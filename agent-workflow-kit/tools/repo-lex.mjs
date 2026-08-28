@@ -20,3 +20,27 @@ export const lexicalRepoRelative = (rel) => {
 
 // POSIX single-quote for pasteable command rendering (display only — never an execution boundary).
 export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+
+// The bytes a settings-level allow rule cannot see past: command separators, redirections,
+// expansions and globs. ONE home for the seeder (velocity-profile.mjs, the allow-rule writer) and
+// the renders that must spell a path in the seeded byte-form (procedures.mjs) — two predicates for
+// one rule drift apart, and a drifted render is a dead allow rule that simply prompts.
+export const SHELL_METACHARACTERS = Object.freeze([
+  '&', '|', ';', '<', '>', '$', '`', '(', ')',
+  '\n', '\r', '\t', '\\', '{', '}', '*', '?', '#', '~', '!',
+]);
+export const hasShellMetacharacter = (cmd) => SHELL_METACHARACTERS.some((ch) => cmd.includes(ch));
+
+// Characters that survive whitespace tokenization but break an UNQUOTED byte-exact path rule:
+// shell quoting syntax and glob brackets (SHELL_METACHARACTERS owns the command-level separators/
+// redirections/expansions — `*`/`?` globs included — but not these four).
+const PATH_BREAKING_CHARACTERS = Object.freeze(["'", '"', '[', ']']);
+
+// A path token that can be seeded UNQUOTED into a byte-exact allow rule: POSIX-absolute, no
+// whitespace, no shell metacharacter, no quoting/glob syntax.
+export const isSeedablePathToken = (token) =>
+  typeof token === 'string' &&
+  token.startsWith('/') &&
+  !/\s/u.test(token) &&
+  !hasShellMetacharacter(token) &&
+  !PATH_BREAKING_CHARACTERS.some((ch) => token.includes(ch));

@@ -303,7 +303,7 @@ describe('set-recipe — --json schema + readiness permutations', () => {
   }
 });
 
-describe('set-recipe — every slot of the three activities [spec:carriers/S4]', () => {
+describe('set-recipe — every slot of the three activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
   const roundTrip = (qualified, value, { vehicle = 'placed', effective = value } = {}) => {
     const [activity, slot] = qualified.split('.');
     const preview = run(['--set', `${qualified}=${value}`], { vehicle });
@@ -324,6 +324,11 @@ describe('set-recipe — every slot of the three activities [spec:carriers/S4]',
 
   it('plan-authoring.author carries a subagent and unsets back to solo', () => {
     const unset = roundTrip('plan-authoring.author', 'subagent');
+    assert.match(unset.stdout, /effective here: solo/);
+  });
+
+  it('plan-authoring.fold previews, writes, and unsets back to solo', () => {
+    const unset = roundTrip('plan-authoring.fold', 'subagent');
     assert.match(unset.stdout, /effective here: solo/);
   });
 
@@ -392,7 +397,7 @@ describe('set-recipe — --help lists the registry, not a hand-typed list', () =
   it('names every activity with its slots and every slot type with its values', () => {
     const r = run(['--help']);
     assert.equal(r.code, 0);
-    assert.match(r.stdout, /plan-authoring → author, review/);
+    assert.match(r.stdout, /plan-authoring → author, fold, review/);
     assert.match(r.stdout, /routine → carrier, parallel/);
     assert.match(r.stdout, /carrier slots accept solo \| subagent/);
     assert.match(r.stdout, /switch slots accept on \| off/);

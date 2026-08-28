@@ -24,7 +24,7 @@ describe('legacy review shorthands remain byte-compatible', () => {
     },
   };
 
-  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) · plan-authoring.review = reviewed (computed default) → codex-review · plan-execution.execute = solo (computed default) · plan-execution.review = ${cell} · routine.carrier = solo (computed default) · routine.parallel = on (computed default; switch) — the configured orchestration values above are what runs; readiness-recommended here: council (informational)`;
+  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) · plan-authoring.fold = solo (computed default) · plan-authoring.review = reviewed (computed default) → codex-review · plan-execution.execute = solo (computed default) · plan-execution.review = ${cell} · routine.carrier = solo (computed default) · routine.parallel = on (computed default; switch) — the configured orchestration values above are what runs; readiness-recommended here: council (informational)`;
   const headCells = {
     solo: 'solo (configured)',
     reviewed: 'reviewed (configured) → codex-review',
@@ -32,7 +32,7 @@ describe('legacy review shorthands remain byte-compatible', () => {
   };
 
   for (const [value, pinned] of Object.entries(expected)) {
-    it(`${value} resolves, obliges and renders the active line exactly as at HEAD 0d2eaee`, () => {
+    it(`${value} resolves, obliges and renders the active line exactly as at HEAD 0d2eaee plus the fold slot`, () => {
       const config = { 'plan-execution': { review: value } };
       assert.deepEqual(recipes.resolveActivityRecipe({ config, readiness, activity: 'plan-execution', slot: 'review' }), pinned.resolved);
       assert.deepEqual(recipes.requiredBackendsForConfiguredRecipe({ config, readiness }), pinned.obligations);

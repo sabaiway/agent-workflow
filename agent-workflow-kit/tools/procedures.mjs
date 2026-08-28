@@ -35,7 +35,7 @@ import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from '.
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 // The family's ONE shell quoter for a RENDERED command operand (bare when the value is already safe,
 // single-quoted otherwise) — the same leaf eight other command renderers here read through.
-import { shellQuoteArg } from './repo-lex.mjs';
+import { shellQuoteArg, isSeedablePathToken } from './repo-lex.mjs';
 // The config schema/read core (orchestration-config.mjs, the single config contract): the reader +
 // the SHARED slot/recipe validity, never the fs-writer (orchestration-write.mjs) DIRECTLY — the
 // import-split test pins the direct-import rule.
@@ -47,6 +47,7 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from 
 // structural — test/read-graph-purity.test.mjs pins it).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
+import { readRegistration } from './mcp-registration.mjs';
 // The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
 // source-size-check.mjs, which owns the writer half: this advisor is a read root of
 // test/read-graph-purity.test.mjs, and the core exists so a surface can ask without reaching a writer.
@@ -189,8 +190,9 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
 // carrier-typed slot (registry-driven — no slot name is spelled here), solo when it has none.
 const effectiveCarrier = (slots) => slots.find((s) => s.slotType === 'carrier')?.recipe ?? 'solo';
 
-// An unsatisfiable EXPLICIT override is the only "warning" (loud, flagged for the agent to relay). A
-// graceful config/default degradation is reported as a per-slot reason, not a warning.
+// An unsatisfiable EXPLICIT override is a warning (loud, flagged for the agent to relay); a graceful
+// config/default degradation remains a per-slot reason. Canon/registry slot-skew warnings are
+// collected separately, after the live section is read.
 const collectWarnings = (slots) =>
   slots
     .filter((s) => s.overrideUnsatisfied)
@@ -223,13 +225,19 @@ const backendSetLabel = (backends) =>
 // REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
 // review slot can resolve reviewed|council (execute floors at solo|delegated), so gate on the recipe.
 const REVIEW_RECIPES = new Set(['reviewed', 'council']);
+const CONSULT_LINE = '  • Before every fold of a finding raised by a review member (a bridge backend or a placed lens): ASK that member whether the proposed fold solves it and adds no new problem; WAIT for its answer, READ it, then edit only as accepted or corrected — agy: agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>. Does this proposed fold solve the finding and add no new problem? Reply accept, or correct with exact replacement text."; codex: fresh codex-review plan <consult-brief> written before the working tree changes; a placed lens: re-dispatch the same lens vehicle with the finding and the proposed fold. A self-review finding, or any finding when no review member ran, is folded directly — the exemption is the finding\'s ORIGIN, never the recipe word on the slot line.';
+const ARMED_CONSULT_LINE = '  • ARMED pre-fold sequence for a bridge-raised finding: the round is open → dispatch that bridge\'s consult with a nonce → WAIT and READ → fold accepted or corrected → flow-writer consult-attestation <planId> --backend <id> --nonce <n> --proposed-fix-digest <the-sha256-of-the-fold-text> → then edit. A lens-raised finding re-dispatches the lens without a nonce, WAIT and READ, then edit as accepted or corrected — it mints no manifest and no attestation — only its per-round participation rides its internal-attestation.';
 // activity-aware (AD-046): the triage classification vocabulary rides EVERY review-backed activity;
 // the LEDGER pointer renders ONLY for plan-execution — the ledger is plan-execution-scoped (AD-045),
 // and pointing plan-authoring at it would send rounds of the wrong activity into the code loop's gate.
-const reviewLoopAdvice = (slots, activity) =>
-  slots.some((s) => REVIEW_RECIPES.has(s.recipe))
+// A roster (any members, a lens-only one included) runs a review round too: it resolves to `solo`
+// when it carries no bridge, so the recipe alone would hide the loop from exactly that project.
+const reviewLoopAdvice = (slots, activity, flowArmed = false) =>
+  slots.some((s) => s.roster != null || REVIEW_RECIPES.has(s.recipe))
     ? [
         'Review-loop economics (procedures.md Fold + loop · orchestration.md §4) — the review this recipe runs:',
+        CONSULT_LINE,
+        ...(activity === 'plan-execution' && flowArmed ? [ARMED_CONSULT_LINE] : []),
         '  • Cap architecture plan-review at ≤2 rounds; the bar is met by RAISING a surviving major to an acceptance invariant (or handing it to Execute/diff-review), never by exhausting the strictest backend.',
         '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
         '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
@@ -253,7 +261,37 @@ const reviewLoopAdvice = (slots, activity) =>
 // grounding rule in EXACTLY this rendered spelling — `node "${GROUNDING_TOOL}"` — so seeded and
 // rendered forms can never drift apart.
 export const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
+export const REPO_SEARCH_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'repo-search.mjs');
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
+
+// The kit-tools tier seeds `Bash(node <abs>/tools/repo-search.mjs:*)` BARE (velocity-profile.mjs
+// deriveKitToolsAllowlist, the same predicate), so a seedable path renders bare — a quoted path is
+// a different prefix and the allow rule is dead. A path the tier could never seed has no rule to
+// match and is single-quoted for a safe paste (double quotes would still expand `$` and backticks).
+const renderToolPath = (abs) => (isSeedablePathToken(abs) ? abs : shellQuoteArg(abs));
+// `registered` is the registration on disk, never the tool's availability in this session — the
+// command line stays as the fallback under the typed form. `toolPath` is a test seam (an unseedable
+// kit path is not constructible from a test against the real checkout).
+const readersSweepAdvice = (activity, registered, toolPath = REPO_SEARCH_TOOL) => {
+  if (activity !== 'plan-authoring') return [];
+  return [
+    'Readers sweep (before the first review) — for every changed config key, registry entry, exported constant, receipt field or canon sentence:',
+    ...(registered ? ['  use: repo_search {"pattern": "<the literal>"} — the kit\'s read-only MCP tool (registration complete; if it is not loaded in this session, the command below)'] : []),
+    `  run: node ${renderToolPath(toolPath)} --pattern <the literal> (a pattern carrying a shell-significant byte goes through --pattern-file <f> instead)`,
+    '  classify every reader as a ledger row, a stated non-goal, or unchanged with its proof',
+  ];
+};
+
+// The canon's own claim — the kit "parses only each section's `Slots:` line" — made true: an installed
+// engine older (or newer) than this kit's registry prints its section verbatim, so the skew is SAID.
+// A section without a Slots line is a customized canon, not a skew: silent. Never the exit code.
+const SLOTS_LINE = /^Slots:[ \t]*(.+?)[ \t]*$/mu;
+const slotSkewWarning = (section, activity) => {
+  const listed = section.match(SLOTS_LINE)?.[1].split(',').map((s) => s.trim()).filter(Boolean);
+  const registry = Object.keys(ACTIVITIES[activity].slots);
+  if (listed == null || listed.join(',') === registry.join(',')) return [];
+  return [`the installed engine's canon lists slots (${listed.join(', ')}) for ${activity} while this kit's registry names (${registry.join(', ')}) — the resolved lines follow the registry; the engine and this kit are out of step — /agent-workflow-kit status names which member is behind: upgrade that one. Tell the user.`];
+};
 const groundingPreStepAdvice = (activity, slots, plans) => {
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
   const planArg = plans.length === 1 ? `--plan "${PLANS_REL}/${plans[0]}"` : '--plan <path>';
@@ -486,7 +524,7 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck }) => {
   const lines = [
     section,
     '',
@@ -510,9 +548,10 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   if ((flowHalves ?? []).length) lines.push('', ...flowHalves);
   const autonomyBlock = autonomyAdvice(activity, autonomy);
   if (autonomyBlock.length) lines.push('', ...autonomyBlock);
+  if (readersSweep.length) lines.push('', ...readersSweep);
   const grounding = groundingPreStepAdvice(activity, slots, plans);
   if (grounding.length) lines.push('', ...grounding);
-  const advice = reviewLoopAdvice(slots, activity);
+  const advice = reviewLoopAdvice(slots, activity, flowArmed);
   if (advice.length) lines.push('', ...advice);
   if (foldScope.length) lines.push('', ...foldScope);
   if (specCheck.length) lines.push('', ...specCheck);
@@ -525,7 +564,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -536,7 +575,8 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
       ...(s.roster ? { roster: s.roster } : {}),
     }]),
   ),
-  reviewLoop: reviewLoopAdvice(slots, activity),
+  reviewLoop: reviewLoopAdvice(slots, activity, flowArmed),
+  readersSweep,
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
@@ -611,7 +651,7 @@ export const main = (argv, ctx = {}) => {
       ),
     });
     const slots = resolveAllSlots({ activity, config, detection, overrides });
-    const warnings = [...detectWarnings, ...collectWarnings(slots)];
+    const warnings = [...detectWarnings, ...collectWarnings(slots), ...slotSkewWarning(section, activity)];
     const plans = plansInFlight(cwd);
     // The autonomy facts (AD-044 Plan 4): resolved levels + red-lines from the policy file. A
     // malformed policy renders LOUDLY in the block AND flips the exit to 1 (config error) — the
@@ -631,13 +671,16 @@ export const main = (argv, ctx = {}) => {
     // The flow armed-halves block (P8): probed ONLY when the config carries a flow block — an
     // unarmed project keeps byte-identical output (human AND JSON) and never pays the store probe.
     const flowProbe = ctx.flowProbe ?? defaultFlowProbe;
-    const flowHalves = config?.flow == null ? null : flowHalvesAdvice(config.flow, flowProbe(cwd));
+    const flowState = config?.flow == null ? null : flowProbe(cwd);
+    const flowHalves = flowState == null ? null : flowHalvesAdvice(config.flow, flowState);
+    const registrationReader = ctx.readRegistration ?? readRegistration;
+    const readersSweep = readersSweepAdvice(activity, activity === 'plan-authoring' && registrationReader(cwd).registered, ctx.repoSearchTool);
     const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
     const foldScope = foldScopeAdvice(activity, config, plans);
     const specCheck = specCheckAdvice(activity);
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, declaredPractice, foldScope, specCheck });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

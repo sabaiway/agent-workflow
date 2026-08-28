@@ -149,10 +149,11 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
 });
 
 // ── the three activities, their typed slots and each slot's value set (AD-124) ──
-describe('orchestration-config — the carrier surface validates (spec:carriers/S3)', () => {
+describe('orchestration-config — the carrier surface validates (spec:carriers/S3) (spec:plan-review-loop/S17)', () => {
   it('accepts a subagent carrier in every carrier-typed and execute-typed slot, and parallel on|off', () => {
     for (const config of [
       { 'plan-authoring': { author: 'subagent' } },
+      { 'plan-authoring': { fold: 'subagent' } },
       { 'plan-execution': { execute: 'subagent' } },
       { routine: { carrier: 'subagent' } },
       { routine: { carrier: 'subagent', parallel: 'off' } },
@@ -175,7 +176,7 @@ describe('orchestration-config — the carrier surface validates (spec:carriers/
     const legacy = { 'plan-authoring': { review: 'solo' }, 'plan-execution': { execute: 'solo', review: 'solo' } };
     assert.deepEqual(validateConfig(legacy), legacy);
     const readiness = [{ name: 'executor', readiness: 'missing', vehicle: { state: 'missing', reason: null } }];
-    for (const [activity, slot, expected] of [['plan-authoring', 'author', 'solo'], ['routine', 'carrier', 'solo'], ['routine', 'parallel', 'on']]) {
+    for (const [activity, slot, expected] of [['plan-authoring', 'author', 'solo'], ['plan-authoring', 'fold', 'solo'], ['routine', 'carrier', 'solo'], ['routine', 'parallel', 'on']]) {
       const r = resolveActivityRecipe({ config: legacy, readiness, activity, slot });
       assert.deepEqual([r.recipe, r.source], [expected, 'default'], `${activity}.${slot}`);
     }
@@ -297,6 +298,19 @@ describe('orchestration-config — canonical refresh', () => {
     const refreshed = refreshReadme({ _README: outgoing, routine: { carrier: 'subagent' } });
     assert.deepEqual([refreshed.changed, refreshed.config._README], [true, CANON_README]);
     assert.deepEqual(refreshed.config.routine, { carrier: 'subagent' }, 'activities preserved');
+  });
+
+  it('the prior roster canonical refreshes, and every slot-list surface names fold', () => {
+    const outgoing = KNOWN_PRIOR_README.find((value) => value.includes('review-lens') && value.includes('slots author, review'));
+    assert.ok(outgoing, 'the roster canonical before fold is retained as a known prior');
+    assert.equal(refreshReadme({ _README: outgoing }).config._README, CANON_README);
+    for (const mode of ['set-recipe', 'procedures', 'recipes', 'status', 'agents']) {
+      const text = readFileSync(join(KIT_ROOT, 'references', 'modes', `${mode}.md`), 'utf8');
+      assert.match(text, /plan-authoring[^\n]*fold/u, `${mode}.md names plan-authoring.fold`);
+    }
+    const readme = readFileSync(join(KIT_ROOT, 'README.md'), 'utf8');
+    const proceduresRow = readme.split('\n').find((line) => line.includes('/agent-workflow-kit procedures')) ?? '';
+    assert.match(proceduresRow, /fold/u, 'the README procedures row names fold');
   });
 
   it('refreshReadme: a prior-canonical _README is refreshed to CANON_README; a customized one is preserved', () => {

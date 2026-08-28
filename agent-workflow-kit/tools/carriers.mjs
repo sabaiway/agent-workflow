@@ -12,7 +12,7 @@ import { refuseDirectRun } from './direct-run.mjs';
 // `policy` marks an activity that is a SESSION with an autonomy level of its own; a routine chore
 // runs inside such a session and carries none.
 export const ACTIVITIES = {
-  'plan-authoring': { slots: { author: 'carrier', review: 'review' }, policy: true },
+  'plan-authoring': { slots: { author: 'carrier', fold: 'carrier', review: 'review' }, policy: true },
   'plan-execution': { slots: { execute: 'execute', review: 'review' }, policy: true },
   routine: { slots: { carrier: 'carrier', parallel: 'switch' }, policy: false },
 };
@@ -102,12 +102,12 @@ export const vehicleDegradeReason = (survey, applyHint = EXECUTOR_APPLY) => {
 // Pure constants. `procedures.mjs` prints them for a slot resolved to `subagent`; the wording is a
 // red line, so a render composes these strings and never re-words one.
 
-// The slice noun is per ACTIVITY — what a bounded slice IS differs for execution, authoring and a
-// routine chore, while the four dispatch lines below are shared by all three.
-export const SLICE_BY_ACTIVITY = {
-  'plan-authoring': 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own',
-  'plan-execution': 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line',
-  routine: "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's",
+// The slice noun is per SLOT — authoring and folding share an activity but carry different work.
+export const SLICE_BY_SLOT = {
+  'plan-authoring.author': 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own',
+  'plan-authoring.fold': "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself",
+  'plan-execution.execute': 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line',
+  'routine.carrier': "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's",
 };
 
 export const VEHICLE_STATE_TOKEN = '<state>';
@@ -132,10 +132,10 @@ export const SUBAGENT_SLOT_TYPES = Object.entries(SLOT_RECIPES)
   .map(([slotType]) => slotType);
 
 // dispatchForm({ activity, slot, state }) → the lines a `subagent`-resolved slot renders: the
-// activity's slice sentence, then the four shared lines with the surveyed vehicle state filled in.
+// slot's slice sentence, then the four shared lines with the surveyed vehicle state filled in.
 // A slot whose type cannot hold `subagent` (a review slot) and an unknown activity render nothing.
 export const dispatchForm = ({ activity, slot, state } = {}) => {
-  const slice = SLICE_BY_ACTIVITY[activity];
+  const slice = SLICE_BY_SLOT[`${activity}.${slot}`];
   const slotType = ACTIVITIES[activity]?.slots?.[slot];
   if (!slice || !SUBAGENT_SLOT_TYPES.includes(slotType)) return [];
   return [slice, ...DISPATCH_LINES.map((line) => line.replace(VEHICLE_STATE_TOKEN, state ?? MISSING))];

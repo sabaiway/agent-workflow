@@ -1105,7 +1105,7 @@ describe('status carries the resolved carrier and the vehicle behind it (spec:ca
       detect: () => [], lstat: STAT_ENOENT, readFile: () => '',
       surveyVehicle: () => ({ state: 'placed', reason: null, rel: VEHICLE_REL }),
     });
-    assert.deepEqual(Object.keys(r.activities['plan-authoring']), ['author', 'review']);
+    assert.deepEqual(Object.keys(r.activities['plan-authoring']), ['author', 'fold', 'review']);
     assert.deepEqual(Object.keys(r.activities.routine), ['carrier', 'parallel']);
     for (const slot of Object.values(r.activities.routine)) {
       assert.deepEqual(Object.keys(slot).sort(), ['degradedFrom', 'recipe', 'source']);

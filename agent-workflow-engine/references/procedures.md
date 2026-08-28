@@ -6,7 +6,7 @@ The ordered steps of each named activity, with **typed recipe slots** bound to t
 live and parses only each section's `Slots:` line.
 
 A **recipe slot**: `review` accepts `solo | reviewed | council`; `execute` accepts
-`solo | delegated | subagent`; a carrier slot (`author`, `carrier`) accepts `solo | subagent`;
+`solo | delegated | subagent`; a carrier slot (`author`, `fold`, `carrier`) accepts `solo | subagent`;
 `parallel` is a switch (`on | off`), not a recipe. The per-project default lives in
 `docs/ai/orchestration.json`.
 
@@ -30,7 +30,7 @@ inline plus the link.
 
 ## plan-authoring
 
-Slots: author, review
+Slots: author, fold, review
 
 1. **Research** — the exact files, contracts and constraints touched.
 2. **Draft** — write to the shape [`planning.md`](planning.md) fixes; its *Module ledger* decides
@@ -41,12 +41,25 @@ Slots: author, review
    Subagent: the orchestrator writes a BRIEF (goal, governing specs, ledger
    constraints, files) and the subagent drafts the plan and any `create` / `modify`
    spec row from it, and the orchestrator reviews the draft as its own before step 3.
-3. **Self-review** — apply *What gets cut*; fold by code (read and cite the `file:line`); update
-   `queue.md` for a series, to the shape *The queue* fixes.
+3. **Self-review** — run the **readers sweep before the first review**: for every config key,
+   registry entry, exported constant, receipt field or canon sentence the plan changes, use one
+   literal repository search to list its readers (validators, renders, seeds, docs and the tests
+   that pin the text). Every reader becomes a ledger row, a stated non-goal, or unchanged with
+   the test or fixture that proves it. Then apply *What gets cut*; fold by code
+   (read and cite the `file:line`); update `queue.md` for a series, to the shape *The queue* fixes.
 4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
    synthesize), as the resolved `review` recipe selects.
-5. **Fold + loop** — fold every finding and re-review; CLEAN is **0 blockers + 0 majors** from every
-   backend the recipe names — folding ≠ convergence. Fold a code-touching finding **test-as-spec**,
+5. **Fold + loop** — before every fold of a finding raised by a **review member**, **ASK** that
+   member whether the proposed fold solves it and adds no new problem; **WAIT** for its answer,
+   **READ** it, and hand only the fold so accepted or corrected to the resolved `fold` carrier; a
+   self-review finding, or any finding when no review member ran, is folded directly. The consult
+   is `agy-review --continue --decided @f` for agy, a fresh `codex-review plan <consult-brief>` for
+   codex, or a fresh re-dispatch of the same lens vehicle for a lens member — with the finding and
+   the fold written before the tree changes. Solo: the orchestrator
+   edits directly. Subagent: the slice is the round's findings with their dispositions; it edits the
+   plan or contract in place and returns, then the orchestrator runs the self-consistency read.
+   Fold every finding and re-review; CLEAN is **0 blockers + 0 majors** from every backend the recipe
+   names — folding ≠ convergence. Fold a code-touching finding **test-as-spec**,
    with **no code-mechanics** in the plan: only **checked syntax** its Verification runs; un-run,
    **logic-bearing** syntax never enters prose (*Un-run syntax never ships in prose*). Council runs
    every named backend **every round** (recipe fidelity, `orchestration.md` §4). Cap architecture
@@ -85,11 +98,23 @@ Each ledger row is one logical commit.
    editing it; fold each finding test-as-spec (red→green); atomic, reversible edits.
 5. **review {recipe}** — the **heavy review at the diff** (*The plan must read cold*): real code and
    the full suite. The plan-authoring loop applies unchanged — every named backend every round,
-   **0 blockers + 0 majors**, the **{round N · finding-origin tally · per-backend verdict}**
-   emission, **fixable-bug / inherent-layer-residual / escalate** at the cap. Its instruments:
+   the pre-fold consult of a finding raised by a **review member** (**ASK** that member, **WAIT**,
+   **READ**, fold only as accepted or corrected; a self-review finding is folded directly — the
+   forms are in its step 5), **0 blockers + 0 majors**, the
+   **{round N · finding-origin tally · per-backend verdict}** emission, **fixable-bug /
+   inherent-layer-residual / escalate** at the cap. Its instruments:
    `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
    degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
    mints the ONE receipt `commit-guard --check` gates the commit against.
+
+   On an **ARMED flow**, a **bridge-raised** finding uses this pre-fold order: the round is open;
+   dispatch that bridge's consult with a nonce; WAIT and READ; accept or correct the fold; run
+   `flow-writer consult-attestation <planId> --backend <id> --nonce <n> --proposed-fix-digest
+   <the-sha256-of-the-fold-text>`; then edit. The attestation is disposition evidence (the
+   manifest plus the fold digest), never proof of the run or its answer. A **lens-raised** finding
+   instead re-dispatches the lens without a nonce (WAIT and READ, edit as accepted or corrected);
+   it mints no manifest and no attestation — only its per-round participation rides its
+   `internal-attestation`.
 
    **Finding scope** — every finding NAMES the invariant its fix enforces, BEFORE the edit, every
    round. Already an acceptance criterion (*Verification*'s `- ` bullets) → **fold here**. It would

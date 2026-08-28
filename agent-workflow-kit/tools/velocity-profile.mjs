@@ -10,6 +10,8 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from '.
 // The bridge-wrappers tier's placement probe (AD-044 Plan 4, Decision 2): a tier entry derives ONLY
 // for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
 import { findOnPath } from './detect-backends.mjs';
+// The seedable-path predicate lives in the pure leaf so the renders spell a path exactly as it is seeded.
+import { SHELL_METACHARACTERS, hasShellMetacharacter, isSeedablePathToken } from './repo-lex.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
 // The declared-path resolution + segment containment the allowWrite degrade shares with the
@@ -269,10 +271,7 @@ export const deriveBridgeTierAllowlist = ({ findWrapper, groundingAbsPath } = {}
 // a sandbox. velocity never ADDS commit/push/publish as allow rules and keeps acceptEdits opt-in;
 // runtime closure is not something settings-level allow rules can enforce — the residual guard
 // ships as the opt-in PreToolUse hook (Mode: hook, tools/gate-hook.mjs; probe record in AD-037).
-export const SHELL_METACHARACTERS = Object.freeze([
-  '&', '|', ';', '<', '>', '$', '`', '(', ')',
-  '\n', '\r', '\t', '\\', '{', '}', '*', '?', '#', '~', '!',
-]);
+export { SHELL_METACHARACTERS };
 
 // The RUNTIME residual documented above, as data: the exact write-redirection / command-
 // substitution / bounded write-flag forms a settings-level allow rule cannot see. Consumed by
@@ -484,8 +483,6 @@ const getDefaultMode = (data) => {
     : { present: false, value: undefined };
 };
 
-const hasShellMetacharacter = (cmd) => SHELL_METACHARACTERS.some((ch) => cmd.includes(ch));
-
 const tokenizeCommand = (cmd) => cmd.trim().split(WHITESPACE_PATTERN).filter(Boolean);
 
 const getSubcommand = (tokens) => tokens.slice(1).join(' ');
@@ -503,20 +500,6 @@ const getBashExactCommand = (pattern) => {
   const match = pattern.match(BASH_EXACT_ALLOW_PATTERN);
   return match ? match[1] : undefined;
 };
-
-// Characters that survive whitespace tokenization but break an UNQUOTED byte-exact path rule:
-// shell quoting syntax and glob brackets (SHELL_METACHARACTERS owns the command-level separators/
-// redirections/expansions — `*`/`?` globs included — but not these four).
-const PATH_BREAKING_CHARACTERS = Object.freeze(["'", '"', '[', ']']);
-
-// A path token that can be seeded UNQUOTED into a byte-exact allow rule: POSIX-absolute, no
-// whitespace, no shell metacharacter, no quoting/glob syntax.
-const isSeedablePathToken = (token) =>
-  typeof token === 'string' &&
-  token.startsWith('/') &&
-  !/\s/u.test(token) &&
-  !hasShellMetacharacter(token) &&
-  !PATH_BREAKING_CHARACTERS.some((ch) => token.includes(ch));
 
 // A tier path token must be SEEDABLE (a relative or shell-syntax-carrying spelling is a dead rule
 // the screen refuses to bless) and end on a known tier-tool tail. Any seedable absolute prefix is

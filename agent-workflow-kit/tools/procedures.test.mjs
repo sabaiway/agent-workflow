@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, extractSection, CONFIG_REL, FLOW_ARMED_HALVES_HEADER, DECLARED_PRACTICE_HEADER, defaultFlowProbe, FOLD_SCOPE_TOOL } from './procedures.mjs';
-import { shellQuoteArg } from './repo-lex.mjs';
+import { shellQuoteArg, isSeedablePathToken } from './repo-lex.mjs';
+import { readRegistration, mergeMcpJson, mergeSettings, formatJson, MCP_JSON_REL, SETTINGS_REL } from './mcp-registration.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
@@ -36,16 +37,17 @@ afterEach(() => {
 const writeConfig = (json) => writeFileSync(join(cwd, CONFIG_REL), json);
 // Run main() with the repo engine + an injected detection and vehicle survey; config from the temp cwd.
 const vehicle = (state) => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' });
-const run = (argv, { codex = READY, agy = READY, executor = 'missing' } = {}) =>
-  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy), surveyVehicle: vehicle(executor) });
+const run = (argv, { codex = READY, agy = READY, executor = 'missing' } = {}, extra = {}) =>
+  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy), surveyVehicle: vehicle(executor), ...extra });
 
 describe('procedures CLI — happy path (section verbatim + resolved recipe)', () => {
   it('plan-authoring prints the canon section + the resolved review recipe, exit 0', () => {
     const r = run(['plan-authoring'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /## plan-authoring/);
-    assert.match(r.stdout, /Slots: author, review/);
+    assert.match(r.stdout, /Slots: author, fold, review/);
     assert.match(r.stdout, /resolved recipes for "plan-authoring"/);
+    assert.match(r.stdout, /fold: solo — computed default/);
     assert.match(r.stdout, /review: reviewed — computed default/);
   });
 
@@ -215,6 +217,8 @@ describe('procedures CLI — the dispatch form and the routine switch', () => {
     const author = carried('plan-authoring', 'author', 'customized');
     for (const line of FORM('customized', 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own')) assert.ok(lines(author).includes(line), line);
     assert.ok(!lines(author).includes(`      ${EXECUTE_SLICE}`), 'the slice noun is the activity own');
+    const fold = carried('plan-authoring', 'fold');
+    for (const line of FORM('placed', "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself")) assert.ok(lines(fold).includes(line), line);
   });
   it('routine renders all four parallel x carrier cells', () => {
     for (const [carrier, argv, line] of [
@@ -332,13 +336,73 @@ describe('procedures CLI — grounding pre-step population (AD-038, all three di
   });
 });
 
+// The bare byte-form is the kit-tools tier's own (velocity-profile.test.mjs pins the parity).
+const RUN_LINE = /run: node \S*repo-search\.mjs --pattern <the literal> \(a pattern carrying a shell-significant byte goes through --pattern-file <f> instead\)/u;
+const USE_LINE = /use: repo_search \{"pattern": "<the literal>"\}/u;
+describe('procedures CLI — the plan-authoring readers sweep', () => {
+  it('renders before review under solo, either single reviewer, and council', () => {
+    for (const [argv, readiness] of [
+      [['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }],
+      [['plan-authoring'], { codex: READY, agy: NEEDS_SKILL }],
+      [['plan-authoring'], { codex: NEEDS_SKILL, agy: READY }],
+      [['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY }],
+    ]) {
+      const r = run(argv, readiness);
+      for (const pattern of [/Readers sweep \(before the first review\)/u, RUN_LINE, /ledger row.*stated non-goal.*unchanged with its proof/u]) assert.match(r.stdout, pattern);
+      assert.doesNotMatch(r.stdout, /use: repo_search/u, 'an unregistered project is never pointed at the MCP tool');
+    }
+  });
+  // Two names, both record-bound: an intermediate rename orphaned the second, and a red-proof record
+  // only re-observes under a test whose name matches byte-for-byte.
+  const registered = () => main(['plan-authoring'], { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY), surveyVehicle: vehicle('missing'), readRegistration: () => ({ registered: true }) });
+  it('adds the typed repo_search form above the command when the project registration is complete', () => {
+    const r = registered();
+    assert.match(r.stdout, USE_LINE);
+    assert.ok(r.stdout.indexOf('use: repo_search') < r.stdout.indexOf('--pattern <the literal>'), 'the typed form precedes the command');
+  });
+  it('adds the typed repo_search form above the bare command when the project registration is complete', () => {
+    assert.match(registered().stdout, RUN_LINE, 'the bare command stays as the fallback for a session where the tool is not loaded');
+  });
+  it('the DEFAULT registration probe reads a real .mcp.json + settings.json pair (non-vacuity)', () => {
+    const registration = readRegistration(cwd);
+    writeFileSync(join(cwd, MCP_JSON_REL), formatJson(mergeMcpJson(registration), '\n'));
+    mkdirSync(join(cwd, '.claude'), { recursive: true });
+    writeFileSync(join(cwd, SETTINGS_REL), formatJson(mergeSettings(registration), '\n'));
+    assert.equal(readRegistration(cwd).registered, true, 'the fixture IS a complete registration');
+    assert.match(run(['plan-authoring']).stdout, USE_LINE);
+  });
+  it('a lens-only roster still renders the review-loop block with the consult line', () => {
+    writeConfig(JSON.stringify({ 'plan-authoring': { review: ['review-lens'] } }));
+    const reviewLoop = JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout).reviewLoop;
+    assert.ok(reviewLoop.some((line) => line.includes('Before every fold')), 'the consult line renders for a roster');
+    assert.ok(reviewLoop.some((line) => line.includes('Each round MUST emit')), 'the round emission renders for a roster');
+  });
+  // The render and the seeder share ONE predicate; the expected spellings are LITERAL, never recomputed.
+  const NON_ASCII = `/home/jos${String.fromCharCode(0x65, 0x301)}/kit/tools/repo-search.mjs`;
+  const SPACED = '/home/my kit/tools/repo-search.mjs';
+  const METACHAR = '/kit$(touch x)/tools/repo-search.mjs';
+  it('a seedable non-ASCII kit path renders BARE — the tier seeds that path bare, so a quoted render would be a dead rule', () => {
+    assert.equal(isSeedablePathToken(NON_ASCII), true, 'the SEEDER accepts it — the case an ASCII allowlist gets wrong');
+    assert.ok(run(['plan-authoring'], {}, { repoSearchTool: NON_ASCII }).stdout.includes(`run: node ${NON_ASCII} --pattern <the literal>`));
+  });
+  it('an unseedable path renders SINGLE-QUOTED — no rule covers it, and a double-quoted paste would still expand', () => {
+    for (const path of [SPACED, METACHAR]) {
+      assert.equal(isSeedablePathToken(path), false, path);
+      assert.ok(run(['plan-authoring'], {}, { repoSearchTool: path }).stdout.includes(`run: node '${path}' --pattern <the literal>`), path);
+    }
+  });
+  it('is structured in JSON and absent from plan-execution', () => {
+    assert.ok(JSON.parse(run(['plan-authoring', '--json'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }).stdout).readersSweep.some((line) => /Readers sweep/.test(line)));
+    assert.deepEqual(JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout).readersSweep, []);
+  });
+});
 describe('procedures CLI — --json schema (§2.0)', () => {
   it('emits activity, section, per-slot resolution, configSource, warnings', () => {
     const r = run(['plan-execution', '--json'], { codex: READY, agy: NEEDS_SKILL });
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — flowHalves is CONDITIONAL on a flow block, unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'readersSweep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -427,8 +491,15 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
     const r = run(['plan-execution', '--override', 'review=council'], { codex: READY, agy: READY });
     assert.match(r.stdout, SENTINEL);
   });
+  it('the consult order renders for both review-backed activities', () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const reviewLoop = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout).reviewLoop;
+      const consult = reviewLoop.find((line) => line.includes('Before every fold')) ?? '';
+      for (const token of ['raised by a review member (a bridge backend or a placed lens)', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>. Does this proposed fold solve the finding and add no new problem? Reply accept, or correct with exact replacement text."', 'codex: fresh codex-review plan <consult-brief>', 'a placed lens: re-dispatch the same lens vehicle with the finding and the proposed fold', 'A self-review finding, or any finding when no review member ran, is folded directly']) assert.ok(consult.includes(token), `${activity} consult line names ${token}`);
+      assert.ok(consult.indexOf('ASK') < consult.indexOf('WAIT') && consult.indexOf('WAIT') < consult.indexOf('READ') && consult.indexOf('READ') < consult.indexOf('accepted or corrected'), `${activity} consult order`);
+    }
+  });
 });
-
 describe('procedures CLI — activity-aware instrument pointer: plan-execution names the D3 loop, plan-authoring never does', () => {
   it('plan-execution (council) names the D3 instruments (red-proof / --final / commit-guard)', () => {
     // The structured reviewLoop is the assertion target: the verbatim canon section names the instruments too, so a bare stdout match could stay green with the bullet deleted.
@@ -712,7 +783,7 @@ describe('procedures CLI — --help is read-only and exits 0', () => {
     const r = run(['--help']);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /Activities: plan-authoring, plan-execution, routine/);
-    assert.match(r.stdout, /plan-authoring → author, review;  plan-execution → execute, review;  routine → carrier, parallel/);
+    assert.match(r.stdout, /plan-authoring → author, fold, review;  plan-execution → execute, review;  routine → carrier, parallel/);
     assert.match(r.stdout, /carrier accepts solo\|subagent/);
     assert.match(r.stdout, /switch accepts on\|off/);
     assert.match(r.stdout, /the read-only backend detector plus the executor-vehicle survey/, 'readiness names BOTH sources');
@@ -838,6 +909,27 @@ describe('procedures CLI — engine too old (no procedures.md) → loud exit 1',
     return dir;
   };
 
+  it('a canon whose Slots line differs from the registry WARNS at exit 0; a section without one stays silent', () => {
+    const skewed = makeOldEngine();
+    const canon = readFileSync(join(ENGINE_DIR, 'references', 'procedures.md'), 'utf8');
+    const renderWith = () => main(['plan-authoring', '--json'], { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: skewed }, detect: detect(READY, READY), surveyVehicle: vehicle('missing') });
+    const skewWarnings = (r) => JSON.parse(r.stdout).warnings.filter((w) => w.includes('canon lists slots'));
+    try {
+      writeFileSync(join(skewed, 'references', 'procedures.md'), canon.replace('Slots: author, fold, review', 'Slots: author, review'));
+      const r = renderWith();
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(skewWarnings(r).length, 1);
+      for (const token of ['canon lists slots (author, review) for plan-authoring', 'registry names (author, fold, review)', 'out of step', 'upgrade that one']) assert.ok(skewWarnings(r)[0].includes(token), token);
+      writeFileSync(join(skewed, 'references', 'procedures.md'), canon.replace('Slots: author, fold, review\n', ''));
+      const silent = renderWith();
+      assert.equal(silent.code, 0, silent.stderr);
+      assert.deepEqual(skewWarnings(silent), [], 'no Slots line — a customized canon, never a skew claim');
+      assert.deepEqual(skewWarnings(run(['plan-authoring', '--json'])), [], 'the repo engine matches the registry');
+    } finally {
+      rmSync(skewed, { recursive: true, force: true });
+    }
+  });
+
   it('exits 1 with an upgrade-the-engine message (not a cryptic fs error)', () => {
     const oldEngine = makeOldEngine();
     try {
@@ -914,6 +1006,17 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
       /chain: UNARMED — a store file exists but no chain is adopted \(semantic arms stay inert, #52\)/);
     assert.match(runWithProbe(['plan-execution'], { present: true, armed: false, broken: '2 malformed line(s)' }).stdout,
       /chain: store BROKEN — 2 malformed line\(s\); every composed checker fails closed on it/);
+  });
+  it('the pre-fold attestation sequence renders only for an armed chain', () => {
+    writeConfig(JSON.stringify({ flow: FLOW_BLOCK }));
+    const sequence = JSON.parse(runWithProbe(['plan-execution', '--json'], { present: true, armed: true, broken: null }).stdout).reviewLoop.find((line) => line.includes('consult-attestation')) ?? '';
+    for (const token of ['for a bridge-raised finding', 'round is open', 'nonce', 'WAIT', 'READ', 'accepted or corrected', 'flow-writer consult-attestation', '--proposed-fix-digest', 'then edit', 'A lens-raised finding re-dispatches the lens without a nonce']) assert.ok(sequence.includes(token), `armed sequence names ${token}`);
+    const lensBranch = sequence.slice(sequence.indexOf('A lens-raised finding'));
+    assert.ok(!lensBranch.includes('consult-attestation') && lensBranch.includes('no attestation'), 'the lens branch mints nothing');
+    for (const probe of [{ present: false, armed: false, broken: null }, { present: true, armed: false, broken: null }, { present: true, armed: false, broken: 'malformed' }]) {
+      const reviewLoop = JSON.parse(runWithProbe(['plan-execution', '--json'], probe).stdout).reviewLoop;
+      assert.ok(!reviewLoop.some((line) => line.includes('consult-attestation')), JSON.stringify(probe));
+    }
   });
 
   it('the DEFAULT probe reads the real store on the checker path — absent, armed, and broken lanes', () => {

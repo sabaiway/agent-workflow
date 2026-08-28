@@ -404,7 +404,7 @@ describe('resolveActivityRecipe — defensive validity + purity', () => {
   });
 });
 
-describe('the subagent carrier in the lattice, the resolver and the CLI (spec:carriers/S2)', () => {
+describe('the subagent carrier in the lattice, the resolver and the CLI (spec:carriers/S2) (spec:plan-review-loop/S15)', () => {
   it('a placed or customized vehicle carries; a missing or unusable one degrades to Solo', () => {
     for (const state of ['placed', 'customized']) {
       const p = planRecipe('subagent', readinessWith(state));
@@ -427,8 +427,8 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
   });
 
   it('a carrier slot holds when placed, degrades gracefully when missing, and stays silent by default', () => {
-    const config = { 'plan-authoring': { author: 'subagent' }, routine: { carrier: 'subagent' } };
-    for (const [activity, slot] of [['plan-authoring', 'author'], ['routine', 'carrier']]) {
+    const config = { 'plan-authoring': { author: 'subagent', fold: 'subagent' }, routine: { carrier: 'subagent' } };
+    for (const [activity, slot] of [['plan-authoring', 'author'], ['plan-authoring', 'fold'], ['routine', 'carrier']]) {
       const ok = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity, slot });
       assert.deepEqual([ok.recipe, ok.source, ok.degradedFrom], ['subagent', 'config', null]);
       const gone = resolveActivityRecipe({ config, readiness: readinessWith('missing'), activity, slot });
@@ -438,9 +438,19 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     }
   });
 
+  it('a silent fold stays solo beside a configured author subagent', () => {
+    const config = { 'plan-authoring': { author: 'subagent' } };
+    const author = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity: 'plan-authoring', slot: 'author' });
+    const fold = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity: 'plan-authoring', slot: 'fold' });
+    assert.deepEqual([author.recipe, author.source], ['subagent', 'config']);
+    assert.deepEqual([fold.recipe, fold.source], ['solo', 'default']);
+  });
+
   it('an --override to subagent on a missing vehicle degrades LOUDLY', () => {
-    const r = resolveActivityRecipe({ readiness: readinessWith('missing'), activity: 'plan-execution', slot: 'execute', override: 'subagent' });
-    assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['solo', 'subagent', true]);
+    for (const [activity, slot] of [['plan-authoring', 'fold'], ['plan-execution', 'execute']]) {
+      const r = resolveActivityRecipe({ readiness: readinessWith('missing'), activity, slot, override: 'subagent' });
+      assert.deepEqual([r.recipe, r.degradedFrom, r.overrideUnsatisfied], ['solo', 'subagent', true], `${activity}.${slot}`);
+    }
   });
 
   it('routine.parallel returns its value untouched from every source and NEVER degrades', () => {
@@ -486,6 +496,7 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     assert.match(line, /routine\.carrier = subagent \(configured\)/);
     assert.match(line, /routine\.parallel = on \(computed default; switch\)/);
     assert.match(line, /plan-authoring\.author = solo \(computed default\)/);
+    assert.match(line, /plan-authoring\.fold = solo \(computed default\)/);
   });
 });
 

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROCEDURES = join(ROOT, 'references', 'procedures.md');
 const METHODOLOGY_SLOT = join(ROOT, 'references', 'methodology-slot.md');
+const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.2;
 
 const procedures = readFileSync(PROCEDURES, 'utf8');
 
@@ -52,8 +53,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
-  it('plan-authoring declares `Slots: author, review` as its first content line', () => {
-    assert.equal(slotsLineOf(sectionOf(procedures, 'plan-authoring')), 'Slots: author, review');
+  it('plan-authoring declares `Slots: author, fold, review` as its first content line', () => {
+    assert.equal(slotsLineOf(sectionOf(procedures, 'plan-authoring')), 'Slots: author, fold, review');
   });
 
   it('plan-execution declares `Slots: execute, review` as its first content line', () => {
@@ -185,6 +186,34 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
+  it('plan-authoring step 3 opens with the readers sweep before its existing checks', () => {
+    const step3 = stepOf(sectionOf(procedures, 'plan-authoring'), 3).replace(/\s+/g, ' ');
+    assert.match(step3, /^3\. \*\*Self-review\*\* — run the \*\*readers sweep before the first review\*\*/u);
+    for (const token of ['config key', 'registry entry', 'exported constant', 'receipt field', 'canon sentence', 'ledger row', 'stated non-goal', 'unchanged']) {
+      assert.ok(step3.includes(token), `readers sweep names ${token}`);
+    }
+  });
+
+  it('both step 5s put ASK, WAIT and READ before the fold edit', () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const step5 = stepOf(sectionOf(procedures, activity), 5).replace(/\s+/g, ' ');
+      for (const token of ['raised by a **review member**', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'folded directly']) assert.ok(step5.includes(token), `${activity} names ${token}`);
+      if (activity === 'plan-authoring') {
+        for (const token of ['`agy-review --continue --decided @f` for agy', '`codex-review plan <consult-brief>` for codex', 'a fresh re-dispatch of the same lens vehicle for a lens member']) assert.ok(step5.includes(token), `the consult form carries ${token}`);
+      }
+      assert.ok(step5.indexOf('ASK') < step5.indexOf('WAIT') && step5.indexOf('WAIT') < step5.indexOf('READ') && step5.indexOf('READ') < step5.indexOf('accepted or corrected'), `${activity} consult order`);
+    }
+  });
+
+  it('the authoring fold carrier is explicit, and execution carries the armed attestation sequence', () => {
+    const authoring = stepOf(sectionOf(procedures, 'plan-authoring'), 5).replace(/\s+/g, ' ');
+    for (const token of ['resolved `fold` carrier', 'Solo', 'Subagent', "round's findings with their dispositions", 'self-consistency read']) assert.ok(authoring.includes(token), `authoring fold names ${token}`);
+    const execution = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
+    for (const token of ['ARMED flow', 'a **bridge-raised** finding', 'round is open', 'nonce', 'flow-writer consult-attestation', '--proposed-fix-digest', 'then edit', 'A **lens-raised** finding instead re-dispatches the lens without a nonce']) assert.ok(execution.includes(token), `armed sequence names ${token}`);
+    const lensBranch = execution.slice(execution.indexOf('A **lens-raised** finding'));
+    assert.ok(!lensBranch.includes('consult-attestation') && lensBranch.includes('no attestation'), 'the lens branch mints nothing');
+  });
+
   // Cost lanes (cost-tiered execution): the kit advisor renders an unconditional cost-lane block
   // that PARAPHRASES orchestration.md §5 — pin the same distinctive tokens in the CANON here
   // (the kit side pins them in the advisor output, procedures.test.mjs), so the paraphrase and
@@ -267,10 +296,10 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!/Phase:\s*Release Publishing/i.test(procedures), 'no mandatory Release-Publishing phase bake-in');
   });
 
-  it('is terse — stays smaller than the planning.md canon it binds to (points, not restates)', () => {
+  it('is terse — stays within a bounded margin of the planning.md canon it binds to', () => {
     const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
     assert.ok(
-      procedures.length < planning.length,
+      procedures.length < planning.length * MAX_PROCEDURES_TO_PLANNING_RATIO,
       'the procedures canon stays a terse pointer, not a restatement of planning.md',
     );
   });

@@ -16,7 +16,7 @@ import {
   withVehicle,
   EXECUTOR_APPLY,
   vehicleDegradeReason,
-  SLICE_BY_ACTIVITY,
+  SLICE_BY_SLOT,
   DISPATCH_LINES,
   PARALLEL_LINES,
   PARALLEL_SOLO_NOTE,
@@ -32,10 +32,10 @@ const CODEX = 'codex-cli-bridge';
 const AGY = 'antigravity-cli-bridge';
 const survey = (state, reason = null) => ({ state, reason, rel: '.claude/agents/executor.md' });
 
-describe('carriers — the one activity/slot table (spec:carriers/S1)', () => {
+describe('carriers — the one activity/slot table (spec:carriers/S1) (spec:plan-review-loop/S14)', () => {
   it('names three activities, each with its typed slots', () => {
     assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution', 'routine']);
-    assert.deepEqual(ACTIVITIES['plan-authoring'].slots, { author: 'carrier', review: 'review' });
+    assert.deepEqual(ACTIVITIES['plan-authoring'].slots, { author: 'carrier', fold: 'carrier', review: 'review' });
     assert.deepEqual(ACTIVITIES['plan-execution'].slots, { execute: 'execute', review: 'review' });
     assert.deepEqual(ACTIVITIES.routine.slots, { carrier: 'carrier', parallel: 'switch' });
   });
@@ -237,11 +237,16 @@ describe('carriers — a routine chore carries no autonomy level of its own', ()
 });
 
 describe('the dispatch form — the ONE wording source, pinned whole', () => {
-  it('every activity has a slice sentence, and each is the exact sentence', () => {
-    assert.deepEqual(Object.keys(SLICE_BY_ACTIVITY).sort(), Object.keys(ACTIVITIES).sort());
-    assert.equal(SLICE_BY_ACTIVITY['plan-execution'], 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line');
-    assert.equal(SLICE_BY_ACTIVITY['plan-authoring'], 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own');
-    assert.equal(SLICE_BY_ACTIVITY.routine, "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's");
+  it('every subagent-capable activity/slot pair has one exact slice sentence', () => {
+    const capableSlots = Object.entries(ACTIVITIES).flatMap(([activity, definition]) =>
+      Object.entries(definition.slots)
+        .filter(([, slotType]) => SLOT_RECIPES[slotType].includes(SUBAGENT_RECIPE.id))
+        .map(([slot]) => `${activity}.${slot}`));
+    assert.deepEqual(Object.keys(SLICE_BY_SLOT).sort(), capableSlots.sort());
+    assert.equal(SLICE_BY_SLOT['plan-execution.execute'], 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line');
+    assert.equal(SLICE_BY_SLOT['plan-authoring.author'], 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own');
+    assert.equal(SLICE_BY_SLOT['plan-authoring.fold'], "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself");
+    assert.equal(SLICE_BY_SLOT['routine.carrier'], "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's");
   });
 
   it('the four shared dispatch lines are exact, and in this order', () => {
@@ -260,7 +265,7 @@ describe('the dispatch form — the ONE wording source, pinned whole', () => {
 
   it('dispatchForm fills the surveyed state into the first line and prepends the activity slice', () => {
     const form = dispatchForm({ activity: 'plan-execution', slot: 'execute', state: 'customized' });
-    assert.equal(form[0], SLICE_BY_ACTIVITY['plan-execution']);
+    assert.equal(form[0], SLICE_BY_SLOT['plan-execution.execute']);
     assert.equal(form[1], 'dispatch: the executor vehicle (.claude/agents/executor.md — customized), in the background');
     assert.deepEqual(form.slice(2), DISPATCH_LINES.slice(1));
     assert.match(dispatchForm({ activity: 'routine', slot: 'carrier' })[1], / missing\), in the background$/u, 'an unstated state reads missing, never an empty parenthesis');

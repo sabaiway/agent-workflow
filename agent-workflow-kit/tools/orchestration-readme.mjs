@@ -45,12 +45,17 @@ const V3_README =
   "parallel. Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for " +
   "your environment. Strict JSON — no comments.";
 
-export const CANON_README = V3_README.replace(
+const ROSTER_README = V3_README.replace(
   "a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize)",
   "a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize), or an explicit roster array such as [\"codex-review\", \"agy-review\", \"review-lens\"] in hand-edit form",
 );
 
-export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README]);
+export const CANON_README = ROSTER_README
+  .replace("'plan-authoring' (slots author, review)", "'plan-authoring' (slots author, fold, review)")
+  .replace("the carrier slots 'plan-authoring.author' and 'routine.carrier'", "the carrier slots 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier'")
+  .replace('solo for author, execute and carrier', 'solo for author, fold, execute and carrier');
+
+export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README, ROSTER_README]);
 
 export const refreshReadme = (config) => {
   if (config == null || typeof config !== 'object' || Array.isArray(config)) return { config, changed: false };

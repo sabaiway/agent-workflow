@@ -30,7 +30,7 @@ import {
   screenAllowlistEntry,
   validateProfile,
 } from './velocity-profile.mjs';
-import { GROUNDING_TOOL } from './procedures.mjs';
+import { GROUNDING_TOOL, REPO_SEARCH_TOOL } from './procedures.mjs';
 import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
 
 const UTF8 = 'utf8';
@@ -1022,6 +1022,11 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(screenAllowlistEntry('Bash(agy-review diff:*)'), false, 'diff mode keeps its prompt');
     assert.equal(screenAllowlistEntry('Bash(codex-review code extra:*)'), false, 'an argument-bearing spelling is not the tier form');
     assert.equal(screenAllowlistEntry('Bash(codex-review code)'), false, 'the exact form is not the tier form');
+  });
+
+  it('the kit-tools tier seeds repo-search in EXACTLY the BARE byte-form the readers-sweep advisor renders', () => {
+    assert.equal(tierEntries().includes(`Bash(node ${REPO_SEARCH_TOOL}:*)`), true, 'the seeded rule wraps exactly the rendered `node ${REPO_SEARCH_TOOL}` prefix — a quoted render is a dead rule');
+    assert.equal(screenAllowlistEntry(`Bash(node "${REPO_SEARCH_TOOL}":*)`), false, 'the quoted spelling is NOT seedable — the screen accepts a quoted node token only for grounding');
   });
 
   it('NEGATIVE: no other node tool rides the quoted-grounding class', () => {
