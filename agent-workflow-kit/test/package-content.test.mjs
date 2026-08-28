@@ -136,6 +136,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // project a command that cannot run.
       'tools/fold-scope.mjs',
       'tools/fold-scope-cli.mjs',
+      'tools/plan-shape.mjs',
+      'tools/plan-shape-facts.mjs',
+      'tools/plan-shape-cli.mjs',
       // the structural checker of the spec store (spec layer 2b) — the op grammar, the IO-free judge
       // and the CLI half. By NAME for the same reason as fold-scope: the procedures advisor renders
       // the CLI path into a copy-paste command, and the judge imports the other two at load.
@@ -732,7 +735,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 270 = 264 + tools/cheap-agents-read.mjs and five review-roster leaves:
     //       review-roster.mjs, review-roster-resolve.mjs, orchestration-readme.mjs and
     //       bridge-posture.mjs, plus the set-recipe list-op leaf. All six ride the NAMED list above.
-    assert.equal(packed.length, 270, `tarball file count drifted (${packed.length} ≠ 270)`);
+    // 273 = 270 + the plan-shape checker's three leaves (rule half, facts half, CLI); NAMED above
+    //       because the planning canon renders the CLI path into the --check / --verify commands.
+    assert.equal(packed.length, 273, `tarball file count drifted (${packed.length} ≠ 273)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -36,7 +36,7 @@ import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 // (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
 // READ core only — never autonomy-write.mjs (the import-split invariant).
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
-
+import { PLAN_HEADINGS } from './plan-shape.mjs';
 const PLAN_EXECUTION = 'plan-execution';
 
 // The agy single-argv byte contract (mirrors agy-review.sh — the wrapper is the enforcement home).
@@ -44,7 +44,7 @@ export const DEFAULT_MAX_PROMPT_BYTES = 120000;
 export const ARGV_HARD_MAX = 131000;
 
 export const CONSTRAINTS_HEADING = /^## .*Hard Constraints$/;
-export const PLAN_SECTIONS = ['## Goal and boundary', '## Module ledger', '## Verification'];
+export const PLAN_SECTIONS = PLAN_HEADINGS.slice(0, 3);
 
 // ── pure section slicing (exactly-one-match; the inject-methodology discipline) ────────
 

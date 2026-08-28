@@ -13,8 +13,10 @@ const flat = planning.replace(/\s+/g, ' ');
 // and produced a 690-line plan for a 587-line change. A rule earns a pin here only when its loss
 // would let a plan grow again.
 describe('planning.md — the plan shape', () => {
-  it('caps the plan by BOTH lines and bytes, and budgets its three sections', () => {
-    assert.match(flat, /capped at \*\*100 lines and 8000 bytes\*\*/, 'a line cap alone is paid off with longer lines');
+  it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
+    assert.match(flat, /capped at \*\*100 lines and at most 25 ledger rows\*\*/);
+    assert.match(flat, /plan-shape-cli\.mjs --check <plan>/);
+    assert.doesNotMatch(flat, /8000 bytes/, 'the retired whole-file byte cap must not return');
     for (const [heading, budget] of [['Goal and boundary', 10], ['Module ledger', 60], ['Verification', 20]]) {
       assert.match(flat, new RegExp(`\\*\\*${heading}\\*\\* \\(${budget} lines\\)`), `${heading} carries its budget`);
     }
@@ -47,7 +49,7 @@ describe('planning.md — the plan shape', () => {
   it('makes the ledger decide layout before any file exists, and bounds the row itself', () => {
     assert.match(flat, /check-id/, 'a row carries the id its one validator checks');
     assert.match(flat, /create\|modify\|delete/, 'a deletion row is expressible');
-    assert.match(flat, /≤200 bytes per row/, 'the row cannot absorb the complexity the cap removed');
+    assert.match(flat, /200 UTF-8 bytes counted without its path and anchor/, 'names the counted fields instead of charging path length');
     assert.match(flat, /never an invented number/, 'a project without a declared cap gets no hallucinated limit');
   });
 
@@ -64,6 +66,7 @@ describe('planning.md — the plan shape', () => {
 
   it('validates the ledger with ONE command, not an assertion per row', () => {
     assert.match(flat, /validated by ONE command/);
+    assert.match(flat, /plan-shape-cli\.mjs --verify <plan>/);
     assert.match(flat, /Per-row assertions in prose are the repetition/);
   });
 

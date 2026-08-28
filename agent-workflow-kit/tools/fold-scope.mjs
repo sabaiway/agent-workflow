@@ -22,10 +22,13 @@
 // Dependency-free, Node >= 22.
 
 import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { PLAN_HEADINGS, bulletBlocks } from './plan-shape.mjs';
+
+export { bulletBlocks };
 
 export const CLASSES = ['in-scope', 'new-invariant', 'blocking'];
 export const ROW_FIELDS = ['invariant', 'origin', 'narrow fix', 'proof', 'residual exposure'];
-export const ACCEPTANCE_HEADING = '## Verification';
+export const ACCEPTANCE_HEADING = PLAN_HEADINGS[2];
 // The canon says a deferral row carries "the origin `file:line`". Anchored at the start of the value
 // and a POSITIVE line number, so "file.mjs:12junk" and "file.mjs:0" are not one; trailing context
 // after the token is fine, because the canon asks the row to CARRY a file:line, not to carry nothing
@@ -35,68 +38,10 @@ const ORIGIN_SHAPE = /^\S+:[1-9]\d*(\s|$)/;
 // literals refuses fail-closed; the general per-project status grammar is queued, not guessed here.
 const CLOSED_MARKERS = ['DONE', 'CLOSED'];
 const ORIGIN_MISSING = 'origin (the canon requires a file:line)';
-const BULLET = /^-\s+\S/;
 
 const normalize = (s) => String(s ?? '').replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 const contains = (haystack, needle) => normalize(haystack).toLowerCase().includes(needle);
 
-// The ONE bullet scan both readers use, over the block model's lines. A fenced region is a quotation
-// AND a boundary: it closes the block it interrupts, so text past a fence can never join the bullet
-// before it (which would let a far-side literal satisfy a near-side claim). A `-` plus any whitespace
-// run opens a block; a blank or indented line continues it; any other unindented line closes it.
-// Blocks are returned RAW (their own lines) — the queue reader needs the field lines inside them —
-// each carrying the body index it OPENS at, because a second reader (queue-audit.mjs) reports rows by
-// file line and a scan that dropped the index would have to re-derive it against a different grammar.
-//
-// `fenceContinues` is the SECOND reader's question, and it is a different one. A deferral row asks
-// what a bullet CLAIMS, so a fence must cut it. A queue row asks what a bullet COSTS and whether it
-// is still work, and there the fence-as-boundary is a hole: measured, a row carrying a code block
-// reported ONE line and its `**DONE 2026-01-01:**` two lines further down was invisible, so the
-// per-row cap could be walked straight past and a closure went unseen.
-//
-// Under the option only a NESTED fence continues an open block — one whose opening line is indented,
-// which is what makes it part of the list item at all. A fence opening at column 0 is a
-// DOCUMENT-level block and still closes the row, exactly as an unindented line does; absorbing it
-// charged a one-line row for six. The run is decided ONCE, at its opening line, so a content line
-// inside it cannot re-decide the question.
-//
-// The absorbed lines never enter `lines` — a marker inside a quotation is not a status — so the
-// block records where they were: `span` is the row's PHYSICAL extent, and `gaps` holds the `lines`
-// indices a fence run follows, so a reader assembling a multi-line span cannot join text from both
-// sides of a code block into one claim.
-export const bulletBlocks = (lines, fencedLines, from, to, { fenceContinues = false } = {}) => {
-  const blocks = [];
-  let current = null;
-  let absorbing = null;
-  const close = () => {
-    if (current) blocks.push(current);
-    current = null;
-  };
-  for (let index = from; index < to; index += 1) {
-    if (fencedLines.has(index)) {
-      if (absorbing === null) absorbing = Boolean(fenceContinues && current && /^\s+\S/.test(lines[index]));
-      if (!absorbing) close();
-      else {
-        current.span += 1;
-        current.gaps.add(current.lines.length - 1);
-      }
-      continue;
-    }
-    absorbing = null;
-    const line = lines[index];
-    if (BULLET.test(line)) {
-      close();
-      current = { start: index, lines: [line], span: 1, gaps: new Set() };
-    } else if (current && (line.trim() === '' || /^\s+\S/.test(line))) {
-      current.lines.push(line);
-      current.span += 1;
-    } else {
-      close();
-    }
-  }
-  close();
-  return blocks;
-};
 
 // extractAcceptance(planText) -> the top-level bullets under `## Verification`, each collapsed to one
 // line. Per the planning canon those bullets ARE the acceptance criteria and they are the WHOLE list.
@@ -131,7 +76,7 @@ const parseFields = (block) => {
     if (match) {
       open = match[1].toLowerCase().replace(/\s+/g, ' ');
       values[open] = [...(values[open] ?? []), match[2].trim()];
-    } else if (open && /^\s+\S/.test(line) && !BULLET.test(line.trim())) {
+    } else if (open && /^\s+\S/.test(line) && !/^-\s+\S/.test(line.trim())) {
       values[open][values[open].length - 1] += ` ${line.trim()}`;
     } else {
       open = null;

@@ -1,0 +1,137 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { ledgerOf, makeTree, planWith, write } from './plan-shape-harness.test.mjs';
+
+const CLI = join(dirname(fileURLToPath(import.meta.url)), 'plan-shape-cli.mjs');
+const loadCli = () => import('./plan-shape-cli.mjs');
+const makeRepo = () => {
+  const root = makeTree('plan-shape-cli');
+  write(root, 'docs/readme.md', 'ten\n');
+  return root;
+};
+const run = (root, args) => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: 'utf8' });
+};
+const planOf = (row, total) => planWith({ ledger: ledgerOf(row, total) });
+
+describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
+  it('S10/S11 runs authoring state only on --check and post-state only on --verify (spec:plan-review-loop/S10, spec:plan-review-loop/S11)', async () => {
+    const { main } = await loadCli();
+    assert.equal(typeof main, 'function');
+    const root = makeRepo();
+    write(root, 'docs/plans/modify.md', planWith());
+    write(root, 'docs/new.md', 'landed\n');
+    write(root, 'docs/plans/create.md', planOf('R1 | create | docs/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'package.json', '{"files":["docs/"]}\n');
+    write(root, 'test/package-content.test.mjs', 'pin\n');
+    write(root, 'docs/plans/pin.md', planOf('R1 | create | docs/shipped.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'private/package.json', '{"private":true}\n');
+    write(root, 'docs/plans/private.md', planOf('R1 | create | private/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'unknown/package.json', '{"files":["+(src)/**"]}\n');
+    write(root, 'docs/plans/unknown.md', planOf('R1 | create | unknown/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'nopin/package.json', '{"files":["new.md"]}\n');
+    write(root, 'docs/plans/nopin.md', planOf('R1 | create | nopin/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/delete.md', planOf('R1 | delete | docs/gone.md | delete it | — | —'));
+    const checked = run(root, ['--check', 'docs/plans/modify.md']);
+    const refusedBefore = run(root, ['--check', 'docs/plans/create.md']);
+    const verifiedAfter = run(root, ['--verify', 'docs/plans/create.md']);
+    const pinRefusal = run(root, ['--check', 'docs/plans/pin.md']);
+    const privateSkip = run(root, ['--check', 'docs/plans/private.md']);
+    const unknownSkip = run(root, ['--check', 'docs/plans/unknown.md']);
+    const noPinSkip = run(root, ['--check', 'docs/plans/nopin.md']);
+    const deletedAfter = run(root, ['--verify', 'docs/plans/delete.md']);
+    assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+    assert.match(checked.stdout, /ACCEPT/);
+    assert.equal(refusedBefore.status, 1);
+    assert.match(refusedBefore.stdout, /expects absent, observed regular/);
+    assert.equal(verifiedAfter.status, 0, verifiedAfter.stderr || verifiedAfter.stdout);
+    assert.equal(pinRefusal.status, 1);
+    assert.match(pinRefusal.stdout, /package-pin/);
+    assert.equal(privateSkip.status, 0, privateSkip.stderr || privateSkip.stdout);
+    assert.match(privateSkip.stdout, /package pin skipped — private package/);
+    assert.match(unknownSkip.stdout, /package pin skipped — shipping state is unknown/);
+    assert.match(noPinSkip.stdout, /package pin skipped — no package-content\.test\.mjs/);
+    assert.equal(deletedAfter.status, 0, deletedAfter.stderr || deletedAfter.stdout);
+    write(root, 'docs/plans/after.md', planOf('R1 | create | docs/new.md | create it | 10 | docs/readme.md:1'));
+    assert.match(run(root, ['--verify', 'docs/plans/after.md']).stdout, /after-total/);
+  });
+
+  it('S12 judges titled plans structurally, counts skipped shapes, and refuses any judged defect (spec:plan-review-loop/S12)', async () => {
+    await loadCli();
+    const root = makeRepo();
+    write(root, 'docs/plans/good.md', planWith());
+    write(root, 'docs/plans/notes.md', '# Notes\n\nNot a plan.\n');
+    const accepted = run(root, ['--check', '--in-flight']);
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.match(accepted.stdout, /skipped by shape: 1/);
+    assert.match(accepted.stdout, /judged plans: 1/);
+    assert.equal(run(root, ['--verify', '--in-flight']).status, 0);
+    write(root, 'docs/plans/landed.md', planOf('R1 | create | docs/readme.md | executed, awaiting its commit | n/a | docs/readme.md:1'));
+    assert.equal(run(root, ['--check', 'docs/plans/landed.md']).status, 1, 'the authoring arm refuses a create on an existing path');
+    const structuralOnly = run(root, ['--check', '--in-flight']);
+    assert.equal(structuralOnly.status, 0, structuralOnly.stderr || structuralOnly.stdout);
+    assert.match(structuralOnly.stdout, /judged plans: 2/);
+    write(root, 'docs/plans/bad.md', planOf('R1 | move | docs/readme.md | wrong verb | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/glob.md', planOf('R1 | modify | docs/[a.md | update (1 files) | n/a | docs/readme.md:1'));
+    const refused = run(root, ['--check', '--in-flight']);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stdout, /bad\.md/);
+    assert.match(refused.stdout, /row-grammar/);
+    assert.match(refused.stdout, /glob\.md:1: facts: unsupported glob/);
+    assert.match(refused.stdout, /ACCEPT — docs\/plans\/good\.md/);
+    assert.match(refused.stdout, /skipped by shape: 1/);
+    const explicit = run(root, ['--check', 'docs/plans/glob.md']);
+    assert.equal(explicit.status, 1, 'a plan-level facts failure is a listed finding on the explicit arm too');
+    assert.match(explicit.stdout, /glob\.md:1: facts: unsupported glob/);
+    write(root, 'package.json', '{"files":["docs/"]}\n');
+    write(root, 'test/package-content.test.mjs', 'one\n');
+    write(root, 'other/package-content.test.mjs', 'two\n');
+    const twoPins = run(root, ['--check', 'docs/plans/good.md']);
+    assert.equal(twoPins.status, 2, 'a repository-level facts refusal keeps its usage class on the explicit arm');
+    assert.match(twoPins.stderr, /several package-content\.test\.mjs files: other\/package-content\.test\.mjs, test\/package-content\.test\.mjs/);
+    assert.equal(run(root, ['--check', '--in-flight']).status, 2, 'and on the in-flight arm');
+    write(root, 'docs/ai/source-size.json', '{');
+    assert.equal(run(root, ['--check', '--in-flight']).status, 2, 'a malformed practice is a usage refusal before any plan is judged');
+    assert.equal(run(root, ['--check', 'docs/plans/good.md']).status, 2);
+  });
+
+  it('prints every refusal and reserves exit 2 for usage, an unreadable plan or an unreadable plans directory', async () => {
+    await loadCli();
+    const root = makeRepo();
+    write(root, 'docs/plans/broken.md', planWith({ title: '# Plan: ', verification: 'plain prose' }));
+    const refused = run(root, ['--check', 'docs/plans/broken.md']);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stdout, /title/);
+    assert.match(refused.stdout, /acceptance/);
+    const usage = run(root, ['--unknown']);
+    assert.equal(usage.status, 2);
+    assert.match(usage.stderr, /Usage:/);
+    const missing = run(root, ['--check', 'docs/plans/missing.md']);
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /readable regular plan file/);
+    const noPlans = makeTree('plan-shape-cli');
+    assert.equal(run(noPlans, ['--check', '--in-flight']).status, 0);
+    write(noPlans, 'docs/plans', 'a file where the directory should be\n');
+    const unreadable = run(noPlans, ['--check', '--in-flight']);
+    assert.equal(unreadable.status, 2);
+    assert.match(unreadable.stderr, /docs\/plans could not be read \(ENOTDIR\)/);
+  });
+
+  it('refuses a plan the block model refuses as a listed finding, on both arms, even when the title is not its first line', async () => {
+    await loadCli();
+    const root = makeRepo();
+    write(root, 'docs/plans/fence.md', `\n${planWith()}\n\`\`\`\nnever closed\n`);
+    const explicit = run(root, ['--check', 'docs/plans/fence.md']);
+    assert.equal(explicit.status, 1);
+    assert.match(explicit.stdout, /block-model/);
+    const inFlight = run(root, ['--check', '--in-flight']);
+    assert.equal(inFlight.status, 1);
+    assert.match(inFlight.stdout, /fence\.md.*block-model/);
+    assert.match(inFlight.stdout, /judged plans: 1/);
+  });
+});

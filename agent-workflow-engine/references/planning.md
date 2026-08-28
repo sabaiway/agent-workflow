@@ -8,8 +8,9 @@ plan tells it which files to open, what each one may become, and how the result 
 
 ## Shape
 
-The whole file is capped at **100 lines and 8000 bytes** — both, because a line cap alone is paid off
-with longer lines. The headings are LITERAL, copied bare: tooling extracts sections by exact match.
+The whole file is capped at **100 lines and at most 25 ledger rows**. Before its first review and
+after every authoring fold, run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`. The headings are
+LITERAL, copied bare: tooling extracts sections by exact match.
 
 ```
 # Plan: <title>
@@ -19,6 +20,9 @@ with longer lines. The headings are LITERAL, copied bare: tooling extracts secti
 ## Phase: Cleanup
 ## Next steps
 ```
+
+A project-declared `## Phase: <name>` may ride between Verification and Cleanup; it is bounded by
+the whole-file line cap and may not reuse the Cleanup name.
 
 A plan that does not fit is not under-described. Either the TASK is too big — split it along
 independently verifiable boundaries, never by document size — or it is a SWEEP (below).
@@ -34,7 +38,8 @@ independently verifiable boundaries, never by document size — or it is a SWEEP
 
 ## Module ledger
 
-One row per path, ≤200 bytes per row, six fields:
+One row per path, six fields. A row is capped at **200 UTF-8 bytes counted without its path and
+anchor**: id, verb, responsibility and budget after trimming, including their three ` | ` separators.
 
 ```
 <check-id> | create|modify|delete | <path> | <responsibility, one sentence> | <max lines | n/a> | <anchor>
@@ -71,9 +76,9 @@ the sweep, and breaks the intermediate states.
 ## Verification
 
 Exact existing commands plus the acceptance check for the goal. The ledger is validated by ONE
-command over its `check-id`s — existence and budget for create/modify, absence for delete, the count
-for a sweep, and the total line. Per-row assertions in prose are the repetition this section exists
-to avoid.
+command: `node <kit>/tools/plan-shape-cli.mjs --verify <plan>` — existence and budget for
+create/modify, absence for delete, the count for a sweep, and the total line. Per-row assertions in
+prose are the repetition this section exists to avoid.
 
 **The acceptance criteria ARE the `- ` bullets.** Every top-level `- ` bullet in this section is one
 acceptance criterion, and they are the whole list — nothing outside a bullet is one. That makes the
