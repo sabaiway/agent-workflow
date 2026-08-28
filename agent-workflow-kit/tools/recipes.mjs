@@ -1,19 +1,9 @@
 #!/usr/bin/env node
-// Recipe planner — the pure brain behind the read-only `/agent-workflow-kit recipes` advisor.
-//
-// A "recipe" is a NAMED orchestration pattern over the family's optional carriers: the
-// subscription-CLI bridges (codex-cli-bridge → `codex`, antigravity-cli-bridge → `agy`) and the
-// executor subagent vehicle. The ENGINE owns the canonical narrative
-// (agent-workflow-engine/references/orchestration.md, kept in lockstep by the recipe-name parity
-// guard in recipes.test.mjs); this module owns the EXECUTABLE dispatch. The activity/slot registry
-// lives in carriers.mjs, re-exported here so every importer keeps its './recipes.mjs' path.
-// Invariants: pure (no fs/network/CLI in planRecipe/recommendRecipe), read-only, NEVER runs a
-// subscription CLI. The orchestrator executes a recipe and always makes the single commit; a
-// backend or a subagent is advisory or delegated, never autonomous. Dependency-free, Node >= 22.
+// Read-only recipe planner. The engine owns the narrative; carriers.mjs owns the activity/slot
+// registry re-exported here. Pure planning functions never run a subscription CLI.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-// The READ-ONLY settings core, never the writer: this advisor never pulls in the atomic-write core.
 import { settingsSnapshot, DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import {
@@ -29,10 +19,13 @@ import {
   vehicleDegradeReason,
   EXECUTOR_APPLY,
   safeLine,
+  DISPLAY_ALIASES,
+  BACKEND_PRIORITY,
 } from './carriers.mjs';
-// The READ core of the vehicle surface, never the writer: this advisor can never reach a module
-// that creates `.claude/agents/`.
-import { surveyExecutorVehicle } from './cheap-agents-read.mjs';
+import { surveyExecutorVehicle, surveyVehicle } from './cheap-agents-read.mjs';
+import { obligationsOf } from './review-roster.mjs';
+import { resolveRoster, activeLineCell, remedyFor } from './review-roster-resolve.mjs';
+import { posturesByBackend } from './bridge-posture.mjs';
 import {
   detectBackends,
   wrapperCmdFor,
@@ -43,17 +36,11 @@ import {
   DEGRADED,
 } from './detect-backends.mjs';
 
-export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APPLY, safeLine };
+export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APPLY, safeLine, DISPLAY_ALIASES };
 
-const CODEX = 'codex-cli-bridge';
-const AGY = 'antigravity-cli-bridge';
+const [CODEX, AGY] = BACKEND_PRIORITY;
 
-// The manifest-name → human-alias map (the detector emits manifest names; humans say codex/agy).
-export const DISPLAY_ALIASES = { [CODEX]: 'codex', [AGY]: 'agy' };
-
-// The provider → role table, keyed by the name the readiness array carries, NOT the display alias.
-// The bridge rows are drift-guarded against each capability.json `provides[]`; the executor row is
-// the vehicle withVehicle appends, and the ONLY provider of `carry`.
+// Keyed by readiness-array provider name; executor is the only `carry` provider.
 export const BACKEND_ROLES = {
   [CODEX]: ['execute', 'review'],
   [AGY]: ['review', 'probe'],
@@ -68,6 +55,9 @@ export const requiredBackendsForConfiguredRecipe = ({ config, readiness = [], de
   if (configured == null && detectionFailed) {
     // No config + no readiness signal: the computed default is UNKNOWABLE — fail closed upstream.
     return { recipe: null, source: 'default', backends: [], minShip: 0, perBackend: false, unknowable: true };
+  }
+  if (Array.isArray(configured)) {
+    return { ...obligationsOf(configured), source: 'config', unknowable: false };
   }
   // Role-filtered: a ready EXECUTOR vehicle is a carry provider, never a reviewer, so it must not
   // turn a silent review config into `reviewed`.
@@ -90,8 +80,6 @@ export const BACKEND_META = {
   },
 };
 
-// Deterministic tie-break: codex before agy — the more reliable default for substantive reviews.
-const BACKEND_PRIORITY = [CODEX, AGY];
 const priorityIndex = (name) => {
   const i = BACKEND_PRIORITY.indexOf(name);
   return i === -1 ? BACKEND_PRIORITY.length : i;
@@ -137,14 +125,6 @@ export const RECIPES = [
 
 const recipeById = (id) => RECIPES.find((r) => r.id === id);
 
-// Read-only file-presence remedies — never a claim about whether a backend's service is responsive.
-const READINESS_REASON = {
-  [NEEDS_SKILL]: 'bridge skill not installed — run /agent-workflow-kit setup',
-  [NEEDS_CLI]: 'the CLI is not installed',
-  [NEEDS_CREDENTIALS]: 'not signed in (credentials missing)',
-  [DEGRADED]: 'wrapper not on PATH — run /agent-workflow-kit setup',
-};
-
 // ── pure planner ───────────────────────────────────────────────────────────────
 
 const providersOf = (role, detection) => detection.filter((b) => (BACKEND_ROLES[b.name] ?? []).includes(role));
@@ -171,7 +151,7 @@ const degradeReason = (recipe, detection) => {
     .filter((b) => b.readiness !== READY)
     .map((b) => (b.name === EXECUTOR_PROVIDER
       ? vehicleDegradeReason(b.vehicle, EXECUTOR_APPLY)
-      : `${DISPLAY_ALIASES[b.name] ?? b.name}: ${READINESS_REASON[b.readiness] ?? b.readiness}`))
+      : `${DISPLAY_ALIASES[b.name] ?? b.name}: ${remedyFor({ readiness: b.readiness })}`))
     .join('; ');
   return `${recipe.title} needs ${recipe.minBackends} provider(s) providing ${recipe.role}, but only ${ready.length} ready${detail ? ` — ${detail}` : ''}`;
 };
@@ -268,7 +248,7 @@ const computedDefaultForSlot = (slotType, detection) => {
 // The effective recipe for ONE slot. Precedence: an explicit `override` (degrades LOUDLY, so the
 // agent tells the user) > the `config` entry (graceful) > the computed default. Satisfiability and
 // the lattice REUSE planRecipe — one source. Pure; never mutates.
-export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, slot, override } = {}) => {
+export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, slot, override, surveyLens, postures } = {}) => {
   const activityDef = ACTIVITIES[activity];
   if (!activityDef) throw new Error(`unknown activity: ${activity}`);
   const slotType = activityDef.slots[slot];
@@ -277,6 +257,21 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
   const configured = config?.[activity]?.[slot];
   const requested = override ?? configured ?? computedDefaultForSlot(slotType, readiness);
   const source = override != null ? 'override' : configured != null ? 'config' : 'default';
+
+  if (Array.isArray(requested)) {
+    if (slotType !== 'review' || source !== 'config') {
+      throw new Error(`invalid roster for ${slotType} slot of "${activity}"`);
+    }
+    const obligations = obligationsOf(requested);
+    return {
+      recipe: obligations.recipe,
+      source,
+      degradedFrom: null,
+      reason: null,
+      overrideUnsatisfied: false,
+      roster: resolveRoster({ value: requested, readiness, surveyLens, postures }),
+    };
+  }
 
   // Defensive: the IO shell and the CLI validate first, so a stray value here is a programmer error
   // — surfaced loudly rather than silently coerced into a neighbour recipe.
@@ -300,42 +295,14 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
   };
 };
 
-// ── the one-line backend status (the tool speaks, the agent pastes) ───────────────────────────────
-// Machine-composed so the agent composes NOTHING factual (a session once echoed SKILL.md's canonical
-// example while the detector said otherwise). Always exactly one line.
-
-// The CONFIGURED dispatch posture: the bundled manifests' pins overlaid with the active
-// bridge-settings. No pins or a corrupt bundle → null; the posture segment is a fact, never a gate.
+// Configured posture from bundled manifest pins plus bridge settings; corruption returns null.
 export const composeConfiguredPosture = (ctx = {}) => {
   try {
-    const bundleRoot = ctx.bundleRoot ?? DEFAULT_BUNDLE_ROOT;
-    const read = ctx.readFile ?? readFileSync;
-    const parts = [];
-    for (const name of BACKEND_PRIORITY) {
-      let manifest;
-      try {
-        manifest = JSON.parse(String(read(join(bundleRoot, name, 'capability.json'), 'utf8')));
-      } catch {
-        return null; // an unreadable/corrupt manifest is CORRUPTION — a partial posture would lie
-      }
-      if (!Object.hasOwn(manifest, 'posture')) continue; // a pre-D5 bridge — legitimate absence
-      const posture = manifest.posture;
-      // A present-but-invalid block nulls the WHOLE render — never a partial/mangled line.
-      const invalid =
-        posture === null || typeof posture !== 'object' || Array.isArray(posture) ||
-        typeof posture.model !== 'string' || posture.model.length === 0 ||
-        (Object.hasOwn(posture, 'effort') && (typeof posture.effort !== 'string' || posture.effort.length === 0)) ||
-        (Object.hasOwn(posture, 'tier') && posture.tier !== null && (typeof posture.tier !== 'string' || posture.tier.length === 0)) ||
-        Object.keys(posture).some((k) => !['model', 'effort', 'tier'].includes(k));
-      if (invalid) return null;
-      const seg = [`model=${posture.model}`];
-      if (Object.hasOwn(posture, 'effort')) seg.push(`effort=${posture.effort}`);
-      if (Object.hasOwn(posture, 'tier')) {
-        const knob = (ctx.settings?.active ?? []).find((s) => s.key === 'CODEX_SERVICE_TIER' && s.bridge === name);
-        seg.push(knob ? `tier=${knob.value} (bridge-settings)` : `tier=${posture.tier ?? 'standard'}`);
-      }
-      parts.push(`${DISPLAY_ALIASES[name] ?? name} ${seg.join(' ')}`);
-    }
+    const rows = posturesByBackend({ bundleRoot: ctx.bundleRoot ?? DEFAULT_BUNDLE_ROOT, settings: ctx.settings ?? { active: [] }, readFile: ctx.readFile ?? readFileSync });
+    if (Object.values(rows).some((row) => row.state === 'unreadable')) return null;
+    const parts = Object.entries(rows)
+      .filter(([, row]) => row.state === 'valid')
+      .map(([receiptId, row]) => `${receiptId} ${row.posture}`);
     return parts.length ? parts.join(' · ') : null;
   } catch {
     return null;
@@ -422,19 +389,25 @@ export const composeAutonomyFacts = async (cwd, deps = {}) => {
 // ONE line rendering the CONFIGURED recipe of every activity/slot with its source, degradation and
 // dispatched wrappers — contrasted with the readiness-RECOMMENDED recipe, which is NOT what runs.
 // The session-start checklist and the handover "Active recipes:" slot paste it verbatim.
-export const composeActiveRecipeLine = ({ config, source } = {}, detection, autonomy = null) => {
+export const composeActiveRecipeLine = ({ config, source } = {}, detection, autonomy = null, rosterDeps = null) => {
   const cells = [];
   for (const [activity, def] of Object.entries(ACTIVITIES)) {
     const level = autonomy?.activities?.[activity]?.autonomy;
     const auto = level ? `; autonomy ${level}` : '';
     for (const [slot, slotType] of Object.entries(def.slots)) {
-      const r = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot });
-      const dispatch = isSwitchSlot(slotType) ? [] : planRecipe(r.recipe, detection).dispatch;
+      const r = resolveActivityRecipe({
+        config: config ?? {}, readiness: detection, activity, slot,
+        surveyLens: rosterDeps?.surveyLens, postures: rosterDeps?.postures,
+      });
+      const dispatch = isSwitchSlot(slotType) || r.roster ? [] : planRecipe(r.recipe, detection).dispatch;
       const wrappers = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
       const srcLabel = r.source === 'config' ? 'configured' : 'computed default';
+      const renderedValue = r.roster
+        ? activeLineCell(r.roster, { states: rosterDeps !== null })
+        : r.recipe;
       const head = r.degradedFrom
         ? `${activity}.${slot} = ${r.degradedFrom} (${srcLabel}; degrades here to ${r.recipe} — ${r.reason}${auto})`
-        : `${activity}.${slot} = ${r.recipe} (${srcLabel}${isSwitchSlot(slotType) ? '; switch' : ''}${auto})`;
+        : `${activity}.${slot} = ${renderedValue} (${srcLabel}${isSwitchSlot(slotType) ? '; switch' : ''}${auto})`;
       const suffix =
         wrappers.length >= 2
           ? ` → every backend every round: ${wrappers.join(' + ')}`
@@ -553,7 +526,12 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
     // Lazy: orchestration-config.mjs statically imports this module — no static cycle.
     const { loadConfig } = await import('./orchestration-config.mjs');
     try {
-      console.log(composeActiveRecipeLine(loadConfig(cwd), readiness, await composeAutonomyFacts(cwd)));
+      const snapshot = settingsSnapshot();
+      const surveyLens = deps.surveyLens ?? ((spec) => surveyVehicle(cwd, spec, deps));
+      console.log(composeActiveRecipeLine(
+        loadConfig(cwd), readiness, await composeAutonomyFacts(cwd),
+        { surveyLens, postures: posturesByBackend({ settings: snapshot }) },
+      ));
     } catch (err) {
       console.error(`[agent-workflow-kit] ${err.message}`);
       return err.exitCode ?? 1;

@@ -7,6 +7,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refuseDirectRun } from './direct-run.mjs';
+import { deriveLensTemplate } from './review-roster-resolve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -107,13 +108,23 @@ export const planPlacement = (templates, projectDir, deps = {}) => {
 
 export const EXECUTOR_VEHICLE = 'executor.md';
 export const EXECUTOR_VEHICLE_REL = `${AGENTS_DIR}/${EXECUTOR_VEHICLE}`;
+export const EXECUTOR_VEHICLE_SPEC = Object.freeze({
+  stem: 'executor', template: 'executor', model: null, effort: null, tools: 'full', derived: false,
+});
+const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 // The YAML subset a vehicle's frontmatter is read with: a bare scalar, a single- or double-quoted
 // scalar, or a flow sequence; an unquoted ` #comment` and surrounding whitespace are dropped first.
-const cleanValue = (raw) => {
-  const noComment = String(raw ?? '').replace(/^((?:[^"'#]|"[^"]*"|'[^']*')*?)\s+#.*$/u, '$1').trim();
-  return noComment.replace(/^(["'])(.*)\1$/u, '$2').replace(/^\[(.*)\]$/u, '$1').trim();
+const stripComment = (raw) => String(raw ?? '').replace(/^((?:[^"'#]|"[^"]*"|'[^']*')*?)\s+#.*$/u, '$1').trim();
+const cleanValue = (raw) => stripComment(raw).replace(/^(["'])(.*)\1$/u, '$2').replace(/^\[(.*)\]$/u, '$1').trim();
+
+const scalarValue = (raw) => {
+  const value = stripComment(raw);
+  const quoted = value.match(/^(["'])(.*)\1$/u);
+  if (quoted) return quoted[2].trim();
+  return /^[[{|>]|["']/u.test(value) ? '' : value;
 };
+const scalarOf = (frontmatter, key) => scalarValue(frontmatter.match(new RegExp(`^${key}:(.*)$`, 'mu'))?.[1]);
 
 // The block-sequence items under the `tools:` key: `- item` lines indented deeper than the key,
 // with blank and comment lines allowed between them; the first other line ends the list.
@@ -133,40 +144,88 @@ const blockItems = (frontmatter) => {
   return items;
 };
 
-const executorFrontmatterRefusal = (content) => {
-  const frontmatter = String(content).replace(/\r\n/gu, '\n').match(/^---\n([\s\S]*?)\n---(?:\n|$)/u)?.[1] ?? '';
+const frontmatterOf = (content) => String(content).replace(/\r\n/gu, '\n').match(/^---\n([\s\S]*?)\n---(?:\n|$)/u)?.[1] ?? '';
+
+const listedTools = (frontmatter) => {
+  const inline = cleanValue(frontmatter.match(/^tools:(.*)$/mu)?.[1]);
+  return (inline || blockItems(frontmatter).join(', ')).split(',').map((tool) => cleanValue(tool)).filter(Boolean);
+};
+
+const executorFrontmatterRefusal = (frontmatter, stem) => {
   for (const key of ['name', 'tools']) {
     if ((frontmatter.match(new RegExp(`^${key}:`, 'gmu')) ?? []).length > 1) return `duplicate \`${key}:\` key in the frontmatter`;
   }
-  if (cleanValue(frontmatter.match(/^name:(.*)$/mu)?.[1]) !== 'executor') return 'frontmatter does not declare `name: executor`';
+  if (scalarOf(frontmatter, 'name') !== stem) return `frontmatter does not declare \`name: ${stem}\``;
   if (!/^tools:/mu.test(frontmatter)) return null;
-  const inline = cleanValue(frontmatter.match(/^tools:(.*)$/mu)?.[1]);
-  const listed = inline || blockItems(frontmatter).join(', ');
-  if (!listed) return 'tools: is empty — grant a list that includes Bash, or drop the line';
-  const granted = listed.split(',').map((tool) => cleanValue(tool));
-  return granted.includes('Bash') ? null : `tools: ${listed} is read-only`;
+  const granted = listedTools(frontmatter);
+  if (granted.length === 0) return 'tools: is empty — grant a list that includes Bash, or drop the line';
+  return granted.includes('Bash') ? null : `tools: ${granted.join(', ')} is read-only`;
 };
 
-// A symlinked, non-regular or unreadable vehicle is a STATE the carrier degrades on, so this survey
-// answers it instead of throwing: its callers compose the answer into a readiness array.
-export const surveyExecutorVehicle = (projectDir, deps = {}) => {
-  const rel = EXECUTOR_VEHICLE_REL;
+const lensFrontmatter = (frontmatter, stem) => {
+  for (const key of ['name', 'model', 'effort', 'tools']) {
+    const count = (frontmatter.match(new RegExp(`^${key}:`, 'gmu')) ?? []).length;
+    if (count !== 1) return { refusal: count === 0 ? `frontmatter has no \`${key}:\` key` : `duplicate \`${key}:\` key in the frontmatter` };
+  }
+  if (scalarOf(frontmatter, 'name') !== stem) {
+    return { refusal: `frontmatter does not declare \`name: ${stem}\`` };
+  }
+  const model = scalarOf(frontmatter, 'model');
+  const effort = scalarOf(frontmatter, 'effort');
+  if (!model || !effort) return { refusal: 'model: and effort: must be non-empty scalars' };
+  const tools = listedTools(frontmatter);
+  if (tools.length === 0) return { refusal: 'tools: must grant a non-empty read-only list' };
+  const unsafe = tools.find((tool) => !READ_ONLY_TOOLS.has(tool));
+  if (unsafe) return { refusal: `tools: grants non-read-only tool ${unsafe}` };
+  return { refusal: null, model, effort };
+};
+
+const templateFor = (spec, deps) => {
+  if (spec.template == null) return null;
+  const bundled = readBundledAgents(deps).find((item) => item.name === `${spec.template}.md`);
+  if (!bundled) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${spec.template}.md is missing from the bundle`);
+  return {
+    name: `${spec.stem}.md`,
+    content: spec.derived ? deriveLensTemplate(bundled.content, spec) : bundled.content,
+  };
+};
+
+export const surveyVehicle = (projectDir, spec, deps = {}) => {
+  const rel = `${AGENTS_DIR}/${spec.stem}.md`;
   try {
-    const template = readBundledAgents(deps).find((item) => item.name === EXECUTOR_VEHICLE);
-    if (!template) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${EXECUTOR_VEHICLE} is missing from the bundle`);
+    const template = templateFor(spec, deps);
     const fs = readFsDeps(deps);
     assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
     assertDirSafe(join(projectDir, AGENTS_DIR), AGENTS_DIR, fs);
-    const [placement] = planPlacement([template], projectDir, deps);
-    if (placement.action === 'place') return { state: 'missing', reason: null, rel };
-    if (placement.action === 'already-current') return { state: 'placed', reason: null, rel };
-    const refusal = executorFrontmatterRefusal(placement.existing);
-    return refusal === null
-      ? { state: 'customized', reason: null, rel }
-      : { state: 'unusable', reason: refusal, rel };
+    const placeholder = template ?? { name: `${spec.stem}.md`, content: null };
+    const [placement] = planPlacement([placeholder], projectDir, deps);
+    if (placement.action === 'place') {
+      const reason = template === null ? 'no bundled template to derive it from' : null;
+      return { state: 'missing', reason, rel };
+    }
+    const frontmatter = frontmatterOf(placement.existing ?? template?.content);
+    if (placement.action === 'already-current') {
+      if (spec.tools !== 'read-only') return { state: 'placed', reason: null, rel };
+      const lens = lensFrontmatter(frontmatter, spec.stem);
+      return lens.refusal === null
+        ? { state: 'placed', reason: null, rel, model: lens.model, effort: lens.effort }
+        : { state: 'unusable', reason: lens.refusal, rel };
+    }
+    if (spec.tools !== 'read-only') {
+      const refusal = executorFrontmatterRefusal(frontmatter, spec.stem);
+      return refusal === null
+        ? { state: 'customized', reason: null, rel }
+        : { state: 'unusable', reason: refusal, rel };
+    }
+    const lens = lensFrontmatter(frontmatter, spec.stem);
+    return lens.refusal === null
+      ? { state: 'customized', reason: null, rel, model: lens.model, effort: lens.effort }
+      : { state: 'unusable', reason: lens.refusal, rel };
   } catch (err) {
     return { state: 'unusable', reason: err?.message ?? String(err), rel };
   }
 };
+
+export const surveyExecutorVehicle = (projectDir, deps = {}) => surveyVehicle(projectDir, EXECUTOR_VEHICLE_SPEC, deps);
 
 refuseDirectRun(import.meta.url);

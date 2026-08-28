@@ -166,7 +166,7 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
     // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here. A vehicle
     // step is NOT a bridge: it carries its own state and is never looked up in a manifest.
-    const { dispatch } = planRecipe(resolved.recipe, detection);
+    const { dispatch } = resolved.roster ? { dispatch: [] } : planRecipe(resolved.recipe, detection);
     const vehicles = dispatch.filter((d) => d.vehicle != null).map((d) => ({ backend: d.backend, state: d.vehicle }));
     const bridged = dispatch.filter((d) => d.vehicle == null);
     const backends = bridged.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
@@ -531,7 +531,10 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   slots: Object.fromEntries(
     // `backends: string[]` is the STABLE pre-existing shape (wrapper names) — never repurposed.
     // `contracts` is the ADDITIVE per-dispatch driving-contract field (empty for solo).
-    slots.map((s) => [s.slot, { recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts }]),
+    slots.map((s) => [s.slot, {
+      recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts,
+      ...(s.roster ? { roster: s.roster } : {}),
+    }]),
   ),
   reviewLoop: reviewLoopAdvice(slots, activity),
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).

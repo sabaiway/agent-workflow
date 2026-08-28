@@ -62,6 +62,8 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   // The READ core of the subagent-vehicle surface: it sits one name away from the writer
   // references/modes/agents.md DOES name, and reaching for it is reaching for the agents mode.
   'cheap-agents-read.mjs': '/agent-workflow-kit agents',
+  'review-roster.mjs': '/agent-workflow-kit recipes',
+  'review-roster-resolve.mjs': '/agent-workflow-kit recipes',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

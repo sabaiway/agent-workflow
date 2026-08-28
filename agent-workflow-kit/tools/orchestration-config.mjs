@@ -22,6 +22,16 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { ACTIVITIES, SLOT_RECIPES } from './recipes.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
+import { validateRoster } from './review-roster.mjs';
+import {
+  CANON_README,
+  KNOWN_PRIOR_README,
+  normalizeCanonical,
+  refreshIfCanonical,
+  refreshReadme,
+} from './orchestration-readme.mjs';
+
+export { CANON_README, KNOWN_PRIOR_README, normalizeCanonical, refreshIfCanonical, refreshReadme };
 
 // The hand-editable / agent-writable, per-project config (strict JSON). cwd-relative — the error prefix
 // uses this rel path so a user sees a path they can open, never an absolute temp/host path.
@@ -242,10 +252,18 @@ export const validateConfig = (config) => {
           `${CONFIG_REL}: unknown slot "${slot}" for activity "${key}" (${key} slots: ${Object.keys(activityDef.slots).join(', ')})`,
         );
       }
+      if (Array.isArray(recipe) && slotType === 'review') {
+        try {
+          validateRoster(recipe);
+        } catch (error) {
+          throw fail(1, `${CONFIG_REL}: invalid review roster for "${key}.${slot}" (${error.message})`);
+        }
+        continue;
+      }
       if (typeof recipe !== 'string' || !(SLOT_RECIPES[slotType] ?? []).includes(recipe)) {
         throw fail(
           1,
-          `${CONFIG_REL}: invalid value "${recipe}" for ${slotType} slot of "${key}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
+          `${CONFIG_REL}: invalid value ${JSON.stringify(recipe)} for ${slotType} slot of "${key}" (${slotType} accepts: ${SLOT_RECIPES[slotType].join(', ')})`,
         );
       }
     }
@@ -336,83 +354,6 @@ export const serializeConfig = (config) => {
     if (k !== '_README') ordered[k] = v;
   }
   return `${JSON.stringify(ordered, null, 2)}\n`;
-};
-
-// ── canonical-refresh (shared by the _README refresh + the injected-slot refresh) ───
-// normalizeCanonical: trim + LF-normalize (handles the CRLF / trailing-whitespace trap) so a byte-noisy
-// copy of a canonical string still matches. refreshIfCanonical: replace `current` with `next` IFF it
-// normalize-equals ANY known prior canonical; otherwise return `current` UNCHANGED (preserve a
-// customization). Pure; no fs. Used for the orchestration `_README` and the two injected pointers.
-
-export const normalizeCanonical = (s) => String(s).replace(/\r\n/g, '\n').trim();
-
-export const refreshIfCanonical = (current, knownPriorCanonicals, next) => {
-  const cur = normalizeCanonical(current);
-  return knownPriorCanonicals.some((prior) => normalizeCanonical(prior) === cur) ? next : current;
-};
-
-// ── canonical `_README` (drift-guarded, append-only known-prior set) ─────────────────
-// CANON_README is the CURRENT onboarding note — what the templates ship + what a refresh installs. It
-// frames hand-edit as a still-available option AND points at the set-recipe writer (no "never written
-// for you"). KNOWN_PRIOR_README is the APPEND-ONLY set of every PREVIOUS canonical note: any release
-// that changes CANON_README must FIRST append the outgoing string here, so an immediately-previous
-// deployment still normalize-matches and gets refreshed (a customized note never matches → preserved).
-export const CANON_README =
-  "Per-project orchestration config: the recipe used at each step (slot) of each named activity. " +
-  "Easiest: tell the agent in plain language and run the `set-recipe` writer — it interprets your intent, " +
-  "previews the change, and writes valid JSON for you. You can still hand-edit this file directly whenever you " +
-  "prefer; that option never goes away. Three activities are configured independently, and so is each slot " +
-  "within them: 'plan-authoring' (slots author, review), 'plan-execution' (slots execute, review) and " +
-  "'routine' (slots carrier, parallel). A slot's value is a recipe: a 'review' slot accepts " +
-  "solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an " +
-  "'execute' slot accepts solo | delegated | subagent (you implement / a backend runs a bounded sub-task / a " +
-  "full-tool frontier subagent carries a bounded slice you verify); the carrier slots 'plan-authoring.author' " +
-  "and 'routine.carrier' accept solo | subagent. 'routine.parallel' is a flag rather than a recipe: it accepts " +
-  "on | off and decides whether file-disjoint subagent slices dispatch concurrently. The default below is " +
-  "'solo' for every recipe and carrier slot, and 'on' for the parallel switch — no execution backend required. " +
-  "Raise a slot to reviewed or council for a second " +
-  "opinion, or to delegated to hand off execution; those need an execution backend set up first. 'subagent' " +
-  "needs the executor vehicle placed in this project — the composition root's `agents` writer places it; without " +
-  "it the slot resolves to solo with the reason stated. Remove a slot's line, or a whole activity block (or " +
-  "run `set-recipe --unset <activity>.<slot>`), to fall back to the computed default: reviewed when a review " +
-  "backend is ready and otherwise solo for a review slot, solo for author, execute and carrier, on for " +
-  "parallel. Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for " +
-  "your environment. Strict JSON — no comments.";
-
-export const KNOWN_PRIOR_README = [
-  // v1 (pre-set-recipe) — the "Hand-edit this file — it is never written for you" note. APPEND-ONLY.
-  "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Hand-edit this file — it is never written for you. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. Remove a slot's line to fall back to the computed default (reviewed when a review backend is ready, otherwise solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your environment, and pass a per-run override to change one slot just once. Strict JSON — no comments.",
-  // v2 (two activities, an `execute` slot without a carrier) — the note that shipped before AD-124.
-  "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Easiest: tell " +
-  "the agent in plain language and run the `set-recipe` writer — it interprets your intent, previews the change, " +
-  "and writes valid JSON for you. You can still hand-edit this file directly whenever you prefer; that option " +
-  "never goes away. Each activity is configured independently (e.g. plan-authoring, plan-execution), and so is " +
-  "each slot within it. A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you " +
-  "self-review / one backend reviews / both review and you synthesize); an 'execute' slot accepts solo | " +
-  "delegated (you implement / a backend runs a bounded sub-task). The default below is 'solo' everywhere — no " +
-  "execution backend required. Raise a slot to reviewed or council for a second opinion, or to delegated to hand " +
-  "off execution; those need an execution backend set up first. Remove a slot's line (or run `set-recipe --unset " +
-  "<activity>.<slot>`) to fall back to the computed default (reviewed when a review backend is ready, otherwise " +
-  "solo). Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your " +
-  "environment. Strict JSON — no comments.",
-];
-
-// refreshReadme(config) → { config, changed }: refresh ONLY the `_README` value when it normalize-
-// matches a known prior canonical (preserve a customized note untouched); seed it when absent. The
-// stamp-independent config-ensure (kit fallback + memory delegated upgrade paths) uses this so an
-// install-base deployment gains the new note without a migration file — never clobbering a customization.
-export const refreshReadme = (config) => {
-  if (config == null || typeof config !== 'object' || Array.isArray(config)) {
-    return { config, changed: false };
-  }
-  const had = config._README;
-  const nextReadme = had === undefined ? CANON_README : refreshIfCanonical(had, KNOWN_PRIOR_README, CANON_README);
-  if (nextReadme === had) return { config, changed: false };
-  const next = { _README: nextReadme };
-  for (const [k, v] of Object.entries(config)) {
-    if (k !== '_README') next[k] = v;
-  }
-  return { config: next, changed: true };
 };
 
 // The canonical seed file body (what `init` deploys + what serializeConfig round-trips byte-identically).

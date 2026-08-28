@@ -31,6 +31,18 @@ export const SLOT_RECIPES = {
 export const SWITCH_SLOT = 'switch';
 export const SWITCH_DEFAULT = 'on';
 
+const CODEX = 'codex-cli-bridge';
+const AGY = 'antigravity-cli-bridge';
+
+export const DISPLAY_ALIASES = Object.freeze({ [CODEX]: 'codex', [AGY]: 'agy' });
+export const BACKEND_PRIORITY = Object.freeze([CODEX, AGY]);
+export const REVIEW_CMD_ALIASES = Object.freeze({
+  'codex-review': Object.freeze({ backend: CODEX, receiptId: 'codex' }),
+  'agy-review': Object.freeze({ backend: AGY, receiptId: 'agy' }),
+});
+export const receiptIdOfCmd = (cmd) => REVIEW_CMD_ALIASES[cmd]?.receiptId ?? null;
+export const LENS_VERDICTS = Object.freeze(['ship', 'ship with nits', 'revise', 'rethink']);
+
 export const isSwitchSlot = (slotType) => slotType === SWITCH_SLOT;
 
 export const CARRY_ROLE = 'carry';
