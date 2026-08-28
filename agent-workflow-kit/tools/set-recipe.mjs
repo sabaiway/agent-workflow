@@ -26,8 +26,11 @@
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, lstatSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isDirectRun } from './direct-run.mjs';
+import { settingsSnapshot } from './bridge-settings-read.mjs';
+import { posturesByBackend } from './bridge-posture.mjs';
+import { surveyVehicle } from './cheap-agents-read.mjs';
+import { applyCheapAgentsCommand } from './cheap-agents.mjs';
 import {
   ACTIVITIES,
   SLOT_RECIPES,
@@ -49,23 +52,36 @@ import {
   CANON_README,
 } from './orchestration-config.mjs';
 import { writeConfig as writeConfigFs } from './orchestration-write.mjs';
+import {
+  applyReviewerOps,
+  parseReviewerOp,
+  persistedLensStems,
+  renderRosterPreview,
+  resolveReviewerRows,
+  rosterJsonRows,
+} from './set-recipe-roster.mjs';
 
 // ── argument parsing (usage errors → exit 2) ────────────────────────────────────────
 
-// Parse argv → { ops, write, json }. `--set`/`--unset` take a fully-qualified token (parseOp validates
-// it). A duplicate op for the same activity.slot, a `--write` with zero ops, an unknown flag, or a bad
-// token → exit 2. `--set=<tok>` / `--unset=<tok>` inline forms are accepted too.
+// Parse argv → { ops, write, json }. Fixed ops stay unique per slot; reviewer list ops accumulate.
+// A `--write` with zero ops, an unknown flag, or a bad token → exit 2. Inline forms are accepted too.
 const parseArgs = (argv) => {
   const ops = [];
-  const seen = new Set();
+  const fixed = new Set();
+  const reviewer = new Set();
   let write = false;
   let json = false;
   const takeOp = (kind, tok) => {
-    if (tok === undefined || tok.startsWith('--')) throw fail(2, `--${kind} requires <activity>.<slot>${kind === 'set' ? '=<value>' : ''}`);
-    const op = parseOp(kind, tok);
+    const reviewerKind = kind === 'add-reviewer' || kind === 'remove-reviewer';
+    const form = reviewerKind ? '<activity>.review=<member>' : `<activity>.<slot>${kind === 'set' ? '=<value>' : ''}`;
+    if (tok === undefined || tok.startsWith('--')) throw fail(2, `--${kind} requires ${form}`);
+    const op = reviewerKind ? parseReviewerOp(kind, tok) : parseOp(kind, tok);
     const key = `${op.activity}.${op.slot}`;
-    if (seen.has(key)) throw fail(2, `duplicate op for "${key}" — name each activity.slot at most once`);
-    seen.add(key);
+    if (fixed.has(key) || (!reviewerKind && reviewer.has(key))) {
+      throw fail(2, `duplicate op for "${key}" — --set/--unset name each activity.slot at most once and cannot mix with reviewer list ops`);
+    }
+    if (reviewerKind) reviewer.add(key);
+    else fixed.add(key);
     ops.push(op);
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -74,12 +90,16 @@ const parseArgs = (argv) => {
     else if (a === '--write') write = true;
     else if (a === '--set') { takeOp('set', argv[i + 1]); i += 1; }
     else if (a === '--unset') { takeOp('unset', argv[i + 1]); i += 1; }
+    else if (a === '--add-reviewer') { takeOp('add-reviewer', argv[i + 1]); i += 1; }
+    else if (a === '--remove-reviewer') { takeOp('remove-reviewer', argv[i + 1]); i += 1; }
     else if (a.startsWith('--set=')) takeOp('set', a.slice('--set='.length));
     else if (a.startsWith('--unset=')) takeOp('unset', a.slice('--unset='.length));
+    else if (a.startsWith('--add-reviewer=')) takeOp('add-reviewer', a.slice('--add-reviewer='.length));
+    else if (a.startsWith('--remove-reviewer=')) takeOp('remove-reviewer', a.slice('--remove-reviewer='.length));
     else if (a.startsWith('-')) throw fail(2, `unknown flag: ${a}`);
     else throw fail(2, `unexpected argument: ${a}`);
   }
-  if (write && ops.length === 0) throw fail(2, 'nothing to write — pass at least one --set/--unset (a bare --write is a no-op)');
+  if (write && ops.length === 0) throw fail(2, 'nothing to write — pass at least one --set/--unset/--add-reviewer/--remove-reviewer (a bare --write is a no-op)');
   return { ops, write, json };
 };
 
@@ -115,15 +135,21 @@ const effectiveLine = (e) =>
     ? `effective here: ${e.effective} (requested ${e.degradedFrom} → degraded: ${e.reason})`
     : `effective here: ${e.effective}`;
 
-const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody, activeLine }) => {
+const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody, activeLine, agentsApply, persistedLenses }) => {
   const lines = [];
   if (wrote) lines.push(`wrote ${CONFIG_REL}`);
   else if (changed.length) lines.push(`set-recipe — preview (nothing written; re-run with --write to apply)`);
   for (const e of changed) {
+    if (Array.isArray(e.roster)) {
+      lines.push(renderRosterPreview(e, { agentsApply, wrote, persistedLenses }));
+      continue;
+    }
     lines.push(`  ${e.activity}.${e.slot}: ${valueLabel(e.from)} → ${valueLabel(e.to)}`);
     lines.push(`      ↳ ${effectiveLine(e)}`);
   }
-  for (const e of unchanged) lines.push(`  ${e.activity}.${e.slot}: already ${valueLabel(e.from)} (no change)`);
+  for (const e of unchanged) lines.push(Array.isArray(e.roster)
+    ? renderRosterPreview(e, { agentsApply, wrote, persistedLenses })
+    : `  ${e.activity}.${e.slot}: already ${valueLabel(e.from)} (no change)`);
   for (const w of warnings) lines.push(`  ⚠ ${w}`);
   if (wrote && fileBody) lines.push('', `${CONFIG_REL} now reads:`, fileBody.replace(/\n$/, ''));
   // The post-write discovery echo (AD-038): after every successful write, paste the freshly composed
@@ -140,8 +166,8 @@ const formatHuman = ({ changed, unchanged, warnings, willWrite, wrote, fileBody,
 };
 
 const buildJson = ({ changed, unchanged, warnings, writtenPath, noop, activeLine }) => ({
-  changed: changed.map((e) => ({ activity: e.activity, slot: e.slot, from: e.from, to: e.to, effective: e.effective, degradedFrom: e.degradedFrom ?? null, reason: e.reason ?? null })),
-  unchanged: unchanged.map((e) => ({ activity: e.activity, slot: e.slot, recipe: e.from })),
+  changed: rosterJsonRows(changed, true),
+  unchanged: rosterJsonRows(unchanged, false),
   writtenPath: writtenPath ?? null,
   noop,
   warnings,
@@ -167,10 +193,14 @@ const QUALIFIED_SLOTS = Object.entries(ACTIVITIES)
 const HELP = `set-recipe — write the per-project orchestration config (docs/ai/orchestration.json).
 
 Usage:
-  node set-recipe.mjs [--set <activity>.<slot>=<value>]... [--unset <activity>.<slot>]... [--write] [--json]
+  node set-recipe.mjs [--set <activity>.<slot>=<value>]... [--unset <activity>.<slot>]...
+                      [--add-reviewer <activity>.review=<member>]...
+                      [--remove-reviewer <activity>.review=<member>]... [--write] [--json]
 
   --set    <activity>.<slot>=<value>   pin a value (fully-qualified; e.g. plan-authoring.review=council)
   --unset  <activity>.<slot>            return a slot to its computed default
+  --add-reviewer <activity>.review=<member>     append a reviewer (same-slot ops accumulate in argv order)
+  --remove-reviewer <activity>.review=<member>  remove a reviewer (same-slot ops accumulate in argv order)
   --write                               apply the change (default: preview only — writes nothing)
   --json                                machine-readable output
   --help, -h                            this help
@@ -220,12 +250,37 @@ export const main = (argv, ctx = {}) => {
 
     // The merged config, then the _README refresh: a note that normalize-matches a KNOWN PRIOR canonical
     // is replaced by the current one on a touched write, while a customized note stays untouched.
-    const after = refreshReadme(applySetOps(current, ops, { seedReadme: CANON_README })).config;
-
+    const render = { agentsApply: applyCheapAgentsCommand(cwd), persistedLenses: persistedLensStems(current) };
     const warnings = [];
     const readiness = composeReadinessOrWarn(cwd, readinessDeps, warnings);
-
-    const resolved = ops.map((op) => resolveOp(op, current, after, readiness));
+    const reviewerOps = ops.filter((op) => op.kind === 'add-reviewer' || op.kind === 'remove-reviewer');
+    const fixedOps = ops.filter((op) => op.kind === 'set' || op.kind === 'unset');
+    const fixedAfter = fixedOps.length
+      ? applySetOps(current, fixedOps, { seedReadme: CANON_README })
+      : current;
+    const defaults = Object.fromEntries(reviewerOps.map((op) => [
+      `${op.activity}.${op.slot}`,
+      resolveActivityRecipe({ config: {}, readiness, activity: op.activity, slot: op.slot }).recipe,
+    ]));
+    const reviewerResult = applyReviewerOps(fixedAfter, reviewerOps, { defaults, seedReadme: CANON_README });
+    const after = refreshReadme(reviewerResult.config ?? {}).config;
+    const surveyLens = ctx.surveyLens ?? ((spec) => surveyVehicle(cwd, spec, ctx));
+    const hasRoster = reviewerOps.length > 0 || Object.values(after).some((activity) => Array.isArray(activity?.review));
+    const settings = hasRoster ? settingsSnapshot({
+      getenv: ctx.env, home: ctx.home, readFile: ctx.readFileSync, lstat: ctx.lstatSync,
+    }) : null;
+    const postures = ctx.postures ?? (hasRoster ? posturesByBackend({ settings }) : {});
+    const reviewerRows = resolveReviewerRows(reviewerResult.rows, { readiness, surveyLens, postures })
+      .map((row) => {
+        const resolved = resolveActivityRecipe({
+          config: after, readiness, activity: row.activity, slot: row.slot, surveyLens, postures,
+        });
+        return { ...row, effective: resolved.recipe, degradedFrom: null, reason: null };
+      });
+    const resolved = [
+      ...fixedOps.map((op) => resolveOp(op, current, after, readiness)),
+      ...reviewerRows,
+    ];
     const changed = resolved.filter((e) => e.from !== e.to);
     const unchanged = resolved.filter((e) => e.from === e.to);
     const noop = changed.length === 0;
@@ -233,7 +288,7 @@ export const main = (argv, ctx = {}) => {
     if (!write) {
       const stdout = json
         ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath: null, noop }), null, 2)
-        : formatHuman({ changed, unchanged, warnings, willWrite: !noop, wrote: false });
+        : formatHuman({ changed, unchanged, warnings, willWrite: !noop, wrote: false, ...render });
       return { code: 0, stdout, stderr: '' };
     }
 
@@ -241,7 +296,7 @@ export const main = (argv, ctx = {}) => {
     if (noop) {
       const stdout = json
         ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath: null, noop: true }), null, 2)
-        : formatHuman({ changed, unchanged, warnings, willWrite: false, wrote: false });
+        : formatHuman({ changed, unchanged, warnings, willWrite: false, wrote: false, ...render });
       return { code: 0, stdout, stderr: '' };
     }
 
@@ -259,10 +314,12 @@ export const main = (argv, ctx = {}) => {
         return { error: (err && err.message) || String(err) };
       }
     })();
-    const activeLine = composeActiveRecipeLine({ config: after, source: CONFIG_REL }, readiness, autonomyFacts);
+    const activeLine = composeActiveRecipeLine(
+      { config: after, source: CONFIG_REL }, readiness, autonomyFacts, { surveyLens, postures },
+    );
     const stdout = json
       ? JSON.stringify(buildJson({ changed, unchanged, warnings, writtenPath, noop: false, activeLine }), null, 2)
-      : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody, activeLine });
+      : formatHuman({ changed, unchanged, warnings, wrote: true, fileBody, activeLine, ...render });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `set-recipe: ${err.message}` };

@@ -24,6 +24,7 @@ const EXIT_PRECONDITION = 1;
 export const CHEAP_AGENTS_STAMP = 'CHEAP_AGENTS_STAMP';
 export const CHEAP_AGENTS_SYMLINK = 'CHEAP_AGENTS_SYMLINK';
 export const CHEAP_AGENTS_BUNDLE = 'CHEAP_AGENTS_BUNDLE';
+export const CHEAP_AGENTS_CONFIG = 'CHEAP_AGENTS_CONFIG';
 
 export const makeCheapAgentsError = (code, message) =>
   Object.assign(new Error(`${ERROR_PREFIX} ${message}`), { name: 'CheapAgentsError', code, exitCode: EXIT_PRECONDITION });
@@ -122,7 +123,7 @@ const scalarValue = (raw) => {
   const value = stripComment(raw);
   const quoted = value.match(/^(["'])(.*)\1$/u);
   if (quoted) return quoted[2].trim();
-  return /^[[{|>]|["']/u.test(value) ? '' : value;
+  return /^[[{|>]|["']/u.test(value) ? null : value;
 };
 const scalarOf = (frontmatter, key) => scalarValue(frontmatter.match(new RegExp(`^${key}:(.*)$`, 'mu'))?.[1]);
 
@@ -170,14 +171,16 @@ const lensFrontmatter = (frontmatter, stem) => {
   if (scalarOf(frontmatter, 'name') !== stem) {
     return { refusal: `frontmatter does not declare \`name: ${stem}\`` };
   }
-  const model = scalarOf(frontmatter, 'model');
-  const effort = scalarOf(frontmatter, 'effort');
-  if (!model || !effort) return { refusal: 'model: and effort: must be non-empty scalars' };
+  const scalars = Object.fromEntries(['model', 'effort'].map((key) => [key, scalarOf(frontmatter, key)]));
+  for (const [key, value] of Object.entries(scalars)) {
+    if (value === null) return { refusal: `${key}: is not a scalar` };
+    if (value === '') return { refusal: `${key}: is empty` };
+  }
   const tools = listedTools(frontmatter);
   if (tools.length === 0) return { refusal: 'tools: must grant a non-empty read-only list' };
   const unsafe = tools.find((tool) => !READ_ONLY_TOOLS.has(tool));
   if (unsafe) return { refusal: `tools: grants non-read-only tool ${unsafe}` };
-  return { refusal: null, model, effort };
+  return { refusal: null, ...scalars };
 };
 
 const templateFor = (spec, deps) => {

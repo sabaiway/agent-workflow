@@ -64,6 +64,7 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   'cheap-agents-read.mjs': '/agent-workflow-kit agents',
   'review-roster.mjs': '/agent-workflow-kit recipes',
   'review-roster-resolve.mjs': '/agent-workflow-kit recipes',
+  'set-recipe-roster.mjs': '/agent-workflow-kit set-recipe',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

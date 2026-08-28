@@ -10,7 +10,8 @@
 // The family's second `.claude/` writer, the velocity-profile.mjs writer discipline verbatim:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
 //   • deployment-gated — `--apply` STOPs unless docs/ai/.workflow-version equals the lineage
-//     head (a dry-run stays usable on any project);
+//     head (a dry-run stays usable whatever the stamp says; an unreadable orchestration config
+//     STOPs both, since the derived lenses it names cannot be known);
 //   • symlink-safe — a symlinked `.claude` / `.claude/agents` / target file is a STOP, never a
 //     write-through;
 //   • NEVER overwrites an existing .claude/agents/ file whose content differs from the bundled
@@ -25,7 +26,8 @@
 // apply report reminds you.
 //
 // Exit codes: 0 done / dry-run (incl. preserved customizations — a user's file is a legitimate
-// state, not an error); 1 precondition STOP (stamp, symlink, missing bundle); 2 usage.
+// state, not an error); 1 precondition STOP (stamp, symlink, missing bundle, an unreadable
+// orchestration config — the derived lenses it names cannot be known); 2 usage.
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -33,6 +35,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDirectRun } from './direct-run.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+import { loadConfig } from './orchestration-config.mjs';
+import { lensMembersOf } from './review-roster.mjs';
+import { deriveLensTemplate, lensVehicleSpec } from './review-roster-resolve.mjs';
 // The READ core, never a second copy: the bundle, the placement plan and the executor survey live
 // there so the read-only advisor graph can reach them without reaching this writer.
 import {
@@ -42,6 +47,9 @@ import {
   EXPECTED_WORKFLOW_VERSION,
   UTF8,
   CHEAP_AGENTS_STAMP,
+  CHEAP_AGENTS_BUNDLE,
+  CHEAP_AGENTS_CONFIG,
+  EXECUTOR_VEHICLE,
   makeCheapAgentsError,
   readFsDeps,
   readBundledAgents,
@@ -59,6 +67,7 @@ export {
   CHEAP_AGENTS_STAMP,
   CHEAP_AGENTS_SYMLINK,
   CHEAP_AGENTS_BUNDLE,
+  CHEAP_AGENTS_CONFIG,
   makeCheapAgentsError,
   readBundledAgents,
   planPlacement,
@@ -86,6 +95,7 @@ model. The fifth, executor, is the ONE full-tool vehicle: dispatched only for a 
 authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and
 it never commits.
 Default is --dry-run (a preview; writes nothing). --apply writes.
+Configured derived review lenses are planned and placed beside the bundled vehicles.
 An existing file with DIFFERENT content is preserved and reported, never overwritten.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -95,10 +105,12 @@ const writeFsDeps = (deps = {}) => ({
   writeFile: deps.writeFile ?? writeFileSync,
 });
 
-export const preflightCheapAgents = ({ cwd }, deps = {}) => {
+export const preflightCheapAgents = ({ cwd, derived = [] }, deps = {}) => {
   const fs = readFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
-  const templates = readBundledAgents(deps);
+  const templatesByName = new Map(readBundledAgents(deps).map((template) => [template.name, template]));
+  for (const template of derived) templatesByName.set(template.name, template);
+  const templates = [...templatesByName.values()];
   const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
   const stampOk = stamp === EXPECTED_WORKFLOW_VERSION;
   assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
@@ -107,11 +119,38 @@ export const preflightCheapAgents = ({ cwd }, deps = {}) => {
   return { projectDir, stamp, stampOk, plan };
 };
 
+const loadConfigOrStop = (cwd, deps) => {
+  try {
+    return loadConfig(cwd, deps.readFile, deps.lstat).config;
+  } catch (err) {
+    throw makeCheapAgentsError(CHEAP_AGENTS_CONFIG, `${err?.message ?? err} — the agents writer cannot read the configured review lenses — nothing is placed`);
+  }
+};
+
+const configuredDerivedTemplates = (cwd, deps) => {
+  const config = loadConfigOrStop(cwd, deps);
+  const bundle = readBundledAgents(deps);
+  const templates = new Map();
+  for (const member of lensMembersOf(config)) {
+    const spec = lensVehicleSpec(member);
+    if (!spec.derived) continue;
+    const base = bundle.find((template) => template.name === `${spec.template}.md`);
+    if (!base) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${spec.template}.md is missing from the bundle`);
+    templates.set(`${spec.stem}.md`, { name: `${spec.stem}.md`, content: deriveLensTemplate(base.content, spec) });
+  }
+  return [...templates.values()];
+};
+
+export const applyCheapAgentsCommand = (root) =>
+  `node ${shellQuoteArg(fileURLToPath(import.meta.url))} --apply --cwd ${shellQuoteArg(root)}`;
+
 // ── the writer ────────────────────────────────────────────────────────────────────────
 
 export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const fs = writeFsDeps(deps);
-  const preflight = preflightCheapAgents({ cwd }, deps);
+  const projectDir = cwd ?? process.cwd();
+  const derived = configuredDerivedTemplates(projectDir, deps);
+  const preflight = preflightCheapAgents({ cwd: projectDir, derived }, deps);
   if (dryRun) return { wrote: false, dryRun: true, ...preflight };
 
   if (!preflight.stampOk) {
@@ -147,8 +186,9 @@ export const formatResult = (result) => {
   if (!result.stampOk) {
     lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
   }
+  const readOnlyCount = result.plan.filter((item) => item.name !== EXECUTOR_VEHICLE).length;
   lines.push(
-    'four vehicles are Claude Code subagents with READ-ONLY tools and NO shell — so a fan-out can never turn into a wave of approval prompts.',
+    `${readOnlyCount} vehicles are Claude Code subagents with READ-ONLY tools and NO shell as bundled or derived (a customized file keeps whatever it grants) — so a fan-out on the shipped templates can never turn into a wave of approval prompts.`,
     `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
     'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
   );
@@ -156,7 +196,7 @@ export const formatResult = (result) => {
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
   // bare "re-run with --apply" would leave the caller to reconstruct --cwd and its quoting.
   if (result.dryRun && result.plan.some((item) => item.action === 'place')) {
-    lines.push(`to apply, run exactly: node ${shellQuoteArg(fileURLToPath(import.meta.url))} --apply --cwd ${shellQuoteArg(result.projectDir)}`);
+    lines.push(`to apply, run exactly: ${applyCheapAgentsCommand(result.projectDir)}`);
   }
   if (!result.dryRun && result.wrote) {
     lines.push('hidden-mode note: if this deployment is hidden, run the hide-footprint reconcile so the placed files stay out of `git status`.');

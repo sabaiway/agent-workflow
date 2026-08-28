@@ -89,8 +89,13 @@ export const resolveRoster = ({ value, readiness = [], surveyLens, postures } = 
   });
 };
 
+export const isReadyMember = (row) => READY_STATES.has(row.state);
+
+export const skippedLine = (row, remedy = row.reason) =>
+  `skipped this round — ${safeLine(row.state)}: ${remedy ?? 'no remedy recorded'}`;
+
 export const rosterLabel = (roster, { states = true } = {}) => roster.map((row) => {
-  if (!states || READY_STATES.has(row.state)) return row.member;
+  if (!states || isReadyMember(row)) return row.member;
   return `${row.member} (${safeLine(row.state)})`;
 }).join(' + ');
 

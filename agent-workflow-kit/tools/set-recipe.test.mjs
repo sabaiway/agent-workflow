@@ -45,7 +45,14 @@ describe('set-recipe — arg parsing (usage → exit 2)', () => {
   it('--write with zero ops → exit 2', () => {
     const r = run(['--write']);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /nothing to write/);
+    assert.match(r.stderr, /nothing to write — pass at least one --set\/--unset\/--add-reviewer\/--remove-reviewer/);
+  });
+  it('reviewer list ops: a malformed token or a suffixed bridge → exit 2; the inline forms apply in order', () => {
+    const bad = (tok) => run(['--add-reviewer', tok]);
+    assert.deepEqual([bad('plan-execution.review').code, bad('plan-execution.review=codex-review:x:y').code], [2, 2]);
+    write(serializeConfig({ 'plan-execution': { review: 'council' } }));
+    const inline = run(['--add-reviewer=plan-execution.review=review-lens', '--remove-reviewer=plan-execution.review=agy-review', '--json']);
+    assert.deepEqual([inline.code, JSON.parse(inline.stdout).changed[0].to], [0, ['codex-review', 'review-lens']]);
   });
   it('--unset with a stray recipe → exit 2', () => {
     assert.equal(run(['--unset', 'plan-authoring.review=solo']).code, 2);
@@ -266,7 +273,8 @@ describe('set-recipe — --json schema + readiness permutations', () => {
     assert.equal(j.noop, false);
     assert.equal(j.writtenPath, null, 'a preview never reports a written path');
     assert.equal(j.activeLine, null, 'a preview never composes the active-recipe line');
-    assert.deepEqual(Object.keys(j.changed[0]).sort(), ['activity', 'degradedFrom', 'effective', 'from', 'reason', 'slot', 'to'].sort());
+    assert.deepEqual(Object.keys(j.changed[0]).sort(), ['activity', 'degradedFrom', 'effective', 'from', 'reason', 'roster', 'slot', 'to'].sort());
+    assert.equal(j.changed[0].roster, null);
     assert.equal(j.changed[0].effective, 'reviewed');
     assert.equal(j.changed[0].degradedFrom, 'council');
   });

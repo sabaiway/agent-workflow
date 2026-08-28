@@ -12,7 +12,7 @@ const reviewCommands = () => KNOWN_BACKENDS
   .map((backend) => backend.roleCmds?.review)
   .filter(Boolean);
 
-const failRoster = (message) => new Error(`review roster: ${message}`);
+const failRoster = (message, code = null) => Object.assign(new Error(`review roster: ${message}`), { code });
 
 export const parseSlotToken = (member) => {
   if (typeof member !== 'string' || member.length === 0) {
@@ -120,7 +120,7 @@ export const removeReviewer = (value, member) => {
   const next = explicitMembers(value);
   const stem = parseSlotToken(member).stem;
   const filtered = next.filter((entry) => parseSlotToken(entry).stem !== stem);
-  if (next.length > 0 && filtered.length === 0) throw failRoster('removing the last member requires the solo shorthand');
+  if (next.length > 0 && filtered.length === 0) throw failRoster('removing the last member requires the solo shorthand', 'last-member');
   if (filtered.length > 0) validateRoster(filtered);
   return filtered;
 };

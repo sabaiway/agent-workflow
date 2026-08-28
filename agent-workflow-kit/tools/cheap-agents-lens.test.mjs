@@ -65,6 +65,14 @@ describe('parameterized lens vehicle survey (spec:review-roster/S4)', () => {
     assert.equal(survey('review-lens', 'x', 'symlink').state, 'unusable');
   });
 
+  it('tells a non-scalar model or effort from an empty one in the refusal', () => {
+    const reasonOf = (body) => survey('review-lens', body).reason;
+    assert.equal(reasonOf('---\nname: review-lens\nmodel: "opus\neffort: high\ntools: Read\n---\nbody\n'), 'model: is not a scalar');
+    assert.equal(reasonOf('---\nname: review-lens\nmodel: opus\neffort: [high]\ntools: Read\n---\nbody\n'), 'effort: is not a scalar');
+    assert.equal(reasonOf('---\nname: review-lens\nmodel:\neffort: high\ntools: Read\n---\nbody\n'), 'model: is empty');
+    assert.equal(reasonOf('---\nname: review-lens\nmodel: opus\neffort: ""\ntools: Read\n---\nbody\n'), 'effort: is empty');
+  });
+
   it('surveys a derived vehicle against the derived bundled bytes', () => {
     const base = readFileSync(join(agents.BUNDLED_AGENTS_DIR, 'review-lens.md'), 'utf8');
     const spec = lensVehicleSpec('review-lens:opus:high');

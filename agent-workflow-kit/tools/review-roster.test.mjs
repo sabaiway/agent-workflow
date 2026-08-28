@@ -121,3 +121,33 @@ describe('review roster grammar, expansion and wording (spec:review-roster/S1)',
     assert.equal(resolved.activeLineCell(rows), '[codex-review + review-lens (missing)]');
   });
 });
+
+describe('the skipped line and the preview remedy (spec:review-roster/S5, folded here under the red-proof file freeze)', () => {
+  it('skippedLine collapses the state only and hands the remedy through untouched', () => {
+    const row = { state: 'needs-credentials', reason: 'not signed in (credentials missing)' };
+    assert.equal(resolved.skippedLine(row), 'skipped this round — needs-credentials: not signed in (credentials missing)');
+    const apply = "to place it, run exactly: node x.mjs --apply --cwd '/repo (backup)'";
+    assert.equal(resolved.skippedLine(row, apply), `skipped this round — needs-credentials: ${apply}`);
+  });
+
+  it('the apply line of a lens not yet on disk names --write first; a persisted or written lens does not', async () => {
+    const { renderRosterPreview, persistedLensStems } = await import('./set-recipe-roster.mjs');
+    const derived = { member: 'review-lens:opus:xhigh', stem: 'review-lens-opus-xhigh', kind: 'lens', state: 'missing', reason: null, posture: null };
+    const bundled = { ...derived, member: 'review-lens', stem: 'review-lens' };
+    const row = (from, lens) => ({
+      activity: 'plan-execution', slot: 'review', from, to: [lens.member], beforeValue: from, afterValue: [lens.member],
+      changed: true, named: new Set([lens.stem]), roster: [lens],
+    });
+    const agentsApply = 'node cheap-agents.mjs --apply --cwd /p';
+    const preview = renderRosterPreview(row('solo', derived), { agentsApply });
+    assert.match(preview, /to place it, run exactly: node cheap-agents\.mjs --apply --cwd \/p$/mu);
+    assert.match(preview, /^ {8}after --write — the agents writer derives this lens from what docs\/ai\/orchestration\.json names$/mu);
+    assert.doesNotMatch(renderRosterPreview(row('solo', bundled), { agentsApply }), /after --write/u, 'a bundled template is placed regardless of the config');
+    assert.doesNotMatch(renderRosterPreview(row(['review-lens:opus:xhigh'], derived), { agentsApply }), /after --write/u);
+    assert.doesNotMatch(renderRosterPreview(row('solo', derived), { agentsApply, persistedLenses: new Set(['review-lens-opus-xhigh']) }), /after --write/u, 'the writer reads every review slot of the persisted config');
+    const persisted = (member) => persistedLensStems({ 'plan-authoring': { review: [member] } });
+    assert.doesNotMatch(renderRosterPreview(row('solo', derived), { agentsApply, persistedLenses: persisted('review-lens:opus:xhigh') }), /after --write/u);
+    assert.match(renderRosterPreview(row('solo', derived), { agentsApply, persistedLenses: persisted('review-lens-opus-xhigh') }), /after --write/u, 'a bare stem is never derived, so it persists nothing the writer can place');
+    assert.doesNotMatch(renderRosterPreview(row('solo', derived), { agentsApply, wrote: true }), /after --write/u);
+  });
+});

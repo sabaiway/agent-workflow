@@ -168,6 +168,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the explicit review-roster grammar/resolver and their extracted README/posture siblings
       'tools/review-roster.mjs',
       'tools/review-roster-resolve.mjs',
+      'tools/set-recipe-roster.mjs',
       'tools/orchestration-readme.mjs',
       'tools/bridge-posture.mjs',
       // the cheap-lane subagent writer, its READ core (recipes.mjs imports it, so a payload drop
@@ -728,10 +729,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       degrades to solo when the vehicle is absent, so a payload drop would turn a configured
     //       `subagent` slot into a silent solo run rather than a loud missing file, and a dropped
     //       registry breaks recipes.mjs at load.
-    // 269 = 264 + tools/cheap-agents-read.mjs and four review-roster leaves:
+    // 270 = 264 + tools/cheap-agents-read.mjs and five review-roster leaves:
     //       review-roster.mjs, review-roster-resolve.mjs, orchestration-readme.mjs and
-    //       bridge-posture.mjs. All five ride the NAMED list above.
-    assert.equal(packed.length, 269, `tarball file count drifted (${packed.length} ≠ 269)`);
+    //       bridge-posture.mjs, plus the set-recipe list-op leaf. All six ride the NAMED list above.
+    assert.equal(packed.length, 270, `tarball file count drifted (${packed.length} ≠ 270)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
