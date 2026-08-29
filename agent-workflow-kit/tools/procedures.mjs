@@ -35,7 +35,7 @@ import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from '.
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 // The family's ONE shell quoter for a RENDERED command operand (bare when the value is already safe,
 // single-quoted otherwise) — the same leaf eight other command renderers here read through.
-import { shellQuoteArg, isSeedablePathToken } from './repo-lex.mjs';
+import { shellQuoteArg, isSeedablePathToken, isRenderableLine, escapeForDisplay, isArtifactPathCarriable } from './repo-lex.mjs';
 // The config schema/read core (orchestration-config.mjs, the single config contract): the reader +
 // the SHARED slot/recipe validity, never the fs-writer (orchestration-write.mjs) DIRECTLY — the
 // import-split test pins the direct-import rule.
@@ -218,22 +218,25 @@ const backendSetLabel = (backends) =>
       : ` → ${backends[0]}`;
 
 // The review-loop economics block (M1 + M6's firing half) — printed when the activity engages a review
-// backend (a slot resolving reviewed | council) and OMITTED for solo. It paraphrases the procedures.md
+// member: a slot RESOLVING reviewed | council, a roster, or one whose config or override REQUESTED a
+// review recipe and degraded (readiness removes no configured obligation, and the table still judges
+// it); omitted only for a solo nobody asked to be otherwise. It paraphrases the procedures.md
 // Fold + loop step + orchestration §4 canon (no rival rule): the ≤2-round architecture cap, the bar met by RAISING a
 // surviving major to an acceptance invariant (not exhausting prose), backend divergence = the crossover
 // stop, the thin-plan/diff-review carve-out, a self-consistency read before every re-review, and the
 // REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
-// review slot can resolve reviewed|council (execute floors at solo|delegated), so gate on the recipe.
+// review slot can resolve or request reviewed|council (execute floors at solo|delegated), so the gate
+// reads the recipe, the requested recipe and the roster.
 const REVIEW_RECIPES = new Set(['reviewed', 'council']);
 const CONSULT_LINE = '  • Before every fold of a finding raised by a review member (a bridge backend or a placed lens): ASK that member whether the proposed fold solves it and adds no new problem; WAIT for its answer, READ it, then edit only as accepted or corrected — agy: agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>. Does this proposed fold solve the finding and add no new problem? Reply accept, or correct with exact replacement text."; codex: fresh codex-review plan <consult-brief> written before the working tree changes; a placed lens: re-dispatch the same lens vehicle with the finding and the proposed fold. A self-review finding, or any finding when no review member ran, is folded directly — the exemption is the finding\'s ORIGIN, never the recipe word on the slot line.';
 const ARMED_CONSULT_LINE = '  • ARMED pre-fold sequence for a bridge-raised finding: the round is open → dispatch that bridge\'s consult with a nonce → WAIT and READ → fold accepted or corrected → flow-writer consult-attestation <planId> --backend <id> --nonce <n> --proposed-fix-digest <the-sha256-of-the-fold-text> → then edit. A lens-raised finding re-dispatches the lens without a nonce, WAIT and READ, then edit as accepted or corrected — it mints no manifest and no attestation — only its per-round participation rides its internal-attestation.';
 // activity-aware (AD-046): the triage classification vocabulary rides EVERY review-backed activity;
 // the LEDGER pointer renders ONLY for plan-execution — the ledger is plan-execution-scoped (AD-045),
 // and pointing plan-authoring at it would send rounds of the wrong activity into the code loop's gate.
-// A roster (any members, a lens-only one included) runs a review round too: it resolves to `solo`
-// when it carries no bridge, so the recipe alone would hide the loop from exactly that project.
-const reviewLoopAdvice = (slots, activity, flowArmed = false) =>
-  slots.some((s) => s.roster != null || REVIEW_RECIPES.has(s.recipe))
+// A lens-only roster resolves to `solo` and a fully degraded request resolves to `solo`: both still run
+// a review round, which is why the gate never reads the effective recipe alone.
+const reviewLoopAdvice = (slots, activity, flowArmed = false, plans = []) =>
+  slots.some((s) => s.roster != null || REVIEW_RECIPES.has(s.recipe) || REVIEW_RECIPES.has(s.degradedFrom))
     ? [
         'Review-loop economics (procedures.md Fold + loop · orchestration.md §4) — the review this recipe runs:',
         CONSULT_LINE,
@@ -242,6 +245,7 @@ const reviewLoopAdvice = (slots, activity, flowArmed = false) =>
         '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
         '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
         '  • Each round MUST emit {round N · finding-origin tally (first-draft / fold-induced / mechanics) · per-backend verdict} so the crossover is a computed signal.',
+        ...(activity === 'plan-authoring' ? roundRenderAdvice(slots, plans) : []),
         '  • At the cap, classify every surviving blocking finding: fixable-bug (fold ONCE as a red→green test, re-review) / inherent-layer-residual (document + raise to an acceptance criterion) / escalate (the maintainer decides); a minor never forces triage.',
         ...(activity === 'plan-execution'
           ? [
@@ -254,15 +258,61 @@ const reviewLoopAdvice = (slots, activity, flowArmed = false) =>
 // The grounding pre-step (AD-038, extending the AD-033 verbatim-contract rendering): whenever the
 // resolved dispatch includes agy-review, print the CONCRETE facts-assembly invocation + the
 // --facts form as a copy-paste pre-step — population, not placeholders. Plan-path population rule
-// (the review-state plan-in-flight detector): exactly ONE plan in flight → render it populated;
-// zero or several → the explicit `--plan <path>` placeholder + a one-line discovery caveat. The
+// (the review-state plan-in-flight detector): exactly ONE renderable plan in flight → render it
+// populated; zero, several, or a name a one-line render cannot carry → the explicit placeholder + a
+// one-line discovery caveat; a name the receipt encoder refuses falls back on the receipt-minting
+// or receipt-matching command only (`agy-review plan`, the round table). The
 // suggested --out lives OUTSIDE the repo (/tmp) — grounding.mjs refuses a non-scratch destination.
 // Exported for the bridge-tier byte-parity pin (AD-044 Plan 4): the velocity tier seeds the
 // grounding rule in EXACTLY this rendered spelling — `node "${GROUNDING_TOOL}"` — so seeded and
 // rendered forms can never drift apart.
 export const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
+export const REVIEW_ROUNDS_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'review-rounds-cli.mjs');
 export const REPO_SEARCH_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'repo-search.mjs');
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
+const MINTS_RECEIPT = Object.freeze({ mintsReceipt: true });
+
+// The round table judges what review-rounds-cli resolves from the config (S27), never this render's
+// override or degradation, so the advisor states that fact beneath the command instead of predicting
+// when the two agree; a bridge-less roster gets the fact that no receipt can exist in the command's place.
+// A requested review recipe renders the command even when every bridge is unavailable here: readiness
+// degradation removes no configured obligation, so the table still has something to say.
+const ROUND_RENDER_FACT_LINE = "  ↳ the table judges the obligation review-rounds-cli resolves from docs/ai/orchestration.json (S27) — the configured recipe, or the computed default for a silent slot — never this run's --override or a degraded recipe; it reads receipts only: a backend that did not run shows as missing (no receipts when none ran), and its degrade record is judged by review-state and core-evidence summary, not here.";
+const ROUND_RENDER_NO_BRIDGE_LINE = "  • Round render: a roster with no bridge mints no receipt, so review-rounds-cli cannot supply this round's verdicts — emit the finding-origin tally plus each lens member's verdict (or silent) directly.";
+const roundRenderAdvice = (slots, plans) => {
+  const review = slots.find((s) => s.slot === 'review');
+  if (review === undefined) return [];
+  const roster = review.roster ?? null;
+  const shouldRenderCommand = roster === null
+    ? (review.backends ?? []).length > 0 || REVIEW_RECIPES.has(review.degradedFrom)
+    : roster.some((row) => row.kind === 'bridge');
+  if (!shouldRenderCommand) return [ROUND_RENDER_NO_BRIDGE_LINE];
+  const lensMembers = (roster ?? []).filter((row) => row.kind === 'lens').map((row) => row.member);
+  const operand = populatedPlan(plans, MINTS_RECEIPT);
+  return [
+    `  • Round render (verdict half of the per-round emission; the finding-origin tally stays the orchestrator's): node ${renderToolPath(REVIEW_ROUNDS_TOOL)} --artifact ${operand ?? '<plan-file>'}`,
+    ...planDiscoveryCaveat(plans, '--artifact', 'populate --artifact with the plan file under review.', operand === null ? ['--artifact'] : []),
+    ROUND_RENDER_FACT_LINE,
+    ...(lensMembers.length > 0 ? [`  ↳ the table carries the bridge verdicts only — add each lens member's verdict (or silent) by hand: ${lensMembers.join(', ')}`] : []),
+  ];
+};
+
+// The ONE plan in flight as a pasteable operand: shell-significant bytes ride shellQuoteArg; a name a
+// one-line render cannot carry is never populated, nor one the receipt encoder refuses (S21) for a
+// command that MINTS or MATCHES a plan receipt: agy-review plan would be refused pre-spend by name, the
+// round table would match no receipt.
+const populatedPlan = (plans, { mintsReceipt = false } = {}) => {
+  if (plans.length !== 1 || !isRenderableLine(plans[0])) return null;
+  if (mintsReceipt && !isArtifactPathCarriable(plans[0])) return null;
+  return shellQuoteArg(`${PLANS_REL}/${plans[0]}`);
+};
+const planDiscoveryCaveat = (plans, flag, noPlanAction, fellBack = []) => {
+  if (plans.length === 0) return [`  ↳ plan discovery: no plan in flight under ${PLANS_REL} — ${noPlanAction}`];
+  if (plans.length > 1) return [`  ↳ plan discovery: ${plans.length} plans in flight under ${PLANS_REL} (${plans.map(escapeForDisplay).join(', ')}) — populate ${flag} with the one under review.`];
+  return fellBack.length === 0
+    ? []
+    : [`  ↳ plan discovery: the plan in flight ${escapeForDisplay(plans[0])} carries a character that either a review receipt or a rendered command cannot carry — ${fellBack.join(' and ')} ${fellBack.length === 1 ? 'stays a placeholder' : 'stay placeholders'}; rename the plan.`];
+};
 
 // The kit-tools tier seeds `Bash(node <abs>/tools/repo-search.mjs:*)` BARE (velocity-profile.mjs
 // deriveKitToolsAllowlist, the same predicate), so a seedable path renders bare — a quoted path is
@@ -294,28 +344,33 @@ const slotSkewWarning = (section, activity) => {
 };
 const groundingPreStepAdvice = (activity, slots, plans) => {
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
-  const planArg = plans.length === 1 ? `--plan "${PLANS_REL}/${plans[0]}"` : '--plan <path>';
-  // plan-authoring reviews the plan FILE — when exactly one plan is in flight, the review command
-  // is populated with the same discovered path (a known path never renders a placeholder).
+  const operand = populatedPlan(plans);
+  const planArg = operand === null ? '--plan <path>' : `--plan ${operand}`;
+  const reviewOperand = populatedPlan(plans, MINTS_RECEIPT);
+  // plan-authoring reviews the plan FILE — a plain name in flight renders the review command populated;
+  // the renderability and receipt-carriability fallbacks are the only placeholders a known path produces.
   const reviewForm =
     activity === 'plan-authoring'
-      ? plans.length === 1
-        ? `agy-review plan "${PLANS_REL}/${plans[0]}"`
-        : 'agy-review plan <plan-file>'
+      ? reviewOperand === null
+        ? 'agy-review plan <plan-file>'
+        : `agy-review plan ${reviewOperand}`
       : 'agy-review code';
   // `run:`/`then:` prefixes keep these POPULATED command lines machine-distinguishable from the
   // verbatim contract DESCRIPTORS above (the descriptor drift guard set-equals bare wrapper lines).
-  // Path arguments are double-quoted — a skill dir or plan name with a space must stay copy-pasteable.
+  // The TOOL path stays double-quoted (the bridge tier seeds that exact byte-form); the plan operand
+  // rides shellQuoteArg — bare when safe, single-quoted otherwise.
   const lines = [
     'Grounding pre-step (agy is dispatched — assemble the verified facts BEFORE the review; grounding.mjs slices verbatim, judgment additions stay yours):',
     `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy ${planArg} --out ${GROUNDING_FACTS_OUT}`,
     `  then: ${reviewForm} --facts @${GROUNDING_FACTS_OUT}`,
   ];
-  if (plans.length === 0) {
-    lines.push(`  ↳ plan discovery: no plan in flight under ${PLANS_REL} — substitute the plan file you are reviewing against, or drop --plan for constraints+autonomy facts.`);
-  } else if (plans.length > 1) {
-    lines.push(`  ↳ plan discovery: ${plans.length} plans in flight under ${PLANS_REL} (${plans.join(', ')}) — populate --plan with the one under review.`);
-  }
+  const fellBack = [operand === null ? '--plan' : null, activity === 'plan-authoring' && reviewOperand === null ? 'agy-review plan' : null].filter(Boolean);
+  lines.push(...planDiscoveryCaveat(
+    plans,
+    '--plan',
+    'substitute the plan file you are reviewing against, or drop --plan for constraints+autonomy facts.',
+    fellBack,
+  ));
   return lines;
 };
 
@@ -551,7 +606,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   if (readersSweep.length) lines.push('', ...readersSweep);
   const grounding = groundingPreStepAdvice(activity, slots, plans);
   if (grounding.length) lines.push('', ...grounding);
-  const advice = reviewLoopAdvice(slots, activity, flowArmed);
+  const advice = reviewLoopAdvice(slots, activity, flowArmed, plans);
   if (advice.length) lines.push('', ...advice);
   if (foldScope.length) lines.push('', ...foldScope);
   if (specCheck.length) lines.push('', ...specCheck);
@@ -575,7 +630,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
       ...(s.roster ? { roster: s.roster } : {}),
     }]),
   ),
-  reviewLoop: reviewLoopAdvice(slots, activity, flowArmed),
+  reviewLoop: reviewLoopAdvice(slots, activity, flowArmed, plans),
   readersSweep,
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),

@@ -51,6 +51,22 @@ write_review_receipt plan true ${'a'.repeat(64)} ship true '' false '' '' "$arti
   assert.equal(run.status, 0, run.stderr);
 };
 
+describe('the CLI spawns its own read-only git query once', () => {
+  it('main runs git rev-parse --show-toplevel exactly once; normalizeArtifactPath given top spawns nothing', () => {
+    const root = makeRepo();
+    const calls = [];
+    const run = (cmd, args, opts) => { calls.push([cmd, ...args].join(' ')); return spawnSync(cmd, args, opts); };
+    const receipts = join(root, 'receipts.jsonl');
+    writeFileSync(receipts, '');
+    const r = main(['--artifact', 'docs/plans/example.md'], { cwd: root, env: { AW_REVIEW_RECEIPTS: receipts }, readinessDeps: { detect: () => [] }, run });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(calls, ['git rev-parse --show-toplevel'], 'the whole run spawns one git query — the receipts path came from the env');
+    const never = () => { throw new Error('a git query was spawned'); };
+    assert.equal(normalizeArtifactPath('docs/plans/example.md', { cwd: root, top: root, run: never }), 'docs/plans/example.md');
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe('review-rounds CLI', () => {
   it('selects a real wrapper-helper receipt under the same normalized artifact path', () => {
     // spec:plan-review-loop/S27

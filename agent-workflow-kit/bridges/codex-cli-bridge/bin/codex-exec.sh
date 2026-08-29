@@ -372,7 +372,7 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.5.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="3.6.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.

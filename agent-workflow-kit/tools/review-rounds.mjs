@@ -1,3 +1,4 @@
+import { isRenderableLine } from './repo-lex.mjs';
 import { isShipVerdict, isRecognizedVerdict } from './core-evidence.mjs';
 
 export const SIGNALS = Object.freeze({
@@ -10,9 +11,7 @@ export const SIGNALS = Object.freeze({
 });
 
 const isNonNegativeInteger = (value) => Number.isInteger(value) && value >= 0;
-// A receipt-derived string is REFUSED, never escaped: no C0/C1 control and no Unicode line or
-// paragraph separator, so the render's one-signal-line contract cannot be forged from the store.
-const isPlainLine = (value) => typeof value === 'string' && !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(value);
+const isPlainLine = isRenderableLine;
 
 const invalidFieldOf = (receipt) => {
   if (typeof receipt?.artifactPath !== 'string') return 'artifactPath';

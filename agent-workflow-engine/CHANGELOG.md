@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.4.0 — the plan cap counts rows, the readers sweep opens self-review, the consult order and the round render are canon (AD-125)
+
+`references/planning.md`: the cap is 100 lines AND ≤25 ledger rows, 200 UTF-8 bytes per row counted
+without the path and anchor fields (the 8000-byte cap is deleted); an extension phase rides only
+before Cleanup; the two checker commands (`plan-shape-cli.mjs --check` before the first review,
+`--verify` at Cleanup) are named at the point of use. `references/procedures.md`: `plan-authoring`
+carries `Slots: author, fold, review`; step 3 opens with the readers sweep (one literal search per
+changed key, symbol, receipt field or canon sentence — every reader becomes a row, a non-goal or a
+pinned "unchanged"); step 5 of BOTH activities carries the consult-before-fold order (ASK the review
+member that raised the finding, WAIT, READ, fold only as accepted or corrected; a self-review finding
+folds directly); plan-authoring's step 5 additionally names the round render as the source of the
+per-round emission's verdict half — the crossover stop is a computed signal, the origin tally the
+orchestrator's judgment. The canon tests
+pin every sentence (spec `plan-review-loop` S13, S18); the procedures-to-planning size pin is a 1.2
+ratio, declared.
+
 ## 4.3.0 — the fifth recipe, the third activity, and a carrier that is never the one who commits (AD-124)
 
 `references/orchestration.md` admits the CARRIER wherever it said backend: the orchestrator, a bridge

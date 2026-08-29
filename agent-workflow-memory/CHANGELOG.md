@@ -4,6 +4,12 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.1.2 — the seed orchestration note names the fold slot (AD-125)
+
+`references/templates/orchestration.json`: the `_README` note lists `plan-authoring`'s third slot,
+`fold` (`solo | subagent`, computed default `solo`), beside `author` and `review`; the JSON shape is
+unchanged. Documentation only — PATCH, the class 7.1.1 shipped.
+
 ## 7.1.1 — the seed orchestration note names every slot (AD-124)
 
 `references/templates/orchestration.json`: the `_README` note now names the three activities, every

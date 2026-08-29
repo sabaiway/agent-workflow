@@ -284,7 +284,7 @@ DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.5.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="3.6.0"  # aw-version-anchor
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).

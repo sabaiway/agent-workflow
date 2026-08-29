@@ -31,6 +31,22 @@ export const SHELL_METACHARACTERS = Object.freeze([
 ]);
 export const hasShellMetacharacter = (cmd) => SHELL_METACHARACTERS.some((ch) => cmd.includes(ch));
 
+// A string a one-line render can carry: no control character (C0 or C1) and no Unicode line or
+// paragraph separator. The receipt-derived fields are REFUSED on it; a plan name is escaped for display.
+const LINE_BREAKING_SOURCE = '[\\p{Cc}\\p{Zl}\\p{Zp}]';
+const LINE_BREAKING = new RegExp(LINE_BREAKING_SOURCE, 'u');
+const LINE_BREAKING_ALL = new RegExp(LINE_BREAKING_SOURCE, 'gu');
+export const isRenderableLine = (value) => typeof value === 'string' && !LINE_BREAKING.test(value);
+export const escapeForDisplay = (value) => String(value).replace(LINE_BREAKING_ALL, (ch) => `\\u${ch.codePointAt(0).toString(16).padStart(4, '0')}`);
+
+// The receipt encoder's carriability rule for an artifact path (S21), the JS twin of the wrappers'
+// refuse_uncarriable_artifact_byte: a quote, a backslash, a C0 control or DEL — deliberately NOT
+// \p{Cc} (C1 is the declared residual, and the two normalizations are parity-pinned on this set).
+// ONE home: the round table's refusal names the byte, the advisor's fallback reads the boolean.
+export const uncarriableArtifactByte = (value) =>
+  value.includes('"') ? 'a double quote' : value.includes('\\') ? 'a backslash' : /[\u0000-\u001f\u007f]/u.test(value) ? 'a control' : null;
+export const isArtifactPathCarriable = (value) => typeof value === 'string' && uncarriableArtifactByte(value) === null;
+
 // Characters that survive whitespace tokenization but break an UNQUOTED byte-exact path rule:
 // shell quoting syntax and glob brackets (SHELL_METACHARACTERS owns the command-level separators/
 // redirections/expansions — `*`/`?` globs included — but not these four).

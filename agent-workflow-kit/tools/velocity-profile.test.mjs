@@ -30,7 +30,7 @@ import {
   screenAllowlistEntry,
   validateProfile,
 } from './velocity-profile.mjs';
-import { GROUNDING_TOOL, REPO_SEARCH_TOOL } from './procedures.mjs';
+import { GROUNDING_TOOL, REPO_SEARCH_TOOL, REVIEW_ROUNDS_TOOL } from './procedures.mjs';
 import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
 
 const UTF8 = 'utf8';
@@ -256,7 +256,7 @@ const SOURCE_SIZE_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/source-size-check.m
 const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
 
 describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
-  it('matches the frozen 12-member tool list + count sentinel', () => {
+  it('matches the frozen 13-member tool list + count sentinel', () => {
     const expected = [
       'tools/recipes.mjs',
       'tools/procedures.mjs',
@@ -270,13 +270,15 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
       'tools/release-scan.mjs',
       'tools/repo-search.mjs',
       'tools/path-inventory.mjs',
+      'tools/review-rounds-cli.mjs',
     ];
     assert.equal(Object.isFrozen(KIT_READONLY_TOOLS), true);
     // 9 → 10: AD-044 Plan 4 Phase 3 — the recommendations advisor joins the tier.
     // 10 → 11: the literal search lane. Its allow rule is not a convenience here — a non-core
     // command gets NO decision from the hook, and no decision is not an allow.
     // 11 → 12: the inventory lane, for the same reason on the other half of the corpus.
-    assert.equal(KIT_READONLY_TOOLS.length, 12, 'kit-tools tier count sentinel - edit deliberately');
+    // 12 → 13: the round table — the advisor names it every review round (AD-125).
+    assert.equal(KIT_READONLY_TOOLS.length, 13, 'kit-tools tier count sentinel - edit deliberately');
     assert.deepEqual([...KIT_READONLY_TOOLS], expected);
     assert.equal(KIT_RUN_GATES_TOOL, 'tools/run-gates.mjs');
   });
@@ -291,16 +293,17 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
   });
 
-  it('derives 11 wildcard entries + the exact run-gates and source-size entries + 3 exact previews (count sentinel 16)', () => {
+  it('derives 12 wildcard entries + the exact run-gates and source-size entries + 3 exact previews (count sentinel 17)', () => {
     const derived = tierEntries();
     assert.equal(Object.isFrozen(derived), true);
     // 12 → 13: AD-044 Plan 4 Phase 3 — the recommendations advisor joins KIT_READONLY_TOOLS.
     // 13 → 14: the literal search lane joins as a wildcard entry.
     // 14 → 15: the inventory lane joins as a wildcard entry.
     // 15 → 16: the source-size checker joins as a SECOND exact entry — its --check mode only.
-    assert.equal(derived.length, 16, 'derived tier count sentinel - edit deliberately');
+    // 16 → 17: the round table joins as a wildcard entry.
+    assert.equal(derived.length, 17, 'derived tier count sentinel - edit deliberately');
     const wildcards = derived.filter((e) => e.endsWith(':*)'));
-    assert.equal(wildcards.length, 11);
+    assert.equal(wildcards.length, 12);
     for (const rel of KIT_READONLY_TOOLS) {
       if (rel === KIT_RUN_GATES_TOOL) continue;
       assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
@@ -855,7 +858,7 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     const dry = runMain(['--kit-tools'], cwd);
 
     assert.equal(dry.code, EXIT_OK);
-    assert.match(dry.stdout, /would add kit-tools tier entries: 16/);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 17/);
     assert.equal(existsSync(settingsPath(cwd)), false);
     assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
   });
@@ -1027,6 +1030,11 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
   it('the kit-tools tier seeds repo-search in EXACTLY the BARE byte-form the readers-sweep advisor renders', () => {
     assert.equal(tierEntries().includes(`Bash(node ${REPO_SEARCH_TOOL}:*)`), true, 'the seeded rule wraps exactly the rendered `node ${REPO_SEARCH_TOOL}` prefix — a quoted render is a dead rule');
     assert.equal(screenAllowlistEntry(`Bash(node "${REPO_SEARCH_TOOL}":*)`), false, 'the quoted spelling is NOT seedable — the screen accepts a quoted node token only for grounding');
+  });
+
+  it('the kit-tools tier seeds review-rounds-cli in EXACTLY the BARE byte-form the review-loop advisor renders', () => {
+    assert.equal(tierEntries().includes(`Bash(node ${REVIEW_ROUNDS_TOOL}:*)`), true, 'the seeded rule wraps exactly the rendered `node ${REVIEW_ROUNDS_TOOL}` prefix — a quoted render is a dead rule');
+    assert.equal(screenAllowlistEntry(`Bash(node "${REVIEW_ROUNDS_TOOL}":*)`), false, 'the quoted spelling is NOT seedable');
   });
 
   it('NEGATIVE: no other node tool rides the quoted-grounding class', () => {

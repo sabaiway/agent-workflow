@@ -110,6 +110,14 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
+  it('pins the round render as the plan-authoring verdict source; plan-execution names no render (spec:plan-review-loop/S18)', () => {
+    const authoring = stepOf(sectionOf(procedures, 'plan-authoring'), 5).replace(/\s+/g, ' ');
+    const verdict = authoring.indexOf('READ its verdict half from the round render');
+    const tally = authoring.indexOf("append the orchestrator's finding-origin tally");
+    assert.ok(verdict >= 0 && tally > verdict, 'plan-authoring §5 reads the verdict half from the round render, then appends the tally');
+    assert.doesNotMatch(stepOf(sectionOf(procedures, 'plan-execution'), 5), /round render|review-rounds/i, 'a code receipt carries no artifact path, so plan-execution names no render');
+  });
+
   // The finding-scope rule (the fold channel): a finding NAMES the invariant its fix enforces
   // BEFORE the edit, and WHERE that invariant already lives decides the disposition. Pinned in the
   // plan-execution review STEP only — plan-authoring settles boundaries and has no shipped behaviour

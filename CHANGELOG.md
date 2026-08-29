@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-28 — AD-125 the plan-review loop's measured costs are rungs, values and receipt fields (kit 10.5.0 · engine 4.4.0 MINOR · memory 7.1.2 PATCH · codex bridge 3.6.0 · agy bridge 5.5.0)
+
+**Five hours of review, taken apart into checkers and fields.** A plan is refused by SHAPE before its
+first review (`plan-shape-cli --check`: the row cap, red-first order, the pin row, budgets, anchors) and
+closed by `--verify`; the readers sweep opens self-review and the advisor renders it; consult-before-fold
+is a procedure step, not a memory; `plan-authoring` distinguishes the draft carrier from the fold
+carrier; every review receipt carries its duration and its blocking count, and a plan or diff receipt
+its artifact path, so the
+kit's round table (`review-rounds-cli --artifact <plan>`) computes `converged` and `crossover` from
+the receipts and the advisor prints that command populated with the plan in flight; `agy-review
+plan|diff` forbid the file read themselves. Four plans, each landed as one reviewed commit: plan 1 the
+checker (4 rounds: the cap of 2, one round on the cap fold, one narrow round), plan 2 the procedure and
+the fold slot (4 rounds: the cap of 2, one narrow round after the cap fold, one round paid for a test
+rename), plan 3 the receipt fields and the round table (3 rounds, 4 red-proofs), plan 4 the render and
+the release. The next feature of comparable size is the acceptance measure: a spec and a plan in
+≤2 rounds each, zero shape findings, zero reader blockers, receipted durations.
+
 ## 2026-08-27 — AD-124 who does what is a project setting (kit 10.4.0 · engine 4.3.0 MINOR · memory 7.1.1 PATCH)
 
 **The carrier of a step is a setting, not a memory.** `docs/ai/orchestration.json` now says who

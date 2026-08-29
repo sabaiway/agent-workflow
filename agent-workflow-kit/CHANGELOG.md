@@ -4,6 +4,61 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.5.0 — the plan-review loop's measured costs are rungs, values and receipt fields (AD-125)
+
+One feature cost five hours of review by the kit's own defaults: plan findings that were plan SHAPE
+no tool checked, round-1 blockers that were READERS of a changed value nobody enumerated, a
+consult-before-fold rule living in an agent's memory, folds riding the executor vehicle, no run
+duration anywhere, and a crossover stop that had to be remembered. Each of those is now a checker,
+a procedure step, a slot or a receipt field — advisory by contract (`docs/ai/specs/kit/plan-review-loop/`,
+S1–S28): no new gate by default, the commit gate stays on the bridges, a lens never becomes a receipt.
+
+**The plan-shape checker** (`tools/plan-shape.mjs` the rules, `plan-shape-facts.mjs` one repository
+snapshot, `plan-shape-cli.mjs`): `--check <plan>` refuses a plan by shape BEFORE its first review — the
+five headings in order, the row cap (100 lines AND ≤25 ledger rows, 200 UTF-8 bytes per row counted
+without the path and anchor fields; the 8000-byte cap is gone), red-first row order, a
+`package-content` pin row for every shipped `create` (from the package `files`), budgets under the cap
+and the recorded size, anchors that resolve to exactly one candidate; `--verify <plan>` closes a
+ledger after execution; `--in-flight` judges every titled plan by shape. Exit 0 / 1 / 2, every refusal
+naming the line, the rule and the fix. `grounding` and `fold-scope` import the headings from it.
+
+**The round table** (`tools/review-rounds.mjs`, `review-rounds-cli.mjs --artifact <plan>
+[--activity …]`): receipts grouped by fingerprint into rounds, latest per backend, complete by the
+configured slot's obligation; ONE of six signals in order — `converged` is a complete round (every listed backend under a
+per-backend obligation, at least the obligation's minimum otherwise) whose every present backend
+reports blocking 0 with a ship-class verdict, `crossover` needs a negative — with the receipted duration per round and
+cumulative, the pathless and malformed receipts counted. `procedures plan-authoring` prints that
+command populated with the plan in flight, beside the grounding pre-step, as the verdict half of the
+per-round emission; the finding-origin tally stays the orchestrator's. Beneath the command one fact
+line holds for every source: the table judges the obligation `review-rounds-cli` resolves from the config
+(S27) — never a run's `--override` or a recipe the advisor degraded — and reads receipts only (a backend
+that did not run shows as missing; its degrade record is `review-state`'s and `core-evidence summary`'s);
+a requested review recipe renders the command even when every bridge is unavailable here (a degradation
+removes no configured obligation); a roster with no bridge gets, in the command's place, the fact that no
+receipt can exist; a mixed roster adds the lens reminder. The `--kit-tools` tier gains
+`tools/review-rounds-cli.mjs` (read-only: the receipts store plus read-only `git rev-parse` queries —
+`--show-toplevel` here and `--absolute-git-dir` through the receipts-path resolver; the advisor
+names it every round, so it renders BARE in the tier's byte-form). The plan operand of every rendered
+command — the round table, the grounding pre-step, `agy-review plan` — rides `shellQuoteArg` (bare when
+safe, single-quoted otherwise); a plan name a one-line render cannot carry (a control or line-breaking
+character) falls back to the placeholder on every command, and a name the receipt encoder refuses (a
+double quote, a backslash, a control byte — the S21 set) falls back on the commands that mint or match
+a receipt (`agy-review plan`, the round table) while the file-reading `grounding --plan` stays
+populated; the caveat names the plan escaped and the operand(s) that fell back.
+
+**The procedure and the config.** `plan-authoring` gains the `fold` carrier slot (`solo | subagent`,
+default `solo` even beside `author = subagent`; resolved, validated, previewed, written and unset like
+every carrier slot; the slice wording keyed by slot). The advisor renders the readers sweep for
+plan-authoring — the typed `repo_search` line when the MCP registration is complete on disk and ALWAYS
+the command line in the tier's seedable byte-form — and the consult-before-fold order in the review-loop
+block (agy `--continue --decided @f --focus …`, codex a fresh `codex-review plan <consult-brief>`, a
+placed lens a re-dispatch; on an armed flow the bridge `consult-attestation` sequence). A `Slots:`
+line an installed engine renders differently from the kit's registry is said in `warnings`.
+`requiredBackendsForConfiguredRecipe` takes an `activity`; the shell lexing predicate
+`isSeedablePathToken` lives in the pure leaf `repo-lex.mjs`. Bundled bridges: codex-cli-bridge
+3.6.0 and antigravity-cli-bridge 5.5.0 (the receipt fields, the node preflight, the no-file-read
+prepend, the single schema parse — see each bridge's SKILL.md). `package-content` pins 275 files.
+
 ## 10.4.0 — who does what is a project setting, and a subagent is a first-class carrier of every kind of work (AD-124)
 
 The rule "design, then hand execution to a frontier subagent" lived in an agent's memory and in a

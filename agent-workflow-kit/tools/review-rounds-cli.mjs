@@ -3,6 +3,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isDirectRun } from './direct-run.mjs';
+import { uncarriableArtifactByte } from './repo-lex.mjs';
 import { readReceipts, resolveReceiptsPath } from './core-evidence.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { ACTIVITIES, composeReadiness, requiredBackendsForConfiguredRecipe } from './recipes.mjs';
@@ -11,9 +12,8 @@ import { groupRounds, renderRounds } from './review-rounds.mjs';
 const REVIEW_ACTIVITIES = new Set(Object.entries(ACTIVITIES).filter(([, def]) => Object.hasOwn(def.slots, 'review')).map(([name]) => name));
 
 const assertArtifactPathCarryable = (value) => {
-  if (value.includes('"')) throw new Error('artifact path contains a double quote byte, which the receipt encoder cannot carry');
-  if (value.includes('\\')) throw new Error('artifact path contains a backslash byte, which the receipt encoder cannot carry');
-  if (/[\u0000-\u001f\u007f]/u.test(value)) throw new Error('artifact path contains a control byte, which the receipt encoder cannot carry');
+  const byte = uncarriableArtifactByte(value);
+  if (byte !== null) throw new Error(`artifact path contains ${byte} byte, which the receipt encoder cannot carry`);
 };
 
 const gitTopLevel = (cwd, run = spawnSync) => {
@@ -21,10 +21,9 @@ const gitTopLevel = (cwd, run = spawnSync) => {
   return result.status === 0 ? result.stdout.replace(/\r?\n$/u, '') : null;
 };
 
-export const normalizeArtifactPath = (path, { cwd = process.cwd(), run = spawnSync, realpath = realpathSync } = {}) => {
+export const normalizeArtifactPath = (path, { cwd = process.cwd(), run = spawnSync, realpath = realpathSync, top = gitTopLevel(cwd, run) } = {}) => {
   assertArtifactPathCarryable(path);
   const absolute = realpath(resolve(cwd, path));
-  const top = gitTopLevel(cwd, run);
   const root = top === null ? null : realpath(top);
   const rel = root === null ? null : relative(root, absolute);
   const contained = rel !== null && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
@@ -57,8 +56,10 @@ export const main = (argv, deps = {}) => {
     const cwd = deps.cwd ?? process.cwd();
     const env = deps.env ?? process.env;
     const { artifact, activity } = parseArgs(argv);
-    const artifactPath = normalizeArtifactPath(artifact, { cwd });
-    const root = gitTopLevel(cwd) ?? cwd;
+    const run = deps.run ?? spawnSync;
+    const top = gitTopLevel(cwd, run);
+    const artifactPath = normalizeArtifactPath(artifact, { cwd, run, top });
+    const root = top ?? cwd;
     const { config } = loadConfig(root);
     const detection = { failed: false };
     const readiness = config?.[activity]?.review == null

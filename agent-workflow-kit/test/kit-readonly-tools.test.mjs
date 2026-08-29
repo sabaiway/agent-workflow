@@ -5,8 +5,10 @@
 //       read-only or project-exec — run-gates.mjs the ONLY project-exec member — via a
 //       hand-maintained frozen tool→mode map (commands.mjs is mode-keyed; a tool cannot be looked
 //       up there directly, so the map is the pinned bridge and goes red on any repartition).
-//   (b) the 2 non-mode-backed tools (manifest/validate.mjs, release-scan.mjs — no catalog entry
-//       exists) get a dedicated writes-nothing read-only assertion over their sources instead.
+//   (b) the 5 non-mode-backed tools (no catalog entry exists) get a dedicated writes-nothing
+//       read-only assertion over their sources instead; a tier tool's OWN source may spawn one
+//       declared read-only git query, pinned in its exact form, and any query its imported readers
+//       run is DECLARED beside it, never walked.
 //   (c) dead-rule prevention (Decision 5): a seeded tier entry equals its documented dispatch line
 //       in references/modes/velocity.md with ${CLAUDE_SKILL_DIR} replaced by the resolved skill dir
 //       (and ${PROJECT_ROOT} into the run-gates --cwd slot), UNQUOTED — prefix for the wildcard
@@ -37,7 +39,7 @@ const SKILL_DIR_VAR = '${CLAUDE_SKILL_DIR}';
 const PROJECT_ROOT_VAR = '${PROJECT_ROOT}';
 
 // ── (a) the hand-maintained frozen tool→mode partition map ──────────────────
-// 8 mode-backed tier tools; the 2 validator/scanner tools have no catalog entry (checked in (b)).
+// 8 mode-backed tier tools; the 5 non-mode-backed tools have no catalog entry (checked in (b)).
 const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/recipes.mjs': 'recipes',
   'tools/procedures.mjs': 'procedures',
@@ -56,7 +58,33 @@ const NON_MODE_BACKED = Object.freeze([
   'tools/release-scan.mjs',
   'tools/repo-search.mjs',
   'tools/path-inventory.mjs',
+  'tools/review-rounds-cli.mjs',
 ]);
+// The one process this tool's OWN source spawns: a read-only git query, in exactly this form (the
+// review-state.mjs precedent — read-only git spawns are in-scope read-only); the readers it imports run
+// read-only git queries of their own, which this source scan cannot see — the transitive set is
+// DECLARED here from the import list, not walked, and its argv literal is asserted present in the
+// importing module's source. The import surface is pinned byte-for-byte on purpose: a widened import
+// from the store's mixed module (core-evidence.mjs also exports writers) must go red here.
+const READ_ONLY_GIT_QUERY = Object.freeze({
+  'tools/review-rounds-cli.mjs': "run('git', ['rev-parse', '--show-toplevel']",
+});
+const TRANSITIVE_GIT_QUERY = Object.freeze({
+  'tools/review-rounds-cli.mjs': ['tools/core-evidence.mjs', "['rev-parse', '--absolute-git-dir']"],
+});
+const ALLOWED_IMPORTS = Object.freeze({
+  'tools/review-rounds-cli.mjs': [
+    "import { realpathSync } from 'node:fs';",
+    "import { isAbsolute, relative, resolve, sep } from 'node:path';",
+    "import { spawnSync } from 'node:child_process';",
+    "import { isDirectRun } from './direct-run.mjs';",
+    "import { uncarriableArtifactByte } from './repo-lex.mjs';",
+    "import { readReceipts, resolveReceiptsPath } from './core-evidence.mjs';",
+    "import { loadConfig } from './orchestration-config.mjs';",
+    "import { ACTIVITIES, composeReadiness, requiredBackendsForConfiguredRecipe } from './recipes.mjs';",
+    "import { groupRounds, renderRounds } from './review-rounds.mjs';",
+  ],
+});
 // Writer previews are exact BECAUSE these are writers — the map pins that they stay writers.
 const PREVIEW_TOOL_TO_MODE = Object.freeze({
   'tools/velocity-profile.mjs': 'velocity',
@@ -65,7 +93,7 @@ const PREVIEW_TOOL_TO_MODE = Object.freeze({
 });
 
 describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
-  it('the tier is exactly the 8 mode-backed tools + the 4 non-mode-backed direct tools (set equality)', () => {
+  it('the tier is exactly the 8 mode-backed tools + the 5 non-mode-backed direct tools (set equality)', () => {
     const expected = [...Object.keys(MODE_BACKED_TOOL_TO_MODE), ...NON_MODE_BACKED].sort();
     assert.deepEqual([...KIT_READONLY_TOOLS].sort(), expected);
   });
@@ -96,12 +124,25 @@ describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
 // ── (b) the non-mode-backed tools: writes-nothing read-only assertion ───────
 describe('non-mode-backed tier tools write nothing', () => {
   const WRITE_API_PATTERN =
-    /writeFileSync|appendFileSync|mkdirSync|rmSync|renameSync|unlinkSync|createWriteStream|copyFileSync|node:child_process/u;
+    /writeFileSync|appendFileSync|mkdirSync|rmSync|renameSync|unlinkSync|createWriteStream|copyFileSync/u;
+  const EXEC_API_PATTERN = /node:child_process|execSync|execFileSync|\bexec\(|\bspawn\(/u;
 
   for (const rel of NON_MODE_BACKED) {
-    it(`${rel} carries no write/exec API`, () => {
+    it(`${rel} carries no write API, and no exec API beyond its declared read-only git queries (own, and transitive by declaration)`, () => {
       const source = readFileSync(join(kitRoot, rel), 'utf8');
       assert.doesNotMatch(source, WRITE_API_PATTERN, `${rel} must stay a pure reader`);
+      const query = READ_ONLY_GIT_QUERY[rel];
+      if (query === undefined) {
+        assert.doesNotMatch(source, EXEC_API_PATTERN, `${rel} must spawn nothing`);
+        return;
+      }
+      assert.equal(source.split(query).length, 2, `${rel} spawns exactly its declared read-only git query in its own source`);
+      assert.deepEqual(source.split('\n').filter((line) => line.startsWith('import ')), ALLOWED_IMPORTS[rel], `${rel}: the import surface is pinned — update ALLOWED_IMPORTS deliberately`);
+      assert.doesNotMatch(source, /\bimport\s*\(/u, `${rel}: a dynamic import evades the pinned import surface`);
+      const [module, argv] = TRANSITIVE_GIT_QUERY[rel];
+      assert.ok(readFileSync(join(kitRoot, module), 'utf8').includes(argv), `${module} carries the declared transitive query ${argv}`);
+      assert.equal(source.split('spawnSync').length, 5, `${rel} names spawnSync only as the import, the two injectable defaults and main's runner default`);
+      assert.doesNotMatch(source, /execSync|execFileSync|\bexec\(|\bspawn\(/u, `${rel} spawns nothing else`);
     });
   }
 });
