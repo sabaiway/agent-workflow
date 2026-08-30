@@ -402,7 +402,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — flowHalves is CONDITIONAL on a flow block, unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldScope', 'groundingPreStep', 'readersSweep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldLane', 'foldScope', 'groundingPreStep', 'readersSweep', 'reviewLoop', 'section', 'slots', 'specCheck', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -839,7 +839,7 @@ describe('procedures CLI — the spec-check block: plan-execution ONLY, uncondit
 
   it('the JSON key set stays ADDITIVE — specCheck joins the others, none is dropped or renamed', () => {
     const json = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout);
-    for (const key of ['activity', 'section', 'slots', 'reviewLoop', 'groundingPreStep', 'costLanes', 'foldScope', 'specCheck', 'autonomy', 'declaredPractice']) {
+    for (const key of ['activity', 'section', 'slots', 'reviewLoop', 'groundingPreStep', 'costLanes', 'foldLane', 'foldScope', 'specCheck', 'autonomy', 'declaredPractice']) {
       assert.ok(key in json, `the --json contract keeps "${key}"`);
     }
     assert.ok(Array.isArray(json.specCheck), 'specCheck is an array of lines, like its siblings');

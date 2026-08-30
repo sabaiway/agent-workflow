@@ -34,8 +34,8 @@
 //      reason verbatim — a foreign worktree's chain stays advisory; the armed state extends the
 //      PASS line;
 //   4. re-computes the review-state decision (the ship-receipt arm) — a missing/vetoed ship
-//      receipt refuses. The env it hands over is SANITIZED (receipts/evidence/flow-store producer
-//      seams stripped) so a poisoned override can neither redirect nor mask any store this guard
+//      receipt refuses. The env it hands over is SANITIZED; four producer seams are stripped:
+//      receipts/evidence/flow-store/delegation-store. A poisoned override can neither redirect nor mask any store this guard
 //      reads.
 // `git commit --no-verify` stays the stated residual (a self-discipline mechanism, not a security
 // boundary). Read-only; dependency-free; Node >= 22. No side effects on import.
@@ -323,6 +323,7 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   delete reviewEnv.AW_REVIEW_RECEIPTS;
   delete reviewEnv.AW_CORE_EVIDENCE;
   delete reviewEnv.AW_FLOW_STORE;
+  delete reviewEnv.AW_DELEGATION_STORE;
   const review = decideCheck(buildState({ cwd, env: reviewEnv }));
   if (review.code !== 0) {
     return { code: 1, lines: [`commit-guard: REFUSED — the review obligations are not satisfied: ${review.reason}`] };
@@ -354,7 +355,7 @@ the LATEST completed run-gates --final receipt — refusing on { no receipt for 
 latest attempt · before≠after · declaration content drift · evidence-hash drift · lcov drift ·
 a flow-store refusal (a PRESENT store's open own chain / base motion / coverage — verbatim; no
 store file = byte-exact pre-flow behavior) · unsatisfied review obligations (the review-state
-decision, over a sanitized env — receipts/evidence/flow-store seams stripped) }. Wire it into
+decision, over a sanitized env — receipts/evidence/flow-store/delegation-store seams stripped) }. Wire it into
 pre-commit; \`git commit --no-verify\` stays the stated residual (self-discipline, not a security
 boundary).
 

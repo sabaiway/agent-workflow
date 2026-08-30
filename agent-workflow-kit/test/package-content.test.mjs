@@ -279,6 +279,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the delegation-ledger IO (delegation Plan 1 Phase 2) — its own store beside the review
       // receipts, the fail-closed reader, and the thread/correlation/retry/wave preflight
       'tools/dispatch-store.mjs',
+      // the delegation reader split and its pure held-session judge
+      'tools/dispatch-store-read.mjs',
+      'tools/held-session.mjs',
       // the delegation ENGINE + its mode contract (delegation Plan 1 Phase 3) — the FORM-only
       // contract check, the two hand-written ledger records, and the L0 aggregate report
       'tools/dispatch.mjs',
@@ -740,7 +743,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 273 = 270 + the plan-shape checker's three leaves (rule half, facts half, CLI); NAMED above
     //       because the planning canon renders the CLI path into the --check / --verify commands.
     // 275 = 273 + the review-round table's pure half and CLI; NAMED because the procedure renders it.
-    assert.equal(packed.length, 275, `tarball file count drifted (${packed.length} ≠ 275)`);
+    // 277 = 275 + the delegation read leaf and the pure held-session judge.
+    assert.equal(packed.length, 277, `tarball file count drifted (${packed.length} ≠ 277)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

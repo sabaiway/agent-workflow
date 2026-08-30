@@ -110,6 +110,19 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     assert.match(readFileSync(writer, 'utf8'), /fs\.writeFile\(/u, 'cheap-agents.mjs really does write, directly');
   });
 
+  it('spec:held-session/S4 procedures reaches the delegation read leaf and never its append facade', () => {
+    const root = resolve(TOOLS_DIR, 'procedures.mjs');
+    const leaf = resolve(TOOLS_DIR, 'dispatch-store-read.mjs');
+    const facade = resolve(TOOLS_DIR, 'dispatch-store.mjs');
+    const append = resolve(TOOLS_DIR, 'store-append.mjs');
+    const closure = closureOf([root]);
+    assert.ok(edges.has(leaf), 'dispatch-store-read.mjs must be a tools module');
+    assert.ok(closure.has(leaf), 'procedures.mjs must reach dispatch-store-read.mjs');
+    assert.equal(closure.has(facade), false, 'procedures.mjs must not reach dispatch-store.mjs');
+    assert.equal(closure.has(append), false, 'procedures.mjs must not reach store-append.mjs');
+    assert.equal([...closureOf([leaf])].includes(facade), false, 'the read leaf must not import its facade');
+  });
+
   // ── the source-size practice's own two edges (D-18) ──────────────────────────────────
   // The split exists so that the practice can be asked about from the read surfaces while its WRITER
   // stays out of their reach. Both halves of that claim are pinned here, by name, because the whole

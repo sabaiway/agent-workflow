@@ -46,6 +46,8 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from 
 // orchestration-write (the import-split test pins both direct rules; the TRANSITIVE claim is
 // structural — test/read-graph-purity.test.mjs pins it).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
+import { readDelegationLedger } from './dispatch-store-read.mjs';
+import { foldLaneLines, HELD_RECEIPT_BACKEND, judgeLedger } from './held-session.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
 import { readRegistration } from './mcp-registration.mjs';
 // The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
@@ -579,7 +581,22 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck }) => {
+const foldLaneAdvice = ({
+  activity,
+  slots,
+  cwd,
+  env,
+  resolveStore,
+  readStore,
+  audit,
+  readHead,
+}) => {
+  if (activity !== 'plan-execution' || slots.find((slot) => slot.slot === 'execute')?.recipe !== 'delegated') return [];
+  const ledger = readDelegationLedger(cwd, env, { resolveStore, readStore, audit, readHead });
+  return foldLaneLines(judgeLedger(ledger, { backend: HELD_RECEIPT_BACKEND, degrades: [] }));
+};
+
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, foldLane }) => {
   const lines = [
     section,
     '',
@@ -599,6 +616,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
       for (const line of dispatchForm({ activity, slot: s.slot, state: v.state })) lines.push(`      ${line}`);
     }
     for (const c of s.contracts ?? []) lines.push(...contractLines(c));
+    if (s.slot === 'execute' && foldLane.length) lines.push('', ...foldLane);
   }
   if ((flowHalves ?? []).length) lines.push('', ...flowHalves);
   const autonomyBlock = autonomyAdvice(activity, autonomy);
@@ -619,7 +637,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, foldLane }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -640,6 +658,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   foldScope,
   // ADDITIVE (spec layer 2b): the spec-store block, structured (empty outside plan-execution).
   specCheck,
+  foldLane,
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
   // ADDITIVE (D-17 U1): the SAME composed lines the human render prints — one array, two renders, so
@@ -733,9 +752,19 @@ export const main = (argv, ctx = {}) => {
     const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
     const foldScope = foldScopeAdvice(activity, config, plans);
     const specCheck = specCheckAdvice(activity);
+    const foldLane = foldLaneAdvice({
+      activity,
+      slots,
+      cwd,
+      env,
+      resolveStore: ctx.resolveDelegationStorePath,
+      readStore: ctx.readDelegationStore,
+      audit: ctx.auditDelegationStoreSemantics,
+      readHead: ctx.readHeadInstant,
+    });
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, foldLane }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, foldLane });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

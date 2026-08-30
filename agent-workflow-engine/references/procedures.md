@@ -103,6 +103,13 @@ Each ledger row is one logical commit.
    self-review finding is folded directly (forms: its step 5). CLEAN:
    **0 blockers + 0 majors**; the **{round N · finding-origin tally · per-backend verdict}**
    emission; **fixable-bug / inherent-layer-residual / escalate** at the cap. Its instruments:
+   when `execute` resolved to Delegated, a fold of a review finding is `codex-exec --resume <held id>
+   --nonce <nonce> <fold-brief>` — the session the first FOLDED delegated dispatch's exec receipt minted
+   — the first delegated code that entered the tree, never an earlier failed or unfolded run — held
+   until the row's commit (a nonce-less run mints no receipt and is invisible to the judge); a fresh session for
+   a fold is a forbidden substitution `review-state` names (a retry of a failed thread and a recorded
+   execute degrade excepted); the orchestrator still runs the suites, verifies the returned diff,
+   re-mints the red-proofs and owns the commit, and folds by hand only what the delegate cannot reach.
    `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
    degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
    mints the ONE receipt `commit-guard --check` gates the commit against.

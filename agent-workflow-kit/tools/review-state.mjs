@@ -9,6 +9,11 @@
 // `--check` turns the report into a gate exit code (declare it in docs/ai/gates.json).
 //
 // Normative `--check` exit contract (the single home of this list — SKILL.md points here):
+// Before the review-recipe exits, configured plan-execution.execute=delegated with a plan and a
+// dirty, fingerprintable tree audits the delegation ledger. An absent ledger is inert; an
+// unavailable ledger, a HEAD error or a SUBSTITUTED held session refuses unless a codex-exec degrade at the
+// substituted return's tree, standing after every later fold, accepts it, or the fold of that thread's
+// retry lifts it (codex never grants it).
 //   exit 0  when the CONFIGURED plan-execution.review recipe is solo (or the computed default is —
 //           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
 //           holds no top-level .md that is not queue.md and not scratch by the naming convention:
@@ -105,6 +110,10 @@ import { selectReliedOnReceipt, evaluateVetoOverride, evaluateInternalAttestatio
 // graph; re-exported here so every historical consumer keeps its import site.
 import { PLANS_REL, isScratchPlanName, plansInFlight } from './plan-files.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+import { readDelegationLedger } from './dispatch-store-read.mjs';
+import {
+  decideHeldSession, HELD_EXECUTE_WRAPPER, HELD_RECEIPT_BACKEND, judgeLedger,
+} from './held-session.mjs';
 
 export { PLANS_REL, isScratchPlanName, plansInFlight, shellQuoteArg };
 // The canonical review-domain primitives live in the core-evidence DAG bottom (ONE home for the
@@ -138,6 +147,7 @@ export {
 
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
+const CORE_EVIDENCE_TOOL = shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'core-evidence.mjs'));
 const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff can be large; never truncate silently
 // --await (BUGFREE-3 / AD-049, item (d)) bounds + poll cadence. The default timeout is generous —
 // a real grounded bridge review can take minutes — and every value is overridable (--timeout / the
@@ -296,10 +306,35 @@ export const degradeRecordSet = ({ cwd, env = process.env, fingerprint }) => {
   const storePath = resolveEvidencePath(cwd, env);
   const read = storePath ? readEvidence(storePath) : { records: [], malformed: 0, malformedReasons: [] };
   const unavailable = (read.malformed ?? 0) > 0 || read.readError != null;
+  const records = unavailable ? [] : authoritativeOfKind(read.records, 'degrade');
   const set = unavailable || fingerprint == null
     ? new Set()
-    : new Set(authoritativeOfKind(read.records, 'degrade').filter((r) => r.fingerprint === fingerprint).map((r) => r.backend));
-  return { set, storePath, malformed: read.malformed ?? 0, readError: read.readError ?? null, unavailable };
+    : new Set(records.filter((r) => r.fingerprint === fingerprint).map((r) => r.backend));
+  return { set, records, storePath, malformed: read.malformed ?? 0, readError: read.readError ?? null, unavailable };
+};
+
+export const selectHeldSessionDegrades = (records) =>
+  records.filter((record) => record.kind === 'degrade' && record.backend === HELD_EXECUTE_WRAPPER);
+
+export const shouldReadHeldSession = ({ configuredExecute, plans, fingerprint, clean }) =>
+  configuredExecute === 'delegated' && plans.length > 0 && fingerprint !== null && clean === false;
+
+export const buildHeldSessionState = ({
+  cwd,
+  env,
+  configuredExecute,
+  plans,
+  fingerprint,
+  clean,
+  degrades,
+  resolveStore,
+  readStore,
+  audit,
+  readHead,
+}) => {
+  if (!shouldReadHeldSession({ configuredExecute, plans, fingerprint, clean })) return null;
+  const ledger = readDelegationLedger(cwd, env, { resolveStore, readStore, audit, readHead });
+  return judgeLedger(ledger, { backend: HELD_RECEIPT_BACKEND, degrades });
 };
 
 // ── the check + report core ─────────────────────────────────────────────────────────
@@ -340,6 +375,15 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
   const base = resolveBase(cwd);
   const degrade = degradeRecordSet({ cwd, env, fingerprint });
   const degradedExempt = requiredBackends.filter((b) => degrade.set.has(b));
+  const heldSession = buildHeldSessionState({
+    cwd,
+    env,
+    configuredExecute: config?.[ACTIVITY]?.execute,
+    plans,
+    fingerprint,
+    clean,
+    degrades: selectHeldSessionDegrades(degrade.records),
+  });
   // ── the Phase-2 flow arms' state (two-tier activation, P3) ──
   // Tier 1 is store-file PRESENCE: no file ⇒ every field below stays inert and the decision is
   // byte-identical to the pre-flow checker (the unarmed fast path also reads NO plan file).
@@ -437,6 +481,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
     evidenceReadError: degrade.readError,
     evidenceUnavailable: degrade.unavailable,
     degradedExempt,
+    heldSession,
     maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
     detectionWarning,
     flowPresent,
@@ -476,7 +521,27 @@ const backendFailurePart = (b, state) => {
   if (b.state === 'probe') return `${b.backend}: only probe receipts for the current tree (CODEX_PROBE=1 / AGY_PROBE=1 relaxes the quality guards) — a probe review never attests; re-run a real one`;
   if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${state.receiptsPath}`;
   if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
-  return `${b.backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'core-evidence.mjs'))} degrade --backend ${b.backend} --reason "...")`;
+  return `${b.backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${CORE_EVIDENCE_TOOL} degrade --backend ${b.backend} --reason "...")`;
+};
+
+const describesHeldRecovery = (state) => {
+  const substitution = state.heldSession.substitution;
+  if (substitution === null) return '';
+  const canRetry = substitution.folded === false;
+  if (state.evidenceUnavailable === true) {
+    const retry = canRetry ? '; or fold the retry of that thread' : '';
+    return ` — the evidence store is unavailable, so the degrade lane cannot be judged: repair it (inspect ${state.evidenceStorePath}) and re-check${retry}`;
+  }
+  const canDegrade = typeof substitution.postTreeDigest === 'string'
+    && state.fingerprint === substitution.postTreeDigest;
+  if (!canDegrade && !canRetry) {
+    return ' — no recovery lane remains: the tree moved after the substituted return and that thread is folded; re-dispatch the work under the held session';
+  }
+  const degrade = canDegrade
+    ? ` — mint the accepted-replacement record now, before the next edit: node ${CORE_EVIDENCE_TOOL} degrade --backend ${HELD_EXECUTE_WRAPPER} --reason "..."`
+    : '';
+  const retry = canRetry ? `${canDegrade ? '; or' : ' —'} fold the retry of that thread` : '';
+  return `${degrade}${retry}`;
 };
 
 // The normative --check decision (the header contract, in order). → { code, reason }.
@@ -493,6 +558,11 @@ export const decideCheck = (state) => {
     ? ` — evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}); the degrade escape is denied (fail-closed) — inspect ${state.evidenceStorePath}`
     : '';
   const earlyNotes = `${malformedNote}${evidenceNote}${state.receiptsReadError ? ` — receipts store unreadable (${state.receiptsReadError}); inspect ${state.receiptsPath}` : ''}`;
+  if (state.heldSession !== null && state.heldSession !== undefined) {
+    const held = decideHeldSession(state.heldSession);
+    const heldRecovery = describesHeldRecovery(state);
+    if (held.code !== 0) return { ...held, reason: `${held.reason}${heldRecovery}${earlyNotes}`, terminal: true, heldSession: true };
+  }
   // Detector failure with NO configured recipe: the computed default is unknowable → fail closed.
   // An EXPLICIT configured recipe needs no detector — its obligations are readiness-independent.
   if (state.obligations.unknowable) {
@@ -649,6 +719,7 @@ const formatHuman = (state, check) => {
   if (state.fingerprint == null) lines.push('  tree: not a git work tree');
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
+  if (state.heldSession != null) lines.push(`  ${decideHeldSession(state.heldSession).line}`);
   lines.push(`  receipts: ${state.receiptsPath ?? '(unresolvable — no git dir)'} (${state.receiptCount} line(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
   if (state.receiptsReadError) lines.push(`  ⚠ receipts store unreadable (${state.receiptsReadError}) — inspect ${state.receiptsPath}`);
   if (state.evidenceUnavailable) lines.push(`  ⚠ evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}) — the degrade escape is denied (fail-closed)`);
@@ -700,7 +771,12 @@ attests; a malformed OR absent probe marker is rejected fail-closed — silence 
 The ONLY escape for an unavailable backend under council is an explicit current-tree degrade
 record (node core-evidence.mjs degrade) — and never all backends.
 
---check exits 0/1 per the normative contract in the tool header: 0 for solo / no plan in flight /
+--check exits 0/1 per the normative contract in the tool header. FIRST, before any of the arms
+below, a configured plan-execution.execute = delegated with a plan in flight and a dirty,
+fingerprintable tree audits the delegation ledger: an absent ledger is inert; an unreadable,
+malformed, foreign or audit-refused ledger, a failed HEAD read, or a SUBSTITUTED held session
+exits 1 (a substitution is lifted only by a codex-exec degrade at the substituted return's own
+tree, or the fold of that thread's retry). THEN: 0 for solo / no plan in flight /
 a clean tree (under a non-solo review obligation the PASS names every plan in flight and its arm) /
 not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
@@ -728,11 +804,12 @@ export const main = (argv, ctx = {}) => {
   const cwd = ctx.cwd ?? process.cwd();
   const env = ctx.env ?? process.env;
   const detect = ctx.detect ?? detectBackends;
+  const build = ctx.buildState ?? buildState;
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
     if (unknown !== undefined) throw fail(2, `unknown argument: ${unknown}`);
-    const state = buildState({ cwd, env, detect, surveyVehicle: ctx.surveyVehicle, lstat: ctx.lstat, readFile: ctx.readFile });
+    const state = build({ cwd, env, detect, surveyVehicle: ctx.surveyVehicle, lstat: ctx.lstat, readFile: ctx.readFile });
     const check = decideCheck(state);
     // The mask advisory is NON-FAILING by contract: one notice line, never an exit-code arm.
     const advisory = maskAdvisoryLine(state);
@@ -779,6 +856,7 @@ export const mainAwait = async (argv, ctx = {}) => {
   const now = ctx.now ?? (() => Date.now());
   const sleep = ctx.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const pollMs = ctx.pollMs ?? AWAIT_POLL_MS;
+  const build = ctx.buildState ?? buildState;
   try {
     for (let i = 0; i < argv.length; i += 1) {
       const a = argv[i];
@@ -798,9 +876,10 @@ export const mainAwait = async (argv, ctx = {}) => {
     for (;;) {
       const elapsed = now() - start;
       if (elapsed >= timeoutMs) return { code: 1, stdout: '', stderr: `review-state --await: TIMEOUT after ${timeoutS}s — ${lastReason}` };
-      const check = decideCheck(buildState({ cwd, env, detect }));
+      const check = decideCheck(build({ cwd, env, detect }));
       lastReason = check.reason;
       if (check.code === 0) return { code: 0, stdout: `review-state --await: READY — ${check.reason}`, stderr: '' };
+      if (check.heldSession === true) return { code: 1, stdout: '', stderr: `review-state --await: HELD SESSION — ${check.reason}` };
       // Decision 4 (#50): an AUTHORITATIVE veto ends the wait loudly BEFORE the deadline — the
       // dispatched review answered with a landed negative; classifying that as a timeout was the
       // misclassification this amendment closes. Only a fresh review can move it, never waiting.

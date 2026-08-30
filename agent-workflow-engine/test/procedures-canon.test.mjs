@@ -15,7 +15,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROCEDURES = join(ROOT, 'references', 'procedures.md');
 const METHODOLOGY_SLOT = join(ROOT, 'references', 'methodology-slot.md');
 const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.2;
-
+const HELD_SESSION_SENTENCE_GROUP = Object.freeze({ start: 'when `execute` resolved to Delegated', end: 'what the delegate cannot reach.', maxBytes: 726 });
 const procedures = readFileSync(PROCEDURES, 'utf8');
 
 const contentLines = (text) => text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -171,6 +171,24 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!auth.includes('review-ledger'), 'the retired ledger is never named');
   });
 
+  it('spec:held-session/S6 pins the held-session sentence group in plan-execution step 5', () => {
+    const execution = sectionOf(procedures, 'plan-execution');
+    const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
+    for (const token of [
+      'codex-exec --resume <held id> --nonce <nonce> <fold-brief>',
+      "the session the first FOLDED delegated dispatch's exec receipt minted",
+      "never an earlier failed or unfolded run", "held until the row's commit",
+      'a nonce-less run mints no receipt',
+      'a fresh session for a fold is a forbidden substitution',
+      'a retry of a failed thread',
+      'a recorded execute degrade',
+      'runs the suites', 'verifies the returned diff', 're-mints the red-proofs', 'owns the commit',
+      'folds by hand only what the delegate cannot reach',
+    ]) assert.ok(step5.includes(token), token);
+    assert.equal(slotsLineOf(execution), 'Slots: execute, review');
+    assert.deepEqual([...execution.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
   // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
   // discovered when a gate refuses a written file. The rung itself (path, responsibility, budget from
   // the declared cap or `n/a`) is the planning.md Module ledger; the Draft step points at it.
@@ -303,15 +321,16 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!/release-marketing/.test(procedures), 'no concrete release-marketing skill bake-in');
     assert.ok(!/Phase:\s*Release Publishing/i.test(procedures), 'no mandatory Release-Publishing phase bake-in');
   });
-
   it('is terse — stays within a bounded margin of the planning.md canon it binds to', () => {
     const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
-    assert.ok(
-      procedures.length < planning.length * MAX_PROCEDURES_TO_PLANNING_RATIO,
-      'the procedures canon stays a terse pointer, not a restatement of planning.md',
-    );
+    const start = procedures.indexOf(HELD_SESSION_SENTENCE_GROUP.start);
+    assert.notEqual(start, -1, 'the held-session sentence group keeps its opening anchor');
+    const end = procedures.indexOf(HELD_SESSION_SENTENCE_GROUP.end, start);
+    assert.notEqual(end, -1, 'the held-session sentence group keeps its closing anchor');
+    const sentenceGroup = procedures.slice(start, end + HELD_SESSION_SENTENCE_GROUP.end.length);
+    assert.ok(Buffer.byteLength(sentenceGroup, 'utf8') < HELD_SESSION_SENTENCE_GROUP.maxBytes, 'the held-session sentence group stays under its own byte cap');
+    assert.ok(procedures.length - sentenceGroup.length < planning.length * MAX_PROCEDURES_TO_PLANNING_RATIO, 'the procedures canon stays a terse pointer, not a restatement of planning.md');
   });
-
   // AD-025 — durable session behavior pinned in the live-read canon (so a future canon edit can't
   // silently drop them): read-at-start, the plan-authoring Definition of Done, and the communication
   // contract. The engine canon stays GENERIC (the "no project bake-in" test above still holds).
