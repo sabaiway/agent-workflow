@@ -1,7 +1,7 @@
 // git-process.mjs — the LOSSLESS process leaf the release scripts' git reads run through.
 //
-// It returns the raw outcome of a child process — {status, stdout, stderr, error, signal} — and
-// nothing else: no throwing on a non-zero exit, no classification, no CLI, no side effects on
+// It returns the raw outcome of a child process — {status, stdout, stderr, error, signal,
+// killedByDeadline} — and nothing else: no throwing on a non-zero exit, no classification, no CLI, no side effects on
 // import. Which exit status MEANS what is the caller's policy and must never be decided here:
 // `git merge-base --is-ancestor` and `git rev-parse --verify` both use exit 1 as a normal ANSWER,
 // while dispatch-publish.mjs's own runGit treats any non-zero as fatal. A shared classifier would
@@ -65,6 +65,7 @@ export const runProcess = (command, args, {
   extraEnv = {},
   deadlineMs = PROCESS_DEADLINE_MS,
   escalationMs = KILL_ESCALATION_MS,
+  encoding = 'utf8',
   spawnImpl = spawn,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -87,20 +88,23 @@ export const runProcess = (command, args, {
   // A run THIS LEAF terminated is reported as killed, whatever the process happened to exit with.
   // Measured: when a descendant delays the drain past the deadline, `close` carries the parent's
   // ORIGINAL (0, null) — so reporting close verbatim would hand the caller a clean success for a run
-  // we cut off, and the caller's only structural timeout signal (a null status WITH a signal) would
-  // never fire. The parent's exit code is deliberately given up in that case: the result carries five
-  // fields, and a killed run being recognisable as killed is the one that matters.
+  // we cut off, and the caller's only structural timeout signal (`killedByDeadline`, true only when
+  // this leaf's deadline delivered the kill — an external signal is not one) would never fire. The
+  // parent's exit code is deliberately given up in that case: the result carries six fields, and a
+  // killed run being recognisable as killed is the one that matters.
   const settle = () => {
     if (state.settled) return;
     state.settled = true;
     disarm();
     const killed = state.killSignal !== null;
+    const decode = (chunks) => (encoding === null ? Buffer.concat(chunks) : Buffer.concat(chunks).toString(encoding));
     resolve({
       status: killed || state.exit === null ? null : state.exit.code,
-      stdout: Buffer.concat(stdoutChunks).toString('utf8'),
-      stderr: Buffer.concat(stderrChunks).toString('utf8'),
+      stdout: decode(stdoutChunks),
+      stderr: decode(stderrChunks),
       error: state.error,
       signal: killed ? state.killSignal : (state.exit === null ? null : state.exit.signal),
+      killedByDeadline: killed,
     });
   };
 

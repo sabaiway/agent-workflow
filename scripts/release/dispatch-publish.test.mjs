@@ -15,7 +15,6 @@ import {
   newestChangelogEntry,
   RELEASE_STUB_MARKER,
   NPM_VERIFY_ATTEMPTS,
-  fetchJsonDefault,
   ghApiDefault,
   renderVerifyOnlyCommand,
   VERIFY_TRANSPORT_DEADLINE_MS,
@@ -32,10 +31,6 @@ import { buildGateReceipt, GATE_RECEIPT_BASENAME, GATE_RECEIPT_SCHEMA } from './
 const SHA = 'a'.repeat(40);
 const OTHER_SHA = 'b'.repeat(40);
 const REAL_KIT_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'agent-workflow-kit', 'package.json'), 'utf8')).version;
-
-// ── a scripted world: gh REST + git + npm registry, fully hermetic ─────────────────────
-// Runs appear after a dispatch POST; each run completes on the next poll with the scripted
-// conclusion. Time is virtual (every now() call advances it), sleep is instant.
 
 const makeWorld = ({
   conclusions = {}, // e.g. { 'memory:dry': 'success', 'kit:live': 'failure' }
@@ -69,7 +64,7 @@ const makeWorld = ({
   shallow = false, // rev-parse --is-shallow-repository : false | true | a raw result
   lsRemoteBody = null, // the whole `git ls-remote origin <ref>` stdout, when an arm needs an exact one
 } = {}) => {
-  const calls = { dispatches: [], gitArgs: [], gitRawArgs: [], fetches: [], fetchOpts: [], ghReqs: [] };
+  const calls = { dispatches: [], gitArgs: [], gitRawArgs: [], reads: [], readOpts: [], ghReqs: [] };
   const runs = [];
   let nextRunId = 100;
   let pendingRun = null;
@@ -132,8 +127,6 @@ const makeWorld = ({
     throw new Error(`unscripted git: ${head}`);
   };
 
-  // The raw-result lane (the lossless leaf in production). A result object is what the leaf returns;
-  // returning a plain status here would let a test pass against a caller that never reads `error`.
   const rawResult = (status) => ({ status, stdout: '', stderr: '', error: null, signal: null });
   const runGitRaw = async (args, cwd) => {
     calls.gitRawArgs.push(args.join(' '));
@@ -183,11 +176,9 @@ const makeWorld = ({
         })
       : crossVersionReceipt;
 
-  const fetchJson = async (url, opts) => {
-    calls.fetches.push(url);
-    calls.fetchOpts.push(opts);
-    const name = decodeURIComponent(url.split('registry.npmjs.org/')[1].replace('/latest', '')).replace('%2F', '/');
-    // npmTransport: true (all lookups) or a Set of names (per-package) — a typed transport failure.
+  const readLatest = async (name, opts) => {
+    calls.reads.push(name);
+    calls.readOpts.push(opts);
     if (npmTransport === true || (npmTransport && typeof npmTransport.has === 'function' && npmTransport.has(name))) {
       return { transportError: 'dial tcp: registry.npmjs.org: no such host' };
     }
@@ -219,7 +210,7 @@ const makeWorld = ({
     ghApi,
     runGit,
     runGitRaw,
-    fetchJson,
+    readLatest,
     readFile,
     sleep: async () => {},
     now: () => {
@@ -608,7 +599,7 @@ describe('runDispatch — the `all` flow (a 3-package family release = 2 workflo
       ],
       'ONE dry-run dispatch then ONE live dispatch, the workflow receives package=all on both',
     );
-    const verifiedNames = calls.fetches.map((url) => decodeURIComponent(url.split('registry.npmjs.org/')[1].replace('/latest', '')));
+    const verifiedNames = calls.reads;
     assert.deepEqual(
       verifiedNames,
       ['@sabaiway/agent-workflow-memory', '@sabaiway/agent-workflow-engine', '@sabaiway/agent-workflow-kit'],
@@ -849,7 +840,7 @@ describe('runDispatch — post-publish verification', () => {
     });
     const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
     assert.equal(code, EXIT.verify);
-    assert.equal(calls.fetches.length, NPM_VERIFY_ATTEMPTS, 'retry is bounded');
+    assert.equal(calls.reads.length, NPM_VERIFY_ATTEMPTS, 'retry is bounded');
   });
 
   it('a missing Release asset → exit 8 naming the tag', async () => {
@@ -947,7 +938,7 @@ describe('T2c reachable verify failures stay LOUD (exit 8), never inconclusive',
     });
     const code = await runDispatch(['memory', '--live', '--expect', 'memory=1.0.0'], deps);
     assert.equal(code, EXIT.verify);
-    assert.equal(calls.fetches.length, NPM_VERIFY_ATTEMPTS, 'a reachable mismatch retries to the bound (never short-circuits to unreachable)');
+    assert.equal(calls.reads.length, NPM_VERIFY_ATTEMPTS, 'a reachable mismatch retries to the bound (never short-circuits to unreachable)');
   });
 
   it('a reachable-but-malformed body (parse failure) is a LOUD verify failure, not unreachable', async () => {
@@ -1020,20 +1011,7 @@ describe('T2d --verify-only contract (D2)', () => {
   });
 });
 
-describe('T2e production adapters — typed transport classification (low-level injection)', () => {
-  it('fetchJsonDefault types transport vs HTTP-status vs parse vs success', async () => {
-    const dns = await fetchJsonDefault('https://x', { fetchImpl: async () => { throw Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' }); } });
-    assert.ok(dns.transportError, 'a transport rejection is typed transportError');
-    const http404 = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: false, status: 404 }) });
-    assert.equal(http404.httpError, 404, 'an HTTP status is typed httpError (reachable), never transport');
-    assert.ok(!http404.transportError);
-    const malformed = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }) });
-    assert.ok(malformed.parseError, 'a reachable-but-unparseable body (SyntaxError) is typed parseError, never transport');
-    assert.ok(!malformed.transportError);
-    const okRes = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => ({ version: '9.9.9' }) }) });
-    assert.equal(okRes.version, '9.9.9');
-  });
-
+describe('T2e production adapter transport classification', () => {
   it('ghApiDefault keys on response-shape, not the exit code — DNS and HTTP-404 BOTH exit nonzero', () => {
     const dns = () => ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { spawnImpl: () => ({ status: 1, stdout: '', stderr: 'dial tcp: lookup api.github.com: no such host' }) });
     assert.throws(dns, (e) => e.transport === true, 'a gh transport failure (no HTTP response) is typed .transport');
@@ -1042,6 +1020,29 @@ describe('T2e production adapters — typed transport classification (low-level 
     const okRes = ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { spawnImpl: () => ({ status: 0, stdout: '{"draft":false,"assets":[]}' }) });
     assert.deepEqual(okRes, { draft: false, assets: [] });
   });
+});
+// spec:release-run/S5
+it('npm verification uses the typed readLatest seam', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw Object.assign(new Error('old fetch seam'), { code: 'ENOTFOUND' }); };
+  try {
+    const success = makeWorld({
+      npmVersions: { '@sabaiway/agent-workflow-memory': '1.0.0' },
+      releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
+    });
+    assert.equal(await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], success.deps), EXIT.ok);
+    assert.deepEqual(success.calls.reads, ['@sabaiway/agent-workflow-memory']);
+    assert.deepEqual(success.calls.readOpts, [{ deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS }]);
+    const local = makeWorld({});
+    local.deps.readLatest = async () => { throw new Error('local npm failure: EROFS'); };
+    assert.equal(await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], local.deps), EXIT.verify);
+    assert.match(local.calls.lastError, /LOCAL npm failure: local npm failure: EROFS/);
+    const transport = makeWorld({ npmTransport: true });
+    assert.equal(await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], transport.deps), EXIT.unreachable);
+    assert.match(transport.calls.lastError, /--verify-only/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 describe('T2f verify continuation + mixed outcomes (D3b)', () => {
@@ -1071,7 +1072,7 @@ describe('T2f verify continuation + mixed outcomes (D3b)', () => {
     });
     const code = await runDispatch(['all', '--live', '--expect', 'memory=2.0.0', '--expect', 'engine=2.1.0', '--expect', 'kit=1.5.0'], deps);
     assert.equal(code, EXIT.verify, 'a reachable-verify red dominates the inconclusive code');
-    const verifiedNames = calls.fetches.map((u) => decodeURIComponent(u.split('registry.npmjs.org/')[1].replace('/latest', '')));
+    const verifiedNames = calls.reads;
     assert.ok(verifiedNames.includes('@sabaiway/agent-workflow-kit'), 'kit was STILL verified after memory unreachable + engine red');
     assert.match(calls.lastError, /INCONCLUSIVE/i, 'the message still enumerates the inconclusive memory');
     assert.match(calls.lastError, /--verify-only/, 'and the recovery');
@@ -1079,15 +1080,6 @@ describe('T2f verify continuation + mixed outcomes (D3b)', () => {
 });
 
 describe('T2g verify-stage transport deadlines (D3a)', () => {
-  it('fetchJsonDefault: a hanging fetch hits the deadline → transportError (never a hang)', async () => {
-    const hangingFetch = (url, { signal } = {}) => new Promise((_, reject) => {
-      if (signal) signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
-    });
-    const res = await fetchJsonDefault('https://x', { deadlineMs: 5, fetchImpl: hangingFetch });
-    assert.ok(res.transportError, 'a hung fetch is bounded → transportError');
-    assert.match(res.transportError, /timeout/i);
-  });
-
   it('ghApiDefault: a spawn timeout (SIGTERM/ETIMEDOUT) classifies as transport (never a hang)', () => {
     const timedOutSpawn = () => ({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' }), stdout: '', stderr: '' });
     assert.throws(() => ghApiDefault({ path: 'repos/x/y/releases/tags/t' }, { deadlineMs: 5, spawnImpl: timedOutSpawn }), (e) => e.transport === true);
@@ -1099,7 +1091,7 @@ describe('T2g verify-stage transport deadlines (D3a)', () => {
       releases: { 'agent-workflow-memory-v1.0.0': { assets: 1 } },
     });
     await runDispatch(['memory', '--verify-only', '--expect', 'memory=1.0.0'], deps);
-    assert.ok(calls.fetchOpts.length > 0 && calls.fetchOpts.every((o) => o && o.deadlineMs > 0), 'every npm fetch carries a transport deadline');
+    assert.ok(calls.readOpts.length > 0 && calls.readOpts.every((o) => o && o.deadlineMs > 0), 'every npm read carries a transport deadline');
     const releaseReq = calls.ghReqs.find((r) => r.path.includes('/releases/tags/'));
     assert.ok(releaseReq && releaseReq.opts && releaseReq.opts.deadlineMs > 0, 'the gh Release lookup carries a transport deadline');
     assert.ok(Number.isFinite(NPM_VERIFY_ATTEMPTS * VERIFY_TRANSPORT_DEADLINE_MS) && VERIFY_TRANSPORT_DEADLINE_MS > 0, 'the retry loop has a finite total transport bound');
@@ -1223,19 +1215,6 @@ describe('R3 folds — second-round review majors on the dispatcher', () => {
     assert.match(calls.lastError, /node scripts\/release\/dispatch-publish\.mjs memory --verify-only --expect memory=1\.0\.0/, 'the exact recovery command with target + --expect');
   });
 
-  it('R3-D fetchJsonDefault classifies a mid-body abort or stream failure as transport not parseError', async () => {
-    // res.json() rejecting AFTER headers — the deadline fired mid-body (AbortError), or the body stream
-    // dropped — is a TRANSPORT failure, never a false reachable parseError (exit 8). Only a genuine
-    // malformed body (SyntaxError) stays parseError.
-    const abort = await fetchJsonDefault('https://x', { deadlineMs: 5, fetchImpl: async () => ({ ok: true, json: async () => { throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }); } }) });
-    assert.ok(abort.transportError, 'a mid-body abort is transport, not a malformed-body parseError');
-    assert.ok(!abort.parseError);
-    const streamDrop = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw Object.assign(new Error('terminated'), { code: 'UND_ERR_SOCKET' }); } }) });
-    assert.ok(streamDrop.transportError, 'a body-stream drop after headers is transport');
-    const malformed = await fetchJsonDefault('https://x', { fetchImpl: async () => ({ ok: true, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } }) });
-    assert.ok(malformed.parseError, 'a genuine JSON SyntaxError stays parseError (reachable red)');
-    assert.ok(!malformed.transportError);
-  });
 });
 
 // ── AD-098: the head-mismatch refusal names WHICH mismatch ────────────────────────────

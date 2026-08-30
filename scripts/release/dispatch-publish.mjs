@@ -65,7 +65,7 @@
 // red) · 9 post-publish verification UNREACHABLE (inconclusive — the publish itself concluded
 // success but a verify endpoint could not be reached, e.g. a network-blocked sandbox; re-run the
 // verify OUTSIDE the sandbox with the printed `--verify-only` command — NOT a failed release).
-// Dependency-free, Node >= 22 (global fetch). No side effects on import.
+// Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -74,6 +74,7 @@ import { spawnSync } from 'node:child_process';
 import { runGitProcess } from './git-process.mjs';
 import { readSmokeReceipt, candidateSmokeViolation } from './smoke-candidate.mjs';
 import { readGateReceipt, crossVersionGateViolation } from './cross-version-gate.mjs';
+import { npmViewLatest } from './npm-view.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
@@ -254,34 +255,6 @@ export const ghApiDefault = ({ method = 'GET', path, fields = {} } = {}, { deadl
   }
   const body = (res.stdout || '').trim();
   return body === '' ? null : JSON.parse(body);
-};
-
-// npm registry read, typed (D3). Envelope (flat — a success is the parsed JSON object, which carries
-// `.version`): `{transportError}` (no response — DNS/connection/timeout/abort) · `{httpError}` (a
-// status WAS observed — reachable) · `{parseError}` (reachable but malformed body) · the parsed JSON.
-// `deadlineMs` bounds the fetch via an AbortController (D3a); `fetchImpl` is injectable for T2e/T2g.
-export const fetchJsonDefault = async (url, { deadlineMs, fetchImpl = fetch } = {}) => {
-  const controller = deadlineMs ? new AbortController() : null;
-  const timer = controller ? setTimeout(() => controller.abort(), deadlineMs) : null;
-  try {
-    const res = await fetchImpl(url, controller ? { signal: controller.signal } : {});
-    if (!res.ok) return { httpError: res.status };
-    try {
-      return await res.json();
-    } catch (err) {
-      // res.json() rejected AFTER headers: a genuine malformed body is a SyntaxError → parseError
-      // (reachable red). An abort (the deadline fired mid-body) or a dropped body stream is NOT
-      // malformed JSON — it is a TRANSPORT failure, never a false reachable red.
-      if (err && err.name === 'SyntaxError') return { parseError: err.message || 'invalid JSON' };
-      const isAbort = err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
-      return { transportError: isAbort ? `timeout after ${deadlineMs}ms` : `response body unreadable (${(err && err.message) || 'stream failure'})` };
-    }
-  } catch (err) {
-    const isAbort = err && (err.name === 'AbortError' || err.code === 'ABORT_ERR');
-    return { transportError: isAbort ? `timeout after ${deadlineMs}ms` : ((err && err.message) || 'network failure') };
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 };
 
 const sleepDefault = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -532,27 +505,26 @@ const dispatchAndAwait = async ({ pkg, dryRun, ctx }) => {
   return run;
 };
 
-// Post-publish verification: npm `@latest` equals the expected version (bounded retry — the
-// registry read-through cache can lag) and the GitHub Release exists, is published (not a
-// draft), and carries EXACTLY ONE asset — at the tag _publish-one.yml derives.
-//
 // RETURNS a typed outcome, never throws (D3b — the caller collects per-package outcomes + continues):
 //   { outcome: 'verified', name }
 //   { outcome: 'unreachable', name, endpoint, cause }  — a TRANSPORT failure (npm or gh); the publish
 //        concluded success, only the verify endpoint was unreachable → inconclusive, not a red.
 //   { outcome: 'failed', name, detail }                — a REACHABLE red (wrong version after the
 //        bounded retry, missing/draft Release, wrong asset count, or a parse-error body) → loud.
-// Every lookup carries VERIFY_TRANSPORT_DEADLINE_MS (D3a) so a network-blocked endpoint cannot hang.
 export const verifyPublished = async ({ pkg, ctx }) => {
-  const { ghApi, repo, expect, tagFor, fetchJson, readFile, root, sleep, log } = ctx;
+  const { ghApi, repo, expect, tagFor, readLatest, readFile, root, sleep, log } = ctx;
   const dir = PKG_DIRS[pkg];
   const expected = expect[pkg];
   const name = JSON.parse(readFile(join(root, dir, 'package.json'), 'utf8')).name;
-  const encoded = name.replace('/', '%2F');
   let lastSeen = null;
   let verified = false;
   for (let attempt = 1; attempt <= NPM_VERIFY_ATTEMPTS && !verified; attempt += 1) {
-    const latest = await fetchJson(`https://registry.npmjs.org/${encoded}/latest`, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS });
+    const latest = await Promise.resolve()
+      .then(() => readLatest(name, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS }))
+      .catch((localError) => ({ localError }));
+    if (latest && latest.localError) {
+      return { outcome: 'failed', pkg, name, detail: `LOCAL npm failure: ${firstLine(latest.localError.message)}` };
+    }
     if (latest && latest.transportError) {
       return { outcome: 'unreachable', pkg, name, endpoint: `npm registry (${name}@latest)`, cause: latest.transportError };
     }
@@ -883,7 +855,7 @@ export const runDispatch = async (argv, deps = {}) => {
     ghApi = ghApiDefault,
     runGit = runGitDefault,
     runGitRaw = runGitRawDefault,
-    fetchJson = fetchJsonDefault,
+    readLatest = npmViewLatest,
     sleep = sleepDefault,
     now = Date.now,
     readFile = readFileSync,
@@ -924,7 +896,7 @@ export const runDispatch = async (argv, deps = {}) => {
     // with the verify-only transport semantics (a transport auth failure is inconclusive, not a red).
     if (opts.verifyOnly) {
       assertGitHubAuth(ghApi, { verifyOnly: true, deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS, reRunCommand: renderRecovery(null) });
-      const ctx = { ghApi, repo, expect: opts.expect, tagFor, fetchJson, readFile, root, sleep, log };
+      const ctx = { ghApi, repo, expect: opts.expect, tagFor, readLatest, readFile, root, sleep, log };
       const outcomes = [];
       for (const pkg of verifyTargets) outcomes.push(await verifyPublished({ pkg, ctx }));
       return finalizeVerify(outcomes, ctx, renderRecovery, { verifyOnly: true });
@@ -984,7 +956,7 @@ export const runDispatch = async (argv, deps = {}) => {
     // Bounded (M1/D3a): a transport timeout here is a loud preflight red in live/dry.
     assertGitHubAuth(ghApi, { deadlineMs: VERIFY_TRANSPORT_DEADLINE_MS });
 
-    const ctx = { ghApi, repo, ref: opts.ref, expectedSha, expect: opts.expect, tagFor, fetchJson, readFile, root, pollTimeoutS: opts.pollTimeoutS, now, sleep, log };
+    const ctx = { ghApi, repo, ref: opts.ref, expectedSha, expect: opts.expect, tagFor, readLatest, readFile, root, pollTimeoutS: opts.pollTimeoutS, now, sleep, log };
 
     // Phase 1 — ALL dry-runs conclude green before the FIRST live dispatch (for `all` that is
     // ONE dry-run workflow run covering the family).

@@ -162,12 +162,12 @@ describe('git-process — the result stays lossless', () => {
   // Node defers exactly five spawn errnos to an `error` event (EACCES, EAGAIN, EMFILE, ENFILE,
   // ENOENT); every other one is thrown straight out of `spawn` — measured here: EIO — and uncaught
   // it escapes this leaf as a REJECTION. The whole result is pinned, not just the error: a
-  // non-start must answer in the same five fields as every other outcome.
+  // non-start must answer in the same six fields as every other outcome.
   it('a spawn that THROWS settles like one that emits — a named cause, never a rejection', async () => {
     const thrown = Object.assign(new Error('spawn EIO'), { code: 'EIO', errno: -5, syscall: 'spawn' });
     const clock = timerHarness();
     const res = await runProcess('git', ['status'], { spawnImpl: () => { throw thrown; }, ...clock });
-    assert.deepEqual(res, { status: null, stdout: '', stderr: '', error: thrown, signal: null });
+    assert.deepEqual(res, { status: null, stdout: '', stderr: '', error: thrown, signal: null, killedByDeadline: false });
     assert.equal(res.error, thrown, 'the platform error object reaches the caller, never re-wrapped');
     assert.deepEqual(clock.armed, [], 'no process was created, so no deadline is armed');
   });
@@ -210,7 +210,7 @@ describe('git-process — the result stays lossless', () => {
   // The measured shape a descendant produces: the parent exited 0 long before the deadline, the pipe
   // stayed open, and `close` therefore carries the parent's ORIGINAL (0, null). Reporting that would
   // hand the caller a clean success for a run this leaf cut off, and the consumer's timeout rule
-  // (status null AND a signal) would never fire.
+  // (`killedByDeadline`) would never fire.
   it('reports a run IT terminated as killed, even when close carries the exit code 0', async () => {
     const child = stubChild();
     const clock = timerHarness();
