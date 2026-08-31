@@ -39,6 +39,35 @@ const LINE_BREAKING_ALL = new RegExp(LINE_BREAKING_SOURCE, 'gu');
 export const isRenderableLine = (value) => typeof value === 'string' && !LINE_BREAKING.test(value);
 export const escapeForDisplay = (value) => String(value).replace(LINE_BREAKING_ALL, (ch) => `\\u${ch.codePointAt(0).toString(16).padStart(4, '0')}`);
 
+// The control-byte gate's predicate over ONE byte (an integer 0..255, a Buffer element): C0 minus
+// TAB, LF and CR, plus DEL. Bytes at or above 0x80 are never judged here (UTF-8 validity and C1
+// controls are the gate's stated non-goals). ONE home, beside the artifact-path rule below, which
+// keeps refusing TAB, LF and CR as its bash twins do.
+export const isRefusedControlByte = (byte) => byte <= 0x08 || byte === 0x0b || byte === 0x0c || (byte >= 0x0e && byte <= 0x1f) || byte === 0x7f;
+
+// The injective renderer of a path's raw BYTES for a report line: bytes decode as UTF-8 where a
+// sequence is valid, every LINE_BREAKING code point and a valid U+FFFD render as \u{XXXX}, an invalid
+// byte as \xNN and a backslash as \\ — so two names differing only in an unrenderable byte render differently,
+// a name carrying a raw byte differs from a name spelling its escape, and no output line carries a
+// raw control byte or U+FFFD. Separate from escapeForDisplay, whose string-rendering consumers keep their contract.
+const utf8SequenceLength = (lead) => (lead < 0x80 ? 1 : (lead & 0xe0) === 0xc0 ? 2 : (lead & 0xf0) === 0xe0 ? 3 : (lead & 0xf8) === 0xf0 ? 4 : 0);
+export const renderPathForDisplay = (bytes) => {
+  let out = '';
+  for (let i = 0; i < bytes.length;) {
+    const length = utf8SequenceLength(bytes[i]);
+    const slice = length > 0 && i + length <= bytes.length ? bytes.subarray(i, i + length) : null;
+    const decoded = slice === null ? null : slice.toString('utf8');
+    if (decoded === null || !Buffer.from(decoded, 'utf8').equals(slice)) {
+      out += `\\x${bytes[i].toString(16).padStart(2, '0')}`;
+      i += 1;
+      continue;
+    }
+    out += decoded === '\\' ? '\\\\' : LINE_BREAKING.test(decoded) || decoded.codePointAt(0) === 0xfffd ? `\\u{${decoded.codePointAt(0).toString(16)}}` : decoded;
+    i += length;
+  }
+  return out;
+};
+
 // The receipt encoder's carriability rule for an artifact path (S21), the JS twin of the wrappers'
 // refuse_uncarriable_artifact_byte: a quote, a backslash, a C0 control or DEL — deliberately NOT
 // \p{Cc} (C1 is the declared residual, and the two normalizations are parity-pinned on this set).

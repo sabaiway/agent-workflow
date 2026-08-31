@@ -256,7 +256,7 @@ const SOURCE_SIZE_EXACT = `Bash(node ${join(KIT_ROOT, 'tools/source-size-check.m
 const PREVIEW_FORBIDDEN_FLAGS = ['--apply', '--write', '--yes', '--refresh-placed'];
 
 describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
-  it('matches the frozen 13-member tool list + count sentinel', () => {
+  it('matches the frozen 14-member tool list + count sentinel', () => {
     const expected = [
       'tools/recipes.mjs',
       'tools/procedures.mjs',
@@ -271,14 +271,15 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
       'tools/repo-search.mjs',
       'tools/path-inventory.mjs',
       'tools/review-rounds-cli.mjs',
+      'tools/control-bytes.mjs',
     ];
     assert.equal(Object.isFrozen(KIT_READONLY_TOOLS), true);
     // 9 → 10: AD-044 Plan 4 Phase 3 — the recommendations advisor joins the tier.
     // 10 → 11: the literal search lane. Its allow rule is not a convenience here — a non-core
     // command gets NO decision from the hook, and no decision is not an allow.
     // 11 → 12: the inventory lane, for the same reason on the other half of the corpus.
-    // 12 → 13: the round table — the advisor names it every review round (AD-125).
-    assert.equal(KIT_READONLY_TOOLS.length, 13, 'kit-tools tier count sentinel - edit deliberately');
+    // 12 → 13: the round table (AD-125). 13 → 14: the control-byte gate, a pure reader over the work tree.
+    assert.equal(KIT_READONLY_TOOLS.length, 14, 'kit-tools tier count sentinel - edit deliberately');
     assert.deepEqual([...KIT_READONLY_TOOLS], expected);
     assert.equal(KIT_RUN_GATES_TOOL, 'tools/run-gates.mjs');
   });
@@ -293,7 +294,7 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     for (const rel of KIT_WRITER_PREVIEW_TOOLS) assert.equal(KIT_READONLY_TOOLS.includes(rel), false, rel);
   });
 
-  it('derives 12 wildcard entries + the exact run-gates and source-size entries + 3 exact previews (count sentinel 17)', () => {
+  it('derives 13 wildcard entries + the exact run-gates and source-size entries + 3 exact previews (count sentinel 18)', () => {
     const derived = tierEntries();
     assert.equal(Object.isFrozen(derived), true);
     // 12 → 13: AD-044 Plan 4 Phase 3 — the recommendations advisor joins KIT_READONLY_TOOLS.
@@ -301,9 +302,10 @@ describe('KIT_READONLY_TOOLS tier — frozen membership + derivation', () => {
     // 14 → 15: the inventory lane joins as a wildcard entry.
     // 15 → 16: the source-size checker joins as a SECOND exact entry — its --check mode only.
     // 16 → 17: the round table joins as a wildcard entry.
-    assert.equal(derived.length, 17, 'derived tier count sentinel - edit deliberately');
+    // 17 → 18: the control-byte gate joins as a wildcard entry.
+    assert.equal(derived.length, 18, 'derived tier count sentinel - edit deliberately');
     const wildcards = derived.filter((e) => e.endsWith(':*)'));
-    assert.equal(wildcards.length, 12);
+    assert.equal(wildcards.length, 13);
     for (const rel of KIT_READONLY_TOOLS) {
       if (rel === KIT_RUN_GATES_TOOL) continue;
       assert.equal(derived.includes(wildcardEntryOf(rel)), true, rel);
@@ -858,7 +860,7 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
     const dry = runMain(['--kit-tools'], cwd);
 
     assert.equal(dry.code, EXIT_OK);
-    assert.match(dry.stdout, /would add kit-tools tier entries: 17/);
+    assert.match(dry.stdout, /would add kit-tools tier entries: 18/);
     assert.equal(existsSync(settingsPath(cwd)), false);
     assert.equal(existsSync(pathOf(cwd, CLAUDE_DIR)), false);
   });

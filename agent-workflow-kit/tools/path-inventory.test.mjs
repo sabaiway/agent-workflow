@@ -489,10 +489,10 @@ describe('path-inventory — the argument lanes match repo-search, including the
 describe('path-inventory — the human shape is safe to print', () => {
   it('control and ANSI bytes in a name are escaped, never emitted raw', () => {
     const root = scratch();
-    writeFileSync(join(root, 'we[31mird.txt'), '');
-    const r = run(['--path', 'we[31mird.txt'], root);
+    writeFileSync(join(root, 'we\x1b[31mird.txt'), '');
+    const r = run(['--path', 'we\x1b[31mird.txt'], root);
     assert.equal(r.code, EXIT_OK);
-    assert.ok(!r.stdout.includes(''), 'an escape byte must never reach the terminal');
+    assert.ok(!r.stdout.includes('\x1b'), 'an escape byte must never reach the terminal');
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -502,9 +502,9 @@ describe('path-inventory — the human shape is safe to print', () => {
   it('control bytes in a REFUSED path are escaped in stderr too', () => {
     const outside = seed(scratch(), { 'secret.txt': 'x\n' });
     const root = scratch();
-    const r = run(['--path', `../${''}[31m`], root);
+    const r = run(['--path', `../${'\x1b'}[31m`], root);
     assert.notEqual(r.code, EXIT_OK);
-    assert.ok(!r.stderr.includes(''), 'an escape byte must never reach the terminal, even on a refusal');
+    assert.ok(!r.stderr.includes('\x1b'), 'an escape byte must never reach the terminal, even on a refusal');
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   });

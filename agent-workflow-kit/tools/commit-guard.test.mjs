@@ -733,8 +733,10 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const oid = 'a'.repeat(40);
     const invalidName = Buffer.concat([Buffer.from('bad-'), Buffer.from([0xff, 0xfe]), Buffer.from('.txt')]);
     const ok = (out) => ({ status: 0, stdout: Buffer.isBuffer(out) ? out : Buffer.from(out), stderr: Buffer.from('') });
+    // The location probes ask rev-parse for one line per query and realpath each answer, so the
+    // fake names an EXISTING directory for every query (all three identities agree: a work tree).
     const runGit = (args) => {
-      if (args[0] === 'rev-parse') return ok('/tmp/fake-root\n');
+      if (args[0] === 'rev-parse') return ok(`${args.slice(1).map(() => tmpdir()).join('\n')}\n`);
       if (args[0] === 'diff' && args[1] === '--cached') return ok('');
       if (args[0] === 'diff') return ok('');
       if (args[0] === 'config') return { status: 1, stdout: Buffer.from(''), stderr: Buffer.from('') };
@@ -958,7 +960,7 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const killed = { status: null, signal: 'SIGKILL', stdout: Buffer.from(''), stderr: Buffer.from('') };
     const ok = (out) => ({ status: 0, stdout: Buffer.from(out), stderr: Buffer.from('') });
     const runGit = (args) => {
-      if (args[0] === 'rev-parse') return ok('/tmp/fake-root\n');
+      if (args[0] === 'rev-parse') return ok(`${args.slice(1).map(() => tmpdir()).join('\n')}\n`);
       if (args[0] === 'diff' && args[1] === '--cached') return killed;
       return ok('');
     };

@@ -18,37 +18,18 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { configFail, configPathFor, scopeFail } from './source-size-refusal.mjs';
+import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';
 
 const LF = 0x0a;
 const CR = 0x0d;
-const TAB = 0x09;
 const SLASH = 0x2f;
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const SYMLINK_MODE = '120000';
 const GITLINK_MODE = '160000';
 
-// Raw bytes in, raw bytes out: `ls-files -s -z` emits mode, object and stage, then a TAB, then the
-// path, then a NUL — and the path half is never decoded before it has been matched, so a name
-// carrying a tab or a newline survives intact (splitting on lines would mangle it).
-// The object id is carried through rather than dropped: the record already holds it, and a consumer
-// that must read what the index HOLDS (not what the worktree happens to show) needs exactly that.
-const parseIndexEntries = (buf) => {
-  const entries = [];
-  let start = 0;
-  while (start < buf.length) {
-    let end = buf.indexOf(0, start);
-    if (end === -1) end = buf.length;
-    const record = buf.subarray(start, end);
-    const tab = record.indexOf(TAB);
-    if (tab !== -1) {
-      const head = record.subarray(0, tab).toString('utf8').split(' ');
-      entries.push({ mode: head[0], sha: head[1], stage: Number(head[2]), path: record.subarray(tab + 1) });
-    }
-    start = end + 1;
-  }
-  return entries;
-};
+// The `ls-files -s -z` record parser lives in the git leaf (raw bytes in, raw path bytes out, the
+// object id carried through so a consumer reading what the index HOLDS has it) — one home shared
+// with the control-byte gate.
 
 // A path whose bytes are not valid UTF-8 round-trips to something DIFFERENT (the replacement char is
 // lossy) — that is the whole test, and it is exact.
@@ -65,11 +46,24 @@ const bufSegmentPrefix = (path, prefix) =>
 const bufEndsWith = (path, suffix) =>
   path.length >= suffix.length && path.subarray(path.length - suffix.length).equals(suffix);
 
+// The enumeration-error class (exit 2) also refuses every git LOCATION but a work tree, by its own
+// state name — a redirecting GIT_DIR would otherwise enumerate ANOTHER repository's index in
+// silence — and a runner that throws, which is an answer here, never a raw stack.
 export const enumerateIndex = (cwd, deps = {}) => {
   const spawn = deps.spawn ?? spawnSync;
-  const result = spawn('git', ['ls-files', '-s', '-z'], { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+  const env = deps.env ?? process.env;
+  const location = resolveGitLocation(cwd, { spawn, env });
+  if (location.state !== 'work-tree') {
+    throw configFail(`the git index could not be enumerated in ${cwd} (the git location is ${location.state}: ${location.cause}) — the declared scope is unknown, so nothing is judged`);
+  }
+  let result;
+  try {
+    result = spawn('git', ['ls-files', '-s', '-z'], { cwd, env: withGitPath(env), maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+  } catch (err) {
+    result = { error: err };
+  }
   if (result.error || result.status !== 0) {
-    const why = result.error ? result.error.message : `git exited ${result.status}`;
+    const why = result.error ? result.error.message : result.signal ? `git was killed by ${result.signal}` : `git exited ${result.status}`;
     throw configFail(`the git index could not be enumerated in ${cwd} (${why}) — the declared scope is unknown, so nothing is judged`);
   }
   return parseIndexEntries(result.stdout);

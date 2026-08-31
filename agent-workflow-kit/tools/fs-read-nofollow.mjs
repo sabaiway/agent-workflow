@@ -5,7 +5,7 @@
 // no-follow read without a cycle. flow-store-read.mjs re-exports everything here, so every
 // existing consumer keeps its import site. Dependency-free, Node >= 22.
 
-import { readFileSync, lstatSync, openSync, closeSync, fstatSync, constants as fsConstants } from 'node:fs';
+import { readFileSync, readSync, lstatSync, openSync, closeSync, fstatSync, constants as fsConstants } from 'node:fs';
 
 // Local no-follow lstat (null ONLY on a true ENOENT).
 export const lstatNoFollowRead = (path, lstat = lstatSync) => {
@@ -24,6 +24,14 @@ export const describeNonRegular = (st) =>
 // ignoreBOM: a BOM must surface as malformed line 1, not vanish and get rewritten without it.
 const FATAL_UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const hasOpenFlag = (v) => typeof v === 'number' && v !== 0;
+const errCode = (err) => (err && err.code) || (err && err.message) || null;
+// The open failures with a NAME of their own (shared by both readers); null for every other.
+const openFailure = (err) => {
+  if (err && err.code === 'ENOENT') return { outcome: 'absent' };
+  if (err && err.code === 'ELOOP') return { outcome: 'foreign', className: 'symlink', isDirectory: false };
+  if (err && err.code === 'EISDIR') return { outcome: 'foreign', className: 'directory', isDirectory: true };
+  return null;
+};
 
 // The ONE race-free read for store/lock bytes: open O_NOFOLLOW|O_NONBLOCK, fstat the DESCRIPTOR,
 // read through it, decode fatally — a pathname swapped after the open cannot change what the fd
@@ -89,9 +97,8 @@ const readNoFollowCore = (path, io, closeBox) => {
     }
     return { outcome: 'ok', content, dev: st.dev, ino: st.ino };
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { outcome: 'absent' };
-    if (err && err.code === 'ELOOP') return { outcome: 'foreign', className: 'symlink', isDirectory: false };
-    if (err && err.code === 'EISDIR') return { outcome: 'foreign', className: 'directory', isDirectory: true };
+    const known = openFailure(err);
+    if (known !== null) return known;
     try {
       const st = lstatNoFollowRead(path, lstat);
       if (st && !st.isFile()) return { outcome: 'foreign', className: describeNonRegular(st), isDirectory: st.isDirectory() };
@@ -107,6 +114,51 @@ const readNoFollowCore = (path, io, closeBox) => {
     }
   }
 };
+
+// readFileBytesNoFollowCapped(path, cap, io?) → ok { bytes } | over-cap { cap } | absent | foreign |
+// error — the control-byte gate's read: open O_NOFOLLOW|O_NONBLOCK, fstat the DESCRIPTOR for its
+// kind, read on it in bounded chunks until EOF or cap+1 bytes; the fstat SIZE is never consulted (a
+// file growing after the fstat still refuses); no decode (a lone 0xE9 is ok bytes); no lstat fallback.
+// ONE skeleton: no open without both flags; fstat the DESCRIPTOR; the body runs on a regular file only.
+const READ_CHUNK = 64 * 1024;
+const withRegularDescriptor = (path, io, body) => {
+  const consts = io.constants ?? fsConstants;
+  const open = io.open ?? openSync;
+  const fstat = io.fstat ?? fstatSync;
+  const close = io.close ?? closeSync;
+  if (!hasOpenFlag(consts.O_NONBLOCK) || !hasOpenFlag(consts.O_NOFOLLOW)) {
+    return { outcome: 'error', code: 'this platform exposes no usable O_NOFOLLOW|O_NONBLOCK open flags — refusing to open (fail closed)' };
+  }
+  let fd = null;
+  let result;
+  try {
+    fd = open(path, (consts.O_RDONLY ?? 0) | consts.O_NOFOLLOW | consts.O_NONBLOCK);
+    const st = fstat(fd);
+    result = st.isFile() ? body(fd) : { outcome: 'foreign', className: describeNonRegular(st), isDirectory: st.isDirectory() };
+  } catch (err) {
+    result = openFailure(err) ?? { outcome: 'error', code: errCode(err) ?? 'read failed' };
+  } finally {
+    if (fd !== null) {
+      try { close(fd); } catch (err) { result = { outcome: 'error', code: `descriptor close failed (${errCode(err) ?? 'close failed'}) — fail closed` }; }
+    }
+  }
+  return result;
+};
+// probeRegularFileNoFollow(path, io?) → ok | absent | foreign | error: the kind check alone, no read.
+export const probeRegularFileNoFollow = (path, io = {}) => withRegularDescriptor(path, io, () => ({ outcome: 'ok' }));
+export const readFileBytesNoFollowCapped = (path, cap, io = {}) => withRegularDescriptor(path, io, (fd) => {
+  const read = io.read ?? readSync;
+  const chunks = [];
+  let total = 0;
+  while (total <= cap) {
+    const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK, cap + 1 - total));
+    const n = read(fd, chunk, 0, chunk.length, null);
+    if (n === 0) break;
+    chunks.push(chunk.subarray(0, n));
+    total += n;
+  }
+  return total > cap ? { outcome: 'over-cap', cap } : { outcome: 'ok', bytes: Buffer.concat(chunks, total) };
+});
 
 // readFileBytesNoFollow(path, io?) → { outcome: 'ok', bytes } | absent | foreign | error — the
 // BYTES twin of the reader above for consumers whose domain is byte offsets (the Phase-4

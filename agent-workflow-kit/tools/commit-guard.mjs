@@ -54,6 +54,8 @@ import {
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 import { computeFlowDecision } from './flow-check.mjs';
+import { resolveGitLocation } from './git-env.mjs';
+import { escapeForDisplay } from './repo-lex.mjs';
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
@@ -201,15 +203,25 @@ const flowAdvisoryLines = (flow) => (flow.present && flow.armed
   : []);
 
 export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
-  const rootTop = gitLine(['rev-parse', '--show-toplevel'], cwd);
-  if (rootTop == null) return { code: 1, lines: ['commit-guard: not a git work tree — nothing to guard'] };
-  // FIRST: a pure tree property needing no store read. Its recovery re-stages the tree and re-mints
+  // FIRST of all: WHICH repository. The location is a closed six-state table judged by realpath
+  // agreement (the git-env leaf); every state but work-tree refuses by its own name — a redirecting
+  // GIT_DIR, a killed or absent git, a bare repository — instead of guarding another tree or
+  // passing a tree git could not describe. A pre-commit hook's own env agrees and passes.
+  const location = resolveGitLocation(cwd, { env });
+  if (location.state !== 'work-tree') {
+    // The cause can carry a repository PATH (a newline-bearing one included) — escaped, ONE line.
+    return { code: 1, lines: [`commit-guard: REFUSED — the git location is ${location.state} (${escapeForDisplay(location.cause)}) — nothing is guarded until git names one work tree from ${escapeForDisplay(cwd)}`] };
+  }
+  const rootTop = location.top;
+  // NEXT: a pure tree property needing no store read. Its recovery re-stages the tree and re-mints
   // the receipt, so every arm below is re-decided anyway — naming a stale fingerprint ahead of it
   // would send the operator down a recovery they must redo.
-  const working = computeWorkingState(cwd);
+  const working = computeWorkingState(cwd, { env });
+  if (working === null) return { code: 1, lines: ['commit-guard: REFUSED — the working state is undecidable (a git query failed or was killed) — nothing is guarded'] };
   const indexLag = decideIndexLag(working);
   if (indexLag !== null) return indexLag;
-  const fingerprint = computeTreeFingerprint(cwd);
+  const fingerprint = computeTreeFingerprint(cwd, { env });
+  if (fingerprint === null) return { code: 1, lines: ['commit-guard: REFUSED — the tree fingerprint is undecidable (a git query failed or was killed) — nothing is guarded'] };
   // The CONTENT-FREE lanes — the second pure tree property, decided here for the same reason the
   // index lag is: no store read can answer it. A payload with no bytes states nothing about what
   // this commit will carry, and its fingerprint is the ONE value every clean moment of every

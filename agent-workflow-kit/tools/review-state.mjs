@@ -21,8 +21,8 @@
 //           the tree is clean (nothing to review — under a non-solo review obligation the PASS
 //           still NAMES every plan in flight and states that the gate arms as soon as the tree
 //           turns dirty, so a latent arm is discoverable before it blocks a pending commit); when
-//           the cwd is not a git work tree
-//           (the gate can never arm there, so nothing is announced); and when
+//           git ITSELF answers not-a-repository under both discoveries (the ONLY non-work-tree
+//           location that passes; the five other states refuse by name); and when
 //           the obligations are SATISFIED: under `reviewed`, >=1 backend's latest normal receipt
 //           attests SHIP-CLASS (ship / ship with nits) for the current tree; under `council`,
 //           EVERY review-capable backend attests ship-class OR carries an explicit current-tree
@@ -109,7 +109,8 @@ import { selectReliedOnReceipt, evaluateVetoOverride, evaluateInternalAttestatio
 // in leaf modules so the procedures read surface reaches them without this module's write-API
 // graph; re-exported here so every historical consumer keeps its import site.
 import { PLANS_REL, isScratchPlanName, plansInFlight } from './plan-files.mjs';
-import { shellQuoteArg } from './repo-lex.mjs';
+import { escapeForDisplay, shellQuoteArg } from './repo-lex.mjs';
+import { resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';
 import { readDelegationLedger } from './dispatch-store-read.mjs';
 import {
   decideHeldSession, HELD_EXECUTE_WRAPPER, HELD_RECEIPT_BACKEND, judgeLedger,
@@ -157,18 +158,18 @@ export const AWAIT_POLL_MS = 5000;
 
 // ── git plumbing (read-only queries; injectable for tests) ─────────────────────────
 
-const gitRaw = (args, cwd) =>
-  spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+const gitRaw = (args, cwd, env) =>
+  spawnSync('git', args, { cwd, env: withGitPath(env ?? process.env), maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
 
 // stdout Buffer of a git query, or null when git fails (not a repo / git absent).
-const gitBuf = (args, cwd) => {
-  const r = gitRaw(args, cwd);
+const gitBuf = (args, cwd, env) => {
+  const r = gitRaw(args, cwd, env);
   if (r.error || r.status !== 0) return null;
   return r.stdout;
 };
 
-const gitLine = (args, cwd) => {
-  const buf = gitBuf(args, cwd);
+const gitLine = (args, cwd, env) => {
+  const buf = gitBuf(args, cwd, env);
   return buf == null ? null : buf.toString('utf8').replace(/\r?\n$/, '');
 };
 
@@ -181,10 +182,10 @@ const gitLine = (args, cwd) => {
 // ignores them by construction; this count only feeds ONE non-failing advisory line naming the
 // cosmetic sandbox-masks apply — an applied managed block hides the paths from --exclude-standard,
 // so the advisory disappears exactly when the status noise does (no standing detector).
-export const countNeverCommittableUntracked = (cwd, { lstat = lstatSync } = {}) => {
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+export const countNeverCommittableUntracked = (cwd, { lstat = lstatSync, env } = {}) => {
+  const top = gitLine(['rev-parse', '--show-toplevel'], cwd, env);
   if (top == null) return 0;
-  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top, env);
   if (untrackedZ == null) return 0;
   return untrackedZ
     .toString('utf8')
@@ -345,7 +346,10 @@ export const buildHeldSessionState = ({
 // must read the same config/plans or a dirty unreceipted tree could false-PASS as "no plan in
 // flight". Outside a git tree the cwd is the only anchor (and --check exits 0).
 export const buildState = ({ cwd, env = process.env, detect = detectBackends, surveyVehicle, lstat = lstatSync, readFile = readFileSync } = {}) => {
-  const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
+  // WHICH repository, first; the config/plan anchor is the stripped discovery's top (from a subdirectory the bare cwd would miss docs/plans — decideCheck refuses on an unanchored root).
+  const location = resolveGitLocation(cwd, { env });
+  const anchoredTop = location.top ?? gitLine(['rev-parse', '--show-toplevel'], cwd, stripGitLocationEnv(env));
+  const root = anchoredTop ?? cwd;
   const { config, source: configSource } = loadConfig(root);
   // A bridge-detector throw reaches the hook, never a catch that would also lose the surveyed
   // executor vehicle: bridge readiness goes unknown (fail closed below), the carrier stays known.
@@ -354,16 +358,15 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
     detectionWarning = `backend detection failed (${(err && err.message) || err}) — bridge readiness unknown.`;
   };
   const detection = composeReadiness(root, { detect, surveyVehicle, onDetectError });
-  // The resolver stays for DISPLAY/diagnostics only; the OBLIGATIONS come from the configured
-  // recipe (never the readiness-degraded effective one — no silent solo).
+  // The resolver stays for DISPLAY only; the OBLIGATIONS come from the configured recipe (never the readiness-degraded effective one — no silent solo).
   const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: ACTIVITY, slot: SLOT });
   const obligations = requiredBackendsForConfiguredRecipe({ config: config ?? {}, readiness: detection, detectionFailed: detectionWarning != null });
   const requiredBackends = obligations.backends;
   const plans = plansInFlight(root);
   // The injected lstat threads through EVERY stat-dependent computation (fingerprint, clean, the
   // mask count) — a partial injection would let a test observe an inconsistent state.
-  const fingerprint = computeTreeFingerprint(cwd, { lstat });
-  const clean = fingerprint == null ? null : isTreeClean(cwd, { lstat });
+  const fingerprint = location.state === 'work-tree' ? computeTreeFingerprint(cwd, { lstat, env }) : null;
+  const clean = fingerprint == null ? null : isTreeClean(cwd, { lstat, env });
   const receiptsPath = resolveReceiptsPath(cwd, env);
   const receiptsRead = receiptsPath ? readReceipts(receiptsPath) : { receipts: [], malformed: 0 };
   const { receipts, malformed } = receiptsRead;
@@ -469,6 +472,8 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
     backends: armedBackends,
     plans,
     root,
+    rootAnchored: anchoredTop !== null,
+    location,
     fingerprint,
     clean,
     receiptsPath,
@@ -482,7 +487,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
     evidenceUnavailable: degrade.unavailable,
     degradedExempt,
     heldSession,
-    maskedUntracked: countNeverCommittableUntracked(cwd, { lstat }),
+    maskedUntracked: countNeverCommittableUntracked(cwd, { lstat, env }),
     detectionWarning,
     flowPresent,
     flowArmed,
@@ -519,7 +524,7 @@ const backendFailurePart = (b, state) => {
   if (b.state === 'unrecognized-verdict') return `${b.backend}: the latest normal receipt carries an unrecognized verdict (${JSON.stringify(b.verdict)}) — an unknown verdict never attests (fail-closed); re-run the review`;
   if (b.state === 'ungrounded') return `${b.backend}: the latest normal receipt is ungrounded — re-run grounded (--facts)`;
   if (b.state === 'probe') return `${b.backend}: only probe receipts for the current tree (CODEX_PROBE=1 / AGY_PROBE=1 relaxes the quality guards) — a probe review never attests; re-run a real one`;
-  if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${state.receiptsPath}`;
+  if (b.state === 'rejected') return `${b.backend}: current-tree receipts rejected — ${rejectionCause(b)} (fail-closed); inspect ${escapeForDisplay(state.receiptsPath)}`;
   if (b.state === 'stale') return `${b.backend}: receipts exist but none matches the current tree (edited after review) — run a fresh review`;
   return `${b.backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${CORE_EVIDENCE_TOOL} degrade --backend ${b.backend} --reason "...")`;
 };
@@ -530,7 +535,7 @@ const describesHeldRecovery = (state) => {
   const canRetry = substitution.folded === false;
   if (state.evidenceUnavailable === true) {
     const retry = canRetry ? '; or fold the retry of that thread' : '';
-    return ` — the evidence store is unavailable, so the degrade lane cannot be judged: repair it (inspect ${state.evidenceStorePath}) and re-check${retry}`;
+    return ` — the evidence store is unavailable, so the degrade lane cannot be judged: repair it (inspect ${escapeForDisplay(state.evidenceStorePath)}) and re-check${retry}`;
   }
   const canDegrade = typeof substitution.postTreeDigest === 'string'
     && state.fingerprint === substitution.postTreeDigest;
@@ -553,11 +558,13 @@ export const decideCheck = (state) => {
   // Store diagnostics ride EVERY check line, early exits (and the unknowable arm) included — a
   // malformed receipt line, an unavailable evidence store, or an unreadable receipts store is
   // never hidden behind any exit.
-  const malformedNote = state.malformed > 0 ? ` — ${state.malformed} malformed receipt line(s) ignored; inspect ${state.receiptsPath}` : '';
+  const malformedNote = state.malformed > 0 ? ` — ${state.malformed} malformed receipt line(s) ignored; inspect ${escapeForDisplay(state.receiptsPath)}` : '';
   const evidenceNote = state.evidenceUnavailable
-    ? ` — evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}); the degrade escape is denied (fail-closed) — inspect ${state.evidenceStorePath}`
+    ? ` — evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}); the degrade escape is denied (fail-closed) — inspect ${escapeForDisplay(state.evidenceStorePath)}`
     : '';
-  const earlyNotes = `${malformedNote}${evidenceNote}${state.receiptsReadError ? ` — receipts store unreadable (${state.receiptsReadError}); inspect ${state.receiptsPath}` : ''}`;
+  const earlyNotes = `${malformedNote}${evidenceNote}${state.receiptsReadError ? ` — receipts store unreadable (${state.receiptsReadError}); inspect ${escapeForDisplay(state.receiptsPath)}` : ''}`;
+  // The git LOCATION (hand-built states carry none; the fingerprint decides there) rules below the solo arm: not-a-repository passes, the four other non-work-tree states refuse by name.
+  const location = state.location ?? { state: state.fingerprint == null ? 'not-a-repository' : 'work-tree', cause: 'no location was resolved for a hand-built state' };
   if (state.heldSession !== null && state.heldSession !== undefined) {
     const held = decideHeldSession(state.heldSession);
     const heldRecovery = describesHeldRecovery(state);
@@ -574,11 +581,14 @@ export const decideCheck = (state) => {
       : `no reviewer backend is ready — the computed ${ACTIVITY}.${SLOT} default is solo`;
     return { code: 0, reason: `${why} — no receipt required${earlyNotes}` };
   }
+  // An UNANCHORED root (git dead everywhere): the bare-cwd plan inventory cannot say "no plan".
+  if (location.state !== 'work-tree' && location.state !== 'not-a-repository' && state.rootAnchored === false) return { code: 1, reason: `the git location is ${location.state} — ${escapeForDisplay(location.cause)} — and the project root cannot be anchored, so the plan arm cannot decide (fail closed)${earlyNotes}` };
   if (state.plans.length === 0) return { code: 0, reason: `no plan in flight (docs/plans/ holds no active plan) — no receipt required${earlyNotes}` };
-  if (state.fingerprint == null) return { code: 0, reason: `not a git work tree — nothing to fingerprint${earlyNotes}` };
-  // A clean tree PASSES, but never silently: the no-plan arm above already returned, so reaching
-  // here means >=1 plan IS in flight and this gate arms the moment the tree turns dirty. Naming
-  // each file forward-looking is what makes the arm discoverable BEFORE it blocks a pending commit.
+  if (location.state !== 'work-tree' && location.state !== 'not-a-repository') return { code: 1, reason: `the git location is ${location.state} — ${escapeForDisplay(location.cause)} — refusing to judge receipts for a tree git cannot name (fail closed)${earlyNotes}` };
+  if (location.state === 'not-a-repository') return { code: 0, reason: `not a git repository (git's own answer: ${escapeForDisplay(location.cause)}) — nothing to fingerprint${earlyNotes}` };
+  if (state.fingerprint == null || state.clean === null) return { code: 1, reason: `the tree ${state.fingerprint == null ? 'fingerprint' : 'clean check'} is undecidable in a work tree (a git query failed or was killed) — refusing to judge receipts (fail closed)${earlyNotes}` };
+  // A clean tree PASSES, but never silently: >=1 plan IS in flight here, and this gate arms the
+  // moment the tree turns dirty — naming each file makes the arm discoverable BEFORE it blocks.
   if (state.clean === true) {
     // Each name is byte-preserving and quoted because this reason is one gate-report line.
     const named = state.plans.map((p) => quoteReportName(p)).join(', ');
@@ -595,7 +605,7 @@ export const decideCheck = (state) => {
   // whatever the recipe consults, so a recipe flip to solo can never bury one.
   if (state.obligations.recipe === 'solo') {
     if (state.receiptsReadError != null) {
-      return { code: 1, reason: `the receipts store is unreadable (${state.receiptsReadError}) — "no standing veto" cannot be established, so the internal-only floor fails closed; inspect ${state.receiptsPath}${earlyNotes}` };
+      return { code: 1, reason: `the receipts store is unreadable (${state.receiptsReadError}) — "no standing veto" cannot be established, so the internal-only floor fails closed; inspect ${escapeForDisplay(state.receiptsPath)}${earlyNotes}` };
     }
     const standing = state.soloVetoRows.filter((b) => (b.state === 'current' && !b.shipClass && !b.overrideLabel) || b.state === 'unrecognized-verdict');
     if (standing.length > 0) {
@@ -641,7 +651,7 @@ export const decideCheck = (state) => {
       .filter((b) => !(printed.has(b.backend) && b.state === 'rejected'))
       .reduce((n, b) => n + (b.markerRejected ?? 0) + (b.unmarkedRejected ?? 0), 0);
     const markerNote = total > 0
-      ? ` — ${total} receipt(s) rejected: an untrustworthy probe marker (malformed, or absent — silence is not a declaration) — fail-closed; inspect ${state.receiptsPath}`
+      ? ` — ${total} receipt(s) rejected: an untrustworthy probe marker (malformed, or absent — silence is not a declaration) — fail-closed; inspect ${escapeForDisplay(state.receiptsPath)}`
       : '';
     return `${markerNote}${earlyNotes}`;
   };
@@ -716,12 +726,12 @@ const formatHuman = (state, check) => {
   ];
   if (state.detectionWarning) lines.push(`  ⚠ ${state.detectionWarning}`);
   lines.push(`  plan in flight: ${state.plans.length ? state.plans.map((name) => quoteReportName(name)).join(', ') : '(none)'}`);
-  if (state.fingerprint == null) lines.push('  tree: not a git work tree');
+  if (state.fingerprint == null) lines.push(`  tree: ${state.location != null && state.location.state !== 'work-tree' ? `git location ${state.location.state} — ${escapeForDisplay(state.location.cause)}` : 'the fingerprint is undecidable (a git query failed or was killed)'}`);
   else if (state.clean === true) lines.push('  tree: clean (nothing to review)');
   else lines.push(`  tree fingerprint: ${state.fingerprint}`);
   if (state.heldSession != null) lines.push(`  ${decideHeldSession(state.heldSession).line}`);
-  lines.push(`  receipts: ${state.receiptsPath ?? '(unresolvable — no git dir)'} (${state.receiptCount} line(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
-  if (state.receiptsReadError) lines.push(`  ⚠ receipts store unreadable (${state.receiptsReadError}) — inspect ${state.receiptsPath}`);
+  lines.push(`  receipts: ${state.receiptsPath == null ? '(unresolvable — no git dir)' : escapeForDisplay(state.receiptsPath)} (${state.receiptCount} line(s)${state.malformed ? `, ${state.malformed} malformed — inspect the file` : ''})`);
+  if (state.receiptsReadError) lines.push(`  ⚠ receipts store unreadable (${state.receiptsReadError}) — inspect ${escapeForDisplay(state.receiptsPath)}`);
   if (state.evidenceUnavailable) lines.push(`  ⚠ evidence store unavailable (${state.evidenceMalformed} malformed line(s)${state.evidenceReadError ? `, read error: ${state.evidenceReadError}` : ''}) — the degrade escape is denied (fail-closed)`);
   const exempt = new Set(state.degradedExempt);
   for (const b of state.backends) {
@@ -778,7 +788,7 @@ malformed, foreign or audit-refused ledger, a failed HEAD read, or a SUBSTITUTED
 exits 1 (a substitution is lifted only by a codex-exec degrade at the substituted return's own
 tree, or the fold of that thread's retry). THEN: 0 for solo / no plan in flight /
 a clean tree (under a non-solo review obligation the PASS names every plan in flight and its arm) /
-not-a-git-tree / obligations satisfied (reviewed: >=1 ship-class attestation;
+a cwd where git ITSELF answers not-a-repository (the only passing non-work-tree state; the four others exit 1 by name) / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
 unrecognized verdict, a missing/stale/ungrounded/probe-only backend without a degrade record,
 an all-degraded tree, or a down detector with no configured recipe.

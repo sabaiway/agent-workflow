@@ -141,6 +141,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/plan-shape-cli.mjs',
       'tools/review-rounds.mjs',
       'tools/review-rounds-cli.mjs',
+      // the control-byte gate, the git-location leaf it and four consumers import, and its mode doc —
+      // by NAME: a project declares the gate's path as a gate command, and the router names the mode doc
+      'tools/control-bytes.mjs',
+      'tools/git-env.mjs',
+      'references/modes/control-bytes.md',
       // the structural checker of the spec store (spec layer 2b) — the op grammar, the IO-free judge
       // and the CLI half. By NAME for the same reason as fold-scope: the procedures advisor renders
       // the CLI path into a copy-paste command, and the judge imports the other two at load.
@@ -744,7 +749,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       because the planning canon renders the CLI path into the --check / --verify commands.
     // 275 = 273 + the review-round table's pure half and CLI; NAMED because the procedure renders it.
     // 277 = 275 + the delegation read leaf and the pure held-session judge.
-    assert.equal(packed.length, 277, `tarball file count drifted (${packed.length} ≠ 277)`);
+    // 280 = 277 + the control-byte gate, the git-location leaf and the gate's mode doc.
+    assert.equal(packed.length, 280, `tarball file count drifted (${packed.length} ≠ 280)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

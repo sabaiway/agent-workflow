@@ -33,6 +33,7 @@ import { spawnSync } from 'node:child_process';
 import { isDirectRun } from './direct-run.mjs';
 import { fail } from './orchestration-config.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
 // (f) --autonomy (AD-044 Plan 3): the effective per-project autonomy policy for the facts payload.
 // READ core only — never autonomy-write.mjs (the import-split invariant).
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from './autonomy-config.mjs';
@@ -163,9 +164,9 @@ const systemTempRoots = () => [...new Set([tmpdir(), process.env.TMPDIR, '/tmp']
 
 const gitLine = (args, cwd) => {
   // Ambient GIT_* location vars (GIT_DIR / GIT_WORK_TREE / …) would let rev-parse prove a FOREIGN
-  // tree — every location answer must come from cwd alone, for every gitLine consumer.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^GIT_/i.test(k)));
-  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true });
+  // tree — every location answer must come from cwd alone, for every gitLine consumer. The strip
+  // is the git-env leaf's (GIT_* only — never the test fixtures' hermetic pins).
+  const r = spawnSync('git', args, { cwd, env: stripGitLocationEnv(process.env), encoding: 'utf8', windowsHide: true });
   return r.error || r.status == null ? null : { status: r.status, stdout: r.stdout ?? '' };
 };
 

@@ -133,7 +133,7 @@ export const SHELL_READONLY = Object.freeze([
 // seed time from the RUNNING tool's own location — resolved-absolute, so a moved or reinstalled
 // skill leaves a stale rule that FAIL-SAFE prompts again (never a silent widening).
 //
-// Membership (13, frozen): the read-only kit tools plus run-gates.mjs — which is NOT read-only but
+// Membership (14, frozen): the read-only kit tools plus run-gates.mjs — which is NOT read-only but
 // project-exec (it runs the project's OWN declared gates.json commands), so it seeds as ONE exact
 // byte-string pinned to this project root (`--cwd <resolved root>`): a wildcard would be BROADER
 // than the AD-037 hook boundary (`--cwd <dir>` executes an arbitrary OTHER project's gates.json)
@@ -163,6 +163,8 @@ export const KIT_READONLY_TOOLS = Object.freeze([
   // The round table the procedures advisor names every review round; its path argument is resolved
   // and compared, never opened as a pattern, so it rides the settings-level posture like the rest.
   'tools/review-rounds-cli.mjs',
+  // The control-byte gate: a pure reader over the work tree, run by hand before the matrix runs it.
+  'tools/control-bytes.mjs',
 ]);
 // Writer previews: ONLY writers whose ARG-FREE invocation is a documented dry-run ("Default is
 // --dry-run" in their usage) seed an EXACT preview byte-string — every --apply/--write/--yes keeps
@@ -780,7 +782,7 @@ export const screenAllowlistEntry = (pattern) => {
 };
 
 /**
- * Derive the opt-in kit-tools tier for a project: 12 wildcard entries (resolved-absolute script
+ * Derive the opt-in kit-tools tier for a project: 13 wildcard entries (resolved-absolute script
  * path + args wildcard), ONE exact run-gates entry pinned to the resolved project root, and the
  * writer-preview exact dry-run byte-strings. Pure derivation — a stale path simply prompts again.
  */

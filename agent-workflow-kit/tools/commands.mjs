@@ -225,6 +225,13 @@ const CATALOG = [
     oneLine: 'Check that every configured review backend has receipted the current uncommitted tree with a fresh grounded review; --check turns it into a gate exit code.',
   },
   {
+    key: 'control-bytes',
+    invocation: invocationOf('control-bytes'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'Refuse any raw control byte (C0 or DEL; TAB, LF, CR admitted) in the work tree — a path name, a regular file\'s content unless a git attribute says binary, a symlink target; --check is the gate spelling of the same report and exit code.',
+  },
+  {
     key: 'receipt-deadline',
     invocation: invocationOf('receipt-deadline'),
     group: 'Orchestrate',

@@ -138,7 +138,7 @@ describe('review-state --check — exit-0 branches of the normative contract', (
     assert.match(r.stdout, /clean/);
   });
 
-  it('not a git work tree → 0 (nothing to fingerprint), stated', () => {
+  it('not a git repository (git\'s own answer) → 0 (nothing to fingerprint), stated', () => {
     const root = mkdtempSync(join(tmpdir(), 'review-state-nogit-'));
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), COUNCIL_CONFIG);
@@ -147,7 +147,7 @@ describe('review-state --check — exit-0 branches of the normative contract', (
     const r = check(root);
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /not a git work tree/);
+    assert.match(r.stdout, /not a git repository \(git's own answer/);
   });
 
   it('every recipe-named backend receipted current + grounded → 0', () => {

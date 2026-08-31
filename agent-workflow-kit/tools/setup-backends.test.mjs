@@ -120,7 +120,7 @@ describe('deriveLinks', () => {
     assert.equal(deriveLinks(manifestOf('codex-cli-bridge', CODEX_ROLES), SK).length, 2);
   });
 
-  for (const bad of ['../evil', 'a/b', 'ab', '', 'a b']) {
+  for (const bad of ['../evil', 'a/b', 'a\x01b', '', 'a b']) {
     it(`rejects cmd ${JSON.stringify(bad)} (allowlist)`, () => {
       const roles = { execute: { cmd: bad, source: 'bin/x.sh' } };
       assert.throws(() => deriveLinks(manifestOf('codex-cli-bridge', roles), SK), (e) => e.code === SETUP_STOP);

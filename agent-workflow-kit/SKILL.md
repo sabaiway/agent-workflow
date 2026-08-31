@@ -183,6 +183,10 @@ guarded — read `${CLAUDE_SKILL_DIR}/references/modes/bridge-settings.md` befor
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/review-state.md` before acting.
 
+### Mode: control-bytes
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/control-bytes.md` before acting.
+
 ### Mode: receipt-deadline
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/receipt-deadline.md` before acting.

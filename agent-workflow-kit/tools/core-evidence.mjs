@@ -43,6 +43,7 @@ import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { lexicalRepoRelative } from './repo-lex.mjs';
+import { resolveGitLocation, withGitPath } from './git-env.mjs';
 // The coverage vocabulary leaf: run-gates RECORDS the token this validator checks, and run-gates
 // imports THIS module (the sole-writer boundary), so their shared home sits below both.
 import { COVERAGE, FINAL_COVERAGE_STATES } from './coverage-state.mjs';
@@ -114,15 +115,30 @@ export const isNeverCommittableStat = (stat) =>
   stat != null &&
   (stat.isCharacterDevice() || stat.isBlockDevice() || stat.isFIFO() || stat.isSocket());
 
+// The git runner seam the tree computations share — (args, dir, input, env) — and its guard: a
+// runner that THROWS answers as a failed spawn (measured: a raw stack out of a fingerprint).
+const defaultRunGit = (args, dir, input, env) => spawnSync('git', args, { cwd: dir, input, env: withGitPath(env ?? process.env), maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+const guardedRunner = (runGit, env) => (args, dir, input, override) => {
+  try { return runGit(args, dir, input, override ?? env); } catch (err) { return { error: err, status: null, signal: null, stdout: Buffer.alloc(0), stderr: '' }; }
+};
+const stdoutOf = (r) => (r.error || r.status !== 0 ? null : r.stdout);
+// Only a work-tree location is computed over (git-env's table under the runner's own env) — a redirecting GIT_DIR never hashes another repository in silence.
+const locateWorkTree = (cwd, run, env) => {
+  const location = resolveGitLocation(cwd, { spawn: (cmd, args, opts) => run(args, opts.cwd, undefined, opts.env), env });
+  return location.state === 'work-tree' ? location.top : null;
+};
+
 // The canonical payload bytes: staged diff + unstaged diff + the untracked-not-ignored section —
-// byte-identical to the wrappers' emit_fingerprint_payload, emitted from the work-tree ROOT. Null
-// outside a git work tree. The lstat is injectable ONLY for the never-committable filter tests.
-export const computeFingerprintPayload = (cwd, { lstat = lstatSync } = {}) => {
-  const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
+// byte-identical to the wrappers' emit_fingerprint_payload, emitted from the work-tree ROOT. Null on
+// every location but a work tree. lstat is injectable ONLY for the never-committable filter tests.
+export const computeFingerprintPayload = (cwd, { lstat = lstatSync, runGit = null, env = process.env } = {}) => {
+  const run = guardedRunner(runGit ?? defaultRunGit, env);
+  const top = locateWorkTree(cwd, run, env);
   if (top == null) return null;
-  const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
-  const unstaged = gitBuf(['diff', '--no-ext-diff'], top);
-  const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
+  const buf = (args) => stdoutOf(run(args, top));
+  const staged = buf(['diff', '--cached', '--no-ext-diff']);
+  const unstaged = buf(['diff', '--no-ext-diff']);
+  const untrackedZ = buf(['ls-files', '--others', '--exclude-standard', '-z']);
   if (staged == null || unstaged == null || untrackedZ == null) return null;
   const chunks = [staged, unstaged];
   for (const rel of untrackedZ.toString('utf8').split('\0').filter(Boolean)) {
@@ -348,21 +364,17 @@ const flaggedIndexLag = (top, runGit, lstat, readlink) => {
   return { paths: lagging, submodules: laggingSubmodules, flagged: laggingFlags };
 };
 
-export const computeWorkingState = (cwd, { lstat = lstatSync, readlink = readlinkSync, runGit = null } = {}) => {
-  const run = runGit ?? ((args, dir, input, env) => spawnSync('git', args, { cwd: dir, input, env: env ?? process.env, maxBuffer: GIT_MAX_BUFFER, windowsHide: true }));
-  const topRun = run(['rev-parse', '--show-toplevel'], cwd);
-  if (topRun.error || topRun.status !== 0) return null;
-  const top = topRun.stdout.toString('utf8').replace(/\r?\n$/, '');
+export const computeWorkingState = (cwd, { lstat = lstatSync, readlink = readlinkSync, runGit = null, env = process.env } = {}) => {
+  const run = guardedRunner(runGit ?? defaultRunGit, env);
+  const top = locateWorkTree(cwd, run, env);
+  if (top == null) return null;
   // `--ignore-submodules=none` on the staged probe too: a config-hidden STAGED gitlink would
   // otherwise make stagedDirty false, and isTreeClean would call such a tree clean.
   const staged = run(['diff', '--cached', '--quiet', '--ignore-submodules=none'], top);
   // ONLY 0 or 1 is a usable answer: a signal-killed probe reports status null, which the old
   // `> 1` guard let through as "nothing staged" — a fail-OPEN the whole arm cannot afford.
   if (staged.error || (staged.status !== 0 && staged.status !== 1)) return null;
-  const buf = (args) => {
-    const r = run(args, top);
-    return r.error || r.status !== 0 ? null : r.stdout;
-  };
+  const buf = (args) => stdoutOf(run(args, top));
   // The FULL probe forces submodules back in: diff.ignoreSubmodules / submodule.<n>.ignore would
   // otherwise erase a dirty submodule from the comparison entirely.
   const changedZ = buf(['diff', '--name-only', '-z', '--ignore-submodules=none']);
@@ -370,7 +382,7 @@ export const computeWorkingState = (cwd, { lstat = lstatSync, readlink = readlin
   const untrackedZ = buf(['ls-files', '--others', '--exclude-standard', '-z']);
   if (changedZ == null || plainZ == null || untrackedZ == null) return null;
   const split = (b) => b.toString('utf8').split('\0').filter(Boolean);
-  const changed = split(changedZ);
+  const changed = [...new Set(split(changedZ))]; // an unmerged path is listed once per conflict side
   const plain = new Set(split(plainZ));
   const flagged = flaggedIndexLag(top, run, lstat, readlink);
   if (flagged == null) return null;
@@ -950,6 +962,7 @@ export const runRedProof = ({ cwd = process.cwd(), env = process.env, testId } =
   // captured BEFORE the runs and re-checked after them; any drift refuses below.
   const base = resolveBase(cwd);
   const fingerprint = computeTreeFingerprint(cwd);
+  if (fingerprint == null) throw stop('cannot compute the tree fingerprint — the git location is not a work tree; nothing was observed, no runs were spent');
   const { entry, file, resolveReason } = probeBound({ testId, rootTop, env, reruns, timeoutS });
   const verdict = probeVerdict(entry);
   const counts = `${entry.greens} green / ${entry.reds} red / ${entry.timeouts} timed out / ${entry.runs - entry.greens - entry.reds - entry.timeouts} unresolved of ${entry.runs} run(s)`;
@@ -974,7 +987,6 @@ export const runRedProof = ({ cwd = process.cwd(), env = process.env, testId } =
         `${entry.timeouts > 0 ? 'raise the timeout or make the test faster' : 'replace the flaky test'}, then re-observe. Nothing was recorded.`,
     );
   }
-  if (fingerprint == null) throw stop('cannot compute the tree fingerprint — not a git work tree');
   // Post-run drift recheck: fingerprint, base, and the test-file bytes must all equal the
   // pre-run capture — a mutating test / parallel edit / commit would otherwise mint a record
   // whose fields attest different trees.

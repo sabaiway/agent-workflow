@@ -39,7 +39,7 @@ const SKILL_DIR_VAR = '${CLAUDE_SKILL_DIR}';
 const PROJECT_ROOT_VAR = '${PROJECT_ROOT}';
 
 // ── (a) the hand-maintained frozen tool→mode partition map ──────────────────
-// 8 mode-backed tier tools; the 5 non-mode-backed tools have no catalog entry (checked in (b)).
+// 9 mode-backed tier tools; the 5 non-mode-backed tools have no catalog entry (checked in (b)).
 const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/recipes.mjs': 'recipes',
   'tools/procedures.mjs': 'procedures',
@@ -49,7 +49,10 @@ const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/review-state.mjs': 'review-state',
   'tools/recommendations.mjs': 'recommendations',
   'tools/run-gates.mjs': 'gates',
+  'tools/control-bytes.mjs': 'control-bytes',
 });
+// Mode-backed tools whose OWN source spawns git get the (b) scan too: the argv list is pinned exactly.
+const SCANNED_MODE_BACKED = Object.freeze(['tools/control-bytes.mjs']);
 // Non-mode-backed tier tools: invoked directly, with no `/agent-workflow-kit <mode>` router entry.
 // repo-search is here rather than behind a mode BECAUSE of what it is for — a mode doc would tell
 // the agent to compose a shell form again, which is the exact reflex the lane exists to remove.
@@ -60,18 +63,24 @@ const NON_MODE_BACKED = Object.freeze([
   'tools/path-inventory.mjs',
   'tools/review-rounds-cli.mjs',
 ]);
-// The one process this tool's OWN source spawns: a read-only git query, in exactly this form (the
-// review-state.mjs precedent — read-only git spawns are in-scope read-only); the readers it imports run
-// read-only git queries of their own, which this source scan cannot see — the transitive set is
-// DECLARED here from the import list, not walked, and its argv literal is asserted present in the
-// importing module's source. The import surface is pinned byte-for-byte on purpose: a widened import
-// from the store's mixed module (core-evidence.mjs also exports writers) must go red here.
+// The processes a tool's OWN source spawns: read-only git queries, one LIST of argv literals per
+// tool, each present exactly once; the transitive set is DECLARED from the import list, not walked.
+// The import surface is pinned byte-for-byte; SPAWN_MENTIONS pins the runner-name count (a new mention is a new spawn site).
 const READ_ONLY_GIT_QUERY = Object.freeze({
-  'tools/review-rounds-cli.mjs': "run('git', ['rev-parse', '--show-toplevel']",
+  'tools/review-rounds-cli.mjs': ["run('git', ['rev-parse', '--show-toplevel']"],
+  'tools/control-bytes.mjs': [
+    "['ls-files', '-s', '-z']",
+    "['ls-files', '--others', '--exclude-standard', '-z']",
+    "['check-attr', '--stdin', '-z', 'binary', 'diff']",
+    "['config', '--type=bool', '--get', 'core.symlinks']",
+    "['ls-files', '-v', '-z']",
+  ],
 });
 const TRANSITIVE_GIT_QUERY = Object.freeze({
-  'tools/review-rounds-cli.mjs': ['tools/core-evidence.mjs', "['rev-parse', '--absolute-git-dir']"],
+  'tools/review-rounds-cli.mjs': [['tools/core-evidence.mjs', "['rev-parse', '--absolute-git-dir']"]],
+  'tools/control-bytes.mjs': [['tools/git-env.mjs', "['rev-parse', arg]"]],
 });
+const SPAWN_MENTIONS = Object.freeze({ 'tools/review-rounds-cli.mjs': 4, 'tools/control-bytes.mjs': 2 });
 const ALLOWED_IMPORTS = Object.freeze({
   'tools/review-rounds-cli.mjs': [
     "import { realpathSync } from 'node:fs';",
@@ -84,6 +93,14 @@ const ALLOWED_IMPORTS = Object.freeze({
     "import { ACTIVITIES, composeReadiness, requiredBackendsForConfiguredRecipe } from './recipes.mjs';",
     "import { groupRounds, renderRounds } from './review-rounds.mjs';",
   ],
+  'tools/control-bytes.mjs': [
+    "import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync, readlinkSync, realpathSync, statSync } from 'node:fs';",
+    "import { spawnSync } from 'node:child_process';",
+    "import { isDirectRun } from './direct-run.mjs';",
+    "import { probeRegularFileNoFollow, readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';",
+    "import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';",
+    "import { isRefusedControlByte, renderPathForDisplay } from './repo-lex.mjs';",
+  ],
 });
 // Writer previews are exact BECAUSE these are writers — the map pins that they stay writers.
 const PREVIEW_TOOL_TO_MODE = Object.freeze({
@@ -93,7 +110,7 @@ const PREVIEW_TOOL_TO_MODE = Object.freeze({
 });
 
 describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
-  it('the tier is exactly the 8 mode-backed tools + the 5 non-mode-backed direct tools (set equality)', () => {
+  it('the tier is exactly the 9 mode-backed tools + the 5 non-mode-backed direct tools (set equality)', () => {
     const expected = [...Object.keys(MODE_BACKED_TOOL_TO_MODE), ...NON_MODE_BACKED].sort();
     assert.deepEqual([...KIT_READONLY_TOOLS].sort(), expected);
   });
@@ -127,21 +144,24 @@ describe('non-mode-backed tier tools write nothing', () => {
     /writeFileSync|appendFileSync|mkdirSync|rmSync|renameSync|unlinkSync|createWriteStream|copyFileSync/u;
   const EXEC_API_PATTERN = /node:child_process|execSync|execFileSync|\bexec\(|\bspawn\(/u;
 
-  for (const rel of NON_MODE_BACKED) {
+  for (const rel of [...NON_MODE_BACKED, ...SCANNED_MODE_BACKED]) {
     it(`${rel} carries no write API, and no exec API beyond its declared read-only git queries (own, and transitive by declaration)`, () => {
       const source = readFileSync(join(kitRoot, rel), 'utf8');
       assert.doesNotMatch(source, WRITE_API_PATTERN, `${rel} must stay a pure reader`);
-      const query = READ_ONLY_GIT_QUERY[rel];
-      if (query === undefined) {
+      const queries = READ_ONLY_GIT_QUERY[rel];
+      if (queries === undefined) {
         assert.doesNotMatch(source, EXEC_API_PATTERN, `${rel} must spawn nothing`);
         return;
       }
-      assert.equal(source.split(query).length, 2, `${rel} spawns exactly its declared read-only git query in its own source`);
+      for (const query of queries) {
+        assert.equal(source.split(query).length, 2, `${rel} carries its declared read-only git query ${query} exactly once in its own source`);
+      }
       assert.deepEqual(source.split('\n').filter((line) => line.startsWith('import ')), ALLOWED_IMPORTS[rel], `${rel}: the import surface is pinned — update ALLOWED_IMPORTS deliberately`);
       assert.doesNotMatch(source, /\bimport\s*\(/u, `${rel}: a dynamic import evades the pinned import surface`);
-      const [module, argv] = TRANSITIVE_GIT_QUERY[rel];
-      assert.ok(readFileSync(join(kitRoot, module), 'utf8').includes(argv), `${module} carries the declared transitive query ${argv}`);
-      assert.equal(source.split('spawnSync').length, 5, `${rel} names spawnSync only as the import, the two injectable defaults and main's runner default`);
+      for (const [module, argv] of TRANSITIVE_GIT_QUERY[rel]) {
+        assert.ok(readFileSync(join(kitRoot, module), 'utf8').includes(argv), `${module} carries the declared transitive query ${argv}`);
+      }
+      assert.equal(source.split('spawnSync').length, SPAWN_MENTIONS[rel] + 1, `${rel} names spawnSync exactly ${SPAWN_MENTIONS[rel]} times (the import and the injectable defaults) — a new mention is a new spawn site until declared`);
       assert.doesNotMatch(source, /execSync|execFileSync|\bexec\(|\bspawn\(/u, `${rel} spawns nothing else`);
     });
   }
