@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-08-31 — AD-126 + AD-127 the release is one run with one approval, and a fold on delegated code rides the delegate's held session (kit 10.6.0 · engine 4.5.0 MINOR · memory 7.1.2 unchanged)
+
+**Two decisions since 10.5.0, one of them driving this very release.** AD-126 (`2682492`, repo-only
+scripts): a family release is ONE run under ONE approval — `scripts/release/release-run.mjs` drives
+eight receipted stages (`commit`, `preflight-remote`, `push`, `smoke-candidate`, `cross-version-gate`,
+`live`, `verify`, `smoke-init`) from a `--plan` render that IS the approval text and ends with the
+fingerprint the run then requires, resumes
+at a failed stage from its receipt, and reads npm `@latest` through an isolated `npm view` so no stage
+needs the sandbox off. This entry's release is the first one it drives. AD-127 (`300e01f`, the bumps
+here): **the delegate that wrote the code is the one who folds the review into it.** Thirteen
+diff-review rounds of hand-made folds on the previous feature, with the executor's session id on
+disk the whole time, measured the defect; the answer is a kit mechanism, not a rule to remember. The held session is a
+value read from the delegation ledger the kit already mints (`held-session.mjs`, the pure judge;
+`dispatch-store-read.mjs`, the ledger's read half); `review-state` names it and `--check` refuses a
+substitution, so the commit guard inherits it; the advisor renders the fold command `codex-exec
+--resume <held id> --nonce <nonce> <fold-brief>` with the id populated; the engine's `procedures.md`
+step 5 states the sentence. Proven on itself: seven folds of the feature's own review rode the held
+session. Memory and both bridges are unchanged.
+
 ## 2026-08-28 — AD-125 the plan-review loop's measured costs are rungs, values and receipt fields (kit 10.5.0 · engine 4.4.0 MINOR · memory 7.1.2 PATCH · codex bridge 3.6.0 · agy bridge 5.5.0)
 
 **Five hours of review, taken apart into checkers and fields.** A plan is refused by SHAPE before its

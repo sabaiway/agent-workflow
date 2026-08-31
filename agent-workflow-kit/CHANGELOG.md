@@ -4,6 +4,60 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 10.6.0 — a fold on delegated code rides the delegate's held session, judged from the ledger the kit already mints (AD-127)
+
+The 2026-08-30 `release-run` execution took thirteen diff-review rounds, and every fold was made by
+the orchestrator by hand while the executor's session id sat on disk the whole time. The delegate that
+wrote the code knows what it wrote; a fold made elsewhere does not. The held session is now a VALUE the
+kit reads from the delegation ledger it already mints — no new record kind, no new receipt field, no
+new contract-header field — a line two renders carry, and a refusal at the commit gate. Contract
+`docs/ai/specs/kit/held-session.md` (live, rev 1, S1-S7, each bound once).
+
+**Two new leaves.** `tools/dispatch-store-read.mjs` is the read half of the delegation ledger — path,
+parser, reader, thread state and the semantic audit — split out of `dispatch-store.mjs` (the facade
+re-exports it, so no caller changes, and the advisor's read graph never reaches the append lane).
+`tools/held-session.mjs` is the pure judge: over the ledger records in file order, inside the commit
+EPOCH (the `code` threads dispatched strictly after HEAD's committer second — the same second counts
+BEFORE the commit, so the wrong direction is "holds nothing"; an unborn branch admits every thread; a
+git error fails closed), HELD is the `sessionId` of the FIRST folded delegated thread; a later thread
+is CONTINUED when its return carries that id or when it is a `retryOf` dispatch, SUBSTITUTED when it
+carries another, OPEN without a return, FAILED when its return identifies no session (the failed-run
+lane — never a substitution).
+Every unresolved substitution is kept by nonce; a fold clears only its own retry chain's; otherwise
+only the existing `core-evidence degrade` record for the execute wrapper `codex-exec` at that return's
+own `postTreeDigest` lifts one, standing after later folds move the tree. The judge is wall-clock and
+worktree-blind — both stated residuals, neither a schema change.
+
+**`review-state` names it, `--check` refuses it, the guard inherits.** The plain run prints
+`held session: <id> — <n> fold(s) rode it` / `none` / the substitution line; under the CONFIGURED
+`plan-execution.execute = delegated` (the raw config, never a per-run override) with a plan in flight
+and a dirty tree, `--check` audits the ledger BEFORE the review-recipe early return and refuses a
+substituted held session; an absent ledger is inert, while an unreadable, malformed, foreign or
+audit-refused ledger and a failed HEAD read fail closed with their own reason; `--await` ends on the
+refusal at once. `commit-guard` strips `AW_DELEGATION_STORE` beside its three seams.
+`references/modes/core-evidence.md` states the backend name's second reading: `codex-exec` is the
+accepted-replacement escape the arm honours; the review receipt id `codex` never grants it.
+
+**The fold lane in the advisor.** `procedures plan-execution` renders, right after a delegated
+execute slot's driving contract, `codex-exec --resume <held id> --nonce <nonce> <fold-brief>` with the
+held id populated from the audited ledger (shell-quoted); one `caveat:` line replaces the id in each
+no-id case — no ledger, no folded code session in the epoch, a recorded substitution, an
+unresolvable / unreadable / malformed / audit-refused ledger, a failed HEAD read, an id a one-line
+render cannot carry; `foldLane` carries the same lines under `--json` and is `[]` outside
+`plan-execution` or when execute resolves to Solo or Subagent. The sidecar `.codex-last-session` is
+never read.
+
+**Measured on itself.** Executed DELEGATED: the first dispatch executed nothing inside a nested
+sandbox and was degrade-closed; the retry returned every row; seven folds rode the held session by
+`codex-exec --resume`; the live report reads `8 fold(s) rode it`. Council 2 rounds + five attestation runs.
+
+Tarball pin 275 -> 277 (the delegation read leaf and the pure held-session judge). Five new test files
+(`held-session.test.mjs`, `procedures-fold-lane.test.mjs`, `review-state-held-session.test.mjs`,
+`commit-guard-held-session.test.mjs`, `delegation-harness.test.mjs`). Source-size recorded on four
+files under one reason: "held-session: the review-state arm, the fold-lane render, the S6 pin and the two payload pins"
+(`review-state.mjs` 826 -> 905, `procedures.mjs` 753 -> 782, the engine's `procedures-canon.test.mjs`
+410 -> 429, `package-content.test.mjs` 755 -> 759).
+
 ## 10.5.0 — the plan-review loop's measured costs are rungs, values and receipt fields (AD-125)
 
 One feature cost five hours of review by the kit's own defaults: plan findings that were plan SHAPE

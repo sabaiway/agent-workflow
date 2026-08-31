@@ -4,6 +4,18 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.5.0 — a fold under Delegated rides the held session, and step 5 of plan-execution says so (AD-127)
+
+`references/procedures.md`, step 5 of `plan-execution`: when `execute` resolved to Delegated, a fold
+of a review finding is `codex-exec --resume <held id> --nonce <nonce> <fold-brief>` — the session the
+first FOLDED delegated dispatch's exec receipt minted (the first delegated code that entered the tree,
+never an earlier failed or unfolded run), held until the row's commit; a nonce-less run mints no
+receipt and is invisible to the judge; a fresh session for a fold is a forbidden substitution
+`review-state` names (a retry of a failed thread and a recorded execute degrade excepted); the
+orchestrator still runs the suites, verifies the returned diff, re-mints the red-proofs and owns the
+commit, and folds by hand only what the delegate cannot reach. `test/procedures-canon.test.mjs` pins
+the sentence (spec `held-session` S6); the step numbers and the `Slots:` line are unchanged.
+
 ## 4.4.0 — the plan cap counts rows, the readers sweep opens self-review, the consult order and the round render are canon (AD-125)
 
 `references/planning.md`: the cap is 100 lines AND ≤25 ledger rows, 200 UTF-8 bytes per row counted
