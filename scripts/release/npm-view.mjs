@@ -6,7 +6,10 @@ import { buildSanitizedEnv } from './smoke-init.mjs';
 
 const NPM_COMMAND = 'npm';
 const TEMP_PREFIX = 'agent-workflow-npm-view-';
-const EMPTY_CONFIG_BASENAME = 'empty.npmrc';
+// Two files, not one: npm 12 refuses to load the same path as both the user and the global config
+// ("double-loading config … as global, previously loaded as user", exit 1 before any request).
+const EMPTY_USER_CONFIG_BASENAME = 'empty-user.npmrc';
+const EMPTY_GLOBAL_CONFIG_BASENAME = 'empty-global.npmrc';
 const HTTP_CODE_PATTERN = /^E(\d{3})$/;
 const CREDENTIAL_VARS = Object.freeze(['GH_TOKEN', 'GITHUB_TOKEN', 'NPM_TOKEN', 'NODE_AUTH_TOKEN']);
 
@@ -81,17 +84,19 @@ const classifyResult = (result, deadlineMs) => {
 
 export const npmViewLatest = async (name, { exec = runProcess, deadlineMs = PROCESS_DEADLINE_MS } = {}) => {
   const cwd = await mkdtemp(join(tmpdir(), TEMP_PREFIX));
-  const configPath = join(cwd, EMPTY_CONFIG_BASENAME);
+  const userConfigPath = join(cwd, EMPTY_USER_CONFIG_BASENAME);
+  const globalConfigPath = join(cwd, EMPTY_GLOBAL_CONFIG_BASENAME);
   try {
-    await writeFile(configPath, '');
+    await writeFile(userConfigPath, '');
+    await writeFile(globalConfigPath, '');
     const env = buildSanitizedEnv(process.env, { home: cwd, npmCache: cwd });
     for (const key of CREDENTIAL_VARS) delete env[key];
     const argv = [
       NPM_VIEW_ARGS[0],
       `${name}@latest`,
       ...NPM_VIEW_ARGS.slice(1),
-      `--userconfig=${configPath}`,
-      `--globalconfig=${configPath}`,
+      `--userconfig=${userConfigPath}`,
+      `--globalconfig=${globalConfigPath}`,
     ];
     const result = await Promise.resolve()
       .then(() => exec(NPM_COMMAND, argv, { cwd, env, deadlineMs }))

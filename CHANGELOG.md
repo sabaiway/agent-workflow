@@ -26,6 +26,13 @@ substitution, so the commit guard inherits it; the advisor renders the fold comm
 step 5 states the sentence. Proven on itself: seven folds of the feature's own review rode the held
 session. Memory and both bridges are unchanged.
 
+**Hotfix the same day (repo-only release tooling):** `npm-view.mjs` passed ONE empty file as both
+`--userconfig` and `--globalconfig`, and npm 12 exits 1 before any request ("double-loading config …
+as global, previously loaded as user") — so the run's own post-publish verify failed although the
+publish had succeeded, and verify + smoke ran by hand. Two distinct empty configs now, pinned by an
+offline real-npm test (the `scripts` size record grows by that pin: "npm-view hotfix: two distinct
+empty configs (npm 12 refuses one path as both user and global config) and the real-npm offline pin").
+
 ## 2026-08-28 — AD-125 the plan-review loop's measured costs are rungs, values and receipt fields (kit 10.5.0 · engine 4.4.0 MINOR · memory 7.1.2 PATCH · codex bridge 3.6.0 · agy bridge 5.5.0)
 
 **Five hours of review, taken apart into checkers and fields.** A plan is refused by SHAPE before its

@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { runProcess } from './git-process.mjs';
 
 const mod = await import('./npm-view.mjs').catch(() => ({}));
@@ -15,8 +16,14 @@ const readWith = async (result, deadlineMs = DEADLINE_MS) => {
   const value = await npmViewLatest(PACKAGE_NAME, {
     deadlineMs,
     exec: async (command, argv, options) => {
-      const configPath = argv.at(-1).slice('--globalconfig='.length);
-      calls.push({ command, argv, options, config: readFileSync(configPath, 'utf8') });
+      assert.ok(argv.at(-2).startsWith('--userconfig='), `expected --userconfig= at argv[-2], got ${argv.at(-2)}`);
+      assert.ok(argv.at(-1).startsWith('--globalconfig='), `expected --globalconfig= at argv[-1], got ${argv.at(-1)}`);
+      const userConfigPath = argv.at(-2).slice('--userconfig='.length);
+      const globalConfigPath = argv.at(-1).slice('--globalconfig='.length);
+      calls.push({
+        command, argv, options, userConfigPath, globalConfigPath,
+        config: readFileSync(userConfigPath, 'utf8') + readFileSync(globalConfigPath, 'utf8'),
+      });
       return result;
     },
   });
@@ -50,14 +57,19 @@ describe('npmViewLatest', () => {
       assert.ok(object.value.parseError);
       assert.ok(many.value.parseError);
       assert.ok(malformed.value.parseError);
-      const { command, argv, options, config } = scalar.call;
-      const emptyConfig = argv.at(-1).slice('--globalconfig='.length);
+      const { command, argv, options, config, userConfigPath, globalConfigPath } = scalar.call;
       assert.equal(command, 'npm');
       assert.deepEqual(argv, [
         'view', `${PACKAGE_NAME}@latest`, 'version', '--json',
         '--registry=https://registry.npmjs.org/',
-        `--userconfig=${emptyConfig}`, `--globalconfig=${emptyConfig}`,
+        `--userconfig=${userConfigPath}`, `--globalconfig=${globalConfigPath}`,
       ]);
+      // npm 12 refuses to load ONE file as both the user and the global config ("double-loading
+      // config … as global, previously loaded as user" — exit 1 before any request), so the two
+      // empty configs must be two files in the same temp dir.
+      assert.notEqual(userConfigPath, globalConfigPath, 'user and global config must be distinct files');
+      assert.equal(dirname(userConfigPath), dirname(globalConfigPath));
+      assert.equal(dirname(userConfigPath), options.cwd);
       assert.equal(config, '');
       assert.equal(options.cwd, options.env.HOME);
       assert.equal(options.cwd, options.env.npm_config_cache);
@@ -127,10 +139,34 @@ describe('npmViewLatest', () => {
     for (const result of cases) {
       await assert.rejects(() => readWith(result), /^Error: local npm failure: /);
     }
+    let thrownCwd = null;
     await assert.rejects(
-      () => npmViewLatest(PACKAGE_NAME, { deadlineMs: DEADLINE_MS, exec: async () => { throw new Error('injected throw'); } }),
+      () => npmViewLatest(PACKAGE_NAME, { deadlineMs: DEADLINE_MS, exec: async (command, argv, options) => { thrownCwd = options.cwd; throw new Error('injected throw'); } }),
       /local npm failure: injected throw/,
     );
+    // the temp dir (both empty configs inside it) is removed on the failure path too
+    assert.equal(typeof thrownCwd, 'string');
+    assert.equal(existsSync(thrownCwd), false);
+  });
+
+  it('a real npm accepts the two-config form offline (npm refuses ONE path loaded as both user and global config)', async () => {
+    const calls = [];
+    await npmViewLatest(PACKAGE_NAME, {
+      deadlineMs: 30_000,
+      exec: async (command, argv, options) => {
+        const user = argv.at(-2);
+        const global = argv.at(-1);
+        // `npm config ls` loads the same config layers `npm view` does and needs no network; the
+        // double-loading refusal fires here, before any request, exactly as it did at the release.
+        const real = await runProcess(command, ['config', 'ls', user, global], { cwd: options.cwd, env: options.env, deadlineMs: 30_000 });
+        calls.push(real);
+        return { status: 0, stdout: JSON.stringify('0.0.0'), stderr: '', error: null, signal: null };
+      },
+    });
+    const [real] = calls;
+    assert.equal(real.error ?? null, null, 'npm must be spawnable on this host (the release tooling requires it)');
+    assert.equal(real.status, 0, `npm config ls refused the two-file form: ${real.stderr}`);
+    assert.doesNotMatch(`${real.stdout}${real.stderr}`, /double-loading config/);
   });
 
   it('the default exec marks a kill as killedByDeadline only when its own deadline delivered it', async () => {
