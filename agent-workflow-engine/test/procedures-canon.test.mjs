@@ -380,6 +380,11 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(dispatch, /verify every returned slice by running its suites yourself before step 3/, 'the orchestrator verifies every returned slice');
   });
 
+  it('S8 pins the generated robustness block in the plan-execution dispatch brief (spec:robustness-literals/S8)', () => {
+    const dispatch = stepOf(sectionOf(procedures, 'plan-execution'), 2).replace(/\s+/g, ' ');
+    assert.ok(dispatch.includes('The dispatch brief — Delegated or Subagent — carries the generated robustness-literals block for every tagged row.'));
+  });
+
   it('the routine activity declares `Slots: carrier, parallel` and carries its five steps', () => {
     const routine = sectionOf(procedures, 'routine');
     assert.equal(slotsLineOf(routine), 'Slots: carrier, parallel');

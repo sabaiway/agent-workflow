@@ -34,12 +34,14 @@
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+
 import { findSatelliteEntry, readSatelliteIdentity, WORKTREES_STOP } from './satellite-locator.mjs';
 import { locateProvisionRecordSection, parseProvisionRecord, displayValue } from './worktrees-record.mjs';
 import { readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 import { computeNumerator } from './dispatch-record.mjs';
 import { resolveRepoRoot, formatRatio, buildObservationRecord } from './observation-builder.mjs';
 import { appendDelegationRecord, DELEGATION_STORE_STOP } from './dispatch-store.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 // The worktrees slug grammar, repeated here so the CLI can refuse a malformed slug as USAGE before
 // any probe echoes it — the locator's own refusal interpolates the slug into a terminal message.
@@ -56,8 +58,6 @@ const STEP_CLASS = 'worktree-stream';
 const PROVENANCE = 'self-reported';
 const REGULAR_MODES = new Set(['100644', '100755']);
 const RECORD_HEADING = '## Provision record';
-
-const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 
 const defaultGit = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: GIT_MAX_BUFFER });

@@ -54,13 +54,12 @@ import {
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 import { computeFlowDecision } from './flow-check.mjs';
-import { resolveGitLocation } from './git-env.mjs';
+import { GIT_MAX_BUFFER, resolveGitLocation } from './git-env.mjs';
 import { escapeForDisplay } from './repo-lex.mjs';
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const gitLine = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;

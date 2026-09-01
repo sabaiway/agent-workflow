@@ -4,13 +4,14 @@
 // pure decision cores can never reach a git spawn through it.
 
 import { spawnSync } from 'node:child_process';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 const short = (digest) => `${digest.slice(0, 12)}…`;
 
 // computeChangedSurface exists for COVERAGE and excludes test files by design — the base-
 // intersection inputs come from these helpers instead: every changed path counts, tests included.
 const gitPathList = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;
   return r.stdout.toString('utf8').split('\0').filter(Boolean);
 };

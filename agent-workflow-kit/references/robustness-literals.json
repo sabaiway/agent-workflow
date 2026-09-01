@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "version": 1,
+  "classes": [
+    {
+      "id": "git-location",
+      "prove": "Prove that every git query reaches the intended repository: every GIT_-named variable is stripped before cwd discovery, the git-dir, common-dir and work-tree identities agree between the ambient and the stripped discovery, and the hermetic environment is the fixtures' own, never a consumer's.",
+      "members": [
+        { "literal": "GIT_", "kind": "env", "note": "Strip every ASCII-case-insensitive git location variable before cwd discovery.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_DIR", "kind": "env", "note": "An ambient git directory can redirect discovery to another repository.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_WORK_TREE", "kind": "env", "note": "An ambient work-tree override can pair one git directory with another tree.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_COMMON_DIR", "kind": "env", "note": "An ambient common directory can redirect shared repository state.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_INDEX_FILE", "kind": "env", "note": "A pre-commit hook can name a temporary or copied index.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "GIT_PREFIX", "kind": "env", "note": "A hook inherits the prefix git measured for its invocation.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "GIT_CONFIG_PARAMETERS", "kind": "env", "note": "Command-line git configuration reaches hooks through this variable.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "GIT_EXEC_PATH", "kind": "env", "note": "A hook-shaped environment carries git's executable path.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "HOME", "kind": "env", "note": "Pin the home directory for hermetic git configuration.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "XDG_CONFIG_HOME", "kind": "env", "note": "Pin the XDG configuration home beside HOME.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_CONFIG_GLOBAL", "kind": "env", "note": "Disable the host's global git configuration file.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_CONFIG_SYSTEM", "kind": "env", "note": "Disable the host's system git configuration file.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_CONFIG_NOSYSTEM", "kind": "env", "note": "Tell git not to consult system configuration.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_ATTR_NOSYSTEM", "kind": "env", "note": "Tell git not to consult system attributes.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "LC_ALL", "kind": "env", "note": "Pin git's diagnostic language before matching its answers.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "PATH", "kind": "env", "note": "A supplied PATH is honored and an omitted PATH borrows the process value.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "--absolute-git-dir", "kind": "argv", "note": "Compare the ambient and stripped git-directory identities.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "--git-common-dir", "kind": "argv", "note": "Compare the ambient and stripped common-directory identities.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "--show-toplevel", "kind": "argv", "note": "Compare the ambient and stripped work-tree identities.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "work-tree", "kind": "state", "note": "All three ambient and stripped identities agree.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "not-a-repository", "kind": "state", "note": "Both discoveries report that cwd reaches no repository.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "error", "kind": "state", "note": "A probe, process result, path identity or answer failed closed.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "redirected", "kind": "state", "note": "Ambient and stripped discovery reach different repository identities.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "no-work-tree", "kind": "state", "note": "The git directory agrees but names no work tree.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "env-only", "kind": "state", "note": "Only the ambient git environment reaches a repository.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "GIT_MAX_BUFFER", "kind": "state", "note": "Every declared non-test git spawn buffer under agent-workflow-kit/tools/ uses the 256 MiB GIT_MAX_BUFFER; git-env.mjs declares it and every other scanned use imports it.", "source": "agent-workflow-kit/tools/git-env.mjs" }
+      ]
+    },
+    {
+      "id": "git-operation-state",
+      "prove": "Prove that an interrupted or conflicted git operation cannot be mistaken for an ordinary clean work tree.",
+      "members": [
+        { "literal": "rebase-apply", "kind": "state", "note": "A stopped git am leaves the apply-backend directory even when ordinary diffs are clean.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "rebase-merge", "kind": "state", "note": "A stopped rebase on the merge backend leaves this directory and REBASE_HEAD while status names the conflicted path.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "MERGE_HEAD", "kind": "ref", "note": "A merge in progress leaves this sequencer reference.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "CHERRY_PICK_HEAD", "kind": "ref", "note": "A cherry-pick in progress leaves this sequencer reference.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "REVERT_HEAD", "kind": "ref", "note": "A revert in progress leaves this sequencer reference.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "REBASE_HEAD", "kind": "ref", "note": "A rebase in progress leaves this sequencer reference.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "index.lock", "kind": "state", "note": "A held index lock blocks writes while read-only index queries still answer.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "unmerged stage 1", "kind": "state", "note": "The conflicted path carries the common-ancestor index stage.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "unmerged stage 2", "kind": "state", "note": "The conflicted path carries the current-side index stage.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "unmerged stage 3", "kind": "state", "note": "The conflicted path carries the other-side index stage.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "unmerged path twice", "kind": "state", "note": "Git 2.43 lists one conflicted path once per unmerged side; git am and bisect leave none of the four sequencer refs above.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" }
+      ]
+    },
+    {
+      "id": "git-read-flags",
+      "prove": "Prove that host git configuration, attributes and output framing cannot hide bytes or paths from a read.",
+      "members": [
+        { "literal": "status.showUntrackedFiles", "kind": "flag", "note": "Porcelain status can hide untracked files when this config is no.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "core.autocrlf", "kind": "flag", "note": "Work-tree CRLF and blob LF can compare clean under this config.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "core.symlinks", "kind": "flag", "note": "A host can materialize a tracked symlink as a placeholder regular file.", "source": "agent-workflow-kit/tools/control-bytes.mjs" },
+        { "literal": "--no-textconv", "kind": "flag", "note": "Disable textconv so configured filters cannot erase staged content from a diff.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "--ignore-submodules=none", "kind": "flag", "note": "Override a host config that hides every submodule change.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "-z", "kind": "flag", "note": "Use NUL framing for path-bearing git output.", "source": "agent-workflow-kit/tools/control-bytes.mjs" },
+        { "literal": "--exclude-standard", "kind": "flag", "note": "Apply repository ignore rules only where the query explicitly intends them.", "source": "agent-workflow-kit/tools/control-bytes.mjs" },
+        { "literal": "%B", "kind": "flag", "note": "Raw subject and body output carries its terminating newline and needs explicit framing.", "source": "scripts/check-ascii-letters.mjs" },
+        { "literal": "LC_ALL=C", "kind": "env", "note": "Pin git's own diagnostic wording before matching it.", "source": "agent-workflow-kit/tools/git-env.mjs" }
+      ]
+    },
+    {
+      "id": "spawn-outcome",
+      "prove": "Prove that every process-launch and process-result state is handled explicitly and never collapses into an empty success.",
+      "members": [
+        { "literal": "ENOENT", "kind": "errno", "note": "The executable may be absent from PATH before a child starts.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "EACCES", "kind": "errno", "note": "The executable or a required path may be present but inaccessible.", "source": "agent-workflow-kit/tools/fs-safe.mjs" },
+        { "literal": "EPERM", "kind": "errno", "note": "A sandbox or host policy may refuse the attempted process or filesystem operation.", "source": "agent-workflow-kit/tools/fs-safe.mjs" },
+        { "literal": "signal", "kind": "state", "note": "A child killed by a signal has no ordinary exit status.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "synchronous throw", "kind": "state", "note": "An injected or native runner can throw before returning a process result.", "source": "agent-workflow-kit/tools/control-bytes.mjs" },
+        { "literal": "exit 128", "kind": "state", "note": "Git's own not-a-repository or no-work-tree wording classifies only the matching exit 128 answer.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "empty answer", "kind": "state", "note": "A zero exit with no identity text is an error, never a repository path.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "maxBuffer", "kind": "state", "note": "A declared output ceiling is shared rather than silently truncated or copied.", "source": "agent-workflow-kit/tools/git-env.mjs" }
+      ]
+    },
+    {
+      "id": "durable-write",
+      "prove": "Prove that a durable write binds the intended regular file, publishes atomically and refuses an existing exclusive target.",
+      "members": [
+        { "literal": "O_NOFOLLOW", "kind": "syscall", "note": "Refuse a symlink leaf at descriptor open.", "source": "agent-workflow-kit/tools/fs-read-nofollow.mjs" },
+        { "literal": "O_NONBLOCK", "kind": "syscall", "note": "Prevent a hostile FIFO from blocking a descriptor open forever.", "source": "agent-workflow-kit/tools/fs-read-nofollow.mjs" },
+        { "literal": "fsync", "kind": "syscall", "note": "Sync the temporary file before rename and the directory after publication where supported.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "rename", "kind": "syscall", "note": "Publish the fully written temporary file atomically after fsync.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "wx", "kind": "flag", "note": "Open a temporary file or lock with exclusive creation.", "source": "scripts/release/release-run.mjs" },
+        { "literal": "EEXIST", "kind": "errno", "note": "An existing exclusive lock is a named busy state, never permission to clobber.", "source": "scripts/release/release-run.mjs" }
+      ]
+    },
+    {
+      "id": "bytes-not-strings",
+      "prove": "Prove that byte-domain identities remain bytes until a deliberate lossless decoding boundary.",
+      "members": [
+        { "literal": "undecoded", "kind": "state", "note": "Path records remain Buffer slices through NUL framing.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "NUL", "kind": "state", "note": "Git path records are split on the byte delimiter rather than whitespace or lines.", "source": "agent-workflow-kit/tools/git-env.mjs" },
+        { "literal": "partial UTF-8 sequence", "kind": "state", "note": "A file can be observed while its last multibyte sequence is incomplete.", "source": "agent-workflow-kit/tools/hostile-git-harness.test.mjs" },
+        { "literal": "raw control byte", "kind": "state", "note": "A report line must never carry a raw line-breaking control character.", "source": "agent-workflow-kit/tools/repo-lex.mjs" },
+        { "literal": "U+FFFD", "kind": "state", "note": "Lossy decoding can fold distinct invalid byte sequences to the replacement character.", "source": "agent-workflow-kit/tools/repo-lex.mjs" }
+      ]
+    }
+  ]
+}

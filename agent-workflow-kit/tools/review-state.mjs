@@ -110,7 +110,7 @@ import { selectReliedOnReceipt, evaluateVetoOverride, evaluateInternalAttestatio
 // graph; re-exported here so every historical consumer keeps its import site.
 import { PLANS_REL, isScratchPlanName, plansInFlight } from './plan-files.mjs';
 import { escapeForDisplay, shellQuoteArg } from './repo-lex.mjs';
-import { resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';
+import { GIT_MAX_BUFFER, resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';
 import { readDelegationLedger } from './dispatch-store-read.mjs';
 import {
   decideHeldSession, HELD_EXECUTE_WRAPPER, HELD_RECEIPT_BACKEND, judgeLedger,
@@ -149,7 +149,6 @@ export {
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 const CORE_EVIDENCE_TOOL = shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'core-evidence.mjs'));
-const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff can be large; never truncate silently
 // --await (BUGFREE-3 / AD-049, item (d)) bounds + poll cadence. The default timeout is generous —
 // a real grounded bridge review can take minutes — and every value is overridable (--timeout / the
 // injectable clock) so hermetic tests never spend wall-clock.

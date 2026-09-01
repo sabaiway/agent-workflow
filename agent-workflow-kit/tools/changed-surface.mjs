@@ -14,7 +14,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff can be large; never truncate
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 // ── the CLOSED changed-path classification rule (AD-046 Decision 5; no heuristics) ───────────────
 

@@ -24,6 +24,7 @@ import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { computeChangedSurface } from './changed-surface.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { lcovCoveredMap, uncoveredChangedFromLcov } from './lcov.mjs';
@@ -47,7 +48,6 @@ const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${m
 
 export const LCOV_BASENAME = 'agent-workflow-lcov.info';
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const gitLine = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;

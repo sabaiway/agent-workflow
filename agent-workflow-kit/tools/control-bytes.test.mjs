@@ -1,5 +1,5 @@
 // control-bytes.test.mjs — the red-first suite for docs/ai/specs/kit/control-bytes.md S1-S6, plus
-// the four claims plan first-pass-quality-1 pins by hand. Real repositories through the hostile
+// the byte-domain claims pinned by that live spec. Real repositories through the hostile
 // harness; spawn, fs and env injected where a class cannot be built on disk. The tool and the two
 // leaf exports are imported DYNAMICALLY so the suite loads and FAILS on the pre-fix tree.
 

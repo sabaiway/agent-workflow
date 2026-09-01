@@ -13,6 +13,7 @@ import { join, isAbsolute, normalize, basename, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { validateFlowRecord, authoritativeFlowRecords } from './flow-record.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 export { lstatNoFollowRead, describeNonRegular, readRegularFileNoFollow, readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 
@@ -23,7 +24,6 @@ export const flowStoreStop = (message) => Object.assign(new Error(`[agent-workfl
 export const FLOW_STORE_BASENAME = 'agent-workflow-flow.jsonl';
 export const FLOW_LOCK_SUFFIX = '.lock';
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const gitBuf = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;

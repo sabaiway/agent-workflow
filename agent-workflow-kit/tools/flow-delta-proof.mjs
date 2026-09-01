@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, lstatSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { lstatNoFollow } from './atomic-write.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase } from './core-evidence.mjs';
@@ -21,7 +22,6 @@ import { appendFlowRecord } from './flow-append.mjs';
 
 const stop = flowStoreStop;
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const gitBuf = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;

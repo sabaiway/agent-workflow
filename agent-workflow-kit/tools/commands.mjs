@@ -232,6 +232,13 @@ const CATALOG = [
     oneLine: 'Refuse any raw control byte (C0 or DEL; TAB, LF, CR admitted) in the work tree — a path name, a regular file\'s content unless a git attribute says binary, a symlink target; --check is the gate spelling of the same report and exit code.',
   },
   {
+    key: 'robustness-brief',
+    invocation: invocationOf('robustness-brief'),
+    group: 'Orchestrate',
+    kind: READ_ONLY,
+    oneLine: 'Generate the concrete robustness literals for every tagged row in a plan, or for one selected row.',
+  },
+  {
     key: 'receipt-deadline',
     invocation: invocationOf('receipt-deadline'),
     group: 'Orchestrate',

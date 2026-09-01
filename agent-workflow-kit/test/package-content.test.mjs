@@ -146,6 +146,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/control-bytes.mjs',
       'tools/git-env.mjs',
       'references/modes/control-bytes.md',
+      'references/robustness-literals.json',
+      'tools/robustness-literals.mjs',
+      'tools/robustness-brief.mjs',
+      'references/modes/robustness-brief.md',
       // the structural checker of the spec store (spec layer 2b) — the op grammar, the IO-free judge
       // and the CLI half. By NAME for the same reason as fold-scope: the procedures advisor renders
       // the CLI path into a copy-paste command, and the judge imports the other two at load.
@@ -394,7 +398,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
   // a surprise change means over/under-exclusion (e.g. a new colocated test leaking, or a payload
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
   // --dry-run --json` and set the new count here in the same commit.
-  it('ships exactly the expected number of files', () => {
+  it('ships exactly the expected number of files (spec:robustness-literals/S7)', () => {
     // 121 = 96 + the 20 progressive-disclosure split files (17 references/modes/ + 3 references/shared/)
     //     + tools/lens-region.mjs (the agent-rules lens reconcile)
     //     + tools/seed-gates.mjs + tools/atomic-write.mjs (the consent-gated seeder pair, AD-042)
@@ -749,8 +753,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       because the planning canon renders the CLI path into the --check / --verify commands.
     // 275 = 273 + the review-round table's pure half and CLI; NAMED because the procedure renders it.
     // 277 = 275 + the delegation read leaf and the pure held-session judge.
-    // 280 = 277 + the control-byte gate, the git-location leaf and the gate's mode doc.
-    assert.equal(packed.length, 280, `tarball file count drifted (${packed.length} ≠ 280)`);
+    // 284 = 280 + the literal list, its reader, brief generator and mode doc.
+    assert.equal(packed.length, 284, `tarball file count drifted (${packed.length} ≠ 284)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

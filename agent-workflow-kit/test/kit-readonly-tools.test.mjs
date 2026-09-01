@@ -39,7 +39,7 @@ const SKILL_DIR_VAR = '${CLAUDE_SKILL_DIR}';
 const PROJECT_ROOT_VAR = '${PROJECT_ROOT}';
 
 // ── (a) the hand-maintained frozen tool→mode partition map ──────────────────
-// 9 mode-backed tier tools; the 5 non-mode-backed tools have no catalog entry (checked in (b)).
+// 10 mode-backed tier tools; the 5 non-mode-backed tools have no catalog entry (checked in (b)).
 const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/recipes.mjs': 'recipes',
   'tools/procedures.mjs': 'procedures',
@@ -50,9 +50,10 @@ const MODE_BACKED_TOOL_TO_MODE = Object.freeze({
   'tools/recommendations.mjs': 'recommendations',
   'tools/run-gates.mjs': 'gates',
   'tools/control-bytes.mjs': 'control-bytes',
+  'tools/robustness-brief.mjs': 'robustness-brief',
 });
-// Mode-backed tools whose OWN source spawns git get the (b) scan too: the argv list is pinned exactly.
-const SCANNED_MODE_BACKED = Object.freeze(['tools/control-bytes.mjs']);
+// Mode-backed tools whose OWN source needs a purity scan join (b); declared queries stay pinned exactly.
+const SCANNED_MODE_BACKED = Object.freeze(['tools/control-bytes.mjs', 'tools/robustness-brief.mjs']);
 // Non-mode-backed tier tools: invoked directly, with no `/agent-workflow-kit <mode>` router entry.
 // repo-search is here rather than behind a mode BECAUSE of what it is for — a mode doc would tell
 // the agent to compose a shell form again, which is the exact reflex the lane exists to remove.
@@ -110,7 +111,7 @@ const PREVIEW_TOOL_TO_MODE = Object.freeze({
 });
 
 describe('kit-tools tier ↔ commands.mjs catalog partition', () => {
-  it('the tier is exactly the 9 mode-backed tools + the 5 non-mode-backed direct tools (set equality)', () => {
+  it('the tier is exactly the 10 mode-backed tools + the 5 non-mode-backed direct tools (set equality) (spec:robustness-literals/S6)', () => {
     const expected = [...Object.keys(MODE_BACKED_TOOL_TO_MODE), ...NON_MODE_BACKED].sort();
     assert.deepEqual([...KIT_READONLY_TOOLS].sort(), expected);
   });

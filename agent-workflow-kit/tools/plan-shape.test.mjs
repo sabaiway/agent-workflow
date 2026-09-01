@@ -173,4 +173,18 @@ describe('plan-shape rules — structural and authoring state', () => {
     const noBudget = checkPlan(planWith({ ledger: 'R4 | modify | src/a.mjs | update | n/a | src/a.mjs:1\ntotal: 0 → 0 lines' }), { ...facts, capDeclared: true });
     assert.ok(codes(noBudget).includes('source-budget'));
   });
+
+  it('S4/S29 validates the one robust tag grammar and listed classes, leaving an untagged row unjudged (spec:robustness-literals/S4, spec:plan-review-loop/S29)', async () => {
+    const { checkPlan } = await loadRules();
+    const judge = (responsibility) => checkPlan(planWith({
+      ledger: `R1 | modify | docs/readme.md | ${responsibility} | n/a | docs/readme.md:1\ntotal: 0 → 0 lines`,
+    }), factsFor({ robustClasses: ['a'] }));
+    for (const responsibility of [
+      'prove robust:no-such-class', 'prove robust:', 'prove robust:a,', 'prove robust:a,a',
+      'prove robust:Not-A-Slug', 'prove robust:a and robust:b',
+    ]) assert.ok(codes(judge(responsibility)).includes('robust-class'), responsibility);
+    assert.equal(codes(judge('prove robust:a')).includes('robust-class'), false);
+    assert.equal(codes(judge('ordinary untagged row')).includes('robust-class'), false);
+    assert.ok(codes(judge(`${'x'.repeat(190)} robust:a`)).includes('row-bytes'), 'the tag counts toward 200 bytes');
+  });
 });

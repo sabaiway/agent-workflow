@@ -16,6 +16,7 @@ import { join, dirname, basename, resolve, relative, isAbsolute, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+
 import { MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, withoutRegistration } from './mcp-registration.mjs';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, expandGlob, normalizeSlashes, isDirPattern, isGlobPattern,
@@ -25,6 +26,7 @@ import { isDirectRun } from './direct-run.mjs';
 import { isScratchPlanName, plansInFlight, PLANS_REL, shellQuoteArg } from './review-state.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
 import {
   WORKTREES_STOP, stop, EXIT, handoffBasename, recordValue, hasControlByte, displayValue,
@@ -75,8 +77,6 @@ const TRACKED_PIN_DECLARATION =
   'tracked declaration is not worktree-portable — this worktree\'s council/final checks route through the MAIN runner via --cwd';
 const TRANSFER_EXCLUSIONS = Object.freeze([':!docs/ai', ':!docs/plans']);
 const PREPARE_LOCK_BASENAME = 'aw-prepare-lock';
-
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 
 const USAGE = [
   'usage: worktrees.mjs <subcommand> [args]',

@@ -24,7 +24,7 @@
 // re-derived): safe repo-relative path resolution, no-follow real-path containment, shell-free
 // argv, per-run timeout, N/N reruns, the quarantine lane (reruns 3, timeout 120s).
 // Import posture: this module is the DAG BOTTOM — it imports only node built-ins + atomic-write +
-// changed-surface + the pure leaves (repo-lex, fs-read-nofollow, coverage-state), and OWNS the
+// changed-surface + the pure leaves (repo-lex, fs-read-nofollow, coverage-state, git-env), and OWNS the
 // canonical review-domain primitives (tree fingerprint, receipt read
 // path, attesting predicate, verdict vocabulary, testId format, base resolution). review-state
 // RE-EXPORTS its historical public API from here, so its consumers (and the bash-twin parity
@@ -43,7 +43,7 @@ import { parsePositiveIntKnob, probeVerdict } from './changed-surface.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { lexicalRepoRelative } from './repo-lex.mjs';
-import { resolveGitLocation, withGitPath } from './git-env.mjs';
+import { GIT_MAX_BUFFER, resolveGitLocation, withGitPath } from './git-env.mjs';
 // The coverage vocabulary leaf: run-gates RECORDS the token this validator checks, and run-gates
 // imports THIS module (the sole-writer boundary), so their shared home sits below both.
 import { COVERAGE, FINAL_COVERAGE_STATES } from './coverage-state.mjs';
@@ -53,7 +53,6 @@ const stop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${messag
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 
 const isoNow = () => new Date().toISOString();
-const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a full-tree diff / TAP stream can be large; never truncate
 
 const gitRaw = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
 

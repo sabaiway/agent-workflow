@@ -50,6 +50,7 @@ import { loadDeclaration } from './run-gates.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { lexicalRepoRelative } from './core-evidence.mjs';
 import { readAuthoritativeVersion } from './manifest/validate.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GATES_REL = 'docs/ai/gates.json';
@@ -197,7 +198,7 @@ const meetsVersionFloor = (version, floor) => {
   return cmp !== null && cmp >= 0;
 };
 
-const defaultRunGit = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: 64 * 1024 * 1024, windowsHide: true });
+const defaultRunGit = (args, cwd) => spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
 
 const gitToplevel = (cwd, runGit) => {
   const r = runGit(['rev-parse', '--show-toplevel'], cwd);

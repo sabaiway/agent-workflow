@@ -1,6 +1,7 @@
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
 import { getLineCount, isSweep, resolveAnchorCandidates, unique } from './plan-shape.mjs';
 
@@ -80,6 +81,14 @@ const loadPractice = (root) => {
     return { capDeclared: true, cap: config.defaults.maxLines, config };
   } catch (error) {
     throw usageError(`${SOURCE_SIZE_REL} is malformed (${error.message})`);
+  }
+};
+
+const loadRobustClasses = (deps) => {
+  try {
+    return classIds(readShippedRobustnessLiterals(deps));
+  } catch (error) {
+    throw usageError(`robustness-literals list is unreadable (${error.message})`);
   }
 };
 
@@ -185,13 +194,13 @@ const describePath = (root, path, practice, repoFiles, packageCache) => {
   };
 };
 
-export const openRepo = (root) => {
+export const openRepo = (root, { robustnessDeps } = {}) => {
   const repoRoot = realpathSync(root);
-  return { repoRoot, repoFiles: walkRegularFiles(repoRoot), practice: loadPractice(repoRoot), packageCache: new Map() };
+  return { repoRoot, repoFiles: walkRegularFiles(repoRoot), practice: loadPractice(repoRoot), robustClasses: loadRobustClasses(robustnessDeps), packageCache: new Map() };
 };
 
-export const buildFacts = (root, { paths = [], repo = openRepo(root) } = {}) => {
-  const { repoRoot, repoFiles, practice, packageCache } = repo;
+export const buildFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }) } = {}) => {
+  const { repoRoot, repoFiles, practice, robustClasses, packageCache } = repo;
   const expansions = Object.fromEntries(paths.filter(isSweep).map((pattern) => {
     const compiled = compileGlob(pattern);
     if (!compiled) throw planError(`unsupported glob in plan path: ${pattern}`);
@@ -200,5 +209,5 @@ export const buildFacts = (root, { paths = [], repo = openRepo(root) } = {}) => 
   const allPaths = unique([...paths, ...Object.values(expansions).flat()]);
   const pathFacts = Object.fromEntries(allPaths.map((path) => [path, describePath(repoRoot, path, practice, repoFiles, packageCache)]));
   const candidates = (suffix, precedingPaths = []) => resolveAnchorCandidates(repoFiles, suffix, precedingPaths);
-  return { capDeclared: practice.capDeclared, cap: practice.cap, pathFacts, expansions, repoFiles, candidates };
+  return { capDeclared: practice.capDeclared, cap: practice.cap, robustClasses, pathFacts, expansions, repoFiles, candidates };
 };

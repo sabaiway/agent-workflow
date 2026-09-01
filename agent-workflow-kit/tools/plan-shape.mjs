@@ -1,4 +1,5 @@
 import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { parseRobustTag } from './robustness-literals.mjs';
 
 export const PLAN_TITLE_PREFIX = '# Plan: ';
 export const PLAN_HEADINGS = Object.freeze([
@@ -243,8 +244,15 @@ const getCurrentLines = (rows, facts, verbs) => rows
 const checkAuthoring = (parsed, facts) => {
   const findings = [];
   const bullets = getVerificationBullets(parsed.document);
+  const robustClasses = new Set(facts.robustClasses ?? []);
   for (const [index, row] of parsed.rows.entries()) {
     if (!row.valid) continue;
+    const robust = parseRobustTag(row.responsibility);
+    const unknownRobustClass = robust.classes?.find((classId) => !robustClasses.has(classId));
+    if (robust.refusal || unknownRobustClass !== undefined) {
+      const reason = robust.refusal ? `tag grammar refused ${robust.refusal}` : `class ${unknownRobustClass} is not in the shipped list`;
+      findings.push(makeFinding(row.line, 'robust-class', `${row.id} robust tag: ${reason}`, row.id));
+    }
     const paths = getConcretePaths(row, facts);
     const expectedKind = row.verb === 'create' ? 'absent' : 'regular';
     if (paths.length === 0 && isSweep(row.path)) findings.push(makeFinding(row.line, 'kind', `${row.id} sweep resolves to no regular path`, row.id));

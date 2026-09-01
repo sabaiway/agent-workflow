@@ -424,6 +424,7 @@ const foldScopeAdvice = (activity, config, plans) => {
 // only what no canon can: the POPULATED checker commands, and the session register they read. The
 // register is NEVER defaulted by the tool — naming it here is the whole point of the block.
 export const SPEC_CHECK_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'spec-check-cli.mjs');
+export const ROBUSTNESS_BRIEF_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'robustness-brief.mjs');
 const SPEC_OPS_REGISTER = `${PLANS_REL}/spec-ops.list`;
 const specCheckAdvice = (activity) => {
   if (activity !== 'plan-execution') return [];
@@ -432,6 +433,16 @@ const specCheckAdvice = (activity) => {
     `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --ops-file ${shellQuoteArg(SPEC_OPS_REGISTER)}   (or --op '<add|modify|remove>=docs/ai/specs/<slug>.md', repeatable; rename=<old>:<new>)`,
     `  • node ${shellQuoteArg(SPEC_CHECK_TOOL)} --all — the whole store instead: unlisted child vs orphan, acyclicity, store-wide slug uniqueness, module overlap.`,
     `  • ${SPEC_OPS_REGISTER} is SESSION SCRATCH: this session writes it, the plan's Cleanup deletes it. It is never defaulted — an unnamed register would attest a post-state nobody declared. Advisory: nothing records that it ran.`,
+  ];
+};
+
+const robustnessBriefAdvice = (activity, plans) => {
+  if (activity !== 'plan-execution') return [];
+  const operand = populatedPlan(plans);
+  return [
+    'Robustness brief (every tagged ledger row) — generate the concrete literals before dispatch:',
+    `  • node ${renderToolPath(ROBUSTNESS_BRIEF_TOOL)} --plan ${operand ?? '<plan-file>'}`,
+    ...planDiscoveryCaveat(plans, '--plan', 'populate --plan with the plan in flight.', operand === null ? ['--plan'] : []),
   ];
 };
 
@@ -596,7 +607,7 @@ const foldLaneAdvice = ({
   return foldLaneLines(judgeLedger(ledger, { backend: HELD_RECEIPT_BACKEND, degrades: [] }));
 };
 
-const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, foldLane }) => {
+const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane }) => {
   const lines = [
     section,
     '',
@@ -628,6 +639,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   if (advice.length) lines.push('', ...advice);
   if (foldScope.length) lines.push('', ...foldScope);
   if (specCheck.length) lines.push('', ...specCheck);
+  if (robustnessBrief.length) lines.push('', ...robustnessBrief);
   lines.push('', ...costLanesAdvice());
   if (declaredPractice.length) lines.push('', ...declaredPractice);
   if (warnings.length) {
@@ -637,7 +649,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   return lines.join('\n');
 };
 
-const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, foldLane }) => ({
+const buildJson = ({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane }) => ({
   activity,
   section,
   slots: Object.fromEntries(
@@ -658,6 +670,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   foldScope,
   // ADDITIVE (spec layer 2b): the spec-store block, structured (empty outside plan-execution).
   specCheck,
+  robustnessBrief,
   foldLane,
   // ADDITIVE (AD-044 Plan 4): the per-activity autonomy block, structured (empty when unresolvable).
   autonomy: autonomyAdvice(activity, autonomy),
@@ -752,6 +765,7 @@ export const main = (argv, ctx = {}) => {
     const declaredPractice = declaredPracticeAdvice(cwd, readFile, lstat);
     const foldScope = foldScopeAdvice(activity, config, plans);
     const specCheck = specCheckAdvice(activity);
+    const robustnessBrief = robustnessBriefAdvice(activity, plans);
     const foldLane = foldLaneAdvice({
       activity,
       slots,
@@ -763,8 +777,8 @@ export const main = (argv, ctx = {}) => {
       readHead: ctx.readHeadInstant,
     });
     const stdout = json
-      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, foldLane }), null, 2)
-      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, foldLane });
+      ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane }), null, 2)
+      : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane });
     if (autonomy?.error) {
       return { code: 1, stdout, stderr: `procedures: malformed ${AUTONOMY_REL} — ${autonomy.error}` };
     }

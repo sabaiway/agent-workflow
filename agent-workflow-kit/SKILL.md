@@ -187,6 +187,10 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/review-state.md` before
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/control-bytes.md` before acting.
 
+### Mode: robustness-brief
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/robustness-brief.md` before acting.
+
 ### Mode: receipt-deadline
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/receipt-deadline.md` before acting.

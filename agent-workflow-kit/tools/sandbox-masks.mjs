@@ -42,6 +42,7 @@ import { isDirectRun } from './direct-run.mjs';
 import { fail } from './orchestration-config.mjs';
 import { isNeverCommittableStat, shellQuoteArg } from './review-state.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 export const MASKS_FENCE_START = '# >>> agent-workflow sandbox-masks — managed block, fully REPLACED by the kit sandbox-masks lane; do not hand-edit inside >>>';
 export const MASKS_FENCE_END = '# <<< agent-workflow sandbox-masks <<<';
@@ -59,7 +60,7 @@ const gitLine = (args, cwd) => {
 // The UNFILTERED untracked walk: --others WITHOUT --exclude-standard, so a mask already hidden by
 // an earlier apply stays visible to a rerun (the full-block replace re-derives it, codex).
 const listUntrackedUnfilteredZ = (root) => {
-  const r = spawnSync('git', ['ls-files', '--others', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, windowsHide: true });
+  const r = spawnSync('git', ['ls-files', '--others', '-z'], { cwd: root, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (r.error || r.status !== 0) return null;
   return r.stdout.split('\0').filter(Boolean);
 };

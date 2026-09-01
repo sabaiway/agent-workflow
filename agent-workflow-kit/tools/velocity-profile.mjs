@@ -165,6 +165,7 @@ export const KIT_READONLY_TOOLS = Object.freeze([
   'tools/review-rounds-cli.mjs',
   // The control-byte gate: a pure reader over the work tree, run by hand before the matrix runs it.
   'tools/control-bytes.mjs',
+  'tools/robustness-brief.mjs',
 ]);
 // Writer previews: ONLY writers whose ARG-FREE invocation is a documented dry-run ("Default is
 // --dry-run" in their usage) seed an EXACT preview byte-string — every --apply/--write/--yes keeps

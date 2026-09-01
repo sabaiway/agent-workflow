@@ -1,6 +1,6 @@
 // tracked-tree-census.mjs — how much of a project's TRACKED tree the changed-line coverage domain
 // can actually assess, in the closed vocabulary that domain already speaks. A LEAF: it imports the
-// classification and nothing else, and it spawns exactly one read-only `git ls-files`.
+// changed-surface classification and the shared git-spawn buffer from the git-location leaf, and it spawns exactly one read-only `git ls-files`.
 //
 // Why this exists: the coverage checker's domain is `.mjs/.cjs/.js` by design, and on a TS project
 // that domain is a rounding error of the tree. Certifying it and calling the flow optimal is the
@@ -10,9 +10,9 @@
 // Read-only: never writes, never commits. Dependency-free, Node >= 22. No side effects on import.
 
 import { spawnSync } from 'node:child_process';
-import { classifyChangedPath } from './changed-surface.mjs';
 
-const GIT_MAX_BUFFER = 256 * 1024 * 1024; // a large tracked tree; never truncate
+import { classifyChangedPath } from './changed-surface.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 export const CENSUS_VERDICT = Object.freeze({ NARROW: 'domain-narrow', WITHIN_DOMAIN: 'within-domain' });
 

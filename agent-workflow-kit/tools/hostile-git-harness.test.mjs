@@ -6,7 +6,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -181,6 +181,18 @@ export const fixtures = {
     assert.notEqual(a.git(['am'], { input: patch }).status, 0, 'the patch does not apply, so am stops');
     return { a, cwd: a.dir, env: a.env, cleanup: a.cleanup };
   },
+  stoppedRebase: () => {
+    const a = makeRepo('stopped-rebase');
+    a.must(['checkout', '-q', '-b', 'side']);
+    a.write('f.txt', 'side\n');
+    a.must(['commit', '-qam', 'side']);
+    a.must(['checkout', '-q', 'main']);
+    a.write('f.txt', 'main\n');
+    a.must(['commit', '-qam', 'main']);
+    a.must(['checkout', '-q', 'side']);
+    assert.notEqual(a.git(['rebase', '--merge', 'main']).status, 0, 'the merge-backend rebase stops on the conflict');
+    return { a, cwd: a.dir, env: a.env, path: 'f.txt', cleanup: a.cleanup };
+  },
   textconv: () => {
     const a = makeRepo('textconv', { 's.secret': 'v1\n', '.gitattributes': 's.secret diff=blank\n' });
     a.must(['config', 'diff.blank.textconv', 'true']);
@@ -307,6 +319,11 @@ describe('hostile-git-harness — every fixture is asserted against git itself',
     assert.ok(existsSync(join(f.cwd, '.git', 'rebase-apply')));
     assert.equal(f.a.git(['diff', '--quiet']).status, 0);
     assert.equal(f.a.git(['diff', '--cached', '--quiet']).status, 0);
+  }));
+  it('a stopped merge-backend rebase leaves its directory, REBASE_HEAD and the conflicted path', () => withFixture(fixtures.stoppedRebase, (f) => {
+    assert.equal(lstatSync(join(f.cwd, '.git', 'rebase-merge')).isDirectory(), true);
+    assert.equal(f.a.git(['rev-parse', '-q', '--verify', 'REBASE_HEAD']).status, 0);
+    assert.match(f.a.must(['status', '--porcelain']), /^UU f\.txt$/mu);
   }));
   it('textconv: --no-ext-diff leaves textconv ON, so the staged change shows no content; --no-textconv shows it', () => withFixture(fixtures.textconv, (f) => {
     assert.equal(f.a.must(['diff', '--cached', '--no-ext-diff']).includes('+v2'), false);

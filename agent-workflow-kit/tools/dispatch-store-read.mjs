@@ -1,18 +1,18 @@
 import { join, isAbsolute, normalize, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+
 import {
   validateDelegationRecord, canonicalDelegationDigest, allowedSuccessorKinds,
   isThreadTerminalRecord,
 } from './dispatch-record.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 export const DELEGATION_STORE_STOP = 'DELEGATION_STORE_STOP';
 export const delegationStoreStop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'DelegationStoreStop', code: DELEGATION_STORE_STOP });
 const stop = delegationStoreStop;
 
 export const DELEGATION_STORE_BASENAME = 'agent-workflow-delegation.jsonl';
-const GIT_MAX_BUFFER = 256 * 1024 * 1024;
-
 const runGit = (args, cwd, spawn = spawnSync) => spawn('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
 const readGitLine = (args, cwd, spawn) => {
   const result = runGit(args, cwd, spawn);

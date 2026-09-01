@@ -90,7 +90,8 @@ Each ledger row is one logical commit.
    (codex-exec) *before* you integrate. **If `execute` resolved to Subagent**, split the ledger into
    file-disjoint slices, exact wording where wording is a red line, dispatch each slice to
    the executor vehicle in the background, and verify
-   every returned slice by running its suites yourself before step 3. Otherwise implement directly.
+   every returned slice by running its suites yourself before step 3. The dispatch brief — Delegated
+   or Subagent — carries the generated robustness-literals block for every tagged row. Otherwise implement directly.
 3. **Implement / integrate** — your own edits or the reviewed delegated diff; a spec row lands its
    approved draft or revision WITH the code ([`specs.md`](specs.md)).
 4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's

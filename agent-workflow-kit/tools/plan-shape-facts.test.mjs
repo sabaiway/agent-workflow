@@ -30,6 +30,7 @@ describe('plan-shape facts — filesystem-only evidence', () => {
     symlinkSync(join(outside, 'target.mjs'), join(root, 'src/out.mjs'));
     const paths = ['src/file.mjs', 'src/dir', 'src/link.mjs', 'src/new/deep.mjs', 'escape/new.mjs', '../outside.mjs', 'src/dangling.mjs', 'src/out.mjs'];
     const facts = buildFacts(root, { paths });
+    assert.ok(facts.robustClasses.includes('git-location'), 'the kit-anchored shipped list supplies the class ids');
     assert.deepEqual(paths.map((path) => facts.pathFacts[path].kind), ['regular', 'other', 'other', 'absent', 'absent', 'absent', 'other', 'other']);
     assert.equal(facts.pathFacts['src/file.mjs'].lines, 2);
     assert.equal(facts.pathFacts['src/new/deep.mjs'].contained, true);
@@ -146,5 +147,27 @@ describe('plan-shape facts — filesystem-only evidence', () => {
     assert.deepEqual(facts.candidates('src/a.mjs', ['other/src/a.mjs']), ['src/a.mjs']);
     assert.deepEqual(facts.candidates('a.mjs', ['nested/src/a.mjs']), ['nested/src/a.mjs']);
     assert.deepEqual(facts.candidates('a.mjs', []), ['nested/src/a.mjs', 'src/a.mjs']);
+  });
+
+  it('refuses an absent, symlinked, unreadable or malformed shipped robustness list as usage', async () => {
+    const { buildFacts } = await loadFacts();
+    const root = makeTree();
+    const listRoot = makeTree();
+    const valid = JSON.stringify({ schema: 1, version: 1, classes: [{
+      id: 'sample', prove: 'Prove it.', members: [{ literal: 'x', kind: 'state', note: 'Measured.', source: 'src/x.mjs' }],
+    }] });
+    write(listRoot, 'target.json', valid);
+    symlinkSync(join(listRoot, 'target.json'), join(listRoot, 'link.json'));
+    write(listRoot, 'malformed.json', '{');
+    const cases = [
+      ['absent', join(listRoot, 'absent.json'), {}],
+      ['symlink', join(listRoot, 'link.json'), {}],
+      ['unreadable', join(listRoot, 'target.json'), { io: { open: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } } }],
+      ['malformed', join(listRoot, 'malformed.json'), {}],
+    ];
+    for (const [label, path, extra] of cases) {
+      const robustnessDeps = { resolvePath: () => path, ...extra };
+      assert.throws(() => buildFacts(root, { robustnessDeps }), (error) => error.exitCode === 2 && /robustness-literals/.test(error.message), label);
+    }
   });
 });
