@@ -4,6 +4,54 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 11.1.0 — the bootstrap offers enforcement on every project, and the advisor closes the loop (AD-131)
+
+Bootstrap steps 8–9 (the enforcement scripts + the pre-commit hook) used to decide by the step-1
+recon — a Python, Go or Rust project was denied the caps gate, the archivers and the hook for no
+proven reason, then `upgrade` reported `skipped-no-node-evidence` on the very tree the bootstrap left
+bare. The scripts are dependency-free Node the agent host already runs for step 7's navigator.
+Contract: `node-evidence.md` rev 2 (S8–S10 bound).
+
+**The offer, on every project.** `references/modes/bootstrap.md` steps 8–9 offer the scripts and the
+hook preview-first with a one-line why: the bootstrap seeds on `package-json` OR
+`deployed-node-scripts` OR the fact that the agent host is running the kit; the only skip condition
+is that the agent host cannot run them; the residual is stated (the hook runs `node scripts/<x>.mjs`,
+so a committer without `node` on PATH gets the hook's own loud failure). `deploy-tail.md` carries the
+same sentence once; the Windsurf launcher's step list names the offer once and copies nothing
+unconditionally; the by-hand "Non-Node projects follow the policy by hand" claims left the READMEs.
+The step-1 recon is a stack fact, never the criterion.
+
+**The advisor's `enforcement` item.** On a `docs/ai` tree whose node evidence answers `none` and
+whose `scripts/` is absent or holds no basename of the kit's own bundle (listed at run time through
+the probe's own `scriptsBundleRoot` seam, never a hardcoded list), Recommendations renders ONE
+optional offer: the exact bootstrap tail as a `HAND-APPLY:` line with both paths shell-quoted.
+Every other cell is silence or a stated skip naming the path — `package-json` /
+`deployed-node-scripts` render nothing and never list the bundle; a wrong-kind path, an unreadable
+probe (`<root>: <code> on <rel>`), an existing, linked or unreadable destination each skip by name;
+no `docs/ai` renders nothing. The probe spawns no git; the installer's refusal over a hook it did not
+write is stated in the posture note (pinned). The commit-guard item's installer-absent skip carries
+its own 155-char remedy (deploy the scripts, bootstrap steps 8–9, install the hook, re-run) on ANY
+evidence — never "run upgrade first".
+
+**A declined offer leaves no false claim.** Every install claim in the family is conditional on
+the yes — `installed on a yes` in the READMEs and the seeded `changelog.md` / `decisions.md`
+templates, `where installed` in the seeded `agent_rules.md`, `and the enforcement offer was
+accepted` in both visibility contracts — pinned by one (file, literal, count) table in
+`test/enforcement-offer-docs.test.mjs`; the visible wiring of `package.json` scripts is conditional
+on an existing `package.json` AND an accepted offer; on a no the docs command slots of
+`env_commands.md` and `AGENTS.md` carry a note (the caps + index gate run from the agent's own skill
+copy; the archive rotations need the scripts deployed) and never the skill's absolute path.
+
+**Pins, unchanged scripts.** The deployed scripts' basename fallback (no or a malformed
+`package.json` → the directory basename) was already there — `install-git-hooks.test.mjs` and
+`archiver-structure.test.mjs` pin it with a package.json-named control; no script changed.
+
+**Measured on itself (the first-pass-quality series' acceptance metric).** Executed delegated on ONE
+held codex session, eight accounted dispatches, every fold through it. Diff council: round 1 codex
+revise 0 blockers + 3 majors, agy SHIP, lens 0 + 2 majors; rounds 2–3 resolved the decline-path
+subarea at altitude; round 4 CLEAN from all three — four rounds against the 13-round baseline
+(AD-130). Three fold-induced findings, each caught by a test or gate before a receipt attested it.
+
 ## 11.0.0 — the per-fold walk is a record, the cap is a refusal at the round table's own signal, and the fingerprint argv has one home (AD-130)
 
 Plan 2's two attestation rounds on CONVERGED bytes each found one member of the kit's own robustness

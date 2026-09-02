@@ -363,6 +363,20 @@ const FINALIZER_RE = /node \$\{CLAUDE_SKILL_DIR\}\/(references\/scripts\/[A-Za-z
 const UPGRADE_HEADING = '### Mode: upgrade';
 const EQUAL_HEAD_ANCHOR = '**Then**, if the stamp **equals** the head';
 const RESTAMP_ANCHOR = '7. **Re-stamp**';
+const ENFORCEMENT_STEP_ANCHORS = ['8. **', '10. **'];
+const ENFORCEMENT_OFFER_LITERALS = ["the only skip condition is that the agent host cannot run them", "a committer without `node` on PATH gets the hook's own loud failure", 'preview-first'];
+const LEGACY_ENFORCEMENT_PROXIES = ['(Node projects)', 'No Node runtime'];
+const GOTCHAS_HEADING = '## Gotchas';
+const ENFORCEMENT_TOKEN = /enforcement/i;
+const STEP_EIGHT_REFERENCE = 'step 8';
+
+const enforcementStepRegion = (text) => {
+  const start = text.indexOf(ENFORCEMENT_STEP_ANCHORS[0]);
+  assert.notEqual(start, -1, `SKILL.md: missing region anchor "${ENFORCEMENT_STEP_ANCHORS[0]}"`);
+  const end = text.indexOf(ENFORCEMENT_STEP_ANCHORS[1], start);
+  assert.notEqual(end, -1, `SKILL.md: missing region anchor "${ENFORCEMENT_STEP_ANCHORS[1]}"`);
+  return text.slice(start, end).replace(/\s+/g, ' ');
+};
 
 const documentedFinalizer = (prose) => {
   const match = prose.match(FINALIZER_RE);
@@ -402,6 +416,21 @@ describe('standalone bootstrap — the navigator the entry point declares always
     runFinalizer(project);
     assert.ok(existsSync(join(docsAi, 'index.md')), 'the navigator landed without a single project-side script');
     execFileSync(process.execPath, [documentedFinalizer(SKILL_MD), '--check-index', `--root=${project}`], { stdio: 'pipe' });
+  });
+
+  it('standalone bootstrap \u2014 SKILL.md offers the enforcement scripts and the hook on every project', () => {
+    const steps = enforcementStepRegion(SKILL_MD);
+    for (const literal of ENFORCEMENT_OFFER_LITERALS) assert.equal(steps.split(literal).length - 1, 1, literal);
+    for (const proxy of LEGACY_ENFORCEMENT_PROXIES) assert.equal(steps.split(proxy).length - 1, 0, proxy);
+    const gotchasAt = SKILL_MD.indexOf(GOTCHAS_HEADING);
+    assert.notEqual(gotchasAt, -1, 'SKILL.md: missing Gotchas anchor');
+    const gotcha = SKILL_MD
+      .slice(gotchasAt + GOTCHAS_HEADING.length)
+      .split('\n- ')
+      .find((bullet) => ENFORCEMENT_TOKEN.test(bullet))
+      ?.replace(/\s+/g, ' ');
+    assert.ok(gotcha, 'SKILL.md: missing enforcement gotcha');
+    assert.ok(gotcha.includes(STEP_EIGHT_REFERENCE), 'the enforcement gotcha points at step 8');
   });
 
   it('the upgrade flow documents the spec-layer ensure (reader pair if missing; store root only behind bundle-equal pairs) BEFORE the navigator ensure', () => {

@@ -4,6 +4,29 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.2.0 — the standalone bootstrap offers enforcement on every project (AD-131)
+
+`SKILL.md` steps 8–9 no longer decide by the stack recon ("Node projects" / "No Node runtime → skip
+this + the hook"): the enforcement scripts + pre-commit hook are OFFERED on every project,
+preview-first, with a one-line why — the dependency-free Node scripts are available because the
+agent host already runs the skill-home navigator; the only skip condition is that the agent host
+cannot run them; the residual is stated (a committer without `node` on PATH gets the hook's own loud
+failure). On a yes the scripts are copied and the hook installed; on a no the docs command slots of
+`env_commands.md` and `AGENTS.md` carry a note (the caps + index gate run from the agent's own skill
+copy, the archive rotations need the scripts deployed) and never the skill's absolute path. The
+Gotchas bullet points at step 8; the "non-Node stacks follow the policy manually" claim is gone.
+
+**A declined offer leaves no false claim.** `references/contracts.md`'s visible bullet wires the
+`package.json` scripts only when one exists and the enforcement offer was accepted (the
+`.gitignore` either way); the seeded `templates/changelog.md`, `decisions.md` and `agent_rules.md`
+say `installed on a yes` / `where installed` instead of asserting an install; the README's use line
+says the same. The seed `adr/log.md` stays the generator's byte-exact output.
+
+**Two characterization pins, no script change.** `references/scripts/install-git-hooks.test.mjs`
+pins the hook marker's directory-basename fallback beside no or a malformed `package.json` (a named
+`package.json` wins); `archiver-structure.test.mjs` pins the same fallback in the archivers' headings
+through the copied four-file import closure. Mirrored byte-identically into the kit.
+
 ## 7.1.2 — the seed orchestration note names the fold slot (AD-125)
 
 `references/templates/orchestration.json`: the `_README` note lists `plan-authoring`'s third slot,

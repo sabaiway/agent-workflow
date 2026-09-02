@@ -49,6 +49,16 @@ const between = (text, from, to) => {
 const LANGUAGE_TOKEN = /in the user's conversational language/i;
 const BYTE_EXACT_TOKEN = /byte-exact/;
 const RAW_BLOCK_TOKEN = /raw tool block/i;
+const ENFORCEMENT_NOTE_START = '- `enforcement` —';
+const POSTURE_NOTE_BOUNDARY = '\n- ';
+const ENFORCEMENT_NOTE_LITERALS = Object.freeze({
+  handApply: 'HAND-APPLY',
+  noClobber: 'never clobbers an existing file',
+  noFollow: 'never follows a link',
+  installerRefusal: 'refuses to overwrite',
+  mergeRemedy: 'merge the hook by hand',
+});
+const ENFORCEMENT_RISK_PROFILE_END = /Risk profile: [^\n]+\.$/u;
 
 describe('recommendations language contract — the presentation tokens are PRESENT (D5)', () => {
   it('the mode doc presents in the user language: facts complete, commands byte-exact, raw block on request', () => {
@@ -125,6 +135,16 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     assert.match(notes, /dedicated dir/i, 'the narrowing mitigation is stated');
     assert.match(notes, /parentDir/, 'the mitigation names the setting');
     assert.match(notes, /re-run recommendations/i, 'the re-check step is stated');
+  });
+
+  it('the enforcement note pins hand-apply safety, installer refusal, and its risk profile', () => {
+    const start = notes.indexOf(ENFORCEMENT_NOTE_START);
+    assert.notEqual(start, -1, 'the enforcement posture note exists');
+    const enforcementNote = notes.slice(start).split(POSTURE_NOTE_BOUNDARY)[0];
+    for (const [label, literal] of Object.entries(ENFORCEMENT_NOTE_LITERALS)) {
+      assert.ok(enforcementNote.includes(literal), `${label}: ${literal}`);
+    }
+    assert.match(enforcementNote, ENFORCEMENT_RISK_PROFILE_END);
   });
 
   it('the consent-sequence is an explicit informed-consent checkpoint (nothing runs before confirmation)', () => {

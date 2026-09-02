@@ -42,8 +42,10 @@ import {
   SANDBOX_LANE_ACK_PARENT,
   SANDBOX_LANE_ACK_KEY,
   RISK_NOTED_KEYS,
+  OPT_IN_CAPABILITIES,
   probeAdrStore,
 } from './recommendations.mjs';
+import { shellQuoteArg } from './review-state.mjs';
 // The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
 // item decides through that predicate, so a fixture spelling its own body would drift off it.
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
@@ -58,10 +60,24 @@ import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_R
 // document builders — a fixture spelling either here would drift off what the probe reads. Dynamic:
 // the suite must LOAD against the pre-fix tree (no leaf, no probe export) so the red proof observes it.
 const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
-const { probeSpecAdoption } = await import('./recommendations.mjs');
+const { probeSpecAdoption, probeEnforcement } = await import('./recommendations.mjs');
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURE_PACKAGE_JSON = '{"name":"fixture"}\n';
+const FIXTURE_PYPROJECT = '[project]\nname = "fixture"\n';
+const FIXTURE_SCRIPT = '// fixture\n';
+const ENFORCEMENT_KEY = 'enforcement';
+const DEPLOYED_NODE_SCRIPT = 'archive-decisions.mjs';
+const COLLISION_SCRIPT = 'markdown-blocks.test.mjs';
+const EACCES_CODE = 'EACCES';
+const EVIDENCE_GATE_FAILURE = 'the clobber scan ran before the evidence gate';
+const KIT_ROOT = resolve(HERE, '..');
+const BUNDLED_SCRIPTS = resolve(KIT_ROOT, 'references', 'scripts');
+const COMMIT_GUARD_REMEDY = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 deploy the enforcement scripts (bootstrap steps 8\u20139) and install the hook, then re-run';
+const ENFORCEMENT_APPLY_TEMPLATE = 'HAND-APPLY: mkdir -p {root}/scripts && cp {kit}/references/scripts/*.mjs {root}/scripts/ && node {root}/scripts/install-git-hooks.mjs';
+const SPACE_PROJECT_PREFIX = 'recommendations none ';
+const EMPTY_BUNDLE_PREFIX = 'recommendations-empty-bundle-';
 
 // Recipe expectations are READ FROM the bundled manifests (the advisor's own single source) —
 // a hardcoded list here would silently outdate the moment a manifest gains an observed entry.
@@ -78,7 +94,20 @@ const makeProject = () => {
   const root = mkdtempSync(join(tmpdir(), 'recommendations-'));
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '3.0.0\n');
+  writeFileSync(join(root, 'package.json'), FIXTURE_PACKAGE_JSON);
   return root;
+};
+
+const removePackageEvidence = (root) => {
+  rmSync(join(root, 'package.json'), { force: true });
+  writeFileSync(join(root, 'pyproject.toml'), FIXTURE_PYPROJECT);
+  return root;
+};
+const makeNoneEvidenceProject = (withDocs = true) => removePackageEvidence(withDocs ? makeProject() : mkdtempSync(join(tmpdir(), 'recommendations-none-')));
+const makeEacces = (path) => Object.assign(new Error(`${EACCES_CODE}: ${path}`), { code: EACCES_CODE });
+const lstatUnreadableAt = (path) => (candidate) => {
+  if (candidate === path) throw makeEacces(candidate);
+  return lstatSync(candidate);
 };
 
 // A FINAL-run-capable declaration: both canonical core checks as quoted absolute paths to the
@@ -115,6 +144,28 @@ const hermeticDeps = (root, extra = {}) => ({
   takeCensus: () => WITHIN_DOMAIN_CENSUS,
   ...extra,
 });
+
+const enforcementFor = (root, extra = {}) => {
+  const { items, skips } = buildRecommendations({
+    cwd: root,
+    deps: hermeticDeps(root, { probes: probeEnforcement ? [probeEnforcement] : [], ...extra }),
+  });
+  return {
+    item: items.find((entry) => entry.key === ENFORCEMENT_KEY),
+    skip: skips.find((entry) => entry.key === ENFORCEMENT_KEY),
+  };
+};
+const assertEnforcementSkip = (disposition, path) => {
+  assert.equal(disposition.item, undefined);
+  assert.ok(disposition.skip?.reason.includes(path), disposition.skip?.reason);
+};
+const guardedBundleRead = (path) => {
+  if (resolve(path) === BUNDLED_SCRIPTS) throw new Error(EVIDENCE_GATE_FAILURE);
+  return readdirSync(path);
+};
+const expectedEnforcementApply = (root) => ENFORCEMENT_APPLY_TEMPLATE
+  .replaceAll('{root}', () => shellQuoteArg(root))
+  .replace('{kit}', () => shellQuoteArg(KIT_ROOT));
 
 describe('recommendations — section contract', () => {
   it('renders PRESENT-EVEN-WHEN-EMPTY with the exact empty-state line', () => {
@@ -512,7 +563,7 @@ const buildInventoryFixtures = () => {
   const results = [];
   // (1) broad hermetic project: velocity-core, kit-tools-tier, autonomy-policy,
   // gates-declaration, sandbox-provision.
-  const root1 = makeProject();
+  const root1 = makeNoneEvidenceProject();
   results.push(buildRecommendations({ cwd: root1, deps: hermeticDeps(root1, { platform: 'linux', hasBinary: () => false }) }));
   rmSync(root1, { recursive: true, force: true });
   // (2) placed-but-unseeded bridges: bridge-tier.
@@ -1939,6 +1990,112 @@ describe('recommendations — the inert gate declaration item', () => {
   });
 });
 
+describe('recommendations \u2014 the enforcement item', () => {
+  // spec:node-evidence/S9
+  it('recommendations \u2014 the enforcement item: docs/ai + pyproject.toml, no package.json, no scripts/ renders the bootstrap-tail offer', () => {
+    const root = makeNoneEvidenceProject();
+    const { item, skip } = enforcementFor(root);
+    const registryRow = OPT_IN_CAPABILITIES.find((row) => row.id === ENFORCEMENT_KEY);
+    assert.deepEqual(registryRow, { id: ENFORCEMENT_KEY, mode: 'bootstrap', advisorKey: ENFORCEMENT_KEY });
+    assert.deepEqual([item?.key, item?.severity, item?.what, skip], [ENFORCEMENT_KEY, SEVERITY_OPTIONAL, WHATS[ENFORCEMENT_KEY], undefined]);
+    assert.ok(RISK_NOTED_KEYS.includes(ENFORCEMENT_KEY));
+    assert.equal(item?.apply, expectedEnforcementApply(root));
+    const spaceRoot = mkdtempSync(join(tmpdir(), SPACE_PROJECT_PREFIX));
+    mkdirSync(join(spaceRoot, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(spaceRoot, 'pyproject.toml'), FIXTURE_PYPROJECT);
+    const { item: spaceItem, skip: spaceSkip } = enforcementFor(spaceRoot);
+    assert.equal(spaceItem?.apply, expectedEnforcementApply(spaceRoot));
+    assert.equal(spaceSkip, undefined);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(spaceRoot, { recursive: true, force: true });
+  });
+  it('recommendations \u2014 the enforcement scripts bundle uses its own dependency seam', () => {
+    const root = makeNoneEvidenceProject();
+    const emptyBundleRoot = mkdtempSync(join(tmpdir(), EMPTY_BUNDLE_PREFIX));
+    const { item, skip } = enforcementFor(root, {
+      bundleRoot: emptyBundleRoot,
+      scriptsBundleRoot: BUNDLED_SCRIPTS,
+    });
+    assert.equal(item?.key, ENFORCEMENT_KEY);
+    assert.equal(skip, undefined);
+    rmSync(root, { recursive: true, force: true });
+    rmSync(emptyBundleRoot, { recursive: true, force: true });
+  });
+  it('recommendations \u2014 package.json and deployed-node-scripts evidence keep enforcement silent', () => {
+    assert.equal(typeof probeEnforcement, 'function', 'the enforcement probe is active');
+    const packageRoot = makeProject();
+    const scriptRoot = makeNoneEvidenceProject();
+    mkdirSync(join(scriptRoot, 'scripts'));
+    writeFileSync(join(scriptRoot, 'scripts', DEPLOYED_NODE_SCRIPT), FIXTURE_SCRIPT);
+    const dispositions = [enforcementFor(packageRoot, { readdir: guardedBundleRead }), enforcementFor(scriptRoot, { readdir: guardedBundleRead })];
+    for (const disposition of dispositions) assert.deepEqual(disposition, { item: undefined, skip: undefined });
+    rmSync(packageRoot, { recursive: true, force: true });
+    rmSync(scriptRoot, { recursive: true, force: true });
+  });
+  it('recommendations \u2014 wrong-kind evidence is a stated enforcement skip naming the path', () => {
+    const cases = [
+      ['package.json', (root) => mkdirSync(join(root, 'package.json'))],
+      ['scripts', (root) => {
+        mkdirSync(join(root, 'linked-scripts'));
+        symlinkSync(join(root, 'linked-scripts'), join(root, 'scripts'), 'dir');
+      }],
+      [join('scripts', DEPLOYED_NODE_SCRIPT), (root) => {
+        mkdirSync(join(root, 'scripts'));
+        writeFileSync(join(root, 'seed-target.mjs'), FIXTURE_SCRIPT);
+        symlinkSync(join(root, 'seed-target.mjs'), join(root, 'scripts', DEPLOYED_NODE_SCRIPT));
+      }],
+    ];
+    for (const [relativePath, seed] of cases) {
+      const root = makeNoneEvidenceProject();
+      seed(root);
+      assertEnforcementSkip(enforcementFor(root, { readdir: guardedBundleRead }), join(root, relativePath));
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('recommendations \u2014 an existing, symlinked, or unreadable bundled destination is a stated enforcement skip', () => {
+    const cases = [
+      (root, path) => {
+        writeFileSync(path, FIXTURE_SCRIPT);
+        return {};
+      },
+      (root, path) => {
+        writeFileSync(join(root, 'collision-target.mjs'), FIXTURE_SCRIPT);
+        symlinkSync(join(root, 'collision-target.mjs'), path);
+        return {};
+      },
+      (root, path) => ({ lstat: lstatUnreadableAt(path) }),
+    ];
+    for (const seed of cases) {
+      const root = makeNoneEvidenceProject();
+      mkdirSync(join(root, 'scripts'));
+      const path = join(root, 'scripts', COLLISION_SCRIPT);
+      const extra = seed(root, path);
+      assertEnforcementSkip(enforcementFor(root, extra), path);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('recommendations \u2014 an EACCES node-evidence probe is a stated enforcement skip naming the probe', () => {
+    const root = makeNoneEvidenceProject();
+    const path = join(root, 'package.json');
+    const lstat = lstatUnreadableAt(path);
+    const disposition = enforcementFor(root, { lstat, readdir: guardedBundleRead });
+    assert.equal(disposition.item, undefined);
+    assert.ok(disposition.skip?.reason.includes(root), disposition.skip?.reason);
+    assert.ok(disposition.skip?.reason.includes(`${EACCES_CODE} on package.json`), disposition.skip?.reason);
+    rmSync(root, { recursive: true, force: true });
+  });
+  it('recommendations \u2014 no docs/ai is silent and unreadable docs/ai is a stated enforcement skip', () => {
+    const absent = makeNoneEvidenceProject(false);
+    const unreadable = makeNoneEvidenceProject();
+    const path = join(unreadable, 'docs', 'ai');
+    const lstat = lstatUnreadableAt(path);
+    assert.deepEqual(enforcementFor(absent, { readdir: guardedBundleRead }), { item: undefined, skip: undefined });
+    assertEnforcementSkip(enforcementFor(unreadable, { lstat, readdir: guardedBundleRead }), path);
+    rmSync(absent, { recursive: true, force: true });
+    rmSync(unreadable, { recursive: true, force: true });
+  });
+});
+
 describe('recommendations — the commit-guard item (the D10 consumer surface)', () => {
   // A final-run-capable project with the installer deployed and a fixture hooks dir (injected —
   // the probe never spawns git in these tests).
@@ -2006,13 +2163,22 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     assert.ok(!skips.some((s) => s.key === 'commit-guard'));
   });
 
-  it('a final-capable declaration WITHOUT the deployed installer is a stated skip naming the recovery', () => {
-    const root = guardProject();
-    rmSync(join(root, 'scripts', 'install-git-hooks.mjs'));
-    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
-    rmSync(root, { recursive: true, force: true });
-    assert.ok(!items.some((i) => i.key === 'commit-guard'));
-    assert.ok(skips.some((s) => s.key === 'commit-guard' && /install-git-hooks\.mjs.*upgrade/u.test(s.reason)));
+  // spec:node-evidence/S10
+  it('a final-capable declaration WITHOUT the deployed installer is a stated skip carrying the remedy', () => {
+    const packageRoot = guardProject();
+    const scriptsRoot = removePackageEvidence(guardProject());
+    rmSync(join(packageRoot, 'scripts', 'install-git-hooks.mjs'));
+    rmSync(join(scriptsRoot, 'scripts', 'install-git-hooks.mjs'));
+    writeFileSync(join(scriptsRoot, 'scripts', DEPLOYED_NODE_SCRIPT), FIXTURE_SCRIPT);
+    for (const root of [packageRoot, scriptsRoot]) {
+      const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+      assert.ok(!items.some((i) => i.key === 'commit-guard'));
+      const commitGuardSkip = skips.find((entry) => entry.key === 'commit-guard');
+      assert.equal(commitGuardSkip?.reason, COMMIT_GUARD_REMEDY);
+      assert.ok(!items.some((entry) => entry.key === ENFORCEMENT_KEY) && !skips.some((entry) => entry.key === ENFORCEMENT_KEY));
+      assert.doesNotMatch(commitGuardSkip.reason, /\babove\b/u);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('family-freshness: behind/caveated rows fire the init item; a throwing survey degrades to a skip', () => {

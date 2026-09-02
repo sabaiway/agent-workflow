@@ -32,7 +32,7 @@ Open your agent inside a project and run the skill:
 
 - **`/agent-workflow-memory`** — bootstrap a new or empty project. Asks the three setup
   questions (visibility, conversational language, agent attribution), then writes `docs/ai/`,
-  `AGENTS.md`, the enforcement scripts + pre-commit hook, and stamps
+  `AGENTS.md`, offers the enforcement scripts + pre-commit hook (installed on a yes), and stamps
   `docs/ai/.memory-version`. The three pointer slots in `AGENTS.md` (the **methodology**,
   **orchestration** and **autonomy** pointers, filled later by the family composition root) are
   left **empty**.

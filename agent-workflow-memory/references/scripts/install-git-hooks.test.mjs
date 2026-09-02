@@ -8,12 +8,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { basename, join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INSTALLER_SRC = join(HERE, 'install-git-hooks.mjs');
+const MALFORMED_PACKAGE_JSON = '{ not json';
+const NAMED_PACKAGE_JSON = '{"name":"named-fixture"}';
+const NAMED_FIXTURE = 'named-fixture';
 
 // The installer anchors ROOT at <its dir>/.. — deploy it into a fixture's scripts/ like a consumer.
 const mkProject = () => {
@@ -38,6 +41,33 @@ const hooksPathOf = (root) => {
   const r = spawnSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: root, encoding: 'utf8' });
   return resolve(root, r.stdout.trim());
 };
+
+const markerFor = (name) => `# ${name}:install-git-hooks.mjs`;
+const readHook = (root) => readFileSync(join(hooksPathOf(root), 'pre-commit'), 'utf8');
+
+describe('install-git-hooks \u2014 beside no package.json, or a malformed one, the marker names the directory basename', () => {
+  it('no package.json, then a MALFORMED one \u2014 the marker names the directory basename', () => {
+    const { root } = mkProject();
+    const expected = markerFor(basename(root));
+    const absent = runInstaller(root);
+    assert.equal(absent.status, 0, absent.stderr);
+    assert.ok(readHook(root).split('\n').includes(expected));
+    writeFileSync(join(root, 'package.json'), MALFORMED_PACKAGE_JSON);
+    const malformed = runInstaller(root);
+    assert.equal(malformed.status, 0, malformed.stderr);
+    assert.ok(readHook(root).split('\n').includes(expected));
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a named package.json wins \u2014 the marker carries its name', () => {
+    const { root } = mkProject();
+    writeFileSync(join(root, 'package.json'), NAMED_PACKAGE_JSON);
+    const result = runInstaller(root);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(readHook(root).split('\n').includes(markerFor(NAMED_FIXTURE)));
+    rmSync(root, { recursive: true, force: true });
+  });
+});
 
 describe('install-git-hooks — the hooks path comes from git plumbing (C7)', () => {
   it('a normal repo installs at the git-path hooks location', () => {

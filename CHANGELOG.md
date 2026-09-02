@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-02 — AD-131 the bootstrap offers enforcement on every project and the advisor closes the loop (kit 11.1.0 MINOR · memory 7.2.0 MINOR · engine 4.6.0 unchanged · bridges unchanged)
+
+**The first delegated feature under the five rungs, and the series' acceptance metric measured.**
+Bootstrap steps 8–9 and the memory substrate decided the enforcement scripts + hook by the step-1
+recon; a Python, Go or Rust project was denied the caps gate, the archivers and the hook, and
+`upgrade` then reported `skipped-no-node-evidence` on the tree the bootstrap left bare. Now the
+offer rides every project, preview-first, keyed on the kit's own node-evidence contract (rev 2: the
+bootstrap seeds on `package-json` OR `deployed-node-scripts` OR the fact that the agent host runs the
+kit; the only skip condition is that the agent host cannot run them; the committer-node residual is
+stated); the Recommendations advisor gains ONE optional `enforcement` item — the exact bootstrap
+tail as a shell-quoted `HAND-APPLY` line over a clean `scripts/` destination; silence on Node
+evidence or with no `docs/ai`, a stated skip naming the offending path in every other state — and
+the commit-guard skip carries its own remedy instead of "run upgrade
+first"; a declined offer leaves no false claim anywhere in the family (one conditional per site, one pin
+table). The deployed scripts' basename fallback is pinned, no script changed. Measured on itself:
+eight delegated dispatches on ONE held session; diff council round 1 codex 0 blockers + 3 majors,
+agy 0, lens 0 + 2 majors; CLEAN at round 4 against the 13-round baseline; three fold-induced
+findings, every one caught by a test or gate before any receipt attested it.
+
 ## 2026-09-02 — AD-130 the per-fold walk is a record, the cap is a refusal, the fingerprint argv has one home (kit 11.0.0 MAJOR · engine 4.6.0 MINOR · codex bridge 3.7.0 · agy bridge 5.6.0 · memory 7.1.2 unchanged)
 
 **The last two rungs of the first-pass-quality series, and the two fingerprint classes plan 1 measured

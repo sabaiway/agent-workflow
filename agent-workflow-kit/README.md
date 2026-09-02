@@ -117,12 +117,12 @@ your-repo/
     ├── tech_reference.md  ← configs & patterns
     ├── pages/             ← one spec per page/route
     └── history/           ← changelog archive (HOT→WARM→COLD)
-  + scripts/               ← caps · index · archive (Node path)
-  + pre-commit hook        ← keeps it all honest    (Node path)
+  + scripts/               ← caps · index · archive (installed on a yes)
+  + pre-commit hook        ← keeps it all honest    (installed on a yes)
 ```
 
 The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are the **Node path**
-(dependency-free, `node --test`). Non-Node projects keep the same policy by hand.
+(dependency-free, `node --test`). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or **hidden**
 (same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the repo "looks
@@ -225,7 +225,7 @@ file), or run the guarded `/agent-workflow-kit uninstall`.
 
 | Command | When | What happens |
 |---------|------|--------------|
-| `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → installs enforcement → **asks before committing** |
+| `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → offers enforcement (installed on a yes) → **asks before committing** |
 | `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps — then prints a **read-only** one-line backend-status line (what's set up vs missing); refreshes the already-placed bridges from the kit's bundled copies (never installs a new one — set one up with `/agent-workflow-kit setup`) |
 | `/agent-workflow-kit help` | any time | **read-only command index** — every command, grouped (Inspect / Configure / Orchestrate / Lifecycle) and tagged read-only / writer / guarded. The discoverable entry point, and where any unrecognized invocation lands (always read-only — a garbage invocation never writes). Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
@@ -270,7 +270,7 @@ It **never auto-commits** and **never overwrites** an existing `AGENTS.md` witho
 - **Plan lifecycle** — a capped plan (goal and boundary, module ledger, verification), ephemeral plan files, and a mandatory Cleanup phase.
 - **No silent failures** — every guard that rejects an action logs structured context.
 
-Enforcement ships as dependency-free **Node** scripts (`node --test`, no package manager assumed). Non-Node projects follow the same policy by hand.
+The dependency-free **Node** enforcement scripts (`node --test`, no package manager assumed) and their hook are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 ---
 
@@ -284,7 +284,8 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
    on /agent-workflow-kit in a repo, the kit:
    ├─ delegates ─▶ memory substrate   (healthy copy, else bundled fallback)
    ├─ injects   ─▶ workflow methodology  (live from the installed engine)
-   ├─ deploys   ─▶ AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
+   ├─ deploys   ─▶ AGENTS.md + docs/ai/
+   │               + Node scripts + pre-commit hook (installed on a yes)
    ├─ detects   ─▶ optional backends   (codex / agy, read-only)
    └─ sets up   ─▶ a bridge (opt-in)   (place skill + link wrappers)
 ```

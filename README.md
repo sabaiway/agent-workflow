@@ -117,8 +117,8 @@ OPTIONAL/MACHINE  install a bridge + subscription login -> delegated exec
    placed**, `init` refreshes them from its bundled copies — skip with `--no-bridges`).
 2. **Once per project** — invoke the skill **inside the repo** (the command differs per agent —
    see the [kit README's command table](agent-workflow-kit/README.md#-use)). It deploys
-   `AGENTS.md` + `docs/ai/` filled with real recon, installs the enforcement scripts +
-   pre-commit hook, and **asks before committing**.
+   `AGENTS.md` + `docs/ai/` filled with real recon, offers the enforcement scripts +
+   pre-commit hook (installed on a yes), and **asks before committing**.
 3. **Every session afterwards** — the agent reads the small entry layer, loads deeper docs only
    on demand, and writes a handover at the end.
 
@@ -140,12 +140,12 @@ your-repo/
     ├── known_issues.md    <- bugs + workarounds
     ├── architecture.md · current_state.md · changelog.md · …
     └── history/           <- changelog archive (HOT -> WARM -> COLD)
-  + scripts/               <- caps · index · archive   (Node path)
-  + pre-commit hook        <- keeps it all honest       (Node path)
+  + scripts/               <- caps · index · archive   (installed on a yes)
+  + pre-commit hook        <- keeps it all honest       (installed on a yes)
 ```
 
 The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are the **Node path**
-(dependency-free, `node --test`). Non-Node projects keep the same policy by hand.
+(dependency-free, `node --test`). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or
 **hidden** (same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the
@@ -170,7 +170,8 @@ One kit is the entry point; everything else is a layer it composes:
 npx ... init -> kit  (composition root; global skill, NOT a project deploy)
    |- injects the methodology  <- engine (canon supplier; kit reads it live)
    |- delegates -> memory substrate (standalone, else bundled fallback)
-   `- deploys -> AGENTS.md + docs/ai/ + Node scripts + pre-commit hook
+   `- deploys -> AGENTS.md + docs/ai/
+                + Node scripts + pre-commit hook (installed on a yes)
 
 optional backends (placed once by setup, NOT by init; init refreshes them):
    codex (execute / review)  |  antigravity (review / probe)
@@ -202,8 +203,8 @@ optional backends (placed once by setup, NOT by init; init refreshes them):
 - **Plan lifecycle** — a capped plan (goal and boundary, module ledger, verification), ephemeral plan files, a **mandatory Cleanup phase**.
 - **No silent failures** — every guard that rejects an action surfaces a real error.
 
-Enforcement ships as dependency-free **Node ≥ 22** scripts; non-Node projects follow the policy
-by hand.
+The dependency-free **Node ≥ 22** enforcement scripts and their hook are offered on every project
+because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 ---
 

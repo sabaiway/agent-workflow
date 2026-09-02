@@ -39,7 +39,7 @@ Read in order, then confirm before starting:
 Before claiming "done":
 1. Run all quality gates (lint + type-check + tests) — all green.
 2. Update docs: `current_state.md` (feature ready), `changelog.md` (entry), `handover.md` (**REPLACE** the last-session block — session delta, never append; older deltas live in `changelog.md` → `history/`), `pages/<page>.md` (matches implementation), the governing spec (its revision lands with the code: `draft` -> `live` on the landing row). Only bump "Last Updated" when content actually changed.
-3. Run the docs cap-validator + index-freshness gate (pre-commit also enforces). On failure: trim the offending file, or run the changelog rotation if the offender is `changelog.md`.
+3. Run the docs cap-validator + index-freshness gate (the pre-commit hook also enforces it where installed). On failure: trim the offending file, or run the changelog rotation if the offender is `changelog.md`.
 4. If the work executed a plan file — complete it per the project's **planning skill / methodology** (the `workflow:methodology` slot in `AGENTS.md` points to it; see §5). Without completing that step the plan is not done. (The methodology, including any mandatory final cleanup, is defined there — not in this substrate.)
 5. **Ask before committing** (§4): report lint / type-check / test counts + docs status, then wait for explicit approval. DO NOT auto-commit.
 

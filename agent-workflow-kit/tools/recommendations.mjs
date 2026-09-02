@@ -83,6 +83,7 @@ import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
+import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
 import { surveyExecutorVehicle, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
@@ -108,7 +109,12 @@ export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
 const q = shellQuoteArg;
-
+const ENFORCEMENT_ABSENT_CODE = 'ENOENT';
+const ENFORCEMENT_KIT_ROOT = resolve(HERE, '..');
+const ENFORCEMENT_BUNDLE_ROOT = join(ENFORCEMENT_KIT_ROOT, 'references', 'scripts');
+const ENFORCEMENT_WHAT = 'the enforcement scripts are not deployed beside docs/ai (no Node evidence) \u2014 the offer copies them and installs the pre-commit hook';
+const ENFORCEMENT_APPLY_TEMPLATE = 'HAND-APPLY: mkdir -p {root}/scripts && cp {kit}/references/scripts/*.mjs {root}/scripts/ && node {root}/scripts/install-git-hooks.mjs';
+const COMMIT_GUARD_INSTALLER_REMEDY = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 deploy the enforcement scripts (bootstrap steps 8\u20139) and install the hook, then re-run';
 // ── the section contract tokens (doc-parity-bound in upgrade.md + the mode doc) ────────────────
 export const RECOMMENDATIONS_SECTION_HEADER = '## Recommendations (agent-workflow)';
 export const RECOMMENDATIONS_EMPTY_LINE = 'no recommendations — flow optimal.';
@@ -166,6 +172,7 @@ export const SEVERITIES = Object.freeze({
   // offer to enable something.
   'gate-hook.marker-stale': SEVERITY_ATTENTION,
   'commit-guard': SEVERITY_OPTIONAL,
+  enforcement: SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
@@ -249,6 +256,7 @@ export const WHATS = Object.freeze({
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'gate-hook.marker-stale': 'the declaration carries the lcovProducer key but the placed hook predates it — the hook goes dark and every gate prompts',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
+  enforcement: ENFORCEMENT_WHAT,
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
@@ -313,6 +321,7 @@ export const BENEFITS = Object.freeze({
   'source-size': 'maintainability — a module you can hold whole stays reviewable, and size drift becomes recorded, reasoned debt',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
+  enforcement: 'enforcement — bundled checks and the pre-commit hook keep caps, archives, and the generated index current',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
@@ -361,6 +370,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'gate-hook', mode: 'hook', advisorKey: 'gate-hook' },
   { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
+  { id: 'enforcement', mode: 'bootstrap', advisorKey: 'enforcement' },
   { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
   { id: 'mcp-channel', mode: 'mcp', advisorKey: 'mcp-channel' },
@@ -843,7 +853,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     if (!isFinalCapableDeclaration(gates, root)) return; // no receipt to guard yet — no offer
     const installer = join(root, 'scripts', 'install-git-hooks.mjs');
     if (!(deps.exists ?? existsSync)(installer)) {
-      skip('commit-guard', new Error('the hook installer (scripts/install-git-hooks.mjs) is not deployed — run upgrade first'));
+      skip('commit-guard', new Error(COMMIT_GUARD_INSTALLER_REMEDY));
       return;
     }
     const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root);
@@ -863,6 +873,45 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     add('commit-guard', fillTemplate(WHATS['commit-guard'], {}), `node ${q(installer)} --commit-guard ${q(toolPath('commit-guard.mjs'))}`);
   } catch (err) {
     skip('commit-guard', err);
+  }
+};
+
+const readEnforcementNode = (path, lstat) => {
+  try {
+    return lstat(path);
+  } catch (err) {
+    if (err?.code === ENFORCEMENT_ABSENT_CODE) return null;
+    throw new Error(`${path}: ${err?.code ?? err?.message ?? err}`);
+  }
+};
+
+export const probeEnforcement = ({ root, deps, add, skip }) => {
+  try {
+    const lstat = deps.lstat ?? lstatSync;
+    const docsAi = join(root, 'docs', 'ai');
+    const docsAiNode = readEnforcementNode(docsAi, lstat);
+    if (docsAiNode === null) return;
+    if (!docsAiNode.isDirectory()) throw new Error(`${docsAi} is not a plain directory`);
+    const evidence = probeNodeEvidence(root, lstat);
+    if (evidence.state === NODE_EVIDENCE.PACKAGE_JSON || evidence.state === NODE_EVIDENCE.DEPLOYED_SCRIPTS) return;
+    if (evidence.state === NODE_EVIDENCE.UNREADABLE) throw new Error(`${root}: ${evidence.error}`);
+    if (evidence.state !== NODE_EVIDENCE.NONE) throw new Error(`unknown Node-evidence state: ${evidence.state}`);
+    if (evidence.wrongKind.length > 0) throw new Error(join(root, evidence.wrongKind[0]));
+    const readDir = deps.readdir ?? readdirSync;
+    const bundleRoot = deps.scriptsBundleRoot ?? ENFORCEMENT_BUNDLE_ROOT;
+    const bundleBasenames = readDir(bundleRoot).filter((name) => name.endsWith('.mjs')).sort();
+    if (NODE_EVIDENCE_SCRIPTS.some((name) => !bundleBasenames.includes(name))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
+    const scripts = join(root, 'scripts');
+    const scriptsNode = readEnforcementNode(scripts, lstat);
+    if (scriptsNode !== null && !scriptsNode.isDirectory()) throw new Error(`${scripts} is not a plain directory`);
+    for (const basename of scriptsNode === null ? [] : bundleBasenames) {
+      const destination = join(scripts, basename);
+      if (readEnforcementNode(destination, lstat) === null) continue;
+      throw new Error(`${destination} already exists; the enforcement copy would clobber it`);
+    }
+    add('enforcement', ENFORCEMENT_WHAT, fillTemplate(ENFORCEMENT_APPLY_TEMPLATE, { root: q(root), kit: q(ENFORCEMENT_KIT_ROOT) }));
+  } catch (err) {
+    skip('enforcement', err);
   }
 };
 
@@ -1242,7 +1291,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1547,6 +1596,7 @@ const PROBES = Object.freeze([
   probeGatesInert,
   probeSourceSize,
   probeCommitGuard,
+  probeEnforcement,
   probeReadLane,
   probeStateBlockHook,
   probeCheapAgents,

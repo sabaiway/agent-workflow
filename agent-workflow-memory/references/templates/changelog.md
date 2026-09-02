@@ -20,7 +20,7 @@ maxLines: 700
 **Changes:**
 - Created `AGENTS.md` (entry point) + `CLAUDE.md` symlink.
 - Created `docs/ai/` with the spec files + `pages/`.
-- Installed the docs cap-validator / index-freshness / archive scripts + pre-commit hook.
+- Offered the docs cap-validator / index-freshness / archive scripts + pre-commit hook (installed on a yes).
 - Recorded the real stack, scripts, and architecture into the relevant files.
 
 **Quality gates:** n/a (no code changes).

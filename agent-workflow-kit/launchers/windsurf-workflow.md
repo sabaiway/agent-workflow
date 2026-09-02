@@ -26,8 +26,8 @@ reinvent any of it here; the kit's `SKILL.md` is the single source of truth.
      attribution) as ONE structured multi-question prompt; record each answer individually,
      write nothing until ALL are answered** →
      create `AGENTS.md` (+ `CLAUDE.md` symlink) from `<KIT_DIR>/references/templates/` →
-     deploy `docs/ai/` → copy `<KIT_DIR>/references/scripts/*.mjs` (Node projects) →
-     wire/hide per visibility → install the pre-commit hook → stamp `docs/ai/.workflow-version`.
+     deploy `docs/ai/` → offer the enforcement scripts + pre-commit hook (on a yes: copy `<KIT_DIR>/references/scripts/*.mjs`, install the hook) →
+     wire/hide per visibility → stamp `docs/ai/.workflow-version`.
 4. Report what was filled with real data vs left as TODO, then **ask before committing** —
    never auto-commit.
 
