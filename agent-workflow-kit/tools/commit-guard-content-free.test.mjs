@@ -7,12 +7,12 @@
 // commit introduces no bytes at all.
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, appendFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { main } from './commit-guard.mjs';
+import { main, runGuard } from './commit-guard.mjs';
 import { computeTreeFingerprint, computeWorkingState } from './core-evidence.mjs';
 
 // The literal clean-tree value, spelled out here rather than imported: a named import of the
@@ -26,6 +26,8 @@ after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const GATES = { gates: [{ id: 'noop', title: 'noop', cmd: 'true' }] };
 const sha = (text) => createHash('sha256').update(text).digest('hex');
+const REFUSAL_2_TEXT = 'the index carries staged content the payload cannot see, so no final receipt can describe what this commit will carry';
+const REAL_GIT = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
 
 let seq = 0;
 const gitIn = (root) => (...args) => {
@@ -100,56 +102,75 @@ describe('commit-guard — the CONTENT-FREE lanes', () => {
     assert.doesNotMatch(out.stdout, /binds this exact tree/, 'a content-free green states nothing about this commit');
   });
 
-  it('staged content INVISIBLE to the fingerprint refuses by name and names the configuration', () => {
-    // A staged gitlink hidden from `git diff`: the payload stays empty while the index carries a
-    // real change. EACH ignore setting is applied as the SOLE mechanism — with both set at once
-    // neither would be proven sufficient — and clearing it must return the tree to the ordinary
-    // lane, which is what proves the refusal was about the hiding and nothing else.
-    for (const setting of ['submodule.vendor.ignore', 'diff.ignoreSubmodules']) {
-      const { root, g } = makeCleanRepo();
-      const sub = join(TMP, `sub-${seq}`);
-      mkdirSync(sub, { recursive: true });
-      const gs = gitIn(sub);
-      gs('init', '-q', '-b', 'main');
-      gs('config', 'user.email', 'coder-tools@proton.me');
-      gs('config', 'user.name', 'coder-tool');
-      writeFileSync(join(sub, 'f.txt'), 'one\n');
-      gs('add', '-A');
-      gs('commit', '-qm', 'sub base');
-      const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'], { cwd: root, encoding: 'utf8' });
-      assert.equal(add.status, 0, add.stderr);
-      g('commit', '-qm', 'add submodule');
-      // Move the submodule's HEAD, stage the new gitlink, then hide it from every diff.
-      writeFileSync(join(sub, 'f.txt'), 'two\n');
-      gs('commit', '-qam', 'sub move');
-      const pull = spawnSync('git', ['-c', 'protocol.file.allow=always', 'fetch', '-q'], { cwd: join(root, 'vendor'), encoding: 'utf8' });
-      assert.equal(pull.status, 0, pull.stderr);
-      gitIn(join(root, 'vendor'))('checkout', '-q', 'main');
-      gitIn(join(root, 'vendor'))('reset', '-q', '--hard', 'origin/main');
-      g('add', 'vendor');
-      g('config', setting, 'all');
-      assert.equal(computeTreeFingerprint(root), CONTENT_FREE_FINGERPRINT, `${setting} alone empties the payload`);
-      assert.equal(computeWorkingState(root).stagedDirty, true, 'while the index really carries the gitlink');
-      const out = check(root);
-      assert.equal(out.code, 1, setting);
-      assert.match(out.stdout, /cannot see/);
-      // Both candidate settings are named by their exact spelling, so a later edit cannot quietly
-      // drop the one the operator actually set.
-      assert.match(out.stdout, /submodule\.<name>\.ignore/);
-      assert.match(out.stdout, /diff\.ignoreSubmodules/);
-      assert.doesNotMatch(out.stdout, /git add -A/, 'the recovery is the configuration, not re-staging what is already staged');
-      // Absolute, and quoted only when the path needs it — the same shellQuoteArg shape the
-      // index-lag recovery prints. What matters is that no installed kit is handed a repo-relative
-      // path it cannot run.
-      assert.match(out.stdout, /node '?\/.*run-gates\.mjs'? --final/, 'and it names the RESOLVED tool');
-      // The recovery, executed: unset the setting and the gitlink becomes visible again, so the
-      // tree carries bytes and the guard falls back to the ordinary no-receipt refusal.
-      g('config', '--unset', setting);
-      assert.notEqual(computeTreeFingerprint(root), CONTENT_FREE_FINGERPRINT, `${setting} cleared makes the change visible`);
-      const after = check(root);
-      assert.equal(after.code, 1);
-      assert.match(after.stdout, /no completed final-run record/, `${setting}: the ordinary lane, not the content-free one`);
-    }
+  it('a staged gitlink enters the payload and a GREEN receipt attests it', () => {
+    const { root, g } = makeCleanRepo();
+    const sub = join(TMP, `sub-${seq}`);
+    mkdirSync(sub, { recursive: true });
+    const gs = gitIn(sub);
+    gs('init', '-q', '-b', 'main');
+    gs('config', 'user.email', 'coder-tools@proton.me');
+    gs('config', 'user.name', 'coder-tool');
+    writeFileSync(join(sub, 'f.txt'), 'one\n');
+    gs('add', '-A');
+    gs('commit', '-qm', 'sub base');
+    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'], { cwd: root, encoding: 'utf8' });
+    assert.equal(add.status, 0, add.stderr);
+    g('commit', '-qm', 'add submodule');
+    const vendor = join(root, 'vendor');
+    const gv = gitIn(vendor);
+    gv('config', 'user.email', 'coder-tools@proton.me');
+    gv('config', 'user.name', 'coder-tool');
+    writeFileSync(join(vendor, 'f.txt'), 'two\n');
+    gv('add', '-A');
+    gv('commit', '-qm', 'move gitlink');
+    g('add', 'vendor');
+    g('config', 'diff.ignoreSubmodules', 'all');
+    const fingerprint = computeTreeFingerprint(root);
+    assert.notEqual(fingerprint, CONTENT_FREE_FINGERPRINT, 'the forced payload includes the staged gitlink');
+    assert.equal(computeWorkingState(root).stagedDirty, true);
+    const absent = check(root);
+    assert.equal(absent.code, 1);
+    assert.match(absent.stdout, /no completed final-run record/);
+    seedFinal(root, fingerprint, 'green');
+    const attested = check(root);
+    assert.equal(attested.code, 0, attested.stdout + attested.stderr);
+    assert.match(attested.stdout, /green final receipt binds this exact tree/);
+  });
+
+  it('refusal 2 names staged content the payload cannot see and gives a generic recovery', () => {
+    const source = readFileSync(new URL('./commit-guard.mjs', import.meta.url), 'utf8');
+    const line = source.split('\n').find((candidate) => candidate.includes(REFUSAL_2_TEXT));
+    assert.ok(line, `commit-guard refusal 2 carries: ${REFUSAL_2_TEXT}`);
+    assert.doesNotMatch(line, /--no-ext-diff/);
+    assert.doesNotMatch(line, /submodule\.<name>\.ignore/);
+    assert.doesNotMatch(line, /diff\.ignoreSubmodules/);
+    assert.match(line, /\$\{FINAL_RUN_TOOL\} --final/);
+  });
+
+  it('refusal 2 fails closed when a hostile git hides only the cached fingerprint payload', () => {
+    const { root, g } = makeCleanRepo();
+    writeFileSync(join(root, 'staged.txt'), 'staged\n');
+    g('add', 'staged.txt');
+    const shim = join(TMP, `shim-${seq}`);
+    mkdirSync(shim, { recursive: true });
+    writeFileSync(join(shim, 'git'), `#!/bin/sh
+verb=
+cached=0
+probe=0
+for arg in "$@"; do
+  [ "$arg" = diff ] && verb=diff
+  [ "$arg" = --cached ] && cached=1
+  case "$arg" in --name-only|--quiet|-z) probe=1 ;; esac
+done
+[ "$verb" = diff ] && [ "$cached" = 1 ] && [ "$probe" = 0 ] && exit 0
+exec "${REAL_GIT}" "$@"
+`, { mode: 0o755 });
+    const out = runGuard({ cwd: root, env: { ...process.env, PATH: `${shim}${delimiter}${process.env.PATH}` } });
+    const report = out.lines.join('\n');
+    assert.equal(out.code, 1, report);
+    assert.match(report, new RegExp(REFUSAL_2_TEXT));
+    assert.doesNotMatch(report, /--no-ext-diff|submodule\.<name>\.ignore|diff\.ignoreSubmodules/);
+    assert.match(report, /run-gates\.mjs.*--final/);
   });
 
   it('an ARMED flow plus a foreign GREEN carrying a stale flow hash still does not decide the lane', () => {

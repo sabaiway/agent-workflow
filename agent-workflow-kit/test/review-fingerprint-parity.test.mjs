@@ -56,12 +56,16 @@ const SHARED_FNS = [
 const FINGERPRINT_FNS = ['is_binary', 'sha256_stdin', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_fingerprint_payload', 'compute_tree_fingerprint'];
 const ASSEMBLE_FNS = ['is_binary', 'is_never_committable_untracked', 'emit_untracked_paths_z', 'emit_status_porcelain_filtered', 'emit_repo_file_map', 'assemble_code_diff'];
 const PREFLIGHT_FNS = ['is_never_committable_untracked', 'emit_untracked_paths_z', 'has_reviewable_untracked'];
+const DIFF_FLAGS = ['--no-ext-diff', '--no-textconv', '--ignore-submodules=none'];
 
 const fnsFrom = (wrapperPath, names) => {
   const source = readFileSync(wrapperPath, 'utf8');
   return names.map((n) => extractBashFn(source, n)).join('\n');
 };
-
+const preflightFrom = (wrapperPath) => {
+  const line = readFileSync(wrapperPath, 'utf8').split('\n').find((candidate) => candidate.trimStart().startsWith('if git diff --quiet'));
+  assert.ok(line, 'wrapper carries the no-diff preflight'); return line.trim();
+};
 // Run the REAL extracted bash helpers in a repo → the fingerprint hex (or a payload dump).
 const bashEval = (script, cwd) => {
   const r = spawnSync('bash', ['-c', `set -euo pipefail\n${script}`], { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -69,6 +73,7 @@ const bashEval = (script, cwd) => {
   return r.stdout.replace(/\n$/, '');
 };
 const bashFingerprint = (wrapperPath, cwd) => bashEval(`${fnsFrom(wrapperPath, FINGERPRINT_FNS)}\ncompute_tree_fingerprint`, cwd);
+const bashPreflight = (wrapperPath, cwd, prefix = '') => bashEval(`${prefix}${fnsFrom(wrapperPath, PREFLIGHT_FNS)}\n${preflightFrom(wrapperPath)} echo CLEAN; else echo DIRTY; fi`, cwd);
 
 let root;
 before(() => {
@@ -100,6 +105,18 @@ before(() => {
 after(() => rmSync(root, { recursive: true, force: true }));
 
 describe('fingerprint parity — one fixture state, three implementations, one hash', () => {
+  it('the node argv, both bash diff functions and both no-diff preflights carry the guarded flag set', async () => {
+    const core = await import('../tools/core-evidence.mjs');
+    for (const name of ['FINGERPRINT_CACHED_DIFF_ARGV', 'FINGERPRINT_UNSTAGED_DIFF_ARGV']) { assert.ok(Array.isArray(core[name]), `${name} is exported`); for (const flag of DIFF_FLAGS) assert.ok(core[name].includes(flag), `${name} carries ${flag}`); }
+    for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
+      for (const name of ['emit_fingerprint_payload', 'assemble_code_diff']) {
+        const lines = extractBashFn(readFileSync(wrapper, 'utf8'), name).split('\n').filter((line) => line.trimStart().startsWith('git diff '));
+        assert.equal(lines.length, 2, `${name} has two diff lines`);
+        for (const line of lines) for (const flag of DIFF_FLAGS) assert.ok(line.includes(flag), `${name}: ${flag}`);
+      }
+      for (const flag of DIFF_FLAGS) assert.equal(preflightFrom(wrapper).split(flag).length - 1, 2, `preflight carries ${flag} twice`);
+    }
+  });
   it('the shared bash helper set is byte-identical across the two wrappers', () => {
     for (const name of SHARED_FNS) {
       const codex = extractBashFn(readFileSync(CODEX_WRAPPER, 'utf8'), name);
@@ -129,6 +146,17 @@ describe('fingerprint parity — one fixture state, three implementations, one h
     assert.notEqual(mutated, fnsFrom(CODEX_WRAPPER, FINGERPRINT_FNS), 'the mutation applied');
     const diverged = bashEval(`${mutated}\ncompute_tree_fingerprint`, root);
     assert.notEqual(diverged, computeTreeFingerprint(root), 'a one-byte serialization drift changes the hash — the comparator would catch it');
+  });
+  it('the extracted preflight sees a staged gitlink despite diff.ignoreSubmodules=all', () => {
+    const base = mkdtempSync(join(tmpdir(), 'fp-gitlink-')), sub = join(base, 'origin'), repo = join(base, 'repo'); mkdirSync(sub); mkdirSync(repo);
+    const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`); };
+    try { for (const cwd of [sub, repo]) { git(cwd, 'init', '-q'); git(cwd, 'config', 'user.email', 'probe@example.com'); git(cwd, 'config', 'user.name', 'probe'); }
+      writeFileSync(join(sub, 'f.txt'), 'one\n'); git(sub, 'add', '-A'); git(sub, 'commit', '-qm', 'base');
+      git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'); git(repo, 'commit', '-qm', 'gitlink');
+      writeFileSync(join(repo, 'vendor', 'f.txt'), 'two\n'); git(join(repo, 'vendor'), 'config', 'user.email', 'probe@example.com'); git(join(repo, 'vendor'), 'config', 'user.name', 'probe'); git(join(repo, 'vendor'), 'add', '-A'); git(join(repo, 'vendor'), 'commit', '-qm', 'move'); git(repo, 'add', 'vendor'); git(repo, 'config', 'diff.ignoreSubmodules', 'all');
+      assert.equal(bashEval('if git diff --quiet && git diff --cached --quiet; then echo CLEAN; else echo DIRTY; fi', repo), 'CLEAN');
+      for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) assert.equal(bashPreflight(wrapper, repo), 'DIRTY');
+    } finally { rmSync(base, { recursive: true, force: true }); }
   });
 });
 
@@ -375,11 +403,7 @@ git() {
     g('commit', '-qm', 'base');
     spawnSync('mkfifo', [join(clean, FIFO_NAME)], { encoding: 'utf8' });
     writeFileSync(join(clean, REG_NAME), 'regular control\n');
-    const preflight = (wrapper, injectPath) =>
-      bashEval(
-        `${shadow(injectPath)}\n${fnsFrom(wrapper, PREFLIGHT_FNS)}\nif git diff --quiet && git diff --cached --quiet && ! has_reviewable_untracked; then echo CLEAN; else echo DIRTY; fi`,
-        clean,
-      );
+    const preflight = (wrapper, injectPath) => bashPreflight(wrapper, clean, `${shadow(injectPath)}\n`);
     for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) {
       assert.equal(preflight(wrapper, FIFO_NAME), 'CLEAN', 'the masks-only tree reads clean (no subscription run spent)');
       assert.equal(preflight(wrapper, REG_NAME), 'DIRTY', 'NON-VACUOUS: an injected regular file keeps the tree reviewable');

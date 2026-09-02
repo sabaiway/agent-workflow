@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-02 — AD-130 the per-fold walk is a record, the cap is a refusal, the fingerprint argv has one home (kit 11.0.0 MAJOR · engine 4.6.0 MINOR · codex bridge 3.7.0 · agy bridge 5.6.0 · memory 7.1.2 unchanged)
+
+**The last two rungs of the first-pass-quality series, and the two fingerprint classes plan 1 measured
+RED.** Rung 4: "does the tag cover the row" is the generator's second mode (`robustness-brief
+--coverage`, bounded literal occurrence in the row file's bytes — the first run over this plan named
+an errno the executor would otherwise never have been briefed on) and the adversarial walk a fold
+owes is a RECORD (`internal-attestation --walk`) that `round-open` refuses without for every round
+after the first. Rung 5: the cap is the round table's OWN signal (`cap reached` / `crossover`), past
+which `round-open` refuses unless every blocking item of the latest round is covered by a disposition
+at digest equality; `--dispose queued` carries a `--claim` fold-scope accepts and a bound proof, so a
+finding with no proven narrow fix is never queued; a lost manifest is a recorded `custody-lost`
+disposition, never an exemption. The fingerprint argv has ONE home in `core-evidence.mjs` and carries
+`--no-textconv --ignore-submodules=none`, mirrored into both wrappers' bash twins and proven on real
+git — Issue-023 and Issue-024 close, `commit-guard`'s content-free lane narrows to a backstop. The
+MAJOR: the fingerprint domain moves on textconv / submodule repositories, `--dispose queued` changes
+its operands, `round-open` refuses where a justification used to lift, and every post-rung record
+form reads under kit >= 11 only — the kit's CHANGELOG carries the BREAKING block and the minimum
+bridge versions. Measured on itself: the plan's fourteen delegated dispatches rode ONE held session
+(AD-127) and the diff council converged in three rounds — the crossover at round 2, every survivor a
+fixable bug folded once, the attestation round ship-class from every member. Memory is unchanged.
+
 ## 2026-08-31 — AD-126 + AD-127 the release is one run with one approval, and a fold on delegated code rides the delegate's held session (kit 10.6.0 · engine 4.5.0 MINOR · memory 7.1.2 unchanged)
 
 **Two decisions since 10.5.0, one of them driving this very release.** AD-126 (`2682492`, repo-only

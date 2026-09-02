@@ -120,6 +120,12 @@ const compileGlob = (pattern) => {
   }
 };
 
+const expandPatterns = (repoFiles, patterns) => Object.fromEntries(patterns.map((pattern) => {
+  const compiled = compileGlob(pattern);
+  if (!compiled) throw planError(`unsupported glob in plan path: ${pattern}`);
+  return [pattern, repoFiles.filter((path) => compiled.test(path))];
+}));
+
 const matchFilesEntry = (entry, ownedPath) => {
   const normalized = entry.replace(/^\.\//, '').replace(/\/$/, '');
   if (normalized === '' || normalized === '.') return { known: true, matches: true };
@@ -199,13 +205,11 @@ export const openRepo = (root, { robustnessDeps } = {}) => {
   return { repoRoot, repoFiles: walkRegularFiles(repoRoot), practice: loadPractice(repoRoot), robustClasses: loadRobustClasses(robustnessDeps), packageCache: new Map() };
 };
 
+export const expandSweepPaths = (root, patterns) => expandPatterns(walkRegularFiles(realpathSync(root)), patterns);
+
 export const buildFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }) } = {}) => {
   const { repoRoot, repoFiles, practice, robustClasses, packageCache } = repo;
-  const expansions = Object.fromEntries(paths.filter(isSweep).map((pattern) => {
-    const compiled = compileGlob(pattern);
-    if (!compiled) throw planError(`unsupported glob in plan path: ${pattern}`);
-    return [pattern, repoFiles.filter((path) => compiled.test(path))];
-  }));
+  const expansions = expandPatterns(repoFiles, paths.filter(isSweep));
   const allPaths = unique([...paths, ...Object.values(expansions).flat()]);
   const pathFacts = Object.fromEntries(allPaths.map((path) => [path, describePath(repoRoot, path, practice, repoFiles, packageCache)]));
   const candidates = (suffix, precedingPaths = []) => resolveAnchorCandidates(repoFiles, suffix, precedingPaths);

@@ -303,12 +303,19 @@ describe('decideFoldScope — new-invariant: the deferral arm', () => {
     const out = r.lines.join('\n');
     assert.ok(out.includes('narrow fix ships'), 'the narrow fix is not deferred');
     assert.ok(out.includes('ONLY the generalization'), 'only the generalization defers');
+    const block = (await load()).findDebtRow(QUEUE, DEFERRABLE).block;
+    assert.deepEqual(r.row, { firstLine: block.split('\n')[0], block });
+    const crlf = await decide({ cls: 'new-invariant', claim: DEFERRABLE, queueText: COMPLETE.replaceAll('\n', '\r\n') });
+    assert.equal(crlf.row.firstLine.endsWith('\r'), false, 'CRLF never leaks into the row title');
+    const trailing = await decide({ cls: 'new-invariant', claim: DEFERRABLE, queueText: `${COMPLETE}\n\n` });
+    assert.equal(trailing.row.block, (await decide({ cls: 'new-invariant', claim: DEFERRABLE, queueText: COMPLETE })).row.block);
   });
 
   it('REFUSEs when the invariant IS an acceptance bullet, routing to the fold arm', async () => {
     const r = await decide({ cls: 'new-invariant', claim: IN_ACCEPTANCE });
     assert.equal(r.code, 'new-invariant-already-accepted');
     assert.equal(r.exit, 1);
+    assert.equal('row' in r, false);
     assert.ok(r.lines.join('\n').includes('--class in-scope'), 'already-required work routes to the fold arm');
   });
 

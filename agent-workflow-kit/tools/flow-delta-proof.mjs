@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { lstatNoFollow } from './atomic-write.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
-import { isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase } from './core-evidence.mjs';
+import { FINGERPRINT_CACHED_DIFF_ARGV, FINGERPRINT_UNSTAGED_DIFF_ARGV, isNeverCommittableStat, isBinaryFile, lexicalRepoRelative, resolveBase } from './core-evidence.mjs';
 import { flowStoreStop, gitLine, describeNonRegular } from './flow-store-read.mjs';
 import { appendFlowRecord } from './flow-append.mjs';
 
@@ -166,8 +166,8 @@ const untrackedEntryChunks = (top, rel, lstat) => {
 const captureFingerprintPieces = (cwd, { lstat = lstatSync } = {}) => {
   const top = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (top == null) return null;
-  const staged = gitBuf(['diff', '--cached', '--no-ext-diff'], top);
-  const unstaged = gitBuf(['diff', '--no-ext-diff'], top);
+  const staged = gitBuf(FINGERPRINT_CACHED_DIFF_ARGV, top);
+  const unstaged = gitBuf(FINGERPRINT_UNSTAGED_DIFF_ARGV, top);
   const untrackedZ = gitBuf(['ls-files', '--others', '--exclude-standard', '-z'], top);
   if (staged == null || unstaged == null || untrackedZ == null) return null;
   const entries = untrackedZ.toString('utf8').split('\0').filter(Boolean)

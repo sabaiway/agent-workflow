@@ -227,13 +227,13 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   // repository shares, so a receipt found at it was minted by some other moment, possibly at
   // another base. Such evidence must therefore decide NOTHING here — neither refuse nor attest
   // (the same fact flow-check-rungs.mjs applies to a red final). The index tells the two lanes
-  // apart, and `computeWorkingState` probes it with --ignore-submodules=none precisely so a
-  // config-hidden gitlink cannot pass for a clean one.
+  // apart. The payload runs --no-textconv and --ignore-submodules=none, so a config-hidden gitlink
+  // rides it; the arm stays because a content-free payload over a dirty index is undecidable by any receipt.
   const contentFree = fingerprint === CONTENT_FREE_FINGERPRINT;
   if (contentFree && working.stagedDirty) {
     return {
       code: 1,
-      lines: [`commit-guard: REFUSED — the index carries staged content the fingerprint domain cannot see (a submodule gitlink hidden from \`git diff\` by \`submodule.<name>.ignore\` or \`diff.ignoreSubmodules\`), so no final receipt can describe what this commit will carry. Recovery: clear that ignore setting (or set it to \`none\`) until \`git diff --cached --no-ext-diff\` shows the change, then re-run node ${FINAL_RUN_TOOL} --final`],
+      lines: [`commit-guard: REFUSED — the index carries staged content the payload cannot see, so no final receipt can describe what this commit will carry. Recovery: make the staged change visible to \`git diff --cached\`, then re-run node ${FINAL_RUN_TOOL} --final`],
     };
   }
   // The guard's OWN reads resolve FIXED git-dir paths — a stray AW_CORE_EVIDENCE / AW_LCOV_FILE

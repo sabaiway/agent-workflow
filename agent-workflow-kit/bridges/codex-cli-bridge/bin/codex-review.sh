@@ -284,7 +284,7 @@ DEFAULT_CODEX_EFFORT="xhigh"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.6.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="3.7.0"  # aw-version-anchor
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
 # Generous hard cap for a slow xhigh review (subscription latency varies).
@@ -527,8 +527,8 @@ warn_never_committable_untracked() {
 # implements the SAME serialization in node — cross-checked by the kit's
 # review-fingerprint-parity.test.mjs.
 emit_fingerprint_payload() {
-  git diff --cached --no-ext-diff
-  git diff --no-ext-diff
+  git diff --cached --no-ext-diff --no-textconv --ignore-submodules=none
+  git diff --no-ext-diff --no-textconv --ignore-submodules=none
   local path
   while IFS= read -r -d '' path; do
     if [[ -L "$path" ]]; then
@@ -811,10 +811,10 @@ assemble_code_diff() {
   emit_status_porcelain_filtered
   echo
   echo "=== staged diff (git diff --cached) ==="
-  git diff --cached --no-ext-diff
+  git diff --cached --no-ext-diff --no-textconv --ignore-submodules=none
   echo
   echo "=== unstaged diff (git diff) ==="
-  git diff --no-ext-diff
+  git diff --no-ext-diff --no-textconv --ignore-submodules=none
   echo
   echo "=== untracked file contents ==="
   local path
@@ -923,7 +923,7 @@ case "$mode" in
   code)
     # No-diff preflight — never spend a subscription run on a clean tree. Never-committable
     # untracked masks do not count: the FILTERED domain is the review surface.
-    if git diff --quiet && git diff --cached --quiet && ! has_reviewable_untracked; then
+    if git diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none && git diff --cached --quiet --no-ext-diff --no-textconv --ignore-submodules=none && ! has_reviewable_untracked; then
       echo "codex-review: no uncommitted changes to review — the working tree is clean." >&2
       warn_never_committable_untracked
       exit 0

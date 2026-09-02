@@ -79,6 +79,7 @@ const FIELD_CHECKS = {
   attemptIndex: { ok: (v) => Number.isInteger(v) && v >= 1, want: 'a positive integer attempt index (monotonic per counting context)' },
   status: { ok: (v) => v === 'green' || v === 'red', want: 'the closed enum green | red' },
   diagnosis: { ok: isNonEmptyString, want: 'a non-empty diagnosis statement (Decision 8 — the recorded continuation past two reds)' },
+  walk: { ok: isPlainObject, want: 'the closed walk object' },
 };
 
 const CHAIN_COMMON_FIELDS = ['planId', 'cycle', 'round', 'commitEpoch', 'owner', 'base', 'timestamp'];
@@ -171,35 +172,74 @@ const validateDispatches = (label, list) => {
 // The per-finding disposition ledger (#13/#33): every council finding lands as exactly one of the
 // three closed arms, each carrying its proof (a consult-attestation/red-proof digest, a debt entry,
 // or a stated rejection reason).
+// The new arms are escalated with its override, and custody-lost keyed on receiptDigest with no findingDigest.
 const DISPOSITION_KEYS = {
   folded: ['findingDigest', 'action', 'proofKind', 'proofDigest'],
   queued: ['findingDigest', 'action', 'debtId', 'debtDigest'],
   rejected: ['findingDigest', 'action', 'reason'],
+  escalated: ['findingDigest', 'action', 'overrideDigest'],
+  'custody-lost': ['action', 'receiptDigest', 'findingManifestDigest', 'reason'],
 };
+const PROOF_KINDS = ['consult-attestation', 'red-proof'];
+const QUEUED_PROOF_KEYS = ['claim', 'proofKind', 'proofDigest'];
+const LOSS_REASONS = ['absent', 'foreign', 'error', 'malformed', 'foreign-identity', 'swapped'];
 
 const validateDispositions = (label, list) => {
   const seenFindings = new Set();
+  const seenLostReceipts = new Set();
   for (let i = 0; i < list.length; i += 1) {
     const d = list[i];
     const at = `${label}: dispositions[${i}]`;
     if (!isPlainObject(d)) return refuse(`${at} must be an object`);
-    const armKeys = Object.hasOwn(DISPOSITION_KEYS, d.action) ? DISPOSITION_KEYS[d.action] : undefined;
+    const baseKeys = Object.hasOwn(DISPOSITION_KEYS, d.action) ? DISPOSITION_KEYS[d.action] : undefined;
+    const armKeys = d.action === 'queued' && QUEUED_PROOF_KEYS.some((key) => key in d) ? [...baseKeys, ...QUEUED_PROOF_KEYS] : baseKeys;
     if (armKeys === undefined) return refuse(`${at}: action must be one of ${Object.keys(DISPOSITION_KEYS).join(' | ')} (got ${JSON.stringify(d.action)}) — an inherited prototype key never resolves an arm (fail closed)`);
     const stray = Object.keys(d).find((k) => !armKeys.includes(k));
     if (stray !== undefined) return refuse(`${at}: unknown field "${stray}" — the ${d.action} arm's key set is closed`);
     const missing = armKeys.find((k) => !(k in d));
     if (missing !== undefined) return refuse(`${at}: missing field "${missing}"`);
+    if (d.action === 'custody-lost') {
+      if (!isHex64(d.receiptDigest)) return refuse(`${at}: receiptDigest must be the 64-hex digest of the lost receipt`);
+      if (!isHex64(d.findingManifestDigest)) return refuse(`${at}: findingManifestDigest must be the 64-hex ledger digest of the lost manifest`);
+      if (!LOSS_REASONS.includes(d.reason)) return refuse(`${at}: reason must be one of ${LOSS_REASONS.join(' | ')}`);
+      if (seenLostReceipts.has(d.receiptDigest)) return refuse(`${at}: duplicate receiptDigest — one custody-lost entry per lost receipt`);
+      seenLostReceipts.add(d.receiptDigest);
+      continue;
+    }
     if (!isHex64(d.findingDigest)) return refuse(`${at}: findingDigest must be the 64-hex digest of the finding`);
     if (seenFindings.has(d.findingDigest)) return refuse(`${at}: duplicate findingDigest — every finding gets exactly one disposition, whichever the arm`);
     seenFindings.add(d.findingDigest);
     if (d.action === 'folded') {
-      if (d.proofKind !== 'consult-attestation' && d.proofKind !== 'red-proof') return refuse(`${at}: proofKind must be consult-attestation | red-proof (the fold's proof record class)`);
+      if (!PROOF_KINDS.includes(d.proofKind)) return refuse(`${at}: proofKind must be consult-attestation | red-proof (the fold's proof record class)`);
       if (!isHex64(d.proofDigest)) return refuse(`${at}: proofDigest must be the 64-hex digest of the proof record`);
     } else if (d.action === 'queued') {
       if (!isNonEmptyString(d.debtId)) return refuse(`${at}: debtId must be the non-empty stable debt-queue id`);
       if (!isHex64(d.debtDigest)) return refuse(`${at}: debtDigest must be the 64-hex digest of the debt entry`);
+      if ('claim' in d && !isNonEmptyString(d.claim)) return refuse(`${at}: claim must be a non-empty invariant`);
+      if ('proofKind' in d && !PROOF_KINDS.includes(d.proofKind)) return refuse(`${at}: proofKind must be consult-attestation | red-proof`);
+      if ('proofDigest' in d && !isHex64(d.proofDigest)) return refuse(`${at}: proofDigest must be the 64-hex digest of the proof record`);
+    } else if (d.action === 'escalated') {
+      if (!isHex64(d.overrideDigest)) return refuse(`${at}: overrideDigest must be the 64-hex digest of the maintainer override`);
     } else if (!isNonEmptyString(d.reason)) {
       return refuse(`${at}: reason must be a non-empty statement of why the finding is rejected`);
+    }
+  }
+  return { ok: true };
+};
+
+const validateWalk = (walk) => {
+  const keys = ['listVersion', 'rows', 'uncovered'];
+  if (!isPlainObject(walk)) return refuse('internal-attestation: walk must be an object');
+  const stray = Object.keys(walk).find((key) => !keys.includes(key));
+  if (stray !== undefined) return refuse(`internal-attestation: walk has unknown field "${stray}"`);
+  const missing = keys.find((key) => !(key in walk));
+  if (missing !== undefined) return refuse(`internal-attestation: walk is missing field "${missing}"`);
+  if (!Number.isInteger(walk.listVersion) || walk.listVersion < 1) return refuse('internal-attestation: walk.listVersion must be a positive integer');
+  for (const name of ['rows', 'uncovered']) {
+    if (!Array.isArray(walk[name])) return refuse(`internal-attestation: walk.${name} must be an array`);
+    const itemKeys = name === 'rows' ? ['id', 'class', 'checked'] : ['id', 'class'];
+    for (const [i, item] of walk[name].entries()) {
+      if (!isPlainObject(item) || Object.keys(item).length !== itemKeys.length || !itemKeys.every((key) => key in item && isNonEmptyString(item[key]))) return refuse(`internal-attestation: walk.${name}[${i}] must be the closed {${itemKeys.join(', ')}} string object`);
     }
   }
   return { ok: true };
@@ -272,8 +312,10 @@ export const validateFlowRecord = (record) => {
     }
     fieldToCheck.diagnosis = 'diagnosis';
   }
+  if (record.kind === 'internal-attestation' && 'walk' in record) fieldToCheck.walk = 'walk';
   const checked = checkFields(record.kind, record, fieldToCheck);
   if (!checked.ok) return checked;
+  if (record.kind === 'internal-attestation' && 'walk' in record) return validateWalk(record.walk);
   if (record.kind === 'down-mark') {
     if (!isCanonicalInstant(record.timestamp)) return refuse('down-mark: timestamp must be a canonical UTC ISO instant (toISOString round-trip) — the TTL window needs comparable instants');
     if (Date.parse(record.expiresAt) <= Date.parse(record.timestamp)) return refuse('down-mark: expiresAt must be strictly after timestamp — an already-expired mark is refused at the record level');

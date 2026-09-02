@@ -130,13 +130,15 @@ const locateWorkTree = (cwd, run, env) => {
 // The canonical payload bytes: staged diff + unstaged diff + the untracked-not-ignored section —
 // byte-identical to the wrappers' emit_fingerprint_payload, emitted from the work-tree ROOT. Null on
 // every location but a work tree. lstat is injectable ONLY for the never-committable filter tests.
+export const FINGERPRINT_CACHED_DIFF_ARGV = Object.freeze(['diff', '--cached', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none']);
+export const FINGERPRINT_UNSTAGED_DIFF_ARGV = Object.freeze(['diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none']);
 export const computeFingerprintPayload = (cwd, { lstat = lstatSync, runGit = null, env = process.env } = {}) => {
   const run = guardedRunner(runGit ?? defaultRunGit, env);
   const top = locateWorkTree(cwd, run, env);
   if (top == null) return null;
   const buf = (args) => stdoutOf(run(args, top));
-  const staged = buf(['diff', '--cached', '--no-ext-diff']);
-  const unstaged = buf(['diff', '--no-ext-diff']);
+  const staged = buf(FINGERPRINT_CACHED_DIFF_ARGV);
+  const unstaged = buf(FINGERPRINT_UNSTAGED_DIFF_ARGV);
   const untrackedZ = buf(['ls-files', '--others', '--exclude-standard', '-z']);
   if (staged == null || unstaged == null || untrackedZ == null) return null;
   const chunks = [staged, unstaged];

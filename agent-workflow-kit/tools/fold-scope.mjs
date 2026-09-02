@@ -39,7 +39,7 @@ const ORIGIN_SHAPE = /^\S+:[1-9]\d*(\s|$)/;
 const CLOSED_MARKERS = ['DONE', 'CLOSED'];
 const ORIGIN_MISSING = 'origin (the canon requires a file:line)';
 
-const normalize = (s) => String(s ?? '').replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+export const normalize = (s) => String(s ?? '').replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 const contains = (haystack, needle) => normalize(haystack).toLowerCase().includes(needle);
 
 
@@ -119,7 +119,7 @@ const EMPTY_ROW = () => ({ found: false, matches: 0, fields: {}, missing: [...RO
 export const findDebtRow = (queueText, claim) => {
   const needle = normalize(claim).toLowerCase();
   if (!needle) return EMPTY_ROW();
-  const rows = topLevelRows(queueText).map((block) => ({ block, ...parseFields(block) }));
+  const rows = topLevelRows(queueText).map((block) => ({ block, ...parseFields(block.replace(/\r$/gm, '')) }));
   // EVERY recorded value of `invariant` is a candidate key, not just the first: a claim sitting in a
   // repeated label would otherwise be invisible here and resolve to some OTHER row.
   const owns = (r) => (r.values.invariant ?? []).some((v) => contains(v, needle));
@@ -272,8 +272,12 @@ export const decideFoldScope = ({ cls, claim, planText, queueText } = {}) => {
       '  silence is not a declaration — state the disposition in the row.',
     ]);
   }
-  return accept('new-invariant', claimText, [
+  const accepted = accept('new-invariant', claimText, [
     `  the queue row carries all five fields and declares its residual exposure NOT live: ${row.fields.origin}`,
     '  the narrow fix ships in this phase; ONLY the generalization defers.',
   ]);
+  const terminator = row.block.includes('\r\n') ? '\r\n' : '\n';
+  const block = row.block.replace(/(?:\r?\n[ \t]*)+$/, terminator);
+  accepted.row = { firstLine: block.split('\n')[0].replace(/\r$/, ''), block };
+  return accepted;
 };

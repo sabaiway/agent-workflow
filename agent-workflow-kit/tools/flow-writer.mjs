@@ -46,8 +46,8 @@
 // → { code, stdout, stderr }; cwd / env / now are injectable. Dependency-free, Node >= 22. No
 // side effects on import (the isDirectRun idiom).
 
-import { readFileSync, lstatSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, lstatSync, realpathSync } from 'node:fs';
+import { join, dirname, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -72,13 +72,24 @@ import { classifyDeltaChain, deltaCustodyIssue } from './flow-check.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { computePlanAdoptionCoverage, plansInFlight, quoteReportName } from './review-state.mjs';
 import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
-
+import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
+import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
+import { expandSweepPaths } from './plan-shape-facts.mjs';
+import { checkPlanStructure, isSweep } from './plan-shape.mjs';
+import { escapeForDisplay } from './repo-lex.mjs';
+import { computeRowCoverage, isCoverageDocument } from './robustness-brief.mjs';
+import { decideFoldScope, findDebtRow, normalize } from './fold-scope.mjs';
+import { capIssue, walkIssue, escalationIssue, findingQuoted, validateWalk } from './flow-round-gates.mjs';
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 const refuse = (message) => Object.assign(new Error(message), { exitCode: 1 });
 
 const PLANS_DIR = 'docs/plans';
 const HEX64_RE = /^[0-9a-f]{64}$/;
-
+const PLAN_READ_CAP = 1_048_576;
+const WALK_READ_CAP = 65_536;
+const sha256 = (value) => createHash('sha256').update(value, typeof value === 'string' ? 'utf8' : undefined).digest('hex');
+const inside = (root, path) => path === root || path.startsWith(`${root}${sep}`);
+const safeWalkPath = (name) => typeof name === 'string' && name.length > 0 && !isAbsolute(name) && !name.includes('\\') && name.split('/').every((part) => !['', '.', '..'].includes(part));
 // ── shared derivation (reads only; legality stays the store preflight's) ────────────
 
 const treeContext = (cwd) => {
@@ -372,6 +383,65 @@ const requireReceiptsPath = (cwd, env, why) => {
   return receiptsPath;
 };
 
+const decodeUtf8 = (bytes, label, stop = refuse) => {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw stop(`${label} is malformed UTF-8`);
+  }
+};
+const readBoundPlan = (root, plan, adoption) => {
+  const path = join(root, PLANS_DIR, plan);
+  const read = readFileBytesNoFollowCapped(path, PLAN_READ_CAP);
+  if (read.outcome !== 'ok') throw refuse(`the adopted plan ${plan} is not a readable regular file (${read.className ?? read.code ?? read.outcome})`);
+  if (sha256(read.bytes) !== adoption.planDigest) throw refuse(`the adopted plan ${plan} no longer matches its adoption record`);
+  return decodeUtf8(read.bytes, `the adopted plan ${plan}`);
+};
+const resolveAdoptedPlan = ({ root, records, planId, owner, arm }) => {
+  const adoption = records.find((record) => record.kind === CHAIN_KIND && record.purpose === 'adoption' && record.planId === planId);
+  const candidate = computePlanAdoptionCoverage({ root, plans: plansInFlight(root), records, owner })
+    .find((entry) => entry.planId === planId);
+  const plan = candidate?.covered ? candidate : undefined;
+  const name = candidate?.plan ?? planId;
+  if (adoption === undefined || plan === undefined) {
+    throw refuse(`cannot resolve the adopted plan "${name}" for ${arm} — the adoption record binds its bytes; restore the file or re-adopt (fail closed)`);
+  }
+  let planText;
+  try {
+    planText = readBoundPlan(root, plan.plan, adoption);
+  } catch {
+    throw refuse(`cannot resolve the adopted plan "${name}" for ${arm} — the adoption record binds its bytes; restore the file or re-adopt (fail closed)`);
+  }
+  return { plan, adoption, planText };
+};
+const readWalkInput = (cwd, name) => {
+  if (!safeWalkPath(name)) throw usageFail(`--walk must be a safe forward-slash relative path without an empty, "." or ".." segment (got ${JSON.stringify(name)})`);
+  const rawCommon = gitLine(['rev-parse', '--git-common-dir'], cwd);
+  if (rawCommon == null) throw usageFail('--walk cannot resolve the git common dir');
+  const path = resolve(cwd, rawCommon, name);
+  let resolved;
+  try {
+    resolved = { common: realpathSync(resolve(cwd, rawCommon)), file: realpathSync(path) };
+  } catch (error) {
+    throw usageFail(`--walk ${JSON.stringify(name)} is ${error?.code === 'ENOENT' ? 'absent' : `unreadable (${error?.code ?? error.message})`}`);
+  }
+  if (!inside(resolved.common, resolved.file)) throw usageFail(`--walk ${JSON.stringify(name)} resolves to another location outside the git common dir`);
+  const read = readFileBytesNoFollowCapped(path, WALK_READ_CAP);
+  if (read.outcome !== 'ok') {
+    const state = read.outcome === 'foreign' ? `a non-regular ${read.className}` : read.outcome === 'over-cap' ? 'over 64 KiB' : `unreadable (${read.code ?? read.outcome})`;
+    throw usageFail(`--walk ${JSON.stringify(name)} is ${state}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(decodeUtf8(read.bytes, `--walk ${JSON.stringify(name)}`, usageFail));
+  } catch (error) {
+    if (error.exitCode === 2) throw error;
+    throw usageFail(`--walk ${JSON.stringify(name)} is malformed JSON`);
+  }
+  const stray = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed).find((key) => !['listVersion', 'rows'].includes(key)) : undefined;
+  if (stray !== undefined) throw usageFail(`--walk ${JSON.stringify(name)} has unknown key ${JSON.stringify(stray)}`);
+  return parsed;
+};
 // The consult-attestation arm reads the {backend, nonce}-named finding manifest beside the
 // receipts file fail-closed: findingDigest is COMPUTED from the manifest's findings payload
 // (form-provable binding — a hand-supplied digest could name findings nobody delivered), and the
@@ -428,7 +498,7 @@ const RECEIPT_DEADLINE_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'rec
 // subset-attempt diagnosis discipline).
 const gateCapJustification = ({ justification, overCap, refusal }) => {
   if (!overCap) {
-    if (justification !== undefined) throw usageFail('--justification rides only an over-cap mint (Decision 8) — inside the cap it binds nothing; drop it');
+    if (justification !== undefined) throw usageFail('--justification rides only an over-cap mint or a missing-walk lift (Decision 8) — inside the cap with the walk satisfied it binds nothing; drop it');
     return null;
   }
   if (typeof justification !== 'string' || justification.length === 0) {
@@ -616,6 +686,7 @@ const terminalMoveIssue = ({ flowRecords, chain, cycle, stepId, tree, cwd }) => 
 // receipts-file byte-length watermark, a fresh nonce}; receipt/manifest digests stay null until
 // round-land. A boundary invocation opens the step (opensFrom = the chain's prior terminal); an
 // in-step invocation opens the NEXT round (a fingerprint move never rides a revision).
+const walkObligation = (planText) => checkPlanStructure(planText, {}).parsed.rows.some((row) => row.valid);
 const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd, env, timestamp }) => {
   // The backend list is judged BEFORE any store read — a usage-shaped input never surfaces as a
   // state-dependent refusal.
@@ -628,21 +699,34 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
   const tree = treeContext(cwd);
   const records = readStoreRecords(cwd, env);
   const { chain, state, commitEpoch } = chainContext(records, planId, tree.owner);
+  const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
+  const adopted = resolveAdoptedPlan({ root, records, planId, owner: tree.owner, arm: 'round-open' });
+  const walkRequired = walkObligation(adopted.planText);
   const inStep = state.mode === 'in-step' && !state.parked && !state.completed;
   if (newCycle && inStep) throw usageFail('--new-cycle opens at a step boundary only — an open step continues through its own rounds');
   // The in-step guard re-runs on the LOCKED snapshot too (M6) — this closure is the preflight.
   const roundOpenGuard = (flowRecords) => {
     const lockedChain = flowRecords.filter((r) => r.kind === CHAIN_KIND && r.planId === planId);
     const lockedState = walkChainState(lockedChain);
-    if (!(lockedState.mode === 'in-step' && !lockedState.parked && !lockedState.completed)) return;
-    // The dead-end guard (F2 extended): after round N+1 opens, round N can never be revised
-    // again (the round index only increases within a step), so an unlanded-unjustified dispatch
-    // OR an undispositioned non-ship round there would make the step permanently unterminable.
-    const issue = stepCompletenessIssue({
-      flowRecords, chain: lockedChain, cycle: lockedState.cycle, stepId: lockedState.stepId,
-      onlyRound: lockedState.round, label: `round-open refuses — a NEW round would strand round ${lockedState.round}`, cwd, env,
-    });
-    if (issue != null) throw refuse(issue);
+    const lockedReceipts = readReceiptsBytesFailClosed(cwd, env, 'the locked round-open cap check re-reads the receipts store');
+    const lockedReceiptMap = new Map((lockedReceipts.bytes == null ? [] : parseReceiptLines(lockedReceipts.bytes, lockedReceipts.path))
+      .map(({ record: receipt }) => [canonicalFlowDigest(receipt), receipt]));
+    const lockedReadManifest = (backend, nonce) => readManifestDecoded({ receiptsPath: lockedReceipts.path, backend, nonce });
+    const lockedCap = capIssue({ heads: stepRoundHeads(lockedChain, target.cycle, target.stepId), receipts: lockedReceiptMap, readManifest: lockedReadManifest });
+    if (lockedCap.issue != null) throw refuse([...lockedCap.advisories, lockedCap.issue].join('\n'));
+    const lockedMissingWalk = walkRequired ? walkIssue({ records: flowRecords, planId, cycle: target.cycle, stepId: target.stepId, round: target.round, base: tree.base, fingerprint: tree.fingerprint }) : null;
+    if (lockedMissingWalk != null && recordedJustification == null) throw refuse(lockedMissingWalk);
+    if (lockedMissingWalk == null && missingWalk != null && !roundOverCap && !valveOverCap) {
+      gateCapJustification({ justification, overCap: false, refusal: null });
+    }
+    if (lockedState.mode === 'in-step' && !lockedState.parked && !lockedState.completed) {
+      const issue = stepCompletenessIssue({
+        flowRecords, chain: lockedChain, cycle: lockedState.cycle, stepId: lockedState.stepId,
+        onlyRound: lockedState.round, label: `round-open refuses — a NEW round would strand round ${lockedState.round}`, cwd, env,
+      });
+      if (issue != null) throw refuse(issue);
+    }
+    return lockedCap.advisories;
   };
   let target;
   if (inStep) {
@@ -650,7 +734,6 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
       throw usageFail(`--step "${stepId}" does not match the open step "${state.stepId}" — an in-step round-open derives its step from the chain walk`);
     }
     target = { stepId: state.stepId, round: state.round + 1, opensFrom: null, cycle: state.cycle };
-    roundOpenGuard(records);
   } else {
     if (stepId === undefined) throw usageFail('round-open at a step boundary requires --step <stepId> (the step this round opens)');
     const prior = priorChainTerminal(chain);
@@ -662,14 +745,21 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
   );
   const roundOverCap = !existingRounds.has(target.round) && existingRounds.size >= ROUND_HARD_MAX;
   const valveOverCap = target.cycle > REDESIGN_CYCLE_CAP;
+  const { path: receiptsPath, bytes } = readReceiptsBytesFailClosed(cwd, env, 'the dispatch watermark is the receipts-file byte length');
+  const receiptMap = new Map((bytes == null ? [] : parseReceiptLines(bytes, receiptsPath))
+    .map(({ record: receipt }) => [canonicalFlowDigest(receipt), receipt]));
+  const readManifest = (backend, nonce) => readManifestDecoded({ receiptsPath, backend, nonce });
+  const cap = capIssue({ heads: stepRoundHeads(chain, target.cycle, target.stepId), receipts: receiptMap, readManifest });
+  if (cap.issue != null) throw refuse([...cap.advisories, cap.issue].join('\n'));
+  const missingWalk = walkRequired ? walkIssue({ records, planId, cycle: target.cycle, stepId: target.stepId, round: target.round, base: tree.base, fingerprint: tree.fingerprint }) : null;
   const recordedJustification = gateCapJustification({
     justification,
-    overCap: roundOverCap || valveOverCap,
+    overCap: roundOverCap || valveOverCap || missingWalk != null,
     refusal: roundOverCap
       ? `round ${target.round} of step "${target.stepId}" (cycle ${target.cycle}) exceeds HARD_MAX ${ROUND_HARD_MAX} rounds per cycle (design §2)`
-      : `cycle ${target.cycle} passes the redesign valve (capped at ${REDESIGN_CYCLE_CAP} cycles per plan, design §2)`,
+      : valveOverCap ? `cycle ${target.cycle} passes the redesign valve (capped at ${REDESIGN_CYCLE_CAP} cycles per plan, design §2)` : missingWalk,
   });
-  const { path: receiptsPath, bytes } = readReceiptsBytesFailClosed(cwd, env, 'the dispatch watermark is the receipts-file byte length');
+  const advisories = roundOpenGuard(records);
   const watermark = bytes == null ? 0 : bytes.byteLength;
   // The receipt-deadline boundary rule, applied at MINT time: a watermark on an unterminated tail
   // would let an appended receipt physically continue that malformed line.
@@ -686,7 +776,7 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
     cycle: target.cycle, round: target.round, purpose: 'round', stepId: target.stepId,
     fingerprint: tree.fingerprint, opensFrom: target.opensFrom, dispatches, dispositions: [],
   };
-  return { record, justification: recordedJustification, preflight: roundOpenGuard };
+  return { record, justification: recordedJustification, walkLift: missingWalk != null && !roundOverCap && !valveOverCap, walkRefusal: missingWalk, advisories, preflight: roundOpenGuard };
 };
 
 // round-land — the POST-ARRIVAL half (#42/#13/#33): revises the open round IN PLACE. Arrival
@@ -697,7 +787,7 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
 // from the files (receipt line → canonical digest; manifest bytes → sha256) and land together;
 // a foreign-tree receipt, a missing/malformed/symlinked manifest, or a foreign-identity manifest
 // refuses the binding. A --dispose input appends ONE disposition entry whose findingDigest is the
-// sha256 of the QUOTED finding text, verified a SUBSTRING of a landed manifest's findings payload.
+// sha256 of the QUOTED finding text, verified against a landed manifest's wrapper vocabulary.
 const buildRoundLand = ({ planId, dispose, cwd, env, timestamp }) => {
   const tree = treeContext(cwd);
   const records = readStoreRecords(cwd, env);
@@ -707,6 +797,7 @@ const buildRoundLand = ({ planId, dispose, cwd, env, timestamp }) => {
   if (head == null) throw refuse(`plan "${planId}" has no round record at the open context (cycle ${state.cycle}, step "${state.stepId}", round ${state.round}) — the chain is broken (fail closed)`);
   const { path: receiptsPath, bytes } = readReceiptsBytesFailClosed(cwd, env, 'round-land binds arrivals from the receipts store');
   const lines = bytes == null ? [] : parseReceiptLines(bytes, receiptsPath);
+  const receiptMap = new Map(lines.map(({ record: receipt }) => [canonicalFlowDigest(receipt), receipt]));
   const landed = [];
   const pending = [];
   const dispatches = head.dispatches.map((entry) => {
@@ -770,54 +861,90 @@ const buildRoundLand = ({ planId, dispose, cwd, env, timestamp }) => {
   let dispositions = head.dispositions;
   let disposed = null;
   if (dispose != null) {
-    const findingDigest = createHash('sha256').update(dispose.finding, 'utf8').digest('hex');
     const carriers = dispatches.filter((e) => e.receiptDigest !== null);
     if (carriers.length === 0) throw refuse('no landed dispatch carries a finding manifest yet — a disposition binds a delivered finding of a landed round (fail closed)');
-    // F5 (round-1 fold): every carrier's manifest is re-read and its byte digest MUST equal the
-    // LEDGER's findingManifestDigest — a manifest swapped after landing never carries a
-    // disposition, however well its payload matches the quote.
-    const payloads = carriers.map((e) => {
-      const m = readManifestDecoded({ receiptsPath, backend: e.backend, nonce: e.dispatchNonce });
-      if (m.outcome !== 'ok') {
-        throw refuse(`the landed manifest for {backend "${e.backend}", nonce "${e.dispatchNonce}"} is no longer cleanly readable (${m.outcome}) — a disposition binds live manifest custody (fail closed)`);
+    if (dispose.action === 'custody-lost') {
+      const carrier = carriers.find((e) => e.receiptDigest === dispose.receipt);
+      if (carrier === undefined) throw refuse(`--receipt ${dispose.receipt} is not a landed dispatch of this round`);
+      if (head.dispositions.some((d) => d.action === 'custody-lost' && d.receiptDigest === dispose.receipt)) throw refuse('this receipt already has a custody-lost disposition');
+      const m = readManifestDecoded({ receiptsPath, backend: carrier.backend, nonce: carrier.dispatchNonce });
+      if (m.outcome === 'unsafe') throw refuse('the landed dispatch composes no safe manifest name — the ledger is corrupt');
+      const reason = m.outcome === 'ok' ? (sha256(m.bytes) === carrier.findingManifestDigest ? null : 'swapped') : m.outcome;
+      if (reason === null) throw refuse('no loss to record — this receipt manifest reads cleanly and matches its landed digest');
+      if (!['absent', 'foreign', 'error', 'malformed', 'foreign-identity', 'swapped'].includes(reason)) throw refuse(`the manifest loss outcome ${reason} is not recordable`);
+      const entry = { action: 'custody-lost', receiptDigest: carrier.receiptDigest, findingManifestDigest: carrier.findingManifestDigest, reason };
+      dispositions = [...head.dispositions, entry];
+      disposed = { action: dispose.action, receiptDigest: carrier.receiptDigest };
+    } else {
+      const findingDigest = sha256(dispose.finding);
+      const lost = new Set(head.dispositions.filter((d) => d.action === 'custody-lost').map((d) => d.receiptDigest));
+      const payloads = carriers.filter((e) => !lost.has(e.receiptDigest)).map((e) => {
+        const m = readManifestDecoded({ receiptsPath, backend: e.backend, nonce: e.dispatchNonce });
+        if (m.outcome !== 'ok' || sha256(m.bytes) !== e.findingManifestDigest) throw refuse(`the landed manifest is no longer cleanly readable or no longer matches findingManifestDigest; record custody-lost for the broken carrier before any quote-bearing disposition: round-land --dispose custody-lost --receipt ${e.receiptDigest}`);
+        return { carrier: e, manifest: m.manifest };
+      });
+      const quoted = payloads.find(({ carrier, manifest }) => findingQuoted(carrier.backend, manifest.findings, dispose.finding));
+      if (quoted === undefined) {
+        throw refuse('the quoted finding matches no landed manifest of this round — a substring of its payload in text mode, an exact issue in schema mode — a disposition binds a real delivered finding, verbatim (fail closed)');
       }
-      if (createHash('sha256').update(m.bytes).digest('hex') !== e.findingManifestDigest) {
-        throw refuse(`the manifest at ${m.path} no longer matches the landed findingManifestDigest — a swapped manifest never carries a disposition (fail closed)`);
-      }
-      return m.manifest.findings;
-    });
-    if (!payloads.some((findings) => findings.includes(dispose.finding))) {
-      throw refuse('the quoted finding is not a substring of any landed finding-manifest payload of this round — a disposition binds a real delivered finding, verbatim (fail closed)');
-    }
-    const entry = (() => {
-      if (dispose.action === 'folded') {
-        // The fold's proof must RESOLVE (the consult-attestation precedent — an unverified digest
-        // could name a proof nobody minted): consult-attestation in the flow store, red-proof in
-        // the core store.
-        if (dispose.proofKind === 'consult-attestation') {
-          const target = records.findLast((r) => r.kind === 'consult-attestation' && canonicalFlowDigest(r) === dispose.proofDigest);
-          if (target === undefined) throw refuse(`--proof-digest ${dispose.proofDigest.slice(0, 12)}… does not resolve to a consult-attestation in the flow store — a fold's proof binds an existing record (fail closed)`);
-        } else {
-          const corePath = resolveEvidencePath(cwd, env);
-          const coreRead = corePath == null ? { records: [] } : readEvidence(corePath);
-          if (coreRead.readError || (coreRead.malformed ?? 0) > 0) {
-            throw refuse(`the core evidence store is unreadable or malformed (${coreRead.readError ?? coreRead.malformedReasons[0]}) — cannot resolve the red-proof (fail closed)`);
+      const entry = (() => {
+        if (dispose.action === 'folded') {
+          // The fold's proof must RESOLVE (the consult-attestation precedent — an unverified digest
+          // could name a proof nobody minted): consult-attestation in the flow store, red-proof in
+          // the core store.
+          if (dispose.proofKind === 'consult-attestation') {
+            const target = records.findLast((r) => r.kind === 'consult-attestation' && canonicalFlowDigest(r) === dispose.proofDigest);
+            if (target === undefined) throw refuse(`--proof-digest ${dispose.proofDigest.slice(0, 12)}… does not resolve to a consult-attestation in the flow store — a fold's proof binds an existing record (fail closed)`);
+          } else {
+            const corePath = resolveEvidencePath(cwd, env);
+            const coreRead = corePath == null ? { records: [] } : readEvidence(corePath);
+            if (coreRead.readError || (coreRead.malformed ?? 0) > 0) {
+              throw refuse(`the core evidence store is unreadable or malformed (${coreRead.readError ?? coreRead.malformedReasons[0]}) — cannot resolve the red-proof (fail closed)`);
+            }
+            if (!coreRead.records.some((r) => r.kind === 'red-proof' && canonicalFlowDigest(r) === dispose.proofDigest)) {
+              throw refuse(`--proof-digest ${dispose.proofDigest.slice(0, 12)}… does not resolve to a red-proof in the core evidence store — a fold's proof binds an existing record (fail closed)`);
+            }
           }
-          if (!coreRead.records.some((r) => r.kind === 'red-proof' && canonicalFlowDigest(r) === dispose.proofDigest)) {
-            throw refuse(`--proof-digest ${dispose.proofDigest.slice(0, 12)}… does not resolve to a red-proof in the core evidence store — a fold's proof binds an existing record (fail closed)`);
-          }
+          return { findingDigest, action: 'folded', proofKind: dispose.proofKind, proofDigest: dispose.proofDigest };
         }
-        return { findingDigest, action: 'folded', proofKind: dispose.proofKind, proofDigest: dispose.proofDigest };
-      }
-      if (dispose.action === 'queued') {
-        // Honest limit: the debt entry's {id, digest} are form-checked only — no debt-file reader
-        // exists to resolve them; the checker's declared-path lane owns the file itself.
-        return { findingDigest, action: 'queued', debtId: dispose.debtId, debtDigest: dispose.debtDigest };
-      }
-      return { findingDigest, action: 'rejected', reason: dispose.reason };
-    })();
-    dispositions = [...head.dispositions, entry];
-    disposed = { action: dispose.action, findingDigest };
+        if (dispose.action === 'queued') {
+          const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
+          const adopted = resolveAdoptedPlan({ root, records, planId, owner: tree.owner, arm: 'round-land --dispose queued' });
+          const queue = loadConfig(root).config?.flow?.debtQueue;
+          if (typeof queue !== 'string') throw refuse('flow.debtQueue is absent — a queued disposition resolves one declared queue row');
+          const queueRead = readFileBytesNoFollow(join(root, queue));
+          if (queueRead.outcome !== 'ok') throw refuse(`flow.debtQueue ${queue} is not a readable regular file (${queueRead.className ?? queueRead.code ?? queueRead.outcome})`);
+          const queueText = decodeUtf8(queueRead.bytes, `flow.debtQueue ${queue}`);
+          const debtRow = findDebtRow(queueText, dispose.claim);
+          const decision = decideFoldScope({ cls: 'new-invariant', claim: dispose.claim, planText: adopted.planText, queueText });
+          if (decision.verdict !== 'ACCEPT') throw refuse(decision.lines.join('\n'));
+          if (dispose.proofKind === 'consult-attestation') {
+            const proof = records.findLast((r) => r.kind === 'consult-attestation' && canonicalFlowDigest(r) === dispose.proofDigest);
+            const bound = proof && payloads.find(({ carrier }) => carrier.backend === proof.backend && carrier.dispatchNonce === proof.nonce);
+            if (!proof || !bound || ['planId', 'cycle', 'stepId', 'round', 'base', 'fingerprint'].some((key) => proof[key] !== ({ planId, ...head })[key]) || !findingQuoted(bound.carrier.backend, bound.manifest.findings, dispose.finding) || proof.findingDigest !== sha256(bound.manifest.findings)) throw refuse('the consult-attestation proof is not bound to this round, landed dispatch and quoted finding');
+            if (proof.proposedFixDigest !== sha256(`${findingDigest}\n${dispose.claim}`)) throw refuse('consult-attestation proposedFixDigest does not equal sha256(itemDigest + "\\n" + claim)');
+          } else {
+            const corePath = resolveEvidencePath(cwd, env);
+            const coreRead = corePath == null ? { records: [] } : readEvidence(corePath);
+            if (coreRead.readError || (coreRead.malformed ?? 0) > 0) throw refuse(`the core evidence store is unreadable or malformed (${coreRead.readError ?? coreRead.malformedReasons[0]}) — cannot resolve the red-proof (fail closed)`);
+            const proof = authoritativeOfKind(coreRead.records, 'red-proof').find((r) => canonicalFlowDigest(r) === dispose.proofDigest);
+            if (!proof || proof.base !== head.base || proof.fingerprint !== tree.fingerprint || !debtRow.fields.proof.includes(proof.testId)) throw refuse('the red-proof does not bind the round head base, the current tree and the resolved queue row proof');
+          }
+          return { findingDigest, action: 'queued', debtId: normalize(decision.row.firstLine), debtDigest: sha256(decision.row.block), claim: dispose.claim, proofKind: dispose.proofKind, proofDigest: dispose.proofDigest };
+        }
+        if (dispose.action === 'escalated') {
+          const escalation = escalationIssue({ records, digest: dispose.overrideDigest, planId, head });
+          if (escalation.issue) throw refuse(escalation.issue);
+          const bound = payloads.find(({ carrier }) => carrier.receiptDigest === escalation.dispatch.receiptDigest);
+          const receipt = receiptMap.get(escalation.dispatch.receiptDigest);
+          if (!bound || !findingQuoted(bound.carrier.backend, bound.manifest.findings, dispose.finding) || !receipt || !isRecognizedVerdict(receipt.verdict) || isShipVerdict(receipt.verdict)) throw refuse('the raiser did not veto this receipt — dispose it as folded, queued or rejected');
+          return { findingDigest, action: 'escalated', overrideDigest: dispose.overrideDigest };
+        }
+        return { findingDigest, action: 'rejected', reason: dispose.reason };
+      })();
+      dispositions = [...head.dispositions, entry];
+      disposed = { action: dispose.action, findingDigest };
+    }
   }
   if (landed.length === 0 && disposed == null) {
     throw refuse(`nothing to land — no pending dispatch has an arrived receipt (${pending.length} still pending) and no --dispose was given; a no-op revision never mints`);
@@ -891,25 +1018,42 @@ const buildUnfreeze = ({ planId, justification, cwd, env, timestamp }) => {
 // covered by an adopted chain (frontmatter planId + content digest + owner, the ONE coverage
 // predicate review-state's internal-only floor consumes) — an uncovered plan is a refusal naming
 // the file, never a relaxation.
-const buildInternalAttestation = ({ planId, lenses, degraded, model, effort, tier, authority, cwd, env, timestamp, ctx }) => {
+const buildInternalAttestation = ({ planId, lenses, degraded, model, effort, tier, authority, walk, cwd, env, timestamp, ctx }) => {
   const tree = treeContext(cwd);
   const records = readStoreRecords(cwd, env);
   const { state } = chainContext(records, planId, tree.owner);
   openStepState(state, planId, 'an internal-attestation binds an open step\'s round (#28); open the step\'s round first');
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
-  const coverage = computePlanAdoptionCoverage({
-    root, plans: plansInFlight(root), records, owner: tree.owner,
-    readFile: ctx.readFileSync ?? readFileSync,
-  });
-  const uncovered = coverage.filter((p) => !p.covered);
+  const adopted = walk === undefined ? null : resolveAdoptedPlan({ root, records, planId, owner: tree.owner, arm: 'internal-attestation --walk' });
+  const planCoverage = computePlanAdoptionCoverage({ root, plans: plansInFlight(root), records, owner: tree.owner,
+    readFile: ctx.readFileSync ?? readFileSync });
+  const uncovered = planCoverage.filter((p) => !p.covered);
   if (uncovered.length > 0) {
     throw refuse(`internal-attestation refuses (#68): ${uncovered.map((p) => `plan ${quoteReportName(p.plan)} — ${p.reason}`).join('; ')} — an uncovered in-flight plan is a refusal, never a relaxation`);
   }
+  const checkedWalk = walk === undefined ? undefined : (() => {
+    const shape = checkPlanStructure(adopted.planText, {});
+    const list = readShippedRobustnessLiterals();
+    if (shape.findings.length > 0) throw usageFail('--walk cannot measure an adopted plan that fails structural validation');
+    const patterns = shape.parsed.rows.filter((row) => row.valid && isSweep(row.path) && !isCoverageDocument(row.path)).map((row) => row.path);
+    const expansions = patterns.length === 0 ? {} : expandSweepPaths(root, patterns);
+    const measured = computeRowCoverage(adopted.planText, list, { expandRowPath: (path) => expansions[path] ?? [],
+      readRowFile: (path) => readFileBytesNoFollowCapped(join(root, path), PLAN_READ_CAP) });
+    if (measured.refusal) {
+      const detail = measured.refusal.reason === undefined
+        ? `path ${escapeForDisplay(measured.refusal.path)}: ${measured.refusal.outcome}`
+        : measured.refusal.reason;
+      throw usageFail(`--walk coverage refuses row ${measured.refusal.id}: ${detail}`);
+    }
+    const validated = validateWalk(readWalkInput(cwd, walk), { listVersion: list.version, rows: measured.rows });
+    if (!validated.ok) throw usageFail(`--walk ${validated.reason}`);
+    return validated.walk;
+  })();
   return {
     schema: FLOW_SCHEMA_VERSION, kind: 'internal-attestation', fingerprint: tree.fingerprint,
     planId, stepId: state.stepId, cycle: state.cycle, round: state.round,
     lenses, degraded, posture: { model, effort: effort ?? null, tier: tier ?? null }, authority,
-    base: tree.base, timestamp,
+    base: tree.base, timestamp, ...(checkedWalk === undefined ? {} : { walk: checkedWalk }),
   };
 };
 
@@ -994,12 +1138,14 @@ Usage:
   node flow-writer.mjs consult-attestation <planId> --backend <name> --nonce <nonce> --proposed-fix-digest <digest>
   node flow-writer.mjs round-open <planId> --backend <name> [--backend <name> ...] [--step <stepId>] [--new-cycle] [--justification <text>]
   node flow-writer.mjs round-land <planId> [--dispose folded --finding <quote> --proof-kind consult-attestation|red-proof --proof-digest <digest>]
-  node flow-writer.mjs round-land <planId> [--dispose queued --finding <quote> --debt-id <id> --debt-digest <digest>]
+  node flow-writer.mjs round-land <planId> [--dispose queued --finding <quote> --claim <invariant> --proof-kind consult-attestation|red-proof --proof-digest <digest>]
   node flow-writer.mjs round-land <planId> [--dispose rejected --finding <quote> --reason <text>]
+  node flow-writer.mjs round-land <planId> [--dispose escalated --finding <quote> --override-digest <digest>]
+  node flow-writer.mjs round-land <planId> [--dispose custody-lost --receipt <receiptDigest>]
   node flow-writer.mjs freeze <planId>
   node flow-writer.mjs unfreeze <planId> [--justification <text>]
   node flow-writer.mjs converged <planId>
-  node flow-writer.mjs internal-attestation <planId> --lens <name> [--lens <name> ...] [--degraded <backend> ...] --model <model> [--effort <effort>] [--tier <tier>] --authority <text>
+  node flow-writer.mjs internal-attestation <planId> --lens <name> [--lens <name> ...] [--degraded <backend> ...] --model <model> [--effort <effort>] [--tier <tier>] --authority <text> [--walk <file>]
   node flow-writer.mjs write-plan-id <plan-file> --plan-id <id>
 
 Operand shapes: a positional may follow a literal -- and a value flag accepts --flag=<value>
@@ -1075,7 +1221,8 @@ export const main = (argv, ctx = {}) => {
       const lines = [
         `flow-writer: appended chain/round (open) for plan "${planId}" — step "${r.stepId}" cycle ${r.cycle} round ${r.round} — digest ${canonicalFlowDigest(r)}`,
         `  store: ${appended.writtenPath}`,
-        ...(built.justification != null ? [`  justification (Decision 8, over-cap mint — the record above is the durable trail): ${built.justification}`] : []),
+        ...(built.justification != null ? [built.walkLift ? `  justification (Decision 8, walk lift trail — ${built.justification}; ${built.walkRefusal}; the ABSENCE of that walk-carrying attestation is the lift's trail; the record above is the durable trail)` : `  justification (Decision 8, over-cap mint — the record above is the durable trail): ${built.justification}`] : []),
+        ...built.advisories.map((advisory) => `  ${advisory}`),
         ...r.dispatches.flatMap((d) => [
           `  dispatch backend=${d.backend} nonce=${d.dispatchNonce} watermark=${d.receiptWatermark}`,
           `    dispatch with --nonce ${d.dispatchNonce} on the wrapper invocation (the plain-argument lane onto the AW_REVIEW_NONCE seam) so the wrapper mints the {backend, nonce}-named finding manifest`,
@@ -1086,24 +1233,27 @@ export const main = (argv, ctx = {}) => {
     }
 
     if (arm === 'round-land') {
-      const { values, positionals } = parseFlags(rest, { '--dispose': 'value', '--finding': 'value', '--proof-kind': 'value', '--proof-digest': 'value', '--debt-id': 'value', '--debt-digest': 'value', '--reason': 'value' });
+      const legacy = rest.find((arg) => ['--debt-id', '--debt-digest'].includes(arg.split('=')[0]));
+      if (legacy !== undefined) throw usageFail(`unknown argument "${legacy.split('=')[0]}"`);
+      const { values, positionals } = parseFlags(rest, { '--dispose': 'value', '--finding': 'value', '--claim': 'value', '--proof-kind': 'value', '--proof-digest': 'value', '--reason': 'value', '--override-digest': 'value', '--receipt': 'value' });
       const planId = onePlanId(positionals, arm);
       const dispose = (() => {
         if (values.dispose === undefined) {
-          const stray = ['finding', 'proof-kind', 'proof-digest', 'debt-id', 'debt-digest', 'reason'].find((f) => values[f] !== undefined);
+          const stray = ['finding', 'claim', 'proof-kind', 'proof-digest', 'reason', 'override-digest', 'receipt'].find((f) => values[f] !== undefined);
           if (stray !== undefined) throw usageFail(`--${stray} rides only a --dispose invocation`);
           return null;
         }
         const action = values.dispose;
-        if (!['folded', 'queued', 'rejected'].includes(action)) throw usageFail(`--dispose must be folded | queued | rejected (got "${action}")`);
+        if (!['folded', 'queued', 'rejected', 'escalated', 'custody-lost'].includes(action)) throw usageFail(`--dispose must be folded | queued | rejected | escalated | custody-lost (got "${action}")`);
         // G3 (round-2 fold): a flag of another disposition branch refuses as usage BEFORE any
         // required-value error — an incompatible input is named, never silently dropped.
-        const branchFlags = { folded: ['proof-kind', 'proof-digest'], queued: ['debt-id', 'debt-digest'], rejected: ['reason'] };
+        const branchFlags = { folded: ['finding', 'proof-kind', 'proof-digest'], queued: ['finding', 'claim', 'proof-kind', 'proof-digest'], rejected: ['finding', 'reason'], escalated: ['finding', 'override-digest'], 'custody-lost': ['receipt'] };
         const allowedFlags = new Set(branchFlags[action]);
-        const strayFlag = ['proof-kind', 'proof-digest', 'debt-id', 'debt-digest', 'reason'].find((f) => values[f] !== undefined && !allowedFlags.has(f));
+        const strayFlag = ['finding', 'claim', 'proof-kind', 'proof-digest', 'reason', 'override-digest', 'receipt'].find((f) => values[f] !== undefined && !allowedFlags.has(f));
         if (strayFlag !== undefined) {
-          throw usageFail(`--${strayFlag} does not ride --dispose ${action} — the ${action} arm takes exactly {--finding, ${branchFlags[action].map((f) => `--${f}`).join(', ')}}`);
+          throw usageFail(`--${strayFlag} does not ride --dispose ${action} — the ${action} arm takes exactly {${branchFlags[action].map((f) => `--${f}`).join(', ')}}`);
         }
+        if (action === 'custody-lost') return { action, receipt: requireDigest(requireValue(values, 'receipt', arm), 'receipt') };
         const finding = requireValue(values, 'finding', arm);
         // An empty quote must never reach the substring check — '' is a substring of EVERYTHING.
         if (finding.length === 0) throw usageFail('--finding must be the non-empty quoted finding text (verbatim from the delivered manifest)');
@@ -1113,8 +1263,11 @@ export const main = (argv, ctx = {}) => {
           return { action, finding, proofKind, proofDigest: requireDigest(requireValue(values, 'proof-digest', arm), 'proof-digest') };
         }
         if (action === 'queued') {
-          return { action, finding, debtId: requireValue(values, 'debt-id', arm), debtDigest: requireDigest(requireValue(values, 'debt-digest', arm), 'debt-digest') };
+          if (['claim', 'proof-kind', 'proof-digest'].some((flag) => values[flag] === undefined)) throw usageFail('--dispose queued requires --finding, --claim, --proof-kind and --proof-digest together');
+          if (!['consult-attestation', 'red-proof'].includes(values['proof-kind'])) throw usageFail(`--proof-kind must be consult-attestation | red-proof (got "${values['proof-kind']}")`);
+          return { action, finding, claim: requireValue(values, 'claim', arm), proofKind: values['proof-kind'], proofDigest: requireDigest(values['proof-digest'], 'proof-digest') };
         }
+        if (action === 'escalated') return { action, finding, overrideDigest: requireDigest(requireValue(values, 'override-digest', arm), 'override-digest') };
         return { action, finding, reason: requireValue(values, 'reason', arm) };
       })();
       const built = buildRoundLand({ planId, dispose, cwd, env, timestamp });
@@ -1124,7 +1277,7 @@ export const main = (argv, ctx = {}) => {
         `  store: ${appended.writtenPath}`,
         ...built.landed.map((l) => `  landed backend=${l.backend} nonce=${l.nonce}`),
         ...built.pending.map((p) => `  pending backend=${p.backend} nonce=${p.dispatchNonce} watermark=${p.receiptWatermark}`),
-        ...(built.disposed != null ? [`  disposition ${built.disposed.action} findingDigest=${built.disposed.findingDigest}`] : []),
+        ...(built.disposed != null ? [`  disposition ${built.disposed.action} ${built.disposed.receiptDigest ? `receiptDigest=${built.disposed.receiptDigest}` : `findingDigest=${built.disposed.findingDigest}`}`] : []),
       ];
       return { code: 0, stdout: lines.join('\n'), stderr: '' };
     }
@@ -1211,14 +1364,14 @@ export const main = (argv, ctx = {}) => {
         });
       }
       if (arm === 'internal-attestation') {
-        const { values, positionals } = parseFlags(rest, { '--lens': 'list', '--degraded': 'list', '--model': 'value', '--effort': 'value', '--tier': 'value', '--authority': 'value' });
+        const { values, positionals } = parseFlags(rest, { '--lens': 'list', '--degraded': 'list', '--model': 'value', '--effort': 'value', '--tier': 'value', '--authority': 'value', '--walk': 'value' });
         if (!Array.isArray(values.lens) || values.lens.length === 0) {
           throw usageFail('internal-attestation requires at least one --lens <name> (the required-lens set, #28)');
         }
         return buildInternalAttestation({
           planId: onePlanId(positionals, arm), lenses: values.lens, degraded: values.degraded ?? [],
           model: requireValue(values, 'model', arm), effort: values.effort, tier: values.tier,
-          authority: requireValue(values, 'authority', arm), cwd, env, timestamp, ctx,
+          authority: requireValue(values, 'authority', arm), walk: values.walk, cwd, env, timestamp, ctx,
         });
       }
       return null; // maintainer-override — handled below (it prints its bound set first)

@@ -343,7 +343,7 @@ DEFAULT_AGY_REVIEW_MODEL="Gemini 3.7 Flash (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="5.5.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.6.0"  # aw-version-anchor
 # `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
 AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
@@ -867,8 +867,8 @@ warn_never_committable_untracked() {
 # implements the SAME serialization in node — cross-checked by the kit's
 # review-fingerprint-parity.test.mjs.
 emit_fingerprint_payload() {
-  git diff --cached --no-ext-diff
-  git diff --no-ext-diff
+  git diff --cached --no-ext-diff --no-textconv --ignore-submodules=none
+  git diff --no-ext-diff --no-textconv --ignore-submodules=none
   local path
   while IFS= read -r -d '' path; do
     if [[ -L "$path" ]]; then
@@ -1556,10 +1556,10 @@ assemble_code_diff() {
   emit_status_porcelain_filtered
   echo
   echo "=== staged diff (git diff --cached) ==="
-  git diff --cached --no-ext-diff
+  git diff --cached --no-ext-diff --no-textconv --ignore-submodules=none
   echo
   echo "=== unstaged diff (git diff) ==="
-  git diff --no-ext-diff
+  git diff --no-ext-diff --no-textconv --ignore-submodules=none
   echo
   echo "=== untracked file contents ==="
   local path
@@ -1834,7 +1834,7 @@ else
     cd "$(git rev-parse --show-toplevel)"
     # No-diff preflight — never spend a run on a clean tree. Never-committable untracked masks do
     # not count: the FILTERED domain is the review surface.
-    if git diff --quiet && git diff --cached --quiet && ! has_reviewable_untracked; then
+    if git diff --quiet --no-ext-diff --no-textconv --ignore-submodules=none && git diff --cached --quiet --no-ext-diff --no-textconv --ignore-submodules=none && ! has_reviewable_untracked; then
       echo "agy-review: no uncommitted changes to review — the working tree is clean." >&2
       warn_never_committable_untracked
       exit 0

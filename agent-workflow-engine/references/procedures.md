@@ -90,8 +90,11 @@ Each ledger row is one logical commit.
    (codex-exec) *before* you integrate. **If `execute` resolved to Subagent**, split the ledger into
    file-disjoint slices, exact wording where wording is a red line, dispatch each slice to
    the executor vehicle in the background, and verify
-   every returned slice by running its suites yourself before step 3. The dispatch brief — Delegated
-   or Subagent — carries the generated robustness-literals block for every tagged row. Otherwise implement directly.
+   every returned slice by running its suites yourself before step 3. Otherwise implement directly.
+   Before a row's dispatch, and before `flow-writer adoption` on an armed flow, run
+   `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, re-run
+   `plan-shape --check`, and only then generate the brief. The dispatch brief — Delegated or
+   Subagent — carries the generated robustness-literals block for every tagged row.
 3. **Implement / integrate** — your own edits or the reviewed delegated diff; a spec row lands its
    approved draft or revision WITH the code ([`specs.md`](specs.md)).
 4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's
@@ -122,6 +125,14 @@ Each ledger row is one logical commit.
    never the run or answer. A **lens-raised** finding instead re-dispatches the lens without a nonce
    (WAIT and READ, edit as accepted or corrected); it mints no manifest and no attestation; only its
    per-round participation rides `internal-attestation`.
+
+   For an ARMED flow, every fold owes a walk: run `flow-writer internal-attestation <planId> …
+   --walk <file>` on folded bytes before the next `round-open`; it records `uncovered` and never
+   refuses it, while `--justification` lifts the walk refusal as an echoed input. The cap is the round
+   table's own signal (`cap reached` / `crossover`, computed by `round-open` from the round's landed dispatches), never a tool's constant:
+   past it `round-open` refuses until every blocking item of the latest round has one disposition:
+   `folded` (its proof), `queued` (`--claim` plus a bound proof and the fold-scope ACCEPT), `rejected`
+   (its reason), `escalated` (its maintainer-override), or `custody-lost` (a lost manifest, recorded first).
 
    **Finding scope** — every finding NAMES the invariant its fix enforces, BEFORE the edit, every
    round. Already an acceptance criterion (*Verification*'s `- ` bullets) → **fold here**. It would

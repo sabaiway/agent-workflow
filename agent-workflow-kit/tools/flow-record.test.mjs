@@ -237,9 +237,13 @@ describe('flow-record vocabulary (Phase 1.1)', () => {
     const folded = { findingDigest: D('7c'), action: 'folded', proofKind: 'red-proof', proofDigest: D('7d') };
     const consulted = { findingDigest: D('8e'), action: 'folded', proofKind: 'consult-attestation', proofDigest: D('7d') };
     const queued = { findingDigest: D('7e'), action: 'queued', debtId: 'DEBT-1', debtDigest: D('7f') };
+    const claimed = { ...queued, findingDigest: D('8b'), claim: 'the invariant', proofKind: 'red-proof', proofDigest: D('8a') };
     const rejected = { findingDigest: D('9a'), action: 'rejected', reason: 'not a defect on this axis' };
-    const populated = chain('round', { dispatches: [pending, landed], dispositions: [folded, consulted, queued, rejected] });
+    const escalated = { findingDigest: D('9b'), action: 'escalated', overrideDigest: D('9c') };
+    const lost = (receiptDigest, reason) => ({ action: 'custody-lost', receiptDigest, findingManifestDigest: D('9d'), reason });
+    const populated = chain('round', { dispatches: [pending, landed], dispositions: [folded, consulted, queued, claimed, rejected, escalated, lost(D('9e'), 'absent'), lost(D('9f'), 'swapped')] });
     assert.deepEqual(validateFlowRecord(populated), { ok: true });
+    for (const reason of ['absent', 'foreign', 'error', 'malformed', 'foreign-identity', 'swapped']) assert.deepEqual(validateFlowRecord(chain('round', { dispositions: [lost(D('9e'), reason)] })), { ok: true });
     const halfLanded = validateFlowRecord(chain('round', { dispatches: [{ ...pending, receiptDigest: D('6a') }] }));
     assert.equal(halfLanded.ok, false);
     assert.match(halfLanded.reason, /land together/);
@@ -251,13 +255,18 @@ describe('flow-record vocabulary (Phase 1.1)', () => {
     assert.match(badWatermark.reason, /receiptWatermark/);
     const unknownAction = validateFlowRecord(chain('round', { dispositions: [{ findingDigest: D('7c'), action: 'ignored' }] }));
     assert.equal(unknownAction.ok, false);
-    assert.match(unknownAction.reason, /action/);
+    assert.match(unknownAction.reason, /folded.*queued.*rejected.*escalated.*custody-lost/);
     const badProofKind = validateFlowRecord(chain('round', { dispositions: [{ ...folded, proofKind: 'promise' }] }));
     assert.equal(badProofKind.ok, false);
     assert.match(badProofKind.reason, /proofKind/);
     const queuedWithoutDebt = validateFlowRecord(chain('round', { dispositions: [{ findingDigest: D('7e'), action: 'queued', debtDigest: D('7f') }] }));
     assert.equal(queuedWithoutDebt.ok, false);
     assert.match(queuedWithoutDebt.reason, /debtId/);
+    const partialClaim = validateFlowRecord(chain('round', { dispositions: [{ ...queued, claim: 'the invariant', proofKind: 'red-proof' }] }));
+    assert.equal(partialClaim.ok, false);
+    assert.match(partialClaim.reason, /proofDigest/);
+    assert.match(validateFlowRecord(chain('round', { dispositions: [lost(D('9e'), 'unsafe')] })).reason, /reason/);
+    assert.match(validateFlowRecord(chain('round', { dispositions: [lost(D('9e'), 'absent'), lost(D('9e'), 'error')] })).reason, /one custody-lost/);
     const strayDisposition = validateFlowRecord(chain('round', { dispositions: [{ ...rejected, extra: 1 }] }));
     assert.equal(strayDisposition.ok, false);
     assert.match(strayDisposition.reason, /unknown field "extra"/);
@@ -309,6 +318,13 @@ describe('flow-record vocabulary (Phase 1.1)', () => {
     const numericEffort = validateFlowRecord(globalRecord('internal-attestation', { posture: { model: 'm', effort: 42, tier: null } }));
     assert.equal(numericEffort.ok, false);
     assert.deepEqual(validateFlowRecord(globalRecord('internal-attestation', { degraded: ['backend-b'] })), { ok: true });
+    const walk = { listVersion: 2, rows: [{ id: 'R01', class: 'git-location', checked: 'reviewed' }], uncovered: [{ id: 'R02', class: 'spawn-outcome' }] };
+    assert.deepEqual(validateFlowRecord(globalRecord('internal-attestation', { walk })), { ok: true });
+    for (const malformed of [{ ...walk, listVersion: 0 }, { ...walk, rows: [{ id: 'R01', class: '', checked: 'x' }] }, { ...walk, uncovered: [{ id: 'R02', class: 'c', extra: true }] }]) {
+      const result = validateFlowRecord(globalRecord('internal-attestation', { walk: malformed }));
+      assert.equal(result.ok, false);
+      assert.match(result.reason, /walk/);
+    }
   });
 
   it('consult-attestation binds plan, step, round, finding, and proposed fix', () => {

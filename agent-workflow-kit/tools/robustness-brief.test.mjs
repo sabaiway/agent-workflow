@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planWith } from './plan-shape-harness.test.mjs';
+import { expandSweepPaths } from './plan-shape-facts.mjs';
 import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
-import { main, renderBrief } from './robustness-brief.mjs';
+import { computeRowCoverage, main, renderBrief, renderCoverage } from './robustness-brief.mjs';
 
 const LIST = readShippedRobustnessLiterals();
 const makeRoot = () => mkdtempSync(join(tmpdir(), 'robustness-brief-'));
@@ -17,7 +18,9 @@ const write = (root, rel, body) => {
   writeFileSync(path, body);
   return path;
 };
-const row = (id, path, responsibility) => `${id} | modify | ${path} | ${responsibility} | n/a | docs/readme.md:1`;
+const row = (id, path, responsibility, verb = 'modify') => verb === 'delete'
+  ? `${id} | delete | ${path} | ${responsibility} | — | —`
+  : `${id} | ${verb} | ${path} | ${responsibility} | n/a | docs/readme.md:1`;
 const planOf = (...rows) => planWith({ ledger: `${rows.join('\n')}\ntotal: 0 → 0 lines` });
 const run = (root, argv, deps = {}) => main(argv, { cwd: root, readList: () => LIST, ...deps });
 
@@ -131,5 +134,136 @@ describe('robustness brief — rendering and exit contract', () => {
     assert.match(usage.stderr, /unknown argument/u);
     assert.match(usage.stderr, /Usage:/u);
     assert.equal(usage.stdout, '');
+  });
+
+  it('computes bounded byte coverage, skips documents, expands sweeps, and names read refusals (spec:robustness-literals/S10)', () => {
+    const files = new Map([
+      ['src/start.mjs', Buffer.from('ENOENT ')],
+      ['src/end.mjs', Buffer.from(' EPERM')],
+      ['src/invalid.mjs', Buffer.concat([Buffer.from([0xff]), Buffer.from('EACCES'), Buffer.from([0xfe])])],
+      ['src/non-zero.mjs', Buffer.from('non-zero')],
+      ['src/flag.mjs', Buffer.from('--no-textconv=value')],
+      ['src/path.mjs', Buffer.from('XGIT_EXEC_PATHY')],
+      ['src/prefix.mjs', Buffer.from('GIT_DIR')],
+      ['src/comment.mjs', Buffer.from('// EEXIST')],
+      ['src/state.mjs', Buffer.from('unmerged stage 1')],
+      ['data/judged.json', Buffer.from('{"value":"EEXIST"}')],
+      ['src/tagged.mjs', Buffer.from('EEXIST')],
+      ['src/sweep-a.mjs', Buffer.from('ENOENT')],
+      ['src/sweep-b.mjs', Buffer.from('EEXIST')],
+    ]);
+    const plan = planOf(
+      row('Rstart', 'src/start.mjs', 'start'), row('Rend', 'src/end.mjs', 'end'),
+      row('Rinvalid', 'src/invalid.mjs', 'invalid bytes'), row('Rnonzero', 'src/non-zero.mjs', 'bounded'),
+      row('Rflag', 'src/flag.mjs', 'flag'), row('Rpath', 'src/path.mjs', 'nested PATH'),
+      row('Rprefix', 'src/prefix.mjs', 'prefix'), row('Rcomment', 'src/comment.mjs', 'comment'),
+      row('Rstate', 'src/state.mjs', 'state prose'), row('Rmd', 'docs/a.md', 'document'),
+      row('Rtxt', 'notes/a.txt', 'document'),
+      row('Rlist', 'agent-workflow-kit/references/robustness-literals.json', 'shipped list'),
+      row('Rjson', 'data/judged.json', 'json'),
+      row('Rtagged', 'src/tagged.mjs', 'tagged robust:durable-write,git-location'),
+      row('Rdelete', 'src/deleted.mjs', 'delete', 'delete'), row('Rabsent', 'src/absent.mjs', 'absent'),
+      row('Rcreate', 'src/new.mjs', 'create absent', 'create'),
+      row('Rsweep', 'src/sweep-*.mjs', 'sweep (2 files)'),
+    );
+    const answer = computeRowCoverage(plan, LIST, {
+      expandRowPath: (path) => path === 'src/sweep-*.mjs' ? ['src/sweep-a.mjs', 'src/sweep-b.mjs'] : [],
+      readRowFile: (path) => files.has(path) ? { outcome: 'ok', bytes: files.get(path) } : { outcome: 'absent' },
+    });
+    assert.equal(answer.refusal, null);
+    const covered = new Map(answer.rows.map((entry) => [entry.id, entry]));
+    for (const id of ['Rstart', 'Rend', 'Rinvalid']) assert.deepEqual(covered.get(id).present, ['spawn-outcome']);
+    assert.deepEqual(covered.get('Rnonzero').present, []);
+    assert.deepEqual(covered.get('Rflag').present, ['git-read-flags']);
+    assert.deepEqual(covered.get('Rpath').present, []);
+    assert.deepEqual(covered.get('Rprefix').present, ['git-location']);
+    assert.deepEqual(answer.evidence.find((entry) => entry.id === 'Rprefix'), { id: 'Rprefix', classId: 'git-location', literal: 'GIT_' });
+    assert.deepEqual(covered.get('Rcomment').present, ['durable-write']);
+    assert.deepEqual(covered.get('Rstate').present, []);
+    for (const id of ['Rmd', 'Rtxt', 'Rlist']) assert.equal(covered.has(id), false);
+    assert.deepEqual(covered.get('Rjson').present, ['durable-write']);
+    assert.deepEqual(covered.get('Rtagged'), {
+      id: 'Rtagged', path: 'src/tagged.mjs', tagged: ['durable-write', 'git-location'],
+      present: ['durable-write'], uncovered: [], absent: false, deleted: false,
+    });
+    assert.deepEqual(covered.get('Rsweep').uncovered, ['spawn-outcome', 'durable-write']);
+    for (const id of ['Rabsent', 'Rcreate']) {
+      assert.equal(covered.get(id).absent, true);
+      assert.deepEqual(covered.get(id).uncovered, []);
+    }
+    assert.deepEqual(covered.get('Rdelete'), {
+      id: 'Rdelete', path: 'src/deleted.mjs', tagged: [], present: [], uncovered: [], absent: false, deleted: true,
+    });
+    const badTag = computeRowCoverage(planOf(row('Rtag', 'src/tagged.mjs', 'robust:git-location,')), LIST, {
+      expandRowPath: () => [], readRowFile: () => ({ outcome: 'ok', bytes: Buffer.from('GIT_DIR') }),
+    }).refusal;
+    assert.equal(badTag.id, 'Rtag');
+    assert.match(badTag.reason, /empty-class|invalid-class/);
+    const rendered = renderCoverage(answer.rows, 'plans/coverage.md').join('\n');
+    assert.match(rendered, /\| Rdelete \| src\/deleted\.mjs \| delete \|/u);
+    assert.match(rendered, /\| Rabsent \| src\/absent\.mjs \| absent \|/u);
+    for (const [readRowFile, expected] of [
+      [() => ({ outcome: 'foreign', className: 'directory' }), 'directory'],
+      [() => ({ outcome: 'error', code: 'EACCES' }), 'EACCES'],
+      [() => ({ outcome: 'over-cap', cap: 1_048_576 }), 'over-cap'],
+      [() => ({ outcome: 'ok', bytes: 'text' }), 'ok outcome carried no Buffer'],
+      [() => undefined, 'empty read outcome'],
+      [() => { throw Object.assign(new Error('boom'), { code: 'EIO' }); }, 'error \\(EIO\\)'],
+    ]) {
+      const refusal = computeRowCoverage(planOf(row('Rread', 'src/read.mjs', 'read')), LIST, {
+        expandRowPath: () => [], readRowFile,
+      }).refusal;
+      assert.equal(refusal.id, 'Rread');
+      assert.equal(refusal.path, 'src/read.mjs');
+      assert.match(refusal.outcome, new RegExp(expected));
+    }
+  });
+
+  it('runs coverage as a fail-closed second CLI mode with escaped rows and 0/1/2 exits (spec:robustness-literals/S11)', () => {
+    const root = makeRoot();
+    const tool = fileURLToPath(new URL('./robustness-brief.mjs', import.meta.url));
+    const controlPath = 'src/control\u0001.mjs';
+    write(root, 'docs/readme.md', 'anchor\n');
+    write(root, 'plans/uncovered.md', planOf(row('R1', controlPath, 'ordinary row')));
+    write(root, 'plans/tagged.md', planOf(row('R1', controlPath, 'robust:durable-write')));
+    write(root, 'plans/unknown.md', planOf(row('Rbad', 'src/bad.mjs', 'robust:no-such-class')));
+    const readRowFile = () => ({ outcome: 'ok', bytes: Buffer.from('EEXIST') });
+    const uncovered = run(root, ['--plan', 'plans/uncovered.md', '--coverage'], { readRowFile });
+    assert.equal(uncovered.code, 1);
+    assert.match(uncovered.lines.join('\n'), /src\/control\\u0001\.mjs/u);
+    assert.ok(uncovered.lines.includes('R1:durable-write:EEXIST'));
+    assert.equal(run(root, ['--plan', 'plans/tagged.md', '--coverage'], { readRowFile }).code, 0);
+    const refused = run(root, ['--plan', 'plans/tagged.md', '--coverage'], {
+      readRowFile: () => ({ outcome: 'foreign', className: 'directory' }),
+    });
+    assert.equal(refused.code, 2);
+    assert.match(refused.lines.join('\n'), /R1.*src\/control\\u0001\.mjs.*directory/u);
+    assert.equal(run(root, ['--plan', 'plans/tagged.md', '--row', 'R1', '--coverage']).code, 2);
+    assert.equal(run(root, ['--plan', 'plans/tagged.md']).code, 0);
+    assert.equal(run(root, ['--plan', 'plans/tagged.md', '--row', 'R1']).code, 0);
+    const unknown = run(root, ['--plan', 'plans/unknown.md', '--coverage'], { readRowFile });
+    assert.equal(unknown.code, 2);
+    assert.match(unknown.lines.join('\n'), /Rbad.*unknown class no-such-class/u);
+
+    write(root, 'src/real.mjs', 'EEXIST\n');
+    write(root, 'src/sweep-over.mjs', 'x'.repeat(1024 * 1024 + 1));
+    write(root, 'plans/sweep.md', planOf(row('Rsweep', 'src/sweep-*.mjs', 'ordinary row (2 files)')));
+    const overCap = run(root, ['--plan', 'plans/sweep.md', '--coverage']);
+    assert.equal(overCap.code, 2);
+    assert.match(overCap.lines.join('\n'), /Rsweep.*sweep-over\.mjs.*over-cap/u);
+    const fifo = join(root, 'src', 'never-open');
+    const madeFifo = spawnSync('mkfifo', [fifo], { encoding: 'utf8' });
+    assert.equal(madeFifo.status, 0, madeFifo.stderr);
+    assert.equal(expandSweepPaths(root, ['src/*'])['src/*'].includes('src/never-open'), false);
+    write(root, 'plans/real.md', planOf(row('Rreal', 'src/real.mjs', 'ordinary row')));
+    const runCli = () => spawnSync(process.execPath, [tool, '--plan', 'plans/real.md', '--coverage'], { cwd: root, encoding: 'utf8' });
+    const cliUncovered = runCli();
+    assert.equal(cliUncovered.status, 1);
+    assert.match(cliUncovered.stdout, /^Rreal:durable-write:EEXIST$/mu);
+    assert.equal(cliUncovered.stderr, '');
+    write(root, 'plans/real.md', planOf(row('Rreal', 'src/real.mjs', 'robust:durable-write')));
+    const cliCovered = runCli();
+    assert.equal(cliCovered.status, 0);
+    assert.equal(cliCovered.stderr, '');
   });
 });

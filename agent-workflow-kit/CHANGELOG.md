@@ -4,6 +4,91 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 11.0.0 — the per-fold walk is a record, the cap is a refusal at the round table's own signal, and the fingerprint argv has one home (AD-130)
+
+Plan 2's two attestation rounds on CONVERGED bytes each found one member of the kit's own robustness
+list that the executor never received: the tagged sweep row got its brief, the untagged suite and
+generator rows did not. Nothing asked "does the tag cover the row" before the dispatch, nothing
+recorded the adversarial walk a fold owes, and past the round table's `cap reached` / `crossover`
+signal nothing refused the next round — on the release-run feature the table printed CROSSOVER from
+round 2 for eleven rounds and nothing acted on it. Rungs 4 and 5 of the first-pass-quality series
+close that, and the two fingerprint classes plan 1 measured RED (Issue-023 / Issue-024) close with
+them. Contracts: `robustness-literals.md` rev 2 (S10–S11 bound), `plan-review-loop/index.md` rev 6
+(S30–S33 bound), `release-run/index.md` rev 2.
+
+**Coverage is the generator's second mode.** `robustness-brief.mjs --plan <plan> --coverage` judges
+every `create`/`modify` row except a document (`.md`, `.txt`) or the shipped list itself: a class is
+PRESENT when the row file's BYTES carry a member literal of kind env/flag/ref/syscall/errno/argv as a
+BOUNDED token (a comment counts, `state` members are never searched), `uncovered` = present minus
+tagged, a `delete` row and an absent file are LISTED, a sweep row is judged over every path the facts
+leaf expands (`expandSweepPaths`, one home in `plan-shape-facts.mjs`); exit 0 covered / 1 naming each
+`row:class:literal` / 2 on a row file the 1 MiB no-follow read cannot deliver. Measured on itself: the
+first run over this very plan named `R01:spawn-outcome:ENOENT` and the tag grew before the next
+dispatch. `references/modes/robustness-brief.md` states the mode, its read surface and the bounds.
+
+**Every fold owes a walk, recorded.** `flow-writer internal-attestation <planId> --walk <file>` reads a
+closed JSON walk (`{ listVersion, rows: [{ id, class, checked }] }`) relative to the git COMMON dir,
+derives the obligation from the ADOPTED plan (every judged row, every class in TAGGED ∪ PRESENT needs a
+non-empty `checked`), records `uncovered` and never refuses on it; `round-open` for every round after
+the first refuses without an authoritative walk-carrying attestation at round N's coordinates, and
+`--justification` lifts that refusal as an echoed INPUT whose durable trail is the attestation's
+absence. A plan with no judgeable row owes no walk; a plan that lost adoption coverage fails closed
+by name (`resolveAdoptedPlan`, one home).
+
+**The cap is the round table's own signal, and terminal is digest equality.** The new pure leaf
+`tools/flow-round-gates.mjs` (`blockingItems`, `roundsForSignal`, `capIssue`, `walkIssue`,
+`escalationIssue`, `validateWalk`; `signalFor` imported from `review-rounds.mjs`, never modified)
+builds one round per authoritative head from its LANDED dispatches; on `cap reached` or `crossover`
+only, `round-open` refuses unless every blocking ITEM of every landed receipt of the latest head is
+covered by a disposition whose `findingDigest` equals `sha256(itemText)` — text mode the wrapper's own
+line, schema mode the `issue` field verbatim — and prints every uncovered item beside its digest. An
+enumeration failure on a readable manifest falls back to the `>= 1` floor with an ADVISORY; the
+checks run cap → walk → floor in the lock-free pass and again on the locked snapshot.
+
+**A finding with no proven narrow fix is never queued; a lost manifest is a record.** `round-land
+--dispose queued --finding <quote> --claim <invariant> --proof-kind consult-attestation|red-proof
+--proof-digest <d>` mints only on `decideFoldScope` ACCEPT `new-invariant`, with `debtId`/`debtDigest`
+DERIVED from the ONE resolved queue row `fold-scope` now returns (`normalize` exported, one home); a
+consult-attestation proof binds through `proposedFixDigest === sha256(itemDigest + "\n" + claim)`, a
+red-proof through the head's `base`, the tree `round-land` runs on and the row's `proof` field. The
+fourth arm `escalated --finding <quote> --override-digest <d>` resolves a `maintainer-override` of THIS round's vetoing
+receipt; the FIFTH arm `custody-lost --receipt <receiptDigest>` mints only on a REAL loss (`absent |
+foreign | error | malformed | foreign-identity | swapped`), covers every item of that receipt for the
+cap and is recordable whenever the loss is real. `flow-record-shape.mjs` admits `walk`, the queued
+trio (all-or-none), `escalated` and `custody-lost`; `FLOW_SCHEMA_VERSION` does not move.
+
+**The fingerprint argv has one home.** `core-evidence.mjs` exports `FINGERPRINT_CACHED_DIFF_ARGV` /
+`FINGERPRINT_UNSTAGED_DIFF_ARGV` carrying `--no-ext-diff --no-textconv --ignore-submodules=none`;
+`flow-delta-proof.mjs` imports them; both wrappers' bash twins (`emit_fingerprint_payload`,
+`assemble_code_diff`, the no-diff preflight) carry the flags, mirrored into `bridges/`, and
+`test/review-fingerprint-parity.test.mjs` EXTRACTS the preflight line and proves it on real git with a
+gitlink under `diff.ignoreSubmodules=all`. Issue-023 and Issue-024 close; `commit-guard`'s
+content-free refusal 2 narrows to a fail-closed backstop with a generic message that names no flag
+and no config key (`references/modes/commit-guard.md`).
+
+**Tests and records.** New suite `flow-round-gates.test.mjs`; the touched suites (`robustness-brief`,
+`flow-record`, `flow-writer`, `flow-dogfood.integration`, `core-evidence-hostile`,
+`commit-guard-content-free`, `review-fingerprint-parity`, `package-content` — the tarball pin 284 →
+285 — and `fold-scope`) green with real git; thirteen red-proof cases (34 `core-evidence red-proof`
+re-observations on the parked pre-fix trees); the source-size baseline re-recorded under one stated reason. Every fold of the three diff
+rounds rode the delegate's held session (AD-127): fourteen accounted dispatches, one session.
+
+### BREAKING
+
+- **Minimum bridge versions: codex-cli-bridge 3.7.0, antigravity-cli-bridge 5.6.0.** The fingerprint
+  domain moves on a repository configuring `textconv` (neutralised by `--no-textconv`) or
+  `diff.ignoreSubmodules` / `submodule.<name>.ignore` in `.git/config` or `.gitmodules` (both overridden
+  by `--ignore-submodules=none`): a kit-11 receipt and a pre-3.7.0 / pre-5.6.0 wrapper receipt hash the
+  same tree differently. `init` and `upgrade`
+  refresh a placed bridge (`bin/install.mjs`); a bridge never placed is never placed by them.
+- **`round-land --dispose queued` changes its operands:** `--debt-id` / `--debt-digest` are gone;
+  `--claim`, `--proof-kind` and `--proof-digest` are required together with `--finding`.
+- **`round-open` refuses where `--justification` used to lift:** past the round table's signal the
+  cap is never lifted by a justification; a missing walk is.
+- **The one-way door:** a flow store carrying any post-rung record form — an `internal-attestation`
+  with `walk`, a `queued` disposition with `claim`/`proofKind`/`proofDigest`, an `escalated` or a
+  `custody-lost` disposition — reads under kit >= 11 only. A pre-rung store still reads.
+
 ## 10.6.0 — a fold on delegated code rides the delegate's held session, judged from the ledger the kit already mints (AD-127)
 
 The 2026-08-30 `release-run` execution took thirteen diff-review rounds, and every fold was made by

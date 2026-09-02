@@ -4,6 +4,20 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.6.0 — plan-execution runs coverage before every dispatch, and step 5 names the walk and the cap (AD-130)
+
+`references/procedures.md`, `plan-execution`: step 2 runs `robustness-brief --coverage` over the plan
+before each dispatch and fixes the tags it names (a tag is fixed only before adoption; the brief is
+generated from the tag afterwards); step 5 states that every fold owes a walk — recorded on
+`flow-writer internal-attestation <planId> --walk <file>` at the current tree before the next
+`round-open` — and that the cap is the round table's own signal (`cap reached` / `crossover`, computed
+by `round-open` from the round's landed dispatches), past which a blocking item is disposed `folded`,
+`queued` with its `--claim` and proof, `rejected` with its reason or `escalated`, and a lost manifest
+is a recorded `custody-lost` disposition, never a tool the orchestrator remembers to run.
+`test/procedures-canon.test.mjs` pins the step-2 order (coverage → tags → `plan-shape --check` → the
+brief) and the step-5 tokens; its procedures/planning line ratio moves 1.2 → 1.31 for the stated
+prose. Step numbers and the `Slots:` line are unchanged.
+
 ## 4.5.0 — a fold under Delegated rides the held session, and step 5 of plan-execution says so (AD-127)
 
 `references/procedures.md`, step 5 of `plan-execution`: when `execute` resolved to Delegated, a fold

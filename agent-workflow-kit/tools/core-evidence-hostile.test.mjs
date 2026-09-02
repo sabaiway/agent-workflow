@@ -1,12 +1,13 @@
 // core-evidence-hostile.test.mjs — the fingerprint payload and the working state under every
 // hostile-git fixture (first-pass-quality plan 1). Red-first on the measured classes: a redirected
 // location (null, never another repository's bytes), a throwing runner (null, never a raw stack),
-// the duplicated unmerged path. GREEN classes are pinned, not fixed; the two DEFERRED classes are
-// pinned as today's behaviour with the plan-3 flip in the title.
+// the duplicated unmerged path. GREEN classes are pinned, not fixed; the remaining classes pin
+// the hardened diff domain.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { computeFingerprintPayload, computeTreeFingerprint, computeWorkingState, runRedProof } from './core-evidence.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { fixtures, skipWithoutGit } from './hostile-git-harness.test.mjs';
@@ -103,19 +104,22 @@ describe('core-evidence under hostile git — GREEN classes pinned, not fixed', 
   }));
 });
 
-describe('core-evidence under hostile git — DEFERRED classes pinned as today\'s behaviour', { skip: skipWithoutGit }, () => {
-  it('textconv (plan 3 flips it with --no-textconv): today two different staged contents hash identically', () => withFixture(fixtures.textconv, (f) => {
+describe('core-evidence under hostile git — hardened diff domain', { skip: skipWithoutGit }, () => {
+  it('textconv cannot erase staged bytes: two different staged contents hash differently', () => withFixture(fixtures.textconv, (f) => {
     const first = computeTreeFingerprint(f.cwd, under(f.env));
     f.a.write(f.path, 'v3\n');
     f.a.must(['add', f.path]);
     const second = computeTreeFingerprint(f.cwd, under(f.env));
-    assert.equal(first, second, 'the textconv-blanked diff cannot tell v2 from v3');
+    assert.notEqual(first, second, '--no-textconv keeps v2 distinct from v3');
   }));
-  it('diff.ignoreSubmodules=all (plan 3 flips it with --ignore-submodules=none): today a staged gitlink beside a visible change leaves the fingerprint put', () => withFixture(fixtures.ignoreSubmodulesAll, (f) => {
+  it('diff.ignoreSubmodules=all cannot hide a staged gitlink from the fingerprint payload', () => withFixture(fixtures.ignoreSubmodulesAll, (f) => {
+    const payload = computeFingerprintPayload(f.cwd, under(f.env));
+    assert.match(payload.toString('utf8'), /diff --git a\/sub b\/sub[\s\S]*Subproject commit/u);
     const withGitlink = computeTreeFingerprint(f.cwd, under(f.env));
     f.a.must(['reset', '-q', '--', 'sub']);
-    const withoutGitlink = computeTreeFingerprint(f.cwd, under(f.env));
-    assert.equal(withGitlink, withoutGitlink, 'the hidden gitlink never entered the payload');
+    f.a.must(['reset', '-q', '--hard', 'HEAD~1'], { cwd: join(f.cwd, 'sub') });
+    assert.notEqual(withGitlink, computeTreeFingerprint(f.cwd, under(f.env)), '--ignore-submodules=none keeps the staged gitlink in the payload');
+    assert.equal(computeFingerprintPayload(f.cwd, under(f.env)).toString('utf8').includes('Subproject commit'), false);
     assert.equal(computeWorkingState(f.cwd, under(f.env)).stagedDirty, true, 'the visible change is still staged');
     assert.ok(f.a.git(['diff', '--cached', '--name-only', '--ignore-submodules=none']).stdout.toString('utf8').includes('f.txt'));
   }));

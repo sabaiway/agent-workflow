@@ -13,7 +13,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, statSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, appendFileSync, statSync, existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,6 +21,8 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest } from './flow-record.mjs';
 import { EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
+import { planWith } from './plan-shape-harness.test.mjs';
+import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SET_FLOW = join(TOOLS, 'set-flow.mjs');
@@ -139,6 +141,12 @@ const expectOk = (fx, tool, args) => {
   assert.equal(r.code, 0, `${args[0] ?? tool}: ${r.stderr || r.stdout}`);
   return r;
 };
+const expectRefusal = (fx, tool, args, pattern, code = 1) => {
+  const r = runTool(fx, tool, args);
+  assert.equal(r.code, code, `${args.join(' ')}: ${r.stderr || r.stdout}`);
+  assert.match(r.stderr || r.stdout, pattern);
+  return r;
+};
 
 // Helpers that need the fixture's git run OUT of process under the isolated env — an in-process
 // spawn would inherit the HOST git environment and could compute a different fingerprint domain.
@@ -183,13 +191,13 @@ const evidenceRecords = (fx) => readFileSync(join(fx.root, '.git', EVIDENCE), 'u
 const WRAPPER_MANIFEST_SCHEMA = 1;
 const WRAPPER_RECEIPT_SCHEMA = 1;
 const wireTimestamp = () => new Date().toISOString().replace(/\.\d{3}(?=Z$)/, '');
-const appendReceipt = (fx, { backend, nonce, fingerprint }) => {
+const appendReceipt = (fx, { backend, nonce, fingerprint, verdict, blocking }) => {
   const receipt = {
-    schema: WRAPPER_RECEIPT_SCHEMA, artifact: 'code', fresh: true, backend, verdict: backend === 'agy' ? 'SHIP' : 'ship',
+    schema: WRAPPER_RECEIPT_SCHEMA, artifact: 'code', fresh: true, backend, verdict: verdict ?? (backend === 'agy' ? 'SHIP' : 'ship'),
     grounded: true, factsHash: null, wrapperVersion: '0.0.0-dogfood', probe: false,
     posture: backend === 'agy' ? { model: 'agy-dogfood-model' } : { model: 'codex-dogfood-model', effort: 'xhigh', tier: null },
     ...(backend === 'agy' ? { delivery: 'inline' } : {}), nonce, fingerprint,
-    timestamp: wireTimestamp(),
+    timestamp: wireTimestamp(), blocking: blocking === undefined ? 0 : blocking,
   };
   appendFileSync(join(fx.root, '.git', RECEIPTS), `${JSON.stringify(receipt)}\n`);
   return receipt;
@@ -200,10 +208,10 @@ const appendReceipt = (fx, { backend, nonce, fingerprint }) => {
 // order {schema, backend, nonce, fingerprint, findings} AND the trailing newline
 // (codex-review.sh mint core: `JSON.stringify({...}) + "\n"`); the agy findings payload rides
 // its mandated `### Verdict` section form.
-const writeManifest = (fx, { backend, nonce, fingerprint }) => {
-  const findings = backend === 'agy'
+const writeManifest = (fx, { backend, nonce, fingerprint, findings: supplied }) => {
+  const findings = supplied ?? (backend === 'agy'
     ? '### Verdict\nSHIP\n\n### Blocking\nnone\n'
-    : `Verdict: ship\n\nNo blocking findings (${backend} dogfood).\n`;
+    : `Verdict: ship\n\nNo blocking findings (${backend} dogfood).\n`);
   const bytes = Buffer.from(`${JSON.stringify({ schema: WRAPPER_MANIFEST_SCHEMA, backend, nonce, fingerprint, findings })}\n`);
   writeFileSync(join(fx.root, '.git', `agent-workflow-finding-manifest-${backend}-${nonce}.json`), bytes);
   return bytes;
@@ -276,6 +284,97 @@ const flowDecisionRefusals = (fx, consumer) => JSON.parse(inFixtureModule(fx, 'f
   'const m = await import(process.env.DOGFOOD_MODULE_URL);'
   + ' process.stdout.write(JSON.stringify(m.computeFlowDecision({ cwd: process.cwd(), consumer: process.env.DOGFOOD_CONSUMER }).refusals));',
   { DOGFOOD_CONSUMER: consumer }));
+
+const DEBT_CLAIM = 'every queued finding binds its row and proof';
+const DEBT_BLOCK = `- **DOGFOOD-DEBT — queued.**\n  - invariant: ${DEBT_CLAIM}\n  - origin: app.txt:1\n  - narrow fix: bind this finding\n  - proof: app.txt#red case\n  - residual exposure: general callers remain - not live\n`;
+const armRung = (tag, { plan = planWith({ ledger: 'R0 | delete | gone.mjs | cleanup | — | —\ntotal: 0 → 0 lines' }), debt = '# Debt queue\n', backends = ['codex', 'agy'], files = {} } = {}) => {
+  const fx = makeFixture(tag);
+  expectOk(fx, SET_FLOW, ['--preset', 'council', '--write']);
+  writeFileSync(join(fx.root, PLAN_REL), plan);
+  writeFileSync(join(fx.root, 'docs', 'debt.md'), debt);
+  for (const [path, bytes] of Object.entries(files)) { mkdirSync(dirname(join(fx.root, path)), { recursive: true }); writeFileSync(join(fx.root, path), bytes); }
+  expectOk(fx, FLOW_WRITER, ['write-plan-id', PLAN_REL, '--plan-id', PLAN_ID]);
+  git(fx, 'add', '-A'); git(fx, 'commit', '-qm', 'arm rung fixture');
+  expectOk(fx, FLOW_WRITER, ['adoption', PLAN_REL]);
+  expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, ...backends.flatMap((backend) => ['--backend', backend]), '--step', '1.1']);
+  return fx;
+};
+const landWith = (fx, overrides = {}) => {
+  const round = lastRound(fx);
+  for (const entry of round.dispatches.filter((d) => d.receiptDigest === null)) {
+    const over = overrides[entry.backend] ?? {};
+    appendReceipt(fx, { backend: entry.backend, nonce: entry.dispatchNonce, fingerprint: round.fingerprint, ...over });
+    writeManifest(fx, { backend: entry.backend, nonce: entry.dispatchNonce, fingerprint: round.fingerprint, ...over });
+  }
+  return expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID]);
+};
+const attestWalk = (fx, rows, name = 'aw-walk.json') => {
+  writeFileSync(join(fx.root, '.git', name), JSON.stringify({ listVersion: readShippedRobustnessLiterals().version, rows }));
+  return expectOk(fx, FLOW_WRITER, ['internal-attestation', PLAN_ID, '--lens', 'correctness', '--model', 'm', '--authority', 'dogfood', '--walk', name]);
+};
+
+describe('flow dogfood — first-pass quality rungs (real CLIs)', { skip: !gitOk }, () => {
+  it('walks coverage from the common dir, never the worktree root, and pins the off-by-one gate (spec:plan-review-loop/S30)', () => {
+    const ledger = 'R1 | modify | src/location.mjs | robust:git-location | n/a | src/location.mjs:1\nR2 | modify | src/read.mjs | untagged | n/a | src/read.mjs:1\ntotal: 0 → 0 lines';
+    const fx = armRung('aw-dogfood-walk', { plan: planWith({ ledger }), files: { 'src/location.mjs': 'GIT_DIR\n', 'src/read.mjs': '--no-textconv\n' } });
+    landWith(fx);
+    const common = join(fx.root, '.git');
+    const args = ['internal-attestation', PLAN_ID, '--lens', 'correctness', '--model', 'm', '--authority', 'dogfood', '--walk'];
+    expectRefusal(fx, FLOW_WRITER, [...args, join(common, 'absolute.json')], /absolute|relative/ , 2);
+    expectRefusal(fx, FLOW_WRITER, [...args, '../outside.json'], /\.\.|segment/, 2);
+    expectRefusal(fx, FLOW_WRITER, [...args, 'absent.json'], /absent/ , 2);
+    mkdirSync(join(common, 'walk-dir')); expectRefusal(fx, FLOW_WRITER, [...args, 'walk-dir'], /non-regular|directory/, 2);
+    const bad = [['large.json', 'x'.repeat(65537), /64 KiB|over/], ['utf8.json', Buffer.from([0xff]), /UTF-8/], ['json.json', '{', /JSON/], ['stray.json', JSON.stringify({ listVersion: 1, rows: [], stray: true }), /stray|unknown/], ['checked.json', JSON.stringify({ listVersion: 1, rows: [{ id: 'R1', class: 'git-location', checked: 1 }] }), /checked/], ['version.json', JSON.stringify({ listVersion: 999, rows: [] }), /listVersion/], ['missing.json', JSON.stringify({ listVersion: 1, rows: [{ id: 'R1', class: 'git-location', checked: 'yes' }] }), /R2:git-read-flags/]];
+    for (const [name, bytes, pattern] of bad) { writeFileSync(join(common, name), bytes); expectRefusal(fx, FLOW_WRITER, [...args, name], pattern, 2); }
+    const walk = JSON.stringify({ listVersion: readShippedRobustnessLiterals().version, rows: [{ id: 'R1', class: 'git-location', checked: 'yes' }, { id: 'R2', class: 'git-read-flags', checked: 'yes' }] });
+    writeFileSync(join(fx.root, 'aw-walk.json'), walk);
+    expectRefusal(fx, FLOW_WRITER, [...args, 'aw-walk.json'], /absent/, 2);
+    writeFileSync(join(common, 'aw-walk.json'), walk);
+    expectOk(fx, FLOW_WRITER, [...args, 'aw-walk.json']);
+    assert.deepEqual(storeRecords(fx).at(-1).walk.uncovered, [{ id: 'R2', class: 'git-read-flags' }]);
+    expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy']); landWith(fx);
+    expectRefusal(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex'], /authoritative walk for round 2/);
+    assert.match(expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--justification', 'round-2 walk was unavailable']).stdout, /walk lift trail — round-2 walk was unavailable/);
+  });
+
+  it('binds queued findings to the resolved row and either proof kind (spec:plan-review-loop/S32)', () => {
+    const fx = armRung('aw-dogfood-queued', { debt: DEBT_BLOCK, backends: ['codex'] }); landWith(fx);
+    const round = lastRound(fx); const item = 'Verdict: ship'; const testId = 'app.txt#red case';
+    const red = seedEvidence(fx, { schema: EVIDENCE_SCHEMA_VERSION, kind: 'red-proof', testId, file: 'app.txt', fileHash: sha256hex(readFileSync(join(fx.root, 'app.txt'))), runs: 1, reds: 1, base: git(fx, 'rev-parse', 'HEAD').trim(), fingerprint: fingerprintOf(fx), timestamp: new Date().toISOString() });
+    const queued = expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'queued', '--finding', item, '--claim', DEBT_CLAIM, '--proof-kind', 'red-proof', '--proof-digest', canonicalFlowDigest(red)]);
+    assert.match(queued.stdout, /findingDigest=/); const disposition = lastRound(fx).dispositions.at(-1);
+    assert.equal(disposition.debtId, '- **DOGFOOD-DEBT — queued.**'); assert.equal(disposition.debtDigest, sha256hex(Buffer.from(DEBT_BLOCK)));
+    const nonce = round.dispatches[0].dispatchNonce; const second = 'No blocking findings (codex dogfood).'; const itemDigest = sha256hex(Buffer.from(second));
+    expectOk(fx, FLOW_WRITER, ['consult-attestation', PLAN_ID, '--backend', 'codex', '--nonce', nonce, '--proposed-fix-digest', 'ab'.repeat(32)]);
+    const wrongProof = storeRecords(fx).at(-1); expectRefusal(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'queued', '--finding', second, '--claim', DEBT_CLAIM, '--proof-kind', 'consult-attestation', '--proof-digest', canonicalFlowDigest(wrongProof)], /proposedFixDigest does not equal/);
+    const proposed = sha256hex(Buffer.from(`${itemDigest}\n${DEBT_CLAIM}`)); expectOk(fx, FLOW_WRITER, ['consult-attestation', PLAN_ID, '--backend', 'codex', '--nonce', nonce, '--proposed-fix-digest', proposed]); const proof = storeRecords(fx).at(-1);
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'queued', '--finding', second, '--claim', DEBT_CLAIM, '--proof-kind', 'consult-attestation', '--proof-digest', canonicalFlowDigest(proof)]);
+  });
+
+  it('enforces item cap, escalation, and recorded custody loss without changing folded or rejected (spec:plan-review-loop/S33)', () => {
+    const fx = armRung('aw-dogfood-cap', { debt: DEBT_BLOCK });
+    const findings = '[blocker] first item\n[major] second item\nVerdict: revise\n'; const agy = '### Verdict\nSHIP\n\n### Blocking\n1. ship-side item\n';
+    landWith(fx, { codex: { verdict: 'revise', blocking: 2, findings }, agy: { verdict: 'SHIP', blocking: 0, findings: agy } });
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'rejected', '--finding', '[blocker] first item', '--reason', 'round 1: not a defect on this axis']);
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'rejected', '--finding', '[major] second item', '--reason', 'round 1: not a defect on this axis']);
+    attestWalk(fx, []);
+    expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy']); landWith(fx, { codex: { verdict: 'revise', blocking: 2, findings }, agy: { verdict: 'SHIP', blocking: 0, findings: agy } }); attestWalk(fx, []);
+    const cap = expectRefusal(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy'], /\[blocker\] first item[\s\S]*\[major\] second item/);
+    assert.match(cap.stderr, new RegExp(sha256hex(Buffer.from('[blocker] first item'))));
+    const head = lastRound(fx); expectOk(fx, FLOW_WRITER, ['maintainer-override', PLAN_ID, '--backend', 'codex', '--checkpoint-approved']); const override = storeRecords(fx).at(-1);
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'escalated', '--finding', '[blocker] first item', '--override-digest', canonicalFlowDigest(override)]);
+    expectRefusal(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'escalated', '--finding', '1. ship-side item', '--override-digest', canonicalFlowDigest(override)], /the raiser did not veto this receipt/);
+    const red = seedEvidence(fx, { schema: EVIDENCE_SCHEMA_VERSION, kind: 'red-proof', testId: 'app.txt#red case', file: 'app.txt', fileHash: sha256hex(readFileSync(join(fx.root, 'app.txt'))), runs: 1, reds: 1, base: head.base, fingerprint: fingerprintOf(fx), timestamp: new Date().toISOString() });
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'folded', '--finding', '[major] second item', '--proof-kind', 'red-proof', '--proof-digest', canonicalFlowDigest(red)]);
+    expectOk(fx, FLOW_WRITER, ['round-open', PLAN_ID, '--backend', 'codex', '--backend', 'agy']); landWith(fx);
+    const current = lastRound(fx); const lost = current.dispatches.find((d) => d.backend === 'codex'); unlinkSync(join(fx.root, '.git', `agent-workflow-finding-manifest-codex-${lost.dispatchNonce}.json`));
+    expectRefusal(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'queued', '--finding', 'Verdict: ship', '--claim', DEBT_CLAIM, '--proof-kind', 'red-proof', '--proof-digest', canonicalFlowDigest(red)], /record custody-lost for the broken carrier before any quote-bearing disposition/);
+    const loss = expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'custody-lost', '--receipt', lost.receiptDigest]); assert.match(loss.stdout, new RegExp(`receiptDigest=${lost.receiptDigest}`));
+    expectRefusal(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'custody-lost', '--receipt', lost.receiptDigest], /this receipt already has a custody-lost disposition/);
+    const intact = current.dispatches.find((d) => d.backend === 'agy'); expectRefusal(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'custody-lost', '--receipt', intact.receiptDigest], /no loss to record/);
+    expectOk(fx, FLOW_WRITER, ['round-land', PLAN_ID, '--dispose', 'rejected', '--finding', 'SHIP', '--reason', 'the raiser did not veto']);
+  });
+});
 
 describe('flow dogfood — the tracked-docs/ai pipeline end to end (real CLIs, hermetic git)', { skip: !gitOk }, () => {
   it('drives set-flow → adoption → attempts → rounds → delta+refresh → terminals → --final → commit-guard, then the D10 movement refusal', () => {

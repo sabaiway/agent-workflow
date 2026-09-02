@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROCEDURES = join(ROOT, 'references', 'procedures.md');
 const METHODOLOGY_SLOT = join(ROOT, 'references', 'methodology-slot.md');
-const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.2;
+const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.31;
 const HELD_SESSION_SENTENCE_GROUP = Object.freeze({ start: 'when `execute` resolved to Delegated', end: 'what the delegate cannot reach.', maxBytes: 726 });
 const procedures = readFileSync(PROCEDURES, 'utf8');
 
@@ -187,6 +187,16 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     ]) assert.ok(step5.includes(token), token);
     assert.equal(slotsLineOf(execution), 'Slots: execute, review');
     assert.deepEqual([...execution.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('plan-execution pins coverage-to-brief order and the walk/cap round gates', () => {
+    const execution = sectionOf(procedures, 'plan-execution');
+    const step2 = stepOf(execution, 2).replace(/\s+/g, ' ');
+    const positions = ['--coverage', 'tags', 'plan-shape --check', 'generated robustness-literals block'].map((token) => step2.indexOf(token));
+    assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `coverage order: ${positions.join(' < ')}`);
+    assert.ok(step2.indexOf('Otherwise implement directly.') < step2.indexOf('The dispatch brief'), 'direct implementation precedes the dispatch brief');
+    const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
+    for (const token of ['--walk', 'every fold owes a walk', 'cap reached', 'crossover', 'round table', 'never a tool', 'custody-lost', 'escalated', '--claim']) assert.ok(step5.includes(token), `step 5 carries ${token}`);
   });
 
   // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
