@@ -24,6 +24,15 @@ const detect = (codex, agy) => () => [
   { name: CODEX, readiness: codex },
   { name: AGY, readiness: agy },
 ];
+const makeEngine = (canon) => {
+  const dir = mkdtempSync(join(tmpdir(), 'procedures-engine-'));
+  const manifest = { family: 'agent-workflow', schema: 1, name: 'agent-workflow-engine', kind: 'methodology-engine', version: '1.2.0', available: true, provides: ['plan'], roles: {} };
+  writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifest, null, 2));
+  writeFileSync(join(dir, 'SKILL.md'), "---\nname: agent-workflow-engine\nmetadata:\n  version: '1.2.0'\n---\n# engine\n");
+  mkdirSync(join(dir, 'references'), { recursive: true });
+  if (canon !== undefined) writeFileSync(join(dir, 'references', 'procedures.md'), canon);
+  return dir;
+};
 
 let cwd;
 beforeEach(() => {
@@ -402,7 +411,7 @@ describe('procedures CLI — --json schema (§2.0)', () => {
     assert.equal(r.code, 0, r.stderr);
     const j = JSON.parse(r.stdout);
     // The unarmed JSON key set stays byte-exact to the pre-flow shape — flowHalves is CONDITIONAL on a flow block, unlike the unconditional additive keys.
-    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'foldLane', 'foldScope', 'groundingPreStep', 'readersSweep', 'reviewLoop', 'robustnessBrief', 'section', 'slots', 'specCheck', 'warnings'].sort());
+    assert.deepEqual(Object.keys(j).sort(), ['activity', 'autonomy', 'configSource', 'costLanes', 'declaredPractice', 'feedbackTriage', 'foldLane', 'foldScope', 'groundingPreStep', 'readersSweep', 'reviewLoop', 'robustnessBrief', 'section', 'slots', 'specCheck', 'warnings'].sort());
     assert.equal(j.activity, 'plan-execution');
     assert.match(j.section, /## plan-execution/);
     for (const slot of ['execute', 'review']) {
@@ -410,6 +419,11 @@ describe('procedures CLI — --json schema (§2.0)', () => {
       assert.deepEqual(Object.keys(j.slots[slot]).sort(), ['backends', 'contracts', 'degradedFrom', 'reason', 'recipe', 'source'].sort());
     }
     assert.ok(Array.isArray(j.warnings));
+  });
+  it('the feedback-triage advisor block stays an empty array for the other three activities', () => {
+    for (const activity of ['plan-authoring', 'plan-execution', 'routine']) {
+      assert.deepEqual(JSON.parse(run([activity, '--json'], { codex: READY, agy: READY }).stdout).feedbackTriage, [], activity);
+    }
   });
 });
 
@@ -1013,25 +1027,7 @@ describe('procedures CLI — point-of-use driving contract: verbatim, manifest-d
 // §4.0 — an installed engine too old to ship references/procedures.md must FAIL LOUDLY (exit 1, an
 // "upgrade the engine" message), never a cryptic read error; the fixture models one.
 describe('procedures CLI — engine too old (no procedures.md) → loud exit 1', () => {
-  const makeOldEngine = () => {
-    const dir = mkdtempSync(join(tmpdir(), 'old-engine-'));
-    const manifest = {
-      family: 'agent-workflow',
-      schema: 1,
-      name: 'agent-workflow-engine',
-      kind: 'methodology-engine',
-      version: '1.2.0',
-      available: true,
-      provides: ['plan'],
-      roles: {},
-    };
-    writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifest, null, 2));
-    writeFileSync(join(dir, 'SKILL.md'), "---\nname: agent-workflow-engine\nmetadata:\n  version: '1.2.0'\n---\n# engine\n");
-    mkdirSync(join(dir, 'references'), { recursive: true });
-    writeFileSync(join(dir, 'references', 'methodology-slot.md'), '> methodology fragment\n');
-    // deliberately NO references/procedures.md
-    return dir;
-  };
+  const makeOldEngine = () => makeEngine();
 
   it('a canon whose Slots line differs from the registry WARNS at exit 0; a section without one stays silent', () => {
     const skewed = makeOldEngine();
@@ -1068,7 +1064,7 @@ describe('procedures CLI — engine too old (no procedures.md) → loud exit 1',
 });
 
 describe('extractSection (unit) — boundary + verbatim', () => {
-  const FIXTURE = ['# Title', '', '## plan-authoring', '', 'Slots: review', '', 'step one', '', '## plan-execution', '', 'Slots: execute, review', '', 'step two', ''].join('\n');
+  const FIXTURE = ['# Title', '', '## plan-authoring', '', 'Slots: review', '', 'step one', '', '## feedback-triage', '', 'Slots: review', '', '1. Record', '2. Verify', '3. Check', '4. review {recipe}', '5. Rows', '6. Fold', '', '## plan-execution', '', 'Slots: execute, review', '', 'step two', ''].join('\n');
 
   it('returns the requested section, heading-to-next-heading', () => {
     const sec = extractSection(FIXTURE, 'plan-authoring');

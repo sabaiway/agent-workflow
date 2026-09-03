@@ -164,3 +164,24 @@ Slots: carrier, parallel
 4. **Verify** — every returned slice, by running its suites yourself.
 5. **The commit boundary is unchanged** — when an accepted slice changed the tree, the orchestrator
    alone commits; a read-only chore has no commit boundary; a carrier never commits.
+
+## feedback-triage
+
+Slots: review
+
+1. **Record** — write the field report as a record in the record grammar: a title, the source,
+   the HEAD the claims are verified on, and ONE claims table (claim · evidence · verdict ·
+   disposition); stamp the HEAD.
+2. **Verify** — every claim by code on that HEAD, `file:line` evidence, a verdict from the closed
+   list (confirmed · corrected · refuted · works-as-designed).
+3. **Check** — `feedback-record-cli --check <record>` exits 0 before any row is written: the
+   shape, every anchor on the checkout, the HEAD.
+4. **review {recipe}** over the verdicts — the record is the artifact: `--excerpts` first, then
+   the bridges in plan mode over the record, the excerpts as agy's `--facts` payload, the round
+   table on the record.
+5. **Rows** — `feedback-record-cli --rows <record>` renders the skeleton queue rows and the
+   ratchet line; paste and word them, then `queue-audit --check`.
+6. **Fold** only a false statement in shipped copy, red-first; everything else is a row, or an
+   already-queued / declined disposition that opens none.
+   Definition of Done: a checked record, its rows in the queue, the ratchet moved by exactly the rows rendered
+   (unmoved when the record opens none).

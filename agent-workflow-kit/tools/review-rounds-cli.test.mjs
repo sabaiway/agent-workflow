@@ -68,6 +68,29 @@ describe('the CLI spawns its own read-only git query once', () => {
 });
 
 describe('review-rounds CLI', () => {
+  describe('feedback record rounds [spec:feedback-triage/S14]', () => {
+    it('groups feedback record plan receipts into one round', () => {
+      const root = makeRepo();
+      const artifactPath = 'docs/plans/FEEDBACK-2026-09-03-fixture.md';
+      const receipts = join(root, 'receipts.jsonl');
+      writeFileSync(join(root, artifactPath), '# Feedback: Fixture\n');
+      writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'feedback-triage': { review: 'council' } }));
+      const receipt = (backend) => ({
+        artifact: 'plan', artifactPath, backend, fingerprint: 'f'.repeat(64),
+        probe: false, verdict: 'ship', durationS: 1, blocking: 0,
+      });
+      writeFileSync(receipts, `${JSON.stringify(receipt('codex'))}\n${JSON.stringify(receipt('agy'))}\n`);
+      const result = main(['--artifact', artifactPath, '--activity', 'feedback-triage'], {
+        cwd: root, env: { AW_REVIEW_RECEIPTS: receipts },
+      });
+      rmSync(root, { recursive: true, force: true });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.stdout.match(/^round /gmu)?.length, 1);
+      assert.match(result.stdout, /round 1 \u00b7 codex: ship .* \u00b7 agy: ship /u);
+      assert.match(result.stdout, /signal: converged/);
+    });
+  });
+
   it('selects a real wrapper-helper receipt under the same normalized artifact path', () => {
     // spec:plan-review-loop/S27
     const root = makeRepo();

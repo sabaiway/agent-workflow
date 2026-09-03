@@ -4,6 +4,15 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 7.2.1 — the orchestration seed's note names four activities (AD-132)
+
+`references/templates/orchestration.json`: the `_README` is the kit's new canonical byte for byte —
+four activities (`feedback-triage` with its one `review` slot), the seeded slots `solo`, a silent slot
+its computed default (`feedback-triage.review` reviewed as soon as a review backend is ready, solo
+until then). The seed's slot shape is unchanged (plan-authoring · plan-execution, every value `solo`),
+so an older kit still accepts it; a deployed file carrying the outgoing note refreshes on the next
+write. No script changed.
+
 ## 7.2.0 — the standalone bootstrap offers enforcement on every project (AD-131)
 
 `SKILL.md` steps 8–9 no longer decide by the stack recon ("Node projects" / "No Node runtime → skip

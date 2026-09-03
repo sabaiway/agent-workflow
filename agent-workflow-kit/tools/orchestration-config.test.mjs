@@ -124,7 +124,7 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
 
   // parseOp('set') and validateConfig MUST agree on accept/reject for every (activity, slot, recipe).
   it('parseOp(set) accept/reject ≡ validateConfig accept/reject over the full matrix', () => {
-    const activities = ['plan-authoring', 'plan-execution', 'routine', 'plan-foo'];
+    const activities = ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'plan-foo'];
     const slots = ['review', 'execute', 'author', 'carrier', 'parallel', 'bogus'];
     const recipes = ['solo', 'reviewed', 'council', 'delegated', 'subagent', 'on', 'off', 'nope'];
     for (const a of activities) {
@@ -148,15 +148,16 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
   });
 });
 
-// ── the three activities, their typed slots and each slot's value set (AD-124) ──
+// ── the four activities, their typed slots and each slot's value set (AD-124) ──
 describe('orchestration-config — the carrier surface validates (spec:carriers/S3) (spec:plan-review-loop/S17)', () => {
-  it('accepts a subagent carrier in every carrier-typed and execute-typed slot, and parallel on|off', () => {
+  it('accepts every feedback review form beside the existing carrier and switch values', () => {
     for (const config of [
       { 'plan-authoring': { author: 'subagent' } },
       { 'plan-authoring': { fold: 'subagent' } },
       { 'plan-execution': { execute: 'subagent' } },
       { routine: { carrier: 'subagent' } },
       { routine: { carrier: 'subagent', parallel: 'off' } },
+      ...['solo', 'reviewed', 'council', ['codex-review']].map((review) => ({ 'feedback-triage': { review } })),
     ]) {
       assert.deepEqual(validateConfig(config), config, JSON.stringify(config));
     }
@@ -169,14 +170,15 @@ describe('orchestration-config — the carrier surface validates (spec:carriers/
     refusal({ routine: { parallel: 'maybe' } }, /invalid value "maybe" for switch slot of "routine" \(switch accepts: on, off\)/);
     refusal({ 'plan-authoring': { review: 'subagent' } }, /invalid value "subagent" for review slot/);
     refusal({ routine: { review: 'council' } }, /unknown slot "review" for activity "routine" \(routine slots: carrier, parallel\)/);
+    refusal({ 'feedback-triage': { review: 'delegated' } }, /invalid value "delegated" for review slot/);
     refusal({ chores: { carrier: 'solo' } }, /unknown activity "chores".*routine/);
   });
 
-  it('a config with no routine block and no author is valid — an absent slot resolves its default', () => {
+  it('a config with no routine or feedback-triage block and no author resolves every absent slot default', () => {
     const legacy = { 'plan-authoring': { review: 'solo' }, 'plan-execution': { execute: 'solo', review: 'solo' } };
     assert.deepEqual(validateConfig(legacy), legacy);
     const readiness = [{ name: 'executor', readiness: 'missing', vehicle: { state: 'missing', reason: null } }];
-    for (const [activity, slot, expected] of [['plan-authoring', 'author', 'solo'], ['plan-authoring', 'fold', 'solo'], ['routine', 'carrier', 'solo'], ['routine', 'parallel', 'on']]) {
+    for (const [activity, slot, expected] of [['plan-authoring', 'author', 'solo'], ['plan-authoring', 'fold', 'solo'], ['routine', 'carrier', 'solo'], ['routine', 'parallel', 'on'], ['feedback-triage', 'review', 'solo']]) {
       const r = resolveActivityRecipe({ config: legacy, readiness, activity, slot });
       assert.deepEqual([r.recipe, r.source], [expected, 'default'], `${activity}.${slot}`);
     }
@@ -279,7 +281,7 @@ describe('orchestration-config — canonical refresh', () => {
     assert.ok(KNOWN_PRIOR_README.some((p) => /never written for you/.test(p)), 'the v1 note is retained as a known prior');
   });
 
-  it('CANON_README names the three activities, every slot, its values, the vehicle and the defaults', () => {
+  it('CANON_README names the four activities, every slot, its values, the vehicle and the defaults', () => {
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       assert.ok(CANON_README.includes(activity), `names "${activity}"`);
       for (const slot of Object.keys(def.slots)) assert.ok(CANON_README.includes(slot), `names the "${slot}" slot`);
@@ -289,7 +291,9 @@ describe('orchestration-config — canonical refresh', () => {
     }
     assert.match(CANON_README, /composition root's `agents` writer places it/, 'subagent needs the placed executor vehicle');
     assert.ok(!CANON_README.includes('/agent-workflow-kit'), 'the memory twin of the seed must name no sibling skill');
-    assert.match(CANON_README, /'solo' for every recipe and carrier slot, and 'on' for the parallel switch/, 'the defaults are stated per slot kind, never "everywhere"');
+    assert.match(CANON_README, /Every slot seeded below is 'solo'/u, 'the seed defaults are stated without claiming silent slots are seeded');
+    assert.match(CANON_README, /'feedback-triage.review' is reviewed as soon as a review backend is ready/u, 'the silent review slot\'s default is stated honestly');
+    assert.ok(CANON_README.includes("'feedback-triage' (slot review)"), 'the fourth activity is explicit');
   });
 
   it('the OUTGOING note joined the known-prior set, so an existing file refreshes on the next write', () => {
@@ -311,6 +315,20 @@ describe('orchestration-config — canonical refresh', () => {
     const readme = readFileSync(join(KIT_ROOT, 'README.md'), 'utf8');
     const proceduresRow = readme.split('\n').find((line) => line.includes('/agent-workflow-kit procedures')) ?? '';
     assert.match(proceduresRow, /fold/u, 'the README procedures row names fold');
+    assert.match(proceduresRow, /except `feedback-triage`[^|]*the record is the artifact/u, 'the README procedures row states the feedback-triage exception');
+  });
+  it('the three-activity canonical is a known prior that refreshes', () => {
+    const prior = KNOWN_PRIOR_README.find((value) => value.includes('Three activities are configured') && value.includes('slots author, fold, review'));
+    assert.ok(prior, 'the outgoing three-activity canonical is retained whole');
+    assert.equal(refreshReadme({ _README: prior }).config._README, CANON_README);
+  });
+
+  it('the solo-for-every-slot four-activity note is a known prior that refreshes', () => {
+    const prior = KNOWN_PRIOR_README.find((value) => value.includes('Four activities') && value.includes("'solo' for every recipe and carrier slot"));
+    assert.ok(prior);
+    const refreshed = refreshReadme({ _README: prior });
+    assert.equal(refreshed.changed, true);
+    assert.equal(refreshed.config._README, CANON_README);
   });
 
   it('refreshReadme: a prior-canonical _README is refreshed to CANON_README; a customized one is preserved', () => {

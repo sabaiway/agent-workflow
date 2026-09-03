@@ -15,6 +15,7 @@ export const ACTIVITIES = {
   'plan-authoring': { slots: { author: 'carrier', fold: 'carrier', review: 'review' }, policy: true },
   'plan-execution': { slots: { execute: 'execute', review: 'review' }, policy: true },
   routine: { slots: { carrier: 'carrier', parallel: 'switch' }, policy: false },
+  'feedback-triage': { slots: { review: 'review' }, policy: false },
 };
 
 export const POLICY_ACTIVITIES = Object.fromEntries(

@@ -4,6 +4,72 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 11.2.0 — a field report is triaged through a rendered procedure over a checked record (AD-132)
+
+Three consumer field reports were triaged ad hoc — verify each claim on HEAD, record the verdict,
+queue with a hand ratchet bump — with no record shape, no anchor check and nothing rendering the
+steps. The answer is not a skill: a fourth activity, a record grammar a checker can refuse, and a
+procedure the advisor renders. Contract: `docs/ai/specs/kit/feedback-triage.md` (live, S1–S15 bound).
+
+**The fourth activity.** `ACTIVITIES` in `tools/carriers.mjs` gains `feedback-triage` with ONE slot,
+`review`, and `policy: false` — a chore inside a session like `routine`; no `carrier` slot, no
+autonomy block. `procedures feedback-triage` renders the engine's canon section verbatim (Record ·
+Verify · Check · review {recipe} · Rows · Fold; Definition of Done: a checked record, its rows in the
+queue, the ratchet moved by exactly the rows rendered). Every activity list names it (four mode docs name
+it and `recommendations.md` carries the count, both READMEs, the engine SKILL and README, the methodology slot — the outgoing three-activity
+fragment joins `KNOWN_PRIOR_METHODOLOGY_SLOT`); `set-recipe`, `recipes`, `status` and the registry
+survey take the slot; the golden active-recipes line carries `feedback-triage.review = reviewed`
+(computed default); the tarball pin counts 287.
+
+**The record and its checker.** `docs/plans/FEEDBACK-<date>-<slug>.md` — scratch by the in-flight-plan
+prefix — is one grammar, version 1: `# Feedback:` title, `Source:`, `Head: <object id>`, `## Claims`
+and ONE pipe table (`#` · claim · backticked `path:line[-line]` anchors · `confirmed` / `corrected` /
+`refuted` / `works-as-designed` · `queue <ROW-ID>` / `already-queued <ROW-ID>` / `declined: <reason>` /
+`folded: <reason>`), optional `## Notes`. `tools/feedback-record.mjs` (the pure half: parse, judge,
+render rows, render excerpts, the ratchet line — imports nothing) and `tools/feedback-record-cli.mjs`
+(`--check <record>`, `--check <record> --excerpts <out>`, `--rows <record>`; `main(argv, deps)` never
+exits). `--check` reads the record and every anchor no-follow and capped, realpath-contained under
+the cwd, decodes fatally, compares `Head:` to `git rev-parse HEAD` under the git-location leaf with
+`GIT_OPTIONAL_LOCKS=0`, then proves tracking POSITIVELY: each anchor's LEXICAL git-top-relative path
+rides ONE `git status --porcelain -z` and ONE `git ls-files -v -z` as the pathspec `:(literal)<rel>`
+— a rel the index does not list is `anchor-dirty` "not tracked at the stamped HEAD" (`.git/config`,
+an untracked file, a path through a symlinked parent), a tag other than `H` is `anchor-dirty` behind
+a concealing index bit, `H` with a status entry "differs", `H` and clean is proof. Every defect has
+one name from a closed set (`title` · `source` · `head` · `table` · `row-cells` · `claim-id` ·
+`anchor-grammar` · `anchor-path` · `verdict` · `disposition` · `anchor-absent` · `anchor-unreadable`
+· `anchor-line` · `anchor-dirty` · `git-location` · `head-mismatch` · `excerpts-destination` ·
+`excerpts-budget` · `excerpts-write` · `EEXIST`): a structural defect (title, source, head, table)
+ends the read with its name, a row defect is listed per row and an anchor finding per anchor —
+never the first only. Exit 0 accept · 1 findings · 2 usage. `--excerpts` writes the verbatim anchor lines — the `--facts` payload of
+the record's agy review — under `grounding.mjs`'s scratch-destination guard with an exclusive create,
+budgeted at `DEFAULT_MAX_PROMPT_BYTES` minus the record minus `EXCERPTS_FRAMING_RESERVE_BYTES` (4096),
+each text split once, the walk stopped at the budget, tail-trimmed through `trimToBudget`; a text
+that would not begin with an excerpt line is `excerpts-budget`, nothing written. `--rows` prints one
+skeleton queue row per distinct `queue <ROW-ID>` and the `--max-rows` ratchet line read from the git
+top's `docs/ai/gates.json`. Suites: `feedback-record.test.mjs`, `feedback-record-cli.test.mjs`,
+`feedback-record-cli-anchors.test.mjs` (the S9 state table) over the shared
+`feedback-record-cli-harness.test.mjs`.
+
+**The advisor renders the record as the review artifact.** For `feedback-triage` the procedures
+advisor suppresses the driving contracts and the grounding pre-step and renders, after the slot's
+reason, the check line with `--excerpts`, then one line per review member — `codex-review plan
+<record>`, `agy-review plan <record> --facts @<facts>`, a ready lens's brief over the record plus the
+excerpts, a skipped line for a not-ready member — and `review-rounds-cli --artifact <record>
+--activity feedback-triage` followed by the persisted-obligation fact whenever the slot carries a
+bridge obligation (a lens-only roster gets the no-receipt fact); `<record>` and `<facts>` stay
+literal. The JSON key is `feedbackTriage`; the lens survey seam is `ctx.surveyLens ?? ((spec) => …)`.
+
+**The seed note.** The canonical `_README` names four activities and states the defaults honestly —
+the seed keeps its two-activity shape, so `feedback-triage.review` is silent and "reviewed as soon as
+a review backend is ready (solo until then)"; the outgoing four-activity note joins
+`KNOWN_PRIOR_README` and both seed twins carry the canonical byte for byte.
+
+**Recorded tech debt (queue).** The note's "every slot seeded below" clause is a claim about the file;
+the plain-`solo` render of the activity; the status flags decide nothing after the positive proof;
+the registry suite walks one direction only; the import-boundary pin's grammar; S1's wording; a
+submodule anchor reads "not tracked"; `status` / Recommendations drop `r.roster`; the `--kit-tools`
+tier cannot take the checker.
+
 ## 11.1.0 — the bootstrap offers enforcement on every project, and the advisor closes the loop (AD-131)
 
 Bootstrap steps 8–9 (the enforcement scripts + the pre-commit hook) used to decide by the step-1

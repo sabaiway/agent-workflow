@@ -22,6 +22,8 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
+import { surveyVehicle as surveyReviewVehicle } from './cheap-agents-read.mjs';
+import { isReadyMember, skippedLine } from './review-roster-resolve.mjs';
 // The host-level bridge-settings registry (manifest-as-source) + its allowed-value labels. READ-ONLY
 // core only — never the writer — so this read-only advisor never imports the atomic-write core.
 import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
@@ -150,7 +152,7 @@ export const extractSection = (text, activity) => {
 
 // ── resolution + rendering ─────────────────────────────────────────────────────────
 
-const resolveAllSlots = ({ activity, config, detection, overrides }) => {
+const resolveAllSlots = ({ activity, config, detection, overrides, surveyLens }) => {
   // The host-level settings knobs (manifest-as-source), best-effort: a corrupt bundle degrades to none
   // and the advisor never crashes. Attached per wrapper cmd via each knob's `appliesTo`. Fact-only —
   // model/effort are not knobs, so no model claim can ride here.
@@ -163,7 +165,7 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
   })();
   const knobsFor = (cmd) => [...registry.values()].filter((k) => (k.appliesTo ?? []).includes(cmd));
   return Object.entries(ACTIVITIES[activity].slots).map(([slot, slotType]) => {
-    const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot] });
+    const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot], surveyLens });
     if (isSwitchSlot(slotType)) return { slot, slotType, ...resolved, backends: [], contracts: [], vehicles: [] };
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
@@ -177,7 +179,7 @@ const resolveAllSlots = ({ activity, config, detection, overrides }) => {
     // pairs, BEFORE they are flattened to wrapper names (the name array cannot reconstruct the role).
     // Every slot with a non-empty dispatch gets contracts — including execute=delegated; the contract
     // is NEVER gated by REVIEW_RECIPES (that set gates only the review-loop economics block).
-    const contracts = bridged
+    const contracts = activity === 'feedback-triage' ? [] : bridged
       .map((d) => ({ backend: d.backend, role: d.role, cmd: wrapperCmdFor(d.backend, d.role), contract: wrapperContractFor(d.backend, d.role) }))
       .filter((c) => c.cmd && c.contract)
       // `retired` rides along: without it this surface advertised a RETIRED key as an ordinary
@@ -271,8 +273,40 @@ const reviewLoopAdvice = (slots, activity, flowArmed = false, plans = []) =>
 export const GROUNDING_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'grounding.mjs');
 export const REVIEW_ROUNDS_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'review-rounds-cli.mjs');
 export const REPO_SEARCH_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'repo-search.mjs');
+export const FEEDBACK_RECORD_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'feedback-record-cli.mjs');
+const FEEDBACK_TRIAGE = 'feedback-triage';
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
 const MINTS_RECEIPT = Object.freeze({ mintsReceipt: true });
+const FEEDBACK_BRIDGE_LINES = Object.freeze({
+  'codex-review': 'codex-review plan <record>',
+  'agy-review': 'agy-review plan <record> --facts @<facts>',
+});
+const FEEDBACK_LENS_LINE = 'the Agent tool, read-only, in the background — the brief carries <record> plus <facts>';
+const mintsReceipts = (review) => review.roster == null
+  ? (review.backends ?? []).length > 0 || REVIEW_RECIPES.has(review.degradedFrom)
+  : review.roster.some((row) => row.kind === 'bridge');
+
+const renderFeedbackTriageAdvice = (activity, slots) => {
+  if (activity !== FEEDBACK_TRIAGE) return [];
+  const review = slots.find((slot) => slot.slot === 'review');
+  const members = review.roster == null
+    ? review.backends.map((name) => `  then: ${FEEDBACK_BRIDGE_LINES[name]}`)
+    : review.roster.map((row) => !isReadyMember(row)
+      ? `  then: ${row.member} — ${skippedLine(row)}`
+      : row.kind === 'bridge'
+        ? `  then: ${FEEDBACK_BRIDGE_LINES[row.member]}`
+        : `  then: ${row.member} — ${FEEDBACK_LENS_LINE}`);
+  return [
+    `  run:  node ${renderToolPath(FEEDBACK_RECORD_TOOL)} --check <record> --excerpts <facts>`,
+    ...members,
+    ...(mintsReceipts(review)
+      ? [
+          `  then: node ${renderToolPath(REVIEW_ROUNDS_TOOL)} --artifact <record> --activity feedback-triage`,
+          ROUND_RENDER_FACT_LINE,
+        ]
+      : [ROUND_RENDER_NO_BRIDGE_LINE]),
+  ];
+};
 
 // The round table judges what review-rounds-cli resolves from the config (S27), never this render's
 // override or degradation, so the advisor states that fact beneath the command instead of predicting
@@ -285,10 +319,7 @@ const roundRenderAdvice = (slots, plans) => {
   const review = slots.find((s) => s.slot === 'review');
   if (review === undefined) return [];
   const roster = review.roster ?? null;
-  const shouldRenderCommand = roster === null
-    ? (review.backends ?? []).length > 0 || REVIEW_RECIPES.has(review.degradedFrom)
-    : roster.some((row) => row.kind === 'bridge');
-  if (!shouldRenderCommand) return [ROUND_RENDER_NO_BRIDGE_LINE];
+  if (!mintsReceipts(review)) return [ROUND_RENDER_NO_BRIDGE_LINE];
   const lensMembers = (roster ?? []).filter((row) => row.kind === 'lens').map((row) => row.member);
   const operand = populatedPlan(plans, MINTS_RECEIPT);
   return [
@@ -345,6 +376,7 @@ const slotSkewWarning = (section, activity) => {
   return [`the installed engine's canon lists slots (${listed.join(', ')}) for ${activity} while this kit's registry names (${registry.join(', ')}) — the resolved lines follow the registry; the engine and this kit are out of step — /agent-workflow-kit status names which member is behind: upgrade that one. Tell the user.`];
 };
 const groundingPreStepAdvice = (activity, slots, plans) => {
+  if (activity === FEEDBACK_TRIAGE) return [];
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
   const operand = populatedPlan(plans);
   const planArg = operand === null ? '--plan <path>' : `--plan ${operand}`;
@@ -621,6 +653,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
       ? `  ${parallelLine({ value: s.recipe, carrier })} — ${SOURCE_LABEL[s.source]}`
       : `  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
+    if (s.slot === 'review') lines.push(...renderFeedbackTriageAdvice(activity, slots));
     // The form replaces the one-line vehicle mention: a carrier never told how to carry is a name,
     // not an instruction. Indented like the driving contracts beside it.
     for (const v of s.vehicles ?? []) {
@@ -664,6 +697,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
   readersSweep,
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
+  feedbackTriage: renderFeedbackTriageAdvice(activity, slots),
   // ADDITIVE (cost-tiered execution): the unconditional cost-lane advisory, structured.
   costLanes: costLanesAdvice(),
   // ADDITIVE (the fold channel): the finding-scope block, structured (empty outside plan-execution).
@@ -737,7 +771,8 @@ export const main = (argv, ctx = {}) => {
         `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor vehicle is unaffected).`,
       ),
     });
-    const slots = resolveAllSlots({ activity, config, detection, overrides });
+    const surveyLens = ctx.surveyLens ?? ((spec) => surveyReviewVehicle(cwd, spec, ctx));
+    const slots = resolveAllSlots({ activity, config, detection, overrides, surveyLens });
     const warnings = [...detectWarnings, ...collectWarnings(slots), ...slotSkewWarning(section, activity)];
     const plans = plansInFlight(cwd);
     // The autonomy facts (AD-044 Plan 4): resolved levels + red-lines from the policy file. A

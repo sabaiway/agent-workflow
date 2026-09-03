@@ -886,13 +886,14 @@ describe('surveyRecipes — engine-free effective recipe per slot', () => {
     assert.match(r.error, /orchestration\.json/);
   });
 
-  it('the three activities resolve, and a carrier slot follows the executor vehicle (placed → subagent, missing → solo)', () => {
+  it('the four activities resolve and a carrier slot follows the placed or missing executor vehicle', () => {
     const survey = (state) => surveyRecipes('/p', {
       detect: detect(READY, READY), lstat: () => ({}), readFile: () => JSON.stringify({ routine: { carrier: 'subagent' } }),
       surveyVehicle: () => ({ state, reason: null, rel: '.claude/agents/executor.md' }),
     });
     const placed = survey('placed');
-    assert.deepEqual(Object.keys(placed.activities), ['plan-authoring', 'plan-execution', 'routine']);
+    assert.deepEqual(Object.keys(placed.activities), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']);
+    assert.deepEqual(placed.activities['feedback-triage'].review, { recipe: 'reviewed', source: 'default', degradedFrom: null });
     assert.deepEqual([placed.activities.routine.carrier.recipe, placed.activities.routine.parallel.recipe], ['subagent', 'on']);
     assert.equal(placed.activities['plan-authoring'].author.recipe, 'solo', 'placing the vehicle never flips a default');
     const gone = survey('missing');

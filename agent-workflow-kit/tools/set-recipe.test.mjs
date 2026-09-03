@@ -303,7 +303,7 @@ describe('set-recipe — --json schema + readiness permutations', () => {
   }
 });
 
-describe('set-recipe — every slot of the three activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
+describe('set-recipe - every slot of the four activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
   const roundTrip = (qualified, value, { vehicle = 'placed', effective = value } = {}) => {
     const [activity, slot] = qualified.split('.');
     const preview = run(['--set', `${qualified}=${value}`], { vehicle });
@@ -345,6 +345,10 @@ describe('set-recipe — every slot of the three activities [spec:carriers/S4] [
     assert.match(unset.stdout, /effective here: on/, 'the computed default for the switch is on');
     const preview = run(['--set', 'routine.parallel=off'], { vehicle: 'missing' });
     assert.doesNotMatch(preview.stdout, /degrade/i, 'a switch slot never degrades');
+  });
+
+  it('feedback-triage.review previews, writes and unsets to its computed default', () => {
+    assert.match(roundTrip('feedback-triage.review', 'council').stdout, /effective here: reviewed/);
   });
 });
 

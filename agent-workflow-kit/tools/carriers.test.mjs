@@ -33,11 +33,12 @@ const AGY = 'antigravity-cli-bridge';
 const survey = (state, reason = null) => ({ state, reason, rel: '.claude/agents/executor.md' });
 
 describe('carriers — the one activity/slot table (spec:carriers/S1) (spec:plan-review-loop/S14)', () => {
-  it('names three activities, each with its typed slots', () => {
-    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution', 'routine']);
+  it('names four activities, each with its typed slots', () => {
+    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']);
     assert.deepEqual(ACTIVITIES['plan-authoring'].slots, { author: 'carrier', fold: 'carrier', review: 'review' });
     assert.deepEqual(ACTIVITIES['plan-execution'].slots, { execute: 'execute', review: 'review' });
     assert.deepEqual(ACTIVITIES.routine.slots, { carrier: 'carrier', parallel: 'switch' });
+    assert.deepEqual(ACTIVITIES['feedback-triage'].slots, { review: 'review' });
   });
 
   it('names the value set of every slot type', () => {
@@ -228,10 +229,11 @@ describe('engine-kit activity/slot parity — ACTIVITIES matches procedures.md `
   });
 });
 
-describe('carriers — a routine chore carries no autonomy level of its own', () => {
-  it('the two session activities are policy activities and routine is not', () => {
+describe('carriers - chores carry no autonomy level of their own', () => {
+  it('the two session activities are policy activities and the two chores are not', () => {
     assert.deepEqual(Object.keys(POLICY_ACTIVITIES), ['plan-authoring', 'plan-execution']);
     assert.equal(ACTIVITIES.routine.policy, false);
+    assert.equal(ACTIVITIES['feedback-triage'].policy, false);
     for (const name of Object.keys(POLICY_ACTIVITIES)) assert.equal(ACTIVITIES[name].policy, true);
   });
 });

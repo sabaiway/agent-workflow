@@ -63,7 +63,7 @@ the canonical methodology reference on disk:
   for `docs/ai/autonomy.json` (read at session start; the canonical default floor when absent; STOP
   on malformed), routing to the in-project `set-autonomy` / `autonomy-doctor` surfaces.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
-  the named activities (`plan-authoring`, `plan-execution`, `routine`) as ordered steps with typed recipe slots,
+  the named activities (`plan-authoring`, `plan-execution`, `routine`, `feedback-triage`) as ordered steps with typed recipe slots,
   read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.
 - [`references/agent-rules-lens.md`](references/agent-rules-lens.md) — the canonical **agent-rules
   lens** block (the planning/review/process-fidelity invariants) the kit renders into a deployed

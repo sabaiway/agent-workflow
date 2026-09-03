@@ -24,7 +24,7 @@ describe('legacy review shorthands remain byte-compatible', () => {
     },
   };
 
-  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) · plan-authoring.fold = solo (computed default) · plan-authoring.review = reviewed (computed default) → codex-review · plan-execution.execute = solo (computed default) · plan-execution.review = ${cell} · routine.carrier = solo (computed default) · routine.parallel = on (computed default; switch) — the configured orchestration values above are what runs; readiness-recommended here: council (informational)`;
+  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) \u00b7 plan-authoring.fold = solo (computed default) \u00b7 plan-authoring.review = reviewed (computed default) \u2192 codex-review \u00b7 plan-execution.execute = solo (computed default) \u00b7 plan-execution.review = ${cell} \u00b7 routine.carrier = solo (computed default) \u00b7 routine.parallel = on (computed default; switch) \u00b7 feedback-triage.review = reviewed (computed default) \u2192 codex-review \u2014 the configured orchestration values above are what runs; readiness-recommended here: council (informational)`;
   const headCells = {
     solo: 'solo (configured)',
     reviewed: 'reviewed (configured) → codex-review',

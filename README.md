@@ -233,9 +233,10 @@ gracefully when a carrier isn't ready); the orchestrator always commits.
 
 **Activity procedures make it a playbook.** A bare "write a plan" or "execute the plan" now has codified,
 recipe-aware steps. `/agent-workflow-kit procedures <activity>` (read-only) prints a named activity's
-ordered steps — `plan-authoring`, `plan-execution`, `routine` (its carrier plus a `parallel` switch) —
+ordered steps — `plan-authoring`, `plan-execution`, `routine` (its carrier plus a `parallel` switch), `feedback-triage` —
 and the **recipe resolved for each step** from a per-project `docs/ai/orchestration.json` (seeded
-conservative — Solo by default; set it in plain language with `/agent-workflow-kit set-recipe`, hand-edit
+conservative — every seeded slot Solo, a silent slot its computed default as the file's note states;
+set it in plain language with `/agent-workflow-kit set-recipe`, hand-edit
 stays supported, and a per-run `procedures --override` changes one session without writing) plus the
 live carrier readiness. Each activity and each
 slot is configured independently; a per-run `--override` adjusts one step once.

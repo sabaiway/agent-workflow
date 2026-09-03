@@ -50,12 +50,22 @@ const ROSTER_README = V3_README.replace(
   "a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize), or an explicit roster array such as [\"codex-review\", \"agy-review\", \"review-lens\"] in hand-edit form",
 );
 
-export const CANON_README = ROSTER_README
+const FOLD_README = ROSTER_README
   .replace("'plan-authoring' (slots author, review)", "'plan-authoring' (slots author, fold, review)")
   .replace("the carrier slots 'plan-authoring.author' and 'routine.carrier'", "the carrier slots 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier'")
   .replace('solo for author, execute and carrier', 'solo for author, fold, execute and carrier');
 
-export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README, ROSTER_README]);
+const FOUR_README = FOLD_README.replace(
+  "Three activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review) and 'routine' (slots carrier, parallel).",
+  "Four activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel) and 'feedback-triage' (slot review).",
+);
+
+export const CANON_README = FOUR_README.replace(
+  "The default below is 'solo' for every recipe and carrier slot, and 'on' for the parallel switch — no execution backend required.",
+  "Every slot seeded below is 'solo' — no execution backend required. A slot the seed leaves silent takes the computed default stated further down: 'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then); 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier' stay 'solo', and 'routine.parallel' stays 'on'.",
+);
+
+export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README, ROSTER_README, FOLD_README, FOUR_README]);
 
 export const refreshReadme = (config) => {
   if (config == null || typeof config !== 'object' || Array.isArray(config)) return { config, changed: false };

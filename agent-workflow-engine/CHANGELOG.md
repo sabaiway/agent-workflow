@@ -4,6 +4,22 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 4.7.0 — the canon gains `## feedback-triage`, a fourth activity with one review slot (AD-132)
+
+`references/procedures.md` gains `## feedback-triage` — `Slots: review` first, then six steps: Record
+(the record grammar, the HEAD stamped), Verify (every claim by code on that HEAD), Check
+(`feedback-record-cli --check <record>` exits 0 before any row), review {recipe} (the record is the
+artifact: `--excerpts` first, the bridges in plan mode over the record, the excerpts as agy's `--facts`
+payload, the round table on the record), Rows (`--rows <record>`, paste, then `queue-audit --check`) and Fold (only a false
+statement in shipped copy, red-first; everything else is a row, or an already-queued / declined
+disposition that opens none); Definition of Done: a checked record, its rows in the queue, the
+ratchet moved by exactly the rows rendered (unmoved when the record opens none). Generic, no project
+path. `references/methodology-slot.md`, `SKILL.md` and the README name four activities.
+`test/procedures-canon.test.mjs` pins the section (S12 of the kit's feedback-triage spec) and its
+procedures/planning terseness ratio moves 1.31 → 1.45 for the measured 1.4498 (the gate compares
+String length; the canon clears the bar by two code units). Step numbers of the other sections are
+unchanged.
+
 ## 4.6.0 — plan-execution runs coverage before every dispatch, and step 5 names the walk and the cap (AD-130)
 
 `references/procedures.md`, `plan-execution`: step 2 runs `robustness-brief --coverage` over the plan

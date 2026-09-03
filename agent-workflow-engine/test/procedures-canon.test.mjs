@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PROCEDURES = join(ROOT, 'references', 'procedures.md');
 const METHODOLOGY_SLOT = join(ROOT, 'references', 'methodology-slot.md');
-const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.31;
+const MAX_PROCEDURES_TO_PLANNING_RATIO = 1.45;
 const HELD_SESSION_SENTENCE_GROUP = Object.freeze({ start: 'when `execute` resolved to Delegated', end: 'what the delegate cannot reach.', maxBytes: 726 });
 const procedures = readFileSync(PROCEDURES, 'utf8');
 
@@ -47,8 +47,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(procedures.length > 500, 'the procedures canon must carry real content');
   });
 
-  it('declares all three activities as their own `## <activity>` section', () => {
-    for (const activity of ['plan-authoring', 'plan-execution', 'routine']) {
+  it('declares all four activities as their own `## <activity>` section', () => {
+    for (const activity of ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']) {
       assert.ok(sectionOf(procedures, activity), `has a ## ${activity} section`);
     }
   });
@@ -408,6 +408,19 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(flat, /concurrently when `parallel` is on/, 'the parallel switch drives concurrency');
     assert.match(flat, /4\. \*\*Verify\*\* — every returned slice, by running its suites yourself/, 'step 4 verifies every returned slice');
     assert.match(flat, /5\. \*\*The commit boundary is unchanged\*\* — when an accepted slice changed the tree, the orchestrator alone commits; a read-only chore has no commit boundary; a carrier never commits/, 'step 5 keeps the commit boundary, and a read-only chore has none');
+  });
+
+  describe('feedback-triage canon [spec:feedback-triage/S12]', () => {
+    it('carries the review-only six-step procedure and its completion rule', () => {
+      const section = sectionOf(procedures, 'feedback-triage');
+      assert.equal(slotsLineOf(section), 'Slots: review');
+      assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6]);
+      for (const [number, token] of ['Record', 'Verify', 'Check', 'review {recipe}', 'Rows', 'Fold'].entries()) assert.ok(stepOf(section, number + 1).includes(token), `step ${number + 1} names ${token}`);
+      const done = contentLines(section).find((line) => line.includes('Definition of Done')) ?? '';
+      for (const token of ['a checked record', 'its rows in the queue', 'the ratchet moved by exactly the rows rendered']) assert.ok(done.includes(token), `Definition of Done names ${token}`);
+      for (const token of ['--check <record>', '--excerpts', '--rows <record>', 'queue-audit --check']) assert.ok(section.includes(token), `section names ${token}`);
+      assert.doesNotMatch(section, /docs\/|agent-workflow-kit\/|agent-workflow-engine\//u, 'the canon stays project-neutral');
+    });
   });
 });
 

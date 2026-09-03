@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-03 — AD-132 a field report is triaged through a rendered procedure over a checked record (kit 11.2.0 MINOR · engine 4.7.0 MINOR · memory 7.2.1 PATCH · bridges unchanged)
+
+**A fourth activity, not a skill.** Three consumer field reports were triaged ad hoc; the family's
+measured adoption pattern is a rendered procedure plus a record shape a checker can refuse. The kit
+gains `feedback-triage` (one `review` slot, no autonomy block), the engine's canon gains its six
+steps and Definition of Done, and the record `docs/plans/FEEDBACK-<date>-<slug>.md` has one grammar
+(version 1) that `feedback-record-cli --check` proves on the WORKING TREE at the stamped HEAD — every
+anchor read no-follow and capped, realpath-contained, and positively tracked: a lexical top-relative
+`:(literal)` pathspec must be listed `H` by `ls-files`, clean by `status`, or the anchor refuses by
+name (`.git/config`, an untracked file, a symlinked parent, a concealing index bit, a modified file).
+`--excerpts` writes the verbatim anchor lines as the agy review's facts under the scratch-destination
+guard and a stated budget; `--rows` renders the skeleton queue rows and the ratchet line; the
+procedures advisor renders the record-bound review lines per roster member. The seed note states
+the defaults honestly instead of seeding a slot (memory's twin follows). Measured on itself: seven
+accounted dispatches on ONE held codex session; five diff rounds with the lens beside both bridges —
+codex 6M → 3M → 1M → 1M → ship, agy SHIP every round, the lens 1M → 0M; every fold consulted with its
+raiser, two consults corrected a proposed test; the maintainer's ruling at round 4 ("no majors means
+done, real minors are debt") sent six real minors and nits to the queue.
+
 ## 2026-09-02 — AD-131 the bootstrap offers enforcement on every project and the advisor closes the loop (kit 11.1.0 MINOR · memory 7.2.0 MINOR · engine 4.6.0 unchanged · bridges unchanged)
 
 **The first delegated feature under the five rungs, and the series' acceptance metric measured.**

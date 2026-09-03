@@ -21,13 +21,14 @@ mapping their wording onto them is your job, not a shipped phrase list.
 
 Run **`node ${CLAUDE_SKILL_DIR}/tools/set-recipe.mjs [--set <activity>.<slot>=<value>]… [--unset <activity>.<slot>]… [--write] [--json]`**:
 
-1. **Grammar — always fully-qualified `<activity>.<slot>`** (the kit never guesses the activity; a bare `review=council` is rejected). The writer takes **every slot of the three activities**, and `--help` prints the registry (`tools/carriers.mjs`) as two blocks:
+1. **Grammar — always fully-qualified `<activity>.<slot>`** (the kit never guesses the activity; a bare `review=council` is rejected). The writer takes **every slot of the four activities**, and `--help` prints the registry (`tools/carriers.mjs`) as two blocks:
 
    ```
    Activities and their slots:
      plan-authoring → author, fold, review
      plan-execution → execute, review
      routine → carrier, parallel
+     feedback-triage → review
 
    Accepted values per slot type:
      review slots accept solo | reviewed | council
