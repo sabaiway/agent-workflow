@@ -4,6 +4,26 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 8.0.0 — the reader refuses an open-list clause: a guarantee is an invariant, never a list of cases (AD-133)
+
+**BREAKING — the 35th rule id, `open-list`.** `references/scripts/spec-schema.mjs` refuses a Contract clause that
+carries a check verb (`refuse` / `refusal`, case-sensitive substrings) AND an enumeration of two or more items
+(`a, b or c` / `a · b`) AND no closure token inside that same clause. The unit is the CLAUSE: a top-level bullet joined
+with its continuation lines (a blank line, the next top-level bullet — an empty `-` included — or any ATX heading,
+indented up to three spaces, ends it), split at `. ` and `; ` outside a backtick span — the span is opaque to the split
+and to nothing else. Every `## Contract` section of a `kind: spec`, every top-level bullet of a `kind: part`; never an
+index or prose outside bullets. Twelve closure tokens (`only if`, `only when`, `the only`, `everything else`,
+`anything else`, `nothing else`, `every other`, `any other`, `otherwise`, `exactly`, `one of`, `closed`) match
+case-insensitively at word boundaries; `ONLY` is the one case-sensitive emphatic word (a lowercase `only` alone closes
+nothing; `READ-ONLY` and `closed-key` glue). A single-case check is its own closure; a closure that is FALSE is out of
+scope — a form rule. The remedy for a spec valid under the old canon that now refuses: state the invariant in the
+clause ("accepted only if …; everything else is the named refusal …"), never a fourth case; the refusal names the
+clause's first six words. `SPEC_SCHEMA.openList` carries the frozen fragment (every list frozen); `rules` gains
+`open-list` after `fence`. The comment blocks became one-line pointers naming no sibling package; the module is 415
+lines, recorded. The test twin gains the "open-list clauses" describe (clause and bullet boundaries, the span mask, the
+matching rules, every Contract section, part scope, frozenness). Mirrored byte-identically into the kit and the root
+`scripts/`.
+
 ## 7.2.1 — the orchestration seed's note names four activities (AD-132)
 
 `references/templates/orchestration.json`: the `_README` is the kit's new canonical byte for byte —

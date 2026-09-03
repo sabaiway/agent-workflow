@@ -22,7 +22,9 @@ machinery. **No new blocking checkpoints**: statuses are lifecycle markers, neve
 - "Well-formed" has ONE definition: the deployed reader `scripts/spec-schema.mjs`
   (`readSpecDocument(text, rel)`), read through by the navigator collapse and by the structural
   checker alike. It is pure text — it imports nothing, opens no file, and models no markdown code
-  (a fence line refuses; a spec carries no code sample, so no line is ever ambiguous).
+  (a fence line refuses; a spec carries no code sample, so no line is ever ambiguous); an inline
+  backtick span is opaque to the clause split and to nothing else, and an unmatched backtick leaves
+  the rest of the bullet opaque.
 
 ## The frozen schema
 
@@ -53,6 +55,17 @@ against it.
   an absolute path, a backslash, a glob, and a dir + file mix each REFUSE. A retired spec may carry
   `*(empty)*`.
 - **`## Out of scope`** — at least one non-blank bullet, or exactly `*(empty)*` when the emptiness is a decision.
+- **Open-list clause** — `checkVerbs: ['refuse', 'refusal', 'REFUSE', 'REFUSAL']` (case-sensitive
+  substring match); `enumerationForms: [[',', ' or '], [' · ']]` (one form's tokens occur in order);
+  `closureTokens: ['only if', 'only when', 'the only', 'everything else', 'anything else', 'nothing else', 'every other', 'any other', 'otherwise', 'exactly', 'one of', 'closed']`
+  (case-insensitive whole words) plus the case-sensitive whole-word `emphaticToken: 'ONLY'`. A word
+  boundary is the clause boundary or a byte other than an ASCII letter, digit, underscore or hyphen.
+  A `kind: spec` judges top-level bullets in `## Contract`; a `kind: part` judges every top-level
+  bullet; an index, prose outside bullets and continuation text after a blank or ATX heading are not
+  judged. A bullet joins its continuation lines with collapsed whitespace and splits into clauses at
+  `. ` or `; `; a run of `*`, backtick, `)` or `]` after that punctuation stays with the ending
+  clause. A verb and enumeration without a closure in the same clause refuse; a single-case check is
+  its own closure. Splitting the verb from its list is the stated bound, not another reader case.
 - An `unbound` scenario on a `live` spec is an advisory warning, never a refusal.
 
 ## Shape per kind
@@ -95,6 +108,7 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
 | `section-order` | the required and optional sections out of order |
 | `section-forbidden` | a section the kind never carries |
 | `fence` | a code fence line — a spec document carries no code sample; the reader models no markdown code |
+| `open-list` | a judged clause has a check verb and a two-or-more-item enumeration but no closing form in that clause |
 | `children-link` | a `## Children` line that is not a child link to a slug |
 | `children-duplicate` | a child listed twice |
 | `fan-out` | more than 30 children |

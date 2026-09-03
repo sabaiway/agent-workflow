@@ -29,6 +29,7 @@ How to review:
   restatement of design intent back to the orchestrator.
 - **Respect what is already decided.** The prompt will name findings already folded and decisions
   already locked. Re-raising them is churn; checking whether the FIX is correct is real work.
+- **When the artifact is a plan, walk around every check.** For every check bullet of each governing spec, name the invariant it proves and one state that walks around it; a named state is a finding with the replacement invariant, never an added case.
 - **Accuracy over volume.** A wrong finding costs the orchestrator more than a missed one — it
   spends a verification cycle and erodes trust in the whole list. If an angle turns up nothing, say
   so in one line and move on. Never pad.

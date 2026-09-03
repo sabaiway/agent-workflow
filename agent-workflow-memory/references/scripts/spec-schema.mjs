@@ -1,13 +1,5 @@
 #!/usr/bin/env node
-// spec-schema.mjs — the ONE reader that DEFINES a well-formed spec document under docs/ai/specs/.
-//
-// Pure text in, verdict out: readSpecDocument(text, rel) never touches the filesystem and imports
-// nothing, so it seeds layout-free into any deployment. The navigator's collapse (check-docs-size.mjs)
-// and the future spec-check read through THIS module — "malformed" has one definition, never two.
-// `rel` is the path INSIDE docs/ai/specs/ (the store root navigator is `index.md`).
-//
-// SPEC_SCHEMA carries the frozen values; the engine canon (references/specs.md) is pinned against it.
-// A refusal names exactly one rule id per defect, so a fixture corpus can be read rule by rule.
+// Canon: the methodology engine's references/specs.md (frozen schema, refusals table).
 
 export const SPEC_SCHEMA = Object.freeze({
   storePrefix: 'docs/ai/specs/',
@@ -34,17 +26,25 @@ export const SPEC_SCHEMA = Object.freeze({
   rootOwnedKeys: Object.freeze(['status', 'revision']),
   rootOwnedSections: Object.freeze(['## Scenarios', '## Out of scope', '## Module', '## Parts']),
   scenarioGrammar: '- S<N> <name> :: <repo-relative test path> :: spec:<slug>/S<N>  |  - S<N> <name> :: unbound',
+  openList: Object.freeze({
+    checkVerbs: Object.freeze(['refuse', 'refusal', 'REFUSE', 'REFUSAL']),
+    enumerationForms: Object.freeze([Object.freeze([',', ' or ']), Object.freeze([' · '])]),
+    closureTokens: Object.freeze([
+      'only if', 'only when', 'the only', 'everything else', 'anything else', 'nothing else',
+      'every other', 'any other', 'otherwise', 'exactly', 'one of', 'closed',
+    ]),
+    emphaticToken: 'ONLY',
+  }),
   rules: Object.freeze([
     'frontmatter', 'frontmatter-key', 'substrate-key', 'type', 'kind', 'maxlines', 'status', 'revision',
     'root-owns', 'slug', 'kind-path', 'root-uplink', 'title', 'section-missing', 'section-order',
-    'section-forbidden', 'fence', 'children-link', 'children-duplicate', 'fan-out', 'scenario-line',
+    'section-forbidden', 'fence', 'open-list', 'children-link', 'children-duplicate', 'fan-out', 'scenario-line',
     'scenario-number', 'scenario-marker', 'scenario-path', 'scenarios-empty', 'out-of-scope', 'module-line', 'module-empty',
     'module-traversal', 'module-absolute', 'module-backslash', 'module-glob', 'module-mix', 'parts',
   ]),
 });
 
-// The descriptor check-docs-size.mjs joins to its ADR group: rows under `prefix` whose reader verdict
-// is clean collapse into ONE navigator row linking `navPath`; a row with reader errors stays visible.
+// Consumer contract: scripts/check-docs-size.mjs.
 export const SPECS_COLLAPSE = Object.freeze({
   prefix: SPEC_SCHEMA.storePrefix,
   navPath: `${SPEC_SCHEMA.storePrefix}${SPEC_SCHEMA.navigatorFile}`,
@@ -72,8 +72,6 @@ const FORBIDDEN_SECTIONS = Object.freeze({
 
 const KNOWN_KEYS = Object.freeze([...SPEC_SCHEMA.substrateKeys, 'kind', ...SPEC_SCHEMA.rootOwnedKeys]);
 
-// The frontmatter is a closed key set: an unknown key, a repeated key or a line that is not
-// `key: value` is a defect (`frontmatter-key`), never silently dropped or last-one-wins.
 const parseFrontmatter = (text) => {
   const match = text.match(FRONTMATTER_RE);
   if (!match) return null;
@@ -91,10 +89,6 @@ const parseFrontmatter = (text) => {
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 
-// The body as { title, sections: [{ heading, lines }], preamble, fenced } — the title is the FIRST
-// `# ` line, every `## ` line opens a section, the lines before the first section are the preamble.
-// The reader parses NO markdown code: a fence line is recorded (the `fence` refusal) rather than
-// modelled, so a spec carries no code sample and no line is ever ambiguous between code and structure.
 const parseBody = (body) => {
   const sections = [];
   const preamble = [];
@@ -116,8 +110,6 @@ const parseBody = (body) => {
   return { title: state.title, sections, preamble, fenced, sectionBeforeTitle: state.sectionBeforeTitle };
 };
 
-// Lexical classification of a repo-relative path field — the same vocabulary for module roots and
-// scenario bindings. Realpath/symlink containment needs the filesystem and is the checker's duty.
 export const classifyPath = (path) => {
   if (path.trim() === '') return 'empty';
   if (path.includes('\\')) return 'backslash';
@@ -139,8 +131,47 @@ const MODULE_PATH_RULES = Object.freeze({
 const isBullet = (line) => line === '-' || line.startsWith('- ');
 const bulletsOf = (lines) => lines.filter(isBullet).map((line) => line.slice(2));
 const contentOf = (lines) => lines.filter((line) => line.trim() !== '');
+const isAtxHeading = (line) => /^ {0,3}#{1,6}(?:[ \t]|$)/.test(line);
+const topLevelBulletsOf = (lines) => lines.reduce((state, raw) => {
+  const line = raw.replace(/\s+$/, '');
+  if (isBullet(line)) {
+    state.current = [line === '-' ? '' : line.slice(2)];
+    state.bullets.push(state.current);
+  } else if (line.trim() === '' || isAtxHeading(line)) state.current = null;
+  else if (state.current !== null) state.current.push(line.trim());
+  return state;
+}, { bullets: [], current: null }).bullets.map((parts) => parts.join(' ').replace(/\s+/g, ' ').trim());
 
-// The slug a document owns: the file stem for a flat file, the folder name for an index.md.
+const CLAUSE_BREAK = String.fromCharCode(0);
+const MASKED_DOT = String.fromCharCode(1);
+const MASKED_SEMICOLON = String.fromCharCode(2);
+const maskClauseSpans = (text) => [...text].reduce((state, character) => {
+  if (character === '`') state.inSpan = !state.inSpan;
+  state.output.push(state.inSpan && character === '.' ? MASKED_DOT : state.inSpan && character === ';' ? MASKED_SEMICOLON : character);
+  return state;
+}, { inSpan: false, output: [] }).output.join('');
+const clausesOf = (bullet) => maskClauseSpans(bullet).replace(/([.;][*`\)\]]*) /g, `$1${CLAUSE_BREAK}`).split(CLAUSE_BREAK)
+  .map((clause) => clause.split(MASKED_DOT).join('.').split(MASKED_SEMICOLON).join(';').trim()).filter(Boolean);
+const containsInOrder = (text, tokens) => tokens.reduce((position, token) => {
+  const found = position === -1 ? -1 : text.indexOf(token, position);
+  return found === -1 ? -1 : found + token.length;
+}, 0) !== -1;
+const hasBoundedToken = (clause, token, flags) => new RegExp(`(^|[^A-Za-z0-9_-])${token}([^A-Za-z0-9_-]|$)`, flags).test(clause);
+const checkOpenLists = (parsed, kind, errors) => {
+  const groups = kind === 'spec' ? parsed.sections.filter((section) => section.heading === '## Contract').map((section) => section.lines)
+    : kind === 'part' ? [parsed.preamble, ...parsed.sections.map((section) => section.lines)] : [];
+  for (const clause of groups.flatMap(topLevelBulletsOf).flatMap(clausesOf)) {
+    const hasVerb = SPEC_SCHEMA.openList.checkVerbs.some((verb) => clause.includes(verb));
+    const hasEnumeration = SPEC_SCHEMA.openList.enumerationForms.some((form) => containsInOrder(clause, form));
+    const hasClosure = SPEC_SCHEMA.openList.closureTokens.some((token) => hasBoundedToken(clause, token, 'i'))
+      || hasBoundedToken(clause, SPEC_SCHEMA.openList.emphaticToken, '');
+    if (hasVerb && hasEnumeration && !hasClosure) {
+      const prefix = clause.split(/\s+/).slice(0, 6).join(' ');
+      errors.push({ rule: 'open-list', message: `the clause "${prefix}…" is an open list — add a closing form to it such as "only if …; everything else …"` });
+    }
+  }
+};
+
 const describeRel = (rel) => {
   const segments = rel.split('/');
   const file = segments[segments.length - 1];
@@ -314,11 +345,7 @@ const checkParts = (parsed, at, errors) => {
   if (duplicate !== undefined) errors.push({ rule: 'parts', message: `part "${duplicate}" is listed twice` });
 };
 
-// The structure verdict (additive, slice 2a): the DETERMINISTIC extraction of what parsed, per
-// section, targets VERBATIM as written (`./x.md` and `./x/index.md` stay distinct strings). The
-// grammar is per line for scenarios/children/parts — a malformed line is simply absent — while the
-// module is a conjunction (ONE `dir/` root or an all-file list): prose, a refused path, a mix or
-// `*(empty)*` extracts null. `## Links` is free prose and is never extracted.
+// Structure verdict: the same canon, "The frozen schema".
 const scenarioEntry = (line) => {
   const scenario = parseScenario(line);
   if (scenario === null) return null;
@@ -345,10 +372,6 @@ const extractStructure = (parsed) => ({
   module: extractModule(parsed),
 });
 
-// The verdict: { kind, status, revision, structure, errors: [{ rule, message }], warnings: [{ rule,
-// message }] }. Errors are collected past the first defect wherever later checks stay meaningful; a
-// missing or defective frontmatter and an unknown kind each end the read (structure stays null),
-// because no shape can be judged without them.
 export const readSpecDocument = (text, rel) => {
   const errors = [];
   const warnings = [];
@@ -372,6 +395,7 @@ export const readSpecDocument = (text, rel) => {
   const at = checkPath(rel, kind, errors);
   const parsed = parseBody(body);
   if (parsed.fenced.length > 0) errors.push({ rule: 'fence', message: `"${parsed.fenced[0]}" — a spec document carries no code fence` });
+  checkOpenLists(parsed, kind, errors);
   checkSections(parsed, kind, errors);
   if (kind === 'index') {
     checkChildren(parsed, errors);

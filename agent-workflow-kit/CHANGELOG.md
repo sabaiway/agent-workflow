@@ -4,6 +4,23 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 12.0.0 — the reader mirror refuses an open-list clause, the outgoing reader becomes a prior, the consult line names the second case and the lens walks around every check (AD-133)
+
+**MAJOR by the AD-117 class.** `references/scripts/spec-schema.mjs` and its test are the memory 8.0.0 bodies
+byte-identically — `spec-check` relays the new `open-list` rule unchanged, so a consumer store valid under the old canon
+can refuse under this kit; the remedy is the closing clause, never a fourth case. `tools/script-priors.mjs` and
+`FROZEN_PRIORS` gain the outgoing reader pair as `5.0.0`..`7.2.1` with its fixture bodies under
+`test/fixtures/script-priors/5.0.0/`, so a deployed 5.0.0–7.2.1 reader classifies `prior`, never `custom`.
+
+**The consult clause and the lens bullet.** `tools/procedures.mjs` `CONSULT_LINE` — two source literals joined into
+ONE rendered line, each under the 1000-byte cap — renders inside the agy `--focus` payload "If this finding is the
+second case against the same check, reply with the replacement invariant, not an added case."; the codex consult-brief
+and the lens re-dispatch forms say "with the same payload"; `tools/procedures.test.mjs` pins the payload order for both
+activities. `references/agents/review-lens.md` gains the "How to review" bullet **When the artifact is a plan, walk
+around every check** (the S12 arm in `cheap-agents-derived.test.mjs`; the placed copy takes the same line on refresh).
+`tools/spec-coverage.test/cli.test.mjs` characterizes the S6 exit partition (`--help` / `-h` as the sole argument, an
+unreadable store, a stray `--reason` beside `--check`, the debt-write failure as an exception).
+
 ## 11.2.0 — a field report is triaged through a rendered procedure over a checked record (AD-132)
 
 Three consumer field reports were triaged ad hoc — verify each claim on HEAD, record the verdict,

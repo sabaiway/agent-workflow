@@ -72,6 +72,22 @@ describe('specs.md — the canon carries the frozen schema the reader enforces',
     assert.deepEqual(listed, [...SPEC_SCHEMA.rules], 'the table rows ARE the rule list, in order');
   });
 
+  it('pins the open-list fragment, matching boundary, scope and rule-table position', () => {
+    const fragment = SPEC_SCHEMA.openList;
+    const table = [...canon.split('## Refusals')[1].matchAll(/^\| `([a-z-]+)` \|/gm)].map((match) => match[1]);
+    const quoted = (values) => values.map((value) => `'${value}'`).join(', ');
+    assert.ok(canon.includes(`checkVerbs: [${quoted(fragment.checkVerbs)}]`));
+    assert.ok(canon.includes(`enumerationForms: [[${quoted(fragment.enumerationForms[0])}], [${quoted(fragment.enumerationForms[1])}]]`));
+    assert.ok(canon.includes(`closureTokens: [${quoted(fragment.closureTokens)}]`));
+    assert.ok(canon.includes(`emphaticToken: '${fragment.emphaticToken}'`));
+    assert.match(flat, /case-sensitive substring match.*case-insensitive whole words.*case-sensitive whole-word/);
+    assert.match(flat, /boundary is the clause boundary or a byte other than an ASCII letter, digit, underscore or hyphen/);
+    assert.match(flat, /A `kind: spec` judges top-level bullets in `## Contract`; a `kind: part` judges every top-level bullet/);
+    assert.match(flat, /splits into clauses at `\. ` or `; `.*run of `\*`, backtick, `\)` or `\]`/);
+    assert.equal(SPEC_SCHEMA.rules.indexOf('open-list'), SPEC_SCHEMA.rules.indexOf('fence') + 1);
+    assert.equal(table.indexOf('open-list'), table.indexOf('fence') + 1);
+  });
+
   it('the five decided answers are stated at their point of use', () => {
     assert.match(flat, /at least one scenario line[^.]*`\*\(empty\)\*` is NOT an escape/, '(1) no empty-marker escape on ## Scenarios');
     assert.match(flat, /an ORDINARY source line/, '(2) a binding marker is size-counted like code');

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -180,7 +180,23 @@ describe('spec-coverage — the CLI', () => {
   });
 
   it('--help is answered only as the whole invocation', async () => {
-    assert.equal((await run(['--help'])).code, 0);
+    for (const flag of ['--help', '-h']) assert.equal((await run([flag])).code, 0);
     assert.equal((await run(['--check', '--help'])).code, 2);
+  });
+
+  it('keeps the S6 exit partition for an unreadable store, a stray reason and a failed debt write', async () => {
+    const root = project({ tools: ['login.mjs'], covered: ['src/login.mjs'] });
+    assert.equal((await run(['--check', '--reason', 'stray', '--root', root])).code, 0);
+    rmSync(join(root, 'docs', 'ai', 'specs'), { recursive: true });
+    assert.equal((await run(['--check', '--root', root])).code, 2);
+
+    const locked = project({ tools: ['login.mjs'], covered: ['src/login.mjs'], debt: ['src/login.mjs'] });
+    const scope = join(locked, 'docs', 'ai', 'spec-coverage.json');
+    chmodSync(scope, 0o444);
+    try {
+      await assert.rejects(run(['--write-debt', '--reason', 'the contract was written', '--root', locked]), { code: 'EACCES' });
+    } finally {
+      chmodSync(scope, 0o644);
+    }
   });
 });

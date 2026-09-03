@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-03 — AD-133 a spec guarantee is an invariant, never an open list (memory 8.0.0 MAJOR · engine 5.0.0 MAJOR · kit 12.0.0 MAJOR · bridges unchanged)
+
+**One reader rule, two procedure sentences, a store revised by its code.** `feedback-triage.md` shipped a guarantee as
+a list of three git states and the first live record met a fourth. The reader that defines "well-formed" now refuses
+the class at the CLAUSE (a check verb + an enumeration + no closure in the same clause), the lists frozen only after a
+probe over the live store: the `, … or` and ` · ` forms kept, `, … and` (36 hits — a closed statement refuses as
+readily as an open list) and comma-only (38 hits, every one the kept forms do not already catch a false positive) dropped, `never` removed from the closures (it had immunised
+the raising clause). Twenty refused clauses in nine project specs take closing forms written from the code's own
+partition — two closures a reviewer proposed verbatim were false of `robustness-brief.mjs` and were rewritten from its
+exit sites. Plan-authoring's review brief now walks around every check bullet; plan-execution's fold rule sends a
+second case against one check to the replacement invariant; the consult line and the lens vehicle carry both. Measured
+on itself: four plan rounds (codex revise 7 → 9, then the crossover stop; agy SHIP every round; the lens 1B+5M → 2B+7M
+→ 2B+1M → 0B+0M), the code landed by ONE held codex session in three accounted dispatches with the red-proofs
+re-minted by the orchestrator, the delegate's unnamed terseness compression of the procedures canon caught at
+self-review and restored where a sentence had no other home.
+
 ## 2026-09-03 — AD-132 a field report is triaged through a rendered procedure over a checked record (kit 11.2.0 MINOR · engine 4.7.0 MINOR · memory 7.2.1 PATCH · bridges unchanged)
 
 **A fourth activity, not a skill.** Three consumer field reports were triaged ad hoc; the family's

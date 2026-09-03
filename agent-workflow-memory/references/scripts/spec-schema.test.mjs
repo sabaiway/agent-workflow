@@ -32,6 +32,8 @@ const refuses = (text, rel, rule) => {
   const verdict = readSpecDocument(text, rel);
   expect(rulesOf(verdict)).toEqual([rule]);
 };
+const withContract = (contract) => specDoc().replace('Accepts a credential pair.', contract);
+const openListErrors = (contract, rel = 'login.md') => readSpecDocument(withContract(contract), rel).errors;
 
 describe('readSpecDocument — accept', () => {
   it('a flat draft spec reads clean with kind/status/revision', () => {
@@ -266,6 +268,69 @@ describe('readSpecDocument — the structure verdict (additive, slice 2a)', () =
     const v = readSpecDocument(specDoc({ scenarios: ['- S1 a :: test/a.mjs :: spec:login/S2'] }), 'login.md');
     expect(v.errors.map((e) => e.rule)).toEqual(['scenario-marker']);
     expect(v.structure.scenarios).toEqual([{ ordinal: 1, binding: { file: 'test/a.mjs', marker: 'spec:login/S2' } }]);
+  });
+});
+
+describe('readSpecDocument — open-list clauses', () => {
+  const refusal = 'the clause "an anchor path reported modified, untracked…" is an open list — add a closing form to it such as "only if …; everything else …"';
+  const open = '- an anchor path reported modified, untracked or ignored is the named refusal `anchor-dirty`';
+  const closed = '- an anchor path is accepted only if `ls-files -v` lists it with tag `H` and `status` is silent — everything else, a path reported modified, untracked or ignored, is the named refusal `anchor-dirty`';
+
+  it('refuses the measured clause with the exact message; verb alone, form alone and an in-clause closure pass', () => {
+    expect(openListErrors(open)).toEqual([{ rule: 'open-list', message: refusal }]);
+    for (const text of [closed, '- refuse one case', '- alpha, beta or gamma']) expect(openListErrors(text)).toEqual([]);
+  });
+
+  it('joins continuation lines, collapses whitespace and keeps an indented bullet in its top-level bullet', () => {
+    for (const text of ['- refuse alpha,\n   beta   or ignored', '- refuse alpha,\n  - beta or ignored']) expect(rulesOf(readSpecDocument(withContract(text), 'login.md'))).toEqual(['open-list']);
+  });
+
+  it('ends a bullet at a blank, the next top-level bullet or every ATX heading; Contract prose is ignored', () => {
+    for (const tail of ['\n\nEverything else closes', '\n- Everything else closes', ...Array.from({ length: 6 }, (_, i) => `\n${'#'.repeat(i + 1)} Everything else closes`)]) {
+      expect(rulesOf(readSpecDocument(withContract('- refuse alpha, beta or gamma' + tail), 'login.md'))).toEqual(['open-list']);
+    }
+    expect(openListErrors('refuse alpha, beta or gamma')).toEqual([]);
+  });
+
+  it('ends a bullet at indented and tab-separated ATX headings', () => {
+    for (const tail of ['\n   ## Everything else closes', '\n#\tEverything else closes']) expect(rulesOf(readSpecDocument(withContract('- refuse alpha, beta or gamma' + tail), 'login.md'))).toEqual(['open-list']);
+  });
+
+  it('starts a new empty top-level bullet before following prose', () => {
+    for (const tail of ['\n- \nEverything else closes', '\n-\nonly if closes']) expect(rulesOf(readSpecDocument(withContract('- refuse alpha, beta or gamma' + tail), 'login.md'))).toEqual(['open-list']);
+  });
+
+  it('judges an open list in every Contract section', () => {
+    const duplicate = specDoc().replace('## Scenarios', '## Contract\n\n- refuse alpha, beta or gamma\n\n## Scenarios');
+    expect(rulesOf(readSpecDocument(duplicate, 'login.md')).includes('open-list')).toBe(true);
+  });
+
+  it('splits clauses at punctuation plus markdown tails, but not inside backtick spans', () => {
+    for (const tail of ['.** ', '.` ', '.) ', '.] ', '; ']) expect(rulesOf(readSpecDocument(withContract(`- refuse alpha, beta or gamma${tail}Everything else closes`), 'login.md'))).toEqual(['open-list']);
+    for (const text of ['- refuse `alpha. beta`, gamma or delta', '- refuse `alpha; beta`, gamma or delta', '- refuse `alpha. beta, gamma or delta']) expect(rulesOf(readSpecDocument(withContract(text), 'login.md'))).toEqual(['open-list']);
+    expect(openListErrors('- refuse alpha``. beta, gamma or delta')).toEqual([]);
+  });
+
+  it('keeps span content in judgement, and a closure in a neighbouring clause cannot lift a refusal', () => {
+    expect(rulesOf(readSpecDocument(withContract('- `refuse` alpha, beta or gamma'), 'login.md'))).toEqual(['open-list']);
+    expect(openListErrors('- refuse alpha, beta or gamma with `everything else`')).toEqual([]);
+    expect(rulesOf(readSpecDocument(withContract('- refuse alpha, beta or gamma. Everything else closes'), 'login.md'))).toEqual(['open-list']);
+  });
+
+  it('matches verbs, forms and closure tokens with the frozen case and boundary rules', () => {
+    for (const verb of ['refuse', 'refuses', 'refused', 'refusal', 'refusals', 'REFUSE', 'REFUSAL']) expect(rulesOf(readSpecDocument(withContract(`- ${verb} alpha, beta or gamma`), 'login.md'))).toEqual(['open-list']);
+    for (const text of ['- Refuse alpha, beta or gamma', '- refuse alpha, beta and gamma']) expect(openListErrors(text)).toEqual([]);
+    expect(rulesOf(readSpecDocument(withContract('- refuse alpha · beta'), 'login.md'))).toEqual(['open-list']);
+    for (const token of SPEC_SCHEMA.openList.closureTokens) expect(openListErrors(`- ${token.toUpperCase()}: refuse alpha, beta or gamma`)).toEqual([]);
+    for (const text of ['- refuse alpha, beta or gamma — none of these', '- refuse alpha, beta or gamma — closed-key', '- refuse alpha, beta or gamma — READ-ONLY', '- refuse alpha, beta or gamma — if only this', '- refuse alpha, beta or gamma — not only this']) expect(rulesOf(readSpecDocument(withContract(text), 'login.md'))).toEqual(['open-list']);
+    expect(openListErrors('- refuse alpha, beta or gamma — ONLY this')).toEqual([]);
+  });
+
+  it('judges every part bullet, never an index, and freezes every schema list and inner pair', () => {
+    expect(rulesOf(readSpecDocument(partDoc({ extra: `\n${open}\n` }), 'auth/login/sessions.md'))).toEqual(['open-list']);
+    expect(readSpecDocument(indexDoc({ children: [], preamble: `\n${open}\n` }), 'auth/index.md').errors).toEqual([]);
+    expect(SPEC_SCHEMA.openList).toEqual({ checkVerbs: ['refuse', 'refusal', 'REFUSE', 'REFUSAL'], enumerationForms: [[',', ' or '], [' · ']], closureTokens: ['only if', 'only when', 'the only', 'everything else', 'anything else', 'nothing else', 'every other', 'any other', 'otherwise', 'exactly', 'one of', 'closed'], emphaticToken: 'ONLY' });
+    expect([SPEC_SCHEMA.openList, SPEC_SCHEMA.openList.checkVerbs, SPEC_SCHEMA.openList.enumerationForms, ...SPEC_SCHEMA.openList.enumerationForms, SPEC_SCHEMA.openList.closureTokens].every(Object.isFrozen)).toBe(true);
   });
 });
 

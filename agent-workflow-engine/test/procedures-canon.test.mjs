@@ -118,13 +118,7 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.doesNotMatch(stepOf(sectionOf(procedures, 'plan-execution'), 5), /round render|review-rounds/i, 'a code receipt carries no artifact path, so plan-execution names no render');
   });
 
-  // The finding-scope rule (the fold channel): a finding NAMES the invariant its fix enforces
-  // BEFORE the edit, and WHERE that invariant already lives decides the disposition. Pinned in the
-  // plan-execution review STEP only — plan-authoring settles boundaries and has no shipped behaviour
-  // to call a live defect in, so the queue and blocking arms mean nothing there. Both directions,
-  // like the AD-046 ledger pointer below: neither a silent deletion nor a scope-creeping copy into
-  // plan-authoring survives with tests green. (`stepOf` is declared below — the callback runs after
-  // the describe body, so the anchor stays with the per-round emission it belongs to.)
+  // The finding-scope rule is plan-execution-only; `stepOf` is declared below.
   it('the plan-execution review STEP (5) carries the finding-scope rule + the two round bars; plan-authoring carries none', () => {
     const step5 = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
     assert.match(step5, /\*\*Finding scope\*\*/, 'the rule is named');
@@ -142,6 +136,21 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     for (const token of ['Finding scope', 'WRITE/REMOVE', 'SUBTRACTION']) {
       assert.ok(!auth.includes(token), `plan-authoring must not carry "${token}" — the rule is plan-execution-scoped`);
     }
+  });
+
+  it('pins the walk-around and second-case sentences in only their owning activity', () => {
+    const walk = 'The review brief of EVERY member (bridge focus, agy `--facts`, the lens brief) carries the walk-around lens: for every check bullet of each governing spec, name the invariant it proves and one state that walks around it; a named state rewrites the spec BEFORE code, as a `modify` row of the plan.';
+    const bar2 = 'a repeat finding in one subarea routes to SUBTRACTION, not a fourth patch.';
+    const second = 'When the repeat finding named by bar 2 is a second case against the same check bullet, the fold proposes the REPLACEMENT invariant — the closing clause — never an added case, and its consult asks for it.';
+    const authoring = sectionOf(procedures, 'plan-authoring');
+    const execution = sectionOf(procedures, 'plan-execution');
+    assert.ok(stepOf(authoring, 4).replace(/\s+/g, ' ').includes(walk));
+    assert.ok(!authoring.includes(second));
+    const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
+    assert.ok(step5.includes(bar2));
+    assert.ok(step5.includes(second));
+    assert.ok(step5.indexOf(second) > step5.indexOf(bar2), 'the second-case sentence follows bar 2 inside step 5');
+    assert.ok(!execution.includes(walk));
   });
 
   // The activity-aware LEDGER pointer (AD-046): the review-round ledger is plan-EXECUTION-scoped

@@ -83,8 +83,9 @@ describe('agents writer derived review lenses (spec:review-roster/S6)', () => {
 });
 
 describe('bundled review lens contract (spec:review-roster/S12)', () => {
-  it('uses the vehicles-part additional wording, stays read-only and ends with the closed verdict line', () => {
+  it('carries the walk-around line and additional wording, stays read-only and ends with the closed verdict line', () => {
     const template = readBundledAgents().find((item) => item.name === 'review-lens.md').content;
+    assert.equal(template.split('- **When the artifact is a plan, walk around every check.** For every check bullet of each governing spec, name the invariant it proves and one state that walks around it; a named state is a finding with the replacement invariant, never an added case.').length - 1, 1);
     assert.match(template, /additional to the orchestrator's own review and to whatever configured backends ran; never a substitute for either/u);
     assert.match(template, /^tools: Read, Grep, Glob$/mu);
     assert.equal(template.trimEnd().split('\n').at(-1), `Verdict: ${LENS_VERDICTS.join(' | ')}`);

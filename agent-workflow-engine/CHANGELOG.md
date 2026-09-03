@@ -4,6 +4,26 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.0.0 — the canon carries the open-list clause rule, and both activities gain a sentence (AD-133)
+
+`references/specs.md`: the frozen schema gains the **Open-list clause** bullet — the three token lists verbatim, the
+matching rule (case-insensitive whole words, the case-sensitive `ONLY`, the word boundary as a byte class), the scope
+(spec Contract bullets, every part bullet, never an index or prose), the clause split and its markdown tails, the stated
+bound (splitting a verb from its list is not a reader case); the "models no markdown code" sentence is extended by the
+backtick-span opacity; the refusals table gains `open-list` after `fence` — a spec valid under 4.x can refuse under
+5.0.0, the MAJOR of the AD-117 class. `test/specs-canon.test.mjs` pins every token, the matching sentence, the scope
+sentence and the table position; the corpus gains `refuse/open-list/measured-bullet/anchors.md` (the measured rev-1
+sentence) and `accept/closed-check/anchors.md` (one clause carrying its own enumeration and closure).
+
+`references/procedures.md`: plan-authoring step 4 — the review brief of EVERY member carries the walk-around lens (for
+every check bullet of each governing spec, name the invariant it proves and one state that walks around it; a named
+state rewrites the spec BEFORE code, as a `modify` row); plan-execution step 5, after bar 2 — a repeat finding that is a
+second case against the same check bullet proposes the REPLACEMENT invariant, never an added case, and its consult
+asks for it. To stay under the 1.45 terseness ratio the preamble and step 2 compress restatements that have a home in
+`orchestration.md` §6/§7, `planning.md` or `specs.md`; "never re-ask it" and "lead with the result" stay.
+`test/procedures-canon.test.mjs` pins both sentences in their owning activity only — the second-case sentence
+inside step 5, after bar 2 (466 lines, recorded).
+
 ## 4.7.0 — the canon gains `## feedback-triage`, a fourth activity with one review slot (AD-132)
 
 `references/procedures.md` gains `## feedback-triage` — `Slots: review` first, then six steps: Record

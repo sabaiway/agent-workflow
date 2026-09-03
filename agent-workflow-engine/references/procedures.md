@@ -1,30 +1,22 @@
 # Activity Procedures
 
-The ordered steps of each named activity, with **typed recipe slots** bound to the
-[orchestration recipes](orchestration.md). It composes with — never restates —
-[`planning.md`](planning.md), naming its sections by *heading*. The kit reads this file
-live and parses only each section's `Slots:` line.
+Each activity's ordered steps have **typed recipe slots** bound to
+[orchestration](orchestration.md) and named [`planning.md`](planning.md) headings. The kit parses
+only each section's `Slots:` line. `review`: `solo | reviewed | council`; `execute`:
+`solo | delegated | subagent`; carrier slots: `solo | subagent`; `parallel`: `on | off`.
 
-A **recipe slot**: `review` accepts `solo | reviewed | council`; `execute` accepts
-`solo | delegated | subagent`; a carrier slot (`author`, `fold`, `carrier`) accepts `solo | subagent`;
-`parallel` is a switch (`on | off`), not a recipe. The per-project default lives in
-`docs/ai/orchestration.json`.
-
-**When an activity has a commit boundary, the orchestrator owns that commit; every other carrier is
-advisory or delegated, never autonomous, and never commits** (`orchestration.md` §6). `plan-authoring` ends
-at **approval** with no commit (plans are ephemeral, never committed); `plan-execution` commits per
-ledger row.
+**When an activity has a commit boundary, the orchestrator owns that commit; every other carrier
+never commits** (`orchestration.md` §6). `plan-authoring` ends at **approval**: plans are ephemeral,
+never committed; `plan-execution` commits per ledger row.
 
 **Read your preference at session start.** At the start of a planning or execution session, read
-`docs/ai/orchestration.json` (`/agent-workflow-kit set-recipe` writes it; hand-editing stays
-supported) and never re-ask it. Read the **autonomy policy** the same way and at the same moment:
-`docs/ai/autonomy.json` (absent → the computed defaults ARE the policy; malformed → STOP loudly,
-never guess; `/agent-workflow-kit set-autonomy` writes it) — every procedure below runs UNDER it
+`docs/ai/orchestration.json` (`/agent-workflow-kit set-recipe`) and never re-ask it. Read the **autonomy policy** the
+same way and at the same moment: `docs/ai/autonomy.json`; absent → the computed defaults ARE the
+policy; malformed → STOP loudly, never guess; `/agent-workflow-kit set-autonomy` writes it
 (`orchestration.md` §7).
 
-**Communication contract.** Every user-facing message delivers the artifact **inline** — never a
-bare pointer ("see §X") as a substitute; lead with the result; a large artifact gets a real summary
-inline plus the link.
+**Communication contract.** Every message delivers the artifact **inline**, never a bare pointer
+("see §X") as a substitute; lead with the result; a large artifact gets a summary and link.
 
 ---
 
@@ -33,14 +25,12 @@ inline plus the link.
 Slots: author, fold, review
 
 1. **Research** — the exact files, contracts and constraints touched.
-2. **Draft** — write to the shape [`planning.md`](planning.md) fixes; its *Module ledger* decides
-   the layout and every budget before any file exists — a size gate is only the backstop. Name the
-   governing spec(s) in *Goal and boundary* ([`specs.md`](specs.md)); a new feature's draft spec is
-   a `create` row and a revision of a governed contract a `modify` row, both written here so they
-   exist AT review. The resolved `author` carrier drafts — Solo: the orchestrator writes it;
-   Subagent: the orchestrator writes a BRIEF (goal, governing specs, ledger
-   constraints, files) and the subagent drafts the plan and any `create` / `modify`
-   spec row from it, and the orchestrator reviews the draft as its own before step 3.
+2. **Draft** — [`planning.md`](planning.md)'s *Module ledger* decides layout and budget before any
+   file exists; a size gate is only the backstop. Name governing specs in *Goal and boundary*
+   ([`specs.md`](specs.md)); new/revised contracts are `create` / `modify` rows. The resolved
+   `author` carrier drafts — Solo: the orchestrator writes it; Subagent: the orchestrator writes a
+   BRIEF (goal, governing specs, ledger constraints, files), the subagent drafts the plan and any
+   `create` / `modify` spec row from it, and the orchestrator reviews the draft as its own before step 3.
 3. **Self-review** — run the **readers sweep before the first review**: for every config key,
    registry entry, exported constant, receipt field or canon sentence the plan changes, use one
    literal repository search to list its readers (validators, renders, seeds, docs and the tests
@@ -48,7 +38,10 @@ Slots: author, fold, review
    the test or fixture that proves it. Then apply *What gets cut*; fold by code
    (read and cite the `file:line`); update `queue.md` for a series, to the shape *The queue* fixes.
 4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
-   synthesize), as the resolved `review` recipe selects.
+   synthesize), as the resolved `review` recipe selects. The review brief of EVERY member (bridge
+   focus, agy `--facts`, the lens brief) carries the walk-around lens: for every check bullet of each
+   governing spec, name the invariant it proves and one state that walks around it; a named state
+   rewrites the spec BEFORE code, as a `modify` row of the plan.
 5. **Fold + loop** — before folding a finding raised by a **review member**, **ASK** that member whether the
    proposed fold solves it without a new problem; **WAIT**, **READ**, then hand the accepted or
    corrected fold to the resolved `fold` carrier. Self-review findings, or findings with no review
@@ -142,6 +135,8 @@ Each ledger row is one logical commit.
    **blocking** — the phase does not close, and it is never queued. Two bars, before each round: a
    finding counts only if it changes a WRITE/REMOVE decision or is a false statement in shipped
    text; a repeat finding in one subarea routes to SUBTRACTION, not a fourth patch.
+   When the repeat finding named by bar 2 is a second case against the same check bullet, the fold
+   proposes the REPLACEMENT invariant — the closing clause — never an added case, and its consult asks for it.
 6. **Gates** — the project's verification gate to green.
 7. **Commit boundary** — the orchestrator makes the single commit; every other carrier never commits; the
    commit-approval policy lives in the project's own rules.

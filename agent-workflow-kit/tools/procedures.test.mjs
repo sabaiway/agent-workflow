@@ -13,9 +13,6 @@ import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
 
-// Host-independent fixtures: a temp cwd for the config + the REPO's OWN engine via
-// AGENT_WORKFLOW_ENGINE_DIR (it ships references/procedures.md, so the live read is deterministic) +
-// an INJECTED detection and vehicle survey, so no resolved recipe depends on the test host.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
 const CODEX = 'codex-cli-bridge';
@@ -616,7 +613,9 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const reviewLoop = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout).reviewLoop;
       const consult = reviewLoop.find((line) => line.includes('Before every fold')) ?? '';
-      for (const token of ['raised by a review member (a bridge backend or a placed lens)', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>. Does this proposed fold solve the finding and add no new problem? Reply accept, or correct with exact replacement text."', 'codex: fresh codex-review plan <consult-brief>', 'a placed lens: re-dispatch the same lens vehicle with the finding and the proposed fold', 'A self-review finding, or any finding when no review member ran, is folded directly']) assert.ok(consult.includes(token), `${activity} consult line names ${token}`);
+      const payload = ['Does this proposed fold solve the finding and add no new problem?', 'If this finding is the second case against the same check, reply with the replacement invariant, not an added case.', 'Reply accept, or correct with exact replacement text.'];
+      for (const token of ['raised by a review member (a bridge backend or a placed lens)', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>.', ...payload, 'codex: fresh codex-review plan <consult-brief> with the same payload', 'a placed lens: re-dispatch the same lens vehicle with the same payload', 'A self-review finding, or any finding when no review member ran, is folded directly']) assert.ok(consult.includes(token), `${activity} consult line names ${token}`);
+      assert.deepEqual(payload.map((token) => consult.indexOf(token)).sort((a, b) => a - b), payload.map((token) => consult.indexOf(token)), `${activity} agy payload order`);
       assert.ok(consult.indexOf('ASK') < consult.indexOf('WAIT') && consult.indexOf('WAIT') < consult.indexOf('READ') && consult.indexOf('READ') < consult.indexOf('accepted or corrected'), `${activity} consult order`);
     }
   });
