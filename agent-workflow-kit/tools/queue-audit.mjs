@@ -8,7 +8,7 @@
 // This module is the half prose cannot do — it says, per row and with the literal evidence, whether
 // the row is still WORK.
 //
-// Four classes, and the boundaries between them are deliberately conservative, because the consumer
+// Five classes, and the boundaries between them are deliberately conservative, because the consumer
 // of a `terminal` verdict is a DELETION:
 //
 //   live       no status marker decides otherwise — the default, and what a queue should hold.
@@ -37,10 +37,12 @@
 import { tokenizeMarkdown, fail } from '../references/scripts/markdown-blocks.mjs';
 import { bulletBlocks } from './fold-scope.mjs';
 import { CARRY_WORK, CLASSES, DEFAULTS, UNREAD_ITEM, classifyRow, titleOf } from './queue-audit-rows.mjs';
+import { nameFindings } from './queue-row-name.mjs';
 
 // The row grammar is re-exported so one import names the whole reader: the CLI, the tests and any
 // consumer ask this module, and the split into a rules half stays an implementation detail.
-export { CLASSES, DEFAULTS, TERMINAL_MARKERS, FROZEN_MARKERS, LIVE_MARKERS, RECORD_PREFIXES, classifyRow, leadMarkers } from './queue-audit-rows.mjs';
+export { CLASSES, DEFAULTS, TERMINAL_MARKERS, FROZEN_MARKERS, LIVE_MARKERS, RECORD_PREFIXES, classifyRow, leadMarkers, titleOf } from './queue-audit-rows.mjs';
+export { nameOf, nameFindings } from './queue-row-name.mjs';
 
 // The `[from, to)` body-line window a `--section` names: it opens after that heading and closes at
 // the next heading of the SAME level or higher, so a level-3 subheading stays inside. An absent
@@ -77,10 +79,34 @@ const sectionWindow = (headings, lines, section, frontLines = 0) => {
 };
 
 // auditQueue(text, { section, label }) -> { rows, counts }. Each row carries its 1-based FILE line
-// (frontmatter included), the title as written, its class and the literal evidence for that class.
+// (frontmatter included), the title as written, its class and the literal evidence for that class —
+// and beside them the fields a RENDERER reads: the row's plain `name`, the `id` the one parse cut
+// at, the `nameFindings` that name is judged by, and the line-numbered heading `buckets` it sits
+// under. They are computed here, once, so no consumer becomes a second grammar over this document.
 export const auditQueue = (text, { section = null, label = 'the queue' } = {}) => {
   const { lines, headings, fencedLines, frontLines } = tokenizeMarkdown(String(text ?? ''), label);
-  const { from, to } = sectionWindow(headings, lines, section, frontLines);
+  // ONE heading set answers BOTH questions this module asks of a heading — where a `--section` ends,
+  // and which bucket a row sits in — so the rows of the whole document are scanned FIRST and a
+  // heading a row SWALLOWS is refused. The tokenizer reads a 1-3-space indented ATX line as a
+  // heading (deliberately: a consumer's unit grammar is refused rather than guessed at) while the
+  // bullet scan reads the same line as a row CONTINUATION, and DECIDING between them silently was
+  // tried twice and was wrong twice: read raw, a `  ## Details` in a row's body ended the section
+  // early and every row after it went unjudged, and a `  ### Details` became an ancestor bucket of
+  // every following row; dropped, a `## Heading` one space under a `- ` row — where the document
+  // ends the list item and this scan does not — let the section run past a real heading into the
+  // next one. The column that would tell them apart is not knowable here either: a TAB after the
+  // bullet puts the row's body at a tab stop this hand-written reader does not compute.
+  // So the arithmetic is gone and the disposition is the one this file already gives an unread list
+  // item: a token this document reads two ways is corrected by hand. The corpus writes none — zero
+  // indented ATX headings in the 850 KB queue and in every plan and reference doc — and the
+  // correction is one keystroke in either direction, which the refusal names.
+  const documentBlocks = bulletBlocks(lines, fencedLines, 0, lines.length, { fenceContinues: true });
+  const insideARow = (index) => documentBlocks.some((block) => index > block.start && index < block.start + block.span);
+  const documentHeadings = headings.filter(({ index }) => {
+    if (!insideARow(index)) return true;
+    throw fail(2, `line ${frontLines + index + 1} is a heading this document and its row scan read differently ("${lines[index].trim().slice(0, 40)}") — the row above swallows it as body while the document opens a section there, and judging around it would report a domain that was never looked at. Indent it past three spaces to make it body, or to column 0 to make it a heading.`);
+  });
+  const { from, to } = sectionWindow(documentHeadings, lines, section, frontLines);
   // A fence CONTINUES a queue row rather than ending it, and the cap judges the row's PHYSICAL span.
   // Both halves are the same defect: a row carrying a code block reported one line and hid whatever
   // followed the fence — its length from the cap, and a closure from the classifier.
@@ -92,14 +118,28 @@ export const auditQueue = (text, { section = null, label = 'the queue' } = {}) =
     if (fencedLines.has(index) || !UNREAD_ITEM.test(lines[index])) continue;
     throw fail(2, `line ${frontLines + index + 1} opens a list item this audit does not read ("${lines[index].trim().slice(0, 40)}") — a queue row is a "- " bullet, and judging around this one would report a domain that was never looked at.`);
   }
-  const rows = bulletBlocks(lines, fencedLines, from, to, { fenceContinues: true }).map((block) => {
+  const blocks = bulletBlocks(lines, fencedLines, from, to, { fenceContinues: true });
+  const bucketsByStart = new Map();
+  const positionedHeadings = documentHeadings.map(({ index, level, text: headingText }) => ({
+    index, level, text: headingText, line: frontLines + index + 1,
+  }));
+  const events = [
+    ...positionedHeadings.map((heading) => ({ kind: 'heading', index: heading.index, heading })),
+    ...blocks.map((block) => ({ kind: 'row', index: block.start, block })),
+  ].sort((left, right) => left.index - right.index);
+  events.reduce((stack, event) => {
+    if (event.kind === 'heading') return [...stack.filter(({ level }) => level < event.heading.level), event.heading];
+    bucketsByStart.set(event.block.start, stack.map(({ level, text: headingText, line }) => ({ level, text: headingText, line })));
+    return stack;
+  }, []);
+  const rows = blocks.map((block) => {
     const { klass, evidence } = classifyRow(block.lines, block.gaps);
+    const { text: title, name, id } = titleOf(block.lines, block.gaps);
     return {
-      line: frontLines + block.start + 1,
-      lines: block.span,
-      title: titleOf(block.lines, block.gaps).text,
-      klass,
-      evidence,
+      title, name, id,
+      nameFindings: CARRY_WORK.has(klass) ? nameFindings(name, id) : [],
+      klass, line: frontLines + block.start + 1, lines: block.span,
+      buckets: bucketsByStart.get(block.start), evidence,
     };
   });
   const counts = Object.fromEntries(CLASSES.map((klass) => [klass, rows.filter((row) => row.klass === klass).length]));
@@ -109,7 +149,9 @@ export const auditQueue = (text, { section = null, label = 'the queue' } = {}) =
 // checkQueue(text, options) -> { ok, problems, notes }. A problem is a REFUSAL and every one of them
 // names a location: the family's bar is locations, never counts. An ambiguous row is a NOTE — it is
 // exactly the case a human must settle, and failing on it would make the cap unpassable by anyone
-// who did not already know the answer.
+// who did not already know the answer. A NAME finding is the same shape with an opt-in: a note by
+// default, so a gate line written before this contract keeps its verdict byte for byte, and a
+// problem under `requireNames`, which a project adds once its rows are named.
 export const checkQueue = (text, options = {}) => {
   const { maxRows = DEFAULTS.maxRows, maxRowLines = DEFAULTS.maxRowLines, label = 'the queue' } = options;
   const { rows, counts, total } = auditQueue(text, { section: options.section ?? null, label });
@@ -128,6 +170,10 @@ export const checkQueue = (text, options = {}) => {
     }
     if (row.klass === 'parked') {
       notes.push(`${label}:${row.line}: parked (${row.evidence}) — frozen, not dead: ${row.title.slice(0, 80)}`);
+    }
+    const nameResults = options.requireNames ? problems : notes;
+    for (const finding of row.nameFindings) {
+      nameResults.push(`${label}:${row.line}: name ${JSON.stringify(row.name)} (${finding.cause}) — ${finding.message}`);
     }
     if (CARRY_WORK.has(row.klass) && row.lines > maxRowLines) {
       problems.push(

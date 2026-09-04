@@ -168,6 +168,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/queue-audit.mjs',
       'tools/queue-audit-rows.mjs',
       'tools/queue-audit-cli.mjs',
+      'tools/queue-row-name.mjs',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -757,7 +758,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 275 = 273 + the review-round table's pure half and CLI; NAMED because the procedure renders it.
     // 277 = 275 + the delegation read leaf and the pure held-session judge.
     // 287 = 285 + the feedback-record pure half and its CLI; NAMED because the feedback-triage procedure renders the CLI path.
-    assert.equal(packed.length, 287, `tarball file count drifted (${packed.length} \u2260 287)`);
+    // 288 = 287 + tools/queue-row-name.mjs, the backlog queue's pure name reader and sentence-shape judge.
+    assert.equal(packed.length, 288, `tarball file count drifted (${packed.length} \u2260 288)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

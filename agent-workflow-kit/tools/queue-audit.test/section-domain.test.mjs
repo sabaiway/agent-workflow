@@ -87,4 +87,114 @@ describe('queue-audit — the section domain', () => {
       return true;
     });
   });
+
+  it('every row carries its outermost-first heading lineage with file lines', async () => {
+    const text = [
+      '---', 'type: state', '---',
+      '- **An unheaded row stays visible — ROW-A.** Work.',
+      '', '# Plans queue', '', '## Parent bucket', '', '### Child bucket', '',
+      '- **A nested row stays visible — ROW-B.** Work.',
+    ].join('\n');
+    const rows = await rowsOf(text);
+    assert.equal(rows[0].line, 4);
+    assert.deepEqual(rows[0].buckets, []);
+    assert.equal(rows[1].line, 12);
+    assert.deepEqual(rows[1].buckets, [
+      { level: 1, text: '# Plans queue', line: 6 },
+      { level: 2, text: '## Parent bucket', line: 8 },
+      { level: 3, text: '### Child bucket', line: 10 },
+    ]);
+  });
+
+  // ONE rule covers every arm below: a heading token a row SWALLOWS is REFUSED. The tokenizer reads
+  // a 1-3-space indented ATX line as a heading while the bullet scan reads the same line as row
+  // continuation, and no arithmetic reconciles them — deciding silently was tried twice and produced
+  // the same defect twice, each time on a different opener. The corpus writes no such line: zero
+  // indented ATX headings in the 850 KB queue and in every plan and reference doc.
+  const refuses = async (text, options, line) => {
+    const { auditQueue } = await load();
+    assert.throws(() => auditQueue(text, options), (err) => {
+      assert.equal(err.exitCode, 2);
+      assert.match(err.message, new RegExp(`line ${line}`));
+      assert.match(err.message, /read differently/);
+      return true;
+    }, `line ${line} is read two ways and must refuse`);
+  };
+
+  // Read raw, this `  ## Details` ended the `--section` early and the dead row after it went
+  // UNJUDGED — a gate answering about a domain it never looked at, over the rows a purge is driven
+  // by. Dropped, the section ran past the NEXT heading instead. Neither reading is the document's.
+  it('a heading inside a row body never ends the section that row lives in', async () => {
+    const text = [
+      '## Pending',
+      '',
+      '- **A first row — ROW-A.** Work.',
+      '  ## Details',
+      '  more body',
+      '',
+      '- **A dead row — ✅ DONE 2026-01-01.** Shipped.',
+    ].join('\n');
+    await refuses(text, { section: '## Pending' }, 4);
+    await refuses(text, undefined, 4);
+  });
+
+  // The lineage half of the same line: dropped, this `  ### Details` gave the NEXT row a bucket the
+  // document never opened for it.
+  it('an indented heading inside a row body is never a bucket of the next row', async () => {
+    const text = [
+      '## Bucket',
+      '',
+      '- **A first row — ROW-A.** Work.',
+      '  ### Details',
+      '  more body',
+      '',
+      '- **A second row — ROW-B.** Work.',
+    ].join('\n');
+    await refuses(text, undefined, 4);
+  });
+
+  // The two openers a COLUMN rule had to get right and did not, which is why there is no column
+  // rule. One space under a `- ` row: the document ends the list item and opens a section, the
+  // bullet scan keeps the row open, and the archived row below was reported as a terminal row still
+  // listed — in the manifest a deletion is driven by. A TAB after the bullet: the body column is a
+  // tab-stop question this hand-written reader does not answer, and counting characters said 2
+  // where the document says 4. Under one rule both are the same line.
+  it('a heading indented below its row body column is a refusal, never a silent boundary', async () => {
+    const spaced = [
+      '## Pending',
+      '',
+      '- **A-ROW is still open — queued 2026-08-26.** Work.',
+      ' ## Series plans (done)',
+      '',
+      '- **B-ROW shipped long ago — DONE 2026-01-01.** Shipped.',
+    ].join('\n');
+    await refuses(spaced, { section: '## Pending' }, 4);
+    await refuses(spaced, undefined, 4);
+    const tabbed = [
+      '## Pending',
+      '',
+      `-${String.fromCharCode(9)}**A-ROW is still open — queued 2026-08-26.** Work.`,
+      '  ## Series plans (done)',
+      '',
+      '- **B-ROW shipped long ago — DONE 2026-01-01.** Shipped.',
+    ].join('\n');
+    await refuses(tabbed, { section: '## Pending' }, 4);
+  });
+
+  // The COMPLEMENT the pair above leaves untested: the rule is "a heading this row SWALLOWS", not
+  // "any indented heading". One that sits inside no row is a boundary and a bucket exactly as a
+  // column-0 heading is.
+  it('an indented heading inside no row is still a boundary and a bucket', async () => {
+    const text = [
+      '## Bucket',
+      '',
+      'Prose, not a row.',
+      '  ### Details',
+      '',
+      '- **A-ROW is still open — queued 2026-08-26.** Work.',
+    ].join('\n');
+    const rows = await rowsOf(text);
+    assert.deepEqual(rows[0].buckets.map(({ text: heading }) => heading), ['## Bucket', '  ### Details']);
+    assert.deepEqual(await classOf(text, { section: '### Details' }), ['live']);
+  });
 });

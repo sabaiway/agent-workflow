@@ -5,8 +5,9 @@
 // and the rules file had reached the source-size cap. Read-only: it reads the file it is pointed at
 // and writes nothing. Dependency-free, Node >= 22.
 //
-// Exit codes: 0 accept; 1 refuse (a terminal/record row still listed, or a cap breach); 2 usage —
-// a missing/unknown flag, a flag with no value, an unreadable path, or a section that is not there.
+// Exit codes: 0 accept; 1 refuse (a terminal/record row still listed, a cap breach, or — when and
+// only when `--require-names` is named — a row whose name is not a sentence); 2 usage — a
+// missing/unknown flag, a flag with no value, an unreadable path, or a section that is not there.
 
 import { readFileSync } from 'node:fs';
 import { fail } from '../references/scripts/markdown-blocks.mjs';
@@ -17,7 +18,7 @@ const HELP = `queue-audit — classify the backlog queue's rows (agent-workflow 
 
 Usage:
   node queue-audit-cli.mjs --report <queue-file> [--section "## Pending / backlog (newest)"]
-  node queue-audit-cli.mjs --check  <queue-file> [--section "…"] [--max-rows N] [--max-row-lines N]
+  node queue-audit-cli.mjs --check  <queue-file> [--section "…"] [--max-rows N] [--max-row-lines N] [--require-names]
 
 --report  one tab-separated line per row: file line, class, row length, title, the literal evidence.
           Deterministic — this is the manifest a deletion is driven by, never a regex guess.
@@ -25,6 +26,10 @@ Usage:
           carries work (live, parked and ambiguous alike), or when more rows than the row cap carry
           work. Ambiguous rows are reported and never refuse on their own: a row that contradicts
           itself, or names a status word outside a status position, is settled by a human.
+--require-names  the opt-in a project adds once its rows are named: a row whose name is not a plain
+          sentence refuses with exit 1 instead of printing a note. Without it every name finding is
+          a NOTE and the verdict is byte for byte what it was, so a queue that has not migrated is
+          never bricked by an upgrade it did not ask for.
 
 Classes: ${CLASSES.join(' · ')}. Defaults: --max-rows ${DEFAULTS.maxRows}, --max-row-lines ${DEFAULTS.maxRowLines}.
 
@@ -44,7 +49,7 @@ const parseArgv = (argv) => {
   // makes `--check <dirty-file> --help` exit 0 — the gate's refusal replaced by a help page, which
   // is the same bypass a second mode flag would be, reached by a flag nobody reads as dangerous.
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) return { mode: 'help' };
-  const options = { mode: null, path: null, section: null };
+  const options = { mode: null, path: null, section: null, requireNames: false };
   // Every option here is a SINGLETON. A repeat used to win silently: a second `--section` moved the
   // domain the report covers and a softer `--max-rows` moved the ratchet, both without a word — and
   // both in the direction that lets a queue keep rows a check would have refused.
@@ -69,6 +74,9 @@ const parseArgv = (argv) => {
       once(arg);
       options.section = valueOf(argv, index, arg);
       index += 1;
+    } else if (arg === '--require-names') {
+      once(arg);
+      options.requireNames = true;
     } else if (arg === '--max-rows' || arg === '--max-row-lines') {
       once(arg);
       const value = Number(valueOf(argv, index, arg));
@@ -79,12 +87,11 @@ const parseArgv = (argv) => {
   }
   if (!options.mode) throw fail(2, 'one of --report or --check is required — run with --help');
   if (!options.path) throw fail(2, `${`--${options.mode}`} takes a queue file path`);
-  // A cap named beside `--report` used to be accepted and then ignored, and the run still exited 0 —
-  // so an operator who meant to ask a question about the caps was told nothing and read the silence
-  // as an answer. The caps belong to `--check`; naming one here is a usage error, not a no-op.
-  const capsInReport = ['--max-rows', '--max-row-lines'].filter((flag) => seen.has(flag));
-  if (options.mode === 'report' && capsInReport.length) {
-    throw fail(2, `${capsInReport.join(' and ')} ${capsInReport.length > 1 ? 'are' : 'is'} a --check option — --report lists every row and judges no cap`);
+  // A check-only option named beside `--report` used to be accepted and then ignored, and the run
+  // still exited 0. Those options belong to `--check`; naming one here is usage, not a no-op.
+  const checkOnlyInReport = ['--max-rows', '--max-row-lines', '--require-names'].filter((flag) => seen.has(flag));
+  if (options.mode === 'report' && checkOnlyInReport.length) {
+    throw fail(2, `${checkOnlyInReport.join(' and ')} ${checkOnlyInReport.length > 1 ? 'are' : 'is'} a --check option — --report lists every row and judges no check-only rule`);
   }
   return options;
 };

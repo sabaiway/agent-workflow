@@ -72,6 +72,29 @@ describe('queue-audit — classification', () => {
     }
   });
 
+  it('an undated live word inside a name does not contradict a dated parked status', async () => {
+    const text = '- **Rows still pending a rename — A-ROW — PARKED 2026-09-04 until plan 2.** Body.';
+    assert.deepEqual(await classOf(text), ['parked']);
+  });
+
+  // The status vocabulary keeps its measured CASE asymmetry wherever it is read, and the name
+  // reader is no exception: an ordinary verb at the head of a title is not a record prefix.
+  // The DATED BARE TICK is a status the weaker question cannot see, and it was the one form the
+  // name drop still left inside a name — the row below was named by its own status text and passed
+  // the readability bar with no finding at all.
+  it('a dated bare check mark opening the title is a status, never part of the name', async () => {
+    const [row] = await rowsOf('- **✅ 2026-08-20 — PARKED 2026-08-21 by AD-105 — A-ROW.** Body.');
+    assert.equal(row.klass, 'ambiguous');
+    assert.equal(row.name, '');
+    assert.deepEqual(row.nameFindings.map(({ cause }) => cause), ['absent']);
+  });
+
+  it('an ordinary lower-case verb at the head of a title is not a status', async () => {
+    const [row] = await rowsOf('- **Tally the remaining broken gates — ROW-A.** Work.');
+    assert.equal(row.klass, 'live');
+    assert.equal(row.name, 'Tally the remaining broken gates', 'the name survives the status drop');
+  });
+
   it('a LOWER-CASE terminal word is prose, never a status', async () => {
     // Measured: matching terminal markers case-insensitively flipped EIGHT live rows of the real
     // corpus to terminal — "(decided 2026-07-22)", "…until resolved", "the class gets asked for" —
@@ -320,6 +343,48 @@ describe('queue-audit — classification', () => {
       '- **A-REAL-ROW — queued 2026-08-26.** Work.',
     ].join('\n');
     assert.deepEqual(await classOf(text), ['record', 'record', 'live']);
+  });
+
+  it('a record prefix reads at a segment head only when its date is adjacent', async () => {
+    const text = [
+      '- **A-ROW — TALLY 2026-08-26.** Counted.',
+      '- **A-ROW — SEQUENCING is what the dispatcher does — queued 2026-08-26.** Work.',
+    ].join('\n');
+    assert.deepEqual(await classOf(text), ['record', 'live']);
+  });
+
+  // A record is a STATE, reduced with the rest. Returning it early made a row that declares itself
+  // open a deletable `record`, and hid a closure behind the same single verdict.
+  it('a record beside another declared state is a contradiction, never a deletable record', async () => {
+    const rows = [
+      '- **QUEUED 2026-09-04 — TALLY 2026-09-04 — A-ROW.** Work.',
+      '- **DONE 2026-09-04 — TALLY 2026-09-04.** Work.',
+      '- **A row waits on the chain — A-ROW — PARKED 2026-09-04 by AD-105 — TALLY 2026-08-26.** Body.',
+    ].join('\n');
+    assert.deepEqual(await classOf(rows), ['ambiguous', 'ambiguous', 'ambiguous']);
+    // A tick OPENING the record's own segment is consumed by that status, exactly as a terminal
+    // status consumes its own — the row keeps the refusal it always earned, and the evidence names
+    // the marker that decided it.
+    const [ticked] = await rowsOf('- **A-ROW — ✅ TALLY 2026-09-04.** Work.');
+    assert.equal(ticked.klass, 'record');
+    assert.match(ticked.evidence, /opens with TALLY/u);
+    // It consumes THAT tick and no other: a second done marker elsewhere in the title is still a
+    // mention, or a row carrying one becomes a DELETABLE record on the strength of the counter.
+    const two = await classOf('- **✅ Plan 3 / 3 — a readable row name — ✅ TALLY 2026-09-04.** Work.');
+    assert.deepEqual(two, ['ambiguous']);
+    // Every tick a record segment consumes is counted, so two counters stay the record they are.
+    const both = await classOf('- **✅ TALLY 2026-09-04 — ✅ SEQUENCING 2026-09-04.** Work.');
+    assert.deepEqual(both, ['record']);
+  });
+
+  // Narrowing the live reading to a status POSITION may never move a row INTO a deletable class.
+  // The narrow reading is what makes the PARKED twin above `parked`; against a dated closure the
+  // same name lost its contradiction and the row landed in the deletable set.
+  it('an undated live word in a name still contradicts a dated CLOSURE', async () => {
+    const text = '- **Rows still pending a rename — A-ROW — DONE 2026-09-04.** Body.';
+    const [row] = await rowsOf(text);
+    assert.equal(row.klass, 'ambiguous', 'a terminal verdict here authorises a deletion');
+    assert.match(row.evidence, /PENDING/u);
   });
 
   it('a title carrying BOTH a terminal and a live marker is ambiguous, never auto-deleted', async () => {

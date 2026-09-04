@@ -12,8 +12,10 @@ describe('queue-audit — the report', () => {
     const { auditQueue, formatReport } = await load();
     const text = ['- **A-ROW — queued 2026-08-26.** Work.', '- **B-ROW — ✅ DONE 2026-08-20.** Shipped.'].join('\n');
     const report = formatReport(auditQueue(text));
+    assert.equal(report.split('\n')[2], '# line\tclass\tlines\ttitle\tevidence');
     const body = report.split('\n').filter((line) => /^\d+\t/.test(line));
     assert.equal(body.length, 2);
+    assert.ok(body.every((line) => line.split('\t').length === 5), 'every row keeps exactly five fields');
     assert.match(body[0], /^1\tlive\t/);
     assert.match(body[1], /^2\tterminal\t/);
     assert.match(body[1], /B-ROW/);

@@ -138,6 +138,9 @@ condition is not terminal and stays, in its own bucket. Order inside a bucket IS
 A prose promise to trim later has been measured failing: a checker over the file is the rung, and it
 is runnable — `node <kit>/tools/queue-audit-cli.mjs --check docs/plans/queue.md --section '<bucket
 heading>' --max-rows <n> --max-row-lines <n>`, declared as a project gate once the queue has migrated.
+The opening sentence has a rung too: append `--require-names` and a row whose name is not a sentence
+refuses. It is an OPT-IN a project adds once its rows are named — without the flag a nameless row is
+only a note, so the gate line a project wrote before this rule keeps its verdict byte for byte.
 
 ## The plan must read cold
 

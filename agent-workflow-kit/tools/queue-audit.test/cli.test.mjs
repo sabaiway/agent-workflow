@@ -133,6 +133,22 @@ describe('queue-audit — the CLI', () => {
     assert.equal((await run(['--report', path])).code, 0, 'the report itself is unaffected');
   });
 
+  // spec:queue-row-name/S7
+  it('--require-names promotes name notes and is a check-only singleton', async () => {
+    const path = write('- **ROW-A** Work.\n');
+    const advisory = await run(['--check', path]);
+    assert.equal(advisory.code, 0);
+    const note = advisory.out.split('\n').find((line) => line.includes('(absent)'));
+    assert.match(note, /:1:.*name ""/u);
+
+    const required = await run(['--check', path, '--require-names']);
+    assert.equal(required.code, 1);
+    assert.equal(required.err, note, 'the same finding moves from stdout to stderr');
+    assert.equal((await run(['--report', path, '--require-names'])).code, 2);
+    assert.equal((await run(['--check', path, '--require-names', '--require-names'])).code, 2);
+    assert.match((await run(['--help'])).out, /--require-names/u);
+  });
+
   // spec:queue-audit/S10
   it('a LARGE report reaches a pipe WHOLE — the process never exits before stdout drains', async (t) => {
     const rows = Array.from({ length: 4000 }, (_, i) => `- **ROW-${i} ${'x'.repeat(220)} — queued 2026-08-26.** body`);

@@ -23,6 +23,8 @@
 //
 // Pure string functions. No IO, no argv, no side effects on import. Dependency-free, Node >= 22.
 
+import { nameOf } from './queue-row-name.mjs';
+
 // The closed list the queue actually uses. `DONE` and `CLOSED` are the two fold-scope already knows
 // (its CLOSED_MARKERS); the rest are the states this corpus grew on its own. The check mark is a
 // marker in its own right because the file's DONE-entry convention leads with it.
@@ -37,7 +39,9 @@ export const FROZEN_MARKERS = ['PARKED', 'STOPPED'];
 // writes deliberately, and a wider list would turn ordinary words into status.
 export const LIVE_MARKERS = ['QUEUED', 'PENDING'];
 
-// Not work: a counter and an ordering note. Matched at the START of the title only.
+// Not work: a counter and an ordering note. Read by POSITION like every other status — the head of
+// the title, or the head of a ` — `-separated segment, and everywhere but the title head the marker
+// owes a DATE adjacent to it, the form the counter is always written in.
 export const RECORD_PREFIXES = ['TALLY', 'SEQUENCING'];
 
 export const CLASSES = ['live', 'terminal', 'parked', 'record', 'ambiguous'];
@@ -97,7 +101,9 @@ export const titleOf = (blockLines, gaps = new Set()) => {
   // mistaken for a row that declares a state.
   const display = span((line) => String(line ?? '').replace(/\r/g, ''));
   const judged = span(quoteFree);
-  return { text: flatten(display.raw).replace(/`/g, ''), judged: flatten(judged.raw), endLine: display.endLine };
+  const text = flatten(display.raw).replace(/`/g, '');
+  const { name, id } = nameOf(nameSource(text));
+  return { text, name, id, judged: flatten(judged.raw), endLine: display.endLine };
 };
 
 // A word-boundary match that survives punctuation the corpus writes (`— CLOSED 2026-08-21 ·`), and
@@ -126,9 +132,11 @@ export const titleOf = (blockLines, gaps = new Set()) => {
 export const UNREAD_ITEM = /^(?:[*+](?:\s+\S|\s*$)|-\s*$)/;
 
 const IDENT = '[A-Za-z0-9_-]';
+const wordMatches = (text, marker, { anyCase = false } = {}) =>
+  Array.from(String(text).matchAll(new RegExp(`(?<!${IDENT})${marker}(?!${IDENT})`, anyCase ? 'giu' : 'gu')));
 const carries = (text, marker, { anyCase = false } = {}) =>
   /^[A-Za-z]+$/.test(marker)
-    ? new RegExp(`(?<!${IDENT})${marker}(?!${IDENT})`, anyCase ? 'i' : '').test(text)
+    ? wordMatches(text, marker, { anyCase }).length > 0
     : text.includes(marker);
 
 const markersIn = (text, list, options) => list.filter((marker) => carries(text, marker, options));
@@ -189,14 +197,17 @@ const DATED_STATUS = /^(?:\s*\+\s*[A-Z][A-Z-]*)*\s*\d{4}-\d{2}-\d{2}/;
 // `requireDate: false` answers the WEAKER question — does this span OPEN with a status word at all —
 // which is what separates "no status here" from "a status word with no date beside it". The second
 // is not silence: it is a row a human has to settle.
-export const leadMarkers = (span, list = TERMINAL_MARKERS, { requireDate = true } = {}) => {
+export const leadMarkers = (span, list = TERMINAL_MARKERS, { requireDate = true, anyCase = false } = {}) => {
   let rest = String(span).replace(/\r/g, '').trimStart();
   const tick = rest.startsWith('✅');
   if (tick) rest = rest.slice(1).trimStart();
   const word = LEAD_WORD.exec(rest);
-  const named = word ? list.filter((m) => m === word[1]) : [];
+  // The tick joins the answer only when the LIST being asked about carries it. Prepending it to a
+  // frozen, live or RECORD answer named the wrong marker in the evidence a deletion is read from.
+  const named = word ? list.filter((m) => anyCase ? m.toLowerCase() === word[1].toLowerCase() : m === word[1]) : [];
+  const withTick = (found) => (tick && list.includes('✅') ? ['✅', ...found] : found);
   if (named.length && (!requireDate || DATED_STATUS.test(rest.slice(word[1].length)))) {
-    return tick ? ['✅', ...named] : named;
+    return withTick(named);
   }
   // A BARE check mark declares nothing on its own — the corpus writes `**✅ ENTRY GATE OPEN …**` for
   // a LIVE gate — so it counts only in its DATED form, and the weaker question never takes it.
@@ -213,13 +224,53 @@ export const leadMarkers = (span, list = TERMINAL_MARKERS, { requireDate = true 
 // pieces; a bracket or a colon would make `(CLOSED is an input)` and `note: DONE is a token` into
 // status heads, which is a row ABOUT status words being deleted for containing them.
 const SEGMENT_SPLIT = /\s+[—–]\s+/;
-const statusMarkersIn = (title, list) => [
+const statusMarkersIn = (title, list, options) => [
   ...new Set(
     String(title)
       .split(SEGMENT_SPLIT)
-      .flatMap((segment) => leadMarkers(segment, list)),
+      .flatMap((segment) => leadMarkers(segment, list, options)),
   ),
 ];
+
+// The NAME is what remains after the row's own STATUS declarations, and this is where the two
+// grammars meet: the readability judge owns the sentence, this module owns the status vocabulary, so
+// the drop happens HERE rather than by restating four marker lists in a second home. Every LEADING
+// ` — `-segment that OPENS with a status word is removed before the name is cut — measured on the
+// live corpus, `PARKED 2026-08-21 by AD-105 (…) — QUEUED 2026-08-20 — B — A-PLAN-REVIEW-…` was
+// passing the readability bar with its own PARKED declaration as the row's "name", which is the
+// exact class of unreadable row the bar exists for. The date is not required here: the question is
+// only whether a human reading the head of that segment meets a status word instead of a name.
+// Stated residual: the segments are judged on the DISPLAY text, so a QUOTED status word opening a
+// segment drops it too — a stricter name, never a missed one.
+// The CASE asymmetry is the classifier's own and it holds here too: terminal, frozen and record
+// words are SHOUTED, live words are not. Reading all four case-insensitively deleted the name of a
+// row that opens with an ordinary verb — `Tally the remaining broken gates — ROW-A` lost its whole
+// name to a `TALLY` that was never there. And the remainder is returned as a SLICE of the display
+// title, never re-joined from the split parts: re-joining rewrote every en dash the row wrote into
+// an em dash, so the "name" stopped being the bytes a human is shown.
+const SHOUTED_STATUS = [...TERMINAL_MARKERS, ...FROZEN_MARKERS, ...RECORD_PREFIXES];
+const opensWithStatus = (segment) =>
+  leadMarkers(segment, SHOUTED_STATUS, { requireDate: false }).length > 0
+  // The DATED bare tick is a status the weaker question cannot see — that arm is guarded by
+  // `requireDate` — and it was the one form of status this drop still left inside a name:
+  // `✅ 2026-08-20 — PARKED 2026-08-21 by AD-105 — A-ROW` was named by its own status text and
+  // passed the bar with no finding at all, which is the blocker this drop exists to close.
+  || leadMarkers(segment, TERMINAL_MARKERS).length > 0
+  || leadMarkers(segment, LIVE_MARKERS, { requireDate: false, anyCase: true }).length > 0;
+const nameSource = (title) => {
+  const text = String(title);
+  let at = 0;
+  for (const segment of text.split(SEGMENT_SPLIT)) {
+    const start = text.indexOf(segment, at);
+    if (!opensWithStatus(segment)) return text.slice(start);
+    at = start + segment.length;
+  }
+  return '';
+};
+
+const datedMarkersIn = (title, list, options) => list.filter((marker) =>
+  wordMatches(title, marker, options).some((match) => DATED_STATUS.test(String(title).slice(match.index + match[0].length))),
+);
 
 const boldStatusMarkers = (blockLines, from, { list = TERMINAL_MARKERS, gaps, ...options } = {}) => {
   for (let offset = from + 1; offset < blockLines.length; offset += 1) {
@@ -233,15 +284,20 @@ const boldStatusMarkers = (blockLines, from, { list = TERMINAL_MARKERS, gaps, ..
 
 const evidenceOf = (parts) => parts.filter(Boolean).join(' + ');
 
-// classifyRow(blockLines) -> { klass, evidence }. The order of the arms IS the rule: a record is
-// judged before any status, a contradiction before the state it contradicts, and `live` is what
-// survives when nothing else decided.
+// classifyRow(blockLines) -> { klass, evidence }. The order of the arms IS the rule: a
+// contradiction is judged before the state it contradicts, and `live` is what survives when nothing
+// else decided. A RECORD is a state like any other and is reduced with the rest: returning it early
+// made `QUEUED 2026-09-04 — TALLY 2026-09-04 — A-ROW` a deletable `record` while the row said it was
+// open, and hid a `DONE …` beside a `TALLY …` behind a single verdict.
 export const classifyRow = (blockLines, gaps) => {
   const { judged: title, endLine } = titleOf(blockLines, gaps);
   // The prefix must be a whole token: `TALLYING-FAILURES-HAS-NO-RUNG` and `SEQUENCING-BUG-IN-THE-
   // DISPATCHER` are work, and a bare `startsWith` would have the checker demand their deletion.
-  const record = RECORD_PREFIXES.find((prefix) => new RegExp(`^${prefix}(?!${IDENT})`).test(title));
-  if (record) return { klass: 'record', evidence: `title opens with ${record}` };
+  const records = String(title)
+    .split(SEGMENT_SPLIT)
+    .flatMap((segment, index) => leadMarkers(segment, RECORD_PREFIXES, { requireDate: index !== 0 })
+      .map((prefix) => ({ prefix, index, tick: segment.trimStart().startsWith('✅') })));
+  const [record] = records;
 
   // EVERY status of every class is gathered BEFORE anything is decided. Deciding as they were found
   // made two states unreachable: a frozen title returned before the contradiction arms could see a
@@ -250,8 +306,20 @@ export const classifyRow = (blockLines, gaps) => {
   // state at all.
   const titleFrozen = statusMarkersIn(title, FROZEN_MARKERS);
   const titleTerminal = statusMarkersIn(title, TERMINAL_MARKERS);
-  const titleLive = markersIn(title, LIVE_MARKERS, { anyCase: true });
-  const bodyTerminal = boldStatusMarkers(blockLines, endLine, { gaps });
+  const bodyTerminalAt = boldStatusMarkers(blockLines, endLine, { gaps });
+  // Narrowing the live reading to a status POSITION may never move a row INTO a deletable class.
+  // The narrow reading is what lets `Rows still pending a rename — A-ROW — PARKED 2026-09-04` be
+  // parked instead of ambiguous; applied to the same name beside a dated `DONE`, it deleted the
+  // contradiction and handed the row to a purge. So wherever the row already declares a TERMINAL or
+  // a RECORD state, the wide reading — a live word anywhere in the title, in any case — is added
+  // back: there it can only ever ADD ambiguity, and this grammar errs toward keeping a row.
+  const deletable = Boolean(titleTerminal.length || record || bodyTerminalAt);
+  const titleLive = [...new Set([
+    ...statusMarkersIn(title, LIVE_MARKERS, { anyCase: true, requireDate: false }),
+    ...datedMarkersIn(title, LIVE_MARKERS, { anyCase: true }),
+    ...(deletable ? markersIn(title, LIVE_MARKERS, { anyCase: true }) : []),
+  ])];
+  const bodyTerminal = bodyTerminalAt;
   const bodyFrozen = boldStatusMarkers(blockLines, endLine, { gaps, list: FROZEN_MARKERS });
   // The body declares LIVE too, and leaving it out of the table was the dangerous half: a row whose
   // body said `**QUEUED 2026-08-20:**` and then `**CLOSED 2026-01-01:**` was read as simply closed —
@@ -264,8 +332,18 @@ export const classifyRow = (blockLines, gaps) => {
   // `✅ Plan 3 / 3 — …` as a done marker (ten such rows), so dropping it turned ten reported rows
   // silent; in a BOLD BODY span it writes `**✅ ENTRY GATE OPEN …**` for a gate that OPENED. Same
   // glyph, two positions, two meanings — and the position is what this module already reads.
+  // A tick OPENING the record's own segment is consumed by that status exactly as a terminal status
+  // consumes its own: without this, `A-ROW — ✅ TALLY 2026-09-04` took the mention arm and became
+  // `ambiguous`, dropping the record refusal the row had always earned. It consumes THAT tick and no
+  // other, counted rather than assumed: suppressing every tick in the title made
+  // `✅ Plan 3 / 3 — a readable name — ✅ TALLY 2026-09-04` a DELETABLE record while one of its two
+  // done markers had nothing to do with the counter. Counting the ticks EVERY record segment
+  // consumes is what keeps `✅ TALLY 2026-09-04 — ✅ SEQUENCING 2026-09-04` the record it is.
+  const ticks = (String(title).match(/✅/gu) ?? []).length;
+  const consumed = records.filter((sighting) => sighting.tick).length;
   const mentioned = markersIn(title, [...TERMINAL_MARKERS, ...FROZEN_MARKERS]).filter(
-    (marker) => !titleTerminal.includes(marker) && !titleFrozen.includes(marker),
+    (marker) => !titleTerminal.includes(marker) && !titleFrozen.includes(marker)
+      && !(marker === '✅' && consumed > 0 && ticks <= consumed),
   );
   if (!titleTerminal.length && !titleFrozen.length && mentioned.length) {
     return { klass: 'ambiguous', evidence: `title mentions ${mentioned.join(', ')} outside a status position` };
@@ -276,6 +354,10 @@ export const classifyRow = (blockLines, gaps) => {
   // stayed terminal and kept authorising a deletion while the row declared two things. Two sightings
   // of the SAME class are one state (a title and a body that agree do not contradict).
   const sightings = [
+    record && {
+      klass: 'record',
+      evidence: `${record.index === 0 ? 'title' : `title segment ${record.index + 1}`} opens with ${record.prefix}`,
+    },
     titleTerminal.length && { klass: 'terminal', evidence: `title: ${titleTerminal.join(', ')}` },
     titleFrozen.length && { klass: 'parked', evidence: `title: ${titleFrozen.join(', ')}` },
     titleLive.length && { klass: 'live', evidence: `title: ${titleLive.join(', ')}` },
@@ -306,5 +388,3 @@ export const classifyRow = (blockLines, gaps) => {
 
   return { klass: 'live', evidence: 'no status marker' };
 };
-
-// The `[from, to)` body-line window a `--section` names: it opens after that heading and closes at

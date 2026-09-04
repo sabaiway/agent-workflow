@@ -168,9 +168,34 @@ describe('feedback queue row rendering [spec:feedback-triage/S5]', () => {
     assert.equal(rendered.length, 1);
     const text = rendered[0];
     const title = text.split('\n')[0];
+    const claim = 'Alpha | beta';
+    const id = 'ROW-A';
+    assert.ok(title.indexOf(claim) < title.indexOf(id), 'the claim sentence opens the title and its id follows');
     assert.ok(title.includes('ROW-A') && title.includes('Alpha | beta') && !title.includes('Gamma'));
     for (const token of ['ROW-A', 'Alpha | beta', 'Gamma', 'confirmed', 'corrected', 'src/a.mjs:1', 'src/b.mjs:2-3', 'src/d.mjs:5', 'docs/plans/FEEDBACK-fixture.md', HEAD]) assert.ok(text.includes(token), token);
     for (const skipped of ['ROW-B', 'Declined claim', 'Folded claim']) assert.ok(!text.includes(skipped), `${skipped} creates no skeleton row`);
+  });
+});
+
+describe('feedback queue row rendering reaches the queue name judge', () => {
+  // END TO END, because the two contracts meet here: the row this writer renders is read back by
+  // `queue-audit`'s name judge, and the id it emits (`ROW_ID` admits `FOO`, `TASK-123`, `1-TASK`)
+  // is only readable there because the writer MARKS it. The tuple is pinned exactly, marker and all.
+  it('renders a row whose name and id the queue audit reads back', async () => {
+    const { parseRecord, renderRows } = await load();
+    const { auditQueue } = await import('./queue-audit.mjs');
+    const parsed = parseRecord(record({ rows: ROWS }));
+    const [rendered] = renderRows(parsed, { date: '2026-09-04', recordPath: 'docs/plans/FEEDBACK-fixture.md' });
+    const [row] = auditQueue(rendered).rows;
+    assert.deepEqual(
+      { name: row.name, id: row.id, causes: row.nameFindings.map(({ cause }) => cause) },
+      { name: '[ ] Alpha | beta', id: 'ROW-A', causes: ['too-few-words'] },
+    );
+    // The marker is what carries the ids the heuristic deliberately does not read unmarked: the
+    // writer may legally emit `TASK-123`, and without ` id ` the judge takes the whole line as a name.
+    const { nameOf } = await import('./queue-row-name.mjs');
+    assert.equal(nameOf('Fix the dispatcher bug — id TASK-123 (2026-09-04)').id, 'TASK-123');
+    assert.equal(nameOf('Fix the dispatcher bug — TASK-123 (2026-09-04)').id, null);
   });
 });
 

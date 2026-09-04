@@ -18,7 +18,11 @@ const NOTES_HEADING = '## Notes';
 const TABLE_HEADER = '| # | Claim | Evidence | Verdict | Disposition |';
 const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
 const ANCHOR = /^`([^`,\s]+):([1-9][0-9]*)(?:-([1-9][0-9]*))?`$/u;
-const ROW_ID = '[A-Z0-9][A-Z0-9-]*';
+// The row id a checked record hands over, and the ONE home of that grammar: the queue's name
+// judge reads it back for the EXPLICITLY marked form (`— id <ID>`), so every id this writer may
+// legally emit round-trips through the judge — including `FOO`, `TASK-123` and `1-TASK`, which
+// the judge's own heuristic deliberately does not read unmarked.
+export const ROW_ID = '[A-Z0-9][A-Z0-9-]*';
 const QUEUE = new RegExp(`^queue (${ROW_ID})$`, 'u');
 const ALREADY_QUEUED = new RegExp(`^already-queued (${ROW_ID})$`, 'u');
 const REASONED_DISPOSITION = /^(?:declined|folded): (.+)$/u;
@@ -227,7 +231,7 @@ export const renderRows = (record, { date, recordPath }) => {
   return ids.map((id) => {
     const claims = record.claims.filter((claim) => QUEUE.exec(claim.disposition)?.[1] === id);
     return [
-      `- [ ] ${id}: ${claims[0].claim} (${date})`,
+      `- [ ] ${claims[0].claim} — id ${id} (${date})`,
       ...claims.map((claim) => `  - ${claim.claim}; verdict ${claim.verdict}; evidence ${claim.anchors.map(rendersAnchor).join(', ')}`),
       `  - record: ${recordPath}`,
       `  - head: ${record.head}`,
