@@ -46,7 +46,7 @@ Environment:
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.7 Flash (High)` | model display string; set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
+| `AGY_MODEL` | `Gemini 3.8 Flash (High)` | model display string; set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
 | `AGY_TIMEOUT` | `5m` | value passed to `--print-timeout` |
 | `AGY_HARD_TIMEOUT` | `= AGY_TIMEOUT` | hard `timeout(1)` wall-clock cap (a duration string) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | single-argv byte ceiling. `agy` takes the prompt as ONE `-p` argv; past `MAX_ARG_STRLEN` (~131072) `execve` fails with a cryptic `Argument list too long`. The wrapper measures the resolved `-`/`@file` prompt and fails loud over the ceiling. A huge **literal** `agy-run "<huge>"` fails at the wrapper's own `exec`, so route large prompts via `-`/`@file`. |
@@ -71,7 +71,7 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.7 Flash (High)` | frontier default (fork (a), 2026-08-14); **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
+| `AGY_MODEL` | `Gemini 3.8 Flash (High)` | frontier default (AD-136, 2026-09-09; 3.7 Flash (High) stays frontier, fork (a)); **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
 | `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory AND lets `code` run without `--facts` (an ungrounded probe never attests — its receipt is probe-marked) |
 | `AGY_REVIEW_MAX_TOTAL_BYTES` | `240000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `code` review's chunked feed may send; checked BEFORE the first turn is spent |
 | `AGY_REVIEW_ALLOW_ADDDIR` | `0` | **RETIRED** — recognized so an existing settings line never warns as unknown, but it arms nothing. An oversized `code` review is a chunked feed with a per-part delivery proof; the `--add-dir` offload it armed could not be verified (headless `agy` auto-denies `read_file`) |
@@ -97,15 +97,18 @@ Pass the **exact display string** from `agy models`, or set `AGY_MODEL`.
 
 | Model string | Practical use |
 |---|---|
-| `Gemini 3.7 Flash (Low)` | lowest-cost smoke tests, cheap probes, simple rewrites (newest Flash) |
-| `Gemini 3.7 Flash (Medium)` | fast summaries, context-reachability checks |
-| `Gemini 3.7 Flash (High)` | wrapper + review default — asserted frontier-grade (fork (a)) |
-| `Gemini 3.6 Flash (Low)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.6 Flash (Medium)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.6 Flash (High)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.8 Flash (Low)` | lowest-cost smoke tests, cheap probes, simple rewrites (newest Flash) |
+| `Gemini 3.8 Flash (Medium)` | fast summaries, context-reachability checks |
+| `Gemini 3.8 Flash (High)` | wrapper + review default — asserted frontier-grade (AD-136) |
+| `Gemini 3.7 Flash (Low)` | previous Flash generation, still served — prefer 3.8 |
+| `Gemini 3.7 Flash (Medium)` | previous Flash generation, still served — prefer 3.8 |
+| `Gemini 3.7 Flash (High)` | previous Flash generation, still frontier-grade for review (fork (a)) |
+| `Gemini 3.6 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.6 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.6 Flash (High)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.8 |
 | `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
 | `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
 | `Claude Sonnet 4.6 (Thinking)` | cross-vendor reasoning comparison |

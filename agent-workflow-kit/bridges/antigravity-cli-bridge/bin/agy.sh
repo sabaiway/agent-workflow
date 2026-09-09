@@ -19,8 +19,8 @@
 #
 # Model families (compact inventory only; run `agy models` for exact display strings, then pass
 # one via AGY_MODEL):
-#   Gemini 3.7 Flash (Low|Medium|High), Gemini 3.6 Flash (Low|Medium|High),
-#   Gemini 3.5 Flash (Low|Medium|High), Gemini 3.1 Pro (Low|High),
+#   Gemini 3.8 Flash (Low|Medium|High), Gemini 3.7 Flash (Low|Medium|High),
+#   Gemini 3.6 Flash (Low|Medium|High), Gemini 3.5 Flash (Low|Medium|High), Gemini 3.1 Pro (Low|High),
 #   Claude Sonnet 4.6 (Thinking), Claude Opus 4.6 (Thinking), GPT-OSS 120B (Medium)
 #
 # Usage (installed on PATH as `agy-run`):
@@ -240,8 +240,8 @@ if ! command -v agy >/dev/null 2>&1; then
 fi
 
 # `-` (empty) => skip --model and let agy use settings.json; default to Flash (High) — asserted
-# frontier-grade (fork (a), maintainer 2026-08-14).
-AGY_MODEL="${AGY_MODEL-Gemini 3.7 Flash (High)}"
+# frontier-grade (fork (a), maintainer 2026-08-14; the 3.8 pin AD-136, 2026-09-09).
+AGY_MODEL="${AGY_MODEL-Gemini 3.8 Flash (High)}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-5m}"
 AGY_TIMEOUT="$(aw_effective_timeout AGY_TIMEOUT 5m)"
 # Hard wall-clock cap (defaults to AGY_TIMEOUT). agy's own --print-timeout is NOT a reliable

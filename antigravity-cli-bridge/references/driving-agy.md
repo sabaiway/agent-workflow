@@ -18,14 +18,15 @@ edits, verification, and final judgment.
 
 | Task | Model |
 |---|---|
-| Reachability / smoke / "is it wired?" | `Gemini 3.7 Flash (Low)` |
-| Cheap probes, summaries | `Gemini 3.7 Flash (Medium)` |
-| Review, reasoning, careful drafting | `Gemini 3.7 Flash (High)` (wrapper default; asserted frontier-grade) |
+| Reachability / smoke / "is it wired?" | `Gemini 3.8 Flash (Low)` |
+| Cheap probes, summaries | `Gemini 3.8 Flash (Medium)` |
+| Review, reasoning, careful drafting | `Gemini 3.8 Flash (High)` (wrapper default; asserted frontier-grade, AD-136) |
+| The previous Flash generation, still frontier-grade for review | `Gemini 3.7 Flash (High)` (fork (a)) |
 | Slower, deeper reasoning pass | `Gemini 3.1 Pro (High)` |
 | Same Pro reasoning, lower quota cost | `Gemini 3.1 Pro (Low)` |
 | A different engine's opinion | `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, or `GPT-OSS 120B (Medium)` |
 
-The 3.6 / 3.5 Flash families remain served — prefer 3.7 (newest generation at the same tiers).
+The 3.7 / 3.6 / 3.5 Flash families remain served — prefer 3.8 (newest generation at the same tiers).
 Don't reach for Pro by reflex — Flash answers most reachability/probe questions for a fraction of the
 quota.
 
@@ -95,7 +96,7 @@ What it does for you, and what YOU must supply:
   `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED** (recognized, arms nothing): headless `agy` auto-denies its
   own `read_file`, so the offload it armed could return a confident fabrication with no way to tell.
   The kit never grants that permission — the feed exists so none is needed.
-- **Model:** frontier default `Gemini 3.7 Flash (High)`; any model is allowed (a sub-frontier one earns a
+- **Model:** frontier default `Gemini 3.8 Flash (High)`; any model is allowed (a sub-frontier one earns a
   silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.
 - **Posture banner — quote it verbatim.** Every review states its ACTUAL posture on ONE stderr line

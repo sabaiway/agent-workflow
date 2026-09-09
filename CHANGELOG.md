@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-09 — AD-136 the agy pin moves to Gemini 3.8 Flash (High) (kit 12.2.0 MINOR · agy bridge 5.7.0 MINOR · engine 5.1.0, memory 8.0.0 and codex bridge 3.8.0 unchanged)
+
+**A pin move on the AD-095 pattern, riding the kit as AD-135's codex move did.** `agy models` on the installed CLI
+(1.1.28, 2026-09-09) lists `Gemini 3.8 Flash (Low|Medium|High)` above the 3.7 rows; the maintainer ruled the default
+moves. Both agy wrappers now pin `Gemini 3.8 Flash (High)`, the review wrapper's frontier set carries it beside
+`Gemini 3.7 Flash (High)` (which stays advisory-silent for a host that pins it), every catalog table gains the three
+3.8 rows and every default-binding test — the bridge's, the kit's posture-parity pair and the status-line tail — moves
+with the pin, in the canon and in the byte-equal kit mirror. No row is removed and no catalog reader is built: the probe
+stays the hand-check lane. The same probe no longer lists the 3.5 Flash family the tables still call served; that is a
+queued row, not this release.
+
 ## 2026-09-05 — AD-134 a queue row carries a plain name, and `now` shows where the work stands from the evidence (kit 12.1.0 MINOR · engine 5.1.0 MINOR · codex bridge 3.8.0 MINOR · memory 8.0.0 and agy bridge unchanged)
 
 **Two plans, one series, one train.** The maintainer called a status answer unusable twice, both times because the

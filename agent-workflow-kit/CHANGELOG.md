@@ -4,6 +4,21 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 12.2.0 — the bundled agy bridge defaults to Gemini 3.8 Flash (High) (AD-136; antigravity-cli-bridge 5.7.0)
+
+**MINOR: a default moved, nothing was removed.** The kit bundles the agy bridge mirror, so the bridge's pin move rides
+this release; no kit tool changed behaviour.
+
+- **`Gemini 3.8 Flash (High)` is the bridge default for both roles** — `agy-run` and `agy-review` — and joins the review
+  wrapper's frontier set. The string is what `agy models` on the installed CLI (1.1.28, probed 2026-09-09) prints; a model
+  display string is matched exactly, so a stale default is a dispatch that refuses before it spends anything (AD-095).
+  `Gemini 3.7 Flash (High)` stays in the frontier set: a host that pins it explicitly keeps an advisory-silent council
+  review. Any model remains selectable through `AGY_MODEL`; the sub-frontier advisory is still a warning, never a gate.
+- **The catalog tables gain the three 3.8 rows**, enumerated individually, in the skill, the model reference and the
+  driving playbook; the wrapper's header inventory names the 3.8 family. No row is removed.
+- **The posture render follows the pin.** The status line and the D5 posture footer read the bundled manifest, so they
+  now print `agy model=Gemini 3.8 Flash (High)`; the posture-parity test pins the pair.
+
 ## 12.1.0 — a queue row carries a plain name a person can read, and `now` renders where the work stands from the evidence, never from the plan's own text (AD-134)
 
 **MINOR: two additive surfaces, one series, one new refusal.** The name judge is advisory until a gate line opts in, and `now` is

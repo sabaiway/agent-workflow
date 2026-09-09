@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '5.6.0'
+  version: '5.7.0'
 ---
 
 # antigravity-cli-bridge
@@ -53,20 +53,23 @@ keep probes short (see *How the main agent drives agy*).
 ## Models
 
 Pass the **exact display string** to `--model` (or set `AGY_MODEL`). The wrapper defaults to
-`Gemini 3.7 Flash (High)`. Run `agy models` for the live list — if it differs from this table, the
+`Gemini 3.8 Flash (High)`. Run `agy models` for the live list — if it differs from this table, the
 live list wins.
 
 | Model string | Use it for |
 |---|---|
-| `Gemini 3.7 Flash (Low)` | cheapest; reachability checks, smoke tests, simple transforms |
-| `Gemini 3.7 Flash (Medium)` | cheap probes, context-reachability checks, quick summaries |
-| `Gemini 3.7 Flash (High)` | wrapper + review default; asserted frontier-grade (fork (a)) |
-| `Gemini 3.6 Flash (Low)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.6 Flash (Medium)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.6 Flash (High)` | previous Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.7 |
-| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.7 |
+| `Gemini 3.8 Flash (Low)` | cheapest; reachability checks, smoke tests, simple transforms |
+| `Gemini 3.8 Flash (Medium)` | cheap probes, context-reachability checks, quick summaries |
+| `Gemini 3.8 Flash (High)` | wrapper + review default; asserted frontier-grade (AD-136) |
+| `Gemini 3.7 Flash (Low)` | previous Flash generation, still served — prefer 3.8 |
+| `Gemini 3.7 Flash (Medium)` | previous Flash generation, still served — prefer 3.8 |
+| `Gemini 3.7 Flash (High)` | previous Flash generation, still frontier-grade for review (fork (a)) |
+| `Gemini 3.6 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.6 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.6 Flash (High)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
+| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.8 |
 | `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
 | `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
 | `Claude Sonnet 4.6 (Thinking)` | a Claude second opinion through the same subscription |
@@ -100,7 +103,7 @@ can ride passthrough (`-- --output-format json`) but this wrapper adds no parsin
 you need structure, ask for Markdown with explicit headings and validate it yourself. (The `review`
 role is the one that adopted the JSON envelope — see below.) Wrapper inputs: first argument is the
 prompt (`text`, `-` for stdin, or `@file`);
-`AGY_MODEL` (default `Gemini 3.7 Flash (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
+`AGY_MODEL` (default `Gemini 3.8 Flash (High)`); `AGY_TIMEOUT` → `--print-timeout` (default `5m`);
 `AGY_HARD_TIMEOUT` → hard `timeout(1)` wall-clock cap (default = `AGY_TIMEOUT`); extra `agy` flags
 after `--`. Full detail: [`references/models-and-flags.md`](references/models-and-flags.md).
 
@@ -189,7 +192,7 @@ release). `agy-review … --nonce <n>` is the plain-argument equivalent
 (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane
 for hosts whose dispatch policy has no env-prefix form.
 
-Frontier default `Gemini 3.7 Flash (High)`; **any** model is allowed (a sub-frontier one earns a
+Frontier default `Gemini 3.8 Flash (High)`; **any** model is allowed (a sub-frontier one earns a
 silenceable `AGY_PROBE=1` advisory). An oversized `code` review is **DELIVERED, not refused**: the
 change set is cut into under-cap parts, fed over continuation turns and reviewed in a final turn, and
 the answer must reproduce a line the wrapper picked from each part — a missing or wrong echo is a
