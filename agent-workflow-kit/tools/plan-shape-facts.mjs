@@ -120,7 +120,7 @@ const compileGlob = (pattern) => {
   }
 };
 
-const expandPatterns = (repoFiles, patterns) => Object.fromEntries(patterns.map((pattern) => {
+export const expandPatterns = (repoFiles, patterns) => Object.fromEntries(patterns.map((pattern) => {
   const compiled = compileGlob(pattern);
   if (!compiled) throw planError(`unsupported glob in plan path: ${pattern}`);
   return [pattern, repoFiles.filter((path) => compiled.test(path))];

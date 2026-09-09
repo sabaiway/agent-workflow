@@ -169,6 +169,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/queue-audit-rows.mjs',
       'tools/queue-audit-cli.mjs',
       'tools/queue-row-name.mjs',
+      // the now render (spec kit/now) and its mode doc — by NAME because the mode doc renders the CLI path.
+      'tools/now-status.mjs',
+      'tools/now-plan-facts.mjs',
+      'tools/now-facts.mjs',
+      'tools/now-render.mjs',
+      'tools/now-cli.mjs',
+      'references/modes/now.md',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -759,7 +766,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 277 = 275 + the delegation read leaf and the pure held-session judge.
     // 287 = 285 + the feedback-record pure half and its CLI; NAMED because the feedback-triage procedure renders the CLI path.
     // 288 = 287 + tools/queue-row-name.mjs, the backlog queue's pure name reader and sentence-shape judge.
-    assert.equal(packed.length, 288, `tarball file count drifted (${packed.length} \u2260 288)`);
+    // 294 = 288 + the five now modules and references/modes/now.md (spec kit/now), all NAMED above.
+    assert.equal(packed.length, 294, `tarball file count drifted (${packed.length} \u2260 294)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

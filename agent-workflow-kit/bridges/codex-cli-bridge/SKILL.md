@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '3.7.0'
+  version: '3.8.0'
 ---
 
 # codex-cli-bridge
@@ -48,9 +48,9 @@ this skill. Both wrappers enforce the subscription path before invoking codex:
 
 ## Models quality-first pinned
 
-Delegated codex work ALWAYS runs on the **PINNED model at maximum reasoning effort**: the wrappers
-**pin** `gpt-5.6-sol` / `xhigh` and **refuse** (exit 2, loud) a non-default `CODEX_MODEL` / `CODEX_EFFORT`
-— knowingly-worse output is never traded for quota. The pin is deliberate: an explicit `-m gpt-5.6-sol`
+Delegated codex work ALWAYS runs on the **PINNED model at the PINNED reasoning effort**: the wrappers
+**pin** `gpt-6-astra` / `high` and **refuse** (exit 2, loud) a non-default `CODEX_MODEL` / `CODEX_EFFORT`
+— knowingly-worse output is never traded for quota. The pin is deliberate: an explicit `-m gpt-6-astra`
 names one model rather than following the CLI's current default. That the pinned id is also the
 *strongest* selectable Codex model is a **separate, time-bounded claim**, checked BY HAND against
 <https://developers.openai.com/codex/models>. There is **no automated gate and this file records no
@@ -63,8 +63,10 @@ either way between releases:
   available until someone re-checks the page.
 
 The guard is therefore a **pin-integrity** guard, not a quality guarantee: it enforces that runs use
-the id named here, and it refuses a *stronger* model exactly as it refuses a weaker one. Read a
-refusal as "not the pinned id", never as "a downgrade was prevented".
+the id named here, and it refuses a *stronger* model exactly as it refuses a weaker one. The effort
+pin is the same kind of decision: `high` is a deliberate posture, not the catalog maximum (`xhigh`,
+`max` and `ultra` exist above it), and the guard refuses a higher effort exactly as it refuses a lower
+one. Read a refusal as "not the pinned id", never as "a downgrade was prevented".
 
 Economy comes only from **quality-neutral waste removal** (clean capture, a hard timeout,
 a precomputed review diff, `resume` instead of re-sending context), never from a downgrade.
@@ -75,8 +77,8 @@ output as real delegated work.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | `gpt-5.6-sol` (pinned) | model passed to `-m`; a non-default is REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort (`-c model_reasoning_effort=…`); non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | `gpt-6-astra` (pinned) | model passed to `-m`; a non-default is REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | `high` (pinned) | reasoning effort (`-c model_reasoning_effort=…`); non-default REFUSED unless `CODEX_PROBE=1` |
 
 `codex --version` reports the CLI version, **not** the model list. Quota is metered in **messages**
 (a rolling 5h window + a weekly cap), not raw tokens — which is why the levers above are about removing
@@ -156,10 +158,10 @@ defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | `gpt-5.6-sol` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_EFFORT` | `xhigh` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | `gpt-6-astra` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | `high` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ a nonce-less exec warns loudly + runs uncapped, a **nonced** exec REFUSES pre-spend (an accounted dispatch that cannot be capped can never honour the terminal-exit rule), and `codex-review` REFUSES pre-spend (fail-closed preflight). |
-| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = ~1.5× token speed at a **2.5× credit rate** on gpt-5.6-sol — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-pinned 2026-07-05), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
+| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = "2x speed, **increased usage**" in the codex catalog's own words for gpt-6-astra (cache fetched 2026-09-05); it states no credit-rate figure — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-verified), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
 | `AW_REVIEW_NONCE` | unset | the flow dispatch nonce (safe grammar `[A-Za-z0-9._-]{1,64}` — anything else refuses pre-spend). `codex-review … --nonce <n>` is the plain-argument equivalent (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane for hosts whose dispatch policy has no env-prefix form. When supplied, a successful review first mints the finding MANIFEST `agent-workflow-finding-manifest-codex-<nonce>.json` beside the receipts file (atomic, no-clobber, ORDERED before the receipt append) — a failed mint EXCLUDES the receipt, so a nonce-supplied dispatch never lands a receipt without its readable manifest; nonce-less runs add no nonce field and mint nothing (the `wrapperVersion` field every receipt carries moves with each release) |
@@ -210,7 +212,7 @@ skipped entirely without a nonce: the wrapper is byte-unchanged, writes no artif
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
 **parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
 empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
-bridge: `CODEX_SERVICE_TIER` (the Fast tier — **2.5× credit rate**; enabling it is a consented
+bridge: `CODEX_SERVICE_TIER` (the Fast tier — **increased usage**; enabling it is a consented
 per-host spend decision, never a default), `CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES` —
 exactly the manifest `settings` block (the single source; the wrapper constants and `--help` are
 drift-guarded against it). Model/effort keys are **not** file-settable — the quality guard above

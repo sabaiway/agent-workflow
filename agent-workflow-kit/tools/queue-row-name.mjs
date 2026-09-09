@@ -4,7 +4,7 @@
 // this module classifies nothing and writes nothing. Governing contract:
 // docs/ai/specs/kit/queue-row-name.md.
 //
-// Measured 2026-09-04 on this repo's own `## Pending / backlog`: 167 of 247 work-carrying rows
+// Measured 2026-09-04 on this repo's own `## Pending / backlog`: 165 of 247 work-carrying rows
 // failed this bar and 121 of those opened with the id itself, so every status answer named the work
 // by machine ids the maintainer could not read. The fix is a rung, never a rule an agent remembers
 // — the remembered rule is the discipline that already failed.

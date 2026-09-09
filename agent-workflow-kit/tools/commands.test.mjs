@@ -293,6 +293,24 @@ describe('commands surface: catalog ⟷ SKILL.md set-equality with the dispatch 
   });
 });
 
+describe('commands surface: the now mode is present on every user-facing surface', () => {
+  it('pins its read-only kind, runnable mode line and README Use row', () => {
+    const command = commandFor('now');
+    assert.ok(command, 'the now catalog entry exists');
+    assert.equal(command.kind, READ_ONLY);
+    assert.equal(command.group, 'Inspect');
+    assert.match(command.oneLine, /plan.*text never sets a status/i);
+    assert.equal(routeInvocation('now --json'), 'now');
+    const skill = readFileSync(SKILL_MD, 'utf8');
+    assert.match(skill, /^### Mode: now$/m);
+    const mode = readFileSync(join(MODES_DIR, 'now.md'), 'utf8');
+    assert.match(mode, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/now-cli\.mjs --dir <project> --json/);
+    const row = readFileSync(README_MD, 'utf8').split('\n').find((line) => line.startsWith('| `/agent-workflow-kit now`'));
+    assert.ok(row, 'the README Use table carries the now row');
+    assert.match(row, /NOW.*STEPS.*QUEUE.*CAMPAIGN/);
+  });
+});
+
 // ── render: formatHelp + buildJson surface every command ─────────────────────────────────────────────
 
 describe('formatHelp / buildJson', () => {

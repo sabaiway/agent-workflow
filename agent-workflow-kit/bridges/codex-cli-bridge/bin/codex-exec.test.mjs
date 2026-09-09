@@ -194,10 +194,10 @@ describe('codex-exec.sh — quality-first model/effort guard (1.1)', { concurren
 
   it('refuses a non-default CODEX_EFFORT', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_EFFORT: 'high' } });
+    const r = await run(sb, { env: { CODEX_EFFORT: 'xhigh' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned max effort/);
+    assert.match(r.stderr, /not the pinned effort/);
   });
 
   it('CODEX_PROBE=1 allows a non-default model and warns loudly', async () => {
@@ -650,8 +650,8 @@ describe('codex-exec.sh — preflight (unchanged invariants)', { concurrency: 2 
 
 describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', { concurrency: 2 }, () => {
   const RESUME_INVARIANTS = [
-    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-5\.6-sol(\n|$)/,
-    /model_reasoning_effort=xhigh/, /sandbox_mode=workspace-write/,
+    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-6-astra(\n|$)/,
+    /model_reasoning_effort=high/, /sandbox_mode=workspace-write/,
     /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
   ];
 
@@ -1546,7 +1546,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
     const lines = banners(r.stderr);
     assert.equal(lines.length, 1, 'EXACTLY ONE banner line per run');
     assert.equal(lines[0],
-      'exec posture: model=gpt-5.6-sol effort=xhigh tier=standard sandbox=workspace-write session=fresh timeout=3600s');
+      'exec posture: model=gpt-6-astra effort=high tier=standard sandbox=workspace-write session=fresh timeout=3600s');
   });
 
   it('an ARMED Fast tier rides the banner (tier=priority)', async () => {
@@ -1642,11 +1642,11 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
 
   it('a banner field carrying CONTROL BYTES refuses pre-spend (model / effort / tier / timeout / DEL)', async () => {
     const cases = [
-      { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` },
-      { CODEX_EFFORT: `xhigh${String.fromCharCode(2)}` },
+      { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(1)}` },
+      { CODEX_EFFORT: `high${String.fromCharCode(2)}` },
       { CODEX_SERVICE_TIER: `priority${String.fromCharCode(3)}` },
       { CODEX_HARD_TIMEOUT: `3600${String.fromCharCode(4)}` },
-      { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` },
+      { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(127)}` },
     ];
     for (const env of cases) {
       const sb = makeSandbox();
@@ -2047,7 +2047,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2
     assert.equal(r.status, 71, r.stderr);
     assert.equal(held.state, 'reserved');
     assert.equal(held.wrapperVersion, MANIFEST.version, 'the receipt stamps the bridge version version-sync bumps');
-    assert.deepEqual(held.posture, { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null });
+    assert.deepEqual(held.posture, { model: 'gpt-6-astra', effort: 'high', tier: null });
     assert.equal(held.capS, 3600);
     assert.equal(held.killGraceS, 15);
     assert.match(held.contractDigest, /^[0-9a-f]{64}$/);

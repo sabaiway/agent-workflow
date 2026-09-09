@@ -85,6 +85,13 @@ const CATALOG = [
     oneLine: 'Show what is installed and at what version, your settings and backends, and what is deployed in this project.',
   },
   {
+    key: 'now',
+    invocation: invocationOf('now'),
+    group: 'Inspect',
+    kind: READ_ONLY,
+    oneLine: 'Show where work stands: NOW answers the plan and tree, STEPS the evidence-derived ledger state, QUEUE its named positions, and CAMPAIGN its size-practice figures; the plan’s own text never sets a status.',
+  },
+  {
     key: 'backends',
     invocation: invocationOf('backends'),
     group: 'Inspect',

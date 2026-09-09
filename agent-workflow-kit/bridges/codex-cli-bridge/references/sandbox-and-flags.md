@@ -47,7 +47,7 @@ carries the session id) into the run trace, with stderr merged into it; `--color
 `--color`, which stays on the fresh lane), so the resume lane is no longer the odd one out: it used
 to print its final message straight to stdout with the event stream nowhere, which left the very
 mode a nested-sandbox incident fired on without a structured evidence surface. Net effect: the wrapper prints just the final answer. **Reasoning still runs at
-`xhigh`** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
+the pinned effort** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
 session id from the trace and records it to `${CODEX_SESSION_FILE:-./.codex-last-session}` (so
 `--resume-last` can find it) and echoes `session: <id>` to stderr. On a missing/empty final-message
 file it falls back to the trace tail (loud, never silent).
@@ -63,8 +63,8 @@ failure is proven.
 
 ## Quality-first guard (pinned model & effort)
 
-The wrappers default `CODEX_MODEL=gpt-5.6-sol` and `CODEX_EFFORT=xhigh` and **refuse** (exit 2, loud) any
-non-default — delegated work always uses the PINNED model at max effort; quality is never traded for
+The wrappers default `CODEX_MODEL=gpt-6-astra` and `CODEX_EFFORT=high` and **refuse** (exit 2, loud) any
+non-default — delegated work always uses the PINNED model at the pinned effort; quality is never traded for
 quota. (Whether the pinned id is still the strongest selectable model is a hand-checked claim with no
 automated gate — see SKILL.md.) `CODEX_PROBE=1` relaxes this for a throwaway, effort-independent probe only (echoed loudly), and
 a probe still runs on the subscription, in the sandbox, with clean capture.
@@ -164,7 +164,7 @@ EVIDENCE posture as a fresh run — `-o` for the final message, `--json` into th
 
 A backgrounded/hung run survives otherwise, so both wrappers wrap codex in `timeout`/`gtimeout`
 (`--kill-after=15s`): `CODEX_HARD_TIMEOUT` defaults to **3600s (exec)** / **1800s (review)**, sized for a
-slow `xhigh` run. Exit 124/137 ⇒ "exceeded the hard cap" (raise the cap or narrow the task). If neither
+slow run at the pinned effort. Exit 124/137 ⇒ "exceeded the hard cap" (raise the cap or narrow the task). If neither
 `timeout` nor `gtimeout` is on `PATH`, `codex-exec` **warns loudly and runs uncapped** — never a silent
 no-op — while `codex-review` **refuses pre-spend** (the fail-closed hard-timeout preflight).
 
@@ -205,8 +205,8 @@ exec` over the precomputed diff instead, keeping every invariant intact.
 | `-o, --output-last-message <f>` | write ONLY the final message (clean capture) |
 | `--json` | structured event stream (`thread.started` ⇒ session id) |
 | `--output-schema <f>` | constrain output to a JSON schema (`CODEX_REVIEW_SCHEMA=1`) |
-| `-m <model>` | model (wrapper default `gpt-5.6-sol`, pinned via `CODEX_MODEL`) |
-| `-c model_reasoning_effort=<effort>` | reasoning effort (wrapper default `xhigh`, pinned via `CODEX_EFFORT`) |
+| `-m <model>` | model (wrapper default `gpt-6-astra`, pinned via `CODEX_MODEL`) |
+| `-c model_reasoning_effort=<effort>` | reasoning effort (wrapper default `high`, pinned via `CODEX_EFFORT`) |
 | `--ignore-user-config` | do NOT load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME` |
 | `--color never` | disable ANSI colour in output |
 

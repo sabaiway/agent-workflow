@@ -8,7 +8,7 @@ The reader + consent-gated **writer** for the **host-level** bridge settings fil
 
 | key | bridge | values | note |
 |---|---|---|---|
-| `CODEX_SERVICE_TIER` | codex | `priority` | **SPEND KNOB** — the "Fast" tier: ~1.5× token speed at a **2.5× credit rate** on gpt-5.6-sol, quality-neutral (same model). Default unset ⇒ standard tier. |
+| `CODEX_SERVICE_TIER` | codex | `priority` | **SPEND KNOB** — the "Fast" tier: "2x speed, **increased usage**" in the codex catalog's own words for gpt-6-astra (cache fetched 2026-09-05); it states no credit-rate figure; quality-neutral (same model). Default unset ⇒ standard tier. |
 | `CODEX_HARD_TIMEOUT` | codex | integer `1..86400` | hard wall-clock cap (seconds) via `timeout(1)`. |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | codex | integer `1..100000000` | codex-review payload size above which the diff rides a temp file (never truncated). |
 | `AGY_HARD_TIMEOUT` | agy | duration `5m`/`30m`/`90s` (unit required, nonzero) | hard wall-clock cap via `timeout(1)`. |
@@ -25,7 +25,7 @@ The reader + consent-gated **writer** for the **host-level** bridge settings fil
 
 **Refusals (the guarded contract):** an **unknown key** or an **invalid / out-of-range value** → exit `2` (nothing read of the file, nothing written). A file that already carries **duplicate keys** → exit `1`, named and left **byte-untouched** (fix the duplicates by hand first — the writer never edits blindly around them). A **symlinked / non-regular / unreadable** settings file → exit `1` (refuses to write through it). `--apply` with `--dry-run`, a duplicate op for one key, or a malformed `--set` → usage exit `2`.
 
-**Spend consent (D4):** enabling `CODEX_SERVICE_TIER=priority` costs a **2.5× credit rate** — a per-host, consented act, never a default. The preview shows the caveat (from the manifest `effect`); confirm with the user before `--apply`. The tool also warns when an env var currently shadows the key you are writing (the env value wins for that session until unset).
+**Spend consent (D4):** enabling `CODEX_SERVICE_TIER=priority` costs **increased usage** (the catalog states no credit-rate figure) — a per-host, consented act, never a default. The preview shows the caveat (from the manifest `effect`); confirm with the user before `--apply`. The tool also warns when an env var currently shadows the key you are writing (the env value wins for that session until unset).
 
 Output is **English/structured** — **localize it to the user's conversational language** when you narrate.
 

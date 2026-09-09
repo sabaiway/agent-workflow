@@ -21,7 +21,7 @@
 # back as a validated JSON object, with a raw-text fallback.
 #
 # Auth/policy: subscription-only, identical to codex-exec.sh. Quality-first: the
-# review runs on the PINNED model at max effort (advisory findings still bear on
+# review runs on the PINNED model at the pinned effort (advisory findings still bear on
 # what ships, so the same pin-integrity guard applies; CODEX_PROBE=1 relaxes it for
 # a throwaway probe only).
 #
@@ -39,7 +39,7 @@ set -euo pipefail
 case "${1:-}" in
   --help|-h)
     cat <<'HELP'
-codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; the PINNED model at max effort).
+codex-review — read-only ADVISORY review by the OpenAI Codex CLI (subscription-only; the PINNED model at the pinned effort).
 
 Usage:
   codex-review plan <plan-file> [--nonce <n>]
@@ -91,7 +91,7 @@ Receipt:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6-astra, cache fetched 2026-09-05; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 1800)
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
@@ -279,15 +279,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_CODEX_MODEL="gpt-5.6-sol"
-DEFAULT_CODEX_EFFORT="xhigh"
+DEFAULT_CODEX_MODEL="gpt-6-astra"
+DEFAULT_CODEX_EFFORT="high"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.7.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="3.8.0"  # aw-version-anchor
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
-# Generous hard cap for a slow xhigh review (subscription latency varies).
+# Generous hard cap for a slow review at the pinned effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
 # file instead of inline — never truncated.
@@ -298,11 +298,12 @@ CODEX_REVIEW_MAX_TOTAL_BYTES="${CODEX_REVIEW_MAX_TOTAL_BYTES:-1500000}"
 # file), so the budget is pinned at the DEFAULT inline-payload cap — the map can never outgrow the
 # whole payload, and every realistic repo's map assembles byte-unchanged.
 AW_REVIEW_MAP_BUDGET_BYTES=1500000
-# Codex service tier (quality-neutral speed knob; live-probed 2026-07-05): default EMPTY ⇒ no
+# Codex service tier (quality-neutral speed knob): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.6-sol; quality-neutral —
-# same model). codex itself accepts ANY -c service_tier string silently (probe-verified), so
+# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6-astra, cache
+# fetched 2026-09-05; it states no credit-rate figure; quality-neutral — same model). codex itself
+# accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
 CODEX_SERVICE_TIER="${CODEX_SERVICE_TIER:-}"
@@ -365,13 +366,13 @@ if [[ "${CODEX_PROBE:-}" == "1" ]]; then
 else
   if [[ "$CODEX_MODEL" != "$DEFAULT_CODEX_MODEL" ]]; then
     echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned model '$DEFAULT_CODEX_MODEL'." >&2
-    echo "       A delegated review must run on the pinned model at max effort (quality-first)." >&2
+    echo "       A delegated review must run on the pinned model at the pinned effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi
   if [[ "$CODEX_EFFORT" != "$DEFAULT_CODEX_EFFORT" ]]; then
-    echo "error: CODEX_EFFORT='$CODEX_EFFORT' is not the pinned max effort '$DEFAULT_CODEX_EFFORT'." >&2
-    echo "       A delegated review must run at max reasoning effort (quality-first)." >&2
+    echo "error: CODEX_EFFORT='$CODEX_EFFORT' is not the pinned effort '$DEFAULT_CODEX_EFFORT'." >&2
+    echo "       A delegated review must run at the pinned reasoning effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi

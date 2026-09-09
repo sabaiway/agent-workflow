@@ -13,12 +13,12 @@
 #   - network access OFF: new dependencies / network installs are done by a human
 #   - approval_policy=never: there is no TTY in exec; anything needing escalation
 #     is refused and reported, then handled by hand
-#   - the PINNED model at maximum reasoning effort (quality-first — see below)
+#   - the PINNED model at the PINNED reasoning effort (quality-first — see below)
 #   - git WRITES are blocked by a physical shim (codex spawns git via execve, which
 #     bypasses shell functions) — the orchestrator owns the commit boundary.
 #
 # Quality-first (hard rule): delegated codex work ALWAYS runs on the PINNED
-# model at maximum reasoning effort. The defaults below are pinned and the wrapper
+# model at the PINNED reasoning effort. The defaults below are pinned and the wrapper
 # REFUSES a non-default CODEX_MODEL/CODEX_EFFORT — knowingly-worse output is never
 # traded for quota. The ONLY exception is a throwaway probe whose result does not
 # depend on effort: set CODEX_PROBE=1 (echoed loudly) to relax the guard. Economy
@@ -149,7 +149,7 @@ Notes:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — ~1.5x speed at a 2.5x credit rate on gpt-5.6-sol); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6-astra, cache fetched 2026-09-05; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 3600)
 
 Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only), AW_DISPATCH_NONCE (delegation dispatch nonce — mints the exec receipt; the --nonce <n> flag is its plain-argument equivalent), AW_DELEGATION_STORE (absolute delegation-store path; its dirname is where the receipt lands).
@@ -319,19 +319,20 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_CODEX_MODEL="gpt-5.6-sol"   # pinned model id (see SKILL.md: strongest-model status is hand-checked, ungated)
-DEFAULT_CODEX_EFFORT="xhigh"    # maximum reasoning effort — pinned
+DEFAULT_CODEX_MODEL="gpt-6-astra"   # pinned model id (see SKILL.md: strongest-model status is hand-checked, ungated)
+DEFAULT_CODEX_EFFORT="high"    # pinned reasoning effort — a deliberate posture, not the catalog maximum
 CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
 CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
-# Generous hard wall-clock cap, sized for a slow xhigh run (subscription latency
+# Generous hard wall-clock cap, sized for a slow run at the pinned effort (subscription latency
 # varies — a trivial reply was observed taking minutes). Raise for a known-healthy
 # long run; lowering it only risks killing real work.
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-3600}"
-# Codex service tier (quality-neutral speed knob; live-probed 2026-07-05): default EMPTY ⇒ no
+# Codex service tier (quality-neutral speed knob): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": ~1.5x token speed at a 2.5x credit rate on gpt-5.6-sol; quality-neutral —
-# same model). codex itself accepts ANY -c service_tier string silently (probe-verified), so
+# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6-astra, cache
+# fetched 2026-09-05; it states no credit-rate figure; quality-neutral — same model). codex itself
+# accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
 CODEX_SERVICE_TIER="${CODEX_SERVICE_TIER:-}"
@@ -372,14 +373,14 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.7.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="3.8.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.
 CODEX_KILL_GRACE_S=15
 
 # --- Quality-first guard: refuse any non-pinned model/effort ---------------
-# Real delegated runs must use the pinned model at max effort. A throwaway probe
+# Real delegated runs must use the pinned model at the pinned effort. A throwaway probe
 # (effort-independent result) may opt out with CODEX_PROBE=1, announced loudly.
 if [[ "${CODEX_PROBE:-}" == "1" ]]; then
   echo "warning: CODEX_PROBE=1 — THROWAWAY PROBE MODE. Quality guards relaxed; do NOT use this run's" >&2
@@ -387,13 +388,13 @@ if [[ "${CODEX_PROBE:-}" == "1" ]]; then
 else
   if [[ "$CODEX_MODEL" != "$DEFAULT_CODEX_MODEL" ]]; then
     echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned model '$DEFAULT_CODEX_MODEL'." >&2
-    echo "       Delegated codex work must run on the pinned model at max effort (quality-first)." >&2
+    echo "       Delegated codex work must run on the pinned model at the pinned effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi
   if [[ "$CODEX_EFFORT" != "$DEFAULT_CODEX_EFFORT" ]]; then
-    echo "error: CODEX_EFFORT='$CODEX_EFFORT' is not the pinned max effort '$DEFAULT_CODEX_EFFORT'." >&2
-    echo "       Delegated codex work must run at max reasoning effort (quality-first)." >&2
+    echo "error: CODEX_EFFORT='$CODEX_EFFORT' is not the pinned effort '$DEFAULT_CODEX_EFFORT'." >&2
+    echo "       Delegated codex work must run at the pinned reasoning effort (quality-first)." >&2
     echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
     exit 2
   fi
@@ -932,7 +933,7 @@ if [[ -n "$resume_mode" ]]; then
 else
   # `-o` writes ONLY codex's final message; `--json` streams structured events
   # (thread.started carries the session id). CoT is dropped and colour disabled, so
-  # the captured surfaces stay clean. Reasoning still runs at xhigh — quality is
+  # the captured surfaces stay clean. Reasoning still runs at the pinned effort — quality is
   # unchanged; we only stop printing the noise.
   codex_cmd=(codex exec
     --ignore-user-config

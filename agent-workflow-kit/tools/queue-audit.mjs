@@ -54,7 +54,7 @@ export { nameOf, nameFindings } from './queue-row-name.mjs';
 // ATX allows an optional CLOSING run of `#`, so `## Pending ##` and `## Pending` are the SAME
 // heading. Comparing raw text made them two: the audit took one, and every row under the other left
 // the domain silently — a section full of dead rows reported as zero rows and exit 0.
-const canonicalHeading = (text) =>
+export const canonicalHeading = (text) =>
   String(text ?? '')
     .replace(/\r/g, '')
     .replace(/\s+#+\s*$/, '')

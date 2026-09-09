@@ -172,10 +172,10 @@ describe('codex-review.sh — quality-first model/effort guard (1.1)', { concurr
 
   it('refuses a non-default CODEX_EFFORT', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_EFFORT: 'high' } });
+    const r = await run(sb, { env: { CODEX_EFFORT: 'xhigh' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned max effort/);
+    assert.match(r.stderr, /not the pinned effort/);
   });
 
   it('CODEX_PROBE=1 relaxes the guard and warns', async () => {
@@ -1646,8 +1646,8 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-5\.6-sol effort=xhigh tier=standard/, 'the banner states the actual run posture');
-    assert.deepEqual(receipts[0].posture, { model: 'gpt-5.6-sol', effort: 'xhigh', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
+    assert.match(r.stderr, /review posture: model=gpt-6-astra effort=high tier=standard/, 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: 'gpt-6-astra', effort: 'high', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
@@ -1657,7 +1657,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-5\.6-sol effort=xhigh tier=priority/);
+    assert.match(r.stderr, /review posture: model=gpt-6-astra effort=high tier=priority/);
     assert.equal(receipts[0].posture.tier, 'priority');
   });
 
@@ -1674,7 +1674,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
 
   it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the pinned-model guard', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(1)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -1689,7 +1689,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=gpt-5\.6-sol effort=xhigh tier=standard timeout=1800s$/m);
+    assert.match(r.stderr, /^review posture: model=gpt-6-astra effort=high tier=standard timeout=1800s$/m);
     assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
   });
 
@@ -1715,7 +1715,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
 
   it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: `gpt-5.6-sol${String.fromCharCode(127)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(127)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);

@@ -4,6 +4,65 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 12.1.0 — a queue row carries a plain name a person can read, and `now` renders where the work stands from the evidence, never from the plan's own text (AD-134)
+
+**MINOR: two additive surfaces, one series, one new refusal.** The name judge is advisory until a gate line opts in, and `now` is
+a new read-only command beside `status`. The one behaviour a deployed `queue-audit --check` line can see change: a heading a row
+swallows (an ATX line indented one to three spaces inside a row's body) now refuses with exit 2 and both one-keystroke corrections,
+where the audit used to scope around it silently and misjudge the rows after it — a document the corpus never writes.
+
+**The name judge (plan 1 of the series, landed repo-only in `da196b9`).** `tools/queue-row-name.mjs` cuts a row's display
+title at the id the row PRESENTS as one and judges the rest as a sentence: three or more words, one of the first three carrying
+a lower-case letter, a letter somewhere, never the id restated, never a run of the row's own status segments. `titleOf` returns
+`{ text, name, id, judged, endLine }` from ONE parse and every `auditQueue` row now carries `name`, `id`, `nameFindings` and
+`buckets` — the full line-numbered heading LINEAGE above the row, computed once inside the one parser.
+`queue-audit-cli --check --require-names` is the opt-in that turns a name finding into exit 1; without it every finding is a
+note and a gate line written before this release keeps its verdict byte for byte. A heading a row swallows — an ATX line
+indented one to three spaces inside a row's body — is REFUSED with its line and both one-keystroke corrections, because the
+document and the row scan read that line two ways and the corpus writes none. Two classifier defects fixed red-first: a live
+marker counts at a segment head or wherever dated, and a record prefix owes an adjacent date at every segment head but the title's; `feedback-record`'s
+row writer puts the claim sentence ahead of the id so the kit passes the gate it offers. Measured over this repo's queue: the
+shipped judge reports findings on 165 of the 247 work-carrying rows of `## Pending / backlog` before the migration, and the migration moved no class cell.
+
+**`now` (plan 2).** `/agent-workflow-kit now` — `node tools/now-cli.mjs --dir <project> [--format plain|ansi|json | --json]` —
+renders four blocks: **NOW** (every plan `plansInFlight` returns, its derived phase, the current and the next step, the tree
+fingerprint, the per-backend review verdict, the final receipt and the red-proof currency from `buildSummaryState`), **STEPS**
+(the ledger rows of each plan, one status each), **QUEUE** (every work-carrying row of `docs/plans/queue.md` folded under the heading PATH it
+carries, per-bucket per-class counts over all five classes, names never ids — an unnamed row prints `unnamed (line N)`; position is called priority
+ONLY in a bucket whose path passes through `## Pending / backlog`, every other bucket is archive), **CAMPAIGN** (the source-size
+practice's figures and config state; an absent opt-in config is a rendered state). The contract is `docs/ai/specs/kit/now.md`
+(live, S1–S10 bound). Its red line: a status is a function of the row's (path, verb) pair and the evidence at that path — the
+path fact, the changed set (ONE cached `diff --cached --name-only -z --no-renames`, both sides of a rename listed, then
+`computeWorkingState`'s unstaged and untracked
+sets, then the path fact; a path in both staged and unstaged is the named disagreement), and the exclusion fact (ONE cached
+`check-ignore -z --stdin`) — and the row's prose moves none: a checked box or a terminal marker outside quotation is a CLAIM
+printed beside the evidence-derived status wherever the two disagree. Four statuses, a closed set (`landed`, `in progress`, `pending`, `unjudged`); three
+annotations (claim, over-budget anomaly, a red-proof bound to the row's path at the current base). A present, clean `modify`
+row is `unjudged` and the render names WHICH fact is missing — `excluded from git here, no changed-set evidence` or `no
+base-motion reader` — never `landed`. A sweep row (`dir/**`, `modify` only) is judged as a SET: present when its expansion on disk is non-empty, changed when
+its pattern matches any path of a changed set (a deleted member included), excluded only when every member is. A git-dir
+store the summary cannot trust (a malformed receipts or evidence line) withholds the tree line with the store's own cause
+while every plan still renders; the final-run line names the receipt's verdict and gate count before its coverage token.
+Every status line carries its evidence source. The command writes nothing in any state:
+every git query it adds runs under `GIT_OPTIONAL_LOCKS=0`, and the suite proves a recursive content hash of `.git` identical
+before and after a run. Exit 0 whenever anything rendered (a WITHHELD block with its cause included), 1 when nothing did (a
+`--dir` that is not a git work tree), 2 for usage. Five modules — `now-status.mjs` (pure rules), `now-plan-facts.mjs`,
+`now-facts.mjs` (the IO shell), `now-render.mjs`, `now-cli.mjs` — registered in the catalog (Inspect, read-only), `SKILL.md`,
+`references/modes/now.md` and the README; the tarball pin counts 294. Stated residual: no reader in this family tells a
+tracked, unmodified file a plan already rewrote from one it never touched, so STEPS is complete when the base-motion reader
+lands; the write-nothing claim is proved dynamically, the structural read-graph proof waits on the core-evidence decomposition.
+
+**Bundled codex bridge 3.8.0 — the pin moves to `gpt-6-astra` at effort `high` (AD-135).** Both wrappers pin the model
+and the effort the maintainer chose; the quality-first guard stays a pin-integrity guard and now refuses `xhigh` exactly as it
+refuses `low` — every shipped sentence that called the pin "the maximum effort" says "the pinned effort", in the wrappers,
+the manifest `posture`, the bridge docs and the kit surfaces composed from the manifest (`recipes --status-line`,
+`bridge-settings`, `procedures`). The Fast tier stays a consented per-host knob (AD-043); its copy carries the codex
+catalog's own words for gpt-6-astra ("2x speed, increased usage", cache fetched 2026-09-05, no credit-rate figure stated)
+and the sol-era figures (~1.5x speed, 2.5x credit rate, probed 2026-07-05) are retired from every reader. The tier caveat
+still rides every render (`SPEND KNOB`). Version anchors: `capability.json`, `SKILL.md`, both `AW_BRIDGE_VERSION`
+lines; the kit mirror is byte-equal to the canon. A host that arms `CODEX_SERVICE_TIER=priority` runs gpt-6-astra /
+high / priority.
+
 ## 12.0.0 — the reader mirror refuses an open-list clause, the outgoing reader becomes a prior, the consult line names the second case and the lens walks around every check (AD-133)
 
 **MAJOR by the AD-117 class.** `references/scripts/spec-schema.mjs` and its test are the memory 8.0.0 bodies

@@ -273,7 +273,7 @@ export const main = (argv = [], ctx = {}) => {
     const body = joinLines(newLines);
 
     // The machine surface carries the SAME spend/credit-rate caveats the human preview prints (D4) — a
-    // --json consumer must not miss the 2.5x-credit consent warning the human render shows.
+    // --json consumer must not miss the spend consent warning the human render shows.
     const jsonBody = (wrote) => ({ path, wrote, noop, changes: changes.map((c) => ({ key: c.key, kind: c.kind, before: c.before, after: c.after })), envShadows, caveats });
 
     if (!apply || noop) {

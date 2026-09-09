@@ -32,8 +32,8 @@ describe('bridge-settings — reader', () => {
     for (const k of ['CODEX_SERVICE_TIER', 'CODEX_HARD_TIMEOUT', 'CODEX_REVIEW_MAX_TOTAL_BYTES', 'AGY_HARD_TIMEOUT', 'AGY_REVIEW_ALLOW_ADDDIR']) {
       assert.match(r.stdout, new RegExp(k));
     }
-    // The tier row always carries the credit-rate caveat (D4), fact-only, from the manifest effect.
-    assert.match(r.stdout, /2\.5x credit rate/);
+    // The tier row always carries the spend caveat (D4), fact-only, from the manifest effect.
+    assert.match(r.stdout, /increased usage[\s\S]*SPEND KNOB/);
   });
 
   // D3: recognition alone is not enough. A retired key stays in the registry (so an existing line
@@ -117,9 +117,9 @@ describe('bridge-settings — writer preview/apply', () => {
     assert.equal(readFileSync(confPath, 'utf8'), 'CODEX_SERVICE_TIER=priority\n');
   });
 
-  it('a set carries the credit-rate caveat on the tier (D4)', () => {
+  it('a set carries the spend caveat on the tier (D4)', () => {
     const r = main(['--set', 'CODEX_SERVICE_TIER=priority'], ctx());
-    assert.match(r.stdout, /2\.5x credit rate/);
+    assert.match(r.stdout, /increased usage[\s\S]*SPEND KNOB/);
   });
 
   it('--apply preserves comments + other keys, replacing ONLY the owned line', () => {

@@ -7,6 +7,28 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-05 — AD-134 a queue row carries a plain name, and `now` shows where the work stands from the evidence (kit 12.1.0 MINOR · engine 5.1.0 MINOR · codex bridge 3.8.0 MINOR · memory 8.0.0 and agy bridge unchanged)
+
+**Two plans, one series, one train.** The maintainer called a status answer unusable twice, both times because the
+artifact carried only machine names and the facts behind it were composed by hand. Plan 1 (repo-only, `da196b9`) gives
+every backlog row a plain NAME with a judge that refuses a slug, an id restated or a run of status words — advisory until a
+gate line adds `--require-names` — and carries each row's line-numbered heading lineage as a field; 165 of this repo's 247
+work-carrying backlog rows were renamed with no class cell moved. Plan 2 ships `/agent-workflow-kit now`: four read-only blocks (NOW · STEPS ·
+QUEUE · CAMPAIGN) over the readers the kit already has, where a ledger row's status is a function of its (path, verb) pair
+and the evidence at the path — the path fact, ONE cached staged diff plus the working state, ONE cached `check-ignore` —
+and the plan's own checkbox or marker is printed as a CLAIM beside that status, never as one. A clean, present `modify`
+row renders `unjudged` naming the missing fact (a git-excluded path, or the base-motion reader this family lacks), never
+`landed`; the queue folds by heading path and prints names, calling position priority only under `## Pending / backlog`;
+the command writes nothing, proved by a `.git` content hash under `GIT_OPTIONAL_LOCKS=0`. The engine's queue canon names
+the opt-in rung. Contract: `docs/ai/specs/kit/now.md` (live, S1–S10 bound).
+
+**Riding the same train — the codex pin moves (AD-135, codex bridge 3.8.0 MINOR).** Both codex wrappers pin `gpt-6-astra`
+at effort `high`, the maintainer's posture rather than the catalog's maximum: the guard stays a pin-integrity guard and
+refuses `xhigh` exactly as it refuses `low`, and every shipped sentence that said "max effort" says "the pinned effort".
+The Fast tier stays a per-host knob (AD-043) whose copy now carries the catalog's own words for gpt-6-astra ("2x speed,
+increased usage"); the sol-era speed and credit-rate figures are retired. The kit bundles the bridge, so the bump rides
+kit 12.1.0.
+
 ## 2026-09-03 — AD-133 a spec guarantee is an invariant, never an open list (memory 8.0.0 MAJOR · engine 5.0.0 MAJOR · kit 12.0.0 MAJOR · bridges unchanged)
 
 **One reader rule, two procedure sentences, a store revised by its code.** `feedback-triage.md` shipped a guarantee as
