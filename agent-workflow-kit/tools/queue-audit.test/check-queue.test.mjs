@@ -51,6 +51,51 @@ describe('queue-audit — checkQueue', () => {
     assert.match(tooMany.problems.join('\n'), /3 rows/);
   });
 
+  // spec:queue-audit/S21
+  it('range keeps every row and unread-item check while reporting the section in file lines', async () => {
+    const { auditQueue } = await load();
+    const lines = ['## Before', LIVE_ROW, '## Pending ##', 'Preamble.', LIVE_ROW,
+      '### Details', LIVE_ROW, '## After', LIVE_ROW];
+    for (const prefix of ['', '---\ntype: queue\n---\n']) {
+      const shift = prefix ? 3 : 0;
+      const text = prefix + lines.join('\n');
+      const { range, ...audit } = auditQueue(text, { range: '## Pending' });
+      assert.deepEqual(range, { headingLine: 3 + shift, from: 4 + shift, to: 8 + shift });
+      assert.equal(audit.total, 4);
+      assert.deepEqual(audit.counts, { live: 4, terminal: 0, parked: 0, record: 0, ambiguous: 0 });
+      assert.deepEqual(audit.rows.map((row) => row.line), [2, 5, 7, 9].map((line) => line + shift));
+      assert.deepEqual(audit, auditQueue(text));
+      assert.deepEqual(text.split('\n').slice(range.from - 1, range.to - 1), lines.slice(3, 7));
+      assert.throws(() => auditQueue(text + '\n* item', { range: '## Pending' }), { exitCode: 2 });
+    }
+    assert.deepEqual(auditQueue('## Empty\n## Next', { range: '## Empty' }).range,
+      { headingLine: 1, from: 2, to: 2 });
+    for (const ending of ['', '\n', '\r\n']) {
+      assert.deepEqual(auditQueue('## Empty' + ending, { range: '## Empty' }).range,
+        { headingLine: 1, from: 2, to: 2 });
+    }
+    assert.deepEqual(auditQueue(lines.join('\n'), { range: '## After' }).range,
+      { headingLine: 8, from: 9, to: 10 });
+    assert.throws(() => auditQueue(lines.join('\n'), { section: '## Before', range: '## Pending' }),
+      { exitCode: 2, message: /(?=.*section)(?=.*range)/ });
+    for (const text of ['## Other', '## Pending\n## Pending ##']) {
+      assert.throws(() => auditQueue(text, { range: '## Pending' }), { exitCode: 2 });
+    }
+  });
+
+  // spec:queue-audit/S22
+  it('authorisesRemoval admits only terminal and record, and checkQueue refuses those classes', async () => {
+    const { authorisesRemoval, checkQueue } = await load();
+    for (const klass of ['terminal', 'record']) assert.equal(authorisesRemoval(klass), true);
+    for (const klass of ['live', 'parked', 'ambiguous', 'unknown', undefined, null, 1, {}, ['terminal']]) {
+      assert.equal(authorisesRemoval(klass), false);
+    }
+    for (const [status, ok] of [['DONE 2026-09-10', false], ['TALLY 2026-09-10', false],
+      ['PARKED 2026-09-10', true], ['DONE 2026-09-10 — QUEUED 2026-09-10', true]]) {
+      assert.equal(checkQueue(`- **${status} — A-ROW.** Body.`).ok, ok);
+    }
+  });
+
   it('a queue inside its caps with no terminal rows is green', async () => {
     const { checkQueue } = await load();
     const result = checkQueue([LIVE_ROW, '- **B-ROW — queued 2026-08-26.** Work.'].join('\n'), {

@@ -49,6 +49,7 @@ export const CLASSES = ['live', 'terminal', 'parked', 'record', 'ambiguous'];
 // The classes that still carry work, and therefore still cost a reader attention: both caps judge
 // exactly these.
 export const CARRY_WORK = new Set(['live', 'parked', 'ambiguous']);
+export const authorisesRemoval = (klass) => klass === 'terminal' || klass === 'record';
 
 export const DEFAULTS = { maxRows: 60, maxRowLines: 12 };
 

@@ -4,6 +4,14 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.2.0 — the queue canon names the archive rung as runnable: `queue-purge-cli.mjs snapshot` before a purge, `--check` after it (AD-137)
+
+`references/planning.md`, `## The queue`: one sentence after the archive obligation — the rung is runnable, `node
+<kit>/tools/queue-purge-cli.mjs snapshot docs/plans/queue.md --section '<bucket heading>' --archive <file>` before
+the purge and the same line with `--check` in place of `snapshot` after it — modelled on the checker's sentence that
+follows. MINOR: one additive sentence in the canon; no contract line moves, no procedure step moves, no reader rule
+changes. Published on this train with kit 12.3.0, which ships the tool.
+
 ## 5.1.0 — the queue canon names the rung behind its opening sentence: `--require-names` is an opt-in a project adds once its rows are named (AD-134)
 
 `references/planning.md`, `## The queue`: two sentences after the gate line. The section's row sentence — a row is one plain

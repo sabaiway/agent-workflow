@@ -36,12 +36,12 @@
 
 import { tokenizeMarkdown, fail } from '../references/scripts/markdown-blocks.mjs';
 import { bulletBlocks } from './fold-scope.mjs';
-import { CARRY_WORK, CLASSES, DEFAULTS, UNREAD_ITEM, classifyRow, titleOf } from './queue-audit-rows.mjs';
+import { CARRY_WORK, CLASSES, DEFAULTS, UNREAD_ITEM, authorisesRemoval, classifyRow, titleOf } from './queue-audit-rows.mjs';
 import { nameFindings } from './queue-row-name.mjs';
 
 // The row grammar is re-exported so one import names the whole reader: the CLI, the tests and any
 // consumer ask this module, and the split into a rules half stays an implementation detail.
-export { CLASSES, DEFAULTS, TERMINAL_MARKERS, FROZEN_MARKERS, LIVE_MARKERS, RECORD_PREFIXES, classifyRow, leadMarkers, titleOf } from './queue-audit-rows.mjs';
+export { CLASSES, DEFAULTS, TERMINAL_MARKERS, FROZEN_MARKERS, LIVE_MARKERS, RECORD_PREFIXES, authorisesRemoval, classifyRow, leadMarkers, titleOf } from './queue-audit-rows.mjs';
 export { nameOf, nameFindings } from './queue-row-name.mjs';
 
 // The `[from, to)` body-line window a `--section` names: it opens after that heading and closes at
@@ -83,7 +83,8 @@ const sectionWindow = (headings, lines, section, frontLines = 0) => {
 // and beside them the fields a RENDERER reads: the row's plain `name`, the `id` the one parse cut
 // at, the `nameFindings` that name is judged by, and the line-numbered heading `buckets` it sits
 // under. They are computed here, once, so no consumer becomes a second grammar over this document.
-export const auditQueue = (text, { section = null, label = 'the queue' } = {}) => {
+export const auditQueue = (text, { section = null, range = null, label = 'the queue' } = {}) => {
+  if (section !== null && range !== null) throw fail(2, 'section and range are exclusive — name only one.');
   const { lines, headings, fencedLines, frontLines } = tokenizeMarkdown(String(text ?? ''), label);
   // ONE heading set answers BOTH questions this module asks of a heading — where a `--section` ends,
   // and which bucket a row sits in — so the rows of the whole document are scanned FIRST and a
@@ -107,6 +108,7 @@ export const auditQueue = (text, { section = null, label = 'the queue' } = {}) =
     throw fail(2, `line ${frontLines + index + 1} is a heading this document and its row scan read differently ("${lines[index].trim().slice(0, 40)}") — the row above swallows it as body while the document opens a section there, and judging around it would report a domain that was never looked at. Indent it past three spaces to make it body, or to column 0 to make it a heading.`);
   });
   const { from, to } = sectionWindow(documentHeadings, lines, section, frontLines);
+  const ranged = range === null ? null : sectionWindow(documentHeadings, lines, range, frontLines);
   // A fence CONTINUES a queue row rather than ending it, and the cap judges the row's PHYSICAL span.
   // Both halves are the same defect: a row carrying a code block reported one line and hid whatever
   // followed the fence — its length from the cap, and a closure from the classifier.
@@ -143,7 +145,14 @@ export const auditQueue = (text, { section = null, label = 'the queue' } = {}) =
     };
   });
   const counts = Object.fromEntries(CLASSES.map((klass) => [klass, rows.filter((row) => row.klass === klass).length]));
-  return { rows, counts, total: rows.length };
+  return {
+    rows, counts, total: rows.length,
+    ...(ranged === null ? {} : { range: {
+      headingLine: frontLines + ranged.from,
+      from: frontLines + ranged.from + 1,
+      to: frontLines + ranged.to + 1 - Number(ranged.to === lines.length && lines.at(-1) === ''),
+    } }),
+  };
 };
 
 // checkQueue(text, options) -> { ok, problems, notes }. A problem is a REFUSAL and every one of them
@@ -159,7 +168,7 @@ export const checkQueue = (text, options = {}) => {
   const notes = [];
 
   for (const row of rows) {
-    if (row.klass === 'terminal' || row.klass === 'record') {
+    if (authorisesRemoval(row.klass)) {
       problems.push(
         `${label}:${row.line}: a ${row.klass} row is still listed (${row.evidence}) — its story belongs to the ` +
           `ADR or the changelog, and the row leaves the queue in the same commit: ${row.title.slice(0, 80)}`,

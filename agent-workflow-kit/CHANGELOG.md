@@ -4,6 +4,46 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 12.3.0 — the purge archive is a tool: `queue-purge` snapshots a section's bytes and vouches for what leaves, and `queue-audit` exports the two surfaces it reads (AD-137)
+
+**MINOR: one new tool, two verbs, and the sibling's revision 6; no deployed gate line changes its verdict.** The canon has
+demanded a purge archive since the row grammar was written, as prose kept by hand — eight dated archives sat under
+`docs/ai/history/` tied by no checked fact to the queue they came out of. The rung is now a tool, and the contract is
+`docs/ai/specs/kit/queue-purge/` (live, revision 2, S1–S18 bound).
+
+- **`tools/queue-purge-cli.mjs snapshot <queue> --section <heading> --archive <file>`** writes the section's
+  heading line and range VERBATIM from the file's own bytes — every row, the preamble, the bucket headings — plus one
+  index entry per row (archived line, class, key, the title's first 80 characters) under a header that records the
+  date, the canonical section, the queue path, both byte lengths, the section sha256, the block sha256 (sealing every
+  other header field and the whole body) and the row count. A block is FRAMED by its recorded lengths, never found by
+  scanning backward; the archive grows by appended blocks, whole or not at all; a second snapshot of an unmoved
+  section refuses; a keyless row is archived and marked, with the count on stderr. `--check` reads the archive whole,
+  judges it intact, selects the last block for the section and refuses on exactly six causes — a key defect, not
+  intact, not moved, an addition, an unauthorised absence, a keyless entry — collected, each naming its row or offset.
+  The key of a row is its id and nothing else; a doubled id anywhere in the document refuses both verbs naming both
+  lines. Exit 0 accept · 1 refuse · 2 usage; `--archive` and `--section` are both required, every option and
+  positional at most once, `--help` only whole, an archive that resolves to the queue (path, symlink or hard link)
+  is usage, and the eight hand-written dated archives are foreign grammar (exit 2 naming line 1). Neither verb reads
+  a cap or judges a length or a name; the queue is byte-identical after both. Three modules under the 400-line cap —
+  `queue-purge-archive.mjs` (the grammar, the digests, the append-whole writer), `queue-purge.mjs` (the two verbs
+  over ONE document-wide parse), `queue-purge-cli.mjs` — and four suites under `tools/queue-purge.test/`.
+- **`queue-audit` revision 6 (`docs/ai/specs/kit/queue-audit/`, now a folder: index + `argv.md`).**
+  `authorisesRemoval(klass)` is exported from the row leaf — true for `terminal` and `record` only, false for every
+  other value, an unknown class included — and `checkQueue`'s still-listed refusal reads it, as the purge check does
+  over the class an archive block froze: two callers, one list. `auditQueue(text, { range })` — exclusive with
+  `section` — keeps the rows, counts, total and the unread-item refusal DOCUMENT-WIDE and adds
+  `range: { headingLine, from, to }` in file lines (half-open, an empty section included); a `section` call is
+  byte-identical to before, so a deployed gate line keeps its verdict. Scenarios S21 and S22 bind in
+  `queue-audit.test/check-queue.test.mjs`.
+- **The tarball** gains the three modules by name (297 files, from 294); the suites stay out of it.
+
+Repo-only, the tool's first live run: this repo's `## Pending / backlog` went from 257 rows / 7020 lines to 256 / 1717
+in the order the spec names — 8 doubled ids renamed, 120 keyless rows keyed, 8 ambiguous rows settled with no line
+added or deleted, one snapshot (257 rows, 655095 section bytes, no keyless note), five trim slices by bucket with
+every id byte-identical and one terminal row deleted, `--check` accepting at 256 rows; eight rows this release's own
+review filed after the check took the count to 264, so the gate line reads `--max-rows 264 --max-row-lines 10` under
+a one-sentence title with no ratchet log.
+
 ## 12.2.0 — the bundled agy bridge defaults to Gemini 3.8 Flash (High) (AD-136; antigravity-cli-bridge 5.7.0)
 
 **MINOR: a default moved, nothing was removed.** The kit bundles the agy bridge mirror, so the bridge's pin move rides

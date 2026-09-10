@@ -7,6 +7,24 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-10 — AD-137 the purge archive is a tool, and this repo's queue is purged to canon (kit 12.3.0 MINOR · engine 5.2.0 MINOR · memory 8.0.0 and both bridges unchanged)
+
+**A prose obligation kept by hand became a checked rung, and it ran on its own author first.** The canon has demanded
+that a purge archive the deleted text where the queue is gitignored; eight dated hand-written archives were the whole
+proof, and the backlog had grown to 257 rows / 7020 lines under a gate title that logged every cap raise. Kit 12.3.0
+ships `queue-purge-cli.mjs`: `snapshot` writes a section's bytes whole plus a row index under two sha256 seals, framed
+by recorded lengths and appended whole or not at all; `--check` reads the archive whole and refuses on exactly six
+causes, the removal question asked of `queue-audit`'s own exported predicate `authorisesRemoval(klass)` over the class
+the block froze. The sibling's revision 6 exports that predicate and a document-wide `range` parse; its spec became a
+folder at its line cap; no deployed gate line changes its verdict. The engine's queue canon names the rung as runnable.
+Contract: `docs/ai/specs/kit/queue-purge/` (live, S1–S18 bound), epic story S1 done.
+
+Repo-only, the tool's first live run: the backlog was keyed (8 doubled ids renamed, 120 keyless rows keyed, 8
+ambiguous rows settled, no line added or deleted), snapshotted (257 rows, 655095 section bytes), trimmed by bucket in
+five delegated slices with every id byte-identical and one terminal row deleted, and checked (accept) at 256 rows /
+1717 lines; eight rows the release's own review filed after the check took the count to 264, every row within ten
+lines, the gate line at `--max-rows 264 --max-row-lines 10` with no ratchet log.
+
 ## 2026-09-09 — AD-136 the agy pin moves to Gemini 3.8 Flash (High) (kit 12.2.0 MINOR · agy bridge 5.7.0 MINOR · engine 5.1.0, memory 8.0.0 and codex bridge 3.8.0 unchanged)
 
 **A pin move on the AD-095 pattern, riding the kit as AD-135's codex move did.** `agy models` on the installed CLI

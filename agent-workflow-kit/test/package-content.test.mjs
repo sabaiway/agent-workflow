@@ -168,6 +168,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/queue-audit.mjs',
       'tools/queue-audit-rows.mjs',
       'tools/queue-audit-cli.mjs',
+      'tools/queue-purge-archive.mjs',
+      'tools/queue-purge.mjs',
+      'tools/queue-purge-cli.mjs',
       'tools/queue-row-name.mjs',
       // the now render (spec kit/now) and its mode doc — by NAME because the mode doc renders the CLI path.
       'tools/now-status.mjs',
@@ -767,7 +770,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 287 = 285 + the feedback-record pure half and its CLI; NAMED because the feedback-triage procedure renders the CLI path.
     // 288 = 287 + tools/queue-row-name.mjs, the backlog queue's pure name reader and sentence-shape judge.
     // 294 = 288 + the five now modules and references/modes/now.md (spec kit/now), all NAMED above.
-    assert.equal(packed.length, 294, `tarball file count drifted (${packed.length} \u2260 294)`);
+    // 297 = 294 + the queue-purge tool's three modules: tools/queue-purge-archive.mjs (the block
+    //       grammar and the append-whole writer), tools/queue-purge.mjs (the two verbs) and
+    //       tools/queue-purge-cli.mjs (argv + fs). Split at the 400-line cap, twice.
+    assert.equal(packed.length, 297, `tarball file count drifted (${packed.length} \u2260 297)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
