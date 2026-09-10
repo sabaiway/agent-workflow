@@ -171,6 +171,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/queue-purge-archive.mjs',
       'tools/queue-purge.mjs',
       'tools/queue-purge-cli.mjs',
+      'tools/epic-shape.mjs',
+      'tools/epic-shape-ledger.mjs',
+      'tools/epic-shape-brief.mjs',
+      'tools/epic-shape-cli.mjs',
       'tools/queue-row-name.mjs',
       // the now render (spec kit/now) and its mode doc — by NAME because the mode doc renders the CLI path.
       'tools/now-status.mjs',
@@ -773,7 +777,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 297 = 294 + the queue-purge tool's three modules: tools/queue-purge-archive.mjs (the block
     //       grammar and the append-whole writer), tools/queue-purge.mjs (the two verbs) and
     //       tools/queue-purge-cli.mjs (argv + fs). Split at the 400-line cap, twice.
-    assert.equal(packed.length, 297, `tarball file count drifted (${packed.length} \u2260 297)`);
+    // 301 = 297 + tools/epic-shape.mjs (shape), tools/epic-shape-ledger.mjs (claims and close),
+    //       tools/epic-shape-brief.mjs (brief and fold), tools/epic-shape-cli.mjs (argv + fs).
+    assert.equal(packed.length, 301, `tarball file count drifted (${packed.length} \u2260 301)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

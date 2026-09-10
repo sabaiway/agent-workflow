@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-10 — AD-138 the epic tier gets its checker, and this repo's own epic is its first consumer (kit 12.4.0 MINOR · engine 5.3.0 MINOR · memory 8.0.0 and both bridges unchanged)
+
+**An altitude bar kept by memory became a tool, and it judged its own author's epic first.** The epic this family works
+under was settled after a six-round design consult of 63 findings, none at concept altitude after round two, because the
+brief had no bar; within a day the file itself had drifted below it. Kit 12.4.0 ships `epic-shape-cli.mjs`: `--check`
+judges a capped concept file — seven frontmatter keys, seven sections in one order, sixty lines frozen, one Queue line,
+at most one dated result line, no stored plan path — by ONE altitude predicate (a code fence, a backtick span, a
+path-with-line citation) and ONE claim relation over the story ledger (owns × owns overlap refuses, a shared pair needs a
+dependency edge inside an epic and is reported across epics, a co-located test is covered by its source), with a sibling
+sweep over the store's direct entries through the no-follow door; `--review-brief` renders the deterministic brief whose
+guard holds a review at concept altitude; `--fold` folds the findings that come back by the same predicate and names what
+it discarded; `--close` lands the epic only under four conditions and rewrites one byte range of one file. Four modules
+under the 400-line cap and four suites bind S1–S16 with every changed line covered; the tarball moves 297 → 301. The
+engine's planning canon gains `## The epic`. Contract: `docs/ai/specs/kit/epic-shape/` (live, revision 1), epic story
+S2 in flight until Cleanup lands it.
+
+Repo-only: the epic `EPICS-STORIES-TASKS-AS-THE-UNIT-OF-WORK` is rewritten to the contract in 58 of its 60 lines — S1
+landed, S2 owning the four modules and the epic file, S6 sharing it behind its dependency edge, every claim a path —
+and its check line is a declared gate before `coverage-check`.
+
 ## 2026-09-10 — AD-137 the purge archive is a tool, and this repo's queue is purged to canon (kit 12.3.0 MINOR · engine 5.2.0 MINOR · memory 8.0.0 and both bridges unchanged)
 
 **A prose obligation kept by hand became a checked rung, and it ran on its own author first.** The canon has demanded

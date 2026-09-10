@@ -13,6 +13,14 @@ const flat = planning.replace(/\s+/g, ' ');
 // and produced a 690-line plan for a 587-line change. A rule earns a pin here only when its loss
 // would let a plan grow again.
 describe('planning.md — the plan shape', () => {
+  it('checks the epic and renders its review brief through a fence-free canon section', () => {
+    assert.match(flat, /## The epic/);
+    const section = flat.split('## The epic')[1].split('## The queue')[0];
+    assert.match(section, /epic-shape-cli\.mjs --check/);
+    assert.match(section, /epic-shape-cli\.mjs --review-brief/);
+    assert.doesNotMatch(section, /```/);
+  });
+
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
     assert.match(flat, /capped at \*\*100 lines and at most 25 ledger rows\*\*/);
     assert.match(flat, /plan-shape-cli\.mjs --check <plan>/);

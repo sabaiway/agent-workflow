@@ -125,6 +125,22 @@ plan file, and plan paths inside committed docs, are forbidden.
 and the docs cap-validator is green. An aborted plan still runs Cleanup — partial outputs land in
 `known_issues.md`.
 
+## The epic
+
+An epic is the tier above the plan: a CAPPED concept file at `docs/ai/epics/<ID>.md` — intent, value,
+non-goals, acceptance, specs, a stories ledger and its queue row — whose id is its file stem and whose
+mechanism content is a refusal: a code fence, a backtick span or a file-line citation anywhere in its
+body is below the tier's altitude, and a plan path other than the queue is a dead reference the day the
+story lands. The ledger is where an epic says who touches what: one row per story with its depends-on,
+owns and shared claims and its state, judged as ONE claim relation so two carriers are never put in one
+file without an order between them. The rung is a tool, never a remembered rule —
+`node <kit>/tools/epic-shape-cli.mjs --check docs/ai/epics/<ID>.md`, declared as a project gate over the
+repo's own epic — and an epic is reviewed only through the brief the kit renders,
+`node <kit>/tools/epic-shape-cli.mjs --review-brief docs/ai/epics/<ID>.md`, whose guard holds the round
+at concept altitude; the findings that come back are folded by the same predicate (`--fold`), and
+`--close` lands the epic only when every story has landed, the result line is a date and the queue row
+is gone.
+
 ## The queue
 
 `docs/plans/queue.md` NAMES work; it never holds the analysis of it. A row is one plain sentence

@@ -4,6 +4,19 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.3.0 — the planning canon gains the epic tier: `## The epic`, a capped concept file checked and its review brief rendered by the kit (AD-138)
+
+`references/planning.md`: one fence-free section `## The epic` at the section boundary before `## The queue`. An epic
+is the tier above the plan — a capped concept file at `docs/ai/epics/<ID>.md` whose id is its file stem and whose
+mechanism content (a code fence, a backtick span, a file-line citation) is a refusal; its ledger is one claim relation
+so two carriers are never put in one file without an order between them; the rung is runnable —
+`node <kit>/tools/epic-shape-cli.mjs --check docs/ai/epics/<ID>.md`, declared as a project gate — and an epic is
+reviewed only through the brief the kit renders (`--review-brief`), the findings folded by the same predicate
+(`--fold`), the close (`--close`) landing it only when every story has landed, the result line is a date and the
+queue row is gone. Pinned by `test/planning-canon.test.mjs` (the heading, the two verb names, no fence in the section).
+MINOR: one additive section; no procedure step moves, no reader rule changes. Published on this train with kit
+12.4.0, which ships the tool.
+
 ## 5.2.0 — the queue canon names the archive rung as runnable: `queue-purge-cli.mjs snapshot` before a purge, `--check` after it (AD-137)
 
 `references/planning.md`, `## The queue`: one sentence after the archive obligation — the rung is runnable, `node

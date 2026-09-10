@@ -4,6 +4,61 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 12.4.0 — the epic tier gets its checker: `epic-shape` judges a capped concept file by one altitude predicate and one claim relation, renders its review brief, folds the findings by the same predicate, and closes it by rewriting one byte range (AD-138)
+
+**MINOR: one new tool, four verbs, four shipped modules; no deployed gate line changes its verdict.** The epic this
+family works under was settled after a six-round design consult whose brief had no altitude bar, and the file drifted
+within a day — a backticked hash in a state field, ground named in prose, an id paragraph above the first section. A
+prose bar has been measured failing under load here, so the rung is a tool. The contract is
+`docs/ai/specs/kit/epic-shape/` (index + `ledger.md` + `brief.md`, live, revision 1, S1–S16 bound).
+
+- **`tools/epic-shape-cli.mjs --check <epic>`** reads `docs/ai/epics/<ID>.md` through the no-follow door — the id is
+  the file stem — and refuses on: a frontmatter key set other than the substrate six plus `state: open | landed`,
+  `maxLines` other than 60, a file over 60 lines, a title other than `# Epic: <title>`, any heading outside the seven
+  sections in their order (Intent, Value, Non-goals, Acceptance, Specs, Stories ledger, Queue), a non-blank line
+  above Intent, a `## Queue` line outside `Row <ID> in <bucket>`, a second or non-date `Result line:`, a
+  `docs/plans/<name>.md` token other than the queue, and — the ALTITUDE BAR, one predicate over every body line
+  outside the two claim fields — a code fence line, a backtick span or a path-with-line citation (`something.ext:123`,
+  `dir/file:123`, backticked or bare); a mechanism written as plain prose passes, a stated residual, no word list.
+  The story ledger is six ` | ` fields per row (`S<N>`, name, `depends-on:`, `owns:`, `shared:`, `state:`), ids
+  contiguous from S1, at most 200 bytes counted OUTSIDE `owns:` and `shared:`; a claim is a repo-relative path in one
+  canonical spelling (a closed byte set — no whitespace, backtick, parenthesis, wildcard, pipe, colon or hash — no
+  `.`/`..` segment, no leading slash, an optional trailing slash as a directory prefix), never a file the checker
+  opens; a co-located test path (`foo.test.mjs`, `foo.test/`) is covered by `foo.mjs`. ONE claim relation between
+  distinct not-landed stories identified by (epic path, id): overlap is equality or a slash-boundary prefix;
+  owns × owns refuses inside and across epics; a pair with a shared side needs a transitive `depends-on` edge inside
+  one epic and is REPORTED (exit 0) across epics; the graph is closed and acyclic, a cycle named by its stories. The
+  sibling sweep reads the DIRECT entries of the store into an entry list — a symlinked or unreadable `.md` refuses
+  naming it, a `type: epic` file with a state outside `open | landed` refuses, an OPEN sibling is judged whole by
+  the same shape check and a refusal names the file (unknown never reads as "owns nothing"), a LANDED sibling is
+  its header only and contributes no story and no finding whatever its body holds, another type or a subdirectory
+  is skipped and counted — and prints `epic-shape: sweep <root>: epics read <n>; entries skipped <n>`, the handed
+  epic counted among the read.
+- **`--review-brief <epic>`** prints, for an epic `--check` accepts and for no other file, a deterministic brief: the
+  id and state, the guard verbatim ("Judge intent, value, boundaries, ownership and story order. A finding that names
+  a mechanism, a file line or an implementation choice is below this tier's altitude and is NOT counted."), the
+  seven sections, five questions one per line. The same render serves a design consult over a draft.
+- **`--fold <findings-file>`** reads entries by its own reader (column-0 `-`, `*`, `<n>.` with indented and blank
+  continuation), excises each entry's first citation (with its backticks only when the span is exactly the token),
+  judges the remainder by the same predicate and prints three named lists with counts — kept, discarded with a
+  reason each, lines outside entries; a zero-entry file refuses.
+- **`--close <epic>`** runs the check, then four conditions — every story `landed <date>`, a result-line date, the
+  header not already landed, the queue row not standing by parsed id or whole-token display title over
+  `queue-audit`'s parser of `<root>/docs/plans/queue.md` read whole (absent or unparseable refuses) — and on accept
+  rewrites ONLY the header `state` bytes through the one descriptor it read; a second hard link refuses without a
+  write; an epic outside a `docs/ai/epics/` store refuses.
+- **Grammar and exits.** `--help` alone, or exactly one verb and exactly one positional; a positional opening with
+  `-`, a second verb, a repeated positional and an empty invocation are usage. Exit 0 accept · 1 refuse · 2 usage.
+  Findings render as `epic-shape: <path>:<line>: <code>: <message>`. Nothing reads git.
+- **Modules and suites.** `tools/epic-shape.mjs` (232 lines — `EPIC_SECTIONS`, `parseEpic`, `parseStoryRow`,
+  `judgeAltitude`, `checkEpic`), `tools/epic-shape-ledger.mjs` (180 — `checkClaims`, `sweepSiblings`, `judgeClose`),
+  `tools/epic-shape-brief.mjs` (75 — `BRIEF_GUARD`, `renderBrief`, `readEntries`, `foldFindings`),
+  `tools/epic-shape-cli.mjs` (153 — argv and fs only, `main(argv, io)`); four suites under `tools/epic-shape.test/`
+  bind S1–S16 with every changed line covered. The tarball gains the four modules by name (301 files, from 297).
+
+Repo-only: this repo's own epic is rewritten to the contract inside its 60 lines (58) and its `--check` line is a
+declared gate before `coverage-check`; the engine canon gains `## The epic` (engine 5.3.0).
+
 ## 12.3.0 — the purge archive is a tool: `queue-purge` snapshots a section's bytes and vouches for what leaves, and `queue-audit` exports the two surfaces it reads (AD-137)
 
 **MINOR: one new tool, two verbs, and the sibling's revision 6; no deployed gate line changes its verdict.** The canon has
