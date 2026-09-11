@@ -7,6 +7,30 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-11 — AD-139 a plan proves its own ground, and the S3 plan is the first consumer of the rule it ships (kit 13.0.0 MAJOR · engine 5.4.0 MINOR · memory 8.0.0 and both bridges unchanged)
+
+**The bar "a plan stays inside its story's claims" was prose; it is now a rung that runs before every dispatch.** Kit
+13.0.0's `plan-shape` reads a plan's `Story: S<N> of <ID>` line and judges every concrete row path against the claims
+of every not-landed story of every open epic under `docs/ai/epics/` other than its own — an `owns` overlap refuses, a `shared` overlap
+needs a transitive `depends-on` edge inside the plan's own epic, and a storied plan's in-scope path that no own claim
+covers refuses; the rule is STRUCTURAL, so `--check`, `--verify` and the `--in-flight` gate agree, and a storyless
+plan stays legal (judged as today plus the collision half). Facts read the store once through the epic sweep's no-follow door, and a store nobody could read
+refuses every judged plan rather than reading as "owns nothing". Three leaves carry the shared ground — the claim
+relation both tiers import, the store's two doors, the story rules — with no import cycle and no claim primitive
+written twice; the epic checker's findings stay byte for byte; the tarball moves 301 → 304. Two spellings walked around a
+claim in review (`./x`, then `x/`, the second confirmed live), so the containment rule became ONE positive predicate
+over path segments instead of an exclusion list — and that is why the kit bump is MAJOR: a trailing or doubled slash
+or a `.` segment in a plan's row or anchor path now refuses `containment` where 12.4.0 accepted it, so a consumer's
+declared `--in-flight` gate can turn red with no edit of theirs (the refusal names the row and the rule; the story
+relation is the second such break for a consumer already on the epic tier; the class AD-117 and AD-133 called
+MAJOR); the pin path's exemption to `duplicate-path` (several `modify` rows
+whose own path is the pin) landed with its binding rule and once-per-path totals. Engine 5.4.0's planning canon
+names the story line and runs the verify arm first in Cleanup, with a slug grep that skips the git dir. Contract:
+`docs/ai/specs/kit/plan-shape-ownership.md` (live, revision 1) beside `plan-review-loop` revision 9; epic story S3
+in flight until Cleanup lands it. Executed as six delegated threads on one held session (four slices, two folds); the
+diff council folded by consult on that session and on the copy, and the release tree carries its own receipts (the
+commit guard admits no other); six debt rows queued.
+
 ## 2026-09-10 — AD-138 the epic tier gets its checker, and this repo's own epic is its first consumer (kit 12.4.0 MINOR · engine 5.3.0 MINOR · memory 8.0.0 and both bridges unchanged)
 
 **An altitude bar kept by memory became a tool, and it judged its own author's epic first.** The epic this family works

@@ -4,6 +4,18 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.4.0 — the planning canon names the story line, runs the verify arm first in Cleanup, and excludes the git dir from the slug grep (AD-139)
+
+`references/planning.md`, two sentences. The Goal-and-boundary bullet: a plan carrying an epic story names it with
+exactly one line `Story: S<N> of <ID>` (`<ID>` the epic's file stem under `docs/ai/epics/`); zero such lines is a
+storyless plan and stays legal — the grammar the kit's `plan-shape` checker judges from 13.0.0. The Cleanup
+paragraph: Cleanup runs `node <kit>/tools/plan-shape-cli.mjs --verify <plan>` FIRST, before anything is migrated or
+deleted (a verify after the plan is gone proves nothing), and verifies that `grep -rn "<slug>" . --exclude-dir=.git`
+is empty — review receipts under the git dir carry the plan path, so the plain grep never cleared a reviewed plan.
+Both pinned by `test/planning-canon.test.mjs`. MINOR: one added sentence in Goal and boundary and one rewritten
+Cleanup sentence (no obligation removed); no procedure step moves, no reader rule changes. Published on this train
+with kit 13.0.0, which ships the rule.
+
 ## 5.3.0 — the planning canon gains the epic tier: `## The epic`, a capped concept file checked and its review brief rendered by the kit (AD-138)
 
 `references/planning.md`: one fence-free section `## The epic` at the section boundary before `## The queue`. An epic

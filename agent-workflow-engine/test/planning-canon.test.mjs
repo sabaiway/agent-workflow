@@ -13,6 +13,16 @@ const flat = planning.replace(/\s+/g, ' ');
 // and produced a 690-line plan for a 587-line change. A rule earns a pin here only when its loss
 // would let a plan grow again.
 describe('planning.md — the plan shape', () => {
+  it('verifies the plan before Cleanup migrates or deletes it and excludes review receipts from the slug grep', () => {
+    assert.match(flat, /plan-shape-cli\.mjs --verify <plan>` FIRST, before anything is migrated or deleted/);
+    assert.match(flat, /grep -rn "<slug>" \. --exclude-dir=\.git/);
+  });
+
+  it('names an epic story with one parseable line and keeps a storyless plan legal', () => {
+    assert.match(flat, /exactly one line `Story: S<N> of <ID>`/);
+    assert.match(flat, /zero such lines is a storyless plan and stays legal/);
+  });
+
   it('checks the epic and renders its review brief through a fence-free canon section', () => {
     assert.match(flat, /## The epic/);
     const section = flat.split('## The epic')[1].split('## The queue')[0];

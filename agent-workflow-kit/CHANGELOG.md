@@ -4,6 +4,66 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 13.0.0 — a plan proves its own ground: `plan-shape` judges a plan's rows against its epic story's claims in both arms and `--in-flight`, the claim relation lives in one leaf, and the containment rule is one positive predicate (AD-139)
+
+**MAJOR: the containment rule refuses a row or anchor path spelling 12.4.0 accepted — a trailing or doubled slash, a
+`.` segment — so a consumer's declared `--in-flight` gate can turn red with no edit of theirs (the refusal names the
+row and the rule; no migration note, as for every kit MAJOR since 4.0.0 — the class AD-117 and AD-133 called MAJOR),
+and the story relation joins the structural set, so a consumer already on the 12.4.0 epic tier can go red the same
+way with no edit of theirs (each code's reach is stated in the bullets below); three new shipped leaves, one new
+structural rule set, no deployed gate line's TEXT changes.** The epic
+tier (12.4.0) gave a story a ledger of claims; the bar "a plan stays inside its story's claims" lived in prose, and
+the last bar this epic wrote down drifted inside a day. The rung is now a tool, enforced where a dispatch is spent: `--in-flight` is already the gate
+this family runs before every dispatch. The contract is `docs/ai/specs/kit/plan-shape-ownership.md` (live, revision 1,
+S1–S11 bound) beside `plan-review-loop` revision 9.
+
+- **The story line.** A plan carrying an epic story names it with exactly one line `Story: S<N> of <ID>` inside
+  `## Goal and boundary`, `<ID>` the epic's file stem under `docs/ai/epics/`. Two lines refuse `story-line`; an
+  unknown epic or story id refuses `story-unknown` by name; a landed epic refuses `story-epic-landed`. Zero lines is
+  a storyless plan and stays legal — judged as today plus the collision half. The plan's own story is looked up in
+  the full record list, landed rows included; its `state:` is never read.
+- **ONE relation, in the STRUCTURAL set.** Over every concrete row path after glob expansion, against every
+  not-landed story of every open epic minus the plan's own: an `owns` overlap refuses `story-owns`; a `shared`
+  overlap inside the plan's own epic refuses `story-shared` unless a transitive `depends-on` edge orders the two
+  in either direction; a storyless plan against a `shared` claim refuses the same way (name the story); a
+  cross-epic `shared` overlap is not judged (the epic tier prints it). For a storied plan, an in-scope row path —
+  the declared source-size practice's roots, extensions and exclusions — that no own claim covers refuses
+  `story-scope`; the package-content pin path is covered by the shipped `create` or `delete` row it pins and is
+  never claimed by a story. `checkPlan`, `verifyPlan` and `checkPlanStructure` all carry it, so `--check`,
+  `--verify` and `--check --in-flight` agree.
+- **Facts.** `openRepo` reads `docs/ai/epics/` once per run through the epic sweep's own no-follow door, and
+  `buildFacts` hands the judge `stories` (one record per valid story row of every open epic: `{ path, id, line, state, claims,
+  reachable }`), `landedEpics` (the file stems the sweep read as landed) and `storeRefusal`. Only ENOENT reads as
+  an absent store; a symlinked root, a regular file, ENOTDIR, any other error, a failed read, an unreadable `.md`
+  entry, a frontmatter the header reader refuses, an open epic the shape check refuses or a state outside the
+  closed set refuse EVERY judged plan `story-store`. A facts object with no `stories` field (the bare callers)
+  leaves the relation unjudged.
+- **The pin exemption (`plan-review-loop` revision 9, S34).** Several `modify` rows whose OWN path is one
+  package-content pin path may own it — the ONE exemption to `duplicate-path`: a single pin row owes nothing; with
+  two or more, every one binds in ledger order the nearest untaken shipped `create` or `delete` row above it whose
+  package pin is that path, and a row that finds none refuses `pin-unbound`. A sweep expansion never rides it; the
+  `before`/`after` totals count each concrete path once; a judge with no `pathFacts` admits repeated `modify` pin
+  rows unjudged; a duplicate involving a `create` or `delete` still refuses.
+- **Containment enumerated by proof.** A row or anchor path is admitted only when it has no backslash and every
+  `/`-separated segment is non-empty and neither `.` nor `..` — one predicate instead of an exclusion list, after
+  `./x` (plan review) and `x/` (diff review, confirmed live) each walked around a claim; a leading slash was
+  already refused by 12.4.0's own predicate.
+- **Three leaves, no cycle, no claim primitive written twice.** `tools/claim-relation.mjs` (`expandClaim`,
+  `hasPathOverlap`, `findReachable`, `listStories`, `unique` — `plan-shape.mjs` re-exports `unique` so every import
+  site stands), `tools/epic-store.mjs` (`EPICS_REL`, `readEpicEntries` — the epic CLI's door, unchanged — and
+  `readEpicStore`, the facts half's no-follow probe), `tools/plan-shape-ownership.mjs` (`readStoryLine`,
+  `checkStoryOwnership`, `PIN_FILE`, `PIN_VERBS`). `epic-shape-ledger.mjs` and `epic-shape-cli.mjs` keep their
+  findings and counts byte for byte under their unchanged suites; the sweep result gains `landedEpics` beside
+  `counts`. Tarball pin 301 → 304. Every touched shipped module stays under the 400-line cap (`plan-shape.mjs` 384);
+  the kit's recorded aggregate rises by the three leaves and their suites, the reason recorded in the ratchet.
+- **Recorded debt (queue).** `openRepo` walks the repository before the store probe, so an EACCES directory
+  anywhere exits 2 before `story-store` can be named (refuse-direction, pre-existing); the robustness coverage
+  table reads a filesystem errno as a process-launch outcome; a delegate read its own sandbox's spawn limit as a
+  reason to stop a slice; a near-miss story line (`- Story: …`, the bullet marker the canon's own sentence sits
+  under) reads as a storyless plan instead of refusing; the one-line read describer is written twice by the store
+  extraction (`describeRead` in the epic CLI and in the store leaf); a storied plan whose only pin-path row ships
+  no `create` or `delete` above it refuses `story-scope` with no repair inside the rule.
+
 ## 12.4.0 — the epic tier gets its checker: `epic-shape` judges a capped concept file by one altitude predicate and one claim relation, renders its review brief, folds the findings by the same predicate, and closes it by rewriting one byte range (AD-138)
 
 **MINOR: one new tool, four verbs, four shipped modules; no deployed gate line changes its verdict.** The epic this

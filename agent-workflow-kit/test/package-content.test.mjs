@@ -175,6 +175,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/epic-shape-ledger.mjs',
       'tools/epic-shape-brief.mjs',
       'tools/epic-shape-cli.mjs',
+      'tools/claim-relation.mjs',
+      'tools/epic-store.mjs',
+      'tools/plan-shape-ownership.mjs',
       'tools/queue-row-name.mjs',
       // the now render (spec kit/now) and its mode doc — by NAME because the mode doc renders the CLI path.
       'tools/now-status.mjs',
@@ -779,7 +782,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/queue-purge-cli.mjs (argv + fs). Split at the 400-line cap, twice.
     // 301 = 297 + tools/epic-shape.mjs (shape), tools/epic-shape-ledger.mjs (claims and close),
     //       tools/epic-shape-brief.mjs (brief and fold), tools/epic-shape-cli.mjs (argv + fs).
-    assert.equal(packed.length, 301, `tarball file count drifted (${packed.length} \u2260 301)`);
+    // 304 = 301 + tools/claim-relation.mjs (the claim primitives both tiers import), tools/epic-store.mjs (the epic store's doors), tools/plan-shape-ownership.mjs (the story rules)
+    assert.equal(packed.length, 304, `tarball file count drifted (${packed.length} \u2260 304)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

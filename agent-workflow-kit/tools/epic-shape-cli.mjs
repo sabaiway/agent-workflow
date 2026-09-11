@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { constants, openSync, closeSync, fstatSync, readdirSync, writeSync, ftruncateSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { constants, openSync, closeSync, fstatSync, writeSync, ftruncateSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fail } from '../references/scripts/markdown-blocks.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { readEpicEntries } from './epic-store.mjs';
 import { checkEpic } from './epic-shape.mjs';
 import { checkClaims, sweepSiblings, judgeClose, STORE_PATH, QUEUE_PATH } from './epic-shape-ledger.mjs';
 import { renderBrief, foldFindings } from './epic-shape-brief.mjs';
@@ -18,7 +19,6 @@ const HELP_FLAG = '--help';
 const HELP_ARITY = 1;
 const VERB_ARITY = 2;
 const FIRST_LINE = 1;
-const MARKDOWN_SUFFIX = '.md';
 const PREFIX = 'epic-shape:';
 const INFO = 'info';
 const STORE_TO_PROJECT = '../../..';
@@ -60,15 +60,6 @@ const readInput = (path, read, writable) => {
   if (result.outcome !== 'ok') throw makeFailure(path, 'read', describeRead(result));
   return result;
 };
-const readDirectory = (root, read) => readdirSync(root, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).map((entry) => {
-  const name = entry.name;
-  if (entry.isDirectory()) return { name, outcome: 'directory' };
-  if (!name.endsWith(MARKDOWN_SUFFIX)) return { name, text: '' };
-  const result = read(join(root, name));
-  if (result.outcome === 'ok') return { name, text: result.content };
-  if (result.outcome === 'foreign') return { name, outcome: 'non-regular', kind: result.className };
-  return { name, outcome: 'unreadable', reason: describeRead(result) };
-});
 const readQueue = (path, read) => {
   if (!STORE_PATH.test(path)) return { outcome: 'unreadable', reason: 'epic is outside a project store' };
   const queuePath = resolve(dirname(path), STORE_TO_PROJECT, QUEUE_PATH);
@@ -104,7 +95,7 @@ const runFold = (input, path, io) => {
   return EXIT.accept;
 };
 const runEpic = (verb, input, path, io) => {
-  const entries = readDirectory(dirname(path), io.read).filter((entry) => entry.name !== basename(path));
+  const entries = readEpicEntries(dirname(path), io.read).filter((entry) => entry.name !== basename(path));
   const shape = checkEpic(input.content, path);
   const sweep = sweepSiblings(entries, dirname(path));
   const claims = shape.findings.length === 0 && sweep.ok

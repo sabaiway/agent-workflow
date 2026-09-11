@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
 import { parseHeader, checkEpic } from './epic-shape.mjs';
 import { auditQueue } from './queue-audit.mjs';
-import { unique } from './plan-shape.mjs';
+import { hasPathOverlap, findReachable, listStories, unique } from './claim-relation.mjs';
 
 const FIRST_LINE = 1;
 const ERROR = 'error';
@@ -11,14 +11,9 @@ const OPEN = 'open';
 const LANDED = 'landed';
 const EPIC = 'epic';
 const OWN = 'owns';
-const CLAIM_FIELDS = Object.freeze([OWN, 'shared']);
 const FRONT_DELIMITER = '---';
 const CR_END = /\r$/;
 const MARKDOWN_SUFFIX = '.md';
-const TRAILING_SLASH = /\/$/;
-const SOURCE_EXTENSION = /^(.*[^/])(\.[^./]+)$/;
-const TEST_FILE = /\.test\.[^/]+$/;
-const TEST_SUFFIX = '.test';
 export const STORE_PATH = /^(?:(.*)\/)?docs\/ai\/epics\/([^/]+)\.md$/;
 export const QUEUE_PATH = 'docs/plans/queue.md';
 const TOKEN_EDGE = '[\\p{L}\\p{N}_-]';
@@ -29,14 +24,10 @@ const finishJudgement = (findings, data = {}) => ({ ...data, ok: !findings.some(
 const nameFindings = (findings, path) => findings.map((finding) => makeFinding(path, finding.line, finding.code, finding.message));
 const getIdentity = (story) => JSON.stringify([story.path, story.id]);
 
-const findReachable = (graph, pending, visited = new Set()) => {
-  const unseen = unique(pending.filter((id) => !visited.has(id)));
-  if (unseen.length === 0) return visited;
-  return findReachable(graph, unseen.flatMap((id) => graph.get(id) ?? []), new Set([...visited, ...unseen]));
-};
-const readGraph = (epic, rows) => {
+const readGraph = (epic, rows, stories) => {
   const graph = new Map(rows.map((row) => [row.id, row.dependsOn]));
-  const reachable = new Map(rows.map((row) => [row.id, findReachable(graph, row.dependsOn)]));
+  const byLine = new Map(stories.map((story) => [story.line, story.reachable]));
+  const reachable = new Map(rows.map((row) => [row.id, byLine.get(row.line) ?? findReachable(graph, row.dependsOn)]));
   const unknowns = rows.flatMap((row) => row.dependsOn.filter((id) => !graph.has(id))
     .map((id) => makeFinding(epic.path, row.line, 'dependency-id', `${row.id} depends on absent story ${id}`)));
   const cyclic = rows.filter((row) => reachable.get(row.id).has(row.id));
@@ -49,17 +40,6 @@ const readGraph = (epic, rows) => {
   return { reachable, findings: [...unknowns, ...cycles] };
 };
 
-const expandClaim = (path) => {
-  const source = SOURCE_EXTENSION.exec(path);
-  return source && !TEST_FILE.test(path)
-    ? [path, `${source[1]}${TEST_SUFFIX}${source[2]}`, `${source[1]}${TEST_SUFFIX}/`] : [path];
-};
-const hasPathOverlap = (left, right) => {
-  const a = left.replace(TRAILING_SLASH, '');
-  const b = right.replace(TRAILING_SLASH, '');
-  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
-};
-const getClaims = (row) => CLAIM_FIELDS.flatMap((field) => row[field].map((path) => ({ field, path, ground: expandClaim(path) })));
 const hasClaimOverlap = (left, right) => left.ground.some((a) => right.ground.some((b) => hasPathOverlap(a, b)));
 const checkPair = (left, right) => {
   if (getIdentity(left) === getIdentity(right)) return [];
@@ -79,13 +59,12 @@ const checkPair = (left, right) => {
 export const checkClaims = (epics) => {
   const parsed = epics.map((epic) => {
     const rows = epic.rows;
-    const graph = readGraph(epic, rows);
+    const stories = listStories([epic]);
+    const graph = readGraph(epic, rows, stories);
     const findings = rows.filter((row) => !row.valid)
       .map((row) => makeFinding(epic.path, row.line, 'row-grammar', `${row.id} has invalid story fields or claim tokens`));
-    const stories = epic.state === OPEN ? rows.filter((row) => row.valid && row.state !== LANDED).map((row) => ({
-      path: epic.path, id: row.id, line: row.line, claims: getClaims(row), reachable: graph.reachable.get(row.id),
-    })) : [];
-    return { stories, findings: [...nameFindings(epic.findings, epic.path), ...findings, ...graph.findings] };
+    return { stories: stories.filter((story) => story.state !== LANDED),
+      findings: [...nameFindings(epic.findings, epic.path), ...findings, ...graph.findings] };
   });
   const stories = parsed.flatMap((epic) => epic.stories);
   const collisions = stories.flatMap((left, index) => stories.slice(index + FIRST_LINE).flatMap((right) => checkPair(left, right)));
@@ -122,19 +101,20 @@ const readSibling = (entry, root) => {
   if (![OPEN, LANDED].includes(header.fields.state)) {
     return { read: 0, skipped: 0, epics: [], findings: [makeFinding(path, FIRST_LINE, 'sibling-state', 'epic state is missing or outside open and landed')] };
   }
-  if (header.fields.state === LANDED) return { read: FIRST_LINE, skipped: 0, epics: [], findings: [] };
+  if (header.fields.state === LANDED) return { read: FIRST_LINE, skipped: 0, epics: [], findings: [], landedEpics: [entry.name.slice(0, -MARKDOWN_SUFFIX.length)] };
   const { epic, findings } = checkEpic(entry.text, path);
   return { read: FIRST_LINE, skipped: 0, epics: findings.length ? [] : [epic], findings: nameFindings(findings, path) };
 };
 
 export const sweepSiblings = (entries, root) => {
   if (!Array.isArray(entries)) {
-    return finishJudgement([makeFinding(root, FIRST_LINE, 'sibling-read', 'the direct entry list is unreadable')], { root, epics: [], counts: { epicsRead: 0, skipped: 0 } });
+    return finishJudgement([makeFinding(root, FIRST_LINE, 'sibling-read', 'the direct entry list is unreadable')], { root, epics: [], counts: { epicsRead: 0, skipped: 0 }, landedEpics: [] });
   }
   const results = entries.map((entry) => readSibling(entry, root));
   const epics = results.flatMap((result) => result.epics);
   return finishJudgement(results.flatMap((result) => result.findings), {
     root, epics, counts: { epicsRead: results.reduce((sum, result) => sum + result.read, 0), skipped: results.reduce((sum, result) => sum + result.skipped, 0) },
+    landedEpics: results.flatMap((result) => result.landedEpics ?? []),
   });
 };
 

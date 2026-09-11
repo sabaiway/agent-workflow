@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { EPIC_SECTIONS } from './epic-shape.mjs';
 import { makeTree as makeNamedTree, write, writeJson } from './plan-shape-harness.test.mjs';
 
 const loadFacts = () => import('./plan-shape-facts.mjs');
@@ -15,8 +16,46 @@ const sourceSize = (extra = {}) => ({
   extensions: ['.mjs'],
   ...extra,
 });
+const makeEpicText = () => {
+  const bodies = ['Keep boundaries visible.', 'Keep work separate.', 'No implementation choices.', 'The boundary is observable.',
+    'docs/ai/specs/kit/example.md', '- S1 | Boundary | depends-on: none | owns: src/x.mjs | shared: none | state: planned', 'Row ALPHA in Now'];
+  return ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
+    'maxLines: 60', 'state: open', '---', '# Epic: Boundary', ...EPIC_SECTIONS.flatMap((heading, index) => [heading, bodies[index]])].join('\n');
+};
 
 describe('plan-shape facts — filesystem-only evidence', () => {
+  it('spec:plan-shape-ownership/S10 snapshots open stories, names landed epics and carries store refusals', async (t) => {
+    const { buildFacts, openRepo } = await loadFacts();
+    const roots = [makeTree(), makeTree(), makeTree()];
+    t.after(() => roots.forEach((root) => rmSync(root, { recursive: true, force: true })));
+    const [root, absent, linked] = roots;
+    const empty = buildFacts(absent);
+    assert.deepEqual([empty.stories, empty.landedEpics, empty.storeRefusal], [[], [], null]);
+    write(root, 'docs/ai/epics/ALPHA.md', makeEpicText());
+    write(root, 'docs/ai/epics/OLD.md', '---\ntype: epic\nstate: landed\n---\nAny body.');
+    const repo = openRepo(root);
+    const facts = buildFacts(root, { repo });
+    assert.deepEqual(facts.stories.map(({ path, id, state, claims, reachable }) => ({ path, id, state, claims, reachable })), [
+      { path: 'docs/ai/epics/ALPHA.md', id: 'S1', state: 'planned', reachable: new Set(), claims: [
+        { field: 'owns', path: 'src/x.mjs', ground: ['src/x.mjs', 'src/x.test.mjs', 'src/x.test/'] },
+      ] },
+    ]);
+    assert.ok(facts.stories[0].line > 0);
+    assert.deepEqual(facts.landedEpics, ['OLD']);
+    assert.equal(facts.storeRefusal, null);
+    write(root, 'docs/ai/epics/ALPHA.md', makeEpicText().replace('- S1 |', '* S1 |'));
+    assert.equal(buildFacts(root, { repo }).stories, facts.stories);
+    assert.equal(buildFacts(root, { repo }).landedEpics, facts.landedEpics);
+    const refused = buildFacts(root);
+    assert.match(refused.storeRefusal, /docs\/ai\/epics\/ALPHA\.md/);
+    assert.deepEqual([refused.stories, refused.landedEpics], [[], []]);
+    mkdirSync(join(linked, 'docs/ai'), { recursive: true });
+    symlinkSync(join(root, 'docs/ai/epics'), join(linked, 'docs/ai/epics'));
+    const symlinked = buildFacts(linked);
+    assert.match(symlinked.storeRefusal, /docs\/ai\/epics.*symlink/);
+    assert.deepEqual([symlinked.stories, symlinked.landedEpics], [[], []]);
+  });
+
   it('classifies leaves without following them and contains absent leaves through their real parent', async () => {
     const { buildFacts } = await loadFacts();
     const root = makeTree();

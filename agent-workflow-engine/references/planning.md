@@ -32,6 +32,8 @@ independently verifiable boundaries, never by document size — or it is a SWEEP
   spec-covered slice — a ZERO names the adoption state it relies on (not adopted · adopting — either
   with a recorded decline — · nothing spec-covered touched); a bare zero is never a licence. Each
   cited spec's Out of scope is restated as a non-goal for that slice.
+  A plan carrying an epic story names it with exactly one line `Story: S<N> of <ID>` (`<ID>` is the
+  epic's file stem under `docs/ai/epics/`); zero such lines is a storyless plan and stays legal.
 - **Module ledger** (60 lines) — the single list of paths, and the plan's execution order.
 - **Verification** (20 lines) — the acceptance check, plus one command that validates the whole ledger.
 - **Phase: Cleanup** and **Next steps** (human-actionable only) share the 10 reserved lines.
@@ -120,8 +122,10 @@ Plan files are **ephemeral, gitignored, never committed**. If something in a pla
 inline it into a durable doc — `decisions.md`, `changelog.md` — and delete the plan. `git add` of a
 plan file, and plan paths inside committed docs, are forbidden.
 
-**Every plan ends with `## Phase: Cleanup`.** It migrates outputs to the durable docs, updates
-`docs/plans/queue.md` for a series, deletes the plan file, and verifies `grep -rn "<slug>" .` is empty
+**Every plan ends with `## Phase: Cleanup`.** Cleanup runs `node <kit>/tools/plan-shape-cli.mjs --verify <plan>`
+FIRST, before anything is migrated or deleted, then migrates outputs to the durable docs, updates
+`docs/plans/queue.md` for a series, deletes the plan file, and verifies that `grep -rn "<slug>" . --exclude-dir=.git`
+is empty (review receipts under the git dir carry the plan path, so the plain grep never clears a reviewed plan)
 and the docs cap-validator is green. An aborted plan still runs Cleanup — partial outputs land in
 `known_issues.md`.
 

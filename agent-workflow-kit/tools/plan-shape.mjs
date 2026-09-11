@@ -1,5 +1,8 @@
+import { posix } from 'node:path';
 import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
 import { parseRobustTag } from './robustness-literals.mjs';
+import { unique } from './claim-relation.mjs';
+import { checkStoryOwnership, PIN_FILE, PIN_VERBS } from './plan-shape-ownership.mjs';
 
 export const PLAN_TITLE_PREFIX = '# Plan: ';
 export const PLAN_HEADINGS = Object.freeze([
@@ -31,7 +34,7 @@ const BULLET = /^-\s+\S/;
 export const getLineCount = (text) => text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 export const isSweep = (path) => GLOB_BYTE.test(path);
 const endsWithPath = (path, suffix) => path === suffix || path.endsWith(`/${suffix}`);
-export const unique = (items) => [...new Set(items)];
+export { unique } from './claim-relation.mjs';
 const getFindingLine = (document, index) => document.frontLines + index + 1;
 const makeFinding = (line, code, message, rowId = null) => ({ line, code, message, rowId });
 const getHeading = (document, text) => document.headings.find((heading) => heading.text === text);
@@ -54,7 +57,8 @@ const getFigure = (value) => Number(String(value).replace(/^~/, ''));
 const getConcretePaths = (row, facts) => isSweep(row.path) ? facts.expansions?.[row.path] ?? [] : [row.path];
 const getPathFact = (facts, path) => facts.pathFacts?.[path] ?? null;
 const getAnchorPath = (anchor) => anchor.replace(/:[1-9]\d*$/, '');
-const hasPathDefect = (path) => path.startsWith('/') || path.includes('\\') || path.split('/').includes('..');
+const hasPathDefect = (path) => !(!path.includes('\\') &&
+  path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..'));
 const hasRaiseBullet = (verificationBullets, path) => verificationBullets.some((bullet) =>
   bullet.includes('--write-baseline') && bullet.includes('--reason') && bullet.includes(path));
 
@@ -174,6 +178,22 @@ const checkHeadings = (text, document) => {
   return findings;
 };
 
+const isPinRow = (row, path) => row.verb === 'modify' && row.path === path && posix.basename(row.path) === PIN_FILE;
+const checkPinBindings = (rows, owners, facts) => {
+  if (!Object.hasOwn(facts, 'pathFacts')) return [];
+  return [...owners].flatMap(([path, group]) => {
+    const pins = group.filter((row) => isPinRow(row, path));
+    if (pins.length < 2) return [];
+    const taken = new Set();
+    return pins.flatMap((pin) => {
+      const above = rows.slice(0, rows.indexOf(pin)).findLast((row) => row.valid && PIN_VERBS.has(row.verb) && !taken.has(row) &&
+        getPathFact(facts, row.path)?.shipped === true && getPathFact(facts, row.path)?.pinTest === path);
+      if (above) { taken.add(above); return []; }
+      return [makeFinding(pin.line, 'pin-unbound', `${pin.id} is a repeated pin row with no untaken shipped create or delete above it`, pin.id)];
+    });
+  });
+};
+
 const checkLedgerStructure = (parsed, facts) => {
   const findings = [];
   const nonBlank = parsed.entries.filter((entry) => entry.raw.trim() !== '');
@@ -206,11 +226,15 @@ const checkLedgerStructure = (parsed, facts) => {
   const owners = new Map();
   for (const row of parsed.rows.filter((item) => item.valid)) {
     for (const path of getConcretePaths(row, facts)) {
-      const prior = owners.get(path);
-      if (prior) findings.push(makeFinding(row.line, 'duplicate-path', `${path} is owned by both ${prior} and ${row.id}`, row.id));
-      else owners.set(path, row.id);
+      const prior = owners.get(path) ?? [];
+      const conflicting = prior.find((owner) => !isPinRow(owner, path) || !isPinRow(row, path));
+      if (conflicting) {
+        findings.push(makeFinding(row.line, 'duplicate-path', `${path} is owned by both ${conflicting.id} and ${row.id}`, row.id));
+      }
+      owners.set(path, [...prior, row]);
     }
   }
+  findings.push(...checkPinBindings(parsed.rows, owners, facts));
   const last = nonBlank.at(-1);
   if (!parsed.total || (parsed.totals ?? []).length !== 1 || last?.line !== parsed.total?.line) {
     findings.push(makeFinding(last?.line ?? 1, 'total', 'the exact total line must be the last non-blank ledger line'));
@@ -236,9 +260,9 @@ const getAnchorCandidates = (row, preceding, facts) => {
   return facts.candidates(suffix, precedingPaths);
 };
 
-const getCurrentLines = (rows, facts, verbs) => rows
+const getCurrentLines = (rows, facts, verbs) => unique(rows
   .filter((row) => row.valid && verbs.has(row.verb) && row.budget !== 'n/a')
-  .flatMap((row) => getConcretePaths(row, facts))
+  .flatMap((row) => getConcretePaths(row, facts)))
   .reduce((sum, path) => sum + (getPathFact(facts, path)?.lines ?? 0), 0);
 
 const checkAuthoring = (parsed, facts) => {
@@ -335,7 +359,11 @@ const judge = (text, facts, stateRules) => {
     return { findings: [makeFinding(line, 'block-model', parsedResult.error.message)], skips: [], parsed: null };
   }
   const parsed = parsedResult.parsed;
-  const structural = [...checkHeadings(String(text ?? ''), parsed.document), ...checkLedgerStructure(parsed, facts)];
+  const goal = getHeading(parsed.document, PLAN_HEADINGS[0]);
+  const goalLines = goal ? getSectionLines(parsed.document, PLAN_HEADINGS[0])
+    .map((text, offset) => ({ text, line: getFindingLine(parsed.document, goal.index + 1 + offset) })) : [];
+  const structural = [...checkHeadings(String(text ?? ''), parsed.document), ...checkLedgerStructure(parsed, facts),
+    ...checkStoryOwnership({ rows: parsed.rows, goalLines, facts, getConcretePaths }).findings];
   const state = stateRules ? stateRules(parsed, facts) : { findings: [], skips: [] };
   const findings = [...structural, ...state.findings].map((finding, index) => ({ ...finding, order: index }))
     .sort((left, right) => left.line - right.line || left.order - right.order)

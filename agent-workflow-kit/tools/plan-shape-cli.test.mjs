@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { renameSync, rmSync, symlinkSync } from 'node:fs';
 import { ledgerOf, makeTree, planWith, write } from './plan-shape-harness.test.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), 'plan-shape-cli.mjs');
+const LINK_REFUSALS = ['EPERM', 'EACCES', 'ENOTSUP'];
 const loadCli = () => import('./plan-shape-cli.mjs');
 const makeRepo = () => {
   const root = makeTree('plan-shape-cli');
@@ -20,6 +22,42 @@ const run = (root, args) => {
 const planOf = (row, total) => planWith({ ledger: ledgerOf(row, total) });
 
 describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
+  it('judges story collisions in both arms and in-flight, and refuses every plan over a refused store', async (t) => {
+    await loadCli();
+    const root = makeRepo();
+    const outside = makeRepo();
+    t.after(() => [root, outside].forEach((path) => rmSync(path, { recursive: true, force: true })));
+    const epic = ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
+      'maxLines: 60', 'state: open', '---', '# Epic: Ownership', '## Intent', 'Keep ownership visible.',
+      '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
+      '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
+      '- S1 | Boundary | depends-on: none | owns: docs/x.md | shared: none | state: planned', '## Queue', 'Row ALPHA in Now'].join('\n');
+    write(root, 'docs/ai/epics/ALPHA.md', epic);
+    write(root, 'docs/x.md', 'Owned document.\n');
+    const ledger = ledgerOf('R1 | modify | docs/x.md | update the document | n/a | docs/x.md:1');
+    write(root, 'docs/plans/collide.md', planWith({ ledger }));
+    for (const args of [['--check', 'docs/plans/collide.md'], ['--verify', 'docs/plans/collide.md'], ['--check', '--in-flight']]) {
+      const result = run(root, args);
+      assert.ifError(result.error); assert.equal(result.status, 1, result.stderr); assert.match(result.stdout, /story-owns/);
+    }
+    write(root, 'docs/plans/mine.md', planWith({ ledger, goal: '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA' }));
+    const mine = run(root, ['--check', 'docs/plans/mine.md']);
+    assert.ifError(mine.error); assert.equal(mine.status, 0, mine.stderr || mine.stdout);
+    const store = join(root, 'docs/ai/epics');
+    const target = join(outside, 'epics');
+    renameSync(store, target);
+    try { symlinkSync(target, store); }
+    catch (error) {
+      if (!LINK_REFUSALS.includes(error.code)) throw error;
+      t.diagnostic(`sandbox refused symlinkSync: ${error.code}: ${store}`); return;
+    }
+    const refused = run(root, ['--check', '--in-flight']);
+    assert.ifError(refused.error); assert.equal(refused.status, 1, refused.stderr);
+    for (const name of ['collide', 'mine']) {
+      assert.ok(refused.stdout.split('\n').some((line) => line.startsWith(`docs/plans/${name}.md:`) && line.includes('story-store')));
+    }
+  });
+
   it('S10/S11 runs authoring state only on --check and post-state only on --verify (spec:plan-review-loop/S10, spec:plan-review-loop/S11)', async () => {
     const { main } = await loadCli();
     assert.equal(typeof main, 'function');

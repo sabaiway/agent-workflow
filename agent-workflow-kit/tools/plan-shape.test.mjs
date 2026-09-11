@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { codes, planWith } from './plan-shape-harness.test.mjs';
+import { expandClaim } from './claim-relation.mjs';
 
+const PIN_PATH = 'test/package-content.test.mjs';
 const rules = await import('./plan-shape.mjs').catch(() => ({}));
 const loadRules = async () => rules;
 
@@ -20,6 +22,50 @@ const factsFor = (overrides = {}) => {
 };
 
 describe('plan-shape rules — structural and authoring state', () => {
+  it('spec:plan-shape-ownership/S11 judges story ownership in every arm and leaves bare facts unjudged', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
+    const facts = factsFor({ stories: [{ path: 'docs/ai/epics/ALPHA.md', id: 'S1', line: 20, state: 'planned',
+      claims: [{ field: 'owns', path: 'docs/readme.md', ground: expandClaim('docs/readme.md') }], reachable: new Set() }],
+      landedEpics: [], storeRefusal: null });
+    for (const judge of [checkPlan, verifyPlan, checkPlanStructure]) {
+      assert.deepEqual(codes(judge(planWith(), facts)), ['story-owns']);
+      assert.deepEqual(codes(judge(planWith(), factsFor())), []);
+      const text = '---\nowner: none\n---\n' + planWith({ goal: '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA\nStory: S1 of ALPHA' });
+      assert.deepEqual(judge(text, facts).findings.map(({ line, code }) => ({ line, code })), [{ line: 9, code: 'story-line' }]);
+    }
+  });
+
+  it('spec:plan-review-loop/S34 binds every repeated modify pin to an untaken shipped row above it', async () => {
+    const { checkPlanStructure } = await loadRules();
+    const pin = (id, verb = 'modify') => `${id} | ${verb} | ${PIN_PATH} | update the pin | n/a | docs/readme.md:1`;
+    const remove = (id, path) => `${id} | delete | ${path} | remove it | \u2014 | \u2014`;
+    const first = remove('D1', 'src/a.mjs');
+    const second = remove('D2', 'src/b.mjs');
+    const facts = factsFor({ pathFacts: Object.fromEntries(['src/a.mjs', 'src/b.mjs'].map((path) => [path, { shipped: true, pinTest: PIN_PATH }])) });
+    const judge = (rows, input = facts) => checkPlanStructure(planWith({ ledger: [...rows, 'total: 0 \u2192 0 lines'].join('\n') }), input);
+    assert.deepEqual(codes(judge([pin('P1')])), []);
+    const two = [first, second, pin('P1'), pin('P2')];
+    assert.deepEqual(codes(judge(two)), []);
+    assert.deepEqual(judge([...two, pin('P3')]).findings.map(({ code, rowId }) => ({ code, rowId })), [{ code: 'pin-unbound', rowId: 'P3' }]);
+    assert.deepEqual(judge([pin('P1'), first, pin('P2'), second, pin('P3')]).findings.map(({ code, rowId }) => ({ code, rowId })), [{ code: 'pin-unbound', rowId: 'P1' }]);
+    assert.ok(codes(judge([pin('P1', 'create'), pin('P2')])).includes('duplicate-path'));
+    assert.deepEqual(codes(judge(two, {})), []);
+    assert.deepEqual(codes(judge([pin('P1'), pin('P2')], {})), []);
+    assert.deepEqual(codes(judge([pin('P1'), pin('P2')])), ['pin-unbound', 'pin-unbound']);
+    assert.deepEqual(codes(judge(two, factsFor({ pathFacts: {} }))), ['pin-unbound', 'pin-unbound']);
+    const countedFacts = factsFor({ pathFacts: { ...facts.pathFacts, [PIN_PATH]: { kind: 'regular', lines: 798, inScope: true } } });
+    const counted = planWith({ ledger: [first, second, pin('P1').replace('n/a', '798'), pin('P2').replace('n/a', '798'),
+      'total: 798 \u2192 798 lines'].join('\n') });
+    assert.deepEqual([rules.checkPlan(counted, countedFacts), rules.verifyPlan(counted, countedFacts)]
+      .map((result) => codes(result).filter((code) => ['before-total', 'after-total'].includes(code))), [[], []]);
+    const creates = [first, second].map((row) => row.replace('delete', 'create').replace('\u2014 | \u2014', 'n/a | docs/readme.md:1'));
+    const sweep = 'SW | modify | test/*.test.mjs | update (2 files) | n/a | docs/readme.md:1';
+    assert.ok(codes(judge([...creates, sweep, pin('P1')], { ...facts, expansions: { 'test/*.test.mjs': [PIN_PATH, 'test/other.test.mjs'] } })).includes('duplicate-path'));
+    const conflicted = judge([...creates, pin('P1'), sweep, pin('P3')],
+      { ...facts, expansions: { 'test/*.test.mjs': [PIN_PATH, 'test/other.test.mjs'] } });
+    assert.match(conflicted.findings.find((finding) => finding.rowId === 'P3').message, /owned by both SW and P3/);
+  });
+
   it('S1 requires the title prefix and ordered skeleton, admitting phases only before Cleanup (spec:plan-review-loop/S1)', async () => {
     const { checkPlan, PLAN_HEADINGS, PLAN_TITLE_PREFIX } = await loadRules();
     assert.deepEqual(PLAN_HEADINGS, [
@@ -149,7 +195,7 @@ describe('plan-shape rules — structural and authoring state', () => {
   });
 
   it('S9 rejects uncontained and multiply-owned paths, wrong kinds and invalid cap states (spec:plan-review-loop/S9)', async () => {
-    const { checkPlan } = await loadRules();
+    const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
     const ledger = [
       'R1 | modify | src/*.mjs | update (1 files) | 10 | src/a.mjs:1',
       'R2 | modify | src/a.mjs | update | 10 | src/a.mjs:1',
@@ -170,6 +216,15 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.ok(codes(result).includes('cap-declaration'));
     const badAnchor = checkPlan(planWith({ ledger: 'R4 | modify | src/a.mjs | update | 10 | ../outside.mjs:1\ntotal: 0 → 10 lines' }), facts);
     assert.ok(codes(badAnchor).includes('containment'));
+    const spellings = ['/src/a.mjs', 'src//a.mjs', './src/a.mjs', 'src/./a.mjs', 'src/a.mjs/', '.', '..', '../escape.mjs', 'src\\a.mjs'];
+    for (const judge of [checkPlan, verifyPlan, checkPlanStructure]) {
+      for (const path of [...spellings, 'src/a.mjs', 'src/*.mjs']) {
+        for (const [rowPath, anchor] of [[path, 'src/a.mjs'], ['src/a.mjs', path]]) {
+          const text = planWith({ ledger: `R4 | modify | ${rowPath} | update (1 files) | n/a | ${anchor}:1\ntotal: 0 \u2192 0 lines` });
+          assert.equal(codes(judge(text, facts)).includes('containment'), spellings.includes(path), `${judge.name}: ${rowPath} | ${anchor}`);
+        }
+      }
+    }
     const noBudget = checkPlan(planWith({ ledger: 'R4 | modify | src/a.mjs | update | n/a | src/a.mjs:1\ntotal: 0 → 0 lines' }), { ...facts, capDeclared: true });
     assert.ok(codes(noBudget).includes('source-budget'));
   });

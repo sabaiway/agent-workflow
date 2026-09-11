@@ -4,13 +4,18 @@ import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
 import { getLineCount, isSweep, resolveAnchorCandidates, unique } from './plan-shape.mjs';
+import { listStories } from './claim-relation.mjs';
+import { EPICS_REL, readEpicStore } from './epic-store.mjs';
+import { sweepSiblings } from './epic-shape-ledger.mjs';
+import { PIN_FILE } from './plan-shape-ownership.mjs';
 
 const SOURCE_SIZE_REL = 'docs/ai/source-size.json';
 const PACKAGE_FILE = 'package.json';
-const PIN_FILE = 'package-content.test.mjs';
 const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules']);
 const NEGATED_CLASS = /\[[!^]/;
 const UNSUPPORTED_GLOB = /[()\\\u0000-\u001f]/;
+const STORE_REFUSED = 'refused';
+const FINDING_SEPARATOR = '; ';
 
 const usageError = (message, scope = 'repository') => Object.assign(new Error(message), { exitCode: 2, scope });
 const planError = (message) => usageError(message, 'plan');
@@ -200,18 +205,31 @@ const describePath = (root, path, practice, repoFiles, packageCache) => {
   };
 };
 
+const readStoryFacts = (root) => {
+  const store = readEpicStore(root);
+  if (store.outcome === STORE_REFUSED) return { stories: [], landedEpics: [], storeRefusal: `${EPICS_REL}: ${store.reason}` };
+  const sweep = sweepSiblings(store.entries, EPICS_REL);
+  return {
+    stories: sweep.ok ? listStories(sweep.epics) : [],
+    landedEpics: sweep.ok ? sweep.landedEpics : [],
+    storeRefusal: sweep.ok ? null : sweep.findings.map((finding) => finding.message).join(FINDING_SEPARATOR),
+  };
+};
+
 export const openRepo = (root, { robustnessDeps } = {}) => {
   const repoRoot = realpathSync(root);
-  return { repoRoot, repoFiles: walkRegularFiles(repoRoot), practice: loadPractice(repoRoot), robustClasses: loadRobustClasses(robustnessDeps), packageCache: new Map() };
+  return { repoRoot, repoFiles: walkRegularFiles(repoRoot), practice: loadPractice(repoRoot), robustClasses: loadRobustClasses(robustnessDeps),
+    packageCache: new Map(), ...readStoryFacts(repoRoot) };
 };
 
 export const expandSweepPaths = (root, patterns) => expandPatterns(walkRegularFiles(realpathSync(root)), patterns);
 
 export const buildFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }) } = {}) => {
-  const { repoRoot, repoFiles, practice, robustClasses, packageCache } = repo;
+  const { repoRoot, repoFiles, practice, robustClasses, packageCache, stories, landedEpics, storeRefusal } = repo;
   const expansions = expandPatterns(repoFiles, paths.filter(isSweep));
   const allPaths = unique([...paths, ...Object.values(expansions).flat()]);
   const pathFacts = Object.fromEntries(allPaths.map((path) => [path, describePath(repoRoot, path, practice, repoFiles, packageCache)]));
   const candidates = (suffix, precedingPaths = []) => resolveAnchorCandidates(repoFiles, suffix, precedingPaths);
-  return { capDeclared: practice.capDeclared, cap: practice.cap, robustClasses, pathFacts, expansions, repoFiles, candidates };
+  return { capDeclared: practice.capDeclared, cap: practice.cap, robustClasses, pathFacts, expansions, repoFiles, candidates,
+    stories, landedEpics, storeRefusal };
 };
