@@ -59,14 +59,16 @@ jobs:
       # scripts/testing/foreign-fixture.test.mjs and scripts/testing/specs-scale-probe.test.mjs are
       # TRACKED and run by the local gate, and they do not run here yet.
       #
-      # The kit's tools list here ENUMERATES its subdirectories, so a future one is silently dropped
-      # until this list is extended — measured once already. Widening it to the gate's recursive glob
-      # is queued with the test that would pin it; an unpinned widening is a change without a test.
+      # The kit's tools list here names tools/manifest EXPLICITLY, so a future non-suite subdirectory
+      # is silently dropped until the list is extended — measured once already. The <name>.test/
+      # subdirectories ride the tools/*.test/ glob below, which is fixed-depth, not the gate's
+      # recursive one; holding both workflows' globs to the tree is recorded debt, no test pins them.
       - name: Unit tests (tracked content)
         run: |
           node --test \
             agent-workflow-memory/{scripts,references/scripts,bin}/*.test.mjs \
             agent-workflow-kit/{tools,tools/manifest,references/scripts,bin}/*.test.mjs \
+            agent-workflow-kit/tools/*.test/*.test.mjs \
             agent-workflow-kit/test/*.test.mjs \
             agent-workflow-engine/test/*.test.mjs \
             antigravity-cli-bridge/bin/*.test.mjs \

@@ -4,6 +4,107 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 13.1.0 — the delegation ledger learns a base: a dispatch records `head` or `checkpoint`, every measurement of a checkpoint thread is base-relative over the snapshot scope, and a checkpoint thread holds the delegate's session (AD-140)
+
+**MINOR: one optional key on the dispatch record, one new flag on `open`, one new IO leaf; every record minted
+before the field reads as today, every head-base thread measures as today, byte for byte.** Until now every
+ledger measurement was HEAD-relative, so the second task of a story — opened over the first task's uncommitted
+diff — recorded a DIRTY baseline and a `dirty-baseline` return, and the metric could not attribute its bytes
+(measured on this very story: fifteen of its seventeen returns). The epic's task tier keeps a checkpoint snapshot per
+task; the ledger can now measure against one. The contract is `docs/ai/specs/kit/dispatch-baseline/index.md` with
+its part `scope.md` (live, revision 1, S1–S6 bound) beside `held-session.md` revision 3 (S8–S9 bound).
+
+- **The record carries its base; the schema stays 1.** A `dispatch` record carries `baseline: { kind, treeOid }` —
+  `head` with `null`, or `checkpoint` with a git object id of exactly 40 or 64 lowercase hex characters; an
+  unknown kind, a malformed id, a head with an id and a checkpoint without one each refuse by name over the nested
+  closed-key rule (`validateBaseline`). `baseline` is the ONE optional key of the dispatch kind (`OPTIONAL_FIELDS`):
+  a record without it reads as head through the one reader `readsBaseline(dispatch)`, an unknown extra key still
+  refuses, and the writer always mints the key. `BASELINE_KINDS`, `HEAD_BASELINE`, `isTreeOid` are exported.
+- **`tools/dispatch-baseline.mjs`, the IO leaf (172 lines).** `snapshotScope` states the scope positively and
+  index-independently: every work-tree path not ignored by git's standard excludes, judged under an EMPTY temporary
+  index so the real index never decides membership, plus every present `KIT_OWN_PATHS` entry, plus every path HEAD's
+  tree or the base tree names, minus `docs/plans/`, the three settings files, every `KNOWN_FOOTPRINT` pattern and
+  `node_modules`; the comparison domain is the scope alone — an excluded base path is never touched and stays at
+  its base bytes, a scope path the base holds and the tree lost is measured as a deletion. The walk that materialises
+  the scope is a state table over the lstat class and base membership: absent → removed; a regular file or a
+  symlink → present; a never-committable class at a base path → refuse; elsewhere → skip; a directory at a base
+  path → removed (the file is gone, its own not-ignored children are scope paths of their own, its excluded
+  children never enter the index); elsewhere → skip; and a present path in an ancestor/descendant relation with an
+  excluded base path makes the measurement undecidable before the index is touched — git's own directory/file
+  conflict would otherwise drop the excluded entry into the payload. `computeBasePayload` delegates to
+  `core-evidence.mjs` byte for byte under `head` and, under `checkpoint`, reads the base tree into its OWN temporary
+  index, forces the live scope in and answers ONE `git diff --cached <treeOid>`, the index directory removed before
+  every return; `computeBaseFingerprint` is the sha256 of that payload; `isCleanAgainstBase` delegates to
+  `isTreeClean` under a head base and under a checkpoint base is "the payload is empty"; `runBaseDiff` serves the
+  producer's walks; `resolveTreeObject` is the type proof (a commit, a blob, a tag
+  and an unknown id refuse by name). A thrown runner, a failed git read, an unreadable path, an uncreatable index,
+  a non-tree base and the undecidable conflict each answer null — never clean. `core-evidence.mjs`, the review
+  wrappers and their bash twins are untouched (`review-fingerprint-parity` green unchanged).
+- **The producer and the store read the base, never a flag.** `enumerateReturnedObjects` and `computeReturnedDiff`
+  take `io.base`: a head base walks exactly as today; a checkpoint base walks ONE layer over the base→live diff
+  (the base blob as pre-image, the forced-add blob as post-image, the binary markers from a numstat over the same
+  base→live diff, no untracked section), and both checkpoint walks force `--ignore-submodules=none` exactly as the
+  checkpoint payload does.
+  `uncommittedStateFingerprint(cwd, fsx, base)` routes by base. The preflight refuses a retry whose base differs in
+  either field from its origin's, both read through `readsBaseline` (a pre-field origin admits its head retry).
+- **`open --checkpoint <oid>`; `return` and `fold` read the base from the record.** The grammar first, then the
+  tree-type proof, nothing written on a refusal; the clean probe, `preTreeDigest`, the return's bracketing
+  fingerprint and diff, the fold's fingerprint and enumeration are all base-relative, so no half-routed pair drifts.
+  The CLEAN line of a checkpoint open names the base; the DIRTY wording is unchanged. `baselineClean` keeps its
+  name and now means clean against the recorded base: two cycles on one tree with no commit are both CLEAN and both
+  metric-eligible, and a head-based open on the same dirty tree is still DIRTY.
+- **A checkpoint base is never a fresh start for the held session (`held-session` revision 3).** A `code` dispatch
+  on a checkpoint base expects HELD exactly as `baselineClean:false` does; its substitution is resolved by ONE record,
+  the thread's own ledger `degrade`, which also withdraws the expectation (HELD is cleared, the next fold establishes
+  it — retryCap 0 with a dead session heals in one step; the report's "held session: none" reason names both
+  states); a terminal return records no substitution; no evidence-store degrade is consulted for a checkpoint thread
+  at either site (its fingerprint is HEAD-relative, the return's is base-relative). The judge's verdict is per thread
+  (`threadVerdict`, `baseKind`, `substituted`), so the `fold` VERB refuses a substituted checkpoint `code` thread by
+  its own verdict — judged over the SAME inputs `review-state` gives the judge, the execute-degrade records through
+  `review-state`'s exported reader — naming the held session the thread was opened against and the ledger degrade as
+  the recovery, and fails closed on an error epoch or an unreadable ledger; `review-state`'s recovery hint names the
+  ledger degrade, then a retry or a new thread.
+- **Stated where they bite.** `DISPATCH_CONTRACT` carries the base clause and `references/modes/dispatch.md` carries it
+  verbatim (doc-parity); the header, HELP and the mode doc's Invariants name TWO git-write exceptions (handoff-return's
+  write-tree; the checkpoint measurement's own temporary index and forced-add blobs — never a ref, never the real
+  index); every head-only premise — "staging moves the tree", the frozen payload's residuals, the concealing-tree
+  guard's digest-blindness rationale in the fold's comment, HELP and mode doc, and the same guard's claim that a
+  deleted skip-worktree file is invisible to every probe (its comment, its refusal message, HELP and the mode doc) —
+  is qualified to a head base; `review-state`'s header (the single home of its exit contract), `review-state.md` and
+  `core-evidence.md` qualify the accepted-replacement escape to a head base and state that a checkpoint substitution
+  closes only by its ledger degrade (the HELP's restatement of that rule is subtracted); the producer's payload
+  comments and the return guard's rationale name the base they hold for, the producer's own prohibition on forcing
+  the submodule domain is SUBTRACTED where its walks now force it, and the non-UTF-8 symlink-target and binary
+  content-blind refusals name the head payload their reason is about and state that they hold under either base —
+  BOTH say outright that they refuse CONSERVATIVELY, each reason holding for an UNTRACKED object alone, since a
+  tracked binary's diff carries its blob ids and a tracked link's target rides the diff body raw; the content-blind
+  refusal's own envelope says the same rather than generalising one kind's blindness over the class, and the two
+  assertions that pinned its old opening were realigned to the new one.
+  Tarball pin 304 → 305; the publish workflow's kit test line and `ci.yml`'s unit-test step both gain
+  `tools/*.test/*.test.mjs` — **nineteen** suites live in the kit's `tools/*.test/` subdirectories, and neither workflow
+  reached ANY of them: the two this story adds and seventeen that four earlier stories left running only in the local
+  gate matrix, which has always used the recursive glob. Recorded sizes raised by six writes carrying the plan's and
+  the folds' reasons, then TIGHTENED by a seventh as the review rounds subtracted prose and raised again by an
+  eighth where a refusal had to say what it conservatively covers (`dispatch.mjs` 1883 lines,
+  its contract line 1597 bytes; `exec-producer.mjs` 503; `review-state.mjs` 918; `test/package-content.test.mjs` 799;
+  the record pair of the dispatch grammar; the kit aggregate); four spec-coverage debts paid (107 → 103).
+- **Recorded debt.** Eight queue rows on this change, beside one PRACTICE row its later rounds motivated (one
+  rationale gets one home, so a sentence cannot drift on five surfaces at once). Five on the shipped code: the leaf hands the whole domain to `git add -f` on
+  argv (a Windows argument-length limit; `--pathspec-from-file` is the fix); the scope's set arithmetic is
+  exact-string, so a `core.ignorecase` index can fold a live path onto an excluded base entry; three guards — the
+  concealing-tree probe, the non-UTF-8 symlink-target refusal and the binary arm of the content-blind refusal —
+  refuse a checkpoint thread for a blindness its payload does not have (one row); the fold's error-epoch arm is
+  unreachable through real git; the binary and non-UTF-8-symlink refusals are wider than their own reasons, since a
+  TRACKED binary's diff carries both blob ids and a TRACKED link's target rides the diff raw, while the reasons hold
+  only for an untracked one (one row). Two from the execution itself: a delegate's brief must pre-authorise the fixture
+  edits its change implies, and a drift guard must hold the publish workflow's test globs to the tree. One on
+  ADJACENT modules the review reached but this change does not touch: `core-evidence.mjs` and `commit-guard.mjs`
+  still name a submodule-ignore setting as staged content the payload cannot see, which the payload's own flags
+  closed. Three STATED
+  LIMITS of the contract itself, not rows: the checkpoint enumeration inherits the unborn-branch refusal, the frozen
+  payload keeps its unframed/no-mode residuals, and the concealing-tree probe reads the real index by design under
+  both bases.
+
 ## 13.0.0 — a plan proves its own ground: `plan-shape` judges a plan's rows against its epic story's claims in both arms and `--in-flight`, the claim relation lives in one leaf, and the containment rule is one positive predicate (AD-139)
 
 **MAJOR: the containment rule refuses a row or anchor path spelling 12.4.0 accepted — a trailing or doubled slash, a

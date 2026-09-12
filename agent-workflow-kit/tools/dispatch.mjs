@@ -60,9 +60,10 @@
 //
 // Writer: appends to the delegation ledger through the store's lock-serialized append (the store's
 // preflight is the single legality door — this module adds NO second validator). Never commits,
-// never runs a subscription CLI, spawns nothing but git READS — with ONE stated exception:
+// never runs a subscription CLI, spawns nothing but git READS — with TWO stated exceptions:
 // `handoff-return` attests MAIN's index with `git write-tree`, which may write a tree OBJECT into
-// the odb and moves no ref (the same probe `land --prepare` itself uses). Dependency-free,
+// the odb (the same probe `land --prepare` itself uses); checkpoint measurement writes the leaf's
+// OWN temporary index and forced-add blob objects — never a ref, never the real index. Dependency-free,
 // Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { readFileSync, realpathSync, readlinkSync } from 'node:fs';
@@ -73,6 +74,7 @@ import {
   DELEGATION_SCHEMA_VERSION, STEP_CLASSES, OBSERVATION_PROVENANCE, RETURN_OUTCOMES,
   SESSION_ID_NULLABLE_OUTCOMES, checkDispatchContractForm, checkDispatchMintConsistency,
   contractDigest, canonicalDelegationDigest, computeNumerator, evaluateMetricEligibility,
+  HEAD_BASELINE, readsBaseline, isTreeOid,
 } from './dispatch-record.mjs';
 import {
   appendDelegationRecord, readDelegationStore, resolveDelegationStorePath, delegationThreadState,
@@ -86,7 +88,11 @@ import { execReceiptBasename, execReportBasename, parseExecReceipt } from './exe
 import {
   enumerateReturnedObjects, computeReturnedDiff, assembleIntegrationBundle,
 } from './exec-producer.mjs';
-import { gitBuf, isTreeClean } from './core-evidence.mjs';
+import { gitBuf } from './core-evidence.mjs';
+import { isCleanAgainstBase, resolveTreeObject } from './dispatch-baseline.mjs';
+import { readDelegationLedger } from './dispatch-store-read.mjs';
+import { judgeLedger, threadVerdict, HELD_RECEIPT_BACKEND } from './held-session.mjs';
+import { degradeRecordSet, selectHeldSessionDegrades } from './review-state.mjs';
 import { lstatNoFollowRead, readRegularFileNoFollow, readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 import { gitLine } from './flow-store-read.mjs';
 import {
@@ -98,7 +104,7 @@ const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 }
 
 // The ONE contract sentence, doc-parity-bound into references/modes/dispatch.md: the FORM-only limit
 // and the aggregator's refusals are what a reader must not be able to mis-learn from the mode doc.
-export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds, and `await` is satisfied ONLY by the TERMINAL exec receipt of its own dispatch\'s {backend, nonce} — never by a review receipt, a ledger line or a finding manifest — while an expiry names a supervision question and releases NO writer slot';
+export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds, and `await` is satisfied ONLY by the TERMINAL exec receipt of its own dispatch\'s {backend, nonce} — never by a review receipt, a ledger line or a finding manifest — while an expiry names a supervision question and releases NO writer slot; `open` records the thread\'s BASE (`head` by default, `checkpoint` under `--checkpoint <oid>`), `return` and `fold` measure against the base the dispatch recorded, never a flag, and the `fold` VERB itself refuses a checkpoint `code` thread the held-session judge names SUBSTITUTED in that thread\'s own verdict — a precondition like its hidden-path and content-blind guards, the store\'s preflight staying the only door on the record';
 
 // ── the flag surface (the CLI tests pin it against the D3 key sets) ────────────────────────────────
 // flag → the record field it decides. The fields NOT on a flag are DERIVED and listed beside them,
@@ -138,6 +144,7 @@ export const OPEN_FLAG_FIELDS = Object.freeze({
   '--backend': 'backend',
   '--rationale': 'rationale',
   '--retry-of': 'retryOf',
+  '--checkpoint': 'baseline.treeOid',
 });
 // COPIED from the contract header at mint and bound by contractDigest (D3): a dispatch that
 // disagreed with the header it claims to carry is refused by checkDispatchMintConsistency.
@@ -525,7 +532,14 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
   // and a verb should refuse in its own words before another module has to. Not decidable is never
   // CLEAN: baselineClean:false is what makes the eventual return honestly ineligible, and guessing
   // true would let an unattributable metric into the acceptance number.
-  const baselineClean = isTreeClean(cwd);
+  const oid = values['--checkpoint'];
+  if (oid !== undefined) {
+    if (!isTreeOid(oid)) return refusal('open', `--checkpoint "${oid}" is not a git object id of exactly 40 or 64 lowercase hex characters; nothing was written`);
+    const resolved = resolveTreeObject(cwd, oid);
+    if (!resolved.ok) return refusal('open', resolved.reason);
+  }
+  const base = oid === undefined ? HEAD_BASELINE : { kind: 'checkpoint', treeOid: oid };
+  const baselineClean = isCleanAgainstBase(cwd, base);
   if (baselineClean === null) {
     return refusal('open', 'the working state could not be probed, so the baseline is undecidable — a dispatch never records a guessed baseline, and outside a git work tree there is no tree to fingerprint either (fail closed); nothing was written');
   }
@@ -539,12 +553,12 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
   // with another run's evidence.
   const leftover = existingArtifactRefusal(dirname(resolveDelegationStorePath(cwd, env)), need(values, '--backend'), contract.nonce);
   if (leftover !== null) return refusal('open', `${leftover}; nothing was written`);
-  // The baseline is a RECORDED CLAIM about this tree, so it is refused before it is made: a tree that
-  // conceals a change reports CLEAN to `isTreeClean` and then hands the concealed change to the
+  // The baseline is a RECORDED CLAIM about this tree, so it is refused before it is made: under a head
+  // base a tree that conceals a change probes CLEAN and then hands the concealed change to the
   // delegate's account at return time. `open` is where that lie is cheapest to catch.
   const honest = hiddenFromPlainDiff(top);
   if (!honest.ok) return refusal('open', `${honest.reason}; nothing was written`);
-  const preTreeDigest = uncommittedStateFingerprint(cwd);
+  const preTreeDigest = uncommittedStateFingerprint(cwd, undefined, base);
   const record = {
     schema: DELEGATION_SCHEMA_VERSION,
     kind: 'dispatch',
@@ -556,6 +570,7 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
     contractDigest: contractDigest(contract),
     preTreeDigest,
     baselineClean,
+    baseline: { kind: base.kind, treeOid: base.treeOid },
     deadlineS: contract.deadlineS,
     retryOf: values['--retry-of'] ?? null,
     retryIndex: contract.retry.index,
@@ -576,7 +591,7 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
   const { writtenPath } = appendDelegationRecord({ cwd, record, env });
   return {
     code: 0,
-    stdout: `dispatch open: thread "${record.nonce}" opened in wave "${record.waveId}" — class ${record.stepClass} · backend ${record.backend} · vehicle ${record.vehicle.requested} → ${record.vehicle.selected} · deadline ${record.deadlineS}s (floor ${floorS}s) · retry ${record.retryIndex}/${record.retryCap} · baseline ${baselineClean ? 'CLEAN' : 'DIRTY — the return will be metric-INELIGIBLE (dirty-baseline)'} → ${writtenPath}`,
+    stdout: `dispatch open: thread "${record.nonce}" opened in wave "${record.waveId}" — class ${record.stepClass} · backend ${record.backend} · vehicle ${record.vehicle.requested} → ${record.vehicle.selected} · deadline ${record.deadlineS}s (floor ${floorS}s) · retry ${record.retryIndex}/${record.retryCap} · baseline ${baselineClean ? (base.kind === 'checkpoint' ? `CLEAN against checkpoint ${base.treeOid}` : 'CLEAN') : 'DIRTY — the return will be metric-INELIGIBLE (dirty-baseline)'} → ${writtenPath}`,
     stderr: '',
   };
 };
@@ -741,17 +756,9 @@ const runAwait = async ({ baseCwd, env, argv, now, sleep, pollMs }) => {
 
 // ── return: the wrapper's exec receipt, ABSORBED ──────────────────────────────────────────────────
 
-// The return-time guard the Phase-1 council required. `git diff` SKIPS index entries carrying
-// assume-unchanged or skip-worktree and honours diff.ignoreSubmodules, so a path can be CHANGED and
-// invisible to BOTH halves of the ratio at once — the producer's enumeration and the canonical
-// payload the denominator is framed from run the same plain probes. The kit already owns a probe
-// that sees them (computeWorkingState forces --ignore-submodules=none and folds in flaggedIndexLag),
-// so the absorb door compares the two views and refuses the DIFFERENCE by name.
-//
-// It is deliberately NOT a producer fix: D7 binds the numerator to computeFingerprintPayload's byte
-// domain, and forcing the flags on one side only would let the numerator count objects the
-// denominator cannot see — a worse failure than the blindness. The payload-side fix is queued as its
-// own frozen-shared-surface change.
+// The return-time guard the Phase-1 council required. Under a head base `git diff` SKIPS index entries
+// carrying assume-unchanged or skip-worktree, so a path can be CHANGED and invisible to the producer's
+// enumeration and to the canonical payload alike — a tree that conceals a change is refused, never measured.
 //
 // The untracked section is excluded from the comparison because BOTH views read it with the same
 // `ls-files --others --exclude-standard` probe: there is no divergence there to find. Both sides
@@ -759,17 +766,18 @@ const runAwait = async ({ baseCwd, env, argv, now, sleep, pollMs }) => {
 // alone — and if it ever did, the answer would be a refusal, never a wrong number.
 // A tree can LIE about itself in two independent ways, and neither is decidable by comparing two
 // views that share the same blindness. So this asks two questions of its own, and every door that
-// measures or binds a tree (`open`, `return`, `fold`) asks them before it does anything else.
+// measures or binds a tree (`open`, `return`, `fold`) asks them.
 //
 // (a) INDEX BITS, fail closed on their PRESENCE. `git ls-files -v` tags an assume-unchanged entry
-// lowercase and a skip-worktree entry `S`, and the second one is the sharp case: a MISSING
+// lowercase and a skip-worktree entry `S`, and the second one is the sharp case: under a head base a MISSING
 // skip-worktree path is an ordinary sparse checkout to every probe this kit owns — probed live, the
 // deletion of a materialized skip-worktree file is invisible to `computeWorkingState`, to the plain
 // diff, to the tree fingerprint AND to the producer's enumeration. Nothing can compare its way to
 // that, so the BIT is refused rather than its effect. It bites hardest at `open`: set the bit, delete
 // the file, open (a FALSE clean baseline is recorded), then clear the bit — and the return credits the
 // delegate with a deletion it never made. Refusing any tag but `H` also refuses an unmerged index,
-// which is honest for a measurement.
+// which is honest for a measurement; a checkpoint measurement sees the deletion because its scope
+// names the path from the base tree.
 //
 // (b) The --ignore-submodules axis, PER SIDE and on BYTES. Against the UNION of the two name lists a
 // path visible on one side masks its own hidden state on the other; against DECODED names two
@@ -847,12 +855,12 @@ const canonicalStoreRefusal = (cwd, env) => {
   return null;
 };
 
-// A symlink's TARGET is read by the shared payload with `readlink` as a STRING, so bytes that are not
-// valid UTF-8 are gone before any framing question arises — probed, two links whose targets are the
-// single bytes 0xff and 0xfe produce the SAME payload and the SAME enumeration, so swapping one for
-// the other after a return is invisible to the fold. Until the payload reads targets as bytes (queued
-// with the framing migration), such a link is refused: this is not a fourth blind CLASS, it is the
-// narrow case where the payload provably cannot follow one object's bytes.
+// Under a head base an UNTRACKED symlink's TARGET is read by the payload with `readlink` as a STRING, so bytes that
+// are not valid UTF-8 are gone before any framing question arises — probed, two untracked links whose targets are the
+// single bytes 0xff and 0xfe produce the SAME payload and the SAME enumeration, so swapping one for the other after a
+// return is invisible to the fold. A TRACKED link's target rides `git diff` RAW, and a checkpoint payload carries it
+// too, so this is not a fourth blind CLASS: it is the CONSERVATIVE refusal over the class, holding under either base
+// by one rule, for the narrow case where the payload provably cannot follow one object's bytes.
 // ENOENT is the ONLY error that means "there is nothing to check here" — a deleted link, whose bytes
 // ride the diff exactly. EVERY other errno refuses, EINVAL emphatically included: the producer labels
 // an object `symlink` when ANY layer carries mode 120000, so a committed symlink REPLACED by a binary
@@ -876,7 +884,7 @@ const symlinkTargetRefusal = (top, entries, io = {}) => {
     if (!Buffer.from(target.toString('utf8'), 'utf8').equals(target)) lost.push(`${entry.path} -> 0x${target.toString('hex')}`);
   }
   if (lost.length === 0) return null;
-  return `${lost.length} symlink target(s) are not valid UTF-8 (${lost.join(', ')}) — the shared payload reads a target as a STRING, so those bytes are folded to U+FFFD before the digest is taken and a later change of target moves nothing at all; this lane is fail-closed for them until the payload reads targets as bytes`;
+  return `${lost.length} symlink target(s) are not valid UTF-8 (${lost.join(', ')}) — refused conservatively: the head payload reads an UNTRACKED link's target as a STRING and folds those bytes to U+FFFD, so this lane is fail-closed for them under either base`;
 };
 
 // NUL-delimited git output, kept as BUFFER segments — a decoded split cannot be undone.
@@ -919,7 +927,7 @@ export const hiddenFromPlainDiff = (top) => {
     .filter((seg) => seg.length > 2 && String.fromCharCode(seg[0]) !== LS_FILES_CACHED_TAG)
     .map((seg) => `${String.fromCharCode(seg[0])} ${showPath(seg.subarray(2))}`);
   if (flagged.length > 0) {
-    return { ok: false, reason: `${flagged.length} index entr(ies) carry a tag other than "${LS_FILES_CACHED_TAG}" (${flagged.join('; ')}) — an assume-unchanged or skip-worktree entry makes the index lie about the worktree, and the sharpest case is invisible to EVERY probe this kit owns: deleting a materialized skip-worktree file changes no diff, no fingerprint and no enumeration, so a delegated measurement over such a tree is not honest at all; clear the bits (git update-index --no-assume-unchanged / --no-skip-worktree) and try again` };
+    return { ok: false, reason: `${flagged.length} index entr(ies) carry a tag other than "${LS_FILES_CACHED_TAG}" (${flagged.join('; ')}) — an assume-unchanged or skip-worktree entry makes the index lie about the worktree, and under a head base the sharpest case is invisible to EVERY probe this kit owns: deleting a materialized skip-worktree file changes no diff, no fingerprint and no enumeration, so a delegated measurement over such a tree is not honest at all; clear the bits (git update-index --no-assume-unchanged / --no-skip-worktree) and try again` };
   }
   const key = (seg) => seg.toString('latin1');
   const missing = (forced, plain) => {
@@ -936,15 +944,16 @@ export const hiddenFromPlainDiff = (top) => {
     hiddenStaged.length > 0 ? `staged: ${hiddenStaged.map(showPath).join(', ')}` : null,
     hiddenUnstaged.length > 0 ? `unstaged: ${hiddenUnstaged.map(showPath).join(', ')}` : null,
   ].filter((part) => part !== null).join('; ');
-  return { ok: false, reason: `${count} changed path(s) are HIDDEN from the plain git diff this metric is computed over (${where}) — an ignore-submodules setting keeps them out of BOTH the numerator and the denominator, so the recorded bytes would describe a change set that is not the one on disk; clear the diff config and try again` };
+  return { ok: false, reason: `${count} changed path(s) are HIDDEN from the plain git diff the head-base metric is computed over (${where}) — clear the diff config and try again` };
 };
 
 // THE CONTENT-BLIND CLASSES, and the line between them and the merely ambiguous ones.
 //
-// For three kinds the payload carries NO CONTENT AT ALL, so their bytes can move underneath a digest
-// that cannot follow them — all three probed live:
-//   • `binary` — the payload holds `untracked-binary:<path>`, and a tracked binary's diff is the one
-//     line "Binary files … differ". Neither a same-size mutation nor a SIZE change moves the digest.
+// Under a head base, for three kinds the payload cannot be trusted to follow an object's bytes, so they can move
+// underneath a digest — each arm probed live, and two of the three are CONSERVATIVE over their whole class:
+//   • `binary` — an UNTRACKED one reaches the payload as `untracked-binary:<path>`, its name alone, so
+//     neither a same-size mutation nor a SIZE change moves the digest; a TRACKED one's diff carries
+//     both blob ids on its `index` line, so that half IS followed and the refusal is the conservative one.
 //   • `non-regular` — `untracked-nonregular:<path>`, a name and nothing else.
 //   • `submodule` — the first transition to dirty moves the digest (the superproject line gains
 //     "-dirty") and NOTHING after it does: a second, different nested edit and a whole new nested
@@ -954,11 +963,11 @@ export const hiddenFromPlainDiff = (top) => {
 // is SUBTRACTED: a change set carrying one is refused, by name, at both doors.
 //
 // Regular-file content and a symlink's TARGET are deliberately NOT here. They are present in the
-// payload — only unframed, so adjacent entries can alias each other (the residual named in the mode
+// payload — under a head base only unframed, so adjacent entries can alias each other (the residual named in the mode
 // doc and in --help). Subtracting them would refuse `new` and `symlink`, which is every delegated
 // change set there is, and the lane would measure nothing at all.
 //
-// Restoring the three means changing `computeFingerprintPayload` — a Plan-1 frozen surface the
+// Restoring the three under a head base means changing `computeFingerprintPayload` — a Plan-1 frozen surface the
 // REVIEW lane also binds — which is queued, not done here.
 export const CONTENT_BLIND_KINDS = Object.freeze(['binary', 'non-regular', 'submodule']);
 
@@ -966,7 +975,7 @@ export const CONTENT_BLIND_KINDS = Object.freeze(['binary', 'non-regular', 'subm
 // clean staged gitlink replacement carries exact OIDs in the payload; it is the nested state of an
 // already-DIRTY one that becomes invisible, and no cheap probe separates the two at this door.
 const CONTENT_BLIND_WHY = {
-  binary: 'the payload holds its name only, so neither its content nor its size reaches the digest',
+  binary: 'refused conservatively: an untracked binary reaches the head payload as its name only, so neither its content nor its size reaches its digest',
   'non-regular': 'the payload holds its name only',
   submodule: 'refused conservatively: a clean pointer change does carry its OIDs, but once the submodule is dirty the payload records nothing further about its nested state',
 };
@@ -975,7 +984,7 @@ export const contentBlindRefusal = (entries) => {
   const blind = entries.filter((e) => CONTENT_BLIND_KINDS.includes(e.kind));
   if (blind.length === 0) return null;
   const listed = blind.map((e) => `${e.kind} ${e.path} (${CONTENT_BLIND_WHY[e.kind]})`).join('; ');
-  return `the change set carries ${blind.length} object(s) whose CONTENT never enters the uncommitted-state payload (${listed}) — their bytes can move under a tree digest that cannot follow them, so the numerator would count a size the fold's binding cannot re-confirm. This lane is fail-closed for them until the shared payload can carry their content (a frozen surface the review lane binds too): keep such objects out of a measured dispatch, or close the thread with degrade`;
+  return `the change set carries ${blind.length} object(s) this lane will not measure (${listed}) — refused CONSERVATIVELY over the class, because for a blind one the bytes can move under a tree digest that cannot follow them and the numerator would count a size the fold's binding cannot re-confirm. This lane, under either base, is fail-closed for them until the shared payload can carry their content (a frozen surface the review lane binds too): keep such objects out of a measured dispatch, or close the thread with degrade`;
 };
 
 // Pre-spend: neither artifact name may be taken before the dispatch that will own it exists. The
@@ -1126,14 +1135,15 @@ const runReturn = ({ baseCwd, env, argv, now }) => {
   // fingerprint is taken before the walks and the payload's own digest is compared against it after.
   // A tree that moved between them would hand the numerator one change set and the denominator
   // another, and the record would bind a postTreeDigest neither of them describes.
-  const openingDigest = uncommittedStateFingerprint(cwd);
-  const enumerated = enumerateReturnedObjects(cwd);
+  const base = readsBaseline(dispatch);
+  const openingDigest = uncommittedStateFingerprint(cwd, undefined, base);
+  const enumerated = enumerateReturnedObjects(cwd, { base });
   if (!enumerated.ok) return refusal('return', enumerated.reason);
   const opaque = contentBlindRefusal(enumerated.entries);
   if (opaque !== null) return refusal('return', `${opaque}; nothing was written`);
   const lostTarget = symlinkTargetRefusal(top, enumerated.entries);
   if (lostTarget !== null) return refusal('return', `${lostTarget}; nothing was written`);
-  const produced = computeReturnedDiff(cwd);
+  const produced = computeReturnedDiff(cwd, { base });
   if (!produced.ok) return refusal('return', produced.reason);
   // The payload IS the diff and its digest IS the uncommitted-state fingerprint — one computation,
   // so diffDigest and postTreeDigest are equal by construction rather than by coincidence.
@@ -1251,7 +1261,7 @@ const runFold = ({ baseCwd, env, argv, now }) => {
     return refusal('fold', `nonce "${nonce}" carries no return to fold — a fold folds a RETURN, and the thread's last record is a ${state.last.kind}; nothing was written`);
   }
   // THE SAME hidden-path guard the absorb door runs, and for a sharper reason: `treeDigestAtFold` is
-  // computed from the very payload that is blind to these paths, so a change made behind an index bit
+  // computed from the very payload that is blind to these paths, so under a head base a change made behind an index bit
   // between the return and the fold leaves the digest EQUAL and the fold would accept bytes nobody
   // returned. The digest cannot catch what the payload cannot see; this guard is what does.
   const hidden = hiddenFromPlainDiff(top);
@@ -1259,30 +1269,45 @@ const runFold = ({ baseCwd, env, argv, now }) => {
   // …and the same subtraction: an object the payload holds by name alone can be mutated between the
   // return and the fold without moving the digest this fold is about to bind. The enumeration runs
   // here for that one question — the fold computes no metric of its own.
-  const enumerated = enumerateReturnedObjects(cwd);
+  const base = readsBaseline(state.dispatch);
+  const enumerated = enumerateReturnedObjects(cwd, { base });
   if (!enumerated.ok) return refusal('fold', enumerated.reason);
   const opaque = contentBlindRefusal(enumerated.entries);
   if (opaque !== null) return refusal('fold', `${opaque}; nothing was written`);
   const lostTarget = symlinkTargetRefusal(top, enumerated.entries);
   if (lostTarget !== null) return refusal('fold', `${lostTarget}; nothing was written`);
-  // WHAT THIS BINDING IS, exactly: EQUALITY OF THE VISIBLE UNFRAMED PAYLOAD between the return and
-  // the fold — never an identity of the tree, and the difference is not academic. The payload is an
+  if (state.dispatch.stepClass === 'code' && base.kind === 'checkpoint') {
+    const evidence = degradeRecordSet({ cwd, env, fingerprint: null });
+    const facts = judgeLedger(readDelegationLedger(cwd, env), {
+      backend: HELD_RECEIPT_BACKEND, degrades: selectHeldSessionDegrades(evidence.records),
+    });
+    if (facts.state === 'error') return refusal('fold', `${facts.reason} (fail closed); nothing was written`);
+    const thread = threadVerdict(facts, nonce);
+    if (thread?.substituted) {
+      const unavailable = evidence.unavailable ? ' (the evidence store is unavailable: judged with no degrade record)' : '';
+      return refusal('fold', `refusing to fold thread "${nonce}": a checkpoint-based code thread whose return rode session "${thread.actualId}" while the held session it was opened against was "${thread.expectedId}" — record its ledger degrade (dispatch degrade --wave ${state.dispatch.waveId} --nonce ${nonce} --step-class code --rationale "..."), then retry it (cap permitting) or open a new thread on the held session, and fold that; nothing was written${unavailable}`);
+    }
+  }
+  // WHAT THIS BINDING IS, exactly: EQUALITY OF THE VISIBLE PAYLOAD between the return and
+  // the fold — never an identity of the tree. Under a HEAD base the payload is an
   // unframed concatenation, so two DIFFERENT trees can produce the same bytes: probed live, one file
   // containing the line `untracked:two.txt` yields the same fingerprint as a tree of two files, and a
-  // symlink target can imitate the marker that opens the next untracked entry. It also carries no
-  // git-relevant mode, so making an untracked file executable moves nothing at all. Those are stated
+  // symlink target can imitate the marker that opens the next untracked entry. Its UNTRACKED section
+  // carries no git-relevant mode either, so making an untracked file executable moves nothing at all. Those are stated
   // residual limits of a Plan-1 frozen surface the review lane binds too, queued as its own item —
-  // not defects of this verb, and not something this verb may quietly claim away.
+  // not defects of this verb, and not something this verb may quietly claim away. Under a checkpoint
+  // base the payload is one indexed diff: a mode change moves it and no untracked marker line exists.
   //
   // Within that domain the binding does its job: a tree whose payload moved between the return and
-  // the fold refuses, and the recovery is a fresh dispatch. Staging usually moves the payload — every
+  // the fold refuses, and the recovery is a fresh dispatch. Under a HEAD base staging usually moves the payload — every
   // change set carrying an untracked path does — which is why the fold precedes `git add -A` (D16).
   // The one shape it does not move is a tracked-only change passing from the worktree into a CLEAN
   // index: the payload concatenates the staged and unstaged diffs, so those bytes are identical
   // either side of `git add` (the fingerprint's stated blindness to the index↔worktree split). The
   // fold is honest there — identical payload bytes, identical content — so the rule is "the fold
-  // precedes staging", never "staging refuses the fold by construction".
-  const treeDigestAtFold = uncommittedStateFingerprint(cwd);
+  // precedes staging", never "staging refuses the fold by construction". A checkpoint measurement
+  // never reads the real index, so staging moves nothing there; the fold still precedes `git add`.
+  const treeDigestAtFold = uncommittedStateFingerprint(cwd, undefined, base);
   const record = {
     schema: DELEGATION_SCHEMA_VERSION,
     kind: 'fold',
@@ -1575,7 +1600,7 @@ Usage:
                             [--denominator-bytes <n>] [--cwd <dir>]
   node dispatch.mjs open --contract <dispatch-file> --wave <id> --backend <name>
                          --rationale <text> --wrapper-cap-s <n> --kill-grace-s <n>
-                         [--retry-of <nonce>] [--cwd <dir>]
+                         [--checkpoint <oid>] [--retry-of <nonce>] [--cwd <dir>]
   node dispatch.mjs await --nonce <n> [--timeout <s>] [--cwd <dir>]
   node dispatch.mjs return --nonce <n> [--outcome <o>]
                            [--no-receipt --exit-status <n>] [--cwd <dir>]
@@ -1624,6 +1649,9 @@ dirty one is recorded, which makes the eventual return metric-INELIGIBLE by name
 deadlineS below --wrapper-cap-s plus --kill-grace-s (both explicit — the kit never reads another
 package's default), REFUSES a tree that conceals a change (below), and surfaces every retry and wave
 refusal from the store verbatim.
+--checkpoint <oid> records a resolvable TREE object of exactly 40 or 64 lowercase hex characters
+(a commit, blob, tag or unknown id refuses by name); the base rides the record and return/fold read
+it there, while a checkpoint CLEAN line names the base.
 
 THE LEDGER a tree-binding verb uses is the CANONICAL one, exactly: <git common dir>/
 agent-workflow-delegation.jsonl. A store inside the work tree is measured as part of the change set
@@ -1649,7 +1677,7 @@ without an answer never authorizes the next dispatch.
 A CONCEALING TREE is refused at every door that measures or binds one (open, return, fold), because
 the recorded baseline, the counted bytes and the folded identity are all claims about a tree that is
 telling the truth. Two arms: any index entry whose ls-files tag is not "H" refuses on the BIT's
-presence — deleting a materialized skip-worktree file is invisible to every probe this kit owns, so
+presence — under a head base deleting a materialized skip-worktree file is invisible to every probe this kit owns, so
 its effect cannot be compared for — and a per-side, BYTE-keyed comparison of the forced against the
 plain diff refuses a path an ignore-submodules setting hides. Both name the path; the recovery is
 git update-index --no-assume-unchanged / --no-skip-worktree, or clearing the diff config.
@@ -1659,7 +1687,7 @@ the TERMINAL receipt (a RESERVED one is a supervision question, never a timeout)
 receipt's independently computed contractDigest, its {backend, nonce}, its capS+killGraceS against
 the recorded deadlineS and its timestamp against the ABSOLUTE deadline (the dispatch's timestamp plus
 deadlineS), re-verifies the report's digest and length, refuses a change set HIDDEN from the plain
-git diff the metric is computed over (assume-unchanged, skip-worktree, ignore-submodules), and then
+git diff the head-base metric is computed over (assume-unchanged, skip-worktree, ignore-submodules), and then
 enumerates the returned objects and frames the canonical integration bundle — bracketed by the tree
 fingerprint, so a tree that moves mid-computation refuses instead of mixing two change sets.
 --outcome records an orchestrator judgment under the closed override form: a wrapper outcome either
@@ -1674,19 +1702,24 @@ diff, and no-op-diff where the tree is unchanged too, since the eligibility rule
 first. With no artifact at all there is no honest return: close the thread with degrade.
 
 fold appends the integration re-confirmation and CLOSES the thread. It runs the same hidden-path
-guard as return — a change made behind an index bit leaves the tree digest EQUAL, so the digest alone
+guard as return — under a head base a change made behind an index bit leaves the tree digest EQUAL, so the digest alone
 cannot catch it — then computes the CURRENT tree digest, which the store binds to the folded return's
-postTreeDigest. What that binding IS, exactly: equality of the VISIBLE UNFRAMED PAYLOAD, never an
-identity of the tree. The payload is an unframed concatenation, so two different trees can produce
+postTreeDigest. What that binding IS, exactly: equality of the VISIBLE PAYLOAD, never an
+identity of the tree. Under a HEAD base the payload is an unframed concatenation, so two different trees can produce
 the same bytes (a file's content or a symlink's target can imitate the marker line that opens the
-next untracked entry), and it carries no git-relevant mode, so making an untracked file executable
+next untracked entry), and its UNTRACKED section carries no git-relevant mode, so making an untracked file executable
 moves nothing. Those residuals belong to a frozen shared surface and are queued, not claimed away
-here. Within that domain a tree whose payload moved refuses, and the recovery is a fresh dispatch,
-never a fold. Staging usually moves the payload (every change set carrying an untracked path does),
+here. Under a checkpoint base the payload is one indexed diff: a mode change moves it and no untracked
+marker line exists. Within that domain a tree whose payload moved refuses, and the recovery is a fresh dispatch,
+never a fold. Under a HEAD base staging usually moves the payload (every change set carrying an untracked path does),
 so the fold precedes git add. The one shape staging does NOT move is a tracked-only change passing
 into a CLEAN index — the payload concatenates the staged and unstaged diffs, so those bytes are
 identical either side of git add. The fold stays honest there (same bytes, same content), which is
 why the rule is "fold before staging", not "staging refuses the fold".
+A checkpoint measurement never reads the real index, so staging moves nothing there; the fold still
+precedes git add. Before binding the digest, fold refuses a checkpoint code thread whose own
+held-session verdict is SUBSTITUTED, naming its ledger degrade and retry as recovery, and fails
+closed on an error epoch or an unreadable ledger.
 
 degrade appends the recorded no-fold closure, threaded (with --nonce) or PRE-DISPATCH (without). The
 pre-dispatch form opens no nonce thread, so aggregate REFUSES the whole wave by name once one is
@@ -1734,19 +1767,25 @@ directory, named agent-workflow-exec-receipt-<backendLength>-<backend>-<nonce>.j
 agent-workflow-exec-report-<backendLength>-<backend>-<nonce>.txt. Honest v1 limits: gate output is
 never accounted (the wrapper's exit trap removes its trace, so no gate-output component is emitted);
 a change set carrying a BINARY, non-regular or SUBMODULE object is REFUSED, because the shared
-payload carries no content for those — a binary by name only, a submodule nothing beyond its first
-dirty transition — so their bytes can move under a digest that cannot follow them, and the lane is
-fail-closed for them until that frozen payload can carry it. STATED RESIDUALS on what it does accept:
-the payload is UNFRAMED, so a file's content or a symlink's target can imitate the marker line that
-opens the next untracked entry and two different trees can share one fingerprint, and no
-git-relevant MODE is carried, so making an untracked file executable moves nothing — both are queued
-against the payload, not claimed away here. A receipt is forgeable exactly like every record here;
+head payload cannot be trusted to follow their bytes — an untracked binary by name only, a submodule
+nothing beyond its first dirty transition — so their bytes can move under a digest that cannot follow
+them, and the lane is fail-closed for them until that frozen payload can carry it; the binary and
+submodule arms are CONSERVATIVE over their class. STATED RESIDUALS on what it does accept:
+under a HEAD base the payload is UNFRAMED, so a file's content or a symlink's target can imitate the marker line that
+opens the next untracked entry and two different trees can share one fingerprint, and that section
+carries no git-relevant MODE, so making an untracked file executable moves nothing — both are queued
+against the head payload, not claimed away here. Under a checkpoint base the payload is one indexed
+diff: a mode change moves it and no untracked marker line exists. Under a head base a delegate's rename
+arrives as a deletion plus a creation, over-counting a plain rename; under a checkpoint base git's own
+rename detection applies inside the one base-relative layer and a detected rename is counted once.
+A receipt is forgeable exactly like every record here;
 and D10 stands as a BAR, not a mechanism — at most one in-tree exec dispatch at a time, and nothing
 refuses a second.
 
-Never commits, never runs a subscription CLI, spawns nothing but git READS — except handoff-return,
+Never commits, never runs a subscription CLI, spawns nothing but git READS — with TWO stated exceptions: handoff-return,
 which attests MAIN's index with git write-tree: that may write a tree OBJECT into the odb and moves
-no ref (the same probe land --prepare itself uses). Exit codes: 0 success;
+no ref (the same probe land --prepare itself uses); checkpoint measurement writes the leaf's OWN
+temporary index file and forced-add blob objects — never a ref, never the real index. Exit codes: 0 success;
 1 a refusal (store STOP verbatim, a form violation, an unreadable file, a supervision question); 2
 usage; ${AWAIT_UNANSWERED_STATUS} an await that ended with no terminal receipt (the absolute deadline or the --timeout
 bound) — its own status so a caller that BRANCHES on the code can tell it from a refusal; a caller

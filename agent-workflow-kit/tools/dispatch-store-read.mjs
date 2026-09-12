@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 
 import {
   validateDelegationRecord, canonicalDelegationDigest, allowedSuccessorKinds,
-  isThreadTerminalRecord,
+  isThreadTerminalRecord, readsBaseline,
 } from './dispatch-record.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
@@ -174,6 +174,11 @@ export const delegationSemanticPreflight = ({ records, snapshot, storePath }) =>
       }
       if (snapshot.stepClass !== prior.dispatch.stepClass) {
         throw stop(`refusing a retry: it declares step class "${snapshot.stepClass}" but its retry origin "${snapshot.retryOf}" was dispatched as "${prior.dispatch.stepClass}" — the pairing key is the step class, so a chain that changes it mid-way would split one attempt's accounting across two classes; nothing was written`);
+      }
+      const base = readsBaseline(snapshot);
+      const priorBase = readsBaseline(prior.dispatch);
+      if (base.kind !== priorBase.kind || base.treeOid !== priorBase.treeOid) {
+        throw stop(`refusing a retry: its base {kind "${base.kind}", treeOid ${base.treeOid}} differs from its retry origin "${snapshot.retryOf}"'s {kind "${priorBase.kind}", treeOid ${priorBase.treeOid}} — a retry chain is measured against ONE base; nothing was written`);
       }
       const origin = findRetryChainOrigin(records, prior.dispatch);
       if (snapshot.retryIndex > origin.retryCap) {

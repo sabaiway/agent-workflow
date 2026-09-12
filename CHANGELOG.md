@@ -7,6 +7,28 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-11 — AD-140 the delegation ledger learns a base, and the second task of a story stops opening DIRTY (kit 13.1.0 MINOR · engine 5.4.0, memory 8.0.0 and both bridges unchanged)
+
+**Every ledger measurement was HEAD-relative, so a second task opened over the first task's diff was metric-blind by
+construction.** Kit 13.1.0's dispatch record carries an optional `baseline: { kind, treeOid }` (schema stays 1; a
+pre-field record reads as head), `open --checkpoint <oid>` records a resolvable tree as the base, and the thread's
+clean probe, three fingerprints, returned diff and object enumeration are computed against it over a positive,
+index-independent snapshot scope (the new IO leaf `dispatch-baseline.mjs`: its own temporary index, forced-add blobs,
+never the real index, never a ref; a head base delegates to `core-evidence` byte for byte; the scope is materialised
+by a state table over the lstat class and base membership, an excluded base path is never touched, and a live path in
+an ancestor/descendant relation with one is undecidable rather than measured). A checkpoint thread holds the
+delegate's session exactly as a dirty one does, its substitution closes only by its own ledger `degrade` (which
+withdraws the expectation), and `fold` refuses a substituted checkpoint thread by that thread's own verdict over the
+inputs `review-state` uses. Contracts: `docs/ai/specs/kit/dispatch-baseline/` (live, revision 1) beside
+`held-session` revision 3; epic story S4 in flight until Cleanup lands it. Executed as eighteen delegated threads on
+one held session (four slices, nine folds, five retries after a degrade); the story measured its own motivation —
+fifteen of its seventeen returns were `dirty-baseline`. The diff council read the staged tree round after round until
+one round returned zero majors from every member: codex and the lens raised the majors that shaped the leaf — the
+excluded-base-path domain, a directory standing where a base file stood, and the reverse of
+that conflict subtracted to an undecidable measurement — every one folded red-first, every false sentence in the
+shipped text fixed, every real minor a queue row. The CI unit-test job and the publish workflow both run the kit's
+subdirectory suites now. Eight queue rows record the debt, beside one practice row the later rounds motivated.
+
 ## 2026-09-11 — AD-139 a plan proves its own ground, and the S3 plan is the first consumer of the rule it ships (kit 13.0.0 MAJOR · engine 5.4.0 MINOR · memory 8.0.0 and both bridges unchanged)
 
 **The bar "a plan stays inside its story's claims" was prose; it is now a rung that runs before every dispatch.** Kit

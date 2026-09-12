@@ -1,10 +1,12 @@
 import { escapeForDisplay, isRenderableLine, shellQuoteArg } from './repo-lex.mjs';
 import { wrapperCmdFor } from './detect-backends.mjs';
 import { DISPLAY_ALIASES } from './recipes.mjs';
+import { readsBaseline, TERMINAL_RETURN_OUTCOMES } from './dispatch-record.mjs';
 
 const CODE_STEP = 'code';
 const FOLD_KIND = 'fold';
 const RETURN_KIND = 'return';
+const DEGRADE_KIND = 'degrade';
 const EXECUTE_BACKEND = 'codex-cli-bridge';
 const UNPOPULATED_HELD_ID = '<held id>';
 
@@ -24,6 +26,7 @@ const findsDispatch = (dispatches, nonce) => dispatches.find((dispatch) => dispa
 const findsReturn = (returns, nonce) => returns.find((returned) => returned.nonce === nonce) ?? null;
 const hasCoveredReplacement = (returned, degrades) =>
   degrades.some((degrade) => degrade.fingerprint === returned.postTreeDigest);
+const expectsSession = (dispatch, baseKind) => dispatch.baselineClean === false || baseKind === 'checkpoint';
 const collectsRetryChainNonces = (dispatches, nonce, collected = new Set()) => {
   if (nonce === null || collected.has(nonce)) return collected;
   const next = new Set(collected).add(nonce);
@@ -33,26 +36,28 @@ const collectsRetryChainNonces = (dispatches, nonce, collected = new Set()) => {
 const accumulatesFacts = (degrades) => (state, record) => {
   if (record.kind === 'dispatch' && state.epochNonces.has(record.nonce)) {
     const expectedId = state.heldId;
+    const baseKind = readsBaseline(record).kind;
     return {
       ...state,
       dispatches: [...state.dispatches, record],
-      threads: [...state.threads, { nonce: record.nonce, expectedId, actualId: null, status: 'OPEN' }],
-      open: record.baselineClean === false ? [...state.open, { nonce: record.nonce, expectedId }] : state.open,
+      threads: [...state.threads, { nonce: record.nonce, expectedId, actualId: null, status: 'OPEN', baseKind }],
+      open: expectsSession(record, baseKind) ? [...state.open, { nonce: record.nonce, expectedId }] : state.open,
     };
   }
   if (record.kind === RETURN_KIND && state.epochNonces.has(record.nonce)) {
     const dispatch = findsDispatch(state.dispatches, record.nonce);
     if (dispatch === null) return state;
+    const baseKind = readsBaseline(dispatch).kind;
     const expectedId = state.threads.find((thread) => thread.nonce === record.nonce)?.expectedId ?? null;
     const status = record.sessionId === null ? 'FAILED'
       : expectedId === null ? 'FIRST'
       : dispatch.retryOf !== null || record.sessionId === expectedId ? 'CONTINUED'
         : 'SUBSTITUTED';
-    const substitution = status === 'SUBSTITUTED' && dispatch.baselineClean === false
-      && !hasCoveredReplacement(record, degrades)
+    const substitution = status === 'SUBSTITUTED' && expectsSession(dispatch, baseKind)
+      && (baseKind === 'checkpoint' ? !TERMINAL_RETURN_OUTCOMES.includes(record.outcome) : !hasCoveredReplacement(record, degrades))
       ? {
         nonce: record.nonce, expectedId, actualId: record.sessionId,
-        postTreeDigest: record.postTreeDigest, folded: false,
+        postTreeDigest: record.postTreeDigest, folded: false, baseKind,
       }
       : null;
     return {
@@ -71,7 +76,7 @@ const accumulatesFacts = (degrades) => (state, record) => {
     if (dispatch === null || returned === null || returned.sessionId === null) return state;
     const establishes = state.heldId === null;
     const retries = dispatch.retryOf !== null;
-    const replaces = returned.sessionId !== state.heldId && hasCoveredReplacement(returned, degrades);
+    const replaces = readsBaseline(dispatch).kind === 'head' && returned.sessionId !== state.heldId && hasCoveredReplacement(returned, degrades);
     const retryChain = retries ? collectsRetryChainNonces(state.dispatches, dispatch.retryOf) : new Set();
     const foldedSubstitutions = state.substitutions.map((substitution) =>
       (substitution.nonce === record.nonce ? { ...substitution, folded: true } : substitution));
@@ -80,6 +85,10 @@ const accumulatesFacts = (degrades) => (state, record) => {
       : foldedSubstitutions;
     if (establishes || retries || replaces) return { ...state, heldId: returned.sessionId, substitutions };
     return { ...state, substitutions };
+  }
+  if (record.kind === DEGRADE_KIND && state.epochNonces.has(record.nonce)
+    && state.substitutions.some((substitution) => substitution.nonce === record.nonce && substitution.baseKind === 'checkpoint')) {
+    return { ...state, heldId: null, substitutions: state.substitutions.filter((substitution) => substitution.nonce !== record.nonce) };
   }
   return state;
 };
@@ -109,10 +118,14 @@ export const judgeHeldSession = (records, { head, backend, degrades = [] }) => {
     heldId: accumulated.heldId,
     folds: countsHeldFolds(records, epochNonces, accumulated.heldId),
     substitution: accumulated.substitutions[0] ?? null,
-    threads: accumulated.threads,
+    threads: accumulated.threads.map((thread) => ({
+      ...thread, substituted: accumulated.substitutions.some((substitution) => substitution.nonce === thread.nonce),
+    })),
     open: accumulated.open,
   };
 };
+
+export const threadVerdict = (facts, nonce) => facts.threads.find((thread) => thread.nonce === nonce) ?? null;
 
 export const judgeLedger = (ledger, { backend, degrades = [] }) => {
   if (ledger.state === 'absent') {
@@ -137,7 +150,7 @@ export const decideHeldSession = (facts) => {
     const reason = `delegated code thread "${nonce}" substituted held session "${escapeForDisplay(expectedId)}" with "${escapeForDisplay(actualId)}"`;
     return { code: 1, reason, line: `held session: SUBSTITUTED — ${reason}` };
   }
-  if (facts.heldId === null) return { code: 0, reason: 'no folded code thread in the commit epoch carries a session yet', line: 'held session: none' };
+  if (facts.heldId === null) return { code: 0, reason: 'no held session stands: no folded code thread established one in this commit epoch, or the last one was withdrawn by a checkpoint thread\'s ledger degrade', line: 'held session: none' };
   const heldId = escapeForDisplay(facts.heldId);
   return { code: 0, reason: `held session "${heldId}" is continuous`, line: `held session: ${heldId} — ${facts.folds} fold(s) rode it` };
 };
@@ -159,7 +172,7 @@ export const foldLaneLines = (facts) => {
     `  run:  ${HELD_EXECUTE_WRAPPER} --resume ${heldId} --nonce <nonce> <fold-brief>`,
     '  the fold brief is a dispatch file carrying the finding and the accepted fold; dispatch open precedes the run, then dispatch return and fold follow it',
     '  the orchestrator runs the suites, verifies the returned diff, re-mints the red-proofs and owns the commit',
-    '  a fresh session is a forbidden substitution; a retry of a failed thread or a recorded execute degrade is the exception; the wrapper sidecar is never read',
+    '  a fresh session is a forbidden substitution; a retry of a failed thread or, for a head base, a recorded execute degrade is the exception (a checkpoint thread\'s substitution closes by its ledger degrade); the wrapper sidecar is never read',
   ];
   return caveat === null ? lines : [...lines, `  caveat: ${caveat}`];
 };

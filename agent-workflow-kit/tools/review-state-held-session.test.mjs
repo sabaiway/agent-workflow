@@ -88,6 +88,20 @@ const withTempGitRoot = (run) => {
   }
 };
 
+describe('review-state checkpoint hint — spec:held-session/S9', () => {
+  it('names the ledger degrade and retry even while the evidence store is unavailable', () => {
+    const substitution = { nonce: 'substituted', expectedId: 'session-held', actualId: 'session-new', postTreeDigest: FINGERPRINT, folded: false, baseKind: 'checkpoint' };
+    for (const evidenceUnavailable of [false, true]) {
+      const result = decideCheck({ ...baseReviewState({ state: 'ok', heldId: 'session-held', folds: 1, threads: [], open: [], substitution }), evidenceUnavailable });
+      assert.equal(result.code, 1);
+      assert.match(result.reason, /dispatch\.mjs degrade --wave .*--nonce substituted/u);
+      assert.match(result.reason, /retry/u);
+      assert.doesNotMatch(result.reason, /core-evidence\.mjs.*degrade --backend codex-exec/u);
+      assert.doesNotMatch(result.reason, /fold the retry of that thread/u);
+    }
+  });
+});
+
 describe('review-state held-session arm — spec:held-session/S2', () => {
   it('refuses a substitution before the solo-review early return', () => {
     const substituted = {

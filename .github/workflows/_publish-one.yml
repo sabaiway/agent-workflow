@@ -168,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ inputs.dir }}" = "agent-workflow-kit" ]; then
-            node --test tools/*.test.mjs tools/manifest/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
+            node --test tools/*.test.mjs tools/manifest/*.test.mjs tools/*.test/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
           elif [ "${{ inputs.dir }}" = "agent-workflow-engine" ]; then
             node --test test/*.test.mjs
           else

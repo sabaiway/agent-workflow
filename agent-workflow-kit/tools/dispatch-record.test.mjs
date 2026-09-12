@@ -41,6 +41,7 @@ import {
   evaluateMetricEligibility,
   evaluateObservationEligibility,
 } from './dispatch-record.mjs';
+import * as vocabulary from './dispatch-record.mjs';
 import { canonicalKindSerialization } from './core-evidence.mjs';
 
 const TS = '2026-08-07T00:00:00.000Z';
@@ -96,6 +97,7 @@ const RECORDS = {
     contractDigest: D('1a'),
     preTreeDigest: D('2b'),
     baselineClean: true,
+    baseline: { kind: 'head', treeOid: null },
     deadlineS: 1800,
     retryOf: null,
     retryIndex: 0,
@@ -197,6 +199,63 @@ const contractFile = (body, { fence = CONTRACT_INFO_STRING } = {}) =>
   ['# Sub-task brief', '', `\`\`\`${fence}`, body, '```', '', 'Prose after the block.', ''].join('\n');
 const CONTRACT_FILE = contractFile(JSON.stringify(CONTRACT, null, 2));
 
+describe('dispatch-record baseline — spec:dispatch-baseline/S1', () => {
+  const OID = 'ab'.repeat(20);
+  it('pins the frozen grammar and the sole optional field without a schema bump', () => {
+    assert.equal(DELEGATION_SCHEMA_VERSION, 1);
+    assert.equal(DELEGATION_KEY_SETS.dispatch.at(-1), 'baseline');
+    assert.deepEqual(vocabulary.OPTIONAL_FIELDS, { dispatch: ['baseline'] });
+    assert.deepEqual(vocabulary.BASELINE_KINDS, ['head', 'checkpoint']);
+    assert.deepEqual(vocabulary.HEAD_BASELINE, { kind: 'head', treeOid: null });
+    for (const value of [vocabulary.BASELINE_KINDS, vocabulary.HEAD_BASELINE, vocabulary.OPTIONAL_FIELDS, vocabulary.OPTIONAL_FIELDS.dispatch]) assert.ok(Object.isFrozen(value));
+  });
+  it('accepts head and both checkpoint object formats and reads fresh pairs', () => {
+    for (const baseline of [vocabulary.HEAD_BASELINE, { kind: 'checkpoint', treeOid: OID }, { kind: 'checkpoint', treeOid: D('ab') }]) {
+      const dispatch = record('dispatch', { baseline });
+      assert.deepEqual(validateDelegationRecord(dispatch), { ok: true });
+      assert.deepEqual(vocabulary.readsBaseline(dispatch), baseline);
+      assert.notEqual(vocabulary.readsBaseline(dispatch), baseline);
+      assert.deepEqual(checkDispatchMintConsistency(CONTRACT, { ...dispatch, contractDigest: contractDigest(CONTRACT) }), { ok: true });
+    }
+  });
+  it('accepts pre-field records and reads a fresh head pair', () => {
+    const dispatch = record('dispatch');
+    delete dispatch.baseline;
+    assert.deepEqual(validateDelegationRecord(dispatch), { ok: true });
+    assert.deepEqual(vocabulary.readsBaseline(dispatch), vocabulary.HEAD_BASELINE);
+    assert.notEqual(vocabulary.readsBaseline(dispatch), vocabulary.HEAD_BASELINE);
+    assert.deepEqual(vocabulary.readsBaseline(Object.create({ baseline: { kind: 'checkpoint', treeOid: OID } })), vocabulary.HEAD_BASELINE);
+  });
+  for (const [baseline, reason] of [
+    [{ kind: 'unknown', treeOid: null }, /unknown kind/],
+    ...[OID.toUpperCase(), 'a'.repeat(39), 'a'.repeat(41), `${OID}\n`, 123].map((treeOid) => [{ kind: 'checkpoint', treeOid }, /treeOid.*40.*64.*lowercase/]),
+    [{ kind: 'head', treeOid: OID }, /head.*treeOid.*null/],
+    [{ kind: 'checkpoint', treeOid: null }, /checkpoint.*treeOid.*non-null/],
+    [{ kind: 'head', treeOid: null, extra: true }, /unknown field "extra"/],
+    [{ kind: 'head' }, /missing field "treeOid"/],
+    [{ treeOid: null }, /missing field "kind"/],
+    [null, /closed baseline pair/],
+  ]) it(`refuses baseline ${JSON.stringify(baseline)} by name`, () => {
+    const result = validateDelegationRecord(record('dispatch', { baseline }));
+    assert.equal(result.ok, false);
+    assert.match(result.reason, reason);
+  });
+  it('refuses accessors and non-enumerable baseline keys without reading them', () => {
+    const failRead = () => assert.fail('accessor was invoked');
+    for (const key of ['kind', 'treeOid']) {
+      const baseline = Object.defineProperty({ ...vocabulary.HEAD_BASELINE }, key, { get: failRead, enumerable: true });
+      assert.match(validateDelegationRecord(record('dispatch', { baseline })).reason, /ACCESSOR/);
+    }
+    const dispatch = Object.defineProperty(record('dispatch'), 'baseline', { get: failRead, enumerable: true });
+    assert.match(validateDelegationRecord(dispatch).reason, /ACCESSOR/);
+    Object.defineProperty(dispatch, 'baseline', { enumerable: false });
+    assert.match(validateDelegationRecord(dispatch).reason, /missing field "baseline"/);
+  });
+  it('still refuses an unknown top-level key', () => {
+    assert.match(validateDelegationRecord(record('dispatch', { extra: true })).reason, /unknown field "extra"/);
+  });
+});
+
 describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)', () => {
   it('AC01 closed vocabulary: unknown schema, kind, field, and missing field each refuse by name, for every kind', () => {
     assert.equal(DELEGATION_SCHEMA_VERSION, 1);
@@ -229,7 +288,7 @@ describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)'
       assert.equal(extra.ok, false, `${kind}: an unknown extra field refuses`);
       assert.match(extra.reason, /"sessionCost"/);
 
-      for (const field of DELEGATION_KEY_SETS[kind]) {
+      for (const field of DELEGATION_KEY_SETS[kind].filter((field) => !((vocabulary.OPTIONAL_FIELDS ?? {})[kind] ?? []).includes(field))) {
         const missing = { ...full };
         delete missing[field];
         const res = validateDelegationRecord(missing);
@@ -237,6 +296,10 @@ describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)'
         assert.match(res.reason, new RegExp(`"${field}"`), `${kind}: the refusal names the missing field`);
       }
     }
+
+    const preField = record('dispatch');
+    delete preField.baseline;
+    assert.deepEqual(validateDelegationRecord(preField), { ok: true });
 
     // Presence is own-ENUMERABLE only: the canonical serialization walks Object.keys, so a field
     // reachable any other way would validate while never entering the digest that IS identity.

@@ -1,29 +1,32 @@
 // exec-producer.mjs — the GIT-side metric producer for an exec return (delegation Plan 2, Phase 1).
 // It answers the two questions a return record cannot answer for itself: which objects the delegated
-// run touched and how many bytes they represent, and what the canonical integration bundle is. It
-// never writes, never appends and never spawns anything but git reads.
+// run touched and how many bytes they represent, and what the canonical integration bundle is.
+// Under a checkpoint base the walks use the leaf's own temporary index and forced-add blob objects;
+// the real index is never written, and head walks spawn only git reads.
 //
 // dispatch-record.mjs:74-76 named this module before it existed: "the metric's byte domains are
 // computed over STRUCTURED inputs handed in by a producer; the git-side producer is Plan 2, and it
 // owns minting a stable objectId".
 //
-// ONE DOMAIN, THREE LAYERS (D7). The enumeration walks HEAD → index → worktree, exactly the layers
+// ONE DOMAIN, THREE LAYERS (D7) under a head base. The enumeration walks HEAD → index → worktree, exactly the layers
 // the canonical payload concatenates — never the collapsed HEAD → worktree view. The difference is
 // not academic: a staged change reverted in the worktree keeps its bytes in the payload (and so in
 // the DENOMINATOR) while HEAD→worktree shows nothing at all, so the object would vanish from the
 // NUMERATOR and the two halves of one ratio would describe different change sets. The diff bytes are
-// computeFingerprintPayload's own bytes, imported rather than rebuilt.
+// computeFingerprintPayload's own bytes, imported rather than rebuilt. Under a checkpoint base the
+// walk is one layer against the base tree, through the leaf's temporary index.
 //
-// ONE OBJECT, ONE ENTRY. An object touched in both layers is a single entry, and its pre-image is
+// ONE OBJECT, ONE ENTRY. Under a head base an object touched in both layers is a single entry, and its pre-image is
 // always the HEAD blob — never the index blob: the numerator answers what the delegate could have
 // spared the ORCHESTRATOR, measured against the dispatch baseline, and a metric-eligible dispatch
-// starts from a clean tree where HEAD is that baseline.
+// starts from a clean tree where HEAD is that baseline. Under a checkpoint base the pre-image is the base blob.
 //
 // RENAMES ARE NOT RECONSTRUCTED, AND THAT IS THE DESIGN — a boundary, not an omission. git's OWN
 // rename detection is consumed where git offers it (`--raw -M` sees a staged `git mv` within a layer),
-// but a rename a delegate actually makes — the wrapper's git-write shim blocks every git write verb,
+// but under a head base a rename a delegate actually makes — the wrapper's git-write shim blocks every git write verb,
 // so every one arrives as a tracked deletion plus an UNTRACKED creation — is accounted as exactly
-// that: a deletion plus a creation.
+// that: a deletion plus a creation. Under a checkpoint base git's own rename detection applies inside
+// the single base-relative layer, and a detected rename is counted once as `renamed`.
 //
 // This module once matched those pairs by blob identity, and the machinery was SUBTRACTED after it
 // produced silent-error edges in four consecutive review rounds: hashing that read through symlinks
@@ -35,7 +38,7 @@
 // An identity heuristic buys accuracy on the ordinary refactor and pays for it in exactly that
 // currency, so the trade was refused.
 //
-// The cost is stated with its DIRECTION, per case, because the direction is NOT the same in all of
+// The head-base cost is stated with its DIRECTION, per case, because the direction is NOT the same in all of
 // them — and a blanket "always optimistic" would be a false reassurance about an accounting number.
 // Write O for the pre-image size:
 //   • A PLAIN RENAME `a→b` emits `deleted pre:a (O)` + `new new:b (O)` = 2O against a recognised O.
@@ -54,18 +57,11 @@
 // Every object here is one git can PROVE: a tracked path with a recorded blob, or an untracked path
 // that exists. Nothing is paired on a resemblance.
 //
-// CONFIG-HIDDEN PATHS ARE A STATED LIMIT, and the limit is the PAYLOAD's, not this module's. `git
-// diff` honours `diff.ignoreSubmodules` and skips index entries carrying assume-unchanged or
-// skip-worktree, so a path can be changed and stay invisible to both probes below. The kit already
-// owns a probe that sees them — computeWorkingState (core-evidence.mjs:341) forces
-// `--ignore-submodules=none` and folds in flaggedIndexLag — and `isTreeClean` consumes it, so a
-// dispatch opened over such a tree records baselineClean:false and its return is metric-INELIGIBLE by
-// name. What this module must NOT do is force those flags HERE: D7 binds the numerator to the byte
-// domain of computeFingerprintPayload, which uses the same plain `git diff` — forcing them on one
-// side only would let the numerator count objects the denominator cannot see, a worse failure than
-// the blindness. Closing it for real means changing the shared payload, which is a Plan-1-frozen
-// surface the review lane also consumes; that is queued as its own item, and Phase 2's `return` owns
-// the return-time guard.
+// CONFIG-HIDDEN PATHS ARE A STATED LIMIT, and not this module's to close. Under a head base `git
+// diff` skips index entries carrying assume-unchanged or skip-worktree, so a path can be changed and
+// stay invisible to both probes below; the doors refuse a concealing tree rather than measure it. The
+// checkpoint walks force `--ignore-submodules=none` because the checkpoint payload they are measured
+// against does.
 //
 // IDENTITY CARRIES ITS DOMAIN (D6). `pre:<path>` for an object with a pre-image (keyed by the name it
 // HAD) and `new:<path>` for a created one. The prefix is load-bearing: a rename a→b beside a
@@ -79,12 +75,12 @@
 // paying it zero would drop a whole object's bytes out of the numerator on a type change. Every OTHER
 // unknown size REFUSES — the fail-closed rule is never a silent zero.
 //
-// A TRANSIENT object (staged, then deleted from the worktree) counts its INDEX image once: the
+// Under a head base a TRANSIENT object (staged, then deleted from the worktree) counts its INDEX image once: the
 // delegate authored those bytes, the payload carries them in both layers, and dropping them would
 // credit the delegate with less than it wrote.
 //
-// Fail closed: outside a git work tree, on an unborn branch (no HEAD means no pre-image to attribute
-// bytes against), on any git read that fails, and on any size it cannot establish.
+// Fail closed: outside a git work tree, on an unborn branch (the inherited no-HEAD limit
+// applies to both bases), on any git read that fails, and on any size it cannot establish.
 
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -92,7 +88,8 @@ import {
   gitBuf, computeFingerprintPayload, isBinaryFile, isNeverCommittableStat, resolveBase,
 } from './core-evidence.mjs';
 import { lstatNoFollowRead } from './fs-read-nofollow.mjs';
-import { frameIntegrationBundle } from './dispatch-record.mjs';
+import { frameIntegrationBundle, HEAD_BASELINE } from './dispatch-record.mjs';
+import { runBaseDiff, computeBasePayload } from './dispatch-baseline.mjs';
 
 const refuse = (reason) => ({ ok: false, reason });
 
@@ -100,6 +97,8 @@ const GITLINK_MODE = '160000';
 const SYMLINK_MODE = '120000';
 const ABSENT_MODE = '000000';
 const SUBMODULE_BYTES = 0;
+const BASE_RAW_ARGS = ['--raw', '-z', '-M', '--no-abbrev', '--no-ext-diff', '--ignore-submodules=none'];
+const BASE_NUMSTAT_ARGS = ['--numstat', '-z', '-M', '--no-ext-diff', '--ignore-submodules=none'];
 
 export const PRE_IMAGE_ID_PREFIX = 'pre:';
 export const NEW_IMAGE_ID_PREFIX = 'new:';
@@ -229,7 +228,7 @@ export const parseNumstatMarkers = (buf, where) => {
 };
 
 // ── the object model ──────────────────────────────────────────────────────────────────────────────
-// One record per touched object: where it came from in HEAD, where it ended up, and every name it
+// One record per touched object: where it came from in the base tree, where it ended up, and every name it
 // wore in between (the names the binary oracle and the type probes are asked about).
 
 const makeObject = ({ headPath, headSha, headMode }) => ({
@@ -247,7 +246,7 @@ const kindForModes = (modes) => {
 
 const buildObjects = (staged, unstaged) => {
   const objects = [];
-  // HEAD → index. A staged record's DESTINATION name is how the unstaged layer will refer to it.
+  // Base tree → index. Under a head base the DESTINATION name links to the unstaged layer.
   const byIndexPath = new Map();
   for (const r of staged) {
     const hasHead = !isAbsentSha(r.srcSha) && r.srcMode !== ABSENT_MODE;
@@ -312,7 +311,7 @@ const entryForObject = (top, object, binary, lstat) => {
   if (typeKind !== null) {
     // The COUNTED image decides the size, even when the emitted kind comes from another layer. A
     // gitlink in ANY layer makes the kind `submodule` (TYPE beats STATUS, D6) — but a regular file
-    // REPLACED by a gitlink is still counted at its HEAD blob, and paying it the submodule's
+    // REPLACED by a gitlink is still counted at its base blob, and paying it the submodule's
     // deliberate zero would drop a whole object's bytes out of the numerator on a type change. Zero
     // belongs to a counted image that is ITSELF a gitlink: that is the case where the move costs this
     // repository no bytes.
@@ -359,6 +358,24 @@ const entryForUntracked = (top, rel, lstat) => {
     : { ok: true, entry: { kind: 'new', path: rel, objectId, postImageBytes: stat.size } };
 };
 
+const enumerateCheckpointObjects = (top, base, io) => {
+  const raw = runBaseDiff(top, base, BASE_RAW_ARGS, io);
+  if (raw === null) return refuse('git could not read the base-relative change set (fail closed)');
+  const parsed = parseRawRecords(raw, 'the base-relative change set');
+  if (!parsed.ok) return parsed;
+  const numstat = runBaseDiff(top, base, BASE_NUMSTAT_ARGS, io);
+  if (numstat === null) return refuse('git could not read the numstat binary markers (fail closed)');
+  const binary = parseNumstatMarkers(numstat, 'the base-relative binary markers');
+  if (!binary.ok) return binary;
+  const entries = [];
+  for (const object of buildObjects(parsed.records, [])) {
+    const built = entryForObject(top, object, binary.names, io.lstat);
+    if (!built.ok) return built;
+    entries.push(built.entry);
+  }
+  return { ok: true, entries };
+};
+
 // enumerateReturnedObjects(cwd, io?) → { ok: true, entries } | { ok: false, reason }. The entries are
 // the STRUCTURED input computeNumerator consumes; this module never computes the numerator itself, so
 // the closed vocabulary stays the single authority on what a component is. `io.lstat` and
@@ -370,6 +387,8 @@ export const enumerateReturnedObjects = (cwd = process.cwd(), io = {}) => {
   if (resolveBase(top) == null) {
     return refuse('the branch is unborn (no HEAD) — there is no pre-image to attribute delegated bytes against (fail closed)');
   }
+  const base = io.base ?? HEAD_BASELINE;
+  if (base.kind === 'checkpoint') return enumerateCheckpointObjects(top, base, io);
   // ABSENT and UNREADABLE are different answers. ENOENT means the path vanished between `ls-files`
   // and the stat, which the payload itself records name-only — mirroring it keeps numerator and
   // denominator over ONE object set. Every OTHER errno (EACCES, EIO, ENOTDIR, ELOOP on a parent) is
@@ -442,9 +461,10 @@ export const enumerateReturnedObjects = (cwd = process.cwd(), io = {}) => {
   return refusedProbe() ?? { ok: true, entries };
 };
 
-// computeReturnedDiff(cwd) → the canonical uncommitted-state payload BYTES, or a refusal. This is the
-// diff half of the integration bundle, and it is the very payload computeTreeFingerprint digests — so
-// the bytes the denominator counts and the digest the records bind describe one state. It refuses
+// computeReturnedDiff(cwd) → the payload BYTES the thread's own base fingerprint digests, or a refusal:
+// computeTreeFingerprint's under a head base, the leaf's base-relative payload under a checkpoint.
+// This is the diff half of the integration bundle, so the bytes the denominator counts and the
+// digest the records bind describe one state. It refuses
 // where the enumeration refuses: one entry point may not answer for a tree the other rejects. That
 // sentence used to hold only for the two SHARED preconditions below, which let an AMBIGUOUS rename
 // refuse the enumeration while the diff still handed back bytes — so the enumeration is run here and
@@ -457,18 +477,18 @@ export const computeReturnedDiff = (cwd = process.cwd(), io = {}) => {
   }
   const enumerated = enumerateReturnedObjects(cwd, io);
   if (!enumerated.ok) return enumerated;
-  // The payload builder guards its lstat but reads untracked file BYTES unguarded, so an unreadable
+  // The head payload builder guards its lstat but reads untracked file BYTES unguarded, so an unreadable
   // or vanishing untracked file throws out of it. This entry point promises a refusal object, and a
   // caller that framed a bundle around a thrown read would have no bytes and no reason either.
-  let payload;
   try {
-    payload = computeFingerprintPayload(cwd);
+    const base = io.base ?? HEAD_BASELINE;
+    const payload = base.kind === 'checkpoint' ? computeBasePayload(cwd, base, io) : computeFingerprintPayload(cwd);
+    return payload == null
+      ? refuse('the canonical payload could not be computed (fail closed)')
+      : { ok: true, diff: payload };
   } catch (err) {
     return refuse(`the canonical payload could not be read (${err?.code ?? err?.message ?? 'read failed'}) — the returned diff is refused rather than framed around a partial read (fail closed)`);
   }
-  return payload == null
-    ? refuse('the canonical payload could not be computed (fail closed)')
-    : { ok: true, diff: payload };
 };
 
 // assembleIntegrationBundle(diff, report) → the framed bundle with its digest and length. The framing

@@ -131,13 +131,21 @@ const short = (v) => {
 // ── the closed vocabulary ─────────────────────────────────────────────────────────────────────────
 
 export const DELEGATION_SCHEMA_VERSION = 1;
+export const BASELINE_KINDS = deepFreeze(['head', 'checkpoint']);
+export const HEAD_BASELINE = deepFreeze({ kind: 'head', treeOid: null });
+export const OPTIONAL_FIELDS = deepFreeze({ dispatch: ['baseline'] });
+const TREE_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+export const isTreeOid = (v) => typeof v === 'string' && TREE_OID_RE.test(v);
+export const readsBaseline = (dispatch) => Object.hasOwn(dispatch, 'baseline')
+  ? { kind: dispatch.baseline.kind, treeOid: dispatch.baseline.treeOid }
+  : { ...HEAD_BASELINE };
 
 export const DELEGATION_KINDS = deepFreeze(['pre-registration', 'dispatch', 'return', 'fold', 'observation', 'degrade']);
 
 // The closed key set per kind (schema + kind are implicit on every record).
 export const DELEGATION_KEY_SETS = deepFreeze({
   'pre-registration': ['waveId', 'stepClasses', 'pairingKey', 'minPerClass', 'meanLThreshold', 'firstPassNum', 'firstPassDen', 'timestamp'],
-  dispatch: ['waveId', 'nonce', 'stepClass', 'vehicle', 'backend', 'contractDigest', 'preTreeDigest', 'baselineClean', 'deadlineS', 'retryOf', 'retryIndex', 'retryCap', 'rationale', 'timestamp'],
+  dispatch: ['waveId', 'nonce', 'stepClass', 'vehicle', 'backend', 'contractDigest', 'preTreeDigest', 'baselineClean', 'deadlineS', 'retryOf', 'retryIndex', 'retryCap', 'rationale', 'timestamp', 'baseline'],
   return: ['role', 'backend', 'nonce', 'contractDigest', 'preTreeDigest', 'postTreeDigest', 'diffDigest', 'diffLength', 'reportDigest', 'reportLength', 'bundleDigest', 'bundleLength', 'metric', 'outcome', 'exitStatus', 'sessionId', 'wrapperVersion', 'posture', 'timestamp'],
   fold: ['nonce', 'returnDigest', 'treeDigestAtFold', 'verdict', 'timestamp'],
   observation: ['waveId', 'stepClass', 'scope', 'metric', 'planId', 'phase', 'timestamp'],
@@ -217,6 +225,7 @@ const namesAnObject = (kind) => kind !== 'gate-output';
 // ── nested closed forms ───────────────────────────────────────────────────────────────────────────
 
 const VEHICLE_KEYS = ['requested', 'selected'];
+const BASELINE_KEYS = ['kind', 'treeOid'];
 const POSTURE_KEYS = ['model', 'effort', 'tier'];
 const METRIC_KEYS = ['numeratorBytes', 'denominatorBytes', 'components', 'provenance', 'eligible', 'ineligibleReason'];
 const COMPONENT_KEYS = ['kind', 'path', 'objectId', 'bytes'];
@@ -232,6 +241,18 @@ const checkClosedKeys = (at, value, keys) => {
   if (missing !== undefined) return refuse(`${at}: missing field "${missing}"`);
   const accessor = keys.find((k) => !isDataProperty(value, k));
   if (accessor !== undefined) return refuse(`${at}: field "${accessor}" ${ACCESSOR_REFUSAL}`);
+  return { ok: true };
+};
+
+const validateBaseline = (at, baseline) => {
+  const closed = checkClosedKeys(at, baseline, BASELINE_KEYS);
+  if (!closed.ok) return closed;
+  if (!BASELINE_KINDS.includes(baseline.kind)) return refuse(`${at}: unknown kind ${short(baseline.kind)} — expected ${BASELINE_KINDS.join(' | ')}`);
+  if (baseline.treeOid !== null && (typeof baseline.treeOid !== 'string' || !TREE_OID_RE.test(baseline.treeOid))) {
+    return refuse(`${at}: treeOid must be null or exactly 40 or 64 lowercase hex characters (got ${short(baseline.treeOid)})`);
+  }
+  if (baseline.kind === 'head' && baseline.treeOid !== null) return refuse(`${at}: head requires treeOid null`);
+  if (baseline.kind === 'checkpoint' && baseline.treeOid === null) return refuse(`${at}: checkpoint requires treeOid to be non-null`);
   return { ok: true };
 };
 
@@ -324,6 +345,7 @@ const FIELD_CHECKS = {
   firstPassNum: { ok: isByteCount, want: 'a non-negative integer first-pass numerator' },
   firstPassDen: { ok: (v) => Number.isSafeInteger(v) && v >= 1, want: 'a positive integer first-pass denominator' },
   vehicle: { ok: isPlainObject, want: 'the closed vehicle pair {requested, selected}' },
+  baseline: { ok: isPlainObject, want: 'the closed baseline pair {kind, treeOid}' },
   // The safe token grammar, not merely non-empty: the backend NAMES an artifact beside the store
   // (the exec receipt and its report), so a name outside this grammar records a dispatch whose own
   // receipt could never be written. One grammar on both sides, or the ledger accepts what the
@@ -375,6 +397,7 @@ const checkFields = (kind, record) => {
     return refuse(`${kind}: unknown field "${stray}" — the key set is closed (the canonical digest is identity; a stray key would fork it)`);
   }
   for (const field of fields) {
+    if (!Object.hasOwn(record, field) && (OPTIONAL_FIELDS[kind] ?? []).includes(field)) continue;
     if (!own.includes(field)) {
       return refuse(`${kind}: missing field "${field}" — every field of the closed set is pinned as an OWN ENUMERABLE key (the digest domain)`);
     }
@@ -492,6 +515,10 @@ export const validateDelegationRecord = (record) => {
   }
   if (record.kind === 'dispatch') {
     const vehicle = validateVehicle('dispatch: vehicle', record.vehicle);
+    if (Object.hasOwn(record, 'baseline')) {
+      const baseline = validateBaseline('dispatch: baseline', record.baseline);
+      if (!baseline.ok) return baseline;
+    }
     return vehicle.ok ? validateDispatchCrossFields(record) : vehicle;
   }
   if (record.kind === 'return') return validateReturnCrossFields(record);

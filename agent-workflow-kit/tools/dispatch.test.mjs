@@ -1420,7 +1420,7 @@ describe('return absorbs ONLY a terminal receipt bound to the dispatch it answer
     mintArtifacts(ws, { dispatch, contract: CONTRACT });
     const r = run(['return', '--nonce', CONTRACT.nonce], ws);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /whose CONTENT never enters the uncommitted-state payload \(binary blob\.bin/);
+    assert.match(r.stderr, /this lane will not measure \(binary blob\.bin/);
     assert.match(r.stderr, /fail-closed for them until the shared payload can carry their content/);
     assert.equal(kindOf(ws, 'return'), undefined);
 
@@ -1741,7 +1741,7 @@ describe('fold binds the CURRENT tree to what was returned; degrade closes witho
       'the two trees share one payload — the store\'s fold binding would accept this one');
     const r = run(['fold', '--nonce', CONTRACT.nonce, '--verdict', 'folding a tree that grew a binary'], ws);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /whose CONTENT never enters the uncommitted-state payload \(binary b/);
+    assert.match(r.stderr, /this lane will not measure \(binary b/);
     assert.equal(kindOf(ws, 'fold'), undefined, 'only the fold-side guard stopped this');
   });
 

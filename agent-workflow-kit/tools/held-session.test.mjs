@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { CONTENT_FREE_FINGERPRINT } from './core-evidence.mjs';
 import {
   auditDelegationStoreSemantics, readDelegationLedger, readHeadInstant,
 } from './dispatch-store-read.mjs';
@@ -11,14 +12,16 @@ const loaded = await import('./held-session.mjs').catch(() => ({}));
 const judgeHeldSession = loaded.judgeHeldSession ?? (() => ({}));
 const decideHeldSession = loaded.decideHeldSession ?? (() => ({}));
 const judgeLedger = loaded.judgeLedger ?? (() => ({}));
+const threadVerdict = loaded.threadVerdict ?? (() => null);
 
 const HEAD = { state: 'ok', seconds: 1893456000 };
 const LEDGER_OPTIONS = { backend: 'codex', degrades: [] };
 const OPTIONS = { head: HEAD, ...LEDGER_OPTIONS };
 const judge = (records, overrides = {}) => judgeHeldSession(records, { ...OPTIONS, ...overrides });
 
-const thread = ({ nonce, sessionId, second, baselineClean = false, backend = 'codex', stepClass = 'code', retryOf = null, post = 'b2' }) => buildThread({
+const thread = ({ nonce, sessionId, second, baselineClean = false, backend = 'codex', stepClass = 'code', retryOf = null, post = 'b2', baseline }) => buildThread({
   dispatch: {
+    ...(baseline === undefined ? {} : { baseline }),
     nonce,
     backend,
     stepClass,
@@ -35,6 +38,73 @@ const thread = ({ nonce, sessionId, second, baselineClean = false, backend = 'co
     timestamp: `2030-01-01T00:00:${String(second + 1).padStart(2, '0')}.000Z`,
   },
   fold: { timestamp: `2030-01-01T00:00:${String(second + 2).padStart(2, '0')}.000Z` },
+});
+
+describe('held-session checkpoint base — spec:held-session/S8', () => {
+  const baseline = { kind: 'checkpoint', treeOid: 'ab'.repeat(20) };
+  const first = thread({ nonce: 'first', sessionId: 'session-held', second: 1, baselineClean: true });
+  const checkpoint = (overrides = {}) => thread({ nonce: 'checkpoint', sessionId: 'session-new', second: 4, baselineClean: true, baseline, ...overrides });
+  const degrade = (dispatch) => ({ schema: 1, kind: 'degrade', waveId: dispatch.waveId, nonce: dispatch.nonce, stepClass: 'code', rationale: 'withdraw the substituted attempt', timestamp: '2030-01-01T00:00:07.000Z' });
+  it('holds a clean checkpoint dispatch and keeps OPEN, retry and FAILED meanings', () => {
+    const [dispatch, returned] = checkpoint();
+    assert.deepEqual(judge([...first, dispatch]).open, [{ nonce: 'checkpoint', expectedId: 'session-held' }]);
+    const facts = judge([...first, dispatch, returned]);
+    assert.deepEqual(facts.substitution, { nonce: 'checkpoint', expectedId: 'session-held', actualId: 'session-new', postTreeDigest: returned.postTreeDigest, folded: false, baseKind: 'checkpoint' });
+    assert.equal(threadVerdict(facts, 'checkpoint').status, 'SUBSTITUTED');
+    const failed = judge([...first, dispatch, { ...returned, sessionId: null, outcome: 'transport-failure', exitStatus: 1 }]);
+    assert.equal(threadVerdict(failed, 'checkpoint').status, 'FAILED');
+    assert.equal(failed.substitution, null);
+    const retried = judge([...first, dispatch, { ...returned, outcome: 'partial-edit', exitStatus: 1 }, ...checkpoint({ nonce: 'retry', retryOf: dispatch.nonce, second: 7 })]);
+    assert.equal(threadVerdict(retried, 'retry').status, 'CONTINUED');
+    assert.equal(retried.substitution, null);
+  });
+  it('never lifts a checkpoint substitution or supersedes HELD through evidence degrades', () => {
+    for (const fingerprint of [digestOf('b2'), CONTENT_FREE_FINGERPRINT]) {
+      const [dispatch, original] = checkpoint();
+      const returned = { ...original, postTreeDigest: fingerprint };
+      for (const tail of [[], [buildFold(returned)]]) {
+        const facts = judge([...first, dispatch, returned, ...tail], { degrades: [{ fingerprint }] });
+        assert.equal(facts.substitution.nonce, dispatch.nonce);
+        assert.equal(facts.heldId, 'session-held');
+      }
+    }
+  });
+  it('records no standing substitution for a terminal checkpoint return', () => {
+    const [dispatch, returned] = checkpoint();
+    const facts = judge([...first, dispatch, { ...returned, outcome: 'partial-edit', exitStatus: 1 }]);
+    assert.equal(facts.substitution, null);
+    assert.equal(threadVerdict(facts, dispatch.nonce).substituted, false);
+    assert.equal(facts.heldId, 'session-held');
+  });
+  it('its ledger degrade clears the substitution and HELD so a new thread heals even at retryCap zero', () => {
+    const [original, returned] = checkpoint();
+    const dispatch = { ...original, retryCap: 0 };
+    const records = [...first, dispatch, returned, degrade(dispatch)];
+    const cleared = judge(records);
+    assert.equal(cleared.substitution, null);
+    assert.equal(cleared.heldId, null);
+    assert.match(decideHeldSession(cleared).reason, /withdrawn by a checkpoint thread's ledger degrade/u);
+    assert.equal(decideHeldSession(cleared).line, 'held session: none');
+    assert.equal(threadVerdict(cleared, dispatch.nonce).substituted, false);
+    const healed = judge([...records, ...checkpoint({ nonce: 'healed', sessionId: 'session-healed', second: 8 })]);
+    assert.equal(threadVerdict(healed, 'healed').status, 'FIRST');
+    assert.equal(healed.heldId, 'session-healed');
+  });
+  it('reports standing substitutions per nonce while the epoch report keeps the first', () => {
+    const facts = judge([...first, ...checkpoint(), ...checkpoint({ nonce: 'continued', sessionId: 'session-held', second: 7 })]);
+    assert.deepEqual(threadVerdict(facts, 'continued'), { nonce: 'continued', expectedId: 'session-held', actualId: 'session-held', status: 'CONTINUED', baseKind: 'checkpoint', substituted: false });
+    assert.equal(threadVerdict(facts, 'checkpoint').substituted, true);
+    assert.equal(facts.substitution.nonce, 'checkpoint');
+    assert.equal(threadVerdict(facts, 'absent'), null);
+  });
+  it('a head ledger degrade and a checkpoint degrade without a standing substitution do not clear HELD', () => {
+    const head = thread({ nonce: 'head', sessionId: 'foreign', second: 4 });
+    const facts = judge([...first, ...head.slice(0, 2), degrade(head[0])]);
+    assert.equal(facts.substitution.baseKind, 'head');
+    assert.equal(facts.heldId, 'session-held');
+    const continued = checkpoint({ sessionId: 'session-held' });
+    assert.equal(judge([...first, ...continued.slice(0, 2), degrade(continued[0])]).heldId, 'session-held');
+  });
 });
 
 describe('held-session judge — spec:held-session/S1', () => {
@@ -79,7 +149,7 @@ describe('held-session judge — spec:held-session/S1', () => {
     const facts = judge(records);
     assert.deepEqual(facts.substitution, {
       nonce: 'wrong', expectedId: 'session-held', actualId: 'session-new',
-      postTreeDigest: digestOf('b2'), folded: true,
+      postTreeDigest: digestOf('b2'), folded: true, baseKind: 'head',
     });
     assert.equal(facts.heldId, 'session-held');
     assert.equal(facts.folds, 1);
@@ -125,7 +195,7 @@ describe('held-session judge — spec:held-session/S1', () => {
     assert.equal(facts.heldId, 'session-z');
     assert.deepEqual(facts.substitution, {
       nonce: 'substituted', expectedId: 'session-held', actualId: 'session-x',
-      postTreeDigest: digestOf('b2'), folded: true,
+      postTreeDigest: digestOf('b2'), folded: true, baseKind: 'head',
     });
     const covered = judge(records, { degrades: [{ fingerprint: substituted[1].postTreeDigest }] });
     assert.equal(covered.heldId, 'session-z');
@@ -177,7 +247,7 @@ describe('held-session judge — spec:held-session/S1', () => {
     const uncovered = judge(records);
     assert.deepEqual(uncovered.substitution, {
       nonce: 'substituted', expectedId: 'session-held', actualId: 'session-new',
-      postTreeDigest: substitutedReturn.postTreeDigest, folded: false,
+      postTreeDigest: substitutedReturn.postTreeDigest, folded: false, baseKind: 'head',
     });
     const covered = judge(records, { degrades: [{ fingerprint: substitutedReturn.postTreeDigest }] });
     assert.equal(covered.substitution, null);

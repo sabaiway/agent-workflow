@@ -11,9 +11,10 @@
 // Normative `--check` exit contract (the single home of this list — SKILL.md points here):
 // Before the review-recipe exits, configured plan-execution.execute=delegated with a plan and a
 // dirty, fingerprintable tree audits the delegation ledger. An absent ledger is inert; an
-// unavailable ledger, a HEAD error or a SUBSTITUTED held session refuses unless a codex-exec degrade at the
-// substituted return's tree, standing after every later fold, accepts it, or the fold of that thread's
-// retry lifts it (codex never grants it).
+// unavailable ledger or a HEAD error refuses. A SUBSTITUTED held session refuses: for a head-base thread,
+// a codex-exec degrade at the substituted return's tree, standing after every later fold, accepts it,
+// or the fold of that thread's retry lifts it (codex never grants it); a checkpoint-based thread's
+// substitution closes only by its own ledger degrade.
 //   exit 0  when the CONFIGURED plan-execution.review recipe is solo (or the computed default is —
 //           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
 //           holds no top-level .md that is not queue.md and not scratch by the naming convention:
@@ -149,6 +150,7 @@ export {
 const ACTIVITY = 'plan-execution';
 const SLOT = 'review';
 const CORE_EVIDENCE_TOOL = shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'core-evidence.mjs'));
+const DISPATCH_TOOL = shellQuoteArg(join(dirname(fileURLToPath(import.meta.url)), 'dispatch.mjs'));
 // --await (BUGFREE-3 / AD-049, item (d)) bounds + poll cadence. The default timeout is generous —
 // a real grounded bridge review can take minutes — and every value is overridable (--timeout / the
 // injectable clock) so hermetic tests never spend wall-clock.
@@ -531,6 +533,9 @@ const backendFailurePart = (b, state) => {
 const describesHeldRecovery = (state) => {
   const substitution = state.heldSession.substitution;
   if (substitution === null) return '';
+  if (substitution.baseKind === 'checkpoint') {
+    return ` — a checkpoint-based thread: no core-evidence degrade lifts it; record its ledger degrade (node ${DISPATCH_TOOL} degrade --wave <wave> --nonce ${shellQuoteArg(substitution.nonce)} --step-class code --rationale "...") then retry it (cap permitting) or open a new thread on the held session, and fold that`;
+  }
   const canRetry = substitution.folded === false;
   if (state.evidenceUnavailable === true) {
     const retry = canRetry ? '; or fold the retry of that thread' : '';
@@ -784,8 +789,7 @@ record (node core-evidence.mjs degrade) — and never all backends.
 below, a configured plan-execution.execute = delegated with a plan in flight and a dirty,
 fingerprintable tree audits the delegation ledger: an absent ledger is inert; an unreadable,
 malformed, foreign or audit-refused ledger, a failed HEAD read, or a SUBSTITUTED held session
-exits 1 (a substitution is lifted only by a codex-exec degrade at the substituted return's own
-tree, or the fold of that thread's retry). THEN: 0 for solo / no plan in flight /
+exits 1. THEN: 0 for solo / no plan in flight /
 a clean tree (under a non-solo review obligation the PASS names every plan in flight and its arm) /
 a cwd where git ITSELF answers not-a-repository (the only passing non-work-tree state; the four others exit 1 by name) / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an
