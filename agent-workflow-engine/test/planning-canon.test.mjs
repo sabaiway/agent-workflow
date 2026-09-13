@@ -31,6 +31,18 @@ describe('planning.md — the plan shape', () => {
     assert.doesNotMatch(section, /```/);
   });
 
+  it('pins ## The task between The epic and The queue, fence-free, naming the two tools, the prune before the plan is deleted and the no-concurrent-writer rule (spec:checkpoint/S10)', () => {
+    assert.match(flat, /## The task/);
+    assert.ok(flat.indexOf('## The epic') < flat.indexOf('## The task'));
+    assert.ok(flat.indexOf('## The task') < flat.indexOf('## The queue'));
+    const section = flat.split('## The task')[1].split('## The queue')[0];
+    assert.match(section, /checkpoint\.mjs/);
+    assert.match(section, /task-brief\.mjs/);
+    assert.match(section, /the prune before the plan file is deleted/);
+    assert.match(section, /no other session writes in scope/);
+    assert.doesNotMatch(section, /```/);
+  });
+
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
     assert.match(flat, /capped at \*\*100 lines and at most 25 ledger rows\*\*/);
     assert.match(flat, /plan-shape-cli\.mjs --check <plan>/);

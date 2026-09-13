@@ -554,7 +554,7 @@ describe('review-state — probe receipts never attest the tree (D3)', () => {
 
 describe('review-state — plan-in-flight detector (the queue.md naming convention)', () => {
   it('classifies every scratch marker', () => {
-    for (const scratch of ['queue.md', 'EXECUTE-x.md', 'FEEDBACK-x.md', 'a-PLAN-PROMPT.md', 'item1-execution-prompt.md', 'next-session-ci-handoff.md']) {
+    for (const scratch of ['queue.md', 'EXECUTE-x.md', 'FEEDBACK-x.md', 'TASK-x-T1.md', 'a-PLAN-PROMPT.md', 'item1-execution-prompt.md', 'next-session-ci-handoff.md']) {
       assert.equal(isScratchPlanName(scratch), true, scratch);
     }
     assert.equal(isScratchPlanName('active-feature.md'), false);
@@ -562,7 +562,7 @@ describe('review-state — plan-in-flight detector (the queue.md naming conventi
 
   it('a fixture mirroring a real mid-execution docs/plans directory yields exactly the one active plan', () => {
     // The SHAPE of this repo's own docs/plans during a plan execution: the queue index, every scratch
-    // marker class the convention names (EXECUTE- / FEEDBACK- prefixes; PLAN-PROMPT / prompt / handoff
+    // marker class the convention names (EXECUTE- / FEEDBACK- / TASK- prefixes; PLAN-PROMPT / prompt / handoff
     // carriers; superseded renames), and exactly ONE bare active plan.
     const root = mkdtempSync(join(tmpdir(), 'review-state-detector-'));
     mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
@@ -571,6 +571,8 @@ describe('review-state — plan-in-flight detector (the queue.md naming conventi
       'EXECUTE-harden-planning-canon.md',
       'EXECUTE-active-feature.md',
       'FEEDBACK-triage-2026-07-03.md',
+      'TASK-active-feature-T1.md',
+      'TASK-active-feature-T1-a1.md',
       'harden-planning-canon-PLAN-PROMPT.md',
       'item1-execution-prompt.md',
       'next-session-ci-handoff.md',

@@ -4,6 +4,21 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.5.0 — the planning canon gains the task tier: `## The task`, a briefed slice with a checkpoint before each execute, its tests as its only review, the restore on failure and the prune before the plan is deleted (AD-141)
+
+`references/planning.md`: one fence-free section `## The task` between `## The epic` and `## The queue`. A task is
+the tier below the plan — one briefed slice of a story's ledger, authored by one carrier and executed by another,
+two dispatches never one; before every execute dispatch the kit mints a checkpoint of the plan's sequence
+(`node <kit>/tools/checkpoint.mjs mint --plan <plan>`) and the brief is stamped and checked against that newest
+checkpoint (`node <kit>/tools/task-brief.mjs stamp <brief>`, then `check <brief> --dispatch <dispatch-file>`
+immediately before the run); the brief is a scratch `TASK-` file under the plans directory, never a plan in flight;
+a task's tests are its only review; a failed task is undone by a restore to its checkpoint, which holds only while no
+other session writes in scope — the precondition is the orchestrator's to keep; the sequence is forgotten by the
+prune before the plan file is deleted, at Cleanup, once every dispatch thread is closed. Pinned by
+`test/planning-canon.test.mjs` (the heading and its position, the two tool names, the prune-before-delete and the
+no-concurrent-writer sentences, no fence in the section). MINOR: one additive section; no procedure step moves, no
+reader rule changes. Published on this train with kit 13.2.0, which ships the two tools.
+
 ## 5.4.0 — the planning canon names the story line, runs the verify arm first in Cleanup, and excludes the git dir from the slug grep (AD-139)
 
 `references/planning.md`, two sentences. The Goal-and-boundary bullet: a plan carrying an epic story names it with

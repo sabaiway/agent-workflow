@@ -9,12 +9,13 @@ import { join } from 'node:path';
 
 export const PLANS_REL = 'docs/plans';
 
-// Scratch by the naming convention: EXECUTE-/FEEDBACK- prefixes, or a name carrying PROMPT/prompt/
+// Scratch by the naming convention: EXECUTE-/FEEDBACK-/TASK- prefixes, or a name carrying PROMPT/prompt/
 // handoff. queue.md is the series index, never a plan.
 export const isScratchPlanName = (name) =>
   name === 'queue.md' ||
   name.startsWith('EXECUTE-') ||
   name.startsWith('FEEDBACK-') ||
+  name.startsWith('TASK-') ||
   name.includes('PROMPT') ||
   name.includes('prompt') ||
   name.includes('handoff');

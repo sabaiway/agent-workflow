@@ -4,6 +4,93 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 13.2.0 — the task tier lands: `checkpoint.mjs` mints, orders, verifies and prunes tree snapshots of a plan's sequence, `checkpoint-restore.mjs` restores one in three proven steps, `task-brief.mjs` stamps and checks a brief against the newest checkpoint, and `TASK-` is a scratch name (AD-141)
+
+**MINOR: three new tools and one added arm of the scratch-name predicate; no existing verb, record, transition or
+metric moves.** Since 13.1.0 the delegation ledger could measure a thread against a `checkpoint` base — a tree the
+orchestrator had to compute by hand. Now the kit mints it, keeps it in a sequence, restores to it and binds the
+task's brief to it. The contract is `docs/ai/specs/kit/checkpoint/index.md` with its parts `restore.md` and
+`task-brief.md` (live, revision 2, S1–S10 bound).
+
+- **`tools/checkpoint.mjs` (146 lines).** `mint --plan docs/plans/<stem>.md` writes ONE tree over the snapshot
+  scope of 13.1.0 (`snapshotScope`, the newest checkpoint as the base tree) through its own temporary index — a
+  forced add of every present regular file or symlink, one `write-tree`, the index removed before every return —
+  so `docs/ai/` deliverables are in the snapshot and the brief under `docs/plans/` never is; an absent leaf and a
+  directory at a former file leaf are deletions; a present non-regular path refuses by name and writes nothing;
+  the real index, the work tree and every other ref are untouched. The plan must be a readable regular file that is
+  a DIRECT child of `docs/plans/`, not a scratch name, with a stem `git check-ref-format` admits, else `stem`. The
+  ref of checkpoint `n` is `refs/agent-workflow/checkpoints/<stem>/<n>` and points at the TREE (reachable across
+  `gc`, never a branch, a fetch or a push); numbers run contiguously from 0; a mint whose tree equals the newest
+  ref's writes nothing and prints the newest's line; the line is `checkpoint <stem>/<n> <oid>`. `newest --plan`
+  prints the greatest or refuses `no-checkpoint`; `verify <oid>` recomputes with the target as base and prints
+  CLEAN (exit 0) or DIRTY (exit 1) with both oids, a lost snapshot path counted as dirt; `prune --plan` deletes the
+  plan's refs (an empty sequence exits 0) and refuses `open-thread`, deleting nothing, while any delegation-ledger
+  thread whose dispatch base is one of those trees is OPEN — judged by base oid alone, so another sequence's thread
+  holds the ref exactly when the two share the tree, and an unfolded success return still holds it; a malformed
+  ledger refuses. A non-tree id refuses through 13.1.0's `resolveTreeObject` wording. Exactly three exit codes:
+  0 accept or CLEAN, 1 refuse or DIRTY, 2 usage; `main(argv, deps)` returns and never exits; git runs through the
+  same guarded runner discipline as the 13.1.0 leaf (a thrown runner is a failed spawn).
+- **`tools/checkpoint-core.mjs` (118 lines).** The git seam the two halves share — the guarded runner, the
+  repository resolution, the sequence-ref reader (a listing line that is not `<ref> <oid>` refuses `sequence`),
+  the temporary-index discipline, the scope lstat and the snapshot write — so `checkpoint.mjs` and
+  `checkpoint-restore.mjs` both import the leaf; `checkpoint.mjs` still imports the restore module, which no longer
+  imports `checkpoint.mjs`. The pair had imported each other;
+  the tools graph's acyclic pin (`read-graph-purity`) caught it at the release gate, after the council.
+- **`tools/checkpoint-restore.mjs` (126 lines) and the `restore <oid>` verb.** Whole-tree over the snapshot scope,
+  ORDERED, idempotent and proven. Refused BEFORE the first write on exactly five states: a non-tree target;
+  `target-scope` — a target leaf outside the domain (an excluded path such as `docs/plans/x`), under a `.git`
+  segment, with a gitlink mode, or a tree no sequence ref carries; `ledger` — an unreadable or malformed ledger
+  (an absent one holds no thread); `open-thread` — an OPEN thread whose base oid is in the HELD SET, the target
+  plus every tree of every sequence carrying it (a disjoint sequence and a head base proceed); `type-conflict` — a
+  directory (empty or not) where the target holds a blob or a symlink, or a file or symlink at a parent segment
+  where the target needs a directory. Then MATERIALIZE (`read-tree` + `checkout-index -a -f` under a temporary
+  index: a blob lands as a file, a symlink entry as a symlink), EXTRAS (every domain path the target does not hold
+  is unlinked at its own lstat-ed leaf, never through a link; a parent emptied by that deletion is removed, never
+  the repository top, never a directory that still holds anything), PROOF (the scope tree recomputed as `verify`
+  computes it; equal → `checkpoint restore <oid> proof <oid>`, exit 0; unequal → exit 1 naming both oids, never a
+  restore claimed). Each step is a pure function of the target and the tree, so a re-run after an interruption at
+  any step converges; a restored ignore file that UNCOVERS a path the first domain did not hold surfaces as a
+  proof mismatch; re-running the restore converges. The real index is never a domain nor written (a staged change survives; the work tree under it is the
+  snapshot's); `docs/plans/`, the three settings files, the footprint and `node_modules` are never read, written or
+  deleted; earlier checkpoints stay; a restore to an older checkpoint is legal and undoes every task after it.
+- **`tools/task-brief.mjs` (270 lines).** A brief is `docs/plans/TASK-<stem>-T<n>.md`, its execute attempt's
+  dispatch file `TASK-<stem>-T<n>-a<attempt>.md` beside it — both scratch, both outside the scope. The grammar is
+  closed: `# Task: <name>`, the story line byte-equal to the plan's, `## Slice` (`Plan:`, `Row:`, `Grouping:`,
+  `Files:` of `- <path> :: <tag>`), `## Reads`, `## Acceptance` (`- <command> :: <expected>`), `## Negative cases`,
+  `## Budget` (`- <path> :: <max lines>`, one per file), at most one `aw-task-binding` block. Exactly seven states
+  refuse `shape`; a tag outside test/impl/pin, a `Grouping:` not equal to the present tags in that order, or the
+  pin rule broken (exactly one pin line naming the package-content path on that row, none elsewhere) refuse
+  `grouping`; a `Row:` naming no row, an impl path that is not the row's path or a sweep expansion (the anchor is
+  never a ground), or a test path not co-located refuse `row`; the story line absent or unequal refuses `story`.
+  `stamp <brief>` judges the grammar, then writes the ONE block `{ schema: 1, plan: { path, sha256 }, reads: [{
+  path, sha256 }], checkpoint: <newest tree oid>, head: <commit oid> }` over zero or one existing block and prints
+  `task-brief digest sha256:<hex>` of the whole stamped file; a plan or read that is not a readable regular file
+  inside the repository refuses `reads` (the descriptor-bound no-follow door), an empty sequence `no-checkpoint`,
+  an unresolvable HEAD `head`. `check <brief> [--dispatch <file>]` recomputes everything and refuses each stale
+  state by one name: `binding`, `no-checkpoint`, `reads`, `binding-plan`, `binding-read`, `binding-checkpoint`,
+  `checkpoint-stale` (the tree DIRTY against the bound checkpoint — mint again, stamp again), `binding-head`, and
+  with `--dispatch` `dispatch-inputs` when the attempt's `aw-dispatch-contract` header does not carry the brief
+  path and the current digest literal. Checkpoint facts are read through `checkpoint.mjs`'s own exports.
+- **`tools/plan-files.mjs`.** `TASK-` joins `isScratchPlanName`, so a brief or a dispatch file is never an
+  in-flight plan and neither `plan-shape --in-flight` nor `review-state` judges it; the review-state mode document
+  and header name the prefix.
+- **Tarball 305 → 309.** The four modules are pinned by name. Suites: `tools/checkpoint.test/mint.test.mjs`
+  (50), `tools/checkpoint.test/restore.test.mjs` (42), `tools/task-brief.test.mjs` (69), `tools/plan-files.test.mjs`
+  (2): every case of the first session written before the code existed and red, the three cases of the diff
+  review's fold red on the pre-fold code, then green; the release gate's coverage checker named the uncovered
+  sites and five cases closed them (each CLI run as a process, the malformed listing for both verbs, the
+  non-numeric suffix) — 311 of 311 across the seven files the story touches.
+- **Stated limits.** A present non-regular scope path refuses the restore at the proof step, after the writes; the
+  extras of a restore are judged under the ignore rules the tree carries BEFORE step (1), so a restored ignore file
+  that RE-COVERS a path (the task had un-ignored a build directory the snapshot never held) deletes that path as an
+  extra with a matching proof — a task that edits an ignore file is restored under the rules it left behind; a
+  retry of a terminal failure opens on the same base BEFORE Cleanup's prune, because after the prune no sequence
+  ref carries the base and the restore the retry needs refuses `target-scope` (the tree object itself is not
+  deleted, only unreachable by name); the precondition of a restore is no concurrent in-scope writer — a parallel session's `docs/ai/` write
+  during the task is restored away with a matching proof, so holding it is the orchestrator's; the process-group
+  stop of a running wrapper stays the bridge's contract, the kit's door is the OPEN-thread refusal; no parallel
+  tasks over one plan and no satellite worktrees; the `task` and `epic` rows of the activity table are story S7's.
+
 ## 13.1.0 — the delegation ledger learns a base: a dispatch records `head` or `checkpoint`, every measurement of a checkpoint thread is base-relative over the snapshot scope, and a checkpoint thread holds the delegate's session (AD-140)
 
 **MINOR: one optional key on the dispatch record, one new flag on `open`, one new IO leaf; every record minted

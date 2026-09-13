@@ -18,7 +18,7 @@
 //   exit 0  when the CONFIGURED plan-execution.review recipe is solo (or the computed default is —
 //           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
 //           holds no top-level .md that is not queue.md and not scratch by the naming convention:
-//           prefixes EXECUTE- / FEEDBACK-, or a name containing PROMPT / prompt / handoff); when
+//           prefixes EXECUTE- / FEEDBACK- / TASK-, or a name containing PROMPT / prompt / handoff); when
 //           the tree is clean (nothing to review — under a non-solo review obligation the PASS
 //           still NAMES every plan in flight and states that the gate arms as soon as the tree
 //           turns dirty, so a latent arm is discoverable before it blocks a pending commit); when

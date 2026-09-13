@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-12 — AD-141 the task tier lands: a checkpoint is minted, ordered, verified, restored and pruned by the kit, and a brief is bound to the newest one (kit 13.2.0 MINOR · engine 5.5.0 MINOR; memory 8.0.0 and both bridges unchanged)
+
+**Since 13.1.0 the ledger could measure against a checkpoint tree the orchestrator had to compute by hand; now the
+kit mints it and everything a task needs around it.** Kit 13.2.0 ships three tools: `checkpoint.mjs` mints a tree
+snapshot of a plan's sequence over the 13.1.0 scope through its own temporary index (`docs/ai/` deliverables in, the
+brief under `docs/plans/` out, absent and directory leaves as deletions), keeps it under
+`refs/agent-workflow/checkpoints/<stem>/<n>` (contiguous from 0, never two equal trees in a row), verifies a tree
+CLEAN or DIRTY with both oids, and prunes the sequence unless a ledger thread is still open on one of its trees;
+`checkpoint-restore.mjs` restores a tree in three ordered, idempotent, proven steps — materialize, extras, proof —
+behind five refusals judged before the first write (a non-tree, a target outside the scope or under a `.git` segment
+or a gitlink or a tree no sequence carries, an unreadable ledger, an open thread on the held set, a type conflict in
+either direction), removing no directory it did not empty and following no link; `task-brief.mjs` judges a closed
+brief grammar, stamps the one binding block (plan and reads digests, the newest checkpoint, HEAD) and refuses every
+stale state by one name, `--dispatch` proving the attempt's header names the brief and its current digest. `TASK-`
+is a scratch name. Engine 5.5.0 adds the canon section `## The task`. Contract:
+`docs/ai/specs/kit/checkpoint/` (live, revision 2, ten scenarios bound); epic story S5 in flight until Cleanup lands
+it. The git seam the mint and the restore share is its own leaf, `checkpoint-core.mjs`, since the release gate found
+the two importing each other. Executed under the maintainer's ruling that a story's tests are written in a separate session from its code:
+seven test rows landed red by four delegated threads on one held session, all first pass; the three modules by three
+more threads on the same session; the diff council's three majors folded red-first on that session; 311 of 311 green after the release-gate fold.
+
 ## 2026-09-11 — AD-140 the delegation ledger learns a base, and the second task of a story stops opening DIRTY (kit 13.1.0 MINOR · engine 5.4.0, memory 8.0.0 and both bridges unchanged)
 
 **Every ledger measurement was HEAD-relative, so a second task opened over the first task's diff was metric-blind by

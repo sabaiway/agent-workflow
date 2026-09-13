@@ -145,6 +145,19 @@ at concept altitude; the findings that come back are folded by the same predicat
 `--close` lands the epic only when every story has landed, the result line is a date and the queue row
 is gone.
 
+## The task
+
+A task is the tier below the plan: one briefed slice of a story's ledger, authored by one carrier and
+executed by another — two dispatches, never one. Before every execute dispatch the kit mints a
+checkpoint, a tree snapshot of the plan's sequence (`node <kit>/tools/checkpoint.mjs mint --plan
+<plan>`), and the brief is stamped and checked against that newest checkpoint (`node
+<kit>/tools/task-brief.mjs stamp <brief>`, then `check <brief> --dispatch <dispatch-file>` immediately
+before the run); the brief is a scratch `TASK-` file under the plans directory, never a plan in flight.
+A task's tests are its only review. A task that fails is undone by a restore to its checkpoint
+(`restore <oid>`), which holds only while no other session writes in scope — the precondition is the
+orchestrator's to keep, stated so the choice is owned. The sequence is forgotten by the prune before the
+plan file is deleted, at Cleanup, once every dispatch thread of the plan is closed.
+
 ## The queue
 
 `docs/plans/queue.md` NAMES work; it never holds the analysis of it. A row is one plain sentence

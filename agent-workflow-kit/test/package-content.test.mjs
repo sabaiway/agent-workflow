@@ -307,6 +307,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // store and engine consume; pinned by NAME for the same reason
       'tools/dispatch-record.mjs',
       'tools/dispatch-baseline.mjs',
+      'tools/checkpoint.mjs',
+      'tools/checkpoint-core.mjs',
+      'tools/checkpoint-restore.mjs',
+      'tools/task-brief.mjs',
       // the delegation-ledger IO (delegation Plan 1 Phase 2) — its own store beside the review
       // receipts, the fail-closed reader, and the thread/correlation/retry/wave preflight
       'tools/dispatch-store.mjs',
@@ -784,7 +788,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 301 = 297 + tools/epic-shape.mjs (shape), tools/epic-shape-ledger.mjs (claims and close),
     //       tools/epic-shape-brief.mjs (brief and fold), tools/epic-shape-cli.mjs (argv + fs).
     // 304 = 301 + tools/claim-relation.mjs (the claim primitives both tiers import), tools/epic-store.mjs (the epic store's doors), tools/plan-shape-ownership.mjs (the story rules)
-    assert.equal(packed.length, 305, `tarball file count drifted (${packed.length} \u2260 305)`);
+    // 309 = 305 + tools/checkpoint.mjs (mint, sequence, verify, prune), tools/checkpoint-core.mjs (the git seam both halves import), tools/checkpoint-restore.mjs (the ordered restore), tools/task-brief.mjs (the brief grammar, stamp and check) — story S5
+    assert.equal(packed.length, 309, `tarball file count drifted (${packed.length}\u2260 309)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
