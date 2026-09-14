@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-14 — AD-143 the placed executor's body follows `docs/ai/vehicles.json`: re-derived by the agents writer and an eighth config ensure instead of preserved, and the one retry on the fallback becomes canon (kit 14.0.0 MAJOR · engine 5.6.0 MINOR; memory 8.0.0 and both bridges unchanged)
+
+**13.3.0 gave the executor vehicle a model setting; 14.0.0 makes the placed vehicle follow it.** The body of
+`.claude/agents/executor.md` is now derived from `docs/ai/vehicles.json` — the bundled template with its `model:` and
+`effort:` lines replaced by the setting, the same substitution the review lenses use — and a placed file that differs
+is rewritten, not preserved: by `cheap-agents --apply` (`re-derived`, through the contained atomic write) and by the
+upgrade run's new eighth config ensure, `executor`, fifth after `vehicles` (`not-placed` / `already-current` /
+`re-derived`, one new cause `vehicle-settings-unreadable`). That withdrawal of the never-clobber rule for the executor
+is the kit's MAJOR: a model set by hand-editing the placed file is replaced; set it in the settings file. An unreadable
+setting makes the vehicle `unusable` with a reason naming the file, stops the agents writer by name, and turns the
+advisor's agents offer into a stated skip. The engine's planning canon states the one retry of a quota-refused slice
+on the setting's `fallback`, from the task's checkpoint, as a recorded dispatch — a second refusal stops the story —
+and its orchestration canon says the writer re-derives the executor. Contract `docs/ai/specs/kit/executor-vehicle.md`
+(live, S1–S7 bound).
+
 ## 2026-09-13 — AD-142 the executor vehicle's model becomes a project setting: `docs/ai/vehicles.json` beside the other two, read through one three-state table, seeded by a seventh config ensure (kit 13.3.0 MINOR; engine 5.5.0, memory 8.0.0 and both bridges unchanged)
 
 **The placed executor vehicle carried one model hard-wired in its template, and when that model's quota ran out the

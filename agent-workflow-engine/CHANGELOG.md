@@ -4,6 +4,20 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.6.0 — the planning canon states the one retry of a quota-refused slice on the fallback model, and the orchestration canon's apply clause re-derives the executor (AD-143)
+
+`references/planning.md`, `## The task`, one sentence: a slice refused for its model's quota is retried ONCE, from the
+task's checkpoint, on the fallback model of the resolved vehicle posture — the `fallback` of `docs/ai/vehicles.json`,
+the bundled default only when that file is absent — as a recorded dispatch of its own whose rationale states the
+model that ran it; a second refusal stops the story. Canon, not mechanism: no dispatch tool, no loop, no model field
+on a ledger record. Pinned by `test/planning-canon.test.mjs` (spec:executor-vehicle/S7).
+`references/orchestration.md`, the subagent carrier's apply clause: the writer's apply command places a missing
+vehicle and re-derives the executor's body from the vehicle settings, replacing a hand edit; a symlinked, non-regular
+or unreadable vehicle path is fixed or removed first; an unreadable `docs/ai/vehicles.json` is fixed in that file,
+since the writer refuses the whole run until it is valid. The retired "a customized file is kept" clause is asserted
+absent by `test/orchestration-canon.test.mjs`. MINOR: one additive sentence and one reworded clause; no procedure step
+moves. Published on this train with kit 14.0.0, which ships the derivation.
+
 ## 5.5.0 — the planning canon gains the task tier: `## The task`, a briefed slice with a checkpoint before each execute, its tests as its only review, the restore on failure and the prune before the plan is deleted (AD-141)
 
 `references/planning.md`: one fence-free section `## The task` between `## The epic` and `## The queue`. A task is

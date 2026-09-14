@@ -1,5 +1,5 @@
 // ensure-ops.mjs — the upgrade ensure operations this module owns, one function each, behind one shared
-// outcome shape; the spec-layer ensure (ensure-specs.mjs) composes its outcomes through
+// outcome shape; the leaves that import this module compose their outcomes through
 // the same door and probes exported below. The CLI that orders and runs them is ensure-configs.mjs —
 // it owns the op table, so the import graph stays acyclic; this module owns what each ensure DOES
 // and, more importantly, what it is allowed to CLAIM.
@@ -371,7 +371,7 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
 };
 
 // The ops this module owns, by name. The CLI composes the full ENSURE_OPS table from these plus
-// the spec-layer ensure (ensure-specs.mjs imports THIS module, so the table cannot live here).
+// the leaves that import THIS module, which join the table in ensure-configs.mjs (so it cannot live here).
 export const OWN_IMPLEMENTATIONS = Object.freeze({
   orchestration: ensureOrchestration,
   gates: ensureGates,

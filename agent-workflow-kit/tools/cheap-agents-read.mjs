@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refuseDirectRun } from './direct-run.mjs';
 import { deriveLensTemplate } from './review-roster-resolve.mjs';
+import { EXECUTOR_DEFAULTS, VEHICLES_REL, readVehicles, resolveExecutor } from './vehicle-settings.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +26,7 @@ export const CHEAP_AGENTS_STAMP = 'CHEAP_AGENTS_STAMP';
 export const CHEAP_AGENTS_SYMLINK = 'CHEAP_AGENTS_SYMLINK';
 export const CHEAP_AGENTS_BUNDLE = 'CHEAP_AGENTS_BUNDLE';
 export const CHEAP_AGENTS_CONFIG = 'CHEAP_AGENTS_CONFIG';
+export const CHEAP_AGENTS_VEHICLES = 'CHEAP_AGENTS_VEHICLES';
 
 export const makeCheapAgentsError = (code, message) =>
   Object.assign(new Error(`${ERROR_PREFIX} ${message}`), { name: 'CheapAgentsError', code, exitCode: EXIT_PRECONDITION });
@@ -88,7 +90,7 @@ export const assertDirSafe = (absPath, relPath, fs) => {
   return { absent: false };
 };
 
-// Per-template placement plan: place | already-current | customized-preserved (never clobbered).
+// Per-template placement plan: place | already-current | re-derive | customized-preserved.
 export const planPlacement = (templates, projectDir, deps = {}) => {
   const fs = readFsDeps(deps);
   return templates.map((template) => {
@@ -101,6 +103,7 @@ export const planPlacement = (templates, projectDir, deps = {}) => {
     }
     const existing = fs.readFile(abs, UTF8);
     if (existing === template.content) return { ...template, rel, abs, action: 'already-current' };
+    if (template.rederive === true) return { ...template, rel, abs, action: 're-derive', existing };
     return { ...template, rel, abs, action: 'customized-preserved', existing };
   });
 };
@@ -110,8 +113,28 @@ export const planPlacement = (templates, projectDir, deps = {}) => {
 export const EXECUTOR_VEHICLE = 'executor.md';
 export const EXECUTOR_VEHICLE_REL = `${AGENTS_DIR}/${EXECUTOR_VEHICLE}`;
 export const EXECUTOR_VEHICLE_SPEC = Object.freeze({
-  stem: 'executor', template: 'executor', model: null, effort: null, tools: 'full', derived: false,
+  stem: 'executor', template: 'executor', model: EXECUTOR_DEFAULTS.model,
+  effort: EXECUTOR_DEFAULTS.effort, tools: 'full', derived: true,
 });
+
+export const readExecutorPosture = (projectDir, deps = {}) => {
+  const fs = readFsDeps(deps);
+  return resolveExecutor(readVehicles(projectDir, fs.readFile, fs.lstat));
+};
+
+export const executorVehicleSpec = (posture) => ({
+  ...EXECUTOR_VEHICLE_SPEC, model: posture.model, effort: posture.effort,
+});
+
+export const deriveExecutorBody = (bundledContent, posture) =>
+  deriveLensTemplate(bundledContent, executorVehicleSpec(posture));
+
+export const executorTemplate = (posture, deps = {}) => {
+  const bundled = readBundledAgents(deps).find((item) => item.name === EXECUTOR_VEHICLE);
+  if (!bundled) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${EXECUTOR_VEHICLE} is missing from the bundle`);
+  return { name: EXECUTOR_VEHICLE, content: deriveExecutorBody(bundled.content, posture), rederive: true };
+};
+
 const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 // The YAML subset a vehicle's frontmatter is read with: a bare scalar, a single- or double-quoted
@@ -229,6 +252,17 @@ export const surveyVehicle = (projectDir, spec, deps = {}) => {
   }
 };
 
-export const surveyExecutorVehicle = (projectDir, deps = {}) => surveyVehicle(projectDir, EXECUTOR_VEHICLE_SPEC, deps);
+export const surveyExecutorVehicle = (projectDir, deps = {}) => {
+  const fs = readFsDeps(deps);
+  try {
+    assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
+    assertDirSafe(join(projectDir, AGENTS_DIR), AGENTS_DIR, fs);
+  } catch (err) {
+    return { state: 'unusable', reason: err.message, rel: EXECUTOR_VEHICLE_REL };
+  }
+  const { posture, reason } = readExecutorPosture(projectDir, deps);
+  if (posture === null) return { state: 'unusable', reason, rel: VEHICLES_REL };
+  return surveyVehicle(projectDir, executorVehicleSpec(posture), deps);
+};
 
 refuseDirectRun(import.meta.url);

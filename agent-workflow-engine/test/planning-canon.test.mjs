@@ -43,6 +43,14 @@ describe('planning.md — the plan shape', () => {
     assert.doesNotMatch(section, /```/);
   });
 
+  it('states the one retry from the checkpoint on the posture fallback model as a recorded dispatch whose rationale states the model, and that a second refusal stops the story (spec:executor-vehicle/S7)', () => {
+    const section = flat.split('## The task')[1].split('## The queue')[0];
+    assert.match(section, /\bretried\b/);
+    assert.match(section, /\bfallback\b/);
+    assert.match(section, /\brationale\b/);
+    assert.match(section, /\bsecond refusal\b/);
+  });
+
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
     assert.match(flat, /capped at \*\*100 lines and at most 25 ledger rows\*\*/);
     assert.match(flat, /plan-shape-cli\.mjs --check <plan>/);

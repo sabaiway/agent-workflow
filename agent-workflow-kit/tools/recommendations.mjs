@@ -85,7 +85,7 @@ import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
-import { surveyExecutorVehicle, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
+import { surveyExecutorVehicle, readExecutorPosture, executorTemplate, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -994,11 +994,16 @@ const probeStateBlockHook = ({ root, deps, add, skip }) => {
 // surfaced its absence: `agents` is the family's SECOND `.claude/` writer, the `help` Tune tail
 // advertises it, and the advisor had no entry for it — so a user who never runs `help` never learned
 // it existed while the advisor reported the deployment optimal. Found by the guard, not by an incident.
-// Only a PLACE action counts as a gap: `already-current` is converged and `customized-preserved` is
-// the user's own edit, which the writer never clobbers and the advisor must never nag about.
+// Only a PLACE action counts as a gap: `already-current` is converged; a customized read-only vehicle or lens is
+// the user's own edit the writer never clobbers and the advisor never nags about; the executor is not preserved but re-derived from docs/ai/vehicles.json (its `re-derive` answer is not a gap of this offer).
 const probeCheapAgents = ({ root, deps, add, skip }) => {
   try {
-    const preflight = preflightCheapAgents({ cwd: root }, deps);
+    const { posture, reason } = readExecutorPosture(root, deps);
+    if (posture === null) {
+      skip('agents', new Error(`${reason} — fix that file first`));
+      return;
+    }
+    const preflight = preflightCheapAgents({ cwd: root, derived: [executorTemplate(posture, deps)] }, deps);
     // The writer refuses below the expected lineage, so offering its command would hand the user a
     // guaranteed failure — the honest surface is a stated skip naming the recovery.
     if (!preflight.stampOk) {
@@ -1050,15 +1055,16 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
     const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
     if (!VEHICLE_BROKEN_STATES.includes(survey.state)) return;
     const reason = safeLine(survey.reason ?? '');
+    const { posture, reason: settingsReason } = readExecutorPosture(root, deps);
     const stamp = readStamp(join(root, WORKFLOW_STAMP), readFsDeps(deps));
     const preconditions = [
       ...(stamp === EXPECTED_WORKFLOW_VERSION ? [] : [`run /agent-workflow-kit upgrade first (deployment stamp ${stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`]),
-      ...(survey.state === 'unusable' ? [`${reason || 'the vehicle file is unusable'} — fix that`] : []),
+      ...(posture === null ? [`${safeLine(settingsReason)} — fix that`] : []),
     ];
     // The writer refuses on ANY vehicle path it cannot touch (a symlinked read-only vehicle blocks a
-    // missing executor's placement too), so its own preflight is the last precondition — named once.
+    // missing executor's placement too), so its own preflight is the last precondition.
     const blocked = writerBlock(root, deps);
-    if (blocked && blocked !== reason) preconditions.push(`${blocked} — fix that`);
+    if (blocked) preconditions.push(`${blocked} — fix that`);
     const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
     add(
       'executor-vehicle',
@@ -1067,8 +1073,8 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
         state: survey.state,
         reason: reason && room > 0 ? `: ${truncatedTo(reason, room)}` : '',
       }),
-      // The writer places a MISSING vehicle; an unusable path (a symlink, a read-only customization)
-      // is kept or refused, so that state's apply is a hand-apply precondition before the writer.
+      // The writer places a missing vehicle and re-derives a placed executor whose bytes differ from the derived body (an invalid
+      // frontmatter or read-only tools included), so those states need no precondition; every precondition above is a refusal the apply would meet.
       `${preconditions.length ? `HAND-APPLY: ${preconditions.join('; ')}, then run: ` : ''}node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
       'executor-vehicle',
       `hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,

@@ -7,15 +7,15 @@
 // only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it
 // never commits. `surveyExecutorVehicle` is that vehicle's readiness, for the subagent carrier.
 //
-// The family's second `.claude/` writer, the velocity-profile.mjs writer discipline verbatim:
+// The family's second `.claude/` writer, the velocity-profile.mjs discipline with an executor exception:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
 //   • deployment-gated — `--apply` STOPs unless docs/ai/.workflow-version equals the lineage
 //     head (a dry-run stays usable whatever the stamp says; an unreadable orchestration config
 //     STOPs both, since the derived lenses it names cannot be known);
 //   • symlink-safe — a symlinked `.claude` / `.claude/agents` / target file is a STOP, never a
 //     write-through;
-//   • NEVER overwrites an existing .claude/agents/ file whose content differs from the bundled
-//     template — a customization is REPORTED (`customized — preserved`), never clobbered;
+//   • preserves differing .claude/agents/ files (`customized — preserved`), except the executor:
+//     on apply its body is re-derived from docs/ai/vehicles.json, replacing a hand edit;
 //     an identical file is `already current` (idempotent re-run);
 //   • writes ONLY under .claude/agents/ — never settings.json / settings.local.json, never
 //     commits.
@@ -27,7 +27,7 @@
 //
 // Exit codes: 0 done / dry-run (incl. preserved customizations — a user's file is a legitimate
 // state, not an error); 1 precondition STOP (stamp, symlink, missing bundle, an unreadable
-// orchestration config — the derived lenses it names cannot be known); 2 usage.
+// orchestration config or docs/ai/vehicles.json — their derived bodies cannot be known); 2 usage.
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -38,6 +38,9 @@ import { shellQuoteArg } from './repo-lex.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { lensMembersOf } from './review-roster.mjs';
 import { deriveLensTemplate, lensVehicleSpec } from './review-roster-resolve.mjs';
+import { loadVehicles, resolveExecutor } from './vehicle-settings.mjs';
+import { safeLine } from './carriers.mjs';
+import { writeContainedFileAtomic } from './atomic-write.mjs';
 // The READ core, never a second copy: the bundle, the placement plan and the executor survey live
 // there so the read-only advisor graph can reach them without reaching this writer.
 import {
@@ -47,9 +50,12 @@ import {
   EXPECTED_WORKFLOW_VERSION,
   UTF8,
   CHEAP_AGENTS_STAMP,
+  CHEAP_AGENTS_SYMLINK,
   CHEAP_AGENTS_BUNDLE,
   CHEAP_AGENTS_CONFIG,
+  CHEAP_AGENTS_VEHICLES,
   EXECUTOR_VEHICLE,
+  executorTemplate,
   makeCheapAgentsError,
   readFsDeps,
   readBundledAgents,
@@ -68,6 +74,10 @@ export {
   CHEAP_AGENTS_SYMLINK,
   CHEAP_AGENTS_BUNDLE,
   CHEAP_AGENTS_CONFIG,
+  CHEAP_AGENTS_VEHICLES,
+  readExecutorPosture,
+  executorTemplate,
+  deriveExecutorBody,
   makeCheapAgentsError,
   readBundledAgents,
   planPlacement,
@@ -96,7 +106,9 @@ authoring, or write-capable routine slice the orchestrator verifies, never for r
 it never commits.
 Default is --dry-run (a preview; writes nothing). --apply writes.
 Configured derived review lenses are planned and placed beside the bundled vehicles.
-An existing file with DIFFERENT content is preserved and reported, never overwritten.`;
+An existing file with DIFFERENT content is preserved and reported, never overwritten, except the executor.
+The executor's model and effort come from docs/ai/vehicles.json, and a placed executor whose bytes differ
+from the derived body is re-derived on --apply (a hand edit is replaced, never preserved).`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -127,6 +139,14 @@ const loadConfigOrStop = (cwd, deps) => {
   }
 };
 
+const loadExecutorPostureOrStop = (cwd, deps) => {
+  try {
+    return resolveExecutor(loadVehicles(cwd, deps.readFile, deps.lstat)).posture;
+  } catch (err) {
+    throw makeCheapAgentsError(CHEAP_AGENTS_VEHICLES, `${err?.message ?? err} — the agents writer cannot derive the executor vehicle — nothing is placed`);
+  }
+};
+
 const configuredDerivedTemplates = (cwd, deps) => {
   const config = loadConfigOrStop(cwd, deps);
   const bundle = readBundledAgents(deps);
@@ -149,9 +169,10 @@ export const applyCheapAgentsCommand = (root) =>
 export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const fs = writeFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
-  const derived = configuredDerivedTemplates(projectDir, deps);
+  const posture = loadExecutorPostureOrStop(projectDir, deps);
+  const derived = [executorTemplate(posture, deps), ...configuredDerivedTemplates(projectDir, deps)];
   const preflight = preflightCheapAgents({ cwd: projectDir, derived }, deps);
-  if (dryRun) return { wrote: false, dryRun: true, ...preflight };
+  if (dryRun) return { wrote: false, dryRun: true, posture, ...preflight };
 
   if (!preflight.stampOk) {
     throw makeCheapAgentsError(
@@ -159,10 +180,16 @@ export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
       `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${preflight.stamp ?? 'none'}) — run init/upgrade first`,
     );
   }
-  const toPlace = preflight.plan.filter((item) => item.action === 'place');
-  if (toPlace.length > 0) fs.mkdir(join(preflight.projectDir, AGENTS_DIR), { recursive: true });
-  for (const item of toPlace) fs.writeFile(item.abs, item.content, UTF8);
-  return { wrote: toPlace.length > 0, dryRun: false, ...preflight };
+  const toWrite = preflight.plan.filter((item) => item.action === 'place' || item.action === 're-derive');
+  if (toWrite.length > 0) fs.mkdir(join(preflight.projectDir, AGENTS_DIR), { recursive: true });
+  for (const item of toWrite) {
+    if (item.action === 're-derive') {
+      writeContainedFileAtomic(preflight.projectDir, item.abs, item.content, deps, {
+        label: item.rel, stop: (message) => makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, message),
+      });
+    } else fs.writeFile(item.abs, item.content, UTF8);
+  }
+  return { wrote: toWrite.length > 0, dryRun: false, posture, ...preflight };
 };
 
 // ── report ────────────────────────────────────────────────────────────────────────────
@@ -170,17 +197,20 @@ export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
 const ACTION_LABEL = {
   place: 'place',
   'already-current': 'already current',
+  're-derive': 're-derived — a hand edit was replaced; set the model in docs/ai/vehicles.json',
   'customized-preserved': 'customized — preserved (delete the file to reseed from the bundle)',
 };
 
 export const formatResult = (result) => {
+  const { posture } = result;
   const lines = [
     result.dryRun
       ? 'agent-workflow subagent vehicles — DRY RUN (no changes)'
       : 'agent-workflow subagent vehicles — APPLY',
   ];
   for (const item of result.plan) {
-    const verb = result.dryRun && item.action === 'place' ? 'would place' : ACTION_LABEL[item.action];
+    const verb = result.dryRun && item.action === 'place' ? 'would place'
+      : result.dryRun && item.action === 're-derive' ? 'would re-derive' : ACTION_LABEL[item.action];
     lines.push(`  - ${item.rel}: ${verb}`);
   }
   if (!result.stampOk) {
@@ -191,11 +221,12 @@ export const formatResult = (result) => {
     `${readOnlyCount} vehicles are Claude Code subagents with READ-ONLY tools and NO shell as bundled or derived (a customized file keeps whatever it grants) — so a fan-out on the shipped templates can never turn into a wave of approval prompts.`,
     `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
     'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
+    `executor posture: model=${safeLine(posture.model)} effort=${safeLine(posture.effort)} fallback=${safeLine(posture.fallback)} (source: ${safeLine(posture.source)}) — set in docs/ai/vehicles.json`,
   );
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
   // bare "re-run with --apply" would leave the caller to reconstruct --cwd and its quoting.
-  if (result.dryRun && result.plan.some((item) => item.action === 'place')) {
+  if (result.dryRun && result.plan.some((item) => item.action === 'place' || item.action === 're-derive')) {
     lines.push(`to apply, run exactly: ${applyCheapAgentsCommand(result.projectDir)}`);
   }
   if (!result.dryRun && result.wrote) {

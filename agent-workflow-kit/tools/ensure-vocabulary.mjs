@@ -10,14 +10,16 @@
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
 // root it seeds is a docs/ai file the navigator must count.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'scripts', 'specs', 'index']);
+// `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
 // ensure's pair refresh (reader or checker) — a deployed script on a body a release shipped,
 // rewritten to the bundled one (a custom body is never refreshed).
-export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
-export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
+// `re-derived` is the executor ensure rewriting a placed executor whose bytes differ from the body derived from docs/ai/vehicles.json.
+export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated', 're-derived']);
+export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate', 'would-re-derive']);
 
 // The CLOSED outcome vocabulary. Closed at RUNTIME, not by convention: composing an outcome with a
 // token outside this list throws, so an op cannot quietly invent a word the mode doc has never heard
@@ -29,6 +31,7 @@ export const ENSURE_TOKENS = Object.freeze([
   ...DRY_RUN_TOKENS,
   'already-current',
   'already-present',
+  'not-placed',
   'customized-preserved',
   'malformed-preserved',
   'skipped-no-node-evidence',
@@ -48,6 +51,8 @@ export const FAILURE_CAUSES = Object.freeze([
   // here is unproven, so the ensures that place Node scripts write nothing (contract: kit/node-evidence).
   'node-evidence-unverifiable',
   'wrong-node-kind',
+  // The settings file could not be read, so no body can be derived and nothing is written.
+  'vehicle-settings-unreadable',
   'write-refused',
   'unexpected-error',
   // The navigator ensure drives a SEPARATE PROCESS (the bundled generator), so its failures split by
@@ -74,10 +79,12 @@ export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'note-refreshed',
   'refreshed',
   'regenerated',
+  're-derived',
   'already-current',
   'customized-preserved',
   'malformed-preserved',
   'already-present',
+  'not-placed',
   'skipped-no-node-evidence',
   'old-adr-layout-migration-instructed',
   'failed',

@@ -4,6 +4,54 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.0.0 — the placed executor's body is derived from `docs/ai/vehicles.json`: the agents writer and a new eighth config ensure, `executor`, re-derive it instead of preserving a hand edit, the readiness survey reports an unreadable setting as an unusable vehicle, and the advisor reads the posture (AD-143)
+
+**MAJOR: the never-clobber rule for the placed executor is withdrawn.** Until 13.3.0 the agents writer reported a
+`.claude/agents/executor.md` whose bytes differed from the bundle as `customized — preserved` and never touched it;
+from 14.0.0 its body is DERIVED from the executor section of `docs/ai/vehicles.json`, and a differing file is
+REWRITTEN — by `cheap-agents --apply` and by the consent-free configs step of every upgrade run. A model you set by
+editing the placed file is replaced; set it in `docs/ai/vehicles.json` instead (`model`, `effort`, `fallback`), and
+every later upgrade keeps it. No migration file is owed and the lineage stamp does not move. Every other vehicle —
+the four read-only ones and the derived review lenses — keeps `customized — preserved`. Story S2 of the epic
+`EXECUTOR-VEHICLE-PINS-ONE-MODEL-AND-DIES-ON-ITS-QUOTA`; the contract is `docs/ai/specs/kit/executor-vehicle.md`
+(live, revision 1, S1–S7 bound).
+
+- **The derived body (`tools/cheap-agents-read.mjs`, 268 lines).** `readExecutorPosture(cwd, deps)` resolves the
+  setting through the never-throwing reader into `{ posture, reason }`; `executorVehicleSpec`, `deriveExecutorBody`
+  and `executorTemplate` build the body as the bundled `references/agents/executor.md` with exactly its `model:` and
+  `effort:` lines replaced — the same `deriveLensTemplate` substitution the review lenses use, never a second copy.
+  With the setting absent the derived body IS the bundled bytes; `fallback` never appears in a placed file.
+- **The readiness survey reads the setting.** `surveyExecutorVehicle` runs the `.claude` and `.claude/agents` STOPs,
+  then the setting, then the bytes: `placed` now means bytes equal to the DERIVED body, and an unreadable
+  `docs/ai/vehicles.json` answers `unusable` with the reader's reason and `rel` naming that file — never `missing`,
+  `customized` or a healthy default, so `status`, the advisor and the recipe resolver name the file to fix.
+- **The agents writer (`tools/cheap-agents.mjs`, 278 lines).** A differing executor takes the new action
+  `re-derive`: `--apply` replaces it through the shared contained atomic write (a temp sibling and a rename, so a
+  hard-linked file elsewhere is never written through) and reports `re-derived — a hand edit was replaced; set the
+  model in docs/ai/vehicles.json`; the preview says `would re-derive`. An unreadable setting STOPs the whole run by the
+  new code `CHEAP_AGENTS_VEHICLES`, exit 1, nothing placed, in a dry-run and an apply alike. The report gains one line,
+  `executor posture: model=… effort=… fallback=… (source: file|default)`.
+- **The eighth config ensure, `executor`, fifth in the fixed order after `vehicles` (`tools/ensure-executor.mjs`, new,
+  87 lines).** Composed into the op table by `tools/ensure-configs.mjs`, which now runs and documents eight. It never
+  places the vehicle: no entry at the path is `not-placed` (checked BEFORE the setting is read, so a project without a
+  placed executor is never failed by a broken setting); bytes equal to the derived body are `already-current`;
+  differing bytes are `re-derived` through the contained atomic write, `would-re-derive` under `--dry-run`. A failure
+  opens with one cause: `wrong-node-kind` (a symlinked or non-directory ancestor, a non-regular node at the path), the
+  NEW `vehicle-settings-unreadable`, `bundle-unreadable` or `write-refused`; any other lstat or read error reaches the
+  catch-all `unexpected-error`, and the write is the last step. `tools/ensure-vocabulary.mjs` gains the op, the
+  `re-derived` / `would-re-derive` pair, `not-placed` and the cause; `tools/upgrade-runlist.mjs`'s copy of the relayed
+  tokens gains `re-derived` and `not-placed`.
+- **The advisor (`tools/recommendations.mjs`).** The `agents` offer reads the posture and is a stated skip with the
+  reader's reason on an unreadable setting; the `executor-vehicle` item's `HAND-APPLY:` precondition names the setting
+  and each writer refusal the advisor observes.
+- **The docs.** `references/modes/upgrade.md` counts eight ensures and relays the tokens and cause;
+  `references/modes/agents.md`, `bootstrap.md`, `recommendations.md` and the README's agents row name the executor
+  exception; the seed `references/templates/vehicles.json` says the placed body follows the setting and `fallback`
+  names the model of the one retry (a present settings file keeps its earlier note, create-only).
+- **Tests.** Two new suites, `tools/cheap-agents-executor.test.mjs` (S1–S4) and `tools/ensure-executor.test.mjs` (S5,
+  one case per state-table cell); `ensure-configs.test.mjs` pins eight ops with `executor` fifth (S6);
+  `package-content.test.mjs` names `tools/ensure-executor.mjs` and pins 312 packed files.
+
 ## 13.3.0 — the executor vehicle's model becomes a project setting: `vehicle-settings.mjs` reads `docs/ai/vehicles.json` through two readers over one three-state table and resolves it to one posture, the seed `vehicles.json` ships, and the config ensure gains a seventh op, `vehicles`, fourth in the fixed order (AD-142)
 
 **MINOR: one new tool, one new seed template, one new ensure op; no existing verb, token, cause or order of the six

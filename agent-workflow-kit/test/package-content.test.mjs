@@ -240,9 +240,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // checker bodies the specs ensure classifies a deployed script through — by NAME, a drop would
       // turn every shipped prior into "custom" and silently stop the refresh
       'tools/script-priors.mjs',
-      // and the sixth ensure itself: the op the CLI table composes — by NAME, a drop would break
+      // and the sixth and eighth ensures: the ops the CLI table composes — by NAME, a drop would break
       // ensure-configs at load and every upgrade with it
       'tools/ensure-specs.mjs',
+      'tools/ensure-executor.mjs',
       // the shared realpath direct-run predicate + the library-only registry. Every guarded module
       // imports it, so a leaf missing from the payload breaks them all — by NAME for the same reason.
       'tools/direct-run.mjs',
@@ -792,7 +793,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 304 = 301 + tools/claim-relation.mjs (the claim primitives both tiers import), tools/epic-store.mjs (the epic store's doors), tools/plan-shape-ownership.mjs (the story rules)
     // 309 = 305 + tools/checkpoint.mjs (mint, sequence, verify, prune), tools/checkpoint-core.mjs (the git seam both halves import), tools/checkpoint-restore.mjs (the ordered restore), tools/task-brief.mjs (the brief grammar, stamp and check) — story S5
     // 311 = 309 + tools/vehicle-settings.mjs (the executor vehicle's settings readers) + references/templates/vehicles.json (its seed) — story S1 of the pilot epic
-    assert.equal(packed.length, 311, `tarball file count drifted (${packed.length}\u2260 311)`);
+    // 312 = 311 + tools/ensure-executor.mjs (the executor ensure) \u2014 story S2 of the pilot epic
+    assert.equal(packed.length, 312, `tarball file count drifted (${packed.length}\u2260 312)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

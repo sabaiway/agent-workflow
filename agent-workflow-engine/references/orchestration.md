@@ -86,8 +86,10 @@ backend's *service* is actually responsive.
 The subagent carrier makes the same kind of claim from a different file: its availability is the
 **executor vehicle** at `.claude/agents/executor.md` — `placed` or `customized` is dispatchable,
 `unusable` or `missing` is not, and the state is the human reason (the writer's apply command
-places a missing vehicle; a customized file is kept; an unusable path must be fixed or removed
-first, then placed). Never a claim about the host that would run it (§5).
+places a missing vehicle and re-derives the executor's body from the vehicle settings, replacing a
+hand edit; a symlinked, non-regular or unreadable vehicle path must be fixed or removed first, then
+placed; an unreadable docs/ai/vehicles.json is fixed in that file — the writer refuses the whole run
+until it is valid). Never a claim about the host that would run it (§5).
 
 When a recipe's roles can't be satisfied, it **degrades to a weaker recipe with a stated reason** —
 always reported, never silently dropped:

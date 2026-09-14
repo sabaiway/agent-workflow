@@ -204,7 +204,7 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.ok(flat.includes('spends no bridge quota (it runs on the host\u2019s own model and consumes that model\u2019s quota and cost)') || flat.includes("spends no bridge quota (it runs on the host's own model and consumes that model's quota and cost)"), '\u00a71 names the executor\u2019s real cost');
     assert.ok(!flat.includes('spends no subscription quota'), 'the executor is never claimed free');
     assert.ok(flat.includes('A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor.'), '§2 never sends read-only work to the executor');
-    assert.ok(flat.includes('a customized file is kept; an unusable path must be fixed or removed first, then placed'), '§4 states what the apply command does and does not repair');
-    assert.ok(!flat.includes('puts the vehicle back'), 'the apply command is never claimed to repair an unusable path');
+    assert.ok(flat.includes("re-derives the executor's body from the vehicle settings, replacing a hand edit; a symlinked, non-regular or unreadable vehicle path must be fixed or removed first, then placed; an unreadable docs/ai/vehicles.json is fixed in that file"), '§4 states what the apply command does and does not repair');
+    assert.ok(!flat.includes('a customized file is kept'), 'the kept-file clause is gone: --apply re-derives a present executor whose bytes differ from the derived body (a hand edit is replaced, never preserved)'); assert.ok(!flat.includes('puts the vehicle back'), 'the apply command is never claimed to repair a symlinked or non-regular vehicle path');
   });
 });

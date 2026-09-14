@@ -155,8 +155,12 @@ checkpoint, a tree snapshot of the plan's sequence (`node <kit>/tools/checkpoint
 before the run); the brief is a scratch `TASK-` file under the plans directory, never a plan in flight.
 A task's tests are its only review. A task that fails is undone by a restore to its checkpoint
 (`restore <oid>`), which holds only while no other session writes in scope — the precondition is the
-orchestrator's to keep, stated so the choice is owned. The sequence is forgotten by the prune before the
-plan file is deleted, at Cleanup, once every dispatch thread of the plan is closed.
+orchestrator's to keep, stated so the choice is owned. A slice refused for its model's quota is
+retried ONCE, from the task's checkpoint, on the fallback model of the resolved vehicle posture — the
+`fallback` of `docs/ai/vehicles.json`, the bundled default only when that file is absent — as a
+recorded dispatch of its own whose rationale states the model that ran it; a second refusal stops the
+story. The sequence is forgotten by the prune before the plan file is deleted, at Cleanup, once every
+dispatch thread of the plan is closed.
 
 ## The queue
 

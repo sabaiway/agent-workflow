@@ -2823,6 +2823,18 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.ok(skip, 'the check that could not run says so');
     assert.match(skip.reason, /upgrade/u, 'and names the recovery');
   });
+
+  it('an unreadable docs/ai/vehicles.json makes the offer a stated skip naming the settings file', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'vehicles.json'), '{ not json');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(!items.some((i) => i.key === 'agents'), 'no offer whose apply would refuse');
+    const skip = skips.find((s) => s.key === 'agents');
+    assert.ok(skip, 'the check that could not run says so');
+    assert.match(skip.reason, /docs\/ai\/vehicles\.json/u);
+    assert.match(skip.reason, /\bunreadable\b/u);
+  });
 });
 
 describe('the executor-vehicle apply follows the actual cause (AD-124 fold)', () => {
@@ -2830,12 +2842,15 @@ describe('the executor-vehicle apply follows the actual cause (AD-124 fold)', ()
   const configured = (root) => writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
   const itemOf = (root, extra) => buildRecommendations({ cwd: root, deps: hermeticDeps(root, extra) }).items.find((i) => i.key === 'executor-vehicle');
 
-  it('unusable → the HAND-APPLY precondition quotes the survey reason, then the writer', () => {
+  it('an unreadable docs/ai/vehicles.json → the HAND-APPLY precondition names the settings file, then the writer', () => {
     const root = makeProject();
     configured(root);
-    const item = itemOf(root, { surveyVehicle: survey('unusable', '.claude/agents is a symlink — refusing to write through it') });
+    writeFileSync(join(root, 'docs', 'ai', 'vehicles.json'), '{ not json');
+    const item = itemOf(root, {});
     rmSync(root, { recursive: true, force: true });
-    assert.match(item.apply, /^HAND-APPLY: \.claude\/agents is a symlink — refusing to write through it — fix that, then run: node .*cheap-agents\.mjs --apply --cwd /u);
+    assert.ok(item, 'the subagent item is rendered');
+    assert.match(item.apply, /^HAND-APPLY: docs\/ai\/vehicles\.json: .* — fix that, then run: node .*cheap-agents\.mjs --apply --cwd /u);
+    assert.match(item.apply, /\bunreadable\b/u);
   });
 
   it('a stale deployment stamp → the upgrade precondition comes first, for a missing vehicle too', () => {
@@ -2846,7 +2861,7 @@ describe('the executor-vehicle apply follows the actual cause (AD-124 fold)', ()
     const unusable = itemOf(root, { surveyVehicle: survey('unusable', 'tools: Read is read-only') });
     rmSync(root, { recursive: true, force: true });
     assert.match(missing.apply, /^HAND-APPLY: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 3\.0\.0\), then run: node /u);
-    assert.match(unusable.apply, /^HAND-APPLY: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 3\.0\.0\); tools: Read is read-only — fix that, then run: node /u);
+    assert.match(unusable.apply, /^HAND-APPLY: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 3\.0\.0\), then run: node /u);
   });
 
   it('a missing vehicle beside a symlinked read-only vehicle → the writer\'s own refusal is a precondition', () => {

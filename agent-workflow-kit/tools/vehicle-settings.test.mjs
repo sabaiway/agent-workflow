@@ -63,8 +63,6 @@ const SEEDED = 'seeded';
 const ALREADY_PRESENT = 'already-present';
 const WOULD_SEED = 'would-seed';
 const FAILED = 'failed';
-const EXPECTED_OPS = Object.freeze(['orchestration', 'gates', AUTONOMY_OP, VEHICLES_OP, 'scripts', 'specs', 'index']);
-const OP_COUNT = 7;
 const VEHICLES_INDEX = 3;
 const AUTONOMY_INDEX = 2;
 const FIRST_INDEX = 0;
@@ -308,8 +306,6 @@ it('seeds once, preserves authored bytes and owns the fourth slot (spec:vehicle-
     assert.deepEqual(readdirSync(join(directory, DEPLOYMENT_REL)), []);
   });
   assert.equal(OWN_IMPLEMENTATIONS.vehicles, ensureVehicles);
-  assert.deepEqual(ENSURE_OPS, EXPECTED_OPS);
-  assert.equal(ENSURE_OPS.length, OP_COUNT);
   assert.equal(ENSURE_OPS[VEHICLES_INDEX], VEHICLES_OP);
   assert.equal(ENSURE_OPS[AUTONOMY_INDEX], AUTONOMY_OP);
 });

@@ -18,6 +18,9 @@ import {
   composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, ensureScripts, failedOutcome,
 } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
+import { ensureExecutor } from '../tools/ensure-executor.mjs';
+import { EXECUTOR_VEHICLE_REL } from '../tools/cheap-agents-read.mjs';
+import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
 // Loaded against the pre-fix tree too (red-first): absent, the specs fixtures below are skipped and
 // the completeness suite reds on the unwitnessed tokens.
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
@@ -228,6 +231,19 @@ if (ensureSpecs) {
   symlinkSync(join(KIT, 'references', 'scripts'), join(badTemplateKit, 'references', 'scripts'));
   writeFileSync(join(badTemplateKit, 'references', 'templates', 'specs', 'index.md'), 'owner: {{OWNER}}\n');
   specsFx('specs-template-unreadable', project(), { kitRoot: badTemplateKit });
+}
+
+{
+  // The executor ensure: every token and its one cause through the real op on a temp project (the writer places the file on consent, never this ensure, so the placed file is written by hand).
+  const dir = project();
+  ensureFx('executor-not-placed', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
+  mkdirSync(join(dir, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(dir, EXECUTOR_VEHICLE_REL), 'a hand-edited executor body');
+  ensureFx('executor-would-re-derive', ensureExecutor({ cwd: dir, kitRoot: KIT, dryRun: true, deps: {} }));
+  ensureFx('executor-re-derived', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
+  ensureFx('executor-already-current', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
+  writeFileSync(join(dir, VEHICLES_REL), '{ not json');
+  ensureFx('executor-vehicle-settings-unreadable', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
 }
 
 // The real ensure CLI, BOTH exits: the `  op: token` slots are the characterized exception; every

@@ -2,7 +2,7 @@
 //
 // The ops themselves are covered in ensure-ops.test.mjs. What is pinned HERE is everything the mode
 // doc now relies on when it invokes this tool exactly once: --reconcile is required, --dry-run writes
-// nothing at all, the seven ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
+// nothing at all, the ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
 // them, one op's failure never skips the rest, and the exit code says whether anything failed.
 
 import { describe, it } from 'node:test';
@@ -105,7 +105,7 @@ describe('the deployment gate runs ONCE, before any op', () => {
 });
 
 describe('--dry-run writes nothing and never emits a write token', () => {
-  it('reports would-* for every absent file, and the tree is byte-identical after', () => {
+  it('emits no write token for a bare project, and the tree is byte-identical after', () => {
     withProject((dir) => {
       const before = snapshot(dir);
       const r = main(['--reconcile', '--dry-run'], { cwd: dir });
@@ -125,9 +125,9 @@ describe('the reconcile run', () => {
     withProject((dir) => {
       const first = main(['--reconcile'], { cwd: dir });
       assert.equal(first.code, 0);
-      // Seven ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
+      // The ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
       // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'regenerated']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
@@ -145,6 +145,28 @@ describe('the reconcile run', () => {
       const r = main(['--reconcile'], { cwd: dir });
       assert.deepEqual(tokensOf(r.stdout).map((t) => t.op), [...ENSURE_OPS]);
     });
+  });
+
+  it('spec:executor-vehicle/S6 — eight ops with executor fifth after vehicles, and --help says eight', () => {
+    assert.equal(ENSURE_OPS.length, 8);
+    assert.equal(ENSURE_OPS[3], 'vehicles');
+    assert.equal(ENSURE_OPS[4], 'executor');
+    withProject((dir) => {
+      const r = main(['--reconcile'], { cwd: dir });
+      const tokens = tokensOf(r.stdout);
+      assert.equal(tokens.length, 8);
+      assert.deepEqual(tokens.map((t) => t.op), [...ENSURE_OPS]);
+      assert.deepEqual(tokens[3].op, 'vehicles');
+      assert.deepEqual(tokens[4], { op: 'executor', token: 'not-placed' });
+      assert.equal(r.code, 0, r.stderr);
+    });
+    const help = main(['--help']).stdout;
+    const lines = help.split('\n');
+    assert.match(lines[0], /\beight\b/);
+    const usage = lines.find((line) => line.includes('--reconcile') && line.includes('required'));
+    assert.match(usage, /\beight\b/);
+    assert.ok(usage.includes(ENSURE_OPS.join(', ')));
+    assert.doesNotMatch(help, /\bseven\b/);
   });
 
   for (const [label, argvFor] of [
@@ -308,7 +330,7 @@ describe('the CLI can only print tokens the mode doc teaches', () => {
 });
 
 describe('one op failing never skips the rest', () => {
-  it('a malformed config fails its own op, the other six still run, and the exit is non-zero', () => {
+  it('a malformed config fails its own op, the others still run, and the exit is non-zero', () => {
     withProject((dir) => {
       writeFileSync(join(dir, CONFIG_REL), '{ not json');
       const r = main(['--reconcile'], { cwd: dir });
@@ -319,6 +341,7 @@ describe('one op failing never skips the rest', () => {
         { op: 'gates', token: 'seeded' },
         { op: 'autonomy', token: 'seeded' },
         { op: 'vehicles', token: 'seeded' },
+        { op: 'executor', token: 'not-placed' },
         { op: 'scripts', token: 'seeded' },
         { op: 'specs', token: 'seeded' },
         { op: 'index', token: 'regenerated' },
@@ -342,7 +365,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });

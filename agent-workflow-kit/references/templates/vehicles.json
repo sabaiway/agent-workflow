@@ -1,5 +1,5 @@
 {
-  "_README": "The executor vehicle's model, effort and fallback as a project setting, read by the kit's vehicle-settings readers into one posture, which the placed executor's body follows only from the release that derives it; seeded once and never clobbered, hand-edited as three bare tokens with fallback differing from model.",
+  "_README": "The executor vehicle's model, effort and fallback as a project setting, read by the kit's vehicle-settings readers into one posture, which the placed executor's body follows: the agents writer and the upgrade run derive it from model and effort, and fallback names the model of the one retry; seeded once and never clobbered, hand-edited as three bare tokens with fallback differing from model.",
   "executor": {
     "model": "opus",
     "effort": "high",
