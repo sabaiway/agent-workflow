@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
+import { ENSURE_OPS, ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
 import {
   composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, ensureScripts, failedOutcome,
 } from '../tools/ensure-ops.mjs';
@@ -400,7 +400,7 @@ describe('the ensure token slot — the AD-092 D6 closed-vocabulary exception', 
     assert.equal(CLI_RUNS.success.result.code, 0, CLI_RUNS.success.result.stderr);
     assert.equal(CLI_RUNS.failure.result.code, 1, 'a wrong-node-kind gates declaration fails the run');
     for (const key of ['success', 'failure']) {
-      assert.equal(CLI_RUNS[key].slots.length, 6, key);
+      assert.equal(CLI_RUNS[key].slots.length, ENSURE_OPS.length, key);
       for (const slot of CLI_RUNS[key].slots) assert.ok(ENSURE_TOKENS.includes(slot[2]), `${key}: ${slot[0]}`);
     }
     assert.match(CLI_RUNS.failure.result.stdout, /did NOT complete/, 'the failure footer rides the failure exit');

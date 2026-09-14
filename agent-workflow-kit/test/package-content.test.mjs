@@ -234,6 +234,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // and the PURE vocabulary leaf both they and the read-only doc-parity lint import — pinned by
       // NAME because dropping it would break the ops AND the lint at once
       'tools/ensure-vocabulary.mjs',
+      // and the executor vehicle's settings readers — by NAME because ensure-ops imports this leaf
+      'tools/vehicle-settings.mjs',
       // the spec-layer delivery (1b, widened in 2a): the append-only catalog of shipped reader and
       // checker bodies the specs ensure classifies a deployed script through — by NAME, a drop would
       // turn every shipped prior into "custom" and silently stop the refresh
@@ -789,7 +791,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     //       tools/epic-shape-brief.mjs (brief and fold), tools/epic-shape-cli.mjs (argv + fs).
     // 304 = 301 + tools/claim-relation.mjs (the claim primitives both tiers import), tools/epic-store.mjs (the epic store's doors), tools/plan-shape-ownership.mjs (the story rules)
     // 309 = 305 + tools/checkpoint.mjs (mint, sequence, verify, prune), tools/checkpoint-core.mjs (the git seam both halves import), tools/checkpoint-restore.mjs (the ordered restore), tools/task-brief.mjs (the brief grammar, stamp and check) — story S5
-    assert.equal(packed.length, 309, `tarball file count drifted (${packed.length}\u2260 309)`);
+    // 311 = 309 + tools/vehicle-settings.mjs (the executor vehicle's settings readers) + references/templates/vehicles.json (its seed) — story S1 of the pilot epic
+    assert.equal(packed.length, 311, `tarball file count drifted (${packed.length}\u2260 311)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

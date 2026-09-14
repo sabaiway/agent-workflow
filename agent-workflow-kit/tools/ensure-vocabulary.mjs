@@ -10,7 +10,7 @@
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
 // root it seeds is a docs/ai file the navigator must count.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'scripts', 'specs', 'index']);
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'scripts', 'specs', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer

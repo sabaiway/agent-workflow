@@ -1,5 +1,5 @@
-// ensure-ops.mjs — FIVE of the upgrade ensure operations, one function each, behind one shared
-// outcome shape; the sixth (the spec-layer ensure, ensure-specs.mjs) composes its outcomes through
+// ensure-ops.mjs — the upgrade ensure operations this module owns, one function each, behind one shared
+// outcome shape; the spec-layer ensure (ensure-specs.mjs) composes its outcomes through
 // the same door and probes exported below. The CLI that orders and runs them is ensure-configs.mjs —
 // it owns the op table, so the import graph stays acyclic; this module owns what each ensure DOES
 // and, more importantly, what it is allowed to CLAIM.
@@ -32,6 +32,7 @@ import { seedConfig, writeConfig } from './orchestration-write.mjs';
 import { lstatNoFollow, writeDocsAiFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { GATES_REL } from './gates-declaration.mjs';
 import { AUTONOMY_REL } from './autonomy-config.mjs';
+import { VEHICLES_REL } from './vehicle-settings.mjs';
 import { surveyAdrLayoutStrict } from './family-registry.mjs';
 import { ENSURE_TOKENS, FAILURE_CAUSES, SEED_SCRIPTS } from './ensure-vocabulary.mjs';
 import { NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
@@ -51,6 +52,9 @@ export {
 } from './ensure-vocabulary.mjs';
 
 const SCRIPTS_DIR = 'scripts';
+const VEHICLES_OP = 'vehicles';
+const VEHICLES_TEMPLATE = 'vehicles.json';
+const VEHICLES_NOUN = 'a vehicle settings declaration';
 
 const outcome = (op, token, lines, failed = false) => {
   if (!ENSURE_TOKENS.includes(token)) {
@@ -98,7 +102,7 @@ export const probeSeedTarget = (abs, lstat) => {
 export const tmpNote = (rel, tmpLeftBehind) =>
   (tmpLeftBehind ? [`${rel}: the write stands, but its temp file could not be removed — delete it by hand: ${tmpLeftBehind}`] : []);
 
-// ── 1. orchestration.json — seed, or refresh ONLY a still-canonical onboarding note ────────────────
+// ── orchestration.json — seed, or refresh ONLY a still-canonical onboarding note ────────────────
 
 // Which no-change outcome is it? refreshReadme returns `changed: false` for two very different trees:
 // a note that already IS the current canonical, and a note the user rewrote. Reporting both as
@@ -173,7 +177,7 @@ export const ensureOrchestration = ({ cwd, dryRun = false, deps = {} }) => {
   return { ...refreshed, lines: [...refreshed.lines, ...seedNote] };
 };
 
-// ── 2/3. gates.json + autonomy.json — seed-if-missing, existing file preserved byte-for-byte ───────
+// ── gates.json + autonomy.json + vehicles.json — seed-if-missing, existing file preserved byte-for-byte ───────
 
 const seedFromTemplate = ({ op, rel, template, noun, cwd, kitRoot, dryRun, deps }) => {
   const lstat = deps.lstat ?? lstatSync;
@@ -202,7 +206,10 @@ export const ensureGates = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
 export const ensureAutonomy = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
   seedFromTemplate({ op: 'autonomy', rel: AUTONOMY_REL, template: 'autonomy.json', noun: 'an autonomy policy', cwd, kitRoot, dryRun, deps });
 
-// ── 4. scripts/ — the ADR-cascade enforcement pairs, detect-first ──────────────────────────────────
+export const ensureVehicles = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
+  seedFromTemplate({ op: VEHICLES_OP, rel: VEHICLES_REL, template: VEHICLES_TEMPLATE, noun: VEHICLES_NOUN, cwd, kitRoot, dryRun, deps });
+
+// ── scripts/ — the ADR-cascade enforcement pairs, detect-first ──────────────────────────────────
 
 // The Node-evidence refusal every ensure that places Node scripts shares (contract: kit/node-evidence):
 // null when Node provably runs here, else the ONE outcome the caller returns — a stated skip naming the
@@ -288,7 +295,7 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   return outcome('scripts', anyCreated ? 'seeded' : 'already-present', lines, false);
 };
 
-// ── 5. docs/ai/index.md — the GENERATED navigator, regenerated when missing or stale ───────────────
+// ── docs/ai/index.md — the GENERATED navigator, regenerated when missing or stale ───────────────
 
 // The only ensure whose target is generated rather than authored: there is nothing to preserve, and
 // nothing to seed from either — the bundled generator IS the writer, driven through its idempotent
@@ -363,12 +370,13 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   return loud('index', 'index-probe-failed', `${INDEX_REL}: the generator reported a regeneration, but the verifying probe answered neither fresh nor stale — ${MAY_HAVE_WRITTEN}. ${verify.error ? causeOf(verify.error) : verdict}`);
 };
 
-// The five ops this module owns, by name. The CLI composes the full ENSURE_OPS table from these plus
+// The ops this module owns, by name. The CLI composes the full ENSURE_OPS table from these plus
 // the spec-layer ensure (ensure-specs.mjs imports THIS module, so the table cannot live here).
 export const OWN_IMPLEMENTATIONS = Object.freeze({
   orchestration: ensureOrchestration,
   gates: ensureGates,
   autonomy: ensureAutonomy,
+  vehicles: ensureVehicles,
   scripts: ensureScripts,
   index: ensureIndex,
 });

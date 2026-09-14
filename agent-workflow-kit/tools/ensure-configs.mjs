@@ -1,17 +1,18 @@
 #!/usr/bin/env node
-// ensure-configs.mjs — ONE runnable command for the six stamp-independent upgrade ensures:
+// ensure-configs.mjs — ONE runnable command for the seven stamp-independent upgrade ensures:
 //
 //   orchestration  docs/ai/orchestration.json  seed, or refresh a still-canonical onboarding note
 //   gates          docs/ai/gates.json          seed-if-missing (an existing declaration is authored content)
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
+//   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
 //   scripts        scripts/<ADR enforcement>   seed-if-missing, ADR-layout detect FIRST
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, store root seeded behind a current checker
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact)
 //
 // Each was prose in references/modes/upgrade.md that an agent performed by hand. One command instead
-// of six is deliberate: six independent runs would be six chances to skip one, and the mode doc now
-// has a single invocation point whose six outcome lines it relays.
+// of seven is deliberate: seven independent runs would be seven chances to skip one, and the mode doc now
+// has a single invocation point whose seven outcome lines it relays.
 //
 // The contract (pinned by this module's tests):
 //   • --reconcile is REQUIRED. A bare run is a usage error, so nothing writes by accident.
@@ -19,7 +20,7 @@
 //   • The ops run in a FIXED order and one op's failure NEVER skips the rest: every op reports its own
 //     token, and the exit is non-zero when any of them failed.
 //   • The deployment gate runs ONCE, before any op: an absent/symlinked docs/ai stops the whole run
-//     with the gate's own message rather than six copies of it.
+//     with the gate's own message rather than seven copies of it.
 //
 // Output is ENGLISH/structured (repo-artifact Hard Constraint); the agent localizes when narrating.
 // Exit codes: 0 every op fine · 1 an op failed, or the deployment gate stopped the run · 2 usage.
@@ -51,12 +52,12 @@ const EMPTY_ONLY = `--only needs one operation name (${ENSURE_OPS.join(' | ')}) 
 const REPEATED_ONLY = '--only was passed more than once — this selector names exactly ONE operation';
 const unknownOp = (value) => `--only ${value}: no such operation (${ENSURE_OPS.join(' | ')}) — nothing was run`;
 
-const HELP = `ensure-configs — the six stamp-independent upgrade ensures, as ONE command.
+const HELP = `ensure-configs — the seven stamp-independent upgrade ensures, as ONE command.
 
 Usage:
   node ensure-configs.mjs --reconcile [--dry-run] [--only <op>] [--cwd <project>]
 
-  --reconcile   required — run the six ensures (${ENSURE_OPS.join(', ')})
+  --reconcile   required — run the seven ensures (${ENSURE_OPS.join(', ')})
   --dry-run     report what each ensure WOULD do; write nothing
   --only <op>   run EXACTLY ONE of them (an unknown, missing or repeated value is a usage error)
   --cwd <dir>   the target project (default: the current directory)
@@ -148,7 +149,7 @@ export const main = (argv = [], ctx = {}) => {
     const cwd = resolve(args.cwd ?? ctx.cwd ?? process.cwd());
     const deps = ctx.deps ?? {};
     // ONE deployment gate for the whole run (see the header): with no docs/ai there is nothing to
-    // reconcile, and six identical STOPs would read as six separate problems.
+    // reconcile, and seven identical STOPs would read as seven separate problems.
     assertDocsAiDeployment(cwd, deps, { noun: 'the project configuration', rel: 'under docs/ai' });
     const outcomes = runEnsures({ cwd, kitRoot: ctx.kitRoot ?? KIT_ROOT, dryRun: args.dryRun, deps, only: args.only });
     return {

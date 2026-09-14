@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-13 — AD-142 the executor vehicle's model becomes a project setting: `docs/ai/vehicles.json` beside the other two, read through one three-state table, seeded by a seventh config ensure (kit 13.3.0 MINOR; engine 5.5.0, memory 8.0.0 and both bridges unchanged)
+
+**The placed executor vehicle carried one model hard-wired in its template, and when that model's quota ran out the
+slice died with it.** Kit 13.3.0 ships the first story of the epic that ends that: `tools/vehicle-settings.mjs`
+reads `docs/ai/vehicles.json` — an optional `_README`, then exactly one `executor` section of `model`, `effort` and
+`fallback` (bare tokens, the fallback differing from the model) — through `readVehicles`, which never throws (lstat
+first; ENOENT alone is absent; a directory, a symlink, a bad node kind, a read or parse error and a malformed body
+are unreadable with a reason naming the file and, for a malformed body, the offending key), and `loadVehicles`, which raises `fail(1)` on
+unreadable; `resolveExecutor` turns a reader answer into `{ posture, reason }` — the file's values, the one frozen
+default (`opus` / `high` / `sonnet`), or no posture at all for a broken file. The config ensure gains its seventh
+op, `vehicles`, fourth after `autonomy`, seeding the file create-only from the shipped `vehicles.json` and never
+reading a present one; `upgrade.md` counts seven ensures and `bootstrap.md` four seeded configs. The second story
+derives the placed executor's body from the setting and retries a refused slice on the fallback. The story ran as
+the tier's pilot: ten tasks, twenty delegated threads on one held session, all first pass; six plan-council rounds;
+fold threads after the diff council's rounds. Contract `docs/ai/specs/kit/vehicle-settings.md` (live, S1–S5 bound).
+
 ## 2026-09-12 — AD-141 the task tier lands: a checkpoint is minted, ordered, verified, restored and pruned by the kit, and a brief is bound to the newest one (kit 13.2.0 MINOR · engine 5.5.0 MINOR; memory 8.0.0 and both bridges unchanged)
 
 **Since 13.1.0 the ledger could measure against a checkpoint tree the orchestrator had to compute by hand; now the

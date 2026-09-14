@@ -4,6 +4,59 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 13.3.0 — the executor vehicle's model becomes a project setting: `vehicle-settings.mjs` reads `docs/ai/vehicles.json` through two readers over one three-state table and resolves it to one posture, the seed `vehicles.json` ships, and the config ensure gains a seventh op, `vehicles`, fourth in the fixed order (AD-142)
+
+**MINOR: one new tool, one new seed template, one new ensure op; no existing verb, token, cause or order of the six
+prior ops moves.** The placed executor vehicle carried one model hard-wired in the bundled template — a project that
+wanted another edited the placed file, which the placer then reported as a customization it never refreshed, and
+when that model's quota ran out the slice died with it. This release ships the setting and its readers (story S1 of
+the epic `EXECUTOR-VEHICLE-PINS-ONE-MODEL-AND-DIES-ON-ITS-QUOTA`); deriving the placed body from it and retrying a
+refused slice on the fallback are the epic's second story. The contract is `docs/ai/specs/kit/vehicle-settings.md`
+(live, revision 1, S1–S5 bound).
+
+- **`tools/vehicle-settings.mjs` (127 lines, imports only `node:fs` and `node:path`).** The setting is ONE
+  strict-JSON file, `docs/ai/vehicles.json`, beside `orchestration.json` and `autonomy.json` — never a key of
+  `orchestration.json`. Its shape is closed: an optional `_README` string, then exactly one `executor` section of
+  exactly three non-empty bare-token string keys `model`, `effort` and `fallback` (`fallback` differing from `model`,
+  since an equal fallback retries into the same quota); every other form is MALFORMED, the reason naming the rel
+  path and the offending key or value. `readVehicles(cwd, readFile, lstat)` probes with lstat FIRST and never throws:
+  ENOENT alone answers `{ state: 'absent' }`; a directory, a symlink dangling or not, any other node kind, a
+  permission or read error, a parse error and a malformed body answer `{ state: 'unreadable', reason }` — the door
+  the read-only surfaces walk through; a well-formed regular file answers `{ state: 'present', settings }`.
+  `loadVehicles` is the same table with `unreadable` raised as the module-local `fail(1, reason)` (the
+  orchestration-config idiom, defined locally as every sibling reader does, so the module stays a leaf the read-only
+  surfaces can import). `resolveExecutor(answer)` is pure and answers `{ posture, reason }`: `present` the file's
+  three values with `source: 'file'`; `absent` the ONE frozen `EXECUTOR_DEFAULTS` — `model: 'opus'`, `effort: 'high'`,
+  `fallback: 'sonnet'` — with `source: 'default'`; `unreadable` a `null` posture and the reader's reason, so a broken
+  file is never mistaken for a healthy default. Exactly six exports: `VEHICLES_REL`, `EXECUTOR_DEFAULTS`,
+  `validateVehicles`, `readVehicles`, `loadVehicles`, `resolveExecutor`; no side effects on import.
+- **`references/templates/vehicles.json` (new).** The seed: a `_README` sentence, then `executor` at the three
+  defaults; the suite pins its parsed `executor` equal to `EXECUTOR_DEFAULTS`, so no second hand-copy exists.
+- **The seventh config ensure, `vehicles`, fourth in the fixed order after `autonomy`.** `ENSURE_OPS` in
+  `tools/ensure-vocabulary.mjs` reads `orchestration, gates, autonomy, vehicles, scripts, specs, index`;
+  `ensureVehicles` in `tools/ensure-ops.mjs` rides the existing `seedFromTemplate` door — create-only from the
+  bundled template, a present file preserved byte for byte and never read (a malformed present file is preserved,
+  not repaired: the readers are what name it), `wrong-node-kind` loud, `would-seed` under `--dry-run`, the outcome
+  tokens the seed family already had. `tools/ensure-configs.mjs` composes the table as before and says seven; the
+  op counts and banner ordinals inside `ensure-ops.mjs` were removed rather than renumbered, so the order lives in
+  `ENSURE_OPS` alone.
+- **The mode docs count what runs.** `references/modes/upgrade.md`'s `configs` step performs all seven ensures and
+  names the vehicles declaration after the autonomy declaration with the shared `seeded` / `already-present` tokens
+  (both report clauses say seven); `references/modes/bootstrap.md` step 6 names the fourth seeded strict-JSON
+  config, `docs/ai/vehicles.json`, which the template loop now deploys on a fresh kit-path deployment. A deployment
+  on the memory package's own templates gets the file at its first upgrade run's ensure.
+- **Tests.** `tools/vehicle-settings.test.mjs` (315 lines): one case per scenario S1–S5, the module and the ensure op
+  imported dynamically with throwing fallbacks so the suite loaded red on the tree before either existed; S3 walks
+  the whole malformed-form table, S4 six node kinds and IO errors with the lstat/readFile call order recorded, S5
+  the ensure's six outcomes plus the registry and the order. `ensure-configs.test.mjs`'s three outcome sequences
+  carry `vehicles: seeded` fourth; `composed-lines-ux.test.mjs`'s slot count reads `ENSURE_OPS.length`; the shipped
+  tarball pin is 311 (309 + the tool + the seed).
+- **How it was built.** The story ran on the task tier as the pilot's measurement: ten ledger rows became ten
+  briefed tasks on wave `p1` — an author dispatch wrote each `TASK-` brief (kit-stamped against a fresh checkpoint),
+  an execute dispatch landed it — twenty codex-exec threads on one held session, every one folded first pass; the
+  diff council's findings were folded before the release; the plan council took six rounds. Figures:
+  `docs/ai/history/pilot-measure-2026-09-13.md`.
+
 ## 13.2.0 — the task tier lands: `checkpoint.mjs` mints, orders, verifies and prunes tree snapshots of a plan's sequence, `checkpoint-restore.mjs` restores one in three proven steps, `task-brief.mjs` stamps and checks a brief against the newest checkpoint, and `TASK-` is a scratch name (AD-141)
 
 **MINOR: three new tools and one added arm of the scratch-name predicate; no existing verb, record, transition or
