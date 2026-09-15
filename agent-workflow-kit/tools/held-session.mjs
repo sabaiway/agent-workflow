@@ -2,6 +2,7 @@ import { escapeForDisplay, isRenderableLine, shellQuoteArg } from './repo-lex.mj
 import { wrapperCmdFor } from './detect-backends.mjs';
 import { DISPLAY_ALIASES } from './recipes.mjs';
 import { readsBaseline, TERMINAL_RETURN_OUTCOMES } from './dispatch-record.mjs';
+import { readsInsideEpoch, readsTask } from './task-thread.mjs';
 
 const CODE_STEP = 'code';
 const FOLD_KIND = 'fold';
@@ -12,12 +13,6 @@ const UNPOPULATED_HELD_ID = '<held id>';
 
 export const HELD_RECEIPT_BACKEND = DISPLAY_ALIASES[EXECUTE_BACKEND];
 export const HELD_EXECUTE_WRAPPER = wrapperCmdFor(EXECUTE_BACKEND, 'execute');
-
-const readsInsideEpoch = (dispatch, head) => {
-  if (head.state === 'unborn') return true;
-  const instant = Date.parse(dispatch.timestamp);
-  return Number.isFinite(instant) && Math.floor(instant / 1000) > head.seconds;
-};
 
 const updatesThread = (threads, nonce, update) =>
   threads.map((thread) => (thread.nonce === nonce ? { ...thread, ...update } : thread));
@@ -101,15 +96,7 @@ const countsHeldFolds = (records, epochNonces, heldId) => {
   }).length;
 };
 
-export const judgeHeldSession = (records, { head, backend, degrades = [] }) => {
-  if (head.state === 'error') {
-    return { state: 'error', cause: 'head', reason: head.reason, heldId: null, folds: 0, substitution: null, threads: [], open: [] };
-  }
-  const dispatches = records.filter((record) =>
-    record.kind === 'dispatch'
-    && record.stepClass === CODE_STEP
-    && record.backend === backend
-    && readsInsideEpoch(record, head));
+const judgeChain = (records, dispatches, degrades) => {
   const epochNonces = new Set(dispatches.map((dispatch) => dispatch.nonce));
   const initial = { epochNonces, dispatches: [], returns: [], heldId: null, substitutions: [], threads: [], open: [] };
   const accumulated = records.reduce(accumulatesFacts(degrades), initial);
@@ -122,6 +109,44 @@ export const judgeHeldSession = (records, { head, backend, degrades = [] }) => {
       ...thread, substituted: accumulated.substitutions.some((substitution) => substitution.nonce === thread.nonce),
     })),
     open: accumulated.open,
+  };
+};
+
+export const judgeHeldSession = (records, { head, backend, degrades = [] }) => {
+  if (head.state === 'error') {
+    return { state: 'error', cause: 'head', reason: head.reason, heldId: null, folds: 0, substitution: null, threads: [], open: [] };
+  }
+  const dispatches = records.filter((record) =>
+    record.kind === 'dispatch'
+    && record.stepClass === CODE_STEP
+    && record.backend === backend
+    && readsInsideEpoch(record, head));
+  if (!dispatches.some((dispatch) => readsTask(dispatch) !== null)) return judgeChain(records, dispatches, degrades);
+  const groups = new Map();
+  for (const dispatch of dispatches) {
+    const key = readsTask(dispatch)?.brief ?? null;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(dispatch);
+  }
+  const reports = new Map([...groups].map(([key, entries]) => {
+    const nonces = new Set(entries.map((dispatch) => dispatch.nonce));
+    return [key, judgeChain(records.filter((record) => nonces.has(record.nonce)), entries, degrades)];
+  }));
+  const untasked = reports.get(null);
+  const threads = new Map([...reports].flatMap(([chainKey, report]) =>
+    report.threads.map((thread) => [thread.nonce, { ...thread, chainKey }])));
+  const substitutions = new Map([...reports.values()]
+    .filter((report) => report.substitution !== null)
+    .map((report) => [report.substitution.nonce, report.substitution]));
+  const firstReturn = records.find((record) => record.kind === RETURN_KIND && substitutions.has(record.nonce));
+  return {
+    state: 'ok',
+    heldId: untasked?.heldId ?? null,
+    folds: untasked?.folds ?? 0,
+    substitution: firstReturn === undefined ? null : substitutions.get(firstReturn.nonce),
+    threads: dispatches.map((dispatch) => threads.get(dispatch.nonce)),
+    open: untasked?.open ?? [],
+    chains: [...reports].map(([key, { heldId, folds, open }]) => ({ key, heldId, folds, open })),
   };
 };
 
@@ -150,6 +175,11 @@ export const decideHeldSession = (facts) => {
     const reason = `delegated code thread "${nonce}" substituted held session "${escapeForDisplay(expectedId)}" with "${escapeForDisplay(actualId)}"`;
     return { code: 1, reason, line: `held session: SUBSTITUTED — ${reason}` };
   }
+  if (facts.chains !== undefined) {
+    const entries = facts.chains.map(({ key, heldId, folds }) =>
+      `${key === null ? 'untasked' : escapeForDisplay(key)}: ${heldId === null ? 'none' : escapeForDisplay(heldId)} (${folds})`);
+    return { code: 0, reason: 'task chains have no unresolved substitution', line: `held sessions: ${facts.chains.length} chain(s) — ${entries.join(' · ')}` };
+  }
   if (facts.heldId === null) return { code: 0, reason: 'no held session stands: no folded code thread established one in this commit epoch, or the last one was withdrawn by a checkpoint thread\'s ledger degrade', line: 'held session: none' };
   const heldId = escapeForDisplay(facts.heldId);
   return { code: 0, reason: `held session "${heldId}" is continuous`, line: `held session: ${heldId} — ${facts.folds} fold(s) rode it` };
@@ -164,15 +194,24 @@ const describesLaneCaveat = (facts) => {
   return null;
 };
 
+const chainLaneLines = (facts, chain) => {
+  const substitution = facts.threads.find((thread) => thread.chainKey === chain.key && thread.substituted) ?? null;
+  const caveat = describesLaneCaveat({ state: facts.state, heldId: chain.heldId, substitution });
+  const task = chain.key === null ? '' : `  (task ${escapeForDisplay(chain.key)})`;
+  if (caveat !== null) return [`  caveat: ${caveat}${task}`];
+  return [`  run:  ${HELD_EXECUTE_WRAPPER} --resume ${shellQuoteArg(chain.heldId)} --nonce <nonce> <fold-brief>${task}`];
+};
+
 export const foldLaneLines = (facts) => {
-  const caveat = describesLaneCaveat(facts);
-  const heldId = caveat === null ? shellQuoteArg(facts.heldId) : UNPOPULATED_HELD_ID;
   const lines = [
     'Fold lane (execute = delegated) — a fold rides the delegate\'s HELD session:',
-    `  run:  ${HELD_EXECUTE_WRAPPER} --resume ${heldId} --nonce <nonce> <fold-brief>`,
     '  the fold brief is a dispatch file carrying the finding and the accepted fold; dispatch open precedes the run, then dispatch return and fold follow it',
     '  the orchestrator runs the suites, verifies the returned diff, re-mints the red-proofs and owns the commit',
     '  a fresh session is a forbidden substitution; a retry of a failed thread or, for a head base, a recorded execute degrade is the exception (a checkpoint thread\'s substitution closes by its ledger degrade); the wrapper sidecar is never read',
   ];
+  if (facts.chains !== undefined) return [...lines, ...facts.chains.flatMap((chain) => chainLaneLines(facts, chain))];
+  const caveat = describesLaneCaveat(facts);
+  const heldId = caveat === null ? shellQuoteArg(facts.heldId) : UNPOPULATED_HELD_ID;
+  lines.splice(1, 0, `  run:  ${HELD_EXECUTE_WRAPPER} --resume ${heldId} --nonce <nonce> <fold-brief>`);
   return caveat === null ? lines : [...lines, `  caveat: ${caveat}`];
 };

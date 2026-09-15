@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-15 — AD-145 a dispatch names its task: `dispatch open --task` records the brief and its files, the ledger refuses overlapping and mixed task threads, and the held session is kept per task instead of per commit (kit 14.1.0 MINOR; engine 5.6.0, memory 8.0.0 and both bridges unchanged)
+
+**A held session now belongs to a task.** Until 14.0.0 the held-session judge kept one held session per commit, so a
+planned fresh session for the next task read as a forbidden substitution. Kit 14.1.0 lets a delegation thread name the
+task it carries out: `dispatch open --checkpoint <oid> --task <brief>` records the brief and the files it lists, the
+ledger refuses a task thread whose files overlap another live task's (`files-overlap`) and a mix of task and untasked
+threads (`mixed-open`) at append time, and each task's threads form their own chain with their own held session —
+in the judge, in `review-state`'s `held sessions: <k> chain(s)` line, in `commit-guard` and in the fold lane. A ledger
+with no task thread reads, renders and gates exactly as before. Parallel task threads are not part of this release: a
+task thread is still measured over the whole tree, so D10's one-dispatch-at-a-time bar still binds; scoping a thread to
+its files is the next story. Draft contract `docs/ai/specs/kit/task-thread/` (S1–S4 and S6 bound).
+
 ## 2026-09-14 — AD-143 the placed executor's body follows `docs/ai/vehicles.json`: re-derived by the agents writer and an eighth config ensure instead of preserved, and the one retry on the fallback becomes canon (kit 14.0.0 MAJOR · engine 5.6.0 MINOR; memory 8.0.0 and both bridges unchanged)
 
 **13.3.0 gave the executor vehicle a model setting; 14.0.0 makes the placed vehicle follow it.** The body of

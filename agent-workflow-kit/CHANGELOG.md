@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.1.0 — a dispatch names its task: `dispatch open --task <brief>` records the brief and its files, the ledger refuses overlapping and mixed task threads (`files-overlap`, `mixed-open`), and the held-session judge holds one session per task instead of one per commit (AD-145)
+
+**A held session now belongs to a task.** Until 14.0.0 the held-session judge kept ONE held session per commit, so a
+planned fresh session for the next task read as a forbidden substitution. From 14.1.0 a delegation thread can name the
+task it carries out, and each task's threads form their own chain with their own held session. Every ledger a 14.x kit
+wrote reads unchanged; a ledger holding a task record needs this kit to read it. Story S8 of the epic
+`EPICS-STORIES-TASKS-AS-THE-UNIT-OF-WORK`; the contract is the draft `docs/ai/specs/kit/task-thread/` (S1–S4 and S6
+bound), the live `docs/ai/specs/kit/held-session.md` revised. Parallel task threads are NOT part of this release: a
+task thread is still measured over the whole tree, so D10's one-dispatch-at-a-time bar still binds every thread.
+
+- **The task key (`tools/task-thread.mjs`, new, 70 lines).** A `dispatch` record may carry `task: { brief, files }`,
+  the dispatch kind's second optional key at schema 1: `brief` is `docs/plans/TASK-<stem>-T<n>.md`, `files` a
+  non-empty list of distinct normalized repo-relative paths in UTF-8 byte order, none a path prefix of another. Three
+  refusals by name — `task-brief`, `task-files`, `task-base` (a task on a head base) — beside the closed nested keys.
+  The pure leaf also exports `readsTask` (a record minted before the field reads `null`), `readsInsideEpoch` (moved
+  from `held-session.mjs`), `claimedPaths`, `epochClaims` and `byteOrder`; it imports nothing from the ledger modules.
+- **`dispatch open --checkpoint <oid> --task <brief>`.** Reads the brief at the git top-level through the no-follow
+  reader, parses it with `task-brief`'s own parser and records its `Files:` paths in byte order. `--task` without
+  `--checkpoint` refuses `task-base`; a brief the parser refuses keeps the parser's name; nothing is written on a
+  refusal. A retry must record its origin's task. An open without `--task` on a ledger with no task record is unchanged.
+- **Two refusals at append time (`tools/dispatch-store-read.mjs`, `tools/dispatch-store.mjs`).** Since the last
+  commit, `files-overlap` refuses a task thread whose files overlap by path prefix an open task thread's or a folded
+  thread's of another brief; `mixed-open` refuses an untasked open beside an open task thread, an untasked `code` open
+  of backend `codex` after a task fold, and a task open beside an open untasked thread. Both are judged under the store
+  lock against a HEAD read taken there, and the read audit never replays them, so moving HEAD back keeps the ledger
+  readable. An open without `--task` on a ledger with no task record takes no extra git read.
+- **One held session per task chain (`tools/held-session.mjs`).** The chain key is the brief; threads without a task
+  keep the one commit-epoch chain. With a task `code` thread of backend `codex` in the epoch the judge reports `chains`
+  and a per-thread `chainKey`, keeps `heldId`, `folds` and `open` on the untasked chain while `substitution` and
+  `threads` span every chain; `review-state` prints `held sessions: <k> chain(s) — <label>: <id> (<n>) · …`,
+  `commit-guard --check` inherits its refusal verbatim, and `procedures plan-execution` prints one fold run line or
+  caveat per chain, a task chain's marked `(task <brief>)`. Without a task thread
+  the report, the line and the fold lane are byte-identical to 14.0.0.
+- **Copy.** The dispatch mode doc and the README name `--task` and both refusals; the review-state mode doc names the
+  chain line; D10 stays a bar for every thread, the two refusals adding to it.
+- **Tests.** Five new suites — `task-thread.test.mjs`, `dispatch.test/task.test.mjs`, `dispatch.test/task-overlap.test.mjs`,
+  `held-session-chain.test.mjs`, `review-state-task-chain.test.mjs` — and the record and tarball pins (313 files).
+
 ## 14.0.0 — the placed executor's body is derived from `docs/ai/vehicles.json`: the agents writer and a new eighth config ensure, `executor`, re-derive it instead of preserving a hand edit, the readiness survey reports an unreadable setting as an unusable vehicle, and the advisor reads the posture (AD-143)
 
 **MAJOR: the never-clobber rule for the placed executor is withdrawn.** Until 13.3.0 the agents writer reported a

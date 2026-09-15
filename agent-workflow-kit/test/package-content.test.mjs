@@ -320,6 +320,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the delegation reader split and its pure held-session judge
       'tools/dispatch-store-read.mjs',
       'tools/held-session.mjs',
+      'tools/task-thread.mjs',
       // the delegation ENGINE + its mode contract (delegation Plan 1 Phase 3) — the FORM-only
       // contract check, the two hand-written ledger records, and the L0 aggregate report
       'tools/dispatch.mjs',
@@ -794,7 +795,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 309 = 305 + tools/checkpoint.mjs (mint, sequence, verify, prune), tools/checkpoint-core.mjs (the git seam both halves import), tools/checkpoint-restore.mjs (the ordered restore), tools/task-brief.mjs (the brief grammar, stamp and check) — story S5
     // 311 = 309 + tools/vehicle-settings.mjs (the executor vehicle's settings readers) + references/templates/vehicles.json (its seed) — story S1 of the pilot epic
     // 312 = 311 + tools/ensure-executor.mjs (the executor ensure) \u2014 story S2 of the pilot epic
-    assert.equal(packed.length, 312, `tarball file count drifted (${packed.length}\u2260 312)`);
+    // 313 = 312 + tools/task-thread.mjs (the task grammar, reader, epoch and claims) — story S8 of the pilot epic
+    assert.equal(packed.length, 313, `tarball file count drifted (${packed.length}\u2260 313)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

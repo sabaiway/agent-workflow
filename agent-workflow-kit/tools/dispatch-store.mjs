@@ -9,8 +9,10 @@ import {
   resolveDelegationStorePath,
   parseDelegationStoreText,
   delegationSemanticPreflight,
+  readHeadInstant,
 } from './dispatch-store-read.mjs';
 import { createStoreAppendLane } from './store-append.mjs';
+import { readsTask } from './task-thread.mjs';
 
 export {
   DELEGATION_STORE_STOP,
@@ -52,6 +54,11 @@ const delegationAppendLane = createStoreAppendLane({
 export const appendDelegationRecord = ({ cwd = process.cwd(), record, env = process.env, deps = {} } = {}) => {
   const { line, snapshot } = delegationAppendLane.captureRecordSnapshot(record);
   return delegationAppendLane.appendResolvedRecord({
-    cwd, env, deps, preflight: delegationSemanticPreflight, makeRecord: () => ({ line, snapshot }),
+    cwd, env, deps, makeRecord: () => ({ line, snapshot }),
+    preflight: ({ records, snapshot, line, storePath }) => delegationSemanticPreflight({
+      records, snapshot, line, storePath, cwd,
+      head: snapshot.kind === 'dispatch' && (readsTask(snapshot) !== null || records.some((record) => readsTask(record) !== null))
+        ? readHeadInstant(cwd) : null,
+    }),
   });
 };

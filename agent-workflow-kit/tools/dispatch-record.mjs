@@ -76,6 +76,7 @@
 
 import { createHash } from 'node:crypto';
 import { SAFE_NONCE_RE, flowCanonicalSerialization } from './flow-record.mjs';
+import { validateTask } from './task-thread.mjs';
 
 const deepFreeze = (value) => {
   if (value !== null && typeof value === 'object') {
@@ -133,7 +134,7 @@ const short = (v) => {
 export const DELEGATION_SCHEMA_VERSION = 1;
 export const BASELINE_KINDS = deepFreeze(['head', 'checkpoint']);
 export const HEAD_BASELINE = deepFreeze({ kind: 'head', treeOid: null });
-export const OPTIONAL_FIELDS = deepFreeze({ dispatch: ['baseline'] });
+export const OPTIONAL_FIELDS = deepFreeze({ dispatch: ['baseline', 'task'] });
 const TREE_OID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const isTreeOid = (v) => typeof v === 'string' && TREE_OID_RE.test(v);
 export const readsBaseline = (dispatch) => Object.hasOwn(dispatch, 'baseline')
@@ -145,7 +146,7 @@ export const DELEGATION_KINDS = deepFreeze(['pre-registration', 'dispatch', 'ret
 // The closed key set per kind (schema + kind are implicit on every record).
 export const DELEGATION_KEY_SETS = deepFreeze({
   'pre-registration': ['waveId', 'stepClasses', 'pairingKey', 'minPerClass', 'meanLThreshold', 'firstPassNum', 'firstPassDen', 'timestamp'],
-  dispatch: ['waveId', 'nonce', 'stepClass', 'vehicle', 'backend', 'contractDigest', 'preTreeDigest', 'baselineClean', 'deadlineS', 'retryOf', 'retryIndex', 'retryCap', 'rationale', 'timestamp', 'baseline'],
+  dispatch: ['waveId', 'nonce', 'stepClass', 'vehicle', 'backend', 'contractDigest', 'preTreeDigest', 'baselineClean', 'deadlineS', 'retryOf', 'retryIndex', 'retryCap', 'rationale', 'timestamp', 'baseline', 'task'],
   return: ['role', 'backend', 'nonce', 'contractDigest', 'preTreeDigest', 'postTreeDigest', 'diffDigest', 'diffLength', 'reportDigest', 'reportLength', 'bundleDigest', 'bundleLength', 'metric', 'outcome', 'exitStatus', 'sessionId', 'wrapperVersion', 'posture', 'timestamp'],
   fold: ['nonce', 'returnDigest', 'treeDigestAtFold', 'verdict', 'timestamp'],
   observation: ['waveId', 'stepClass', 'scope', 'metric', 'planId', 'phase', 'timestamp'],
@@ -346,6 +347,7 @@ const FIELD_CHECKS = {
   firstPassDen: { ok: (v) => Number.isSafeInteger(v) && v >= 1, want: 'a positive integer first-pass denominator' },
   vehicle: { ok: isPlainObject, want: 'the closed vehicle pair {requested, selected}' },
   baseline: { ok: isPlainObject, want: 'the closed baseline pair {kind, treeOid}' },
+  task: { ok: isPlainObject, want: 'the closed task object {brief, files}' },
   // The safe token grammar, not merely non-empty: the backend NAMES an artifact beside the store
   // (the exec receipt and its report), so a name outside this grammar records a dispatch whose own
   // receipt could never be written. One grammar on both sides, or the ledger accepts what the
@@ -518,6 +520,10 @@ export const validateDelegationRecord = (record) => {
     if (Object.hasOwn(record, 'baseline')) {
       const baseline = validateBaseline('dispatch: baseline', record.baseline);
       if (!baseline.ok) return baseline;
+    }
+    if (Object.hasOwn(record, 'task')) {
+      const closed = checkClosedKeys('dispatch: task', record.task, ['brief', 'files']); if (!closed.ok) return closed;
+      const task = validateTask(record.task, readsBaseline(record).kind); if (!task.ok) return refuse(`dispatch: task: ${task.reason}`);
     }
     return vehicle.ok ? validateDispatchCrossFields(record) : vehicle;
   }

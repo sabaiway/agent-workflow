@@ -54,7 +54,7 @@
 //   • a receipt is FORGEABLE, exactly like every record in this family. What the absorb door defends
 //     against is a buggy or interrupted producer, not a hostile one.
 //   • D10 stands as a bar, not a mechanism: at most ONE in-tree exec dispatch runs at a time, and
-//     nothing here refuses a second one.
+//     nothing here refuses a second one, task threads included; files-overlap and mixed-open additionally refuse conflicting task threads at append time.
 //   • `await` observes ARRIVAL and nothing else: an expiry never authorizes the next writer, and the
 //     verb releases no slot it never held. Whether the run may be ABSORBED stays `return`'s question. A parallel-write story is not this plan's.
 //
@@ -99,6 +99,8 @@ import {
   resolveRepoRoot, measureScope, ratio, formatRatio, buildObservationRecord,
 } from './observation-builder.mjs';
 import { handoffReturn, HANDOFF_SLUG_RE } from './worktree-handoff-return.mjs';
+import { parseBrief } from './task-brief.mjs';
+import { byteOrder, validateTask } from './task-thread.mjs';
 
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
@@ -145,6 +147,7 @@ export const OPEN_FLAG_FIELDS = Object.freeze({
   '--rationale': 'rationale',
   '--retry-of': 'retryOf',
   '--checkpoint': 'baseline.treeOid',
+  '--task': 'task',
 });
 // COPIED from the contract header at mint and bound by contractDigest (D3): a dispatch that
 // disagreed with the header it claims to carry is refused by checkDispatchMintConsistency.
@@ -476,7 +479,7 @@ const runObserve = ({ baseCwd, env, argv, now }) => {
 // some other producer wrote — and a verb computing over such a ledger inherits its lie. So every
 // verb that DERIVES anything from the store (`return`, `fold`, `degrade`, `aggregate`) reads it
 // through this one door, which replays the store's own preflight in file order and stops at the
-// first record the append path would have refused, naming its physical line.
+// first record the append path would have refused, except files-overlap and mixed-open, which are judged at append time only, naming its physical line.
 //
 // `open` deliberately has no read-side audit: it derives nothing from the ledger. Its retry and wave
 // rules are evaluated by the store, on the snapshot under the lock, which is the only place they can
@@ -539,6 +542,22 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
     if (!resolved.ok) return refusal('open', resolved.reason);
   }
   const base = oid === undefined ? HEAD_BASELINE : { kind: 'checkpoint', treeOid: oid };
+  const brief = values['--task'];
+  let task = null;
+  if (brief !== undefined) {
+    if (oid === undefined) return refusal('open', 'task-base: --task requires --checkpoint; nothing was written');
+    const root = resolveRepoRoot(cwd);
+    if (root === null) return refusal('open', 'not inside a git work tree — a dispatch is opened against a repository (fail closed); nothing was written');
+    const read = readRegularFileNoFollow(resolve(root, brief));
+    if (read.outcome !== 'ok') {
+      return refusal('open', `cannot read ${brief} (${read.code ?? read.className ?? read.outcome}); nothing was written`);
+    }
+    const parsed = parseBrief(read.content);
+    if (!parsed.ok) return refusal('open', parsed.reason);
+    task = { brief, files: [...new Set(parsed.files.map(({ path }) => path))].sort(byteOrder) };
+    const checked = validateTask(task, base.kind);
+    if (!checked.ok) return refusal('open', checked.reason);
+  }
   const baselineClean = isCleanAgainstBase(cwd, base);
   if (baselineClean === null) {
     return refusal('open', 'the working state could not be probed, so the baseline is undecidable — a dispatch never records a guessed baseline, and outside a git work tree there is no tree to fingerprint either (fail closed); nothing was written');
@@ -571,6 +590,7 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
     preTreeDigest,
     baselineClean,
     baseline: { kind: base.kind, treeOid: base.treeOid },
+    ...(task === null ? {} : { task }),
     deadlineS: contract.deadlineS,
     retryOf: values['--retry-of'] ?? null,
     retryIndex: contract.retry.index,
@@ -1600,7 +1620,7 @@ Usage:
                             [--denominator-bytes <n>] [--cwd <dir>]
   node dispatch.mjs open --contract <dispatch-file> --wave <id> --backend <name>
                          --rationale <text> --wrapper-cap-s <n> --kill-grace-s <n>
-                         [--checkpoint <oid>] [--retry-of <nonce>] [--cwd <dir>]
+                         [--checkpoint <oid>] [--task <brief>] [--retry-of <nonce>] [--cwd <dir>]
   node dispatch.mjs await --nonce <n> [--timeout <s>] [--cwd <dir>]
   node dispatch.mjs return --nonce <n> [--outcome <o>]
                            [--no-receipt --exit-status <n>] [--cwd <dir>]
@@ -1652,6 +1672,7 @@ refusal from the store verbatim.
 --checkpoint <oid> records a resolvable TREE object of exactly 40 or 64 lowercase hex characters
 (a commit, blob, tag or unknown id refuses by name); the base rides the record and return/fold read
 it there, while a checkpoint CLEAN line names the base.
+--task records the brief's path and its byte-ordered Files, requires --checkpoint (task-base), refuses a brief the parser refuses by the parser's name, and the store refuses files-overlap and mixed-open at append time.
 
 THE LEDGER a tree-binding verb uses is the CANONICAL one, exactly: <git common dir>/
 agent-workflow-delegation.jsonl. A store inside the work tree is measured as part of the change set
@@ -1780,7 +1801,7 @@ arrives as a deletion plus a creation, over-counting a plain rename; under a che
 rename detection applies inside the one base-relative layer and a detected rename is counted once.
 A receipt is forgeable exactly like every record here;
 and D10 stands as a BAR, not a mechanism — at most one in-tree exec dispatch at a time, and nothing
-refuses a second.
+refuses a second, task threads included; files-overlap and mixed-open additionally refuse conflicting task threads at append time.
 
 Never commits, never runs a subscription CLI, spawns nothing but git READS — with TWO stated exceptions: handoff-return,
 which attests MAIN's index with git write-tree: that may write a tree OBJECT into the odb and moves

@@ -7,6 +7,9 @@ import {
 } from './dispatch-record.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
+import { readsTask, readsInsideEpoch, epochClaims } from './task-thread.mjs';
+import { hasPathOverlap } from './claim-relation.mjs';
+import { HELD_RECEIPT_BACKEND } from './held-session.mjs';
 
 export const DELEGATION_STORE_STOP = 'DELEGATION_STORE_STOP';
 export const delegationStoreStop = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { name: 'DelegationStoreStop', code: DELEGATION_STORE_STOP });
@@ -127,7 +130,34 @@ const describeClosure = (last) =>
 
 const WAVE_SCOPED_KINDS = ['dispatch', 'observation', 'degrade'];
 
-export const delegationSemanticPreflight = ({ records, snapshot, storePath }) => {
+const checkTaskClaims = (records, snapshot, head) => {
+  if (head.state === 'error') throw stop(`${head.reason}; nothing was written`);
+  const task = readsTask(snapshot);
+  const claims = epochClaims(records, head, isThreadTerminalRecord);
+  if (task === null) {
+    const collision = claims.find((claim) => claim.state === 'open'
+      || (claim.state === 'folded' && snapshot.stepClass === 'code' && snapshot.backend === HELD_RECEIPT_BACKEND));
+    if (collision !== undefined) {
+      throw stop(`mixed-open: untasked dispatch collides with task thread "${collision.nonce}" (${collision.state}); nothing was written`);
+    }
+    return;
+  }
+  const untasked = records.find((record) => record.kind === 'dispatch' && readsTask(record) === null
+    && readsInsideEpoch(record, head) && delegationThreadState(records, record.nonce).open);
+  if (untasked !== undefined) {
+    throw stop(`mixed-open: task dispatch collides with open untasked thread "${untasked.nonce}"; nothing was written`);
+  }
+  for (const claim of claims) {
+    if (claim.state === 'folded' && claim.brief === task.brief) continue;
+    const shared = [...new Set(task.files.flatMap((path) => claim.files.flatMap((other) =>
+      hasPathOverlap(path, other) ? [path, other] : [])))].sort();
+    if (shared.length > 0) {
+      throw stop(`files-overlap: task dispatch overlaps thread "${claim.nonce}" on ${shared.join(', ')}; nothing was written`);
+    }
+  }
+};
+
+export const delegationSemanticPreflight = ({ records, snapshot, storePath, head = null }) => {
   const digest = canonicalDelegationDigest(snapshot);
   if (records.some((record) => canonicalDelegationDigest(record) === digest)) {
     throw stop(`refusing a canonical duplicate: ${storePath} already carries this exact record (${digest.slice(0, 12)}…), however its keys are ordered — a genuine new record carries new content or a new timestamp; nothing was written`);
@@ -180,6 +210,9 @@ export const delegationSemanticPreflight = ({ records, snapshot, storePath }) =>
       if (base.kind !== priorBase.kind || base.treeOid !== priorBase.treeOid) {
         throw stop(`refusing a retry: its base {kind "${base.kind}", treeOid ${base.treeOid}} differs from its retry origin "${snapshot.retryOf}"'s {kind "${priorBase.kind}", treeOid ${priorBase.treeOid}} — a retry chain is measured against ONE base; nothing was written`);
       }
+      if (JSON.stringify(readsTask(snapshot)) !== JSON.stringify(readsTask(prior.dispatch))) {
+        throw stop(`refusing a retry: its task differs from its retry origin "${snapshot.retryOf}" in brief or files — a retry keeps the same task; nothing was written`);
+      }
       const origin = findRetryChainOrigin(records, prior.dispatch);
       if (snapshot.retryIndex > origin.retryCap) {
         throw stop(`refusing a retry: retryIndex ${snapshot.retryIndex} exceeds the retryCap ${origin.retryCap} recorded on the thread's ORIGIN dispatch ("${origin.nonce}") — a fresh contract never manufactures a fresh retry budget; nothing was written`);
@@ -188,6 +221,7 @@ export const delegationSemanticPreflight = ({ records, snapshot, storePath }) =>
         throw stop(`refusing a retry: it retries a contract-refusal thread and must carry a DIFFERENT contractDigest — an unchanged contract would only be refused again, and a retry loop on one contract is exactly what the cap exists to prevent; nothing was written`);
       }
     }
+    if (head !== null) checkTaskClaims(records, snapshot, head);
     return;
   }
   if (state.dispatch === null) {

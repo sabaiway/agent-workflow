@@ -201,10 +201,10 @@ const CONTRACT_FILE = contractFile(JSON.stringify(CONTRACT, null, 2));
 
 describe('dispatch-record baseline — spec:dispatch-baseline/S1', () => {
   const OID = 'ab'.repeat(20);
-  it('pins the frozen grammar and the sole optional field without a schema bump', () => {
+  it('pins the frozen grammar and the two optional fields without a schema bump', () => {
     assert.equal(DELEGATION_SCHEMA_VERSION, 1);
-    assert.equal(DELEGATION_KEY_SETS.dispatch.at(-1), 'baseline');
-    assert.deepEqual(vocabulary.OPTIONAL_FIELDS, { dispatch: ['baseline'] });
+    assert.deepEqual(DELEGATION_KEY_SETS.dispatch.slice(-2), ['baseline', 'task']);
+    assert.deepEqual(vocabulary.OPTIONAL_FIELDS, { dispatch: ['baseline', 'task'] });
     assert.deepEqual(vocabulary.BASELINE_KINDS, ['head', 'checkpoint']);
     assert.deepEqual(vocabulary.HEAD_BASELINE, { kind: 'head', treeOid: null });
     for (const value of [vocabulary.BASELINE_KINDS, vocabulary.HEAD_BASELINE, vocabulary.OPTIONAL_FIELDS, vocabulary.OPTIONAL_FIELDS.dispatch]) assert.ok(Object.isFrozen(value));
@@ -275,8 +275,8 @@ describe('dispatch-record — the closed delegation vocabulary (Plan 1 Phase 1)'
       const full = record(kind);
       assert.deepEqual(validateDelegationRecord(full), { ok: true }, `${kind}: the full fixture validates`);
       assert.deepEqual(
-        Object.keys(full).sort(),
-        ['schema', 'kind', ...DELEGATION_KEY_SETS[kind]].sort(),
+        Object.keys(full).filter((field) => !((vocabulary.OPTIONAL_FIELDS ?? {})[kind] ?? []).includes(field)).sort(),
+        ['schema', 'kind', ...DELEGATION_KEY_SETS[kind]].filter((field) => !((vocabulary.OPTIONAL_FIELDS ?? {})[kind] ?? []).includes(field)).sort(),
         `${kind}: the fixture carries exactly the closed key set`,
       );
 
