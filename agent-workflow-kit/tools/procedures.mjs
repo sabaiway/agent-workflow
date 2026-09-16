@@ -276,6 +276,7 @@ export const REVIEW_ROUNDS_TOOL = join(dirname(fileURLToPath(import.meta.url)), 
 export const REPO_SEARCH_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'repo-search.mjs');
 export const FEEDBACK_RECORD_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'feedback-record-cli.mjs');
 const FEEDBACK_TRIAGE = 'feedback-triage';
+const EPIC = 'epic';
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
 const MINTS_RECEIPT = Object.freeze({ mintsReceipt: true });
 const FEEDBACK_BRIDGE_LINES = Object.freeze({
@@ -380,25 +381,28 @@ const groundingPreStepAdvice = (activity, slots, plans) => {
   if (activity === FEEDBACK_TRIAGE) return [];
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
   const operand = populatedPlan(plans);
-  const planArg = operand === null ? '--plan <path>' : `--plan ${operand}`;
+  const planArg = activity === EPIC ? '' : operand === null ? ' --plan <path>' : ` --plan ${operand}`;
   const reviewOperand = populatedPlan(plans, MINTS_RECEIPT);
   // plan-authoring reviews the plan FILE — a plain name in flight renders the review command populated;
   // the renderability and receipt-carriability fallbacks are the only placeholders a known path produces.
   const reviewForm =
-    activity === 'plan-authoring'
-      ? reviewOperand === null
-        ? 'agy-review plan <plan-file>'
-        : `agy-review plan ${reviewOperand}`
-      : 'agy-review code';
+    activity === EPIC
+      ? 'agy-review plan <brief-file>'
+      : activity === 'plan-authoring'
+        ? reviewOperand === null
+          ? 'agy-review plan <plan-file>'
+          : `agy-review plan ${reviewOperand}`
+        : 'agy-review code';
   // `run:`/`then:` prefixes keep these POPULATED command lines machine-distinguishable from the
   // verbatim contract DESCRIPTORS above (the descriptor drift guard set-equals bare wrapper lines).
   // The TOOL path stays double-quoted (the bridge tier seeds that exact byte-form); the plan operand
   // rides shellQuoteArg — bare when safe, single-quoted otherwise.
   const lines = [
     'Grounding pre-step (agy is dispatched — assemble the verified facts BEFORE the review; grounding.mjs slices verbatim, judgment additions stay yours):',
-    `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy ${planArg} --out ${GROUNDING_FACTS_OUT}`,
+    `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy${planArg} --out ${GROUNDING_FACTS_OUT}`,
     `  then: ${reviewForm} --facts @${GROUNDING_FACTS_OUT}`,
   ];
+  if (activity === EPIC) return lines;
   const fellBack = [operand === null ? '--plan' : null, activity === 'plan-authoring' && reviewOperand === null ? 'agy-review plan' : null].filter(Boolean);
   lines.push(...planDiscoveryCaveat(
     plans,

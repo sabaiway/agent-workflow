@@ -90,6 +90,8 @@ export const KNOWN_PRIOR_METHODOLOGY_SLOT = [
   '> **Workflow methodology** — plan → execute → review. Plans are ephemeral `docs/plans/*.md` (gitignored, **never committed**); every Plan ends with a mandatory **Phase: Cleanup**; series order lives in `docs/plans/queue.md`. The plan shape, its caps and lifecycle live in the project\'s **planning skill** (it overrides the generic `writing-plans`); summary in `docs/ai/agent_rules.md` §5. Named activities (plan-authoring, plan-execution) have procedures — see `/agent-workflow-kit procedures <activity>` for the steps + resolved recipe. **Communication:** user-facing messages deliver the artifact inline (paste the prompt / diff / command — never "see §X" as a substitute), lead with the result, show exactly what was asked, and never read as mockery (a large artifact: a real summary inline + a link).',
   // engine 4.6.0 — the three-activity pointer, before feedback-triage joined the named activities.
   '> **Workflow methodology** — plan → execute → review. Plans are ephemeral `docs/plans/*.md` (gitignored, **never committed**); every Plan ends with a mandatory **Phase: Cleanup**; series order lives in `docs/plans/queue.md`. The plan shape, its caps and lifecycle live in the project\'s **planning skill** (it overrides the generic `writing-plans`); summary in `docs/ai/agent_rules.md` §5. Named activities (plan-authoring, plan-execution, routine) have procedures — see `/agent-workflow-kit procedures <activity>` for the steps + resolved recipe. **Communication:** user-facing messages deliver the artifact inline (paste the prompt / diff / command — never "see §X" as a substitute), lead with the result, show exactly what was asked, and never read as mockery (a large artifact: a real summary inline + a link).',
+  // engine 5.7.0 — the four-activity pointer, before epic and task joined the named activities.
+  '> **Workflow methodology** — plan → execute → review. Plans are ephemeral `docs/plans/*.md` (gitignored, **never committed**); every Plan ends with a mandatory **Phase: Cleanup**; series order lives in `docs/plans/queue.md`. The plan shape, its caps and lifecycle live in the project\'s **planning skill** (it overrides the generic `writing-plans`); summary in `docs/ai/agent_rules.md` §5. Named activities (plan-authoring, plan-execution, routine, feedback-triage) have procedures — see `/agent-workflow-kit procedures <activity>` for the steps + resolved recipe. **Communication:** user-facing messages deliver the artifact inline (paste the prompt / diff / command — never "see §X" as a substitute), lead with the result, show exactly what was asked, and never read as mockery (a large artifact: a real summary inline + a link).',
 ];
 export const KNOWN_PRIOR_ORCH_SLOT = [
   // v1.3.0 — pre-read-at-start orchestration pointer (recipes vocabulary, no orchestration.json clause).
@@ -113,9 +115,9 @@ export const METHODOLOGY_DESCRIPTOR = {
   markerName: 'methodology',
   anchorLabel: 'methodology anchor (the "Read it before any code change." Session-Protocols line)',
   knownPriorCanonicals: KNOWN_PRIOR_METHODOLOGY_SLOT,
-  upgradeSignature: 'Communication',
+  upgradeSignature: 'feedback-triage, epic, task',
   upgradeAdvice:
-    'the workflow-methodology pointer predates the communication-contract clause (deliver the artifact inline, lead with the result) — refresh it to the current canon, or add the clause by hand; the contract still applies.',
+    'the workflow-methodology pointer predates the current canon — six named activities (plan-authoring, plan-execution, routine, feedback-triage, epic, task) with the communication-contract clause (deliver the artifact inline, lead with the result) — refresh it to the current canon, or add what it lacks by hand; the contract still applies.',
 };
 export const ORCHESTRATION_DESCRIPTOR = {
   startMarker: ORCH_START_MARKER,
@@ -443,8 +445,8 @@ export const runCli = async (argv, deps = {}) => {
       'present-filled': 'workflow-methodology pointer already present',
     }[methResult.status];
     // Read-only upgrade advisories for a CUSTOMIZED methodology pointer that reconcile preserved verbatim
-    // (a refreshed/filled/inserted slot already carries the current canon, so it gets none): the AD-019
-    // procedures route AND the §1.9 communication-contract clause. No mutation — reported notes only.
+    // (a refreshed/filled/inserted slot already carries the current canon, so it gets none): the AD-019 procedures route
+    // AND the current-canon hint, keyed on the six-activity token (it names the §1.9 clause too). No mutation — notes only.
     const notes = [];
     if (methResult.status === 'present-filled') {
       const p = methodologyProceduresHint(afterMeth); if (p) notes.push(p);

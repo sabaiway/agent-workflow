@@ -47,8 +47,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(procedures.length > 500, 'the procedures canon must carry real content');
   });
 
-  it('declares all four activities as their own `## <activity>` section', () => {
-    for (const activity of ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']) {
+  it('declares all six activities as their own `## <activity>` section', () => {
+    for (const activity of ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'epic', 'task']) {
       assert.ok(sectionOf(procedures, activity), `has a ## ${activity} section`);
     }
   });
@@ -68,7 +68,7 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
     const headings = planning.split('\n').filter((l) => l.startsWith('## ')).map((l) => l.slice(3).trim());
     const flat = procedures.replace(/\s+/g, ' '); // an anchor may wrap across a markdown line
-    for (const anchor of ['Module ledger', 'What gets cut', 'Un-run syntax never ships in prose', 'The plan must read cold', "Cleanup, and the plan's own life"]) {
+    for (const anchor of ['Module ledger', 'What gets cut', 'Un-run syntax never ships in prose', 'The plan must read cold', "Cleanup, and the plan's own life", 'The epic', 'The task']) {
       assert.ok(flat.includes(`*${anchor}*`), `names the planning.md anchor *${anchor}*`);
       assert.ok(headings.includes(anchor), `planning.md still carries the heading "${anchor}"`);
     }
@@ -419,6 +419,35 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(flat, /5\. \*\*The commit boundary is unchanged\*\* — when an accepted slice changed the tree, the orchestrator alone commits; a read-only chore has no commit boundary; a carrier never commits/, 'step 5 keeps the commit boundary, and a read-only chore has none');
   });
 
+  describe('epic and task canon (spec:carriers/S17)', () => {
+    it('epic carries its slots, six steps and review contract', () => {
+      const section = sectionOf(procedures, 'epic'); assert.ok(section, 'has a ## epic section');
+      assert.equal(slotsLineOf(section), 'Slots: author, review');
+      assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6]);
+      for (const [number, token] of ['Brief', 'Draft', 'Check', 'review {recipe}', 'Fold', 'Land'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(token), `step ${number + 1} names ${token}`);
+      const flat = section.replace(/\s+/g, ' ');
+      for (const token of ['*The epic*', 'no commit boundary of its own', 'epic-shape-cli --check <epic>', 'epic-shape-cli --review-brief <epic>', 'never the file', 'a bridge in plan mode over it', "One lens is the tier's roster", 'epic-shape-cli --fold', 'At most two rounds', '--close']) assert.ok(flat.includes(token), `epic names ${token}`);
+    });
+    it('task carries its slots, five steps and execution contract', () => {
+      const section = sectionOf(procedures, 'task'); assert.ok(section, 'has a ## task section');
+      assert.equal(slotsLineOf(section), 'Slots: author, execute');
+      assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5]);
+      for (const [number, token] of ['Mint', 'Brief', 'Execute', 'Verify', 'Return'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(token), `step ${number + 1} names ${token}`);
+      const flat = section.replace(/\s+/g, ' ');
+      for (const token of ['*The task*', 'its tests are its only review', 'checkpoint mint --plan <plan>', "or before the first of a wave's", 'task-brief stamp <brief>', 'task-brief check <brief>', 'with `--dispatch <dispatch-file>` when the run is a bridge dispatch', 'dispatch open --checkpoint <oid> --task <brief>', 'one session per task', 'the whole-tree restore under its precondition', 'retried once', 'never a shared one']) assert.ok(flat.includes(token), `task names ${token}`);
+    });
+    it('keeps epic and task after feedback-triage and project-neutral', () => {
+      assert.deepEqual([...procedures.matchAll(/^## (.+)$/gmu)].map((match) => match[1]).slice(-3), ['feedback-triage', 'epic', 'task']);
+      for (const activity of ['epic', 'task']) {
+        const section = sectionOf(procedures, activity); assert.ok(section, `has a ## ${activity} section`);
+        assert.doesNotMatch(section, /docs\/|agent-workflow-kit\/|agent-workflow-engine\//u, `${activity} stays project-neutral`);
+      }
+    });
+    it('plan-execution step 2 assigns each brief and run to the task slots', () => {
+      const section = sectionOf(procedures, 'plan-execution'); assert.ok(section, 'has a ## plan-execution section');
+      assert.ok(stepOf(section, 2).replace(/\s+/g, ' ').includes("When a row is carried as tasks, the `task` activity's slots carry each brief and each run (its section below); the row's fold, gates and commit stay here."), 'step 2 names the task slots and keeps the row boundary');
+    });
+  });
   describe('feedback-triage canon [spec:feedback-triage/S12]', () => {
     it('carries the review-only six-step procedure and its completion rule', () => {
       const section = sectionOf(procedures, 'feedback-triage');
@@ -459,7 +488,11 @@ describe('methodology-slot.md — bounded fragment carries the procedures route'
     }
   });
 
-  it('carries the §1.9 communication-contract clause (the canonical-refresh signature)', () => {
+  it('names all six activities in order', () => {
+    assert.ok(slot.replace(/\s+/g, ' ').includes('(plan-authoring, plan-execution, routine, feedback-triage, epic, task)'), 'the slot names all six activities in order');
+  });
+
+  it('carries the §1.9 communication-contract clause', () => {
     assert.match(slot, /Communication/, 'the methodology slot carries the Communication clause');
     assert.match(slot, /inline/, 'the clause says deliver the artifact inline');
   });

@@ -454,6 +454,7 @@ describe('slotNeedsFill — lazy-read predicate (matches reconcileSlot fill deci
 
 // ── canonical-refresh (AD-025 §1.6a/§1.9): push a NEW canon clause to FILLED-but-stale slots, preserve a
 //    customization, advise on the customized case. Covers BOTH the methodology + orchestration slots. ──
+const FOUR_ACTIVITY_METH = KNOWN_PRIOR_METHODOLOGY_SLOT[3].replace('(plan-authoring, plan-execution, routine)', '(plan-authoring, plan-execution, routine, feedback-triage)');
 describe('canonical-refresh — refresh a known-prior slot, preserve a customization', () => {
   // current-minus-one is the NEWEST prior — the entry the release that changed the fragment appended.
   const PRIOR_METH = KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1);
@@ -462,6 +463,10 @@ describe('canonical-refresh — refresh a known-prior slot, preserve a customiza
   const NEW_ORCH = '> **Orchestration recipes (new canon)** — `/agent-workflow-kit recipes`; set it with `/agent-workflow-kit set-recipe`.\n';
   const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
 
+  it('the four-activity fragment is the newest prior and refreshes to the shipped six-activity fragment (spec:carriers/S18)', () => {
+    assert.equal(KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1), FOUR_ACTIVITY_METH); const realMeth = readFileSync(join(ENGINE_DIR, 'references', 'methodology-slot.md'), 'utf8');
+    assert.ok(realMeth.includes('(plan-authoring, plan-execution, routine, feedback-triage, epic, task)')); assert.equal(reconcileSlot(wrap('\n' + FOUR_ACTIVITY_METH + '\n'), realMeth, { maxLines: AGENTS_MD_CAP }).status, 'reconciled-refreshed');
+  });
   it('methodology: a slot filled with a KNOWN PRIOR is refreshed to the new fragment', () => {
     const stale = wrap(`\n${PRIOR_METH}\n`);
     assert.equal(slotNeedsFill(stale), true, 'a stale slot needs the fragment re-sourced');
@@ -528,7 +533,11 @@ describe('canonical-refresh — refresh a known-prior slot, preserve a customiza
 });
 
 describe('markerSlotUpgradeHint — read-only advisory for a customized slot missing the new clause', () => {
-  it('methodology: a filled slot WITHOUT "Communication" gets the advice; with it → null', () => {
+  it('a customized four-activity fragment stays and is told about the epic and task rows', () => {
+    const custom = wrap('\n' + FOUR_ACTIVITY_METH + ' House rule: plans name their owner.\n'); const realMeth = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'methodology-slot.md'), 'utf8'); const out = reconcileSlot(custom, realMeth, { maxLines: AGENTS_MD_CAP }); const hint = markerSlotUpgradeHint(custom, METHODOLOGY_DESCRIPTOR);
+    assert.equal(out.status, 'present-filled'); assert.equal(out.text, custom); assert.equal(typeof hint, 'string'); assert.match(hint, /\bepic\b/); assert.match(hint, /\btask\b/); assert.match(hint, /communication-contract/); assert.equal(FOUR_ACTIVITY_METH.includes(METHODOLOGY_DESCRIPTOR.upgradeSignature), false); assert.ok(realMeth.includes(METHODOLOGY_DESCRIPTOR.upgradeSignature));
+  });
+  it('methodology: a filled slot WITHOUT the six-activity token gets the advice; the shipped fragment → null', () => {
     const without = wrap('\n> custom methodology note (no comms clause)\n');
     const hint = markerSlotUpgradeHint(without, METHODOLOGY_DESCRIPTOR);
     assert.match(hint, /communication-contract|deliver the artifact/);

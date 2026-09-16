@@ -33,12 +33,14 @@ const AGY = 'antigravity-cli-bridge';
 const survey = (state, reason = null) => ({ state, reason, rel: '.claude/agents/executor.md' });
 
 describe('carriers — the one activity/slot table (spec:carriers/S1) (spec:plan-review-loop/S14)', () => {
-  it('names four activities, each with its typed slots', () => {
-    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']);
+  it('names six activities, each with its typed slots', () => {
+    assert.deepEqual(Object.keys(ACTIVITIES), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'epic', 'task']);
     assert.deepEqual(ACTIVITIES['plan-authoring'].slots, { author: 'carrier', fold: 'carrier', review: 'review' });
     assert.deepEqual(ACTIVITIES['plan-execution'].slots, { execute: 'execute', review: 'review' });
     assert.deepEqual(ACTIVITIES.routine.slots, { carrier: 'carrier', parallel: 'switch' });
     assert.deepEqual(ACTIVITIES['feedback-triage'].slots, { review: 'review' });
+    assert.deepEqual(ACTIVITIES.epic?.slots, { author: 'carrier', review: 'review' });
+    assert.deepEqual(ACTIVITIES.task?.slots, { author: 'execute', execute: 'execute' });
   });
 
   it('names the value set of every slot type', () => {
@@ -230,11 +232,31 @@ describe('engine-kit activity/slot parity — ACTIVITIES matches procedures.md `
 });
 
 describe('carriers - chores carry no autonomy level of their own', () => {
-  it('the two session activities are policy activities and the two chores are not', () => {
+  it('the two session activities are policy activities and the four others are not', () => {
     assert.deepEqual(Object.keys(POLICY_ACTIVITIES), ['plan-authoring', 'plan-execution']);
     assert.equal(ACTIVITIES.routine.policy, false);
     assert.equal(ACTIVITIES['feedback-triage'].policy, false);
+    assert.equal(ACTIVITIES.epic?.policy, false);
+    assert.equal(ACTIVITIES.task?.policy, false);
     for (const name of Object.keys(POLICY_ACTIVITIES)) assert.equal(ACTIVITIES[name].policy, true);
+  });
+});
+
+describe('carriers - the epic and task tier rows (spec:carriers/S11)', () => {
+  it('appends epic and task after feedback-triage', () => {
+    assert.deepEqual(Object.keys(ACTIVITIES).slice(-3), ['feedback-triage', 'epic', 'task']);
+  });
+
+  it('pins the three exact slice sentences for the epic and task slots', () => {
+    assert.equal(SLICE_BY_SLOT['epic.author'], 'a slice is a brief naming the intent, the value, the non-goals and the stories in order; the subagent drafts the epic file from it, and the orchestrator runs the shape check on the draft as its own');
+    assert.equal(SLICE_BY_SLOT['task.author'], 'a slice is one ledger row of the plan with the contracts it reads; the subagent writes the task brief from it, and the orchestrator stamps and checks the brief itself');
+    assert.equal(SLICE_BY_SLOT['task.execute'], 'a slice is one stamped brief; the subagent runs it inside the Files the brief names and reports the paths it changed, and the orchestrator runs the Acceptance commands itself');
+  });
+
+  it('dispatches the task execute slice and never carries the epic review slot', () => {
+    assert.equal(typeof SLICE_BY_SLOT['task.execute'], 'string');
+    assert.equal(dispatchForm({ activity: 'task', slot: 'execute', state: 'placed' })[0], SLICE_BY_SLOT['task.execute']);
+    assert.deepEqual(dispatchForm({ activity: 'epic', slot: 'review', state: 'placed' }), []);
   });
 });
 

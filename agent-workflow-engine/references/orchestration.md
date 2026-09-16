@@ -45,7 +45,7 @@ model's quota and cost); it carries the `carry` role only — never
 | **Reviewed** (`reviewed`) | The orchestrator executes; **one** backend reviews the result (advisory). | ≥1 backend providing `review` | `codex` and/or `agy` |
 | **Council** (`council`) | **Both** backends review independently; the orchestrator synthesizes the two opinions. | ≥2 backends providing `review` | `codex` **and** `agy` |
 | **Delegated** (`delegated`) | The orchestrator hands a **bounded** execution sub-task to a backend, then reviews the returned diff and commits. | ≥1 backend providing `execute` | `codex` only |
-| **Subagent** (`subagent`) | The orchestrator hands a **bounded, file-disjoint** slice — of execution, of plan/contract authoring, or of routine work — to a **full-tool frontier subagent**, then verifies the returned slice by running its suites. A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor. | the `carry` role | the placed executor vehicle |
+| **Subagent** (`subagent`) | The orchestrator hands a **bounded, file-disjoint** slice — of execution, of plan/contract authoring, of an epic drafted from a brief, of a task brief written from one ledger row, of one stamped task brief run inside its Files, or of routine work — to a **full-tool frontier subagent**, then verifies the returned slice by running its suites. A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor. | the `carry` role | the placed executor vehicle |
 
 The orchestrator keeps the folds, the gates, the release documents, the asks and the **one commit**
 whatever the recipe resolves to. A subagent is **never a review backend**, **never a bridge
@@ -68,11 +68,12 @@ missing or unusable.
   the orchestrator's own context focused). Only `codex` provides `execute`. The orchestrator still
   reviews the returned diff and owns the commit — delegation never bypasses the review or the gate.
 - **Subagent** — when the work is **bounded and file-disjoint** and the orchestrator's own context is
-  the scarce resource: execution slices, a plan or a contract drafted from a brief the orchestrator
-  writes, or routine chores (gate triage, sweeps, doc regeneration, fixture builds). It spends no
-  bridge quota; it runs on the host's own model and consumes that model's quota and cost. The orchestrator still writes the brief, verifies every returned slice by running
-  its suites itself, and owns the commit — a subagent never stands in for the bridge a `review`
-  recipe names.
+  the scarce resource: execution slices, a plan, a contract or an epic drafted from a brief the
+  orchestrator writes, a task brief written from one ledger row, one stamped task brief run inside its
+  Files, or routine chores (gate triage, sweeps, doc regeneration, fixture builds). It spends no
+  bridge quota; it runs on the host's own model and consumes that model's quota and cost. The
+  orchestrator still verifies every returned slice by running its suites itself, and owns the commit —
+  a subagent never stands in for the bridge a `review` recipe names.
 
 ## 4. Graceful degradation (never silent)
 

@@ -24,7 +24,8 @@ describe('legacy review shorthands remain byte-compatible', () => {
     },
   };
 
-  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) \u00b7 plan-authoring.fold = solo (computed default) \u00b7 plan-authoring.review = reviewed (computed default) \u2192 codex-review \u00b7 plan-execution.execute = solo (computed default) \u00b7 plan-execution.review = ${cell} \u00b7 routine.carrier = solo (computed default) \u00b7 routine.parallel = on (computed default; switch) \u00b7 feedback-triage.review = reviewed (computed default) \u2192 codex-review \u2014 the configured orchestration values above are what runs; readiness-recommended here: council (informational)`;
+  const headLine = (cell) => `active recipes (from fixture): plan-authoring.author = solo (computed default) \u00b7 plan-authoring.fold = solo (computed default) \u00b7 plan-authoring.review = reviewed (computed default) \u2192 codex-review \u00b7 plan-execution.execute = solo (computed default) \u00b7 plan-execution.review = ${cell} \u00b7 routine.carrier = solo (computed default)` +
+    ' \u00b7 routine.parallel = on (computed default; switch) \u00b7 feedback-triage.review = reviewed (computed default) \u2192 codex-review · epic.author = solo (computed default) · epic.review = reviewed (computed default) → codex-review · task.author = solo (computed default) · task.execute = solo (computed default) \u2014 the configured orchestration values above are what runs; readiness-recommended here: council (informational)';
   const headCells = {
     solo: 'solo (configured)',
     reviewed: 'reviewed (configured) → codex-review',
@@ -32,7 +33,7 @@ describe('legacy review shorthands remain byte-compatible', () => {
   };
 
   for (const [value, pinned] of Object.entries(expected)) {
-    it(`${value} resolves, obliges and renders the active line exactly as at HEAD 0d2eaee plus the fold slot`, () => {
+    it(`${value} resolves, obliges and renders the active line exactly as at HEAD 0d2eaee plus the fold slot and the epic and task cells [spec:carriers/S15]`, () => {
       const config = { 'plan-execution': { review: value } };
       assert.deepEqual(recipes.resolveActivityRecipe({ config, readiness, activity: 'plan-execution', slot: 'review' }), pinned.resolved);
       assert.deepEqual(recipes.requiredBackendsForConfiguredRecipe({ config, readiness }), pinned.obligations);
@@ -42,6 +43,9 @@ describe('legacy review shorthands remain byte-compatible', () => {
     });
   }
 
+  it('a configured task slot renders its wrapper suffix', () => {
+    assert.ok(recipes.composeActiveRecipeLine({ config: { task: { author: 'delegated', execute: 'delegated' } }, source: 'fixture' }, readiness).includes(' · task.author = delegated (configured) → codex-exec · task.execute = delegated (configured) → codex-exec — the configured orchestration values above are what runs'));
+  });
   it('legacy posture silence remains null on a missing bundle', () => {
     assert.equal(recipes.composeConfiguredPosture({ bundleRoot: '/missing' }), null);
   });

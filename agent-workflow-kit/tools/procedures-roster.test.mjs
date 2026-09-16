@@ -159,3 +159,42 @@ describe('feedback-triage advisor [spec:feedback-triage/S13]', () => {
     }
   }));
 });
+
+const TIER_CANON = ['# Procedures', '', '## epic', '', 'Slots: author, review', '', '1. Brief', '', '## task', '', 'Slots: author, execute', '', '1. Mint', ''].join('\n');
+const withTierFixture = (activity, config, detection, fn) => {
+  const fixture = makeFeedbackFixture();
+  try {
+    writeFileSync(join(fixture.engine, 'references', 'procedures.md'), TIER_CANON);
+    writeFileSync(join(fixture.cwd, CONFIG_REL), JSON.stringify(config));
+    return fn((json = true) => main([activity, ...(json ? ['--json'] : [])], {
+      cwd: fixture.cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: fixture.engine }, detect: detection,
+      surveyVehicle: () => EXECUTOR_MISSING, surveyLens: (spec) => (spec.stem === 'review-lens' ? LENS_PLACED : EXECUTOR_MISSING),
+    }));
+  } finally {
+    rmSync(fixture.cwd, { recursive: true, force: true }); rmSync(fixture.engine, { recursive: true, force: true });
+  }
+};
+describe('procedures on the epic and task rows [spec:carriers/S16]', () => {
+  it('epic on a lens-only roster resolves solo, dispatches no bridge and carries the roster', () => withTierFixture('epic', { epic: { review: ['review-lens'] } }, detect(READY, READY), (run) => {
+    const r = run(); assert.equal(r.code, 0, r.stderr);
+    const { slots, groundingPreStep, warnings } = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(slots), ['author', 'review']);
+    assert.deepEqual([slots.review.recipe, slots.review.source, slots.review.backends, slots.review.contracts], ['solo', 'config', [], []]);
+    assert.deepEqual(slots.review.roster.map(({ member, kind, state }) => ({ member, kind, state })), [{ member: 'review-lens', kind: 'lens', state: 'placed' }]);
+    assert.deepEqual([slots.author.recipe, slots.author.source], ['solo', 'default']); assert.deepEqual(groundingPreStep, []); assert.deepEqual(warnings, []);
+  }));
+  it('epic on a shorthand renders the grounding operand as the brief file in plan mode, never the code form, with no plan operand', () => withTierFixture('epic', { epic: { review: 'reviewed' } }, detect(NEEDS_SKILL, READY), (run) => {
+    const r = run(); assert.equal(r.code, 0, r.stderr);
+    const { slots, groundingPreStep: steps, warnings } = JSON.parse(r.stdout); assert.deepEqual(slots.review.backends, ['agy-review']);
+    assert.ok(steps.length > 0); assert.ok(steps.some((step) => /grounding\.mjs" --constraints --autonomy --out \/tmp\/review-facts\.md$/u.test(step)));
+    assert.ok(steps.some((step) => step.includes('then: agy-review plan <brief-file> --facts @/tmp/review-facts.md')));
+    for (const text of ['agy-review code', '--plan', 'plan discovery']) assert.ok(steps.every((step) => !step.includes(text)), text); assert.deepEqual(warnings, []);
+  }));
+  it('task renders the driving contract for a delegated slot and has no review slot', () => withTierFixture('task', { task: { author: 'delegated', execute: 'delegated' } }, detect(READY, NEEDS_SKILL), (run) => {
+    const r = run(); assert.equal(r.code, 0, r.stderr);
+    const { slots, groundingPreStep, warnings } = JSON.parse(r.stdout); assert.deepEqual(Object.keys(slots), ['author', 'execute']);
+    for (const slot of Object.values(slots)) { assert.equal(slot.recipe, 'delegated'); assert.deepEqual(slot.backends, ['codex-exec']); assert.equal(slot.contracts[0].cmd, 'codex-exec'); }
+    assert.deepEqual(groundingPreStep, []); assert.deepEqual(warnings, []);
+    const human = run(false); assert.equal(human.code, 0, human.stderr); assert.ok(human.stdout.includes('codex-exec — driving contract'));
+  }));
+});

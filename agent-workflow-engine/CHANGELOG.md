@@ -4,6 +4,24 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.8.0 — the procedures canon gains the `epic` and `task` activities, and a task run checks its dispatch file only when a bridge runs it (AD-147)
+
+`references/procedures.md` gains two sections after `## feedback-triage`. `## epic` (Slots: author, review) has six
+steps bound to `planning.md`'s *The epic*: brief, draft, check, review over the rendered brief (never the epic file),
+fold through the shape tool, land. `## task` (Slots: author, execute) has five steps bound to *The task*: mint, brief,
+execute, verify, return. A task has no commit boundary and no review of its own; a delegated task's fold rides its own
+held session, while a solo or subagent task holds none. The section states that the held-session gate and the `plan-execution` fold lane read
+`plan-execution.execute`. Plan-execution step 2 gains one sentence: a row carried as tasks hands each brief and each
+run to the `task` slots, and keeps its fold, gates and commit. `references/planning.md`, *The task*: a task is
+authored in one step and executed in another by the carriers its `task` slots resolve to, never one dispatch (it
+said one carrier authors and another executes, in two dispatches); `--dispatch <dispatch-file>` is passed to `task-brief check` only when the run is a bridge dispatch; a solo or
+subagent run checks the brief alone. `references/methodology-slot.md` names six activities.
+`references/orchestration.md`'s Subagent recipe names the epic draft, the task brief and the task run among its slices.
+`README.md` and `SKILL.md` list the six activities. The two sections, the step-2 sentence and the six-activity
+fragment are pinned by `test/procedures-canon.test.mjs` (spec:carriers/S17). MINOR: the canon gains two sections and a step sentence, and *The task* follows its slots and
+narrows `--dispatch` to a bridge run; no existing step moves. Published on this train with kit
+14.3.0, whose `procedures epic` and `procedures task` read these sections.
+
 ## 5.7.0 — the canons name the task wave: file-disjoint tasks of one checkpoint on their own codex sessions, the mint before a single task or a wave's first execute, the task restore, and a held session per task chain (AD-146)
 
 `references/planning.md`, `## The task`: the checkpoint is minted before a single task's execute dispatch, or before

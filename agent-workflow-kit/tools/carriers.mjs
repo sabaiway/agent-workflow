@@ -3,7 +3,7 @@
 // moves. The carrier half declares the `subagent` recipe, appends the executor vehicle to a
 // readiness array as the single provider of the `carry` role, words the degrade a missing or
 // unusable vehicle causes, and holds the dispatch-form wording every render prints (one source, a
-// red line where it is a red line). Governing contract: docs/ai/specs/kit/carriers.md.
+// red line where it is a red line). Governing contract: docs/ai/specs/kit/carriers/index.md.
 // Leaf — imports only the direct-run guard (recipes.mjs imports THIS), no fs, nothing on import.
 import { refuseDirectRun } from './direct-run.mjs';
 
@@ -16,6 +16,8 @@ export const ACTIVITIES = {
   'plan-execution': { slots: { execute: 'execute', review: 'review' }, policy: true },
   routine: { slots: { carrier: 'carrier', parallel: 'switch' }, policy: false },
   'feedback-triage': { slots: { review: 'review' }, policy: false },
+  epic: { slots: { author: 'carrier', review: 'review' }, policy: false },
+  task: { slots: { author: 'execute', execute: 'execute' }, policy: false },
 };
 
 export const POLICY_ACTIVITIES = Object.fromEntries(
@@ -109,6 +111,9 @@ export const SLICE_BY_SLOT = {
   'plan-authoring.fold': "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself",
   'plan-execution.execute': 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line',
   'routine.carrier': "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's",
+  'epic.author': 'a slice is a brief naming the intent, the value, the non-goals and the stories in order; the subagent drafts the epic file from it, and the orchestrator runs the shape check on the draft as its own',
+  'task.author': 'a slice is one ledger row of the plan with the contracts it reads; the subagent writes the task brief from it, and the orchestrator stamps and checks the brief itself',
+  'task.execute': 'a slice is one stamped brief; the subagent runs it inside the Files the brief names and reports the paths it changed, and the orchestrator runs the Acceptance commands itself',
 };
 
 export const VEHICLE_STATE_TOKEN = '<state>';

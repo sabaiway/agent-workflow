@@ -60,12 +60,20 @@ const FOUR_README = FOLD_README.replace(
   "Four activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel) and 'feedback-triage' (slot review).",
 );
 
-export const CANON_README = FOUR_README.replace(
+const FOUR_SEED_README = FOUR_README.replace(
   "The default below is 'solo' for every recipe and carrier slot, and 'on' for the parallel switch — no execution backend required.",
   "Every slot seeded below is 'solo' — no execution backend required. A slot the seed leaves silent takes the computed default stated further down: 'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then); 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier' stay 'solo', and 'routine.parallel' stays 'on'.",
 );
 
-export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README, ROSTER_README, FOLD_README, FOUR_README]);
+export const CANON_README = FOUR_SEED_README
+  .replace("Four activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel) and 'feedback-triage' (slot review).",
+    "Six activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel), 'feedback-triage' (slot review), 'epic' (slots author, review) and 'task' (slots author, execute).")
+  .replace("the carrier slots 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier' accept solo | subagent.",
+    "the carrier slots 'plan-authoring.author', 'plan-authoring.fold', 'routine.carrier' and 'epic.author' accept solo | subagent, and the task slots 'task.author' and 'task.execute' take the execute values.")
+  .replace("'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then); 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier' stay 'solo',",
+    "'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then), and so is 'epic.review'; 'plan-authoring.author', 'plan-authoring.fold', 'routine.carrier', 'epic.author', 'task.author' and 'task.execute' stay 'solo',");
+
+export const KNOWN_PRIOR_README = Object.freeze([V1_README, V2_README, V3_README, ROSTER_README, FOLD_README, FOUR_README, FOUR_SEED_README]);
 
 export const refreshReadme = (config) => {
   if (config == null || typeof config !== 'object' || Array.isArray(config)) return { config, changed: false };

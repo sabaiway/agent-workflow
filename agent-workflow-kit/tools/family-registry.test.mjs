@@ -50,6 +50,7 @@ import { START_MARKER } from './hide-footprint.mjs';
 import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
+import { toViewModel } from './view-model.mjs'; import { render } from './renderers.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
@@ -886,13 +887,15 @@ describe('surveyRecipes — engine-free effective recipe per slot', () => {
     assert.match(r.error, /orchestration\.json/);
   });
 
-  it('the four activities resolve and a carrier slot follows the placed or missing executor vehicle', () => {
+  it('the six activities resolve and a carrier slot follows the placed or missing executor vehicle (spec:carriers/S14)', () => {
     const survey = (state) => surveyRecipes('/p', {
       detect: detect(READY, READY), lstat: () => ({}), readFile: () => JSON.stringify({ routine: { carrier: 'subagent' } }),
       surveyVehicle: () => ({ state, reason: null, rel: '.claude/agents/executor.md' }),
     });
     const placed = survey('placed');
-    assert.deepEqual(Object.keys(placed.activities), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage']);
+    assert.deepEqual(Object.keys(placed.activities), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'epic', 'task']);
+    assert.deepEqual(placed.activities.epic.review, { recipe: 'reviewed', source: 'default', degradedFrom: null });
+    assert.deepEqual([placed.activities.epic.author.recipe, placed.activities.task.author.recipe, placed.activities.task.execute.recipe], ['solo', 'solo', 'solo'], 'placing the vehicle never flips a default');
     assert.deepEqual(placed.activities['feedback-triage'].review, { recipe: 'reviewed', source: 'default', degradedFrom: null });
     assert.deepEqual([placed.activities.routine.carrier.recipe, placed.activities.routine.parallel.recipe], ['subagent', 'on']);
     assert.equal(placed.activities['plan-authoring'].author.recipe, 'solo', 'placing the vehicle never flips a default');
@@ -1101,6 +1104,16 @@ describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed 
 });
 
 describe('status carries the resolved carrier and the vehicle behind it (spec:carriers/S6)', () => {
+  it('the envelope and the text render carry the epic and task slots in registry order', () => {
+    const r = surveyRecipes('/p', { detect: () => [{ name: 'codex-cli-bridge', readiness: READY }], lstat: () => ({}), readFile: () => JSON.stringify({ task: { execute: 'subagent' } }), surveyVehicle: () => ({ state: 'placed', reason: null, rel: VEHICLE_REL }) });
+    assert.deepEqual(Object.keys(r.activities?.epic ?? {}), ['author', 'review']); assert.deepEqual(Object.keys(r.activities?.task ?? {}), ['author', 'execute']);
+    assert.deepEqual(r.activities.task.execute, { recipe: 'subagent', source: 'config', degradedFrom: null });
+    const env = buildEnvelope([], { dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true, stamps: [] }, { settings: { recipes: r, attribution: { effective: false }, velocity: { defaultMode: null } } });
+    assert.deepEqual(env.project.settings.recipes.activities, r.activities);
+    const text = render(toViewModel(env), { mode: 'plain' });
+    for (const line of ['epic.author: solo (default)', 'epic.review: reviewed (default)', 'task.author: solo (default)', 'task.execute: subagent (config)']) assert.ok(text.includes(line), line);
+    assert.ok(text.indexOf('feedback-triage.review:') >= 0 && text.indexOf('feedback-triage.review:') < text.indexOf('epic.author:') && text.indexOf('epic.author:') < text.indexOf('task.execute:'));
+  });
   it('the recipes survey names the author slot and routine with both of its slots', () => {
     const r = surveyRecipes('/p', {
       detect: () => [], lstat: STAT_ENOENT, readFile: () => '',

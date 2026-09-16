@@ -124,7 +124,7 @@ describe('orchestration-config — parseOp (typed, fully-qualified) + shared val
 
   // parseOp('set') and validateConfig MUST agree on accept/reject for every (activity, slot, recipe).
   it('parseOp(set) accept/reject ≡ validateConfig accept/reject over the full matrix', () => {
-    const activities = ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'plan-foo'];
+    const activities = ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'plan-foo', 'epic', 'task'];
     const slots = ['review', 'execute', 'author', 'carrier', 'parallel', 'bogus'];
     const recipes = ['solo', 'reviewed', 'council', 'delegated', 'subagent', 'on', 'off', 'nope'];
     for (const a of activities) {
@@ -185,6 +185,29 @@ describe('orchestration-config — the carrier surface validates (spec:carriers/
   });
 });
 
+describe('orchestration-config - the epic and task rows validate (spec:carriers/S12)', () => {
+  const FOUR_ACTIVITY_SEED_README = "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Easiest: tell the agent in plain language and run the `set-recipe` writer — it interprets your intent, previews the change, and writes valid JSON for you. You can still hand-edit this file directly whenever you prefer; that option never goes away. Four activities are configured indepen" +
+    "dently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel) and 'feedback-triage' (slot review). A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize), or an explicit roster arr" +
+    "ay such as [\"codex-review\", \"agy-review\", \"review-lens\"] in hand-edit form; an 'execute' slot accepts solo | delegated | subagent (you implement / a backend runs a bounded sub-task / a full-tool frontier subagent carries a bounded slice you verify); the carrier slots 'plan-authoring.author', 'plan-authoring.fold' and 'routine.carrier' accept solo | subagent. 'routine.parallel' " +
+    "is a flag rather than a recipe: it accepts on | off and decides whether file-disjoint subagent slices dispatch concurrently. Every slot seeded below is 'solo' — no execution backend required. A slot the seed leaves silent takes the computed default stated further down: 'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then); 'plan-authoring.a" +
+    "uthor', 'plan-authoring.fold' and 'routine.carrier' stay 'solo', and 'routine.parallel' stays 'on'. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. 'subagent' needs the executor vehicle placed in this project — the composition root's `agents` writer places it; without it the slot reso" +
+    "lves to solo with the reason stated. Remove a slot's line, or a whole activity block (or run `set-recipe --unset <activity>.<slot>`), to fall back to the computed default: reviewed when a review backend is ready and otherwise solo for a review slot, solo for author, fold, execute and carrier, on for parallel. Run the read-only procedures advisor to see an activity's steps plus " +
+    "the recipe resolved for your environment. Strict JSON — no comments.";
+  it('accepts every epic and task slot value', () => { for (const [a,s,vs] of [['epic','author',['solo','subagent']], ['epic','review',['solo','reviewed','council',['review-lens']]],
+    ...['author','execute'].map(s=>['task',s,['solo','delegated','subagent']])]) for(const v of vs){const c={[a]:{[s]:v}}; assert.doesNotThrow(()=>assert.deepEqual(validateConfig(c),c));} });
+  it('refuses unknown slots and off-list values', () => { const refuse=(a,s,v,m)=>assert.throws(()=>validateConfig({[a]:{[s]:v}}),e=>e.exitCode===1 && e.message.includes(m));
+    for(const [a,s,ss] of [['epic','execute','author, review'],['task','review','author, execute']]) refuse(a,s,'solo',`unknown slot "${s}" for activity "${a}" (${a} slots: ${ss})`);
+    for(const [a,s,v,t,vs] of [['epic','author','delegated','carrier','solo, subagent'],['task','author','council','execute','solo, delegated, subagent'],
+      ['task','execute','on','execute',''],['epic','review','delegated','review','']]) refuse(a,s,v,`invalid value "${v}" for ${t} slot of "${a}"${vs ? ` (${t} accepts: ${vs})` : ''}`); });
+  it('resolves absent slots from type defaults', () => { const config={'plan-authoring':{review:'solo'}}; assert.deepEqual(validateConfig(config),config);
+    const missing=[{name:'executor',readiness:'missing',vehicle:{state:'missing',reason:null}}], ready=[{name:'codex-cli-bridge',readiness:'ready'}];
+    for(const [activity,slot,readiness,want] of [['epic','author',missing,'solo'],['epic','review',missing,'solo'],['task','author',missing,'solo'],['task','execute',missing,'solo'],
+      ['epic','review',ready,'reviewed']]) assert.doesNotThrow(()=>{ const r=resolveActivityRecipe({config,readiness,activity,slot}); assert.deepEqual([r.recipe,r.source],[want,'default']); }); });
+  it('six-activity README',()=>{assert.ok(CANON_README.includes("Six activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-e" +
+    "xecution' (slots execute, review), 'routine' (slots carrier, parallel), 'feedback-triage' (slot review), 'epic' (slots author, review) and 'task' (slots author, execute)."));
+    for(const s of ["'epic.author'","'task.author'","'task.execute'","'epic.review'"]) assert.ok(CANON_README.includes(s)); assert.ok(!CANON_README.includes('Four activities are configured')); });
+  it('frozen prior refreshes preserving epic', () => { const prior=FOUR_ACTIVITY_SEED_README; assert.equal(KNOWN_PRIOR_README.at(-1),prior); assert.notEqual(CANON_README,prior);
+    const r=refreshReadme({_README:prior,epic:{review:['review-lens']}}); assert.deepEqual([r.changed,r.config._README,r.config.epic],[true,CANON_README,{review:['review-lens']}]); }); });
 // ── applySetOps — pure merge, preserve, sparse, seed-on-change ──
 describe('orchestration-config — applySetOps (pure merge)', () => {
   it('sets a slot, preserving _README + untouched slots', () => {
@@ -281,7 +304,7 @@ describe('orchestration-config — canonical refresh', () => {
     assert.ok(KNOWN_PRIOR_README.some((p) => /never written for you/.test(p)), 'the v1 note is retained as a known prior');
   });
 
-  it('CANON_README names the four activities, every slot, its values, the vehicle and the defaults', () => {
+  it('CANON_README names the six activities, every slot, its values, the vehicle and the defaults', () => {
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       assert.ok(CANON_README.includes(activity), `names "${activity}"`);
       for (const slot of Object.keys(def.slots)) assert.ok(CANON_README.includes(slot), `names the "${slot}" slot`);

@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.3.0 — the activity table gains its tier rows: `epic` (author, review) and `task` (author, execute) are configured, resolved and rendered like every other activity (AD-147)
+
+**Epics and tasks now have recipe slots.** Until 14.2.0 the kit had an epic file and a task brief, but no slot said who
+writes an epic, who reviews it, who writes a task brief or who runs one. 14.3.0 adds two activity rows to the one
+registry, so `set-recipe`, `procedures`, `recipes`, `status` and the config validator all accept them with no second
+list. A config without the new rows reads and resolves exactly as before. Story S7 of the epic
+`EPICS-STORIES-TASKS-AS-THE-UNIT-OF-WORK`; contract `docs/ai/specs/kit/carriers/` revision 6 (part `activity-tiers`).
+
+- **Two registry rows (`tools/carriers.mjs`).** `epic` has `author` (`solo | subagent`) and `review`
+  (`solo | reviewed | council`); `task` has `author` and `execute`, both `solo | delegated | subagent`. Neither row
+  carries an autonomy policy. A silent `epic.review` is reviewed as soon as a review backend is ready (solo until then);
+  the other three slots default to solo. `SLICE_BY_SLOT` gains the subagent slice sentence of `epic.author`,
+  `task.author` and `task.execute`.
+- **The epic render (`tools/procedures.mjs`).** When `epic.review` is a shorthand recipe that dispatches agy, the
+  grounding pre-step carries no `--plan` and the review line is `agy-review plan <brief-file>`: plan mode over the
+  rendered epic brief, never the code form.
+- **The orchestration note refreshes (`tools/orchestration-readme.mjs`).** The `_README` that 14.2.0 wrote is now a
+  known prior, and the current note names six activities and the new slots' values and defaults, so a deployed
+  `docs/ai/orchestration.json` that still carries that note refreshes on its next write. Both seed templates carry the new note.
+- **The methodology pointer (`tools/inject-methodology.mjs`).** The four-activity fragment is a known prior and
+  refreshes to six. A customized fragment kept as is gets an upgrade note naming the current canon unless it carries
+  the six-activity token `feedback-triage, epic, task`.
+- **Copy.** Every restatement of the activity list and of the subagent-capable slots names the two rows: the README,
+  and the `agents`, `procedures`, `recipes`, `recommendations`, `set-recipe` and `status` mode docs.
+- **Tests.** Scenario cases S11–S18 of the carriers contract in `carriers.test.mjs`, `orchestration-config.test.mjs`,
+  `set-recipe.test.mjs`, `family-registry.test.mjs`, `recipes-shorthand.test.mjs`, `procedures-roster.test.mjs` and
+  `inject-methodology.test.mjs` (S17 is in the engine's canon test).
+- **Stated limit.** The held-session gate of `review-state` and the fold lane of `procedures` still key on
+  `plan-execution.execute`, so they cover a delegated task only when that slot is delegated as well; the engine canon
+  says so.
+
+Needs engine 5.8.0: `procedures epic` and `procedures task` exit 1 against an engine without the two sections.
+
 ## 14.2.0 — a task thread is measured over its own files: file-disjoint tasks of one checkpoint run as a wave, `open` refuses `task-files-scope`, `return` and `fold` refuse `out-of-files`, and `checkpoint restore <oid> --nonce <n>` undoes one task (AD-146)
 
 **Tasks can now run side by side.** In 14.1.0 a delegation thread could name its task, but it was still measured over

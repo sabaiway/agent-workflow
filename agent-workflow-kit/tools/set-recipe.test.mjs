@@ -303,7 +303,7 @@ describe('set-recipe — --json schema + readiness permutations', () => {
   }
 });
 
-describe('set-recipe - every slot of the four activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
+describe('set-recipe - every slot of the six activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
   const roundTrip = (qualified, value, { vehicle = 'placed', effective = value } = {}) => {
     const [activity, slot] = qualified.split('.');
     const preview = run(['--set', `${qualified}=${value}`], { vehicle });
@@ -350,6 +350,13 @@ describe('set-recipe - every slot of the four activities [spec:carriers/S4] [spe
   it('feedback-triage.review previews, writes and unsets to its computed default', () => {
     assert.match(roundTrip('feedback-triage.review', 'council').stdout, /effective here: reviewed/);
   });
+
+  it('epic.author=subagent unsets back to solo [spec:carriers/S13]', () => { assert.match(roundTrip('epic.author', 'subagent').stdout, /effective here: solo/); });
+  it('epic.review=council unsets back to reviewed', () => { assert.match(roundTrip('epic.review', 'council').stdout, /effective here: reviewed/); });
+  it('task.author=delegated unsets back to solo', () => { assert.match(roundTrip('task.author', 'delegated').stdout, /effective here: solo/); });
+  it('task.author=subagent uses the placed vehicle', () => { roundTrip('task.author', 'subagent'); });
+  it('task.execute=delegated unsets back to solo', () => { assert.match(roundTrip('task.execute', 'delegated').stdout, /effective here: solo/); });
+  it('task.execute=subagent unsets back to solo', () => { assert.match(roundTrip('task.execute', 'subagent').stdout, /effective here: solo/); });
 });
 
 describe('set-recipe — a subagent preview is honest about the executor vehicle', () => {
@@ -386,6 +393,12 @@ describe('set-recipe — a value outside the slot list is a usage error naming t
     assert.equal(r.code, 2);
     assert.match(r.stderr, /carrier accepts: solo, subagent/);
   });
+
+  it('task.author=council and epic.author=delegated → exit 2 naming the slot values', () => {
+    const taskAuthor = run(['--set', 'task.author=council']); assert.equal(taskAuthor.code, 2); assert.match(taskAuthor.stderr, /execute accepts: solo, delegated, subagent/);
+    const epicAuthor = run(['--set', 'epic.author=delegated']); assert.equal(epicAuthor.code, 2); assert.match(epicAuthor.stderr, /carrier accepts: solo, subagent/);
+    const taskReview = run(['--set', 'task.review=solo']); assert.equal(taskReview.code, 2); assert.match(taskReview.stderr, /unknown slot "review" for activity "task"/);
+  });
 });
 
 describe('set-recipe — a known-prior _README refreshes on a touched write', () => {
@@ -403,6 +416,8 @@ describe('set-recipe — --help lists the registry, not a hand-typed list', () =
     assert.equal(r.code, 0);
     assert.match(r.stdout, /plan-authoring → author, fold, review/);
     assert.match(r.stdout, /routine → carrier, parallel/);
+    assert.match(r.stdout, /epic → author, review/);
+    assert.match(r.stdout, /task → author, execute/);
     assert.match(r.stdout, /carrier slots accept solo \| subagent/);
     assert.match(r.stdout, /switch slots accept on \| off/);
   });

@@ -88,6 +88,8 @@ Each ledger row is one logical commit.
    `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, re-run
    `plan-shape --check`, and only then generate the brief. The dispatch brief — Delegated or
    Subagent — carries the generated robustness-literals block for every tagged row.
+   When a row is carried as tasks, the `task` activity's slots carry each brief and each run
+   (its section below); the row's fold, gates and commit stay here.
 3. **Implement / integrate** — your own edits or the reviewed delegated diff; a spec row lands its
    approved draft or revision WITH the code ([`specs.md`](specs.md)).
 4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's
@@ -182,3 +184,52 @@ Slots: review
    already-queued / declined disposition that opens none.
    Definition of Done: a checked record, its rows in the queue, the ratchet moved by exactly the rows rendered
    (unmoved when the record opens none).
+
+## epic
+
+Slots: author, review
+
+An epic binds to [`planning.md`](planning.md)'s *The epic*. It has no commit boundary of its own: the file
+lives in the memory substrate and is committed, where that substrate is tracked, by the orchestrator.
+
+1. **Brief** — intent, value, non-goals, acceptance, the specs and the stories in order, at concept
+   altitude: no mechanism, no file line.
+2. **Draft** — the resolved `author` carrier writes the epic file. Solo: the orchestrator writes it;
+   Subagent: the orchestrator writes the brief of step 1, the subagent drafts the file from it, and the
+   orchestrator runs the shape check on the draft as its own before step 3.
+3. **Check** — `epic-shape-cli --check <epic>` accepts the file, or nothing is reviewed.
+4. **review {recipe}** — over the RENDERED brief, never the file: write `epic-shape-cli --review-brief
+   <epic>` to a scratch file and hand that file to every member — a bridge in plan mode over it, a lens
+   with it as its artifact. One lens is the tier's roster; a project that names bridges pays them.
+5. **Fold** — the findings file goes through `epic-shape-cli --fold`; only the entries it keeps are folded,
+   by hand, at concept altitude; then step 3 again. At most two rounds: a surviving finding at altitude
+   becomes a story or a non-goal, never a mechanism.
+6. **Land** — the queue row; each story's ledger row is the go for its plan; `--close` after the last
+   story lands, as *The epic* states.
+
+## task
+
+Slots: author, execute
+
+A task binds to *The task* and runs inside its story's `plan-execution` session: no commit boundary and no
+review of its own — its tests are its only review, and the story's row commits.
+
+1. **Mint** — `checkpoint mint --plan <plan>` before a single task's execute dispatch, or before the first
+   of a wave's; every brief of that checkpoint is written, stamped and checked before its first dispatch.
+2. **Brief** — the resolved `author` carrier writes `TASK-<stem>-T<n>.md` from ONE ledger row. Solo: the
+   orchestrator; Delegated: a bridge run whose deliverable is the brief file, before any task thread of
+   that checkpoint opens; Subagent: the executor vehicle from the orchestrator's slice. Then `task-brief
+   stamp <brief>`, and `task-brief check <brief>` immediately before the run — with `--dispatch
+   <dispatch-file>` when the run is a bridge dispatch.
+3. **Execute** — the resolved `execute` carrier runs the brief inside its Files. Delegated: `dispatch open
+   --checkpoint <oid> --task <brief>`, then the bridge run, one session per task; Subagent: the executor
+   vehicle with the brief — not a ledger thread, so a failed slice is undone by the whole-tree restore
+   under its precondition; Solo: the orchestrator edits the Files itself.
+4. **Verify** — the orchestrator runs the brief's Acceptance commands and its Negative cases itself; a red
+   task is undone by the restore *The task* names before any retry opens on its checkpoint; a slice refused
+   for its model's quota is retried once on the fallback model, as *The task* states.
+5. **Return** — the returned diff is the story's row from plan-execution step 3 onward; a delegated task's
+   fold rides that task's own held session (its brief's chain), never a shared one; the held-session gate
+   and the `plan-execution` render's fold lane read `plan-execution.execute`, never `task.execute`, so they
+   engage for a delegated task only when that slot is set to delegated, which delegates the rows not
+   carried as tasks as well; a solo or subagent task holds none.

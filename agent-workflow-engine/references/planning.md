@@ -147,13 +147,14 @@ is gone.
 
 ## The task
 
-A task is the tier below the plan: one briefed slice of a story's ledger, authored by one carrier and
-executed by another — two dispatches, never one. The kit mints a checkpoint before a single task's
+A task is the tier below the plan: one briefed slice of a story's ledger, authored in one step and
+executed in another by the carriers its `task` slots resolve to — the brief and its run are never one dispatch. The kit mints a checkpoint before a single task's
 execute dispatch, or before the first of a wave's — a tree snapshot of the plan's sequence (`node
 <kit>/tools/checkpoint.mjs mint --plan <plan>`), and the brief is stamped and checked against that newest
 checkpoint (`node <kit>/tools/task-brief.mjs stamp <brief>`, then
-`check <brief> --dispatch <dispatch-file>` immediately before the run); the brief is a scratch `TASK-`
-file under the plans directory, never a plan in flight.
+`check <brief>` immediately before the run, with
+`--dispatch <dispatch-file>` when the run is a bridge dispatch — a solo or subagent run checks the
+brief alone); the brief is a scratch `TASK-` file under the plans directory, never a plan in flight.
 A task's tests are its only review. A task that fails is undone by a restore to its checkpoint
 (`restore <oid>`), which holds only while no other session writes in scope — the precondition is the
 orchestrator's to keep, stated so the choice is owned.

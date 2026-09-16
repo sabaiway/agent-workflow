@@ -4,6 +4,13 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 8.0.1 — the orchestration seed's note names six activities (AD-147)
+
+`references/templates/orchestration.json`: the `_README` is the kit's new canonical byte for byte. It names six
+activities (`epic` with slots `author` and `review`, `task` with slots `author` and `execute`), the task slots'
+values and the silent slots' defaults. The seed's slot shape is unchanged, so an older kit still accepts it. A
+deployed file carrying the outgoing note refreshes on the next write. No script changed.
+
 ## 8.0.0 — the reader refuses an open-list clause: a guarantee is an invariant, never a list of cases (AD-133)
 
 **BREAKING — the 35th rule id, `open-list`.** `references/scripts/spec-schema.mjs` refuses a Contract clause that

@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-16 — AD-147 the activity table gains its tier rows: `epic` (author, review) and `task` (author, execute) are configured, resolved and rendered like every other activity (kit 14.3.0 MINOR, engine 5.8.0 MINOR, memory 8.0.1 PATCH; both bridges unchanged)
+
+**Epics and tasks now have recipe slots.** The kit had an epic file and a task brief, but no slot said who writes an
+epic, who reviews it, who writes a task brief or who runs one. Kit 14.3.0 adds the `epic` and `task` rows to the one
+activity registry, so `set-recipe`, `procedures`, `recipes`, `status` and the config validator accept them with no
+second list; `procedures epic` renders a shorthand agy review in plan mode over the rendered epic brief. Engine 5.8.0 adds the
+two canon sections the kit reads, and scopes a task's `--dispatch` check to a bridge run. Memory 8.0.1 ships the
+seed's six-activity note. A config without the new rows reads as before; an unedited orchestration note or methodology
+pointer refreshes on the next kit write, and a customized pointer without the six-activity token gets an upgrade note. Contract `docs/ai/specs/kit/carriers/` revision 6 (S11–S18 bound).
+
 ## 2026-09-15 — AD-146 a task thread is measured over its own files: file-disjoint tasks of one checkpoint run as a wave, `return` and `fold` refuse a change no task on the checkpoint claims, and `checkpoint restore --nonce` undoes one task (kit 14.2.0 MINOR, engine 5.7.0 MINOR; memory 8.0.0 and both bridges unchanged)
 
 **Tasks can now run side by side.** Kit 14.1.0 let a delegation thread name its task, but measured it over the whole
