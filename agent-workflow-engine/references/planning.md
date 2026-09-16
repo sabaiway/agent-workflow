@@ -148,14 +148,20 @@ is gone.
 ## The task
 
 A task is the tier below the plan: one briefed slice of a story's ledger, authored by one carrier and
-executed by another — two dispatches, never one. Before every execute dispatch the kit mints a
-checkpoint, a tree snapshot of the plan's sequence (`node <kit>/tools/checkpoint.mjs mint --plan
-<plan>`), and the brief is stamped and checked against that newest checkpoint (`node
-<kit>/tools/task-brief.mjs stamp <brief>`, then `check <brief> --dispatch <dispatch-file>` immediately
-before the run); the brief is a scratch `TASK-` file under the plans directory, never a plan in flight.
+executed by another — two dispatches, never one. The kit mints a checkpoint before a single task's
+execute dispatch, or before the first of a wave's — a tree snapshot of the plan's sequence (`node
+<kit>/tools/checkpoint.mjs mint --plan <plan>`), and the brief is stamped and checked against that newest
+checkpoint (`node <kit>/tools/task-brief.mjs stamp <brief>`, then
+`check <brief> --dispatch <dispatch-file>` immediately before the run); the brief is a scratch `TASK-`
+file under the plans directory, never a plan in flight.
 A task's tests are its only review. A task that fails is undone by a restore to its checkpoint
 (`restore <oid>`), which holds only while no other session writes in scope — the precondition is the
-orchestrator's to keep, stated so the choice is owned. A slice refused for its model's quota is
+orchestrator's to keep, stated so the choice is owned.
+The file-disjoint tasks of one checkpoint whose Reads meet no sibling's Files — the orchestrator's
+precondition — may run as a wave, each opened with `dispatch open --checkpoint <oid> --task <brief>`
+on its own codex session. A failed task of a wave is undone by `restore <oid> --nonce <n>`; the
+no-concurrent-writer precondition binds the whole-tree restore and any writer outside every open task's Files.
+A slice refused for its model's quota is
 retried ONCE, from the task's checkpoint, on the fallback model of the resolved vehicle posture — the
 `fallback` of `docs/ai/vehicles.json`, the bundled default only when that file is absent — as a
 recorded dispatch of its own whose rationale states the model that ran it; a second refusal stops the

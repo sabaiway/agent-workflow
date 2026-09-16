@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.2.0 — a task thread is measured over its own files: file-disjoint tasks of one checkpoint run as a wave, `open` refuses `task-files-scope`, `return` and `fold` refuse `out-of-files`, and `checkpoint restore <oid> --nonce <n>` undoes one task (AD-146)
+
+**Tasks can now run side by side.** In 14.1.0 a delegation thread could name its task, but it was still measured over
+the whole tree, so a second task's edits spoiled the first one's fingerprints and only one exec dispatch could run at a
+time. From 14.2.0 a task thread is measured over the files its brief lists, so tasks whose files do not overlap can run
+on one checkpoint at once, each on its own codex session. Untasked threads measure and restore exactly as in 14.1.0.
+Story S9 of the epic `EPICS-STORIES-TASKS-AS-THE-UNIT-OF-WORK`; the contract `docs/ai/specs/kit/task-thread/` is now
+live.
+
+**Before you upgrade:** close every task thread opened under 14.1.0. A thread opened there is measured under two rules
+and is not guaranteed to refuse. To undo a stray change: inside the files of a task thread closed without a fold, run
+that thread's task restore on its own checkpoint; otherwise close every thread and run the whole-tree `restore <oid>`.
+
+- **The files scope (`tools/dispatch-baseline.mjs`, `tools/dispatch-store.mjs`, `tools/exec-producer.mjs`).** The
+  base-relative diff, payload, fingerprint and clean probe take the thread's file list; the store fingerprint, the
+  returned-object enumeration and the returned diff pass it. Without a list every value is byte-identical to 14.1.0.
+- **`dispatch open --task` refuses `task-files-scope`** for a listed path a task may not claim, naming the path and
+  its kind.
+- **`dispatch return` and `fold` refuse `out-of-files`** for a task thread, naming every changed path that no open or
+  folded task thread on the same checkpoint lists (since the last commit); they fail closed on an undecidable domain or
+  an unreadable ledger.
+- **`task-brief check` tolerates a wave.** A checkpoint dirtied only in files that other open or folded task threads on
+  it list (since the last commit) still passes; dirt in the brief's own files or in a path no such thread lists refuses
+  `checkpoint-stale`, and an unreadable ledger refuses with its reason.
+- **`checkpoint restore <oid> --nonce <n>`** (`tools/checkpoint-restore.mjs` exports `restoreTaskThread`) restores
+  exactly one closed task thread's files and leaves every other path alone; it refuses `open-thread`, `task-folded` and
+  `task-target` in the contract's states, proves the result with git's own diff (external diff helpers and textconv off)
+  and prints `checkpoint restore <oid> task <n> proof clean`. The whole-tree `restore <oid>` is unchanged.
+- **Copy.** `DISPATCH_CONTRACT` and the dispatch mode doc gain the task clause; D10 is stated as a bar for untasked
+  threads and a mechanism for task threads in the mode doc, the module comment and HELP, and `await`'s no-slot message
+  no longer restates it; the README's dispatch row names both refusals.
+- **Tests.** New suites `dispatch-baseline.test/files-scope.test.mjs`, `dispatch.test/task-scope.test.mjs`,
+  `dispatch.test/task-wave.test.mjs` (two tasks, two sessions, no degrade) and `checkpoint.test/task-restore.test.mjs`;
+  six wave cases in `task-brief.test.mjs`.
+
 ## 14.1.0 — a dispatch names its task: `dispatch open --task <brief>` records the brief and its files, the ledger refuses overlapping and mixed task threads (`files-overlap`, `mixed-open`), and the held-session judge holds one session per task instead of one per commit (AD-145)
 
 **A held session now belongs to a task.** Until 14.0.0 the held-session judge kept ONE held session per commit, so a

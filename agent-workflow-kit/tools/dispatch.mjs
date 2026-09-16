@@ -53,8 +53,8 @@
 //     `gate-output` component is emitted in v1. The metric counts the returned change set only.
 //   • a receipt is FORGEABLE, exactly like every record in this family. What the absorb door defends
 //     against is a buggy or interrupted producer, not a hostile one.
-//   • D10 stands as a bar, not a mechanism: at most ONE in-tree exec dispatch runs at a time, and
-//     nothing here refuses a second one, task threads included; files-overlap and mixed-open additionally refuse conflicting task threads at append time.
+//   • D10 stands as a bar, not a mechanism, for untasked threads: at most ONE untasked in-tree exec dispatch
+//     runs at a time, and nothing here refuses a second one; for task threads it is a mechanism: files-overlap and mixed-open refuse conflicting opens at append time, and return and fold refuse out-of-files.
 //   • `await` observes ARRIVAL and nothing else: an expiry never authorizes the next writer, and the
 //     verb releases no slot it never held. Whether the run may be ABSORBED stays `return`'s question. A parallel-write story is not this plan's.
 //
@@ -74,7 +74,7 @@ import {
   DELEGATION_SCHEMA_VERSION, STEP_CLASSES, OBSERVATION_PROVENANCE, RETURN_OUTCOMES,
   SESSION_ID_NULLABLE_OUTCOMES, checkDispatchContractForm, checkDispatchMintConsistency,
   contractDigest, canonicalDelegationDigest, computeNumerator, evaluateMetricEligibility,
-  HEAD_BASELINE, readsBaseline, isTreeOid,
+  HEAD_BASELINE, readsBaseline, isTreeOid, isThreadTerminalRecord,
 } from './dispatch-record.mjs';
 import {
   appendDelegationRecord, readDelegationStore, resolveDelegationStorePath, delegationThreadState,
@@ -89,7 +89,7 @@ import {
   enumerateReturnedObjects, computeReturnedDiff, assembleIntegrationBundle,
 } from './exec-producer.mjs';
 import { gitBuf } from './core-evidence.mjs';
-import { isCleanAgainstBase, resolveTreeObject } from './dispatch-baseline.mjs';
+import { isCleanAgainstBase, resolveTreeObject, taskFilesScopeRefusal, runBaseDiff } from './dispatch-baseline.mjs';
 import { readDelegationLedger } from './dispatch-store-read.mjs';
 import { judgeLedger, threadVerdict, HELD_RECEIPT_BACKEND } from './held-session.mjs';
 import { degradeRecordSet, selectHeldSessionDegrades } from './review-state.mjs';
@@ -100,13 +100,13 @@ import {
 } from './observation-builder.mjs';
 import { handoffReturn, HANDOFF_SLUG_RE } from './worktree-handoff-return.mjs';
 import { parseBrief } from './task-brief.mjs';
-import { byteOrder, validateTask } from './task-thread.mjs';
+import { byteOrder, validateTask, readsTask, claimedPaths } from './task-thread.mjs';
 
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
 // The ONE contract sentence, doc-parity-bound into references/modes/dispatch.md: the FORM-only limit
 // and the aggregator's refusals are what a reader must not be able to mis-learn from the mode doc.
-export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds, and `await` is satisfied ONLY by the TERMINAL exec receipt of its own dispatch\'s {backend, nonce} — never by a review receipt, a ledger line or a finding manifest — while an expiry names a supervision question and releases NO writer slot; `open` records the thread\'s BASE (`head` by default, `checkpoint` under `--checkpoint <oid>`), `return` and `fold` measure against the base the dispatch recorded, never a flag, and the `fold` VERB itself refuses a checkpoint `code` thread the held-session judge names SUBSTITUTED in that thread\'s own verdict — a precondition like its hidden-path and content-blind guards, the store\'s preflight staying the only door on the record';
+export const DISPATCH_CONTRACT = 'the contract check is FORM-only — fields present, grammars respected, never boundedness, design-decidedness or acceptance adequacy — and `aggregate` REFUSES instead of computing acceptance for a wave with no pre-registration record, over an OPEN thread in scope, over a PRE-DISPATCH degrade that opens no thread, or across several waves with no `--wave`; the writer verbs add NO second legality door — the store\'s preflight is the only one, and its refusals travel verbatim — while `open` copies every mint-time field from the contract header and refuses a deadline below the wrapper cap plus the kill grace, `return` absorbs only a TERMINAL exec receipt whose backend, nonce and independently computed contractDigest match the dispatch it answers, and `fold` binds the CURRENT tree to the folded return\'s postTreeDigest, so a tree that moved between the two never folds, and `await` is satisfied ONLY by the TERMINAL exec receipt of its own dispatch\'s {backend, nonce} — never by a review receipt, a ledger line or a finding manifest — while an expiry names a supervision question and releases NO writer slot; `open` records the thread\'s BASE (`head` by default, `checkpoint` under `--checkpoint <oid>`), `return` and `fold` measure against the base the dispatch recorded, never a flag, and the `fold` VERB itself refuses a checkpoint `code` thread the held-session judge names SUBSTITUTED in that thread\'s own verdict — a precondition like its hidden-path and content-blind guards, the store\'s preflight staying the only door on the record; `open --task` records the task, a task thread is measured over its Files and `open`, `return` and `fold` refuse `files-overlap`, `mixed-open` and `out-of-files`';
 
 // ── the flag surface (the CLI tests pin it against the D3 key sets) ────────────────────────────────
 // flag → the record field it decides. The fields NOT on a flag are DERIVED and listed beside them,
@@ -557,8 +557,10 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
     task = { brief, files: [...new Set(parsed.files.map(({ path }) => path))].sort(byteOrder) };
     const checked = validateTask(task, base.kind);
     if (!checked.ok) return refusal('open', checked.reason);
+    const scope = taskFilesScopeRefusal(cwd, base, task.files);
+    if (scope !== null) return refusal('open', `task-files-scope: ${scope}; nothing was written`);
   }
-  const baselineClean = isCleanAgainstBase(cwd, base);
+  const baselineClean = isCleanAgainstBase(cwd, base, undefined, task?.files ?? null);
   if (baselineClean === null) {
     return refusal('open', 'the working state could not be probed, so the baseline is undecidable — a dispatch never records a guessed baseline, and outside a git work tree there is no tree to fingerprint either (fail closed); nothing was written');
   }
@@ -577,7 +579,7 @@ const runOpen = ({ baseCwd, env, argv, now }) => {
   // delegate's account at return time. `open` is where that lie is cheapest to catch.
   const honest = hiddenFromPlainDiff(top);
   if (!honest.ok) return refusal('open', `${honest.reason}; nothing was written`);
-  const preTreeDigest = uncommittedStateFingerprint(cwd, undefined, base);
+  const preTreeDigest = uncommittedStateFingerprint(cwd, undefined, base, task?.files ?? null);
   const record = {
     schema: DELEGATION_SCHEMA_VERSION,
     kind: 'dispatch',
@@ -668,7 +670,7 @@ export const pollExecArrival = ({ dir, backend, nonce, io = {} }) => {
   return { state: 'satisfied', reason: `the TERMINAL exec receipt landed (${path}) — outcome ${receipt.outcome} · exit ${receipt.exitStatus} · session ${receipt.sessionId ?? 'none'}` };
 };
 
-const NO_SLOT_RELEASED = 'NO writer slot was released: a wait that ended without an answer never authorizes the next dispatch (D10 — one in-tree exec dispatch at a time)';
+const NO_SLOT_RELEASED = 'NO writer slot was released: a wait that ended without an answer never authorizes the next dispatch';
 
 // The bound arithmetic is BigInt, and it HAS to be. The frozen record vocabulary admits any positive
 // SAFE INTEGER `deadlineS` (dispatch-record.mjs), so `deadlineS * 1000` leaves the exactly
@@ -1056,6 +1058,18 @@ export const treeDriftRefusal = (openingDigest, closingDigest) => (openingDigest
   ? null
   : `the tree moved WHILE the return was being computed (${openingDigest.slice(0, 12)}… → ${closingDigest.slice(0, 12)}…) — the enumeration and the diff would then describe two different change sets, and the record would bind a postTreeDigest neither of them saw; nothing was written, so leave the tree alone and return again`);
 
+const getOutOfFilesRefusal = (cwd, base, env) => {
+  const changed = runBaseDiff(cwd, base, ['--name-only', '--no-renames', '-z'], {}, null);
+  if (changed === null) return 'out-of-files: the snapshot domain is undecidable (fail closed); nothing was written';
+  const ledger = readDelegationLedger(cwd, env);
+  if (ledger.state !== 'ok') return `out-of-files: ${ledger.reason ?? `delegation ledger is ${ledger.state}`} (fail closed); nothing was written`;
+  const { records, head } = ledger;
+  if (head.state === 'error') return `out-of-files: ${head.reason} (fail closed); nothing was written`;
+  const claimed = new Set(claimedPaths(records, base.treeOid, head, isThreadTerminalRecord));
+  const unclaimed = changed.toString('utf8').split('\0').filter((path) => path !== '' && !claimed.has(path)).sort(byteOrder);
+  return unclaimed.length === 0 ? null : `out-of-files: ${unclaimed.join(', ')}; nothing was written`;
+};
+
 const runReturn = ({ baseCwd, env, argv, now }) => {
   const { values, operands, cwd } = scan(argv, { ...RETURN_FLAG_FIELDS, ...RETURN_INPUT_FLAGS }, baseCwd, { booleans: RETURN_BOOLEAN_FLAGS });
   refuseOperands('return', operands);
@@ -1156,20 +1170,23 @@ const runReturn = ({ baseCwd, env, argv, now }) => {
   // A tree that moved between them would hand the numerator one change set and the denominator
   // another, and the record would bind a postTreeDigest neither of them describes.
   const base = readsBaseline(dispatch);
-  const openingDigest = uncommittedStateFingerprint(cwd, undefined, base);
-  const enumerated = enumerateReturnedObjects(cwd, { base });
+  const paths = readsTask(dispatch)?.files ?? null;
+  const openingDigest = uncommittedStateFingerprint(cwd, undefined, base, paths);
+  const enumerated = enumerateReturnedObjects(cwd, { base, paths });
   if (!enumerated.ok) return refusal('return', enumerated.reason);
   const opaque = contentBlindRefusal(enumerated.entries);
   if (opaque !== null) return refusal('return', `${opaque}; nothing was written`);
   const lostTarget = symlinkTargetRefusal(top, enumerated.entries);
   if (lostTarget !== null) return refusal('return', `${lostTarget}; nothing was written`);
-  const produced = computeReturnedDiff(cwd, { base });
+  const produced = computeReturnedDiff(cwd, { base, paths });
   if (!produced.ok) return refusal('return', produced.reason);
   // The payload IS the diff and its digest IS the uncommitted-state fingerprint — one computation,
   // so diffDigest and postTreeDigest are equal by construction rather than by coincidence.
   const postTreeDigest = sha256(produced.diff);
   const drift = treeDriftRefusal(openingDigest, postTreeDigest);
   if (drift !== null) return refusal('return', drift);
+  const outOfFiles = paths === null ? null : getOutOfFilesRefusal(cwd, base, env);
+  if (outOfFiles !== null) return refusal('return', outOfFiles);
   // The fail-closed arm of a producer contradiction (one objectId claimed at two sizes). The
   // enumeration is this kit's own and emits one entry per object, so nothing here can reach it —
   // the vocabulary stays the authority on what a component is, and its refusal is surfaced whole.
@@ -1290,7 +1307,8 @@ const runFold = ({ baseCwd, env, argv, now }) => {
   // return and the fold without moving the digest this fold is about to bind. The enumeration runs
   // here for that one question — the fold computes no metric of its own.
   const base = readsBaseline(state.dispatch);
-  const enumerated = enumerateReturnedObjects(cwd, { base });
+  const paths = readsTask(state.dispatch)?.files ?? null;
+  const enumerated = enumerateReturnedObjects(cwd, { base, paths });
   if (!enumerated.ok) return refusal('fold', enumerated.reason);
   const opaque = contentBlindRefusal(enumerated.entries);
   if (opaque !== null) return refusal('fold', `${opaque}; nothing was written`);
@@ -1327,7 +1345,9 @@ const runFold = ({ baseCwd, env, argv, now }) => {
   // fold is honest there — identical payload bytes, identical content — so the rule is "the fold
   // precedes staging", never "staging refuses the fold by construction". A checkpoint measurement
   // never reads the real index, so staging moves nothing there; the fold still precedes `git add`.
-  const treeDigestAtFold = uncommittedStateFingerprint(cwd, undefined, base);
+  const treeDigestAtFold = uncommittedStateFingerprint(cwd, undefined, base, paths);
+  const outOfFiles = paths === null ? null : getOutOfFilesRefusal(cwd, base, env);
+  if (outOfFiles !== null) return refusal('fold', outOfFiles);
   const record = {
     schema: DELEGATION_SCHEMA_VERSION,
     kind: 'fold',
@@ -1672,7 +1692,7 @@ refusal from the store verbatim.
 --checkpoint <oid> records a resolvable TREE object of exactly 40 or 64 lowercase hex characters
 (a commit, blob, tag or unknown id refuses by name); the base rides the record and return/fold read
 it there, while a checkpoint CLEAN line names the base.
---task records the brief's path and its byte-ordered Files, requires --checkpoint (task-base), refuses a brief the parser refuses by the parser's name, and the store refuses files-overlap and mixed-open at append time.
+--task records the brief's path and its byte-ordered Files, requires --checkpoint (task-base), refuses a brief the parser refuses by the parser's name, refuses task-files-scope for a Files path the snapshot domain can never hold, and the store refuses files-overlap and mixed-open at append time; a task thread is measured over its Files.
 
 THE LEDGER a tree-binding verb uses is the CANONICAL one, exactly: <git common dir>/
 agent-workflow-delegation.jsonl. A store inside the work tree is measured as part of the change set
@@ -1800,8 +1820,8 @@ diff: a mode change moves it and no untracked marker line exists. Under a head b
 arrives as a deletion plus a creation, over-counting a plain rename; under a checkpoint base git's own
 rename detection applies inside the one base-relative layer and a detected rename is counted once.
 A receipt is forgeable exactly like every record here;
-and D10 stands as a BAR, not a mechanism — at most one in-tree exec dispatch at a time, and nothing
-refuses a second, task threads included; files-overlap and mixed-open additionally refuse conflicting task threads at append time.
+and D10 stands as a BAR, not a mechanism, for untasked threads — at most one untasked in-tree exec dispatch at a time,
+and nothing refuses a second; for task threads it is a mechanism: files-overlap and mixed-open refuse conflicting opens at append time, and return and fold refuse out-of-files.
 
 Never commits, never runs a subscription CLI, spawns nothing but git READS — with TWO stated exceptions: handoff-return,
 which attests MAIN's index with git write-tree: that may write a tree OBJECT into the odb and moves

@@ -1,8 +1,11 @@
-// spec:checkpoint — docs/ai/specs/kit/checkpoint/restore.md
+// restoreCheckpoint, restoreTaskThread — spec:checkpoint, spec:task-thread; docs/ai/specs/kit/checkpoint/restore.md
 import { unlinkSync, rmdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { resolveTreeObject, snapshotScope } from './dispatch-baseline.mjs';
+import { resolveTreeObject, snapshotScope, computeBasePayload } from './dispatch-baseline.mjs';
 import { readDelegationLedger } from './dispatch-store-read.mjs';
+import { isThreadTerminalRecord } from './dispatch-record.mjs';
+import { readsTask, readsInsideEpoch, epochClaims } from './task-thread.mjs';
+import { hasPathOverlap } from './claim-relation.mjs';
 import { CHECKPOINT_REF_PREFIX, withRepository, readGit, readGitBytes, readCheckpointRefs,
   withTemporaryIndex, readScopeStat, writeSnapshot, findOpenCheckpointThread } from './checkpoint-core.mjs';
 
@@ -20,8 +23,14 @@ const SEQUENCE_REF_PATTERN = /^[^/]+\/(?:0|[1-9][0-9]*)$/;
 const ALLOWED_MODES = ['100644', '100755', '120000'];
 const LEDGER_ABSENT = 'absent';
 const LEDGER_OK = 'ok';
+const HEAD_ERROR = 'error';
+const DISPATCH_KIND = 'dispatch';
+const FOLD_KIND = 'fold';
+const CHECKPOINT_KIND = 'checkpoint';
+const FOLDED = 'folded';
 const NONEMPTY_CODES = ['ENOTEMPTY', 'EEXIST'];
-const NAMES = { scope: 'target-scope', ledger: 'ledger', open: 'open-thread', conflict: 'type-conflict' };
+const NAMES = { scope: 'target-scope', ledger: 'ledger', open: 'open-thread', conflict: 'type-conflict',
+  task: 'task-target', folded: 'task-folded' };
 const ENCODING_ERROR = 'target tree paths are not lossless UTF-8';
 const ENTRY_ERROR = 'unreadable target tree entry';
 const UNREFERENCED_ERROR = 'no checkpoint sequence carries target';
@@ -31,10 +40,11 @@ const GIT_ARGS = {
   entries: ['ls-tree', '-r', '-z'],
   read: ['read-tree'],
   checkout: ['checkout-index', '-a', '-f'],
+  checkoutPaths: ['checkout-index', '-f', '--'],
 };
 
 const refuse = (reason) => ({ ok: false, code: REFUSE, reason });
-const readTargetEntries = (context, target) => {
+const readTargetEntries = (context, target, files = null) => {
   const bytes = readGitBytes(context, [...GIT_ARGS.entries, target]);
   const text = bytes.toString(UTF8);
   if (!Buffer.from(text, UTF8).equals(bytes)) throw new Error(`${NAMES.scope}: ${ENCODING_ERROR}`);
@@ -42,11 +52,12 @@ const readTargetEntries = (context, target) => {
     const parsed = ENTRY_PATTERN.exec(entry);
     if (parsed === null) throw new Error(`${NAMES.scope}: ${ENTRY_ERROR}`);
     const [, mode, path] = parsed;
+    if (files !== null && !files.includes(path)) return null;
     if (!ALLOWED_MODES.includes(mode) || path.split(SLASH).some((segment) => FORBIDDEN_SEGMENTS.includes(segment))) {
       throw new Error(`${NAMES.scope}: ${path}`);
     }
     return path;
-  });
+  }).filter((path) => path !== null);
 };
 const readHeldSet = (context, target) => {
   const refs = readCheckpointRefs(context).filter(({ ref }) => SEQUENCE_REF_PATTERN.test(ref.slice(CHECKPOINT_REF_PREFIX.length)));
@@ -123,4 +134,50 @@ export const restoreCheckpoint = (cwd, oid, io = {}) => withRepository(cwd, io, 
   if (!snapshot.ok) return snapshot;
   return snapshot.oid === target ? { ok: true, target, proof: snapshot.oid }
     : refuse(`${MISMATCH}: ${target} ${snapshot.oid}`);
+});
+
+export const restoreTaskThread = (cwd, oid, nonce, io = {}) => withRepository(cwd, io, (context) => {
+  const tree = resolveTreeObject(context.top, oid, context.io);
+  if (!tree.ok) return refuse(tree.reason);
+  const target = readGit(context, [...GIT_ARGS.resolve, oid]);
+  const ledger = readDelegationLedger(context.cwd, context.env);
+  if (ledger.state !== LEDGER_OK) return refuse(`${NAMES.ledger}: ${ledger.reason ?? ledger.state}`);
+  if (ledger.head.state === HEAD_ERROR) return refuse(`${NAMES.ledger}: ${ledger.head.reason}`);
+  const { records, head } = ledger;
+  const index = records.findIndex((record) => record.kind === DISPATCH_KIND && record.nonce === nonce);
+  if (index === LAST) return refuse(`${NAMES.task}: ${nonce}`);
+  const dispatch = records[index];
+  const task = readsTask(dispatch);
+  if (task === null) return refuse(`${NAMES.task}: ${nonce}`);
+  const later = records.slice(index + NEXT).filter((record) => record.nonce === nonce);
+  if (!later.some(isThreadTerminalRecord)) return refuse(`${NAMES.open}: ${nonce}`);
+  if (later.some((record) => record.kind === FOLD_KIND)) return refuse(`${NAMES.folded}: ${nonce}`);
+  if (dispatch.baseline.treeOid !== target) return refuse(`${NAMES.task}: ${nonce}: ${target}`);
+  const scope = snapshotScope(context.top, { baseTreeOid: target }, context.io);
+  if (!scope.ok) return refuse(scope.reason);
+  const paths = scope.paths.filter((path) => task.files.includes(path));
+  const domain = new Set(paths);
+  for (const claim of epochClaims(records, head, isThreadTerminalRecord)) {
+    if (claim.nonce === nonce || !claim.files.some((file) => paths.some((path) => hasPathOverlap(file, path)))) continue;
+    return refuse(`${claim.state === FOLDED ? NAMES.folded : NAMES.open}: ${claim.nonce}`);
+  }
+  const untasked = records.filter((record) => record.kind !== DISPATCH_KIND || readsTask(record) === null);
+  const folded = untasked.find((record, position) => record.kind === DISPATCH_KIND && readsInsideEpoch(record, head)
+    && untasked.slice(position + NEXT).some((successor) => successor.nonce === record.nonce && successor.kind === FOLD_KIND));
+  if (folded !== undefined) return refuse(`${NAMES.folded}: ${folded.nonce}`);
+  const held = readHeldSet(context, target);
+  const open = findOpenCheckpointThread(untasked, held);
+  if (open !== undefined) return refuse(`${NAMES.open}: ${open.nonce}`);
+  const entries = readTargetEntries(context, target, task.files);
+  const outside = entries.find((path) => !domain.has(path));
+  if (outside !== undefined) return refuse(`${NAMES.scope}: ${outside}`);
+  const types = checkTypes(context, entries);
+  if (!types.ok) return types;
+  withTemporaryIndex(context.env, (env) => {
+    readGit(context, [...GIT_ARGS.read, target], env);
+    if (entries.length > START) readGit(context, [...GIT_ARGS.checkoutPaths, ...entries], env);
+  });
+  removeExtras(context, paths, new Set(entries));
+  const proof = computeBasePayload(context.top, { kind: CHECKPOINT_KIND, treeOid: target }, context.io, task.files);
+  return proof !== null && proof.length === START ? { ok: true, target, nonce } : refuse(MISMATCH);
 });

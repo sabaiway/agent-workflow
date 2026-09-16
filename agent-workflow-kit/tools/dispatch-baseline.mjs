@@ -1,4 +1,4 @@
-// dispatch-baseline.mjs — snapshotScope, computeBasePayload, computeBaseFingerprint,
+// dispatch-baseline.mjs — snapshotScope, computeBasePayload, computeBaseFingerprint, taskFilesScopeRefusal,
 // isCleanAgainstBase, runBaseDiff and resolveTreeObject; spec:dispatch-baseline.
 // Writes only its own temporary indexes and the blob objects stored by forced adds.
 // Head measurements delegate unchanged to core-evidence without a temporary index.
@@ -20,6 +20,8 @@ const PAYLOAD_DIFF_ARGS = ['--no-ext-diff', '--no-textconv', '--ignore-submodule
 const SCOPE_EXCLUSIONS = ['/docs/plans/', '/.claude/settings.json', '/.claude/settings.local.json', '/.mcp.json'];
 const MISSING_PATH_CODES = ['ENOENT', 'ENOTDIR'];
 const ABSENT_HEAD_STATUS = 1;
+const CHECK_IGNORE_CLEAR_STATUS = 1;
+const EXCLUDE_SOURCES = ['.gitignore', '.gitattributes'];
 const splitPaths = (bytes) => {
   const text = bytes.toString('utf8');
   if (!Buffer.from(text).equals(bytes)) throw new Error('git path names are not lossless UTF-8');
@@ -62,12 +64,12 @@ const readStat = (path, lstat) => {
     throw error;
   }
 };
-const readTreePaths = (run, top, treeOid, env) => splitPaths(readGit(run, ['ls-tree', '-r', '--name-only', '-z', treeOid], top, env));
-const readHeadPaths = (run, top, env) => {
+const readTreePaths = (run, top, treeOid, env, directories = false) => splitPaths(readGit(run, ['ls-tree', '-r', ...(directories ? ['-d', '-t'] : []), '--name-only', '-z', treeOid], top, env));
+const readHeadPaths = (run, top, env, directories = false) => {
   const head = run(['rev-parse', '--verify', '--quiet', 'HEAD'], top, undefined, env);
   if (head && !head.error && !head.signal && head.status === ABSENT_HEAD_STATUS) return [];
   if (!head || head.error || head.signal || head.status !== 0) throw new Error('cannot resolve HEAD');
-  return readTreePaths(run, top, 'HEAD', env);
+  return readTreePaths(run, top, 'HEAD', env, directories);
 };
 const excludePatterns = (top, paths) => [
   ...SCOPE_EXCLUSIONS,
@@ -99,8 +101,7 @@ const collectScope = (top, baseTreeOid, run, lstat, env) => withTemporaryIndex(e
 
 export const snapshotScope = (cwd, { baseTreeOid = null } = {}, io = {}) => {
   try {
-    const env = io.env ?? process.env;
-    const run = makeRunner(io);
+    const env = io.env ?? process.env, run = makeRunner(io);
     const top = locateTop(cwd, run, env);
     return { ok: true, paths: collectScope(top, baseTreeOid, run, io.lstat ?? lstatSync, env) };
   } catch (error) {
@@ -110,8 +111,7 @@ export const snapshotScope = (cwd, { baseTreeOid = null } = {}, io = {}) => {
 
 export const resolveTreeObject = (cwd, oid, io = {}) => {
   try {
-    const env = io.env ?? process.env;
-    const run = makeRunner(io);
+    const env = io.env ?? process.env, run = makeRunner(io);
     const top = locateTop(cwd, run, env);
     const type = readGit(run, ['cat-file', '-t', oid], top, env).toString('utf8').trim();
     return type === 'tree' ? { ok: true } : { ok: false, reason: `${oid} names a ${type}, not a tree` };
@@ -120,19 +120,47 @@ export const resolveTreeObject = (cwd, oid, io = {}) => {
   }
 };
 
-export const runBaseDiff = (cwd, base, args, io = {}) => {
+export const taskFilesScopeRefusal = (cwd, base, paths, io = {}) => {
+  if (paths.length === 0) return null;
+  const current = { path: paths[0] };
+  try {
+    const env = io.env ?? process.env, run = makeRunner(io), lstat = io.lstat ?? lstatSync;
+    const top = locateTop(cwd, run, env);
+    return withTemporaryIndex(env, (indexEnv) => {
+      readGit(run, ['read-tree', '--empty'], top, indexEnv);
+      const treePaths = readHeadPaths(run, top, indexEnv).concat(base.kind === 'checkpoint' ? readTreePaths(run, top, base.treeOid, indexEnv) : []);
+      const directories = readHeadPaths(run, top, indexEnv, true).concat(base.kind === 'checkpoint' ? readTreePaths(run, top, base.treeOid, indexEnv, true) : []);
+      const matchesPattern = (path, pattern) => { const probe = patternToProbe(pattern); return isDirPattern(pattern) ? path === probe.slice(0, -1) || path.startsWith(probe) : path === probe; };
+      const exclusions = excludePatterns(top, paths);
+      for (const path of paths) {
+        current.path = path;
+        if (EXCLUDE_SOURCES.includes(basename(path))) return `${path}: exclude-source`;
+        if (path.split('/').includes('node_modules') || exclusions.some((pattern) => matchesPattern(path, pattern))) return `${path}: excluded`;
+        if (readStat(join(top, path), lstat)?.isDirectory() || directories.includes(path)) return `${path}: directory`;
+        const prefixes = path.split('/').slice(0, -1).map((segment, index, parts) => parts.slice(0, index + 1).join('/'));
+        if (prefixes.some((prefix) => { const stat = readStat(join(top, prefix), lstat); return (stat !== null && !stat.isDirectory()) || treePaths.includes(prefix); })) return `${path}: beneath-non-directory`;
+        if (treePaths.includes(path) || KIT_OWN_PATHS.some((pattern) => matchesPattern(path, pattern))) continue;
+        const { GIT_LITERAL_PATHSPECS: _literalPathspecs, ...ignoreEnv } = indexEnv; const ignored = run(['check-ignore', '--no-index', '-q', '--', path], top, undefined, ignoreEnv);
+        if (!ignored || ignored.error || ignored.signal || ![0, CHECK_IGNORE_CLEAR_STATUS].includes(ignored.status)) throw new Error(`git check-ignore failed: ${ignored?.error?.message ?? String(ignored?.stderr ?? '').trim()}`);
+        if (ignored.status === 0) return `${path}: ignored`;
+      }
+      return null;
+    });
+  } catch (error) { return `${current.path}: ${error.message}`; }
+};
+
+export const runBaseDiff = (cwd, base, args, io = {}, paths = null) => {
   if (base.kind !== 'checkpoint') return null;
   try {
-    const env = io.env ?? process.env;
-    const run = makeRunner(io);
+    const env = io.env ?? process.env, run = makeRunner(io);
     const top = locateTop(cwd, run, env);
     if (!resolveTreeObject(top, base.treeOid, io).ok) return null;
     const scope = snapshotScope(top, { baseTreeOid: base.treeOid }, io);
     if (!scope.ok) return null;
     const basePaths = readTreePaths(run, top, base.treeOid, env);
-    const present = [];
-    const removed = [];
-    for (const path of scope.paths) {
+    const scopedPaths = paths === null ? scope.paths : scope.paths.filter((path) => paths.includes(path));
+    const present = [], removed = [];
+    for (const path of scopedPaths) {
       const stat = readStat(join(top, path), io.lstat ?? lstatSync);
       const baseHoldsPath = basePaths.includes(path);
       const neverCommittable = stat !== null && isNeverCommittableStat(stat);
@@ -141,7 +169,7 @@ export const runBaseDiff = (cwd, base, args, io = {}) => {
       if (materialized) present.push(path);
       if (!materialized && !neverCommittable && (stat === null || baseHoldsPath)) removed.push(path);
     }
-    const excludedBasePaths = basePaths.filter((path) => !scope.paths.includes(path));
+    const excludedBasePaths = basePaths.filter((path) => !scopedPaths.includes(path));
     const conflict = present.find((path) => excludedBasePaths.some((excluded) =>
       path.startsWith(`${excluded}/`) || excluded.startsWith(`${path}/`)));
     if (conflict !== undefined) throw new Error(`live path ${conflict} conflicts with an excluded base path`);
@@ -156,17 +184,17 @@ export const runBaseDiff = (cwd, base, args, io = {}) => {
   }
 };
 
-export const computeBasePayload = (cwd, base, io = {}) => base.kind === 'head'
+export const computeBasePayload = (cwd, base, io = {}, paths = null) => base.kind === 'head'
   ? computeFingerprintPayload(cwd, io)
-  : runBaseDiff(cwd, base, PAYLOAD_DIFF_ARGS, io);
+  : runBaseDiff(cwd, base, PAYLOAD_DIFF_ARGS, io, paths);
 
-export const computeBaseFingerprint = (cwd, base, io) => {
-  const payload = computeBasePayload(cwd, base, io);
+export const computeBaseFingerprint = (cwd, base, io, paths = null) => {
+  const payload = computeBasePayload(cwd, base, io, paths);
   return payload === null ? null : createHash(HASH_ALGORITHM).update(payload).digest('hex');
 };
 
-export const isCleanAgainstBase = (cwd, base, io) => {
+export const isCleanAgainstBase = (cwd, base, io, paths = null) => {
   if (base.kind === 'head') return isTreeClean(cwd, io);
-  const payload = computeBasePayload(cwd, base, io);
+  const payload = computeBasePayload(cwd, base, io, paths);
   return payload === null ? null : payload.length === 0;
 };

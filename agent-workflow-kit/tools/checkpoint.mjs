@@ -7,7 +7,7 @@ import { PLANS_REL, isScratchPlanName } from './plan-files.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { CHECKPOINT_REF_PREFIX, refuse, withRepository, readGit, readCheckpointRefs, writeSnapshot,
   findOpenCheckpointThread } from './checkpoint-core.mjs';
-import { restoreCheckpoint } from './checkpoint-restore.mjs';
+import { restoreCheckpoint, restoreTaskThread } from './checkpoint-restore.mjs';
 
 export { CHECKPOINT_REF_PREFIX } from './checkpoint-core.mjs';
 const ACCEPT = 0;
@@ -30,11 +30,15 @@ const LEDGER_OK = 'ok';
 const CLEAN = 'CLEAN';
 const DIRTY = 'DIRTY';
 const PROOF = 'proof';
+const TASK_KIND = 'task';
+const TASK_PROOF = 'clean';
 const PLAN_FLAG = '--plan';
+const NONCE_FLAG = '--nonce';
 const PLAN_ARG_COUNT = 3;
 const OID_ARG_COUNT = 2;
+const TASK_ARG_COUNT = 4;
 const ARGV_OFFSET = 2;
-const USAGE_TEXT = 'usage: checkpoint mint|newest|prune --plan <plan> | verify|restore <oid>';
+const USAGE_TEXT = 'usage: checkpoint mint|newest|prune --plan <plan> | verify <oid> | restore <oid> [--nonce <n>]';
 const PLAN_ERROR = 'expected a readable regular plan directly under docs/plans';
 const SEQUENCE_ERROR = 'expected contiguous numbered refs on trees';
 const GIT_ARGS = {
@@ -122,17 +126,22 @@ const PLAN_OPERATIONS = { [VERBS.mint]: mintCheckpoint, [VERBS.newest]: newestCh
 const formatRef = ({ stem, n, oid }) => `${CHECKPOINT_KIND} ${stem}/${n} ${oid}${NEWLINE}`;
 const formatRefusal = ({ code, reason }) => ({ code, stdout: EMPTY, stderr: `${reason}${NEWLINE}` });
 export const main = (argv = process.argv.slice(ARGV_OFFSET), deps = {}) => {
-  const [verb, operand, planPath] = argv;
+  const [verb, operand, planPath, nonce] = argv;
   const planVerb = Object.hasOwn(PLAN_OPERATIONS, verb);
   const oidVerb = verb === VERBS.verify || verb === VERBS.restore;
+  const taskRestore = verb === VERBS.restore && argv.length === TASK_ARG_COUNT && operand
+    && planPath === NONCE_FLAG && typeof nonce === STRING && nonce !== EMPTY;
   if (!(planVerb && argv.length === PLAN_ARG_COUNT && operand === PLAN_FLAG && planPath)
-    && !(oidVerb && argv.length === OID_ARG_COUNT && operand)) return formatRefusal(refuse(USAGE_TEXT, USAGE));
+    && !(oidVerb && argv.length === OID_ARG_COUNT && operand) && !taskRestore) return formatRefusal(refuse(USAGE_TEXT, USAGE));
   const cwd = deps.cwd ?? process.cwd();
   const operation = verb === VERBS.restore ? restoreCheckpoint : verifyCheckpoint;
-  const result = planVerb ? PLAN_OPERATIONS[verb](cwd, planPath, deps) : operation(cwd, operand, deps);
+  const result = taskRestore ? restoreTaskThread(cwd, operand, nonce, deps)
+    : planVerb ? PLAN_OPERATIONS[verb](cwd, planPath, deps) : operation(cwd, operand, deps);
   if (!result.ok) return formatRefusal(result);
-  if (verb === VERBS.restore) return { code: ACCEPT,
-    stdout: `${CHECKPOINT_KIND} ${VERBS.restore} ${result.target} ${PROOF} ${result.proof}${NEWLINE}`, stderr: EMPTY };
+  if (verb === VERBS.restore) {
+    const proof = taskRestore ? `${TASK_KIND} ${nonce} ${PROOF} ${TASK_PROOF}` : `${PROOF} ${result.proof}`;
+    return { code: ACCEPT, stdout: `${CHECKPOINT_KIND} ${VERBS.restore} ${result.target} ${proof}${NEWLINE}`, stderr: EMPTY };
+  }
   if (verb === VERBS.verify) return { code: result.clean ? ACCEPT : REFUSE,
     stdout: `${result.clean ? CLEAN : DIRTY} ${result.target} ${result.oid}${NEWLINE}`, stderr: EMPTY };
   return { code: ACCEPT, stdout: verb === VERBS.prune ? EMPTY : formatRef(result), stderr: EMPTY };

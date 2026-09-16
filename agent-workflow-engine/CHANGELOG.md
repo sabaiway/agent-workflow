@@ -4,6 +4,19 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.7.0 — the canons name the task wave: file-disjoint tasks of one checkpoint on their own codex sessions, the mint before a single task or a wave's first execute, the task restore, and a held session per task chain (AD-146)
+
+`references/planning.md`, `## The task`: the checkpoint is minted before a single task's execute dispatch, or before
+the first of a wave's (it was "before every execute dispatch"); a new sentence group lets the file-disjoint tasks of
+one checkpoint whose Reads meet no sibling's Files — the orchestrator's precondition — run as a wave, each opened with
+`dispatch open --checkpoint <oid> --task <brief>` on its own codex session; a failed task of a wave is undone by
+`restore <oid> --nonce <n>`, and the no-concurrent-writer precondition binds the whole-tree restore and any writer
+outside every open task's Files. `references/procedures.md`, plan-execution step 5, one sentence after the held-session
+group, which stays byte for byte: a task thread's held session is keyed to its task's chain (its brief), an untasked
+thread keeps the epoch's one chain. Pinned by `test/task-wave-canon.test.mjs` (spec:task-thread/S11); every existing
+canon pin holds unedited. MINOR: additive sentences and one narrowed clause; no step moves. Published on this train
+with kit 14.2.0, which ships the mechanism.
+
 ## 5.6.0 — the planning canon states the one retry of a quota-refused slice on the fallback model, and the orchestration canon's apply clause re-derives the executor (AD-143)
 
 `references/planning.md`, `## The task`, one sentence: a slice refused for its model's quota is retried ONCE, from the

@@ -107,6 +107,8 @@ Each ledger row is one logical commit.
    a fold is a forbidden substitution `review-state` names (a retry of a failed thread and a recorded
    execute degrade excepted); the orchestrator still runs the suites, verifies the returned diff,
    re-mints the red-proofs and owns the commit, and folds by hand only what the delegate cannot reach.
+   A task thread's held session is keyed to its task's chain (its brief), so each task of a wave
+   holds its own session; an untasked thread keeps the epoch's one chain.
    `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
    degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
    mints the ONE receipt `commit-guard --check` gates the commit against.

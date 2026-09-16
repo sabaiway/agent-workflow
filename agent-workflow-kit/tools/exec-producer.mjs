@@ -14,7 +14,7 @@
 // the DENOMINATOR) while HEAD→worktree shows nothing at all, so the object would vanish from the
 // NUMERATOR and the two halves of one ratio would describe different change sets. The diff bytes are
 // computeFingerprintPayload's own bytes, imported rather than rebuilt. Under a checkpoint base the
-// walk is one layer against the base tree, through the leaf's temporary index.
+// walk is one layer against the base tree, through the leaf's temporary index; io.paths absent or null = the whole domain.
 //
 // ONE OBJECT, ONE ENTRY. Under a head base an object touched in both layers is a single entry, and its pre-image is
 // always the HEAD blob — never the index blob: the numerator answers what the delegate could have
@@ -359,11 +359,11 @@ const entryForUntracked = (top, rel, lstat) => {
 };
 
 const enumerateCheckpointObjects = (top, base, io) => {
-  const raw = runBaseDiff(top, base, BASE_RAW_ARGS, io);
+  const raw = runBaseDiff(top, base, BASE_RAW_ARGS, io, io.paths ?? null);
   if (raw === null) return refuse('git could not read the base-relative change set (fail closed)');
   const parsed = parseRawRecords(raw, 'the base-relative change set');
   if (!parsed.ok) return parsed;
-  const numstat = runBaseDiff(top, base, BASE_NUMSTAT_ARGS, io);
+  const numstat = runBaseDiff(top, base, BASE_NUMSTAT_ARGS, io, io.paths ?? null);
   if (numstat === null) return refuse('git could not read the numstat binary markers (fail closed)');
   const binary = parseNumstatMarkers(numstat, 'the base-relative binary markers');
   if (!binary.ok) return binary;
@@ -482,7 +482,7 @@ export const computeReturnedDiff = (cwd = process.cwd(), io = {}) => {
   // caller that framed a bundle around a thrown read would have no bytes and no reason either.
   try {
     const base = io.base ?? HEAD_BASELINE;
-    const payload = base.kind === 'checkpoint' ? computeBasePayload(cwd, base, io) : computeFingerprintPayload(cwd);
+    const payload = base.kind === 'checkpoint' ? computeBasePayload(cwd, base, io, io.paths ?? null) : computeFingerprintPayload(cwd);
     return payload == null
       ? refuse('the canonical payload could not be computed (fail closed)')
       : { ok: true, diff: payload };

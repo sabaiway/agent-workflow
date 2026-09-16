@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-15 — AD-146 a task thread is measured over its own files: file-disjoint tasks of one checkpoint run as a wave, `return` and `fold` refuse a change no task on the checkpoint claims, and `checkpoint restore --nonce` undoes one task (kit 14.2.0 MINOR, engine 5.7.0 MINOR; memory 8.0.0 and both bridges unchanged)
+
+**Tasks can now run side by side.** Kit 14.1.0 let a delegation thread name its task, but measured it over the whole
+tree, so D10's one-dispatch-at-a-time bar still bound every thread. Kit 14.2.0 measures a task thread over the files its
+brief lists: `dispatch open --task` refuses a listed path a task may not claim (`task-files-scope`), `return` and
+`fold` refuse a changed path no open or folded task thread since the last commit on the same checkpoint lists
+(`out-of-files`), `task-brief check` accepts a checkpoint dirtied only in files its open or folded sibling tasks list
+since the last commit, and `checkpoint restore <oid> --nonce <n>` undoes one task closed without a fold, leaving the
+others untouched. D10 stays a bar for untasked threads and becomes a
+mechanism for task threads. Engine 5.7.0's planning and procedures canons name the wave. Untasked threads measure and
+restore exactly as before. Close every task thread before upgrading from 14.1.0. Contract
+`docs/ai/specs/kit/task-thread/` is live (S1–S11 bound).
+
 ## 2026-09-15 — AD-145 a dispatch names its task: `dispatch open --task` records the brief and its files, the ledger refuses overlapping and mixed task threads, and the held session is kept per task instead of per commit (kit 14.1.0 MINOR; engine 5.6.0, memory 8.0.0 and both bridges unchanged)
 
 **A held session now belongs to a task.** Until 14.0.0 the held-session judge kept one held session per commit, so a

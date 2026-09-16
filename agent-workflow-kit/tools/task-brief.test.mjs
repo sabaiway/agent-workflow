@@ -9,6 +9,8 @@ import { createHash } from 'node:crypto';
 import { hermeticGitEnv } from './git-env.mjs';
 import { parseLedger } from './plan-shape.mjs';
 import { DELEGATION_STORE_BASENAME } from './dispatch-store.mjs';
+import { appendFileSync } from 'node:fs';
+import { main as dispatchMain } from './dispatch.mjs';
 
 const ABSENT = 'absent ./task-brief.mjs';
 const CHECKPOINT_ABSENT = 'absent ./checkpoint.mjs';
@@ -337,5 +339,51 @@ describe('brief binding and dispatch freshness — spec:checkpoint/S8', () => {
     assert.deepEqual([result.status, result.stdout, result.stderr], [ACCEPT, `task-brief digest sha256:${digest(read(ws))}\n`, '']);
     const usage = spawnSync(process.execPath, [CLI], { cwd: ws.cwd, env: ws.env, encoding: 'utf8' });
     assert.deepEqual([usage.status, usage.stdout], [USAGE, '']); assert.match(usage.stderr, /\busage\b/);
+  });
+});
+
+const SECOND_MS = 1000;
+const HOUR_MS = 3_600_000;
+const SIBLING_NONCE = 'sibling-task';
+const prepareSibling = (path = OTHER) => {
+  const ws = makeRepo(); put(ws, OTHER_BRIEF, renderBrief({ files: [[path, 'impl']] }));
+  const oid = mint(ws); assertDigest(ws, 'stamp');
+  const clock = { ms: Date.now() + HOUR_MS };
+  const deps = { cwd: ws.cwd, env: ws.env, now: () => { clock.ms += SECOND_MS; return new Date(clock.ms).toISOString(); } };
+  accept(dispatchMain(['register', '--wave', 'wave-a', '--step-classes', 'code,triage', '--pairing-key', 'stepClass',
+    '--min-per-class', '1', '--mean-l-threshold', '1', '--first-pass-num', '0', '--first-pass-den', '1'], deps));
+  const contract = { ...CONTRACT, nonce: SIBLING_NONCE, scope: 'write the requested file',
+    inputs: 'the current tree', acceptance: 'the file matches the brief' };
+  const contractPath = join(mkdtempSync(join(TMP, 'contract-')), 'dispatch.md');
+  writeFileSync(contractPath, `\`\`\`aw-dispatch-contract\n${JSON.stringify(contract)}\n\`\`\`\n`);
+  accept(dispatchMain(['open', '--contract', contractPath, '--wave', 'wave-a', '--backend', 'codex', '--rationale', 'x',
+    '--wrapper-cap-s', '600', '--kill-grace-s', '15', '--checkpoint', oid, '--task', OTHER_BRIEF], deps));
+  return { ws, oid, deps };
+};
+
+describe("brief check over a wave's claimed dirt — spec:task-thread/S9", () => {
+  it("accepts a sibling's claimed dirt", () => {
+    const { ws } = prepareSibling(); put(ws, OTHER, CHANGED); assertDigest(ws, 'check');
+  });
+  it('refuses dirt in its own Files even when a sibling claims that path', () => {
+    const { ws } = prepareSibling(MODULE); put(ws, MODULE, CHANGED); refuse(ws, 'check', 'checkpoint-stale');
+  });
+  it('refuses unclaimed dirt', () => {
+    const { ws } = prepareSibling(); put(ws, ANCHOR, CHANGED); refuse(ws, 'check', 'checkpoint-stale');
+  });
+  it('a degraded sibling claims nothing', () => {
+    const { ws, deps } = prepareSibling();
+    accept(dispatchMain(['degrade', '--wave', 'wave-a', '--nonce', SIBLING_NONCE, '--step-class', 'code', '--rationale', 'withdraw'], deps));
+    put(ws, OTHER, CHANGED); refuse(ws, 'check', 'checkpoint-stale');
+  });
+  it('a claim on another checkpoint never counts', () => {
+    const { ws, oid } = prepareSibling(); put(ws, ANCHOR, CHANGED);
+    assert.notEqual(mint(ws, 1), oid); assertDigest(ws, 'stamp');
+    put(ws, OTHER, CHANGED); refuse(ws, 'check', 'checkpoint-stale');
+  });
+  it('an unreadable ledger names its reason', () => {
+    const { ws } = prepareSibling(); put(ws, OTHER, CHANGED);
+    appendFileSync(ws.env.AW_DELEGATION_STORE, 'malformed\n');
+    assert.match(refuse(ws, 'check', 'checkpoint-stale').stderr, /malformed|JSON|line/iu);
   });
 });

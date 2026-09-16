@@ -33,8 +33,8 @@ export const resolveDelegationLockPath = (storePath) => `${storePath}${DELEGATIO
 
 export const UNCOMMITTED_STATE_FINGERPRINT = 'the uncommitted-state fingerprint';
 
-export const uncommittedStateFingerprint = (cwd = process.cwd(), fsx, base = HEAD_BASELINE) => {
-  const fingerprint = base.kind === 'head' ? computeTreeFingerprint(cwd, fsx) : computeBaseFingerprint(cwd, base, fsx);
+export const uncommittedStateFingerprint = (cwd = process.cwd(), fsx, base = HEAD_BASELINE, paths = null) => {
+  const fingerprint = base.kind === 'head' ? computeTreeFingerprint(cwd, fsx) : computeBaseFingerprint(cwd, base, fsx, paths);
   if (fingerprint == null) {
     throw stop(`cannot compute ${UNCOMMITTED_STATE_FINGERPRINT} — not inside a git work tree (or a git probe failed); a record never carries a null tree digest (fail closed)`);
   }
