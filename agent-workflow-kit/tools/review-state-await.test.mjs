@@ -10,7 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mainAwait, computeTreeFingerprint, RECEIPTS_BASENAME } from './review-state.mjs';
+import { computeTreeFingerprint, RECEIPTS_BASENAME } from './core-evidence.mjs';
+const awaitLeaf = await import('./review-state-await.mjs').catch(() => ({}));
+const mainAwait = awaitLeaf.mainAwait ?? (async () => {
+  throw new Error('absent: mainAwait');
+});
 import { READY } from './detect-backends.mjs';
 
 const CODEX = 'codex-cli-bridge';
@@ -73,6 +77,7 @@ const fakeClock = (onSleep) => {
   };
 };
 
+// spec:review-state/S9
 describe('review-state --await', () => {
   it('returns 0 on the FIRST poll when every recipe-named backend is already receipted (no sleep)', async () => {
     const root = makeRepo();

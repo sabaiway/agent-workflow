@@ -4,24 +4,20 @@
 // receipts (plan/diff + fresh:false) never satisfying a tree check, and the plan-in-flight
 // naming-convention detector against a fixture mirroring THIS repo's real docs/plans directory.
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, rmSync, lstatSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   main,
-  decideCheck,
   computeTreeFingerprint,
   computeFingerprintPayload,
-  countNeverCommittableUntracked,
   isNeverCommittableStat,
   isTreeClean,
   isScratchPlanName,
   plansInFlight,
-  quoteReportName,
-  backendReceiptStatus,
   readReceipts,
   RECEIPTS_BASENAME,
 } from './review-state.mjs';
@@ -31,62 +27,32 @@ import {
 const { requiredBackendsForConfiguredRecipe } = await import('./review-state.mjs');
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 
-const CODEX = 'codex-cli-bridge';
-const AGY = 'antigravity-cli-bridge';
-const detect = (codex, agy) => () => [
-  { name: CODEX, readiness: codex },
-  { name: AGY, readiness: agy },
-];
+import {
+  CODEX,
+  AGY,
+  detect,
+  RECEIPT_FIXTURE,
+  receiptLine,
+  COUNCIL_CONFIG,
+  SOLO_CONFIG,
+  makeRepo,
+  fakeStat,
+  makeMaskRepo,
+  throwing,
+  FLOW_TS,
+  FLOW_TS_2,
+  flowStoreAt,
+  writeFlowStore,
+  flowAdoption,
+  attestationAt,
+  PLAN_WITH_ID,
+  digestOf,
+  planPath,
+} from './review-state-harness.test.mjs';
 
-// The normative receipt fixture (AD-038 shape + the D3 self-declaring probe marker); tests override
-// fields. wrapperVersion stays at its historical 2.2.0 ON PURPOSE: the probe verdict must depend on the
-// MARKER alone, so no suite can pass because of a version. The default verdict is SHIP-CLASS (only
-// ship-class satisfies the hardened gate); the veto/vocabulary fixtures override it explicitly.
-const RECEIPT_FIXTURE = JSON.parse(
-  '{"schema":1,"artifact":"code","fresh":true,"fingerprint":"<sha256hex>","backend":"codex","verdict":"ship","grounded":true,"factsHash":null,"wrapperVersion":"2.2.0","timestamp":"2026-07-03T12:00:00Z","probe":false,"posture":{"model":"<display>"}}',
-);
-// An agy `code` receipt additionally SELF-DECLARES how the change set reached the model (D8b); for a
-// single-turn review that is `inline`. Pre-marker fixtures pass `delivery: undefined` (JSON.stringify
-// drops the key).
-const receiptLine = (overrides) => {
-  const receipt = { ...RECEIPT_FIXTURE, ...overrides };
-  if (receipt.backend === 'agy' && !Object.hasOwn(overrides, 'delivery')) receipt.delivery = 'inline';
-  return `${JSON.stringify(receipt)}\n`;
-};
 
-const COUNCIL_CONFIG = JSON.stringify({ 'plan-execution': { execute: 'solo', review: 'council' } });
-const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
 
-// A real git fixture repo: committed base, per-test config / plans / pending state. The committed base
-// is IDENTICAL for every test (all variation is untracked), so it is built ONCE and cloned per test —
-// a per-test `git init`+commit dominated this suite's wall.
-const REPO_TEMPLATE = (() => {
-  const dir = mkdtempSync(join(tmpdir(), 'review-state-template-'));
-  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  g('init', '-q');
-  g('config', 'user.email', 'probe@example.com');
-  g('config', 'user.name', 'probe');
-  writeFileSync(join(dir, 'base.txt'), 'committed base\n');
-  g('add', '-A');
-  g('commit', '-qm', 'base');
-  return dir;
-})();
-after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
 
-const makeRepo = ({ config = COUNCIL_CONFIG, plan = 'active-plan.md', pending = true } = {}) => {
-  const root = mkdtempSync(join(tmpdir(), 'review-state-'));
-  cpSync(REPO_TEMPLATE, root, { recursive: true });
-  const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  if (config != null) {
-    mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);
-  }
-  mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
-  writeFileSync(join(root, 'docs', 'plans', 'queue.md'), '# queue\n');
-  if (plan) writeFileSync(join(root, 'docs', 'plans', plan), '# active plan\n');
-  if (pending) writeFileSync(join(root, 'pending.txt'), 'uncommitted work\n');
-  return { root, g };
-};
 
 const mint = (root, overrides) => appendFileSync(join(root, '.git', RECEIPTS_BASENAME), receiptLine(overrides));
 const check = (root, { env = {}, codex = READY, agy = READY, args = ['--check'] } = {}) =>
@@ -704,35 +670,6 @@ describe('readReceipts — a non-ENOENT read failure is surfaced, never an empty
 });
 
 describe('backendReceiptStatus — the latest grounded receipt wins', () => {
-  it('prefers a grounded current receipt over an earlier ungrounded one', () => {
-    const fp = 'f'.repeat(64);
-    const receipts = [
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, delivery: 'inline' },
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP', delivery: 'inline' },
-    ];
-    const s = backendReceiptStatus(receipts, 'agy', fp);
-    assert.equal(s.state, 'current');
-    assert.equal(s.verdict, 'SHIP');
-  });
-
-  it('an ungrounded unrecognized verdict reports grounded:false (the receipt, never a hardcode)', () => {
-    const fp = 'f'.repeat(64);
-    const receipts = [{ ...RECEIPT_FIXTURE, backend: 'codex', fingerprint: fp, verdict: 'unknown', grounded: false }];
-    const s = backendReceiptStatus(receipts, 'codex', fp);
-    assert.equal(s.state, 'unrecognized-verdict');
-    assert.equal(s.grounded, false, 'the grounded boolean comes from the receipt');
-  });
-
-  it('the REVERSE order pins selection-first: a grounded SHIP followed by a LATER ungrounded → ungrounded (the earlier SHIP never survives)', () => {
-    const fp = 'f'.repeat(64);
-    const receipts = [
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: true, verdict: 'SHIP', delivery: 'inline' },
-      { ...RECEIPT_FIXTURE, backend: 'agy', fingerprint: fp, grounded: false, verdict: 'SHIP', delivery: 'inline' },
-    ];
-    const s = backendReceiptStatus(receipts, 'agy', fp);
-    assert.equal(s.state, 'ungrounded', 'the LATEST normal receipt is selected first and then judged');
-  });
-
   it('gate level: SHIP then a later ungrounded receipt refuses with the ungrounded reason (the other backend ship-class)', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);
@@ -1087,16 +1024,6 @@ describe('requiredBackendsForConfiguredRecipe — obligations from the CONFIGURE
 // injected lstat over a git-visible regular fixture file, plus a true-lstat control proving
 // non-vacuity; char/block devices are not creatable unprivileged, so injected stats cover all four.
 
-// A fake lstat result: exactly one type flag true, every other false (a real lstat has one type).
-const fakeStat = (type) => ({
-  isFile: () => type === 'file',
-  isDirectory: () => type === 'dir',
-  isSymbolicLink: () => type === 'symlink',
-  isCharacterDevice: () => type === 'char',
-  isBlockDevice: () => type === 'block',
-  isFIFO: () => type === 'fifo',
-  isSocket: () => type === 'socket',
-});
 
 describe('isNeverCommittableStat — the filtered class is EXACTLY char/block/FIFO/socket', () => {
   it('all four never-committable classes are in', () => {
@@ -1114,17 +1041,6 @@ describe('isNeverCommittableStat — the filtered class is EXACTLY char/block/FI
 });
 
 describe('review-domain filter — fingerprint + isTreeClean over a lying lstat (the sandbox mechanism)', () => {
-  // A repo whose ONLY untracked path is the git-visible mask fixture; the lying lstat reports the given class while git (dirent) lists it.
-  const makeMaskRepo = () => {
-    const { root, g } = makeRepo({ config: null, plan: null, pending: false });
-    g('add', '-A');
-    g('commit', '-qm', 'docs committed');
-    const baselinePayload = computeFingerprintPayload(root).toString('latin1');
-    const baselineFp = computeTreeFingerprint(root);
-    writeFileSync(join(root, 'mask.txt'), 'sandbox mask body\n');
-    const liar = (p) => (p.endsWith('mask.txt') ? fakeStat('char') : lstatSync(p));
-    return { root, baselinePayload, baselineFp, liar };
-  };
 
   it('(i) the payload and fingerprint are byte-identical WITH and WITHOUT a filtered-class untracked path', () => {
     const { root, baselinePayload, baselineFp, liar } = makeMaskRepo();
@@ -1167,21 +1083,11 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     assert.equal(clean, false, 'a symlink-only tree is reviewable, never clean');
   });
 
-  const throwing = () => { throw new Error('EACCES'); };
   it('isTreeClean: a THROWING lstat keeps the path in the domain (dirty — fail-safe)', () => {
     const { root } = makeMaskRepo();
     const clean = isTreeClean(root, { lstat: throwing });
     rmSync(root, { recursive: true, force: true });
     assert.equal(clean, false, 'an unverifiable untracked path can never read clean');
-  });
-
-  it('countNeverCommittableUntracked: non-git cwd → 0; a throwing lstat counts nothing (fail-safe arms)', () => {
-    const outside = mkdtempSync(join(tmpdir(), 'rs-nongit-'));
-    assert.equal(countNeverCommittableUntracked(outside), 0, 'not a git tree — nothing to count');
-    rmSync(outside, { recursive: true, force: true });
-    const { root } = makeMaskRepo();
-    assert.equal(countNeverCommittableUntracked(root, { lstat: throwing }), 0, 'an unverifiable path never inflates the advisory count');
-    rmSync(root, { recursive: true, force: true });
   });
 
   it('the D-lane advisory: ONE non-failing notice line names the exact sandbox-masks apply when masks are visible', () => {
@@ -1222,11 +1128,6 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
 // A clean-tree PASS that hides a latent arm is the count-free form of the guard-reports-count-not-
 // location defect class: the inventory the human report prints must ride the --check line too.
 describe('review-state --check — a clean tree still reports the plan inventory', () => {
-  const cleanState = (overrides = {}) => ({
-    obligations: { recipe: 'council', source: 'config' }, malformed: 0, evidenceUnavailable: false, receiptsReadError: null,
-    plans: ['active-plan.md'], fingerprint: 'current', clean: true, ...overrides,
-  });
-
   const cleanRepo = (opts) => {
     const { root, g } = makeRepo(opts);
     g('add', '-A');
@@ -1253,27 +1154,6 @@ describe('review-state --check — a clean tree still reports the plan inventory
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /clean/, 'it stays an honest clean-tree PASS');
     assert.match(r.stdout, /arms as soon as the tree is dirty/, 'the latent arm is stated forward-looking, not after it blocks');
-  });
-
-  it('a plan name with a C1 line break (U+0085) stays on one report line, escaped as valid JSON', () => {
-    const name = 'line\u0085break.md';
-    const result = decideCheck(cleanState({ plans: [name] }));
-    assert.equal(result.code, 0);
-    assert.doesNotMatch(result.reason, /\u0085/u, 'U+0085 never reaches the report literally');
-    assert.match(result.reason, /"line\\u0085break\.md"/, 'the plan name is escaped inside the one-line result');
-    assert.match(result.reason, /arms as soon as the tree is dirty/, 'the notice remains on that same line');
-    // Every emitted token is a valid JSON string (the escape round-trips) \u2014 the report stays parseable.
-    const token = result.reason.match(/"line[^"]*break\.md"/)[0];
-    assert.equal(JSON.parse(token), 'line\u0085break.md', 'quoteReportName emits a JSON-parseable token');
-  });
-
-  it('configured solo on a clean tree with a plan exits 0 without the latent-arm notice', () => {
-    const result = decideCheck(cleanState({ obligations: { recipe: 'solo', source: 'config' } }));
-    const modeDoc = readFileSync(new URL('../references/modes/review-state.md', import.meta.url), 'utf8');
-    assert.equal(result.code, 0);
-    assert.match(result.reason, /configured .* recipe is solo/, 'the earlier solo arm remains explicit');
-    assert.doesNotMatch(result.reason, /arms as soon as the tree is dirty/, 'solo carries no latent review obligation');
-    assert.match(modeDoc, /A clean-tree PASS under a NON-SOLO review obligation/, 'the documented notice is limited to the arm that can actually activate');
   });
 
   it('clean tree with no plans still passes quietly (no inventory noise)', () => {
@@ -1313,35 +1193,12 @@ describe('review-state --check — a clean tree still reports the plan inventory
 // ── Phase 2 (flow Plan 3): the gated flow arms (#43/#68/#61/#48, P3/P13/P19) ──
 // Static imports (hoisted): a late top-level await would let a filtered run drain the root suite — and
 // its template-removing after() hook — before this block registers.
-import { buildState, computePlanAdoptionCoverage } from './review-state.mjs';
-import { resolveFlowStorePath } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { resolveBase } from './core-evidence.mjs';
-import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const fingerprintOf = computeTreeFingerprint;
 
 describe('review-state — Phase-2 flow arms (two-tier activation + the three gated arms)', () => {
-  const FLOW_TS = '2026-07-30T00:00:00.000Z';
-  const FLOW_TS_2 = '2026-07-30T00:00:01.000Z';
-  const flowStoreAt = (root) => resolveFlowStorePath(root, {});
-  const writeFlowStore = (root, records) =>
-    writeFileSync(flowStoreAt(root), records.map((r) => `${JSON.stringify(r)}\n`).join(''));
-  const flowAdoption = (over = {}) => ({
-    schema: FLOW_SCHEMA_VERSION, kind: 'chain', purpose: 'adoption', planId: 'plan-x', cycle: 1, round: 0,
-    commitEpoch: 0, owner: 'main', base: null, timestamp: FLOW_TS, stepId: null, fingerprint: 'a1'.repeat(32),
-    planLabel: 'Plan X', createdAt: FLOW_TS, planDigest: 'b2'.repeat(32), ...over,
-  });
-  const attestationAt = (root, planId, over = {}) => ({
-    schema: FLOW_SCHEMA_VERSION, kind: 'internal-attestation', fingerprint: fingerprintOf(root), planId,
-    stepId: 's1', cycle: 1, round: 1, lenses: ['correctness'], degraded: [],
-    posture: { model: 'frontier', effort: null, tier: null }, authority: 'orchestrator',
-    base: resolveBase(root), timestamp: FLOW_TS, ...over,
-  });
-  const PLAN_WITH_ID = '---\nplanId: plan-x\n---\n# active plan\n';
-  const digestOf = (text) => createHash('sha256').update(Buffer.from(text)).digest('hex');
-  const planPath = (root) => join(root, 'docs', 'plans', 'active-plan.md');
   const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
   const degradeHint = (backend) =>
     `${backend}: no receipt — run its review wrapper, or record an explicit degrade (node ${join(TOOLS_DIR, 'core-evidence.mjs')} degrade --backend ${backend} --reason "...")`;
@@ -1661,60 +1518,5 @@ describe('review-state — Phase-2 flow arms (two-tier activation + the three ga
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1, 'a mismatched override never lifts');
     assert.match(r.stdout, /authoritative veto/);
-  });
-
-  it('the readiness carries the executor vehicle, surveyed at the work-tree root, and it never reviews', () => {
-    const { root } = makeRepo({ config: null });
-    const asked = [];
-    const stateFor = (state) => buildState({ cwd: root, env: {}, detect: detect(NEEDS_SKILL, NEEDS_SKILL), surveyVehicle: (dir) => { asked.push(dir); return { state, reason: null, rel: '.claude/agents/executor.md' }; } });
-    const [placed, missing] = [stateFor('placed'), stateFor('missing')];
-    rmSync(root, { recursive: true, force: true });
-    assert.deepEqual(asked, [placed.root, placed.root], 'the survey is composed at the anchor the config is read from');
-    assert.deepEqual([placed.obligations.recipe, placed.obligations.backends], ['solo', []], 'a placed executor is no ready reviewer');
-    assert.equal(missing.obligations.recipe, 'solo');
-  });
-
-  it('the coverage map reads each plan file ONCE and never on the unarmed fast path (P13/P19)', () => {
-    const { root } = makeRepo();
-    writeFileSync(planPath(root), PLAN_WITH_ID);
-    const reads = [];
-    const readFile = (p, ...rest) => {
-      reads.push(String(p));
-      return readFileSync(p, ...rest);
-    };
-    buildState({ cwd: root, env: {}, detect: detect(READY, READY), readFile });
-    assert.deepEqual(reads.filter((p) => p.includes('active-plan')), [], 'no store — the fast path reads no plan file');
-    writeFlowStore(root, [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) })]);
-    const armed = buildState({ cwd: root, env: {}, detect: detect(READY, READY), readFile });
-    rmSync(root, { recursive: true, force: true });
-    assert.equal(reads.filter((p) => p.includes('active-plan')).length, 1, 'armed — exactly one bounded read per plan');
-    assert.deepEqual(armed.planCoverage.map((c) => [c.covered, c.planId]), [[true, 'plan-x']]);
-  });
-
-  it('computePlanAdoptionCoverage names each uncovered class: no planId · no adoption · digest mismatch · foreign owner', () => {
-    const records = [flowAdoption({ planDigest: digestOf(PLAN_WITH_ID) }), flowAdoption({ planId: 'plan-f', owner: 'worktree:elsewhere', planDigest: digestOf('---\nplanId: plan-f\n---\n') })];
-    const files = {
-      'no-id.md': '# no frontmatter\n',
-      'no-adoption.md': '---\nplanId: plan-missing\n---\n',
-      'edited.md': `${PLAN_WITH_ID}tail\n`,
-      'foreign.md': '---\nplanId: plan-f\n---\n',
-    };
-    const coverage = computePlanAdoptionCoverage({
-      root: '/fixture',
-      plans: [...Object.keys(files), 'ghost.md'].sort(),
-      records,
-      owner: 'main',
-      readFile: (p) => {
-        const name = Object.keys(files).find((n) => String(p).endsWith(n));
-        if (name === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-        return Buffer.from(files[name]);
-      },
-    });
-    const byPlan = Object.fromEntries(coverage.map((c) => [c.plan, c]));
-    const classes = [['no-id.md', /planId/], ['no-adoption.md', /no adoption/], ['edited.md', /edited after adoption|no longer matches/], ['foreign.md', /foreign|owned by/], ['ghost.md', /unreadable/]];
-    for (const [plan, reason] of classes) {
-      assert.equal(byPlan[plan].covered, false, `${plan} is uncovered, never skipped`);
-      assert.match(byPlan[plan].reason, reason);
-    }
   });
 });

@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-17 — AD-149 `review-state.mjs` becomes a facade over five tested leaves (kit 14.4.1 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
+
+**The review-receipt checker is split, with no change in what it does.** The 918-line `tools/review-state.mjs` is now a
+218-line facade over five library modules (judge, build, flow, render, await), each with its own suite, plus a layout
+suite that pins every exported name to its home and the header to its digest. The facade keeps its 28 exported names,
+so no import site outside the leaf suites moves; exit codes, reasons, the `--json` output and the header are unchanged. Story S1 of the epic
+`REVIEW-STATE-AND-CORE-EVIDENCE-ARE-MONOLITHS`; contract `docs/ai/specs/kit/review-state.md` (revision 1, all twelve
+scenarios bound).
+
 ## 2026-09-17 — AD-148 a delegated task engages the held session: `review-state --check` reads a configured `task.execute`, the fold lane follows a resolved one, and `task-brief check` admits a lone suite (kit 14.4.0 MINOR, engine 5.9.0 MINOR; memory 8.0.1 and both bridges unchanged)
 
 **A task set to `delegated` is now gated and advised on its own.** Kit 14.3.0 keyed the held-session gate and the fold

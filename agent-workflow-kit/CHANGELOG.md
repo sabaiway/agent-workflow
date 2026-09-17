@@ -4,6 +4,25 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.4.1 — `review-state.mjs` becomes a facade over five tested leaves; nothing the tool decides, prints or records changes (AD-149)
+
+**The review-receipt checker is now five small modules behind its old entry point.** `tools/review-state.mjs` was one
+918-line file. 14.4.1 moves its bodies into five library modules and keeps a 218-line facade that parses the command
+line, composes them and keeps its 28 exported names, so no import site outside the leaf suites moves. Exit codes, reasons, the `--json`
+output and the tool header are the same as in 14.4.0. Story S1 of the epic `REVIEW-STATE-AND-CORE-EVIDENCE-ARE-MONOLITHS`;
+contract `docs/ai/specs/kit/review-state.md` (revision 1).
+
+- **The leaves.** `review-state-judge.mjs` (receipt status, the degrade escape, the held-session arm, the check
+  decision), `review-state-build.mjs` (the read-only git queries and the state build; the only one that imports
+  `node:child_process`), `review-state-flow.mjs` (plan-adoption coverage and the armed-flow arms), `review-state-render.mjs` (the
+  human report and the mask advisory line) and `review-state-await.mjs` (the `--await` timeout grammar and poll loop).
+  No leaf imports the facade or runs as a script; each is under the 400-line cap, and the facade's size record is gone.
+- **Tests.** Nine unit cases move from `review-state.test.mjs` (116 stay) into four new leaf suites, which add five
+  written cases; `review-state-await.test.mjs` imports its leaf; `review-state-harness.test.mjs` holds the shared
+  fixtures. `test/review-state-layout.test.mjs` (new) pins each exported name to its home module, the header's digest,
+  the import directions and the `--json` key order. `test/package-content.test.mjs` names the five leaves and pins 318
+  packed files.
+
 ## 14.4.0 — a delegated task engages the held session: `review-state --check` reads a configured `task.execute`, the fold lane follows a resolved one, and `task-brief check` admits a lone suite (AD-148)
 
 **A task set to `delegated` is now gated and advised on its own.** In 14.3.0 the held-session gate and the fold lane
