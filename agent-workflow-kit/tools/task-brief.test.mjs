@@ -44,6 +44,7 @@ const ROOT_OTHER = 'other.mjs';
 const SWEEP = 'src/sweep/*.mjs';
 const SWEEP_FILE = 'src/sweep/one.mjs';
 const SWEEP_OTHER = 'src/sweep/two.mjs';
+const [SWEEP_TEST, SWEEP_OTHER_TEST] = ['src/sweep/one.test.mjs', 'src/sweep/two.test.mjs'];
 const READ = 'docs/ai/contract.md';
 const READ_EXTRA = 'docs/ai/notes.md';
 const READ_ADDED = 'docs/ai/extra.md';
@@ -239,6 +240,16 @@ describe('brief grammar — spec:checkpoint/S7', () => {
   });
   for (const [name, overrides] of SHAPE_CELLS) it(`refuses shape: ${name}`, () => {
     const ws = makeRepo({ brief: renderBrief(overrides) }); refuse(ws, 'check', 'shape');
+  });
+});
+
+describe('lone suites on module and sweep rows — spec:checkpoint/S11', () => {
+  for (const [row, path] of [['M1', TEST], ['M1', NESTED_TEST], ['W1', SWEEP_TEST]]) it(`accepts lone suite ${path} on ${row}`, () => {
+    const ws = makeRepo({ brief: renderBrief({ row, files: [[path, 'test']] }) }); mint(ws);
+    assertDigest(ws, 'stamp'); assertDigest(ws, 'check');
+  });
+  for (const [row, files] of [['M1', [[OTHER_TEST, 'test']]], ['T1', [[OTHER_TEST, 'test']]], ['W1', [[SWEEP_OTHER_TEST, 'test'], [SWEEP_FILE, 'impl']]]]) it(`refuses unrelated test on ${row}`, () => {
+    const ws = makeRepo({ brief: renderBrief({ row, files }) }); refuse(ws, 'check', 'row');
   });
 });
 

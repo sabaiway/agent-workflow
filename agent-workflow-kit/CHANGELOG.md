@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.4.0 — a delegated task engages the held session: `review-state --check` reads a configured `task.execute`, the fold lane follows a resolved one, and `task-brief check` admits a lone suite (AD-148)
+
+**A task set to `delegated` is now gated and advised on its own.** In 14.3.0 the held-session gate and the fold lane
+keyed only on `plan-execution.execute`, so a delegated task was covered only when the rows not carried as tasks were
+delegated as well. 14.4.0 reads the task's own slot. Under a config that leaves `task.execute` unset or not
+delegated, the gate and the lane behave exactly as before, except that `procedures task --override execute=delegated`
+now renders the lane when the override resolves to delegated. Story S10 of the epic `EPICS-STORIES-TASKS-AS-THE-UNIT-OF-WORK`; contracts
+`docs/ai/specs/kit/carriers/` revision 7, `held-session` revision 4, `checkpoint/` revision 4.
+
+- **The gate (`tools/review-state.mjs`).** `--check` audits the delegation ledger when the configured
+  `plan-execution.execute` or the configured `task.execute` is `delegated`, each read on its own: a solo or subagent
+  value in one slot never masks the other. It reads the configuration, never a degraded recipe or a per-run override.
+  The judge, the refusal and the report line are unchanged. The tool header, `--help` and `modes/review-state.md` say so.
+- **The fold lane (`tools/procedures.mjs`).** `procedures plan-execution` renders the lane once when its own `execute`
+  or `task.execute` resolves to delegated; a per-run `--override` moves only the rendered activity's own slot.
+  `procedures task` renders it when `task.execute` resolves to delegated. `task.author` never counts, and `foldLane`
+  stays `[]` for every other activity. The lane's lines and caveats are unchanged; `modes/procedures.md` says so.
+- **A lone suite is briefable (`tools/task-brief.mjs`).** A slice with no `impl` line may carry the co-located test of
+  the row's path or of one of its sweep expansions. A slice with `impl` lines still admits only tests of its own `impl`
+  paths, and a test of any other path still refuses `row`.
+- **Tests.** `review-state-task-execute.test.mjs` (new; carriers S19), `procedures-fold-lane.test.mjs` (S20) and
+  `task-brief.test.mjs` (checkpoint S11). The pinned cells of `review-state-held-session.test.mjs` pass unedited.
+
+Published with engine 5.9.0, whose `task` step 5 states the same rule.
+
 ## 14.3.0 — the activity table gains its tier rows: `epic` (author, review) and `task` (author, execute) are configured, resolved and rendered like every other activity (AD-147)
 
 **Epics and tasks now have recipe slots.** Until 14.2.0 the kit had an epic file and a task brief, but no slot said who

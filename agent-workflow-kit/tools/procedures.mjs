@@ -629,17 +629,10 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const foldLaneAdvice = ({
-  activity,
-  slots,
-  cwd,
-  env,
-  resolveStore,
-  readStore,
-  audit,
-  readHead,
-}) => {
-  if (activity !== 'plan-execution' || slots.find((slot) => slot.slot === 'execute')?.recipe !== 'delegated') return [];
+const foldLaneAdvice = ({ activity, slots, config, detection, cwd, env, resolveStore, readStore, audit, readHead }) => {
+  const own = slots.find((slot) => slot.slot === 'execute')?.recipe;
+  const task = activity === 'plan-execution' ? resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: 'task', slot: 'execute' }).recipe : null;
+  if (!['plan-execution', 'task'].includes(activity) || ![own, task].includes('delegated')) return [];
   const ledger = readDelegationLedger(cwd, env, { resolveStore, readStore, audit, readHead });
   return foldLaneLines(judgeLedger(ledger, { backend: HELD_RECEIPT_BACKEND, degrades: [] }));
 };
@@ -809,6 +802,8 @@ export const main = (argv, ctx = {}) => {
     const foldLane = foldLaneAdvice({
       activity,
       slots,
+      config,
+      detection,
       cwd,
       env,
       resolveStore: ctx.resolveDelegationStorePath,

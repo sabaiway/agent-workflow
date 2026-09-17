@@ -4,6 +4,16 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 5.9.0 — the task canon: a configured delegated `task.execute` engages the held-session gate and a resolved one renders the fold lane (AD-148)
+
+`references/procedures.md`, `## task`, step 5: the clause saying the held-session gate and the `plan-execution` fold
+lane read `plan-execution.execute`, never `task.execute`, is replaced. A task whose `task.execute` is configured
+delegated engages the held-session gate, and one whose `execute` resolves to delegated renders the fold lane, whatever
+`plan-execution.execute` is; the gate reads the configuration, never a per-run override; a solo or subagent task holds
+none. Pinned by `test/procedures-canon.test.mjs` (spec:carriers/S21); the step numbers, the `Slots:` lines and the
+plan-execution step 5 sentence group are unchanged. MINOR: one rule clause changes; no step moves. Published on this
+train with kit 14.4.0, which ships the gate and the lane.
+
 ## 5.8.0 — the procedures canon gains the `epic` and `task` activities, and a task run checks its dispatch file only when a bridge runs it (AD-147)
 
 `references/procedures.md` gains two sections after `## feedback-triage`. `## epic` (Slots: author, review) has six

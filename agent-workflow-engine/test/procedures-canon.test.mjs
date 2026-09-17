@@ -428,13 +428,13 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       const flat = section.replace(/\s+/g, ' ');
       for (const token of ['*The epic*', 'no commit boundary of its own', 'epic-shape-cli --check <epic>', 'epic-shape-cli --review-brief <epic>', 'never the file', 'a bridge in plan mode over it', "One lens is the tier's roster", 'epic-shape-cli --fold', 'At most two rounds', '--close']) assert.ok(flat.includes(token), `epic names ${token}`);
     });
-    it('task carries its slots, five steps and execution contract', () => {
+    it('task carries its slots, five steps and execution contract (spec:carriers/S21)', () => {
       const section = sectionOf(procedures, 'task'); assert.ok(section, 'has a ## task section');
-      assert.equal(slotsLineOf(section), 'Slots: author, execute');
-      assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5]);
+      assert.equal(slotsLineOf(section), 'Slots: author, execute'); assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5]);
       for (const [number, token] of ['Mint', 'Brief', 'Execute', 'Verify', 'Return'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(token), `step ${number + 1} names ${token}`);
-      const flat = section.replace(/\s+/g, ' ');
+      const flat = section.replace(/\s+/g, ' '); const step5 = stepOf(section, 5).replace(/\s+/g, ' ');
       for (const token of ['*The task*', 'its tests are its only review', 'checkpoint mint --plan <plan>', "or before the first of a wave's", 'task-brief stamp <brief>', 'task-brief check <brief>', 'with `--dispatch <dispatch-file>` when the run is a bridge dispatch', 'dispatch open --checkpoint <oid> --task <brief>', 'one session per task', 'the whole-tree restore under its precondition', 'retried once', 'never a shared one']) assert.ok(flat.includes(token), `task names ${token}`);
+      for (const token of ['configured delegated engages the held-session gate', 'resolves to delegated renders the fold lane', 'whatever `plan-execution.execute` is', 'never a per-run override', 'a solo or subagent task holds none']) assert.ok(step5.includes(token), token); assert.doesNotMatch(step5, /read `plan-execution\.execute`, never `task\.execute`/u);
     });
     it('keeps epic and task after feedback-triage and project-neutral', () => {
       assert.deepEqual([...procedures.matchAll(/^## (.+)$/gmu)].map((match) => match[1]).slice(-3), ['feedback-triage', 'epic', 'task']);

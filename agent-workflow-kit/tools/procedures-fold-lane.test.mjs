@@ -22,7 +22,7 @@ const detect = () => [
 const run = (root, argv, extra = {}) => main(argv, {
   cwd: root,
   env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR, ...extra.env },
-  detect,
+  detect: extra.detect ?? detect,
   surveyVehicle: extra.surveyVehicle ?? (() => ({ state: 'missing', reason: null, rel: '.claude/agents/executor.md' })),
   readHeadInstant: extra.readHeadInstant ?? (() => ({ state: 'unborn' })),
   resolveDelegationStorePath: extra.resolveDelegationStorePath,
@@ -169,4 +169,32 @@ describe('procedures fold lane — spec:held-session/S5', () => {
     assert.ok(json.foldLane.some((line) => line.includes('Fold lane (execute = delegated)')));
     assert.ok(json.foldLane.some((line) => line.includes('--resume session-held --nonce <nonce>')));
   }));
+});
+
+describe('procedures execute slots — spec:carriers/S20', () => {
+  for (const [name, activities, config, count, flags = [], unavailable = false, placement] of [
+    ['cell 1: task alone supplies the plan lane', ['plan-execution'], { 'plan-execution': { execute: 'solo' }, task: { execute: 'delegated' } }, 1, [], false, /  execute: solo[^\n]*\n[\s\S]*Fold lane \(execute = delegated\)[\s\S]*  review:/u],
+    ['cell 2: both slots supply one plan lane', ['plan-execution'], { 'plan-execution': { execute: 'delegated' }, task: { execute: 'delegated' } }, 1],
+    ['cell 3: plan override leaves the task lane', ['plan-execution'], { 'plan-execution': { execute: 'delegated' }, task: { execute: 'delegated' } }, 1, ['--override', 'execute=solo']],
+    ['cell 4: task supplies its own lane', ['task'], { task: { execute: 'delegated' } }, 1, [], false, /  execute: delegated[^\n]*\n[\s\S]*Fold lane \(execute = delegated\)/u],
+    ['cell 5: both slots supply one task lane', ['task'], { 'plan-execution': { execute: 'delegated' }, task: { execute: 'delegated' } }, 1],
+    ['cell 6: task override removes its lane', ['task'], { task: { execute: 'delegated' } }, 0, ['--override', 'execute=solo']],
+    ['cell 7: task ignores the plan slot', ['task'], { 'plan-execution': { execute: 'delegated' }, task: { execute: 'solo' } }, 0],
+    ['cell 8: author supplies no lane', ['plan-execution', 'task'], { 'plan-execution': { execute: 'solo' }, task: { author: 'delegated', execute: 'solo' } }, 0],
+    ['cell 9: degraded execute supplies no lane', ['plan-execution', 'task'], { 'plan-execution': { execute: 'solo' }, task: { execute: 'delegated' } }, 0, [], true],
+    ['cell 10: other activities read no execute slot', ['plan-authoring', 'routine', 'feedback-triage', 'epic'], { task: { execute: 'delegated' } }, 0],
+  ]) {
+    for (const activity of activities) {
+      it(`${name} (${activity})`, () => withRoot({}, (root) => {
+        writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
+        const extra = { env: { AW_DELEGATION_STORE: writeFixtureLedger(root, heldRecords()) }, detect: unavailable ? () => [{ name: CODEX, readiness: NEEDS_SKILL }, { name: AGY, readiness: NEEDS_SKILL }] : detect };
+        const result = run(root, [activity, ...flags], extra);
+        const json = JSON.parse(run(root, [activity, ...flags, '--json'], extra).stdout);
+        assert.equal((result.stdout.match(/Fold lane \(execute = delegated\)/gu) ?? []).length, count);
+        if (count) assert.ok(json.foldLane.length > 0);
+        else assert.deepEqual(json.foldLane, []);
+        if (placement) assert.match(result.stdout, placement);
+      }));
+    }
+  }
 });

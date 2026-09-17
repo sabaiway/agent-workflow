@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-17 — AD-148 a delegated task engages the held session: `review-state --check` reads a configured `task.execute`, the fold lane follows a resolved one, and `task-brief check` admits a lone suite (kit 14.4.0 MINOR, engine 5.9.0 MINOR; memory 8.0.1 and both bridges unchanged)
+
+**A task set to `delegated` is now gated and advised on its own.** Kit 14.3.0 keyed the held-session gate and the fold
+lane only on `plan-execution.execute`. Kit 14.4.0 also reads `task.execute`: the gate arms when either slot is
+configured delegated, and the lane renders under `procedures plan-execution` or `procedures task` when a slot that
+activity reads resolves to delegated. `task-brief check` now admits a slice whose only file is the co-located test of
+its row's path, so a tests-first task can be briefed. Engine 5.9.0's task step 5 states the rule. Under a config
+without a delegated `task.execute`, the gate and the lane behave as before, except that
+`procedures task --override execute=delegated` now renders the lane when the override resolves to delegated. Contracts `docs/ai/specs/kit/carriers/` revision 7 (S19–S21 bound),
+`held-session` revision 4, `checkpoint/` revision 4 (S11 bound).
+
 ## 2026-09-16 — AD-147 the activity table gains its tier rows: `epic` (author, review) and `task` (author, execute) are configured, resolved and rendered like every other activity (kit 14.3.0 MINOR, engine 5.8.0 MINOR, memory 8.0.1 PATCH; both bridges unchanged)
 
 **Epics and tasks now have recipe slots.** The kit had an epic file and a task brief, but no slot said who writes an

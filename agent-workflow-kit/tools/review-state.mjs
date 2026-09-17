@@ -9,12 +9,12 @@
 // `--check` turns the report into a gate exit code (declare it in docs/ai/gates.json).
 //
 // Normative `--check` exit contract (the single home of this list — SKILL.md points here):
-// Before the review-recipe exits, configured plan-execution.execute=delegated with a plan and a
-// dirty, fingerprintable tree audits the delegation ledger. An absent ledger is inert; an
-// unavailable ledger or a HEAD error refuses. A SUBSTITUTED held session refuses: for a head-base thread,
-// a codex-exec degrade at the substituted return's tree, standing after every later fold, accepts it,
-// or the fold of that thread's retry lifts it (codex never grants it); a checkpoint-based thread's
-// substitution closes only by its own ledger degrade.
+// Before the review-recipe exits, a configured plan-execution.execute or task.execute of delegated
+// (each read on its own) with a plan and a dirty, fingerprintable tree audits the delegation ledger.
+// An absent ledger is inert; an unavailable ledger or a HEAD error refuses. A SUBSTITUTED held session
+// refuses: for a head-base thread, a codex-exec degrade at the substituted return's tree, standing after
+// every later fold, accepts it, or the fold of that thread's retry lifts it (codex never grants it); a
+// checkpoint-based thread's substitution closes only by its own ledger degrade.
 //   exit 0  when the CONFIGURED plan-execution.review recipe is solo (or the computed default is —
 //           absent config with no reviewer backend ready); when no plan is in flight (docs/plans/
 //           holds no top-level .md that is not queue.md and not scratch by the naming convention:
@@ -382,7 +382,7 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
   const heldSession = buildHeldSessionState({
     cwd,
     env,
-    configuredExecute: config?.[ACTIVITY]?.execute,
+    configuredExecute: [config?.[ACTIVITY]?.execute, config?.task?.execute].find((recipe) => recipe === 'delegated'),
     plans,
     fingerprint,
     clean,
@@ -786,10 +786,10 @@ The ONLY escape for an unavailable backend under council is an explicit current-
 record (node core-evidence.mjs degrade) — and never all backends.
 
 --check exits 0/1 per the normative contract in the tool header. FIRST, before any of the arms
-below, a configured plan-execution.execute = delegated with a plan in flight and a dirty,
-fingerprintable tree audits the delegation ledger: an absent ledger is inert; an unreadable,
-malformed, foreign or audit-refused ledger, a failed HEAD read, or a SUBSTITUTED held session
-exits 1. THEN: 0 for solo / no plan in flight /
+below, a configured plan-execution.execute or task.execute of delegated (each read on its own)
+with a plan in flight and a dirty, fingerprintable tree audits the delegation ledger: an absent
+ledger is inert; an unreadable, malformed, foreign or audit-refused ledger, a failed HEAD read,
+or a SUBSTITUTED held session exits 1. THEN: 0 for solo / no plan in flight /
 a clean tree (under a non-solo review obligation the PASS names every plan in flight and its arm) /
 a cwd where git ITSELF answers not-a-repository (the only passing non-work-tree state; the four others exit 1 by name) / obligations satisfied (reviewed: >=1 ship-class attestation;
 council: every backend ship-class or degrade-recorded, >=1 real ship); 1 on a veto, an

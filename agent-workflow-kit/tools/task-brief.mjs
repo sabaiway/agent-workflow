@@ -167,7 +167,8 @@ const checkRow = (context, brief, row) => {
   const allowed = isSweep(row.path) ? expandSweepPaths(context.top, [row.path])[row.path] : [row.path];
   if (implementations.some((path) => !allowed.includes(path))) reject(NAMES.row, row.id);
   const tests = files.filter(({ tag }) => tag === TEST);
-  if (tests.some(({ path }) => TEST_RE.test(row.path) ? path !== row.path : !implementations.some((impl) => {
+  const bases = implementations.length > START ? implementations : allowed;
+  if (tests.some(({ path }) => TEST_RE.test(row.path) ? path !== row.path : !bases.some((impl) => {
     const stem = impl.replace(EXTENSION_RE, EMPTY);
     return path === `${stem}${TEST_SUFFIX}` || path.startsWith(`${stem}${TEST_DIRECTORY}`);
   }))) reject(NAMES.row, row.id);

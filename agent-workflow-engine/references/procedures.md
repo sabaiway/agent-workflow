@@ -229,7 +229,7 @@ review of its own — its tests are its only review, and the story's row commits
    task is undone by the restore *The task* names before any retry opens on its checkpoint; a slice refused
    for its model's quota is retried once on the fallback model, as *The task* states.
 5. **Return** — the returned diff is the story's row from plan-execution step 3 onward; a delegated task's
-   fold rides that task's own held session (its brief's chain), never a shared one; the held-session gate
-   and the `plan-execution` render's fold lane read `plan-execution.execute`, never `task.execute`, so they
-   engage for a delegated task only when that slot is set to delegated, which delegates the rows not
-   carried as tasks as well; a solo or subagent task holds none.
+   fold rides that task's own held session (its brief's chain), never a shared one; a task whose
+   `task.execute` is configured delegated engages the held-session gate, and one whose `execute` resolves
+   to delegated renders the fold lane, whatever `plan-execution.execute` is — the gate reads the
+   configuration, never a per-run override; a solo or subagent task holds none.
