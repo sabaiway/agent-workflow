@@ -7,6 +7,14 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-17 — AD-150 `core-evidence.mjs` becomes a facade over six leaves (kit 14.4.2 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
+
+**The core-evidence writer is split, with no change in what it does.** The 1251-line `tools/core-evidence.mjs` is now
+a 143-line facade over six library modules (tree, receipts, store-read, store, red-proof, summary). The facade keeps
+its header, its command line and its 49 exported names, so no import site outside the core-evidence suites moves. The
+96 existing cases move unchanged: 75 into the module suites, 21 stay in the facade suite; none is added. Story S2 of the epic
+`REVIEW-STATE-AND-CORE-EVIDENCE-ARE-MONOLITHS`; contract `docs/ai/specs/kit/core-evidence.md` (revision 1).
+
 ## 2026-09-17 — AD-149 `review-state.mjs` becomes a facade over five tested leaves (kit 14.4.1 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
 
 **The review-receipt checker is split, with no change in what it does.** The 918-line `tools/review-state.mjs` is now a

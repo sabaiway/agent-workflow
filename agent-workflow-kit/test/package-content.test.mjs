@@ -277,6 +277,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the strip-the-kit core-evidence writer (D3(b)/(c) + D6/D6a/D7): the git-dir evidence store
       // (red-proof / degrade / summary) the hardened self-control core rides on
       'tools/core-evidence.mjs',
+      // the facade's six leaves — it imports all six, so a dropped leaf breaks every consumer at load
+      'tools/core-evidence-tree.mjs',
+      'tools/core-evidence-receipts.mjs',
+      'tools/core-evidence-store-read.mjs',
+      'tools/core-evidence-store.mjs',
+      'tools/core-evidence-red-proof.mjs',
+      'tools/core-evidence-summary.mjs',
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
@@ -803,7 +810,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 312 = 311 + tools/ensure-executor.mjs (the executor ensure) \u2014 story S2 of the pilot epic
     // 313 = 312 + tools/task-thread.mjs (the task grammar, reader, epoch and claims) — story S8 of the pilot epic
     // 318 = 313 + the five review-state leaves (judge, build, flow, render, await) — story S1 of the monolith epic
-    assert.equal(packed.length, 318, `tarball file count drifted (${packed.length}\u2260 318)`);
+    // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) \u2014 story S2 of the monolith epic
+    assert.equal(packed.length, 324, `tarball file count drifted (${packed.length}\u2260 324)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

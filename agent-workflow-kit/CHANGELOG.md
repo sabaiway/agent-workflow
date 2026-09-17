@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.4.2 — `core-evidence.mjs` becomes a facade over six leaves; nothing the tool decides, prints or records changes (AD-150)
+
+**The core-evidence writer is now six small modules behind its old entry point.** `tools/core-evidence.mjs` was one
+1251-line file. 14.4.2 moves its code into six library modules and keeps a 143-line facade with the unchanged header,
+the command line and the same 49 exported names, so no import site outside the core-evidence suites moves. Exit codes,
+messages, records and the tree fingerprint are the same as in 14.4.1. Story S2 of the epic
+`REVIEW-STATE-AND-CORE-EVIDENCE-ARE-MONOLITHS`; contract `docs/ai/specs/kit/core-evidence.md` (revision 1).
+
+- **The leaves.** `core-evidence-tree.mjs` (git queries, base, tree fingerprint, working state),
+  `core-evidence-receipts.mjs` (receipt path and reader, verdict vocabulary, receipt classes),
+  `core-evidence-store-read.mjs` (testId format, store path, record schema, reader, keys), `core-evidence-store.mjs`
+  (the one append and the `red-proof` and `degrade` verbs), `core-evidence-red-proof.mjs` (the test-file safeguards
+  and the repeated test runs) and `core-evidence-summary.mjs` (the `summary` state and render). The summary module does not
+  import the append module. None of the six imports the facade or runs as a script; each is under the 400-line cap, and
+  the size records of the old module and its suite are gone.
+- **Tests.** The 96 cases of `core-evidence.test.mjs` move unchanged: 75 into five module suites, 21 stay in the
+  facade suite, with shared fixtures in `core-evidence-harness.test.mjs`; no case is added or removed. `core-evidence-hostile.test.mjs` imports the
+  modules it calls. `test/kit-readonly-tools.test.mjs` now looks for the `--absolute-git-dir` query in the receipts
+  module, and `test/package-content.test.mjs` names the six modules and pins 324 packed files. A comment in `tools/exec-producer.mjs`
+  that pointed at a line range of the old module now names `flaggedIndexLag` in the tree module.
+
 ## 14.4.1 — `review-state.mjs` becomes a facade over five tested leaves; nothing the tool decides, prints or records changes (AD-149)
 
 **The review-receipt checker is now five small modules behind its old entry point.** `tools/review-state.mjs` was one

@@ -78,7 +78,7 @@ const READ_ONLY_GIT_QUERY = Object.freeze({
   ],
 });
 const TRANSITIVE_GIT_QUERY = Object.freeze({
-  'tools/review-rounds-cli.mjs': [['tools/core-evidence.mjs', "['rev-parse', '--absolute-git-dir']"]],
+  'tools/review-rounds-cli.mjs': [['tools/core-evidence-receipts.mjs', "['rev-parse', '--absolute-git-dir']"]],
   'tools/control-bytes.mjs': [['tools/git-env.mjs', "['rev-parse', arg]"]],
 });
 const SPAWN_MENTIONS = Object.freeze({ 'tools/review-rounds-cli.mjs': 4, 'tools/control-bytes.mjs': 2 });

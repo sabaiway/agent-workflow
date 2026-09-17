@@ -8,7 +8,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { computeFingerprintPayload, computeTreeFingerprint, computeWorkingState, runRedProof } from './core-evidence.mjs';
+import { computeFingerprintPayload, computeTreeFingerprint, computeWorkingState } from './core-evidence-tree.mjs';
+import { runRedProof } from './core-evidence-store.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { fixtures, skipWithoutGit } from './hostile-git-harness.test.mjs';
 

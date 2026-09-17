@@ -111,7 +111,7 @@ const isAbsentSha = (sha) => sha === undefined || /^0+$/.test(sha);
 // refuses the whole return under a duplicate id or counts one object where there were two. So every
 // -z stream is split into BUFFER segments and each name is trusted only if it survives a byte
 // round-trip; a name that does not is a REFUSAL, never a repaired string. (The same defense runs one
-// module down at core-evidence.mjs:199-210 — this is the family's idiom, not a new invention.)
+// module down, in flaggedIndexLag in core-evidence-tree.mjs — this is the family's idiom, not a new invention.)
 const splitZBytes = (buf) => {
   const out = [];
   let start = 0;
