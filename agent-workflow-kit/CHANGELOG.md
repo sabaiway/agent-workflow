@@ -4,6 +4,21 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.4.3 — cleanup after the two splits: one false doc pointer, a test title, a list order, comments and whitespace; nothing the kit decides, prints or records changes
+
+**Six small review findings from the review-state and core-evidence splits are fixed.** The only shipped doc change is in
+`references/modes/commit-guard.md`: it now says the fingerprint argv lives in `core-evidence-tree.mjs` and that the
+`core-evidence.mjs` facade re-exports it. The earlier text named the facade as its home. Everything else is one
+test title, one list order, comments and whitespace.
+
+- **Tests.** In `tools/review-state.test.mjs`, the block that runs `--check` and proves a later ungrounded receipt
+  outranks an earlier grounded SHIP no longer carries the name `backendReceiptStatus`. In
+  `test/package-content.test.mjs`, `tools/grounding.mjs` sits under the AD-038 pair comment again, and two comments
+  use a real em dash instead of the literal `\u2014` escape. The `cleanState` helper in `tools/review-state-judge.test.mjs`
+  loses a stray indent, and a blank line before a closing brace in `tools/core-evidence-tree.test.mjs` is gone.
+- **Sources.** The first-line comments of `review-state-build.mjs`, `review-state-flow.mjs` and `review-state-render.mjs`
+  use the em dash the other modules use, and `core-evidence-store-read.mjs` loses a doubled blank line.
+
 ## 14.4.2 — `core-evidence.mjs` becomes a facade over six leaves; nothing the tool decides, prints or records changes (AD-150)
 
 **The core-evidence writer is now six small modules behind its old entry point.** `tools/core-evidence.mjs` was one

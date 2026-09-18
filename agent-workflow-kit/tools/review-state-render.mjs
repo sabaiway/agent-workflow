@@ -1,4 +1,4 @@
-// review-state-render.mjs - the human report and the mask advisory line.
+// review-state-render.mjs — the human report and the mask advisory line.
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';

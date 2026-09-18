@@ -669,7 +669,7 @@ describe('readReceipts — a non-ENOENT read failure is surfaced, never an empty
   });
 });
 
-describe('backendReceiptStatus — the latest grounded receipt wins', () => {
+describe('review-state --check — a later ungrounded receipt outranks an earlier grounded SHIP', () => {
   it('gate level: SHIP then a later ungrounded receipt refuses with the ungrounded reason (the other backend ship-class)', () => {
     const { root } = makeRepo();
     const fp = computeTreeFingerprint(root);

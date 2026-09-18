@@ -7,6 +7,13 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-18 — cleanup after the two splits (kit 14.4.3 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
+
+**Six small review findings from the review-state and core-evidence splits are fixed; the kit behaves as in 14.4.2.**
+`references/modes/commit-guard.md` now names `core-evidence-tree.mjs` as the home of the fingerprint argv, which the
+`core-evidence.mjs` facade re-exports. The rest is a misnamed test block, a module entry moved back under the comment
+that describes it, dashes in comments and a few whitespace slips.
+
 ## 2026-09-17 — AD-150 `core-evidence.mjs` becomes a facade over six leaves (kit 14.4.2 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
 
 **The core-evidence writer is split, with no change in what it does.** The 1251-line `tools/core-evidence.mjs` is now

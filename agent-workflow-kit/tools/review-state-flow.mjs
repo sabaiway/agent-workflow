@@ -1,4 +1,4 @@
-// review-state-flow.mjs - plan-adoption coverage and the armed-flow arms.
+// review-state-flow.mjs — plan-adoption coverage and the armed-flow arms.
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

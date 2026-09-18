@@ -15,10 +15,10 @@ const shouldReadHeldSession = judge.shouldReadHeldSession ?? absent('shouldReadH
 const buildHeldSessionState = judge.buildHeldSessionState ?? absent('buildHeldSessionState');
 const selectHeldSessionDegrades = judge.selectHeldSessionDegrades ?? absent('selectHeldSessionDegrades');
 const decideCheck = judge.decideCheck ?? absent('decideCheck');
-  const cleanState = (overrides = {}) => ({
-    obligations: { recipe: 'council', source: 'config' }, malformed: 0, evidenceUnavailable: false, receiptsReadError: null,
-    plans: ['active-plan.md'], fingerprint: 'current', clean: true, ...overrides,
-  });
+const cleanState = (overrides = {}) => ({
+  obligations: { recipe: 'council', source: 'config' }, malformed: 0, evidenceUnavailable: false, receiptsReadError: null,
+  plans: ['active-plan.md'], fingerprint: 'current', clean: true, ...overrides,
+});
 
 describe('review-state judge stands alone — spec:review-state/S5', () => {
   it('prefers a grounded current receipt over an earlier ungrounded one', () => {

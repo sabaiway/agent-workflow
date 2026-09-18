@@ -42,5 +42,4 @@ describe('review-domain primitives — the defensive arms of the canonical paylo
     assert.match(payload.toString('utf8'), /untracked-symlink:fake-link\.txt -> \?/);
     rmSync(root, { recursive: true, force: true });
   });
-
 });

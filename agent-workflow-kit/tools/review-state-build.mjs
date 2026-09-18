@@ -1,4 +1,4 @@
-// review-state-build.mjs - read-only git plumbing and buildState.
+// review-state-build.mjs — read-only git plumbing and buildState.
 
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

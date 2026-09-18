@@ -260,13 +260,13 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/tracked-tree-census.mjs',
       // the AD-038 review-enforcement pair: the read-only receipt checker + the facts assembler
       'tools/review-state.mjs',
+      'tools/grounding.mjs',
       // the facade's five leaves (spec:review-state/S11) — it imports all five, so a dropped leaf breaks the gate at load
       'tools/review-state-judge.mjs',
       'tools/review-state-build.mjs',
       'tools/review-state-flow.mjs',
       'tools/review-state-render.mjs',
       'tools/review-state-await.mjs',
-      'tools/grounding.mjs',
       // the NEUTRAL shared core: the changed-surface computation the coverage domain consumes
       'tools/changed-surface.mjs',
       // the shared atomic-write core the consented writers run on (AD-042)
@@ -807,10 +807,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 304 = 301 + tools/claim-relation.mjs (the claim primitives both tiers import), tools/epic-store.mjs (the epic store's doors), tools/plan-shape-ownership.mjs (the story rules)
     // 309 = 305 + tools/checkpoint.mjs (mint, sequence, verify, prune), tools/checkpoint-core.mjs (the git seam both halves import), tools/checkpoint-restore.mjs (the ordered restore), tools/task-brief.mjs (the brief grammar, stamp and check) — story S5
     // 311 = 309 + tools/vehicle-settings.mjs (the executor vehicle's settings readers) + references/templates/vehicles.json (its seed) — story S1 of the pilot epic
-    // 312 = 311 + tools/ensure-executor.mjs (the executor ensure) \u2014 story S2 of the pilot epic
+    // 312 = 311 + tools/ensure-executor.mjs (the executor ensure) — story S2 of the pilot epic
     // 313 = 312 + tools/task-thread.mjs (the task grammar, reader, epoch and claims) — story S8 of the pilot epic
     // 318 = 313 + the five review-state leaves (judge, build, flow, render, await) — story S1 of the monolith epic
-    // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) \u2014 story S2 of the monolith epic
+    // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) — story S2 of the monolith epic
     assert.equal(packed.length, 324, `tarball file count drifted (${packed.length}\u2260 324)`);
   });
 

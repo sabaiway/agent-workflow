@@ -41,7 +41,6 @@ const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const HEX40_RE = /^[0-9a-f]{40}$/;
 
-
 export const validateEvidenceRecord = (record) => {
   if (!isPlainObject(record)) return { ok: false, reason: 'record is not an object' };
   if (record.schema !== EVIDENCE_SCHEMA_VERSION) {
