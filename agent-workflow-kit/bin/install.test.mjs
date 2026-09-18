@@ -62,8 +62,8 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
 
   it('removes retired mirror files an older install left behind (single source of truth on upgrade)', async () => {
     const target = join(dir, 'agent-workflow-kit');
-    // Seed a pre-3D install carrying the now-retired bundled mirror files.
     await mkdir(join(target, 'references'), { recursive: true });
+    await writeFile(join(target, 'SKILL.md'), ['---', 'name: agent-workflow-kit', '---', ''].join(String.fromCharCode(10)));
     await mkdir(join(target, 'tools'), { recursive: true });
     await writeFile(join(target, 'references', 'planning.md'), 'stale mirror\n');
     await writeFile(join(target, 'tools', 'methodology-slot.md'), 'stale mirror\n');
@@ -79,6 +79,7 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
     const target = join(dir, 'target');
     const evil = join(dir, 'evil');
     await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'SKILL.md'), ['---', 'name: agent-workflow-kit', '---', ''].join(String.fromCharCode(10)));
     await mkdir(evil, { recursive: true });
     await symlink(evil, join(target, 'references'));
     const res = runInstaller(target);
@@ -90,6 +91,7 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
   it('refuses a DANGLING destination symlink', async () => {
     const target = join(dir, 'target');
     await mkdir(target, { recursive: true });
+    await writeFile(join(target, 'SKILL.md'), ['---', 'name: agent-workflow-kit', '---', ''].join(String.fromCharCode(10)));
     await symlink(join(dir, 'nowhere'), join(target, 'references'));
     const res = runInstaller(target);
     assert.notEqual(res.status, 0);

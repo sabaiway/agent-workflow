@@ -30,13 +30,14 @@
 //
 // Dependency-free, Node >= 22.
 
-import { readFile, mkdir, rm } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { copyTreeRefresh } from '../tools/fs-safe.mjs';
+import { assertInstallableHome, prunePayload } from '../tools/payload-prune.mjs';
 // Dependency-free semver, shared with the family registry's bridge freshness probe (one leaf, no
 // second drifting copy). The null-on-unparseable contract is load-bearing here: legacy installs
 // predate any version stamp, so an unparseable side means "no gate", never a false ordering.
@@ -74,12 +75,6 @@ const PAYLOAD = [
   'tools',
   'bridges',
 ];
-
-// Kit-owned files the package NO LONGER ships (Plan 3D retired the bundled methodology mirror). The
-// refresh copy is additive, so a 1.10.0→1.11.0 upgrade would leave these dead copies behind; remove
-// exactly these known kit paths from the target on install (never user content, never a dir/symlink),
-// so an upgraded install has the same single-source-of-truth shape as a fresh one.
-const RETIRED_PATHS = ['references/planning.md', 'tools/methodology-slot.md'];
 
 // Collapse only a LEADING homedir() to "~" — anchored at the string start (boundary-checked with
 // `sep`), never a mid-path occurrence (Issue-004 parity with the engine/memory installers).
@@ -305,7 +300,8 @@ Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   launcher file (backed up first). The bridges are never PLACED by init (first placement
   stays /agent-workflow-kit setup, opt-in); once placed, init refreshes them from the kit's
   own bundled copies — local files only, never a downgrade — and --no-bridges skips that
-  refresh. init is additive — it never deletes your settings. If the
+  refresh. init never deletes your project settings; in an existing kit home it removes each
+  file in its folders that the package does not carry, one line each. If the
   installed kit is newer than the version you ran, init refuses (no network — it compares
   the version on disk) and points you at @latest; --allow-downgrade overrides that
   refusal (distinct from --force, which is launcher-only).
@@ -373,19 +369,14 @@ const main = async () => {
     process.exit(1);
   }
 
+  assertInstallableHome(target);
   await mkdir(target, { recursive: true });
   for (const entry of PAYLOAD.filter((e) => existsSync(resolve(PKG_ROOT, e)))) {
     copyTreeRefresh(resolve(PKG_ROOT, entry), resolve(target, entry), target);
   }
-  // Remove the retired mirror files an older install may have left (additive refresh never deletes).
-  // Only a regular file at the exact known path is removed — lstat (no-follow) so a dir/symlink is
-  // left untouched, and the path is a hardcoded kit-owned constant (no traversal, never user content).
-  for (const rel of RETIRED_PATHS) {
-    const retired = resolve(target, rel);
-    if (lstatNoFollow(retired)?.isFile()) {
-      await rm(retired, { force: true });
-      console.log(`[agent-workflow-kit] removed retired file ${tildify(retired)} (now read live from the engine).`);
-    }
+  const prune = prunePayload({ packageRoot: PKG_ROOT, home: target, payload: PAYLOAD });
+  for (const line of prune.lines) {
+    console.log(line);
   }
   // Verb keyed on the OBSERVED version relation (cmp), never on mere presence: null (fresh install,
   // or a legacy/unstamped one whose prior version is unknowable) → "installed"; -1 → a real update;
@@ -397,7 +388,11 @@ const main = async () => {
     : cmp === 1 ? 'downgraded the kit to'
     : cmp === -1 ? 'updated the kit to'
     : 'installed';
-  console.log(`[agent-workflow-kit] ${verb} v${version} -> ${tildify(target)}`);
+  if (prune.ok) {
+    console.log(`[agent-workflow-kit] ${verb} v${version} -> ${tildify(target)}`);
+  } else {
+    console.log(prune.nonConvergence);
+  }
 
   // F12 restart hint — any run over a PRE-EXISTING install (every cmp outcome, incl. the legacy
   // unstamped one) leaves an already-open agent session still holding the PREVIOUS kit files in
@@ -544,6 +539,9 @@ const main = async () => {
     }
     console.log('[agent-workflow-kit] methodology engine installed.');
   }
+
+  // The non-convergence line already took the verb's place.
+  if (!prune.ok) process.exit(1);
 
   // This command (de)installed the *kit* globally. Deploying it into a project is a
   // separate, in-agent step — and which sub-command depends on whether that project

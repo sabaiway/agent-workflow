@@ -4,6 +4,60 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.5.0 — an upgrade delivers its migration notes and entry-point blocks through two new tools, and `init` removes the files the package does not carry from an existing kit home (AD-151)
+
+**Three things the upgrade already promised now run as code.** Up to 14.4.3 the upgrade mode asked the agent to pick
+the migration notes newer than the project's stamp by itself and to paste two entry-point blocks by hand, and `init`
+only added files, so a kit home kept every file a later package stopped shipping (except two paths the installer named
+by hand). 14.5.0 adds two command-line tools and one library the installer calls. Story S1 of the epic
+`CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract `docs/ai/specs/kit/upgrade-delivery/` (revision 1).
+
+- **`tools/migration-notes.mjs --cwd <project>`** (read-only). Lists each note under `migrations/` whose version is
+  newer than the project's `docs/ai/.workflow-version` and not newer than the deployment-lineage head, in ascending
+  order, one stdout line each: `note <version> <path> :: <headline>`. A refusal is one stderr line that opens with its
+  name; a usage error exits 2 before anything is read.
+- **`tools/migration-blocks.mjs --cwd <project> [--language <text>] [--attribution on|off] [--apply]`**. Places the
+  Communication language and Attribution blocks into the project's `AGENTS.md` from the kit's
+  `references/templates/AGENTS.md`, now the kit's only copy of their text. Without `--apply` it previews and writes
+  nothing; with `--apply` it writes every missing block in one atomic write, writes nothing when both blocks are
+  already present, and writes nothing when it refuses, naming the refusal in one stderr line.
+- **`tools/payload-prune.mjs`** (library). After its copy, `init` compares each of the five folders it installs
+  (`references/`, `tools/`, `migrations/`, `launchers/`, `bridges/`) with the same folder in the kit home. A regular file the package does not carry is removed with one `removed` line, a file
+  you placed there yourself included; a directory or symlink the package does not carry is kept with a `kept` line
+  (the files inside such a directory are removed all the same). `init` now refuses an existing folder that is
+  neither empty nor a kit home (a `SKILL.md` whose frontmatter names `agent-workflow-kit`): it exits 1 before
+  writing anything. A kind mismatch or a failed enumeration
+  stops the prune before it removes anything; a failed removal is reported by path and the other files still go. When
+  the prune reports a failure, `init` prints a non-convergence line in place of the line that names the installed
+  version, still runs its launcher, bridge, memory and engine steps, and exits 1. The hand-kept `RETIRED_PATHS` list
+  is gone.
+- **Upgrade mode.** Steps 6 and 7 of `references/modes/upgrade.md` run the notes tool and the blocks writer, relay
+  their lines and act on their exits: `stamp-absent` returns to step 1, `answer-missing` asks for the named answers
+  and re-runs once, any other refusal stops the upgrade before the stamp.
+- **Notes and docs.** Notes 1.1.0 and 1.2.0 no longer carry block text; they name the writer. The
+  `.claude/settings.json` step of 1.2.0 stays a hand step, taken whenever the Attribution block reads `off`. The
+  migrations README names the notes tool as the only selection. The README and `init --help` no longer say `init` is
+  additive: it never deletes project settings, and in an existing kit home it removes each file in the kit's folders
+  that the package does not carry, one line each.
+- **Reference profile.** `references/reference-profile.json` names the profile `full-flow`: ten items, each keyed to
+  the story that delivers it. `test/upgrade-full-flow.test.mjs` seeds an older kit home and project, upgrades them
+  once with the real tools and checks each landed story's items; S1's three items pass, and every story not yet landed
+  is asserted to show a gap.
+- **Tests.** Suites for the three new modules; `test/package-content.test.mjs` pins 328 packed files and names the
+  four new ones; the legacy-path case and the two symlink cases of `bin/install.test.mjs` seed the kit's `SKILL.md`
+  their existing homes stand for.
+
+**Upgrade criterion.** Nothing to do by hand, unless you keep a file of your own in the kit home's `references/`,
+`tools/`, `migrations/`, `launchers/` or `bridges/` folders: move it out first. The first `init` of 14.5.0 over an
+existing kit home (`~/.claude/skills/agent-workflow-kit/` by default) removes every file in those five folders that
+the package does not carry, one `removed` line each; that is the intended cleanup. A home that an `init` before 1.15.2
+wrote, or one copied by hand from the source tree, also loses the test files and fixtures under `tools/` that the
+package does not ship, and the folders they leave empty are reported as `kept` on every run until you remove them. A
+folder an earlier `init` wrote the kit's `SKILL.md` into counts as a kit home, a project folder included: if you once
+pointed `--dir` at a project, delete the kit's `SKILL.md` there before you run `init` into it again, or the project's
+own files in those five folders are removed. A `--dir` or `AGENT_WORKFLOW_KIT_DIR` that names an
+existing folder which is neither empty nor a kit home is now refused; point it at a new or empty folder instead.
+
 ## 14.4.3 — cleanup after the two splits: one false doc pointer, a test title, a list order, comments and whitespace; nothing the kit decides, prints or records changes
 
 **Six small review findings from the review-state and core-evidence splits are fixed.** The only shipped doc change is in

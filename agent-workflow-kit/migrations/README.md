@@ -8,8 +8,13 @@ releases add files/templates, which `upgrade` reconciles without a migration.
 ## How `upgrade` applies them
 
 1. Read the project's stamped version from `docs/ai/.workflow-version`.
-2. Select every migration whose `<version>` is **strictly newer** than the stamp.
-3. Apply them in **ascending semver order**.
+2. Run `node ${CLAUDE_SKILL_DIR}/tools/migration-notes.mjs --cwd <project>` as the sole selector.
+   It lists every migration whose `<version>` is **strictly newer** than the stamp and not newer than the head.
+   Each line is `note <version> <path> :: <headline>`, with an absolute `<path>` under the running kit.
+   The headline is the note's first `# ` line, with that prefix removed and surrounding whitespace trimmed.
+   The upgrade must relay those stdout lines verbatim and apply exactly the listed notes.
+   A named refusal stops the upgrade, except `stamp-absent`, which routes it back to the upgrade's step 1.
+3. Apply them in the order the tool listed them (**ascending semver order**).
 4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`3.0.0` today — the
    shared lineage, **not** this skill's npm package version). A stamp greater than the head → STOP.
 
@@ -19,6 +24,7 @@ releases add files/templates, which `upgrade` reconciles without a migration.
 - **Non-destructive** — never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs). Add/rename/restructure only what the kernel owns.
 - **Self-contained** — exact paths + commands, readable cold, like a mini-plan.
 - **Mention rollback** — note how to undo if the step is risky.
+- **Template blocks** — a note never pastes entry-point block text; `tools/migration-blocks.mjs` places it from the kit's template.
 
 ## Template
 

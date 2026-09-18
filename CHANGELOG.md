@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-18 — AD-151 an upgrade delivers its migration notes and blocks through two tools, and `init` prunes an existing kit home to the package (kit 14.5.0 MINOR; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
+
+**The upgrade now does what it already promised.** `tools/migration-notes.mjs` tells a project exactly which migration
+notes its stamp selects, by path and headline; `tools/migration-blocks.mjs` places the Communication language and
+Attribution blocks into `AGENTS.md` from the kit's own template, preview first and one atomic write on `--apply`; and
+`init` removes from an existing kit home each file in the kit's folders that the package does not carry, one line
+each, so a returning user no longer keeps files older packages left. Before writing anything, `init` refuses an
+existing folder that is neither empty nor a kit home. The kit also ships `references/reference-profile.json`, the
+named profile `full-flow` the rest of the epic delivers; a repository fixture upgrades an older home once and checks
+it. Story S1 of the epic
+`CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract `docs/ai/specs/kit/upgrade-delivery/` (revision 1).
+
 ## 2026-09-18 — cleanup after the two splits (kit 14.4.3 PATCH; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
 
 **Six small review findings from the review-state and core-evidence splits are fixed; the kit behaves as in 14.4.2.**

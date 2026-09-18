@@ -196,7 +196,8 @@ other agent). The manual path works identically but **isn't reflected in install
 <details>
 <summary><b>What <code>init</code> touches — and how to undo it</b></summary>
 
-`init` is **additive — it never deletes your settings.** It writes its own namespaced slots, then
+`init` **never deletes your project settings**, and it installs only into a new or empty folder or an existing kit home: any other `--dir` is refused before anything is written. In an existing kit home it removes every file in the kit's
+`references/`, `tools/`, `migrations/`, `launchers/` and `bridges/` folders that the package does not carry, a file you put there included, one reported line per file. It writes its own namespaced slots, then
 refreshes the other npm core members so a returning `init` leaves **no stale core member**:
 
 | Path | What |

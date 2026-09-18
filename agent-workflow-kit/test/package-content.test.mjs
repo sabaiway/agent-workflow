@@ -284,6 +284,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/core-evidence-store.mjs',
       'tools/core-evidence-red-proof.mjs',
       'tools/core-evidence-summary.mjs',
+      // the upgrade-delivery leaves (story S1 of the consumers epic): the mode document runs the two CLIs and the installer imports the prune
+      'tools/migration-notes.mjs',
+      'tools/migration-blocks.mjs',
+      'tools/payload-prune.mjs',
+      'references/reference-profile.json',
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
@@ -811,7 +816,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 313 = 312 + tools/task-thread.mjs (the task grammar, reader, epoch and claims) — story S8 of the pilot epic
     // 318 = 313 + the five review-state leaves (judge, build, flow, render, await) — story S1 of the monolith epic
     // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) — story S2 of the monolith epic
-    assert.equal(packed.length, 324, `tarball file count drifted (${packed.length}\u2260 324)`);
+    // 328 = 324 + tools/migration-notes.mjs, tools/migration-blocks.mjs, tools/payload-prune.mjs and references/reference-profile.json — story S1 of the consumers epic
+    assert.equal(packed.length, 328, `tarball file count drifted (${packed.length}\u2260 328)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
