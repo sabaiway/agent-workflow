@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-20 — AD-152 the story-sessions section has one source and the kit can insert a missing template section (kit 14.6.0 MINOR + memory 8.0.2 PATCH; engine 5.9.0 and both bridges unchanged)
+
+**A section the upgrade could only ask for is now a command.** Both rules templates gain `### 2.7. Story sessions` —
+one source, byte-identical twins — saying a story runs as five sessions, each ending at its own review checkpoint.
+The new `tools/rules-insert.mjs` inserts a template-owned section a project's `docs/ai/agent_rules.md` does not have,
+previewing by default and writing once, atomically, on `--apply`; a section you already have keeps your wording, and
+every state it cannot act on names itself and leaves your file byte-for-byte unchanged — target bytes that do not
+survive a UTF-8 round trip among them, since the tool reads the file as bytes and proves it can give them back
+before it writes, so nothing outside the inserted section is ever rewritten. The upgrade reconcile now judges the
+story-sessions section too, and judges it BEFORE the engine-backed lens section, so a missing engine can no longer
+hide that verdict; both template-owned absent-section notes carry the preview command, and `--apply` follows an
+explicit yes.
+Internally the region table, extraction rule and insert judgement move to `tools/rules-regions.mjs` (pure over text),
+`tools/lens-region.mjs` shrinks from 393 lines to 271 with every export kept, and `tools/profile-gaps.mjs` holds the
+gap registry the Recommendations screen will render. Story S2 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`;
+contract `docs/ai/specs/kit/rules-regions/` (revision 2).
+
 ## 2026-09-18 — AD-151 an upgrade delivers its migration notes and blocks through two tools, and `init` prunes an existing kit home to the package (kit 14.5.0 MINOR; engine 5.9.0, memory 8.0.1 and both bridges unchanged)
 
 **The upgrade now does what it already promised.** `tools/migration-notes.mjs` tells a project exactly which migration

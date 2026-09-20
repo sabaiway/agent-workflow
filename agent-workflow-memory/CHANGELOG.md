@@ -4,6 +4,16 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
 
+## 8.0.2 — the rules template gains the Story sessions section (AD-152)
+
+`references/templates/agent_rules.md`: the new section `### 2.7. Story sessions` is added after §2.6 and before the
+`---` that closes §2, byte-identical to the kit's copy, which is the section's one source. It says a story runs as
+five sessions — spec, plan, tests, code, and diff review + release + record — each ending at its own review
+checkpoint, and that a split is one session. A deployment whose rules file lacks the section is offered the insert
+by the kit's upgrade (`tools/rules-insert.mjs`); a file that already carries a Story sessions heading keeps its own
+wording. No script changed.
+
+
 ## 8.0.1 — the orchestration seed's note names six activities (AD-147)
 
 `references/templates/orchestration.json`: the `_README` is the kit's new canonical byte for byte. It names six

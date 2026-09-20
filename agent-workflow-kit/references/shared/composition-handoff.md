@@ -54,11 +54,13 @@ current* (zero-diff). Relay its outcome in plain language (*refreshed* / *alread
 *custom edit preserved + note* / *file absent — skipped* / *engine too old — skipped* / *over the
 line cap — refused*); a fully absent/invalid engine is the same loud STOP + one-line install
 command as the pointer reconcile. The same invocation also reconciles the **Communication
-(user-facing messages)** section from the kit's own bundled template canon (no engine involved):
+(user-facing messages)** and **story-sessions** sections from the kit's own bundled template canon (no engine involved):
 a body matching the current canon is reported *already current*; a body matching a known prior
-is refreshed; a custom body is preserved + noted; an absent section is a stated note (never an
-insert); an over-cap refresh is refused; and an unreadable bundled template canon is its own
-loud STOP naming the kit reinstall command.
+is refreshed; a custom body is preserved + noted; an absent section is a stated note;
+an over-cap refresh is refused; and an unreadable bundled template canon is its own
+loud STOP naming the kit reinstall command. Relay both sections' outcome lines.
+The printed absent-section note already carries the preview command: relaying it is the offer.
+Run the insert with `--apply` only on the user's explicit yes.
 
 **Navigator finalizer (runs in BOTH paths, AFTER the lens reconcile above).** `docs/ai/index.md` is
 a GENERATED artifact the entry point declares always-loaded, and the reconcile above may have just

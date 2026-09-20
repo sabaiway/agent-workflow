@@ -196,7 +196,9 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 49152, // router + any single mode file. 47104 → 49152 (48 KB): AD-123 — upgrade.md
+  routerPlusMode: 50176, // 49152 → 50176 (49 KB): router + any single mode file. Consumers epic story S2 — references/modes/upgrade.md gains the story-sessions outcome set in its `lens` rationale and step-4/8 report lists, drops `(never an insert)` and requires an explicit yes for `--apply` (+533 B).
+  // Measured 49634 B (router 11778 + upgrade 37856), 482 B over the 49152 ceiling; 542 B of headroom — one documented KB-multiple bump.
+  // History: 47104 → 49152 (48 KB): AD-123 — upgrade.md
   // gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the
   // retired proxy named, the new token + cause, the adoption-state report) and the contradicted-skip
   // finding rule on the equal-head exit; measured 48307 B, 1203 B over the 46 KB ceiling — a documented
@@ -259,7 +261,9 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 78848, // router + mode + its declared shared files. 76800 → 78848 (77 KB): AD-123 —
+  fullReadSet: 79872, // 78848 → 79872 (78 KB): router + mode + its declared shared files. Consumers epic story S2 — references/modes/upgrade.md carries the changes above (+533 B); references/shared/composition-handoff.md carries the same story-sessions outcome set, clause removal and explicit-yes `--apply` rule in its lens paragraph (+200 B).
+  // Measured 79569 B (pair 49634 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 29935), 721 B over the 78848 ceiling; 303 B of headroom — one documented KB-multiple bump.
+  // History: 76800 → 78848 (77 KB): AD-123 —
   // upgrade's set carries its own growth (see routerPlusMode above) plus deploy-tail.md's Node-evidence
   // + contradicted-skip gotcha; measures 78084 B, 1284 B over the 75 KB ceiling, and the 76 KB
   // multiple would leave -260 B, so this takes the following multiple (764 B of headroom). A

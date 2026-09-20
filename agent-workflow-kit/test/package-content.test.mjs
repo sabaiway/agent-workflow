@@ -288,6 +288,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/migration-notes.mjs',
       'tools/migration-blocks.mjs',
       'tools/payload-prune.mjs',
+      'tools/profile-gaps.mjs',
       'references/reference-profile.json',
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
@@ -401,6 +402,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the lens-region reconcile — invoked from upgrade/bootstrap prose (a count alone would not
       // catch its accidental exclusion)
       'tools/lens-region.mjs',
+      'tools/rules-insert.mjs',
+      'tools/rules-regions.mjs',
       // the progressive-disclosure split payload: the router's mode files + shared contracts must
       // ship, or every placed kit routes into a void (representative pins; the exact count below
       // and the catalog↔modes set-equality guard cover the full set)
@@ -817,7 +820,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 318 = 313 + the five review-state leaves (judge, build, flow, render, await) — story S1 of the monolith epic
     // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) — story S2 of the monolith epic
     // 328 = 324 + tools/migration-notes.mjs, tools/migration-blocks.mjs, tools/payload-prune.mjs and references/reference-profile.json — story S1 of the consumers epic
-    assert.equal(packed.length, 328, `tarball file count drifted (${packed.length}\u2260 328)`);
+    // 331 = 328 + tools/profile-gaps.mjs, tools/rules-insert.mjs and tools/rules-regions.mjs - story S2 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW (the consumers epic)
+    assert.equal(packed.length, 331, `tarball file count drifted (${packed.length}\u2260 331)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

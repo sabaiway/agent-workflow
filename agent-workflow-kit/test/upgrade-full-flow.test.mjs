@@ -14,9 +14,19 @@ import { isDeepStrictEqual } from 'node:util';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = resolve(HERE, '..');
 const LF = String.fromCharCode(10);
-const COMMUNICATION = '## 🗣️ Communication language';
-const ATTRIBUTION = '## ✍️ Attribution';
-const MEMORY_MAP = '## 🧭 Memory Map';
+const COMMUNICATION = `## ${String.fromCodePoint(0x1f5e3, 0xfe0f)} Communication language`;
+const ATTRIBUTION = `## ${String.fromCodePoint(0x270d, 0xfe0f)} Attribution`;
+const MEMORY_MAP = `## ${String.fromCodePoint(0x1f9ed)} Memory Map`;
+const STORY_HEADING = '### 2.7. Story sessions';
+const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
+const RULES_PATH = 'docs/ai/agent_rules.md';
+const RULES_TEMPLATE = 'references/templates/agent_rules.md';
+const RULES_CAP = 'maxLines: 150';
+const SECTION_BOUNDARY = '---';
+const INSERT_TOOL = 'rules-insert.mjs';
+const APPLY_ARGS = ['--apply'];
+const ENTRY_ARTIFACT = { path: 'AGENTS.md', key: 'entryPoint' };
+const RULES_ARTIFACT = { path: RULES_PATH, key: 'rules' };
 const PAYLOAD = ['references', 'launchers', 'migrations', 'tools', 'bridges'];
 const STORIES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
 const ITEM_IDS = [
@@ -32,7 +42,7 @@ const ITEM_IDS = [
   'profile-gap-screen',
 ];
 const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
-const LANDED = new Set(['S1']);
+const LANDED = new Set(['S1', 'S2']);
 const PENDING = () => ({ reason: 'detector pending' });
 const fixture = {};
 
@@ -43,29 +53,45 @@ const removeSpan = (text, heading) => {
   return [...lines.slice(0, start), ...lines.slice(next < 0 ? lines.length : next)].join(LF);
 };
 
+const findRegion = (text, heading) => {
+  const lines = text.split(LF);
+  const start = lines.indexOf(heading);
+  if (start < 0) return null;
+  const next = lines.findIndex((line, index) => index > start
+    && (line === SECTION_BOUNDARY || line.startsWith('## ') || line.startsWith('### ')));
+  return { lines, start, end: next < 0 ? lines.length : next };
+};
+
+const removeRulesSpan = (text, heading) => {
+  const region = findRegion(text, heading);
+  if (!region) return text;
+  const { lines, start, end } = region;
+  return [...lines.slice(0, start), ...lines.slice(end)].join(LF);
+};
+
 const writeFixture = (path, bytes) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, bytes);
 };
 
-const readEntryPoint = (project) => {
+const readProjectFile = (project, path) => {
   try {
-    return { bytes: readFileSync(join(project, 'AGENTS.md')) };
+    return { bytes: readFileSync(join(project, path)) };
   } catch (error) {
     return { error: error.message };
   }
 };
 
-const runTool = (home, project, name, extra = []) => {
+const runTool = (home, project, name, extra = [], artifact = ENTRY_ARTIFACT) => {
   const tool = join(home, 'tools', name);
   if (!existsSync(tool)) {
-    return { name, result: { absent: true }, entryPoint: readEntryPoint(project) };
+    return { name, result: { absent: true }, [artifact.key]: readProjectFile(project, artifact.path) };
   }
   const result = spawnSync(process.execPath, [tool, '--cwd', project, ...extra], { encoding: 'utf8' });
   return {
     name,
     result: { code: result.status, stdout: result.stdout, stderr: result.stderr, error: result.error?.message },
-    entryPoint: readEntryPoint(project),
+    [artifact.key]: readProjectFile(project, artifact.path),
   };
 };
 
@@ -98,8 +124,8 @@ const capturePayload = (home) => {
   }
 };
 
-const findCallGap = (record) => {
-  const failed = record.calls.find(({ result }) => result.absent || result.code !== 0);
+const findCallGap = (calls) => {
+  const failed = calls.find(({ result }) => result.absent || result.code !== 0);
   if (!failed) return null;
   if (failed.result.absent) return { reason: `${failed.name} is absent` };
   const detail = failed.result.stderr || failed.result.error || '';
@@ -107,7 +133,7 @@ const findCallGap = (record) => {
 };
 
 const detectNotes = (record) => {
-  const gap = findCallGap(record);
+  const gap = findCallGap(record.slices.S1);
   if (gap) return gap;
   const notes = [
     ['1.1.0', '1.1.0-communication-language.md', 'Migration 1.1.0-communication-language'],
@@ -116,16 +142,16 @@ const detectNotes = (record) => {
   ];
   const expected = notes.map(([version, name, headline]) =>
     `note ${version} ${join(record.home, 'migrations', name)} :: ${headline}`);
-  return record.calls[0].result.stdout === expected.join(LF) + LF
+  return record.slices.S1[0].result.stdout === expected.join(LF) + LF
     ? null : { reason: 'selected notes differ from the three pinned paths and headlines' };
 };
 
 const detectBlocks = (record) => {
-  const gap = findCallGap(record);
+  const gap = findCallGap(record.slices.S1);
   if (gap) return gap;
-  const unreadable = record.calls.find(({ entryPoint }) => entryPoint.error);
+  const unreadable = record.slices.S1.find(({ entryPoint }) => entryPoint.error);
   if (unreadable) return { reason: `entry point unreadable: ${unreadable.entryPoint.error}` };
-  const [notes, preview, apply, repeated] = record.calls;
+  const [notes, preview, apply, repeated] = record.slices.S1;
   if (!preview.entryPoint.bytes.equals(notes.entryPoint.bytes)) {
     return { reason: 'preview changed the entry point' };
   }
@@ -146,7 +172,7 @@ const detectBlocks = (record) => {
 };
 
 const detectPayload = (record) => {
-  const gap = findCallGap(record);
+  const gap = findCallGap(record.slices.S1);
   if (gap) return gap;
   const payload = record.payload;
   if (payload.error) return { reason: `payload unreadable: ${payload.error}` };
@@ -159,11 +185,38 @@ const detectPayload = (record) => {
     ? null : { reason: 'runtime-state.json changed' };
 };
 
+const detectStorySessions = (record) => {
+  const gap = findCallGap(record.slices.S2);
+  if (gap) return gap;
+  const unreadable = record.slices.S2.find(({ rules }) => rules.error);
+  if (unreadable) return { reason: `rules unreadable: ${unreadable.rules.error}` };
+  const [preview, apply, repeated] = record.slices.S2;
+  if (!preview.rules.bytes.equals(record.rulesBefore)) {
+    return { reason: 'preview changed the rules file' };
+  }
+  const text = apply.rules.bytes.toString('utf8');
+  const lines = text.split(LF);
+  const lens = lines.indexOf(LENS_HEADING);
+  const story = findRegion(text, STORY_HEADING);
+  if (!story || lens < 0 || story.start <= lens
+    || lines.filter((line) => line === STORY_HEADING).length !== 1) {
+    return { reason: 'story sessions heading is not present once after the lens' };
+  }
+  const template = findRegion(record.rulesTemplate, STORY_HEADING);
+  if (!template) return { reason: 'story sessions template span is absent' };
+  if (!isDeepStrictEqual(story.lines.slice(story.start, story.end),
+    template.lines.slice(template.start, template.end))) {
+    return { reason: 'story sessions span differs from the template bound to 2.7' };
+  }
+  return repeated.rules.bytes.equals(apply.rules.bytes)
+    ? null : { reason: 'second apply changed the rules file' };
+};
+
 const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
   'payload-converged': detectPayload,
-  'story-sessions-section': PENDING,
+  'story-sessions-section': detectStorySessions,
   'epic-task-slots': PENDING,
   'epic-store-seeded': PENDING,
   'checker-gates-declared': PENDING,
@@ -222,19 +275,30 @@ describe('full flow upgrade delivery', () => {
     const withoutCommunication = removeSpan(template.replace('{{PROJECT_NAME}}', 'fixture'), COMMUNICATION);
     const initialBytes = Buffer.from(removeSpan(withoutCommunication, ATTRIBUTION));
     writeFixture(join(project, 'AGENTS.md'), initialBytes);
+    const rulesTemplate = readFileSync(join(KIT, RULES_TEMPLATE), 'utf8');
+    const rulesBefore = Buffer.from(removeRulesSpan(rulesTemplate, STORY_HEADING));
+    writeFixture(join(project, RULES_PATH), rulesBefore);
     const installer = spawnSync(process.execPath, [
       join(KIT, 'bin', 'install.mjs'), '--dir', home,
       '--no-launchers', '--no-engine', '--no-memory', '--no-bridges',
     ], { encoding: 'utf8' });
     assert.equal(installer.status, 0, installer.stderr || installer.error?.message || installer.stdout);
     const answers = ['--language', 'Esperanto', '--attribution', 'off', '--apply'];
-    const calls = [
+    const s1Calls = [
       runTool(home, project, 'migration-notes.mjs'),
       runTool(home, project, 'migration-blocks.mjs'),
       runTool(home, project, 'migration-blocks.mjs', answers),
       runTool(home, project, 'migration-blocks.mjs', answers),
     ];
-    fixture.record = { home, project, initialBytes, runtimeBefore, calls, payload: capturePayload(home) };
+    const s2Calls = [
+      runTool(home, project, INSERT_TOOL, [], RULES_ARTIFACT),
+      runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
+      runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
+    ];
+    fixture.record = {
+      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate,
+      slices: { S1: s1Calls, S2: s2Calls }, payload: capturePayload(home),
+    };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
 
@@ -281,6 +345,17 @@ describe('full flow upgrade delivery', () => {
     const paths = fixture.record.payload.trees.flatMap(({ entry, installed }) =>
       installed.map((path) => `${entry}/${path}`));
     assert.ok(paths.includes('references/reference-profile.json'));
+  });
+
+  it('spec:rules-regions/S20 inserts story sessions into older rules with a read-only preview and repeat', () => {
+    const text = fixture.record.rulesBefore.toString('utf8');
+    const lines = text.split(LF);
+    assert.ok(!lines.includes(STORY_HEADING));
+    assert.ok(lines.includes(RULES_CAP));
+    const lens = findRegion(text, LENS_HEADING);
+    assert.ok(lens, 'seeded rules retain the lens');
+    assert.equal(lens.lines[lens.end], SECTION_BOUNDARY, 'seeded rules retain the section 2 boundary');
+    assertStory('S2', fixture.profile, fixture.record);
   });
 
   it('spec:upgrade-delivery/S19 binds every detector to an item and every story to the landed register', () => {

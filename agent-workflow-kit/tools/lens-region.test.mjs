@@ -334,7 +334,7 @@ describe('lens-region — frontmatter cap guard input', () => {
   });
 });
 
-describe('lens-region — CLI reconcile (live engine read, outcomes, atomic write)', () => {
+describe('lens-region — CLI reconcile (live engine read, outcomes, atomic write) spec:rules-regions/S15', () => {
   let projectDir;
   let logs;
   let errors;

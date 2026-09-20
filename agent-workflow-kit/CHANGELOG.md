@@ -4,6 +4,46 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.6.0 — your rules file gains a Story sessions section, and the kit can now put a missing template section there for you (AD-152)
+
+**A section you were told to add by hand is now one command.** Up to 14.5.0 a project's
+`docs/ai/agent_rules.md` said nothing about how a story splits into sessions, so where the split belonged was
+nobody's written rule; and when the upgrade found a template-owned section missing from your file, it said "add it
+from the current template" and left you to copy it. 14.6.0 adds the section to the bundled template and adds the
+tool that inserts a missing one — after naming, section by section, what it would add and what it would leave alone.
+Story S2 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract `docs/ai/specs/kit/rules-regions/` (revision 2).
+
+- **The new section.** `references/templates/agent_rules.md` (and its memory twin, byte-identical) gains
+  `### 2.7. Story sessions`, after §2.6 and before the `---` that closes §2: a story runs as five sessions — spec,
+  plan, tests, code, and diff review + release + record — each ending at its own review checkpoint, with tests and
+  code never sharing a session and a spec never sharing one with its plan. A split — moving code and its existing
+  cases into modules, with no new logic and no new case — is one session.
+- **`tools/rules-insert.mjs --cwd <project> [--apply]`**. Inserts a template-owned section your rules file does not
+  have — Communication or Story sessions — after the last `### 2.<N>.` section, numbered after your highest one, with
+  the template's own bytes and your file's newline form. Without `--apply` it previews and writes nothing: one line
+  per section, `present` or `planned`. With `--apply` it writes in one atomic replacement, whole or nothing, and a
+  second `--apply` changes no byte. A section you already have keeps your wording, whatever it says. Every state it
+  cannot act on names itself on stderr and leaves your file byte-for-byte unchanged: the file absent, a symlink,
+  unreadable — bytes that do not survive a UTF-8 round trip included, since the tool reads your file as bytes and
+  proves it can give them back before it writes anything, so nothing outside the inserted section is ever rewritten
+  — the bundled template unusable, a heading occurring more than once, no numbered section to insert after, a
+  result over your file's own `maxLines`, or a failed write. A leading byte-order mark is not a refusal: it is
+  kept, and the section is inserted as in any other file. Exit 0 for a preview or an apply, 1 for a
+  refusal, 2 for a usage error — raised before anything is read.
+- **The upgrade reconcile now judges three sections, not two.** `tools/lens-region.mjs reconcile <path>` reports the
+  Story sessions section from the same outcome set as Communication, and reports it BEFORE the engine-backed lens
+  section, so a missing or too-old engine can no longer hide that verdict. In 14.6.0 the section has no earlier
+  canon to recognise, so what you will actually see is *already current* when your body matches the template,
+  *custom edit preserved + note* whenever it does not — your wording is never overwritten — or *section absent*;
+  the refresh outcomes join once a first prior wording ships. Both "section absent"
+  notes now carry the preview command; an upgrade relays it as an offer and runs `--apply` only on your explicit yes.
+  A heading occurring more than once in a template-owned section is preserved with a note and nothing written.
+- **Internals.** The region table, the one extraction rule and the insert judgement move to `tools/rules-regions.mjs`
+  (pure over text, reads no file, imports no writer); `tools/lens-region.mjs` keeps every export it had and shrinks
+  from 393 lines to 271. `tools/profile-gaps.mjs` holds the frozen registry of gap entries the Recommendations screen
+  will render, with the first entry, `story-sessions-section`.
+
+
 ## 14.5.0 — an upgrade delivers its migration notes and entry-point blocks through two new tools, and `init` removes the files the package does not carry from an existing kit home (AD-151)
 
 **Three things the upgrade already promised now run as code.** Up to 14.4.3 the upgrade mode asked the agent to pick

@@ -16,6 +16,14 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_TEMPLATES = join(HERE, '..', 'references', 'templates');
 const MEMORY_TEMPLATES = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'templates');
+const LF = String.fromCharCode(10);
+const RULES_FILE = 'agent_rules.md';
+const STORY_HEADING = '### 2.7. Story sessions';
+const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
+const STRUCTURAL_BOUNDARY = /^(---$|## |### )/;
+const STORY_CANON = ["A story ", " one row of an epic's ledger, carried by one plan ",
+  " runs as five sessions, each ending at its own review checkpoint: **spec** (the contract under `docs/ai/specs/`, drafted and reviewed on the `plan-authoring` recipe), **plan** (the ledger, same recipe), **tests** (one task per ledger row, red first), **code** (one task per row, to green), and **diff review, release and record** (the review of the staged tree on the `plan-execution` recipe, the release where the story ships one, then the changelog and handover entries and the plan's Phase: Cleanup). Tests and code never share a session, and a spec and its plan never share one either. A storyless plan runs the same five. **Exception ",
+  " a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup."].join(String.fromCharCode(8212));
 
 const read = (root, name) => readFileSync(join(root, name), 'utf8');
 
@@ -128,6 +136,44 @@ describe('agent_rules.md §2.5 Communication — kit and memory template regions
     const region = extractCommunicationRegion(doctored);
     const after = doctored.slice(doctored.indexOf(region) + region.length);
     assert.ok(!after.startsWith('### 2.6. Planning'), 'the doctored regression must be caught by pin (a)');
+  });
+});
+
+const extractStoryRegion = (text, heading = STORY_HEADING) => {
+  const lines = text.split(LF);
+  const start = lines.indexOf(heading);
+  assert.notEqual(start, -1, `${heading} exists in the template`);
+  const tail = lines.slice(start + 1);
+  const boundary = tail.findIndex((line) => STRUCTURAL_BOUNDARY.test(line));
+  return [heading, ...tail.slice(0, boundary === -1 ? undefined : boundary)].join(LF) + (boundary === -1 ? '' : LF);
+};
+
+describe('Story sessions template twins spec:rules-regions/S19', () => {
+  it('the two Story sessions regions match byte-for-byte', () => {
+    const kit = extractStoryRegion(read(KIT_TEMPLATES, RULES_FILE));
+    const memory = extractStoryRegion(read(MEMORY_TEMPLATES, RULES_FILE));
+    assert.equal(kit, memory);
+  });
+  it('section 2.6 is immediately followed by section 2.7 in both templates', () => {
+    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) {
+      const text = read(root, RULES_FILE);
+      const lens = extractStoryRegion(text, LENS_HEADING);
+      assert.ok(text.slice(text.indexOf(lens) + lens.length).startsWith(STORY_HEADING), root);
+    }
+  });
+  it('both Story sessions bodies equal the literal canon', () => {
+    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) {
+      const region = extractStoryRegion(read(root, RULES_FILE));
+      assert.equal(region, [STORY_HEADING, STORY_CANON, '', ''].join(LF), root);
+    }
+  });
+  it('the parity comparison rejects a twin changed in memory', () => {
+    const kit = extractStoryRegion(read(KIT_TEMPLATES, RULES_FILE));
+    const memory = extractStoryRegion(read(MEMORY_TEMPLATES, RULES_FILE));
+    assert.equal(kit, memory);
+    const changed = memory.replace(STORY_CANON, STORY_CANON.toUpperCase());
+    assert.notEqual(memory, changed);
+    assert.throws(() => assert.equal(kit, changed), assert.AssertionError);
   });
 });
 

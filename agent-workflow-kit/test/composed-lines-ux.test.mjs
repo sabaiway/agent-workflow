@@ -30,6 +30,7 @@ import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-ba
 import { reconcileSettings } from '../tools/bridge-settings.mjs';
 import { settingsPath } from '../tools/bridge-settings-read.mjs';
 import { OUTCOME_LINES } from '../tools/lens-region.mjs';
+const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { readEngineFragment } from '../tools/engine-source.mjs';
 // The scanner leaf (its own negative controls live in composed-lines-scan.test.mjs); it sits under
@@ -342,32 +343,51 @@ const caughtEngineErr = (deps) => {
   try { readEngineFragment(ENGINE_DIR, deps); } catch (err) { return err; }
   throw new Error('expected readEngineFragment to throw');
 };
+const composeLines = (table, key, args) => () => {
+  const compose = table?.[key] ?? (() => { throw new Error(`missing outcome composer: ${key}`); });
+  const out = compose(...args);
+  return Array.isArray(out) ? out : [out];
+};
 const LENS_ARGS = {
   targetAbsent: ['docs/ai/agent_rules.md'],
   commsNoRegion: ['docs/ai/agent_rules.md'],
   lensNoRegion: ['docs/ai/agent_rules.md'],
   commsCapRefused: ['docs/ai/agent_rules.md', 152, 150],
   lensCapRefused: ['docs/ai/agent_rules.md', 152, 150],
+  storyNoRegion: ['docs/ai/agent_rules.md'], storyCurrent: [], storyCustom: [],
+  storyCapRefused: ['docs/ai/agent_rules.md', 152, 150], storyRefreshed: [],
+  regionHeadingTwice: ['### 2.x. Story sessions', 'docs/ai/agent_rules.md'],
   templateCanonStop: [],
   errorDetail: ['EACCES: permission denied, open /x'],
   engineStop: [caughtEngineErr({ rel: 'references/no-such-engine-file.md' })],
   commsCurrent: [], commsCustom: [], capSkipNote: [], commsRefreshed: [],
   engineTooOld: [], lensCurrent: [], lensCustom: [], lensRefreshed: [],
 };
-const LENS_ABNORMAL = new Set(['commsNoRegion', 'commsCapRefused', 'templateCanonStop', 'errorDetail', 'lensNoRegion', 'engineTooOld', 'engineStop', 'lensCapRefused']);
+const LENS_ABNORMAL = new Set(['commsNoRegion', 'commsCapRefused', 'templateCanonStop', 'errorDetail', 'lensNoRegion', 'engineTooOld', 'engineStop', 'lensCapRefused', 'storyNoRegion', 'storyCapRefused', 'regionHeadingTwice']);
 for (const [key, args] of Object.entries(LENS_ARGS)) {
-  const out = OUTCOME_LINES[key](...args);
-  fx('lens-region', key, LENS_ABNORMAL.has(key), Array.isArray(out) ? out : [out]);
+  fx('lens-region', key, LENS_ABNORMAL.has(key), composeLines(OUTCOME_LINES, key, args));
 }
 fx('lens-region', 'engineStop-unreadable', true, OUTCOME_LINES.engineStop(
   caughtEngineErr({ readFileSync: () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); } }),
 ));
 
+const RULES_ARGS = {
+  regionPresent: ['story-sessions'], regionPlanned: ['story-sessions'], regionInserted: ['story-sessions'],
+  fileAbsent: LENS_ARGS.targetAbsent, fileSymlink: LENS_ARGS.targetAbsent, fileUnreadable: LENS_ARGS.targetAbsent,
+  templateDefect: [], headingTwice: LENS_ARGS.regionHeadingTwice, anchorAbsent: LENS_ARGS.targetAbsent,
+  capRefused: LENS_ARGS.commsCapRefused, writeFailed: LENS_ARGS.targetAbsent,
+  refusalLine: ['anchor-absent'], errorDetail: LENS_ARGS.errorDetail,
+};
+const RULES_ABNORMAL = new Set(['fileAbsent', 'fileSymlink', 'fileUnreadable', 'templateDefect', 'headingTwice', 'anchorAbsent', 'capRefused', 'writeFailed', 'refusalLine', 'errorDetail']);
+for (const [key, args] of Object.entries(RULES_ARGS)) {
+  fx('rules-insert', key, RULES_ABNORMAL.has(key), composeLines(RULES_INSERT_LINES, key, args));
+}
+
 // ── the three L2 invariants over every collected fixture ─────────────────────────
 describe('L2 (a) — alarm words render only under a detected abnormal condition', () => {
   for (const f of SURFACES.filter((s) => !s.abnormal)) {
     it(`${f.surface}/${f.id}`, () => {
-      for (const line of f.lines) {
+      for (const line of typeof f.lines === 'function' ? f.lines() : f.lines) {
         for (const word of ALARM_WORDS) {
           assert.doesNotMatch(line, new RegExp(`\\b${word}\\b`, 'i'), `${f.surface}/${f.id}: ${line}`);
         }
@@ -379,7 +399,7 @@ describe('L2 (a) — alarm words render only under a detected abnormal condition
 describe('L2 (b) — machine tokens never ride inside a human sentence', () => {
   for (const f of SURFACES) {
     it(`${f.surface}/${f.id}`, () => {
-      for (const line of f.lines) {
+      for (const line of typeof f.lines === 'function' ? f.lines() : f.lines) {
         const text = scannable(line);
         for (const token of MACHINE_TOKENS) {
           assert.doesNotMatch(text, new RegExp(`\\b${token}\\b`), `${f.surface}/${f.id}: ${line}`);
@@ -392,7 +412,7 @@ describe('L2 (b) — machine tokens never ride inside a human sentence', () => {
 describe('L2 (c) — internal names only as a machine-line prefix/self-label or a runnable command', () => {
   for (const f of SURFACES) {
     it(`${f.surface}/${f.id}`, () => {
-      for (const line of f.lines) {
+      for (const line of typeof f.lines === 'function' ? f.lines() : f.lines) {
         const text = scannable(line);
         for (const name of INTERNAL_NAMES) {
           assert.doesNotMatch(text, new RegExp(`\\b${name}\\b`, 'i'), `${f.surface}/${f.id}: ${line}`);
@@ -439,6 +459,10 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
   });
   it('every bridge-settings reconcile branch has a fixture', () => {
     assert.deepEqual([...witnessedReconcile].sort(), ['absent', 'duplicates', 'flagged', 'ok', 'unusable']);
+  });
+  it('every rules-insert outcome composer has a fixture', () => {
+    assert.ok(RULES_INSERT_LINES, 'rules-insert.mjs OUTCOME_LINES is absent');
+    assert.deepEqual(Object.keys(RULES_INSERT_LINES).sort(), Object.keys(RULES_ARGS).sort());
   });
   it('every lens-region outcome composer has a fixture', () => {
     assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort());
