@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-21 — AD-154 the kit ships an epic template and a task-brief template (kit 14.8.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
+
+**A first epic and a first task brief can start from a file.** The kit's skill home now carries
+`references/authoring/EPIC_TEMPLATE.md` and `references/authoring/TASK_TEMPLATE.md`: the shape of each and a closed
+list of `{{KEY}}` placeholders, eleven for the epic and thirteen for the brief, with no guidance prose. With every
+placeholder replaced by a value its checker admits and no other byte changed, the epic, placed at
+`docs/ai/epics/<EPIC_ID>.md`, passes `epic-shape-cli --check`, and the brief, placed beside a plan carrying the same
+Story line and the named row with a checkpoint minted, is stamped by `task-brief stamp` and passes
+`task-brief check`; a copy left unedited is refused. The directory sits outside `references/templates/`, so neither
+file is deployed into a project, and nothing points at them until a later story's guide. The repository walk fixture
+now renders its epic and brief from the installed templates and pins their bytes; its ground helpers move to
+`test/tier-walk-harness.test.mjs`. Story S2 of the epic
+`KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contract `docs/ai/specs/kit/tier/tier-templates.md` (new).
+
 ## 2026-09-21 — AD-153 an epic closes in a project with no queue file, every task-brief refusal says what failed, and the missing-section offer runs as printed (kit 14.7.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
 
 **A project outside this repo can walk one epic, one story and one task to the end, solo.** `epic-shape-cli --close`

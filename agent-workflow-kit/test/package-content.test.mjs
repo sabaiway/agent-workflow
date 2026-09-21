@@ -396,6 +396,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'references/templates/SPEC_TEMPLATE.md',
       'references/templates/specs/index.md',
       'references/templates/adr/log.md',
+      // the epic and task-brief templates a user renders by hand, outside the deployed templates/ directory
+      'references/authoring/EPIC_TEMPLATE.md',
+      'references/authoring/TASK_TEMPLATE.md',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
       'tools/autonomy-doctor.mjs',
       'references/modes/autonomy-doctor.md',
@@ -423,6 +426,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a runtime payload file or entry point was dropped from the tarball');
+  });
+
+  it('keeps the authoring templates out of the deployed templates directory (spec:tier-templates/S1)', () => {
+    const deployed = ['EPIC_TEMPLATE.md', 'TASK_TEMPLATE.md'].filter((name) => packed.includes(`references/templates/${name}`));
+    assert.deepEqual(deployed, [], 'bootstrap deploys every file of references/templates/ that is not on its exclusion list');
   });
 
   // NUL-byte guard (BUGFREE-3): no shipped TEXT source file may contain a NUL byte — a stray \0 (e.g. an
@@ -821,7 +829,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 324 = 318 + the six core-evidence leaves (tree, receipts, store-read, store, red-proof, summary) — story S2 of the monolith epic
     // 328 = 324 + tools/migration-notes.mjs, tools/migration-blocks.mjs, tools/payload-prune.mjs and references/reference-profile.json — story S1 of the consumers epic
     // 331 = 328 + tools/profile-gaps.mjs, tools/rules-insert.mjs and tools/rules-regions.mjs - story S2 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW (the consumers epic)
-    assert.equal(packed.length, 331, `tarball file count drifted (${packed.length}\u2260 331)`);
+    // 333 = 331 + references/authoring/EPIC_TEMPLATE.md and references/authoring/TASK_TEMPLATE.md - story S2 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
+    assert.equal(packed.length, 333, `tarball file count drifted (${packed.length}\u2260 333)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

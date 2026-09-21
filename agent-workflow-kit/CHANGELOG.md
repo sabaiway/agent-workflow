@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.8.0 — the kit ships an epic template and a task-brief template, each accepted by its checker once filled in (AD-154)
+
+**A first epic and a first task brief can start from a file instead of from a checker's refusal.** Until 14.8.0 the
+two shapes lived only in the planning reference and in what `epic-shape-cli` and `task-brief` refuse. The kit now
+ships `references/authoring/EPIC_TEMPLATE.md` and `references/authoring/TASK_TEMPLATE.md` in its skill home. Copy one
+from there into your project, replace every `{{KEY}}` placeholder with a value its checker admits and change no
+other byte: the epic, placed at `docs/ai/epics/<EPIC_ID>.md`, passes `epic-shape-cli --check`; the brief, placed at
+`docs/plans/TASK-<stem>-T<n>.md` beside a plan that carries the same Story line and the named row, with a checkpoint
+minted, is stamped by `task-brief stamp` and passes `task-brief check`. A template copied and left unedited is
+refused: the epic by the check, the brief by the stamp.
+Story S2 of the epic `KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contract `docs/ai/specs/kit/tier/tier-templates.md`
+(new), with `docs/ai/specs/kit/tier/tier-walk.md` at revision 2.
+
+- **Two templates, one placeholder form, a closed key list each.** The epic template carries eleven keys (`DATE`,
+  `EPIC_TITLE`, `INTENT`, `VALUE`, `NON_GOALS`, `ACCEPTANCE`, `SPECS`, `STORY_NAME`, `OWNED_PATHS`, `EPIC_ID`,
+  `QUEUE_BUCKET`) and one story row; the brief template carries thirteen keys and one task with one test file and one
+  module. Neither carries guidance prose: a template is the shape and its placeholders only. Where a grammar leaves a
+  choice, the template makes it: the epic opens `state: open` with `S1` planned, `depends-on: none` and
+  `shared: none`; the brief groups `test, impl` and reads the plan alone. For more stories, files or cases, repeat
+  the line in the form its checker takes: the next story id, and a `## Budget` line for each added file.
+- **Not deployed into a project.** The directory sits outside `references/templates/`, so neither `bootstrap` nor
+  `upgrade` copies anything from it into `docs/ai/`; `init` places it in the kit's skill home only. Nothing in the
+  kit points at the templates yet; the guide that explains each key comes with a later story of the same epic.
+- **Internals.** The repository walk fixture `test/tier-walk-e2e.test.mjs` now renders its epic and brief from the
+  installed templates, pins each template's bytes to a literal text, and checks that an unedited copy is refused; its
+  ground helpers move to `test/tier-walk-harness.test.mjs`. The package-content pin names both files, and the tarball
+  holds 333 files. Neither test file ships.
+
 ## 14.7.0 — an epic closes in a project with no queue file, every task-brief refusal says what failed, and the missing-section offer is a command you can run (AD-153)
 
 **A project outside this repo can now walk one epic, one story and one task to the end, solo.** A walk through the
