@@ -12,6 +12,7 @@ const OTHER_PATH = `${ROOT}/${OTHER}.md`;
 const DATE = '2026-09-10';
 const LANDED = `landed ${DATE}`;
 const CLAIM = 'tools/owned.mjs';
+const ABSENT_WORD = /\babsent\b/;
 const EMPTY_QUEUE = '# Queue\n\n## Now\n\n## Later\n';
 const makeText = (stories = [{}], { id = ID, state = 'open', result = DATE, intent = 'Keep boundaries explicit.' } = {}) => {
   const ledger = stories.map((story, index) => {
@@ -200,7 +201,7 @@ describe('epic ledger', () => {
     }
   });
 
-  it('spec:epic-shape/S11 checks the store and full check before the four ordered close conditions', async () => {
+  it('spec:epic-shape/S11 checks the store and full check before the four ordered close conditions', async (t) => {
     const { judgeClose } = await loadRules();
     const accepted = judgeClose(makeClose());
     assertAccepted(accepted);
@@ -235,10 +236,27 @@ describe('epic ledger', () => {
     const rendered = makeQueue(`- **_${ID}_**`);
     assert.equal(auditQueue(rendered).rows[0].title, ID);
     assertRefused(judgeClose(makeClose({ queue: rendered })), 'close-queue');
-    for (const queue of [null, { outcome: 'absent' }, { outcome: 'unreadable', reason: 'EACCES' },
+    for (const queue of [{ outcome: 'unreadable', reason: 'EACCES' },
       '# Queue\n```never closed', '# Queue\n* Unread row', '# Queue\n- **Other**\n  ## Hidden heading']) {
       assertRefused(judgeClose(makeClose({ queue })), 'queue-read');
     }
+    for (const queue of [{ outcome: 'absent' }, { outcome: 'absent', reason: 'absent' }]) {
+      await t.test(`accepts the explicit absent queue ${JSON.stringify(queue)}`, () => {
+        assertAccepted(judgeClose(makeClose({ queue })));
+      });
+    }
+    for (const queue of [null, undefined, {}, { reason: 'EACCES' }]) {
+      await t.test(`refuses a queue without an outcome: ${JSON.stringify(queue) ?? 'undefined'}`, () => {
+        const result = judgeClose(makeClose({ queue }));
+        assertRefused(result, 'queue-read');
+        for (const finding of result.findings.filter((finding) => finding.code === 'queue-read')) {
+          assert.doesNotMatch(finding.message, ABSENT_WORD);
+        }
+      });
+    }
+    await t.test('names an unknown queue outcome in its refusal', () => {
+      assertRefused(judgeClose(makeClose({ queue: { outcome: 'mystery' } })), 'queue-read', ['mystery']);
+    });
     for (const path of [`/drafts/${ID}.md`, `/other/docs/ai/${ID}.md`, `/project/docs/ai/epics/nested/${ID}.md`]) {
       assertRefused(judgeClose(makeClose({ path })), 'close-path');
     }

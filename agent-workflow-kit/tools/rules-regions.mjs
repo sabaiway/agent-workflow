@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 const LF = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
 const CRLF = CR + LF;
@@ -18,6 +20,11 @@ const UTF8_LABEL = 'utf-8';
 const UTF8_ENCODING = 'utf8';
 const ROUND_TRIP_MESSAGE = 'the bytes read do not survive a UTF-8 round trip';
 const BOM_CHAR = String.fromCharCode(65279);
+const INSERT_PATH = fileURLToPath(new URL('./rules-insert.mjs', import.meta.url));
+const COMMAND_UNSAFE_RE = /[\u0000-\u001f\u007f`]/;
+const SHELL_PLAIN_RE = /^[A-Za-z0-9_./-]+$/;
+const SINGLE_QUOTE = "'";
+const QUOTE_ESCAPE = "'\\''";
 
 // Append the OUTGOING canon here in the same release that changes the template
 // §2.5 region — the fragment-or-prior reconcile depends on it.
@@ -164,4 +171,13 @@ export const planInsert = ({ text, spans, cap }) => {
   const decision = exceedsCap(resultText, cap);
   if (decision.over) return { refusal: CAP_REFUSAL, count: decision.count, cap };
   return { planned, text: resultText };
+};
+
+const shellWord = (path) => SHELL_PLAIN_RE.test(path)
+  ? path
+  : SINGLE_QUOTE + path.split(SINGLE_QUOTE).join(QUOTE_ESCAPE) + SINGLE_QUOTE;
+
+export const buildInsertPreview = (root, insertPath = INSERT_PATH) => {
+  if ([root, insertPath].some((path) => COMMAND_UNSAFE_RE.test(path))) return '';
+  return 'node ' + shellWord(insertPath) + ' --cwd ' + shellWord(root);
 };

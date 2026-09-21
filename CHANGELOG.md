@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-21 — AD-153 an epic closes in a project with no queue file, every task-brief refusal says what failed, and the missing-section offer runs as printed (kit 14.7.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
+
+**A project outside this repo can walk one epic, one story and one task to the end, solo.** `epic-shape-cli --close`
+now accepts when `docs/plans/queue.md` is proven absent, since a file never written holds no row; a symlink or a
+directory at that path, a failed read, or an answer the read does not name still refuses `queue-read`, naming what it
+found. Every `task-brief` refusal is one line, `<name>: <detail>`, with a non-empty detail: `shape` names the rule and
+the place, `checkpoint-stale` its cause and remedy, and a reason from outside the tool's own names and the three the
+checkpoint hands up (`stem`, `sequence`, `no-checkpoint`) prints under the one new name `environment`. The upgrade
+reconcile's missing-section note carries the real `rules-insert.mjs` command with the project root, each path one
+POSIX shell word, instead of `<kit>` and `<project>` placeholders; a target other than `docs/ai/agent_rules.md` gets
+the absent-section line alone. A new repository fixture, `test/tier-walk-e2e.test.mjs`, installs the kit into a
+throwaway home and walks the three tiers from a bare and a seeded project. Story S1 of the epic
+`KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contract `docs/ai/specs/kit/tier-walk.md` (new) with revisions of `epic-shape`
+(2), `checkpoint` (5) and `rules-regions` (3).
+
 ## 2026-09-20 — AD-152 the story-sessions section has one source and the kit can insert a missing template section (kit 14.6.0 MINOR + memory 8.0.2 PATCH; engine 5.9.0 and both bridges unchanged)
 
 **A section the upgrade could only ask for is now a command.** Both rules templates gain `### 2.7. Story sessions` —

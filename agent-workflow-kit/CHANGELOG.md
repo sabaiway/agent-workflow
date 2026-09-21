@@ -4,6 +4,40 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.7.0 — an epic closes in a project with no queue file, every task-brief refusal says what failed, and the missing-section offer is a command you can run (AD-153)
+
+**A project outside this repo can now walk one epic, one story and one task to the end, solo.** A walk through the
+three tiers on a fresh project, with no backend, stopped twice before 14.7.0: the epic close demanded a queue file the
+project never had, and a malformed task brief was refused with `shape: ` and nothing after it. The offer to insert a
+missing rules section printed `<kit>` and `<project>` placeholders, so it could not run as printed. Story S1 of the epic
+`KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contracts `docs/ai/specs/kit/tier-walk.md` (new),
+`docs/ai/specs/kit/epic-shape/` (revision 2), `docs/ai/specs/kit/checkpoint/` (revision 5),
+`docs/ai/specs/kit/rules-regions/` (revision 3).
+
+- **`epic-shape-cli.mjs --close` accepts a project with no queue file.** When `docs/plans/queue.md` is proven absent,
+  no queue row can stand, so the close goes ahead once the other three conditions hold. Only a proven absence counts:
+  a symlink or a directory at that path, a failed read, or any other answer the read did not name refuses
+  `queue-read`, and the refusal names what the read returned, never "absent".
+- **Every `task-brief` refusal is one line, `<name>: <detail>`, and the detail is never empty.** A `shape` refusal
+  names the grammar rule that failed and where: the offending line, or the heading, section, field or path that is
+  absent, foreign or repeated. `checkpoint-stale` names the cause and the remedy: mint a fresh checkpoint, then stamp
+  the brief again. A refusal from outside the tool's own names and the three the checkpoint hands up (`stem`,
+  `sequence`, `no-checkpoint`), such as git's `fatal: not a git repository` sentence, a thrown error or a failed
+  write, prints as `environment: <the whole reason>`. `environment` is the one new name; the other names, the exit
+  codes and the digest line are unchanged. A line break inside a detail is printed escaped, so the refusal stays on
+  one line.
+- **The missing-section offer runs as printed.** When the upgrade reconcile (`tools/lens-region.mjs reconcile`) finds
+  no Communication or Story sessions section in `docs/ai/agent_rules.md`, its note now carries the real command:
+  `node`, the running kit's own `rules-insert.mjs` path, `--cwd` and your project root. A path with a space or a
+  shell-active byte is single-quoted, so the command pasted into a POSIX shell gets exactly those arguments; a plain
+  path prints unquoted. For a target that is not `docs/ai/agent_rules.md`, or a path holding a control byte or a
+  backtick, the reconcile prints the absent-section line alone, with no command. The gap entry
+  `story-sessions-section` builds its preview line with the same builder, so the two offers cannot drift apart.
+- **Internals.** `tools/rules-regions.mjs` exports `buildInsertPreview`, the one builder of the insert preview line;
+  `tools/task-brief.mjs` exports its `NAMES` map. A new repository fixture, `test/tier-walk-e2e.test.mjs`, installs
+  the kit into a throwaway home and walks one epic, one story and one task solo, from a bare project and from a
+  seeded one, every tool spawned from the installed copy. It ships in no package.
+
 ## 14.6.0 — your rules file gains a Story sessions section, and the kit can now put a missing template section there for you (AD-152)
 
 **A section you were told to add by hand is now one command.** Up to 14.5.0 a project's

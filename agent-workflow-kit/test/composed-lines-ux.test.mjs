@@ -30,6 +30,7 @@ import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-ba
 import { reconcileSettings } from '../tools/bridge-settings.mjs';
 import { settingsPath } from '../tools/bridge-settings-read.mjs';
 import { OUTCOME_LINES } from '../tools/lens-region.mjs';
+import { PROFILE_GAPS } from '../tools/profile-gaps.mjs';
 const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { readEngineFragment } from '../tools/engine-source.mjs';
@@ -336,9 +337,6 @@ settingsFx('duplicates', true, { text: 'AW_GUARD_KNOB=1\nAW_GUARD_KNOB=0\n' });
 settingsFx('ok', false, { text: 'AW_GUARD_KNOB=1\n' });
 
 // ── the lens-region outcome lines (the whole exported table) ─────────────────────
-// The engine STOP fixtures are the REAL thrown errors: the missing-file branch via a real engine
-// dir with an absent required rel, and the unreadable branch via an injected read failure — never
-// a hand-cleaned message.
 const caughtEngineErr = (deps) => {
   try { readEngineFragment(ENGINE_DIR, deps); } catch (err) { return err; }
   throw new Error('expected readEngineFragment to throw');
@@ -350,11 +348,11 @@ const composeLines = (table, key, args) => () => {
 };
 const LENS_ARGS = {
   targetAbsent: ['docs/ai/agent_rules.md'],
-  commsNoRegion: ['docs/ai/agent_rules.md'],
+  commsNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')],
   lensNoRegion: ['docs/ai/agent_rules.md'],
   commsCapRefused: ['docs/ai/agent_rules.md', 152, 150],
   lensCapRefused: ['docs/ai/agent_rules.md', 152, 150],
-  storyNoRegion: ['docs/ai/agent_rules.md'], storyCurrent: [], storyCustom: [],
+  storyNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')], storyCurrent: [], storyCustom: [],
   storyCapRefused: ['docs/ai/agent_rules.md', 152, 150], storyRefreshed: [],
   regionHeadingTwice: ['### 2.x. Story sessions', 'docs/ai/agent_rules.md'],
   templateCanonStop: [],
@@ -466,6 +464,8 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
   });
   it('every lens-region outcome composer has a fixture', () => {
     assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort());
+    for (const key of ['commsNoRegion', 'storyNoRegion']) assert.equal(OUTCOME_LINES[key](...LENS_ARGS[key])[1]?.split(String.fromCharCode(96))[1], LENS_ARGS[key][1], key);
+    for (const key of ['commsNoRegion', 'storyNoRegion']) assert.doesNotMatch(OUTCOME_LINES[key](...LENS_ARGS[key]).join(' '), /undefined|<kit>|<project>/, key);
   });
 });
 

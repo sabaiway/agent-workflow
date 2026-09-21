@@ -5,12 +5,14 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { parseEpic } from '../epic-shape.mjs';
 import { readRegularFileNoFollow } from '../fs-read-nofollow.mjs';
+import { auditQueue } from '../queue-audit.mjs';
 
 const load = () => import('../epic-shape-cli.mjs');
 const ID = 'CLI-BOUNDARY';
 const DATE = '2026-09-10';
 const VERBS = ['--check', '--review-brief', '--fold', '--close'];
 const LINK_REFUSALS = ['EPERM', 'EACCES', 'ENOTSUP'];
+const UNREAD_QUEUE = '* Unread queue row' + String.fromCharCode(10);
 const FINDINGS = '# Findings\n- [P1] dir/file:12 \u2014 Intent is unclear.\n- dir/file:13 \u2014 Use `code`.\nClosing line.\n';
 const makeText = ({ id = ID, storyState = `landed ${DATE}` } = {}) => `---
 type: epic
@@ -61,6 +63,14 @@ const snapshotTree = (root, dir = root) => readdirSync(dir).sort().flatMap((name
   if (stats.isDirectory()) return [{ path: key, kind: 'directory' }, ...snapshotTree(root, path)];
   return [{ path: key, kind: 'file', bytes: readFileSync(path) }];
 });
+const getClosedBytes = (original, path) => {
+  const range = parseEpic(original.toString('utf8'), path).stateRange;
+  return Buffer.concat([original.subarray(0, range.start), Buffer.from('landed'), original.subarray(range.end)]);
+};
+const assertClosedTree = (fixture, before, expected) => {
+  assert.deepEqual(snapshotTree(fixture.root), before.map((entry) => entry.path === relative(fixture.root, fixture.epic)
+    ? { ...entry, bytes: expected } : entry));
+};
 const createLink = (t, link, target, path) => {
   try { link(target, path); return true; }
   catch (error) {
@@ -92,13 +102,11 @@ describe('epic CLI', () => {
       const before = snapshotTree(fixture.root);
       const original = readFileSync(fixture.epic);
       const identity = lstatSync(fixture.epic);
-      const range = parseEpic(text, fixture.epic).stateRange;
-      const expected = Buffer.concat([original.subarray(0, range.start), Buffer.from('landed'), original.subarray(range.end)]);
+      const expected = getClosedBytes(original, fixture.epic);
       const result = run(main, ['--close', fixture.epic]);
       assert.equal(result.code, 0, result.err);
       assert.match(result.out, /epic-shape: accept/);
-      assert.deepEqual(snapshotTree(fixture.root), before.map((entry) => entry.path === relative(fixture.root, fixture.epic)
-        ? { ...entry, bytes: expected } : entry));
+      assertClosedTree(fixture, before, expected);
       assert.equal(lstatSync(fixture.epic).ino, identity.ino, 'close must preserve the inode');
       assert.equal(lstatSync(fixture.epic).dev, identity.dev);
       assert.deepEqual(readFileSync(fixture.epic), expected);
@@ -112,15 +120,66 @@ describe('epic CLI', () => {
       assert.match(result.err, /epic-shape: .*hard.?link|epic-shape: .*hard link/);
       assert.deepEqual(snapshotTree(fixture.root), before);
     }
-    for (const queue of [null, '- **CLI-BOUNDARY**\n', '* Unread queue row\n']) {
+    for (const queue of ['- **CLI-BOUNDARY**\n', UNREAD_QUEUE]) {
       const blocked = createFixture(t);
-      if (queue === null) rmSync(blocked.queue);
-      else writeFileSync(blocked.queue, queue);
+      writeFileSync(blocked.queue, queue);
       const before = snapshotTree(blocked.root);
       const result = run(main, ['--close', blocked.epic]);
       assert.equal(result.code, 1);
       assert.ok(result.err.includes(blocked.queue));
       assert.deepEqual(snapshotTree(blocked.root), before);
+    }
+  });
+
+  it('spec:epic-shape/S17 closes only for absent or parsed queues and preserves the tree on refusal', async (t) => {
+    const { main } = await loadRules();
+    for (const state of ['absent', 'parsed']) {
+      await t.test(state, (cell) => {
+        const fixture = createFixture(cell);
+        if (state === 'absent') rmSync(fixture.queue);
+        const before = snapshotTree(fixture.root);
+        const expected = getClosedBytes(readFileSync(fixture.epic), fixture.epic);
+        const result = run(main, ['--close', fixture.epic]);
+        assert.equal(result.code, 0, result.err);
+        assertClosedTree(fixture, before, expected);
+        if (state === 'absent') {
+          assert.equal(snapshotTree(fixture.root).some((entry) =>
+            entry.path === relative(fixture.root, fixture.queue)), false);
+        }
+      });
+    }
+    for (const state of ['symlink', 'directory', 'EIO', 'parser-refused']) {
+      await t.test(state, (cell) => {
+        const fixture = createFixture(cell);
+        if (state === 'symlink') {
+          const target = join(fixture.root, 'queue-target.md');
+          writeFileSync(target, readFileSync(fixture.queue));
+          rmSync(fixture.queue);
+          if (!createLink(cell, symlinkSync, target, fixture.queue)) return;
+        } else if (state === 'directory') {
+          rmSync(fixture.queue);
+          mkdirSync(fixture.queue);
+        } else if (state === 'parser-refused') {
+          writeFileSync(fixture.queue, UNREAD_QUEUE);
+        }
+        const read = (path, options) => state === 'EIO' && path === fixture.queue
+          ? { outcome: 'error', code: 'EIO' } : readRegularFileNoFollow(path, options);
+        const before = snapshotTree(fixture.root);
+        const result = run(main, ['--close', fixture.epic], { read });
+        assert.equal(result.code, 1, result.err);
+        assert.ok(result.err.includes(fixture.queue), result.err);
+        assert.match(result.err, /queue-read/);
+        if (state === 'parser-refused') {
+          assert.throws(() => auditQueue(UNREAD_QUEUE, { label: fixture.queue }), (error) => {
+            assert.ok(result.err.includes('queue-read: ' + error.message), result.err);
+            return true;
+          });
+        } else {
+          assert.ok(result.err.includes(state), result.err);
+          assert.doesNotMatch(result.err, /\babsent\b/);
+        }
+        assert.deepEqual(snapshotTree(fixture.root), before);
+      });
     }
   });
 

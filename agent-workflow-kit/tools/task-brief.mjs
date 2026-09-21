@@ -68,19 +68,37 @@ const DISPATCH_FLAG = '--dispatch';
 const BASIC_ARGS = 2;
 const DISPATCH_ARGS = 4;
 const ARGV_OFFSET = 2;
-const NAMES = { shape: 'shape', grouping: 'grouping', row: 'row', story: 'story', reads: 'reads', binding: 'binding',
+export const NAMES = { shape: 'shape', grouping: 'grouping', row: 'row', story: 'story', reads: 'reads', binding: 'binding',
   plan: 'binding-plan', read: 'binding-read', checkpoint: 'binding-checkpoint', stale: 'checkpoint-stale',
-  head: 'head', boundHead: 'binding-head', dispatch: 'dispatch-inputs' };
+  head: 'head', boundHead: 'binding-head', dispatch: 'dispatch-inputs', environment: 'environment' };
+const HANDED_UP = ['stem', 'sequence', 'no-checkpoint'];
+const MEMBERS = new Set([...Object.values(NAMES), ...HANDED_UP]);
+const NAME_SEPARATOR = ': ';
+const LINE_BREAKS = /[\r\n]/g;
+const ESCAPED_BREAKS = { '\r': '\\r', '\n': '\\n' };
+const SLICE_NAMES = ['Plan', 'Row', 'Grouping', 'Files:'];
+const STALE_REMEDY = 'mint a fresh checkpoint, then stamp the brief again';
 const USAGE_TEXT = 'usage: task-brief stamp <brief> | check <brief> [--dispatch <file>]';
 const WRITE_FLAGS = fsConstants.O_WRONLY | fsConstants.O_TRUNC | fsConstants.O_NOFOLLOW;
 
 const refuse = (reason, code = REFUSE) => ({ ok: false, code, reason });
-const reject = (name, detail = EMPTY) => { throw new Error(`${name}: ${detail}`); };
+const reject = (name, detail) => { throw new Error(`${name}${NAME_SEPARATOR}${detail}`); };
 const computeDigest = (bytes) => createHash(HASH).update(bytes).digest(HEX);
-const matchLine = (pattern, line) => {
+const matchLine = (pattern, line, rule) => {
   const match = pattern.exec(line ?? EMPTY);
-  if (match === null) reject(NAMES.shape, line);
+  if (match === null) reject(NAMES.shape, line === undefined ? `${rule} is absent` : `${rule}: ${line}`);
   return match.slice(ONE);
+};
+const checkMembers = (found, expected, label) => {
+  const faults = [[found.find((item) => !expected.includes(item)), 'is foreign'],
+    [found.find((item, index) => found.indexOf(item) !== index), 'is repeated'], [expected.find((item) => !found.includes(item)), 'is absent']];
+  const [item, fault] = faults.find(([candidate]) => candidate !== undefined) ?? [];
+  if (item !== undefined) reject(NAMES.shape, `${label} ${item} ${fault}`);
+};
+const checkSliceField = (pattern, line, index) => {
+  const name = SLICE_NAMES[index];
+  if (line === undefined || !line.startsWith(name)) reject(NAMES.shape, `## Slice field ${name} is absent before: ${line ?? 'the section end'}`);
+  return matchLine(pattern, line, `## Slice field ${name} is malformed`);
 };
 const splitBindingBlocks = (text) => {
   const raw = text.split(NL);
@@ -105,32 +123,37 @@ const splitBindingBlocks = (text) => {
 };
 export const parseBrief = (text) => {
   try {
-    if (typeof text !== STRING) return refuse(NAMES.shape);
+    if (typeof text !== STRING) return refuse(`${NAMES.shape}${NAME_SEPARATOR}the brief is not text`);
     const document = splitBindingBlocks(text);
     const lines = document.lines;
-    const [title] = matchLine(TITLE_RE, lines[START]);
+    const [title] = matchLine(TITLE_RE, lines[START], 'the title is not "# Task: <name>"');
     const headings = lines.flatMap((line, index) => HEADING_RE.test(line) ? [{ text: line, index }] : []);
-    if (headings.length !== HEADINGS.length + ONE || HEADINGS.some((text, index) => headings[index + ONE]?.text !== text)) reject(NAMES.shape);
+    const storyLines = lines.slice(ONE, headings[ONE]?.index ?? lines.length);
+    const stray = storyLines.find((line) => !line.startsWith(STORY_PREFIX));
+    if (stray !== undefined) reject(NAMES.shape, `a line before ## Slice is not a Story line: ${stray}`);
+    const found = headings.slice(ONE).map(({ text }) => text);
+    checkMembers(found, HEADINGS, 'heading');
+    if (HEADINGS.some((text, index) => found[index] !== text)) reject(NAMES.shape, `headings out of order: ${found.join(', ')}`);
     const sections = HEADINGS.map((heading, index) => lines.slice(headings[index + ONE].index + ONE, headings[index + BASIC_ARGS]?.index ?? lines.length));
-    const storyLines = lines.slice(ONE, headings[ONE].index);
-    if (storyLines.some((line) => !line.startsWith(STORY_PREFIX))) reject(NAMES.shape);
     const [slice, reads, acceptance, negative, budget] = sections;
-    const [[planPath], [rowId], [grouping]] = SLICE_FIELDS.map((pattern, index) => matchLine(pattern, slice[index]));
+    const [[planPath], [rowId], [grouping]] = SLICE_FIELDS.map((pattern, index) => checkSliceField(pattern, slice[index], index));
     const files = slice.slice(SLICE_FIELDS.length).map((line) => {
-      const [path, tag] = matchLine(PAIR_RE, line);
+      const [path, tag] = matchLine(PAIR_RE, line, 'a Files: line is not "- <path> :: <tag>"');
       return { path, tag };
     });
     const budgets = budget.map((line) => {
-      const [path, count] = matchLine(PAIR_RE, line);
-      if (!INTEGER_RE.test(count) || !Number.isSafeInteger(Number(count))) reject(NAMES.shape, line);
+      const [path, count] = matchLine(PAIR_RE, line, 'a ## Budget line is not "- <path> :: <lines>"');
+      if (!INTEGER_RE.test(count) || !Number.isSafeInteger(Number(count))) reject(NAMES.shape, `a ## Budget count is not a positive integer: ${line}`);
       return { path, maxLines: Number(count) };
     });
-    const filePaths = new Set(files.map(({ path }) => path));
-    if (files.length === START || budgets.length !== filePaths.size || new Set(budgets.map(({ path }) => path)).size !== filePaths.size
-      || budgets.some(({ path }) => !filePaths.has(path)) || acceptance.length === START || negative.length === START) reject(NAMES.shape);
+    if (files.length === START) reject(NAMES.shape, 'Files: lists no path');
+    checkMembers(budgets.map(({ path }) => path), [...new Set(files.map(({ path }) => path))], '## Budget path');
+    if (acceptance.length === START) reject(NAMES.shape, '## Acceptance lists no line');
+    if (negative.length === START) reject(NAMES.shape, '## Negative cases lists no line');
     return { ok: true, title, storyLines, planPath, rowId, grouping, files, budgets,
-      reads: reads.map((line) => matchLine(BULLET_RE, line)[START]),
-      acceptance: acceptance.map((line) => matchLine(PAIR_RE, line)), negative: negative.map((line) => matchLine(BULLET_RE, line)[START]),
+      reads: reads.map((line) => matchLine(BULLET_RE, line, 'a ## Reads line is not a bullet')[START]),
+      acceptance: acceptance.map((line) => matchLine(PAIR_RE, line, 'an ## Acceptance line is not "- <command> :: <outcome>"')),
+      negative: negative.map((line) => matchLine(BULLET_RE, line, 'a ## Negative cases line is not a bullet')[START]),
       blocks: document.blocks, unclosed: document.unclosed, body: document.body };
   } catch (error) { return refuse(error.message); }
 };
@@ -149,12 +172,14 @@ const readInside = (context, path, name = NAMES.reads) => {
   } catch (error) { reject(name, `${path}: ${error.message}`); }
 };
 const checkGrouping = (brief, row) => {
-  if (brief.files.some(({ tag }) => !TAGS.includes(tag))
-    || brief.grouping !== TAGS.filter((tag) => brief.files.some((file) => file.tag === tag)).join(GROUP_SEPARATOR)) reject(NAMES.grouping);
+  const foreign = brief.files.find(({ tag }) => !TAGS.includes(tag));
+  if (foreign !== undefined) reject(NAMES.grouping, `${foreign.path} carries the tag ${foreign.tag}, not test, impl or pin`);
+  const expected = TAGS.filter((tag) => brief.files.some((file) => file.tag === tag)).join(GROUP_SEPARATOR);
+  if (brief.grouping !== expected) reject(NAMES.grouping, `Grouping: ${brief.grouping} differs from the Files tags ${expected}`);
   const pins = brief.files.filter(({ tag }) => tag === PIN);
   if (row && posix.basename(row.path) === PIN_FILE) {
-    if (pins.length !== ONE || pins[START].path !== row.path) reject(NAMES.grouping);
-  } else if (pins.length !== START) reject(NAMES.grouping);
+    if (pins.length !== ONE || pins[START].path !== row.path) reject(NAMES.grouping, `a pin row tags only its own path ${row.path} pin`);
+  } else if (pins.length !== START) reject(NAMES.grouping, `the pin tag belongs to a ${PIN_FILE} row only`);
 };
 const checkRow = (context, brief, row) => {
   if (!row?.valid) reject(NAMES.row, brief.rowId);
@@ -190,38 +215,45 @@ const readGrammar = (context, briefPath) => {
   const goal = ledger.document.headings.find(({ text }) => text === PLAN_HEADINGS[START]);
   const end = ledger.document.headings.find(({ index }) => index > goal?.index);
   const story = goal ? selectStory(ledger.document.lines.slice(goal.index + ONE, end?.index)) : null;
-  if (story === null || selectStory(brief.storyLines) !== story) reject(NAMES.story);
+  if (story === null) reject(NAMES.story, `${brief.planPath} carries no single Story line`);
+  if (selectStory(brief.storyLines) !== story) reject(NAMES.story, `the brief's Story line differs from the plan's ${story}`);
   return { ok: true, file, brief, plan };
 };
 const checkBlockCount = (brief, required) => {
-  if (brief.unclosed || brief.blocks.length > ONE || (required && brief.blocks.length !== ONE)) reject(NAMES.binding);
+  if (brief.unclosed) reject(NAMES.binding, `the ${BRIEF_BINDING_INFO_STRING} block never closes`);
+  if (brief.blocks.length > ONE) reject(NAMES.binding, `more than one ${BRIEF_BINDING_INFO_STRING} block`);
+  if (required && brief.blocks.length !== ONE) reject(NAMES.binding, `no ${BRIEF_BINDING_INFO_STRING} block: stamp the brief first`);
 };
 const hasClosedKeys = (value, keys) => value !== null && typeof value === OBJECT && !Array.isArray(value)
   && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const isFileBinding = (value) => hasClosedKeys(value, FILE_KEYS) && typeof value.path === STRING && typeof value.sha256 === STRING && SHA_RE.test(value.sha256);
 const readBinding = (brief) => {
   checkBlockCount(brief, true);
+  let value;
   try {
-    const value = JSON.parse(brief.blocks[START].source);
-    if (!hasClosedKeys(value, BINDING_KEYS) || value.schema !== SCHEMA || !isFileBinding(value.plan)
-      || !Array.isArray(value.reads) || !value.reads.every(isFileBinding) || typeof value.checkpoint !== STRING
-      || !OID_RE.test(value.checkpoint) || typeof value.head !== STRING || !OID_RE.test(value.head)) reject(NAMES.binding);
-    return value;
+    value = JSON.parse(brief.blocks[START].source);
   } catch (error) { reject(NAMES.binding, error.message); }
+  if (!hasClosedKeys(value, BINDING_KEYS) || value.schema !== SCHEMA || !isFileBinding(value.plan)
+    || !Array.isArray(value.reads) || !value.reads.every(isFileBinding) || typeof value.checkpoint !== STRING
+    || !OID_RE.test(value.checkpoint) || typeof value.head !== STRING || !OID_RE.test(value.head)) reject(NAMES.binding, `the block is not a schema ${SCHEMA} binding`);
+  return value;
 };
 const readHead = (context, name) => {
+  let oid;
   try {
-    const oid = readGit(context, HEAD_ARGS);
-    if (!OID_RE.test(oid)) reject(name);
-    return oid;
+    oid = readGit(context, HEAD_ARGS);
   } catch (error) { reject(name, error.message); }
+  if (!OID_RE.test(oid)) reject(name, `HEAD resolves to ${oid}, not an object id`);
+  return oid;
 };
+const stale = (cause) => reject(NAMES.stale, `${cause}; ${STALE_REMEDY}`);
 const bindFile = ({ path, sha256 }) => ({ path, sha256 });
 const checkDispatch = (context, dispatchPath, briefPath, digest) => {
   const file = readInside(context, dispatchPath, NAMES.dispatch);
   const parsed = parseDispatchContract(file.bytes.toString(UTF8));
-  if (!parsed.ok || typeof parsed.contract.inputs !== STRING || !parsed.contract.inputs.includes(briefPath)
-    || !parsed.contract.inputs.includes(`${SHA_PREFIX}${digest}`)) reject(NAMES.dispatch);
+  if (!parsed.ok) reject(NAMES.dispatch, `${dispatchPath}: ${parsed.reason}`);
+  const inputs = parsed.contract.inputs;
+  if (typeof inputs !== STRING || !inputs.includes(briefPath) || !inputs.includes(`${SHA_PREFIX}${digest}`)) reject(NAMES.dispatch, `${dispatchPath} inputs do not name ${briefPath} at ${SHA_PREFIX}${digest}`);
 };
 
 export const stampBrief = (cwd, briefPath, io = {}) => withRepository(cwd, io, (context) => {
@@ -246,31 +278,40 @@ export const checkBrief = (cwd, briefPath, { dispatchPath } = {}, io = {}) => wi
   const newest = newestCheckpoint(cwd, brief.planPath, context.io);
   if (!newest.ok) return newest;
   const reads = brief.reads.map((path) => bindFile(readInside(context, path)));
-  if (binding.plan.path !== brief.planPath || binding.plan.sha256 !== plan.sha256) reject(NAMES.plan);
-  if (binding.reads.length !== reads.length || reads.some((entry, index) =>
-    entry.path !== binding.reads[index].path || entry.sha256 !== binding.reads[index].sha256)) reject(NAMES.read);
-  if (binding.checkpoint !== newest.oid) reject(NAMES.checkpoint);
+  if (binding.plan.path !== brief.planPath || binding.plan.sha256 !== plan.sha256) reject(NAMES.plan, `${brief.planPath} changed since the stamp`);
+  if (binding.reads.length !== reads.length) reject(NAMES.read, `## Reads lists ${reads.length} files, the stamp bound ${binding.reads.length}`);
+  const moved = reads.find((entry, index) => entry.path !== binding.reads[index].path || entry.sha256 !== binding.reads[index].sha256);
+  if (moved !== undefined) reject(NAMES.read, `${moved.path} changed since the stamp`);
+  if (binding.checkpoint !== newest.oid) reject(NAMES.checkpoint, `the stamp bound checkpoint ${binding.checkpoint}, the newest is ${newest.oid}`);
   const verified = verifyCheckpoint(cwd, binding.checkpoint, context.io);
-  if (!verified.ok) reject(NAMES.stale, verified.reason);
+  if (!verified.ok) return verified;
   if (!verified.clean) {
     const changed = runBaseDiff(context.top, { kind: CHECKPOINT_KIND, treeOid: binding.checkpoint }, CHANGED_PATH_ARGS, context.io);
-    if (changed === null) reject(NAMES.stale, verified.reason);
+    if (changed === null) stale(`the tree differs from checkpoint ${binding.checkpoint}`);
     const paths = changed.toString(UTF8).split(NUL).filter(Boolean);
     const ledger = readDelegationLedger(context.cwd, context.env);
-    if (ledger.state === READ_ERROR) reject(NAMES.stale, ledger.reason);
+    if (ledger.state === READ_ERROR) stale(ledger.reason);
     const claimed = new Set(ledger.state === READ_OK
       ? claimedPaths(ledger.records, binding.checkpoint, ledger.head, isThreadTerminalRecord) : []);
     const ownFiles = new Set(brief.files.map(({ path }) => path));
-    if (!paths.every((path) => claimed.has(path) && !ownFiles.has(path))) reject(NAMES.stale, verified.reason);
+    const unclaimed = paths.filter((path) => !claimed.has(path) || ownFiles.has(path));
+    if (unclaimed.length > START) stale(`${unclaimed.join(', ')} changed since checkpoint ${binding.checkpoint}`);
   }
-  if (binding.head !== readHead(context, NAMES.boundHead)) reject(NAMES.boundHead);
+  const head = readHead(context, NAMES.boundHead);
+  if (binding.head !== head) reject(NAMES.boundHead, `the stamp bound HEAD ${binding.head}, HEAD is now ${head}`);
   if (dispatchPath !== undefined) checkDispatch(context, dispatchPath, briefPath, file.sha256);
   return { ok: true, digest: file.sha256 };
 });
 
+const nameReason = (reason) => {
+  const text = String(reason).replace(LINE_BREAKS, (byte) => ESCAPED_BREAKS[byte]);
+  const cut = text.indexOf(NAME_SEPARATOR);
+  const named = cut > START && MEMBERS.has(text.slice(START, cut)) && text.slice(cut + NAME_SEPARATOR.length).trim() !== EMPTY;
+  return named ? text : `${NAMES.environment}${NAME_SEPARATOR}${text}`;
+};
 const formatResult = (result) => result.ok
   ? { code: ACCEPT, stdout: `${DIGEST_LINE} ${SHA_PREFIX}${result.digest}${NL}`, stderr: EMPTY }
-  : { code: result.code, stdout: EMPTY, stderr: `${result.reason}${NL}` };
+  : { code: result.code, stdout: EMPTY, stderr: `${result.code === REFUSE ? nameReason(result.reason) : result.reason}${NL}` };
 export const main = (argv = process.argv.slice(ARGV_OFFSET), deps = {}) => {
   try {
     const [verb, path, flag, dispatchPath] = argv;

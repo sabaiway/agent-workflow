@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCli, OUTCOME_LINES, frontmatterMaxLines } from '../lens-region.mjs';
+import { PROFILE_GAPS } from '../profile-gaps.mjs';
 
 const lens = await import('../lens-region.mjs').catch(() => ({}));
 const regions = await import('../rules-regions.mjs').catch(() => ({}));
@@ -23,6 +25,9 @@ const TEMPLATE_PATH = join(HERE, '..', '..', 'references', 'templates', 'agent_r
 const LF = String.fromCharCode(10);
 const CRLF = String.fromCharCode(13) + LF;
 const BACKTICK = String.fromCharCode(96);
+const CONTROL_BYTE = String.fromCharCode(1);
+const SERVED_TARGET = 'docs/ai/agent_rules.md';
+const PREVIEW_CAP = 150;
 const EXIT_OK = 0;
 const EXIT_STOP = 1;
 const NOT_FOUND = -1;
@@ -51,7 +56,8 @@ const NOTE_RE = /note:/i;
 const STOP_RE = /STOP/;
 const REFUSED_RE = /refused/i;
 const NUMBERS_RE = /[0-9]+/g;
-const PREVIEW_RE = new RegExp(BACKTICK + 'node [^' + BACKTICK + ']*tools/rules-insert[.]mjs --cwd [^' + BACKTICK + ']+' + BACKTICK);
+const FIRST_SPAN_RE = new RegExp(BACKTICK + '([^' + BACKTICK + ']+)' + BACKTICK);
+const PLACEHOLDER_RE = /<kit>|<project>/;
 const CONSENT_RE = /(^|[^a-z])yes([^a-z]|$)/i;
 const DOUBLED_REGIONS = [
   { name: 'Communication', region: COMMS_REGION, label: COMMS_LABEL },
@@ -63,8 +69,8 @@ const ABSENT_NOTES = [
   { name: 'story sessions', composer: 'storyNoRegion' },
 ];
 
-const createDocument = (blocks) => [
-  '---', 'maxLines: ' + TARGET_CAP, '---', '# Rules', '',
+const createDocument = (blocks, cap = TARGET_CAP) => [
+  '---', 'maxLines: ' + cap, '---', '# Rules', '',
   ...blocks.flatMap((block) => [block, '']),
   '## Tail', 'Keep tail.', '',
 ].join(LF);
@@ -86,10 +92,11 @@ const createWriteSpy = () => {
   };
 };
 
-const createFixture = async (context, text) => {
-  const root = await fs.mkdtemp(join(tmpdir(), 'story-sessions-'));
+const createFixture = async (context, text, { served = false, suffix = '' } = {}) => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'story-sessions-' + suffix));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
-  const target = join(root, 'agent_rules.md');
+  const target = join(root, served ? SERVED_TARGET : 'agent_rules.md');
+  await fs.mkdir(dirname(target), { recursive: true });
   await fs.writeFile(target, text, 'utf8');
   const before = await fs.readFile(target);
   const spy = createWriteSpy();
@@ -126,6 +133,22 @@ const assertUnchanged = async (fixture) => {
 const assertEmitted = (logs, lines) => {
   assert.ok(Array.isArray(lines));
   for (const line of lines) assert.ok(logs.includes(line), 'missing outcome: ' + line);
+};
+
+const readFirstSpan = (note) => {
+  const match = note.match(FIRST_SPAN_RE);
+  assert.ok(match, 'the note must contain a command span');
+  return match[1];
+};
+
+const assertNoCommand = (fixture, result) => {
+  assert.ok(result.logs.every((line) => !line.includes('rules-insert')));
+  for (const { composer } of ABSENT_NOTES) {
+    const lines = composeOutcome(composer, fixture.target, '');
+    assert.equal(lines.length, 1);
+    assert.ok(!lines[0].includes(BACKTICK));
+    assertEmitted(result.logs, lines);
+  }
 };
 
 describe('story-sessions verdicts spec:rules-regions/S13', () => {
@@ -209,16 +232,56 @@ describe('story-sessions order and absent notes spec:rules-regions/S14', () => {
 
   for (const row of ABSENT_NOTES) {
     it('offers the insert preview and waits for a yes in the absent ' + row.name + ' note', async (context) => {
-      const fixture = await createFixture(context, createDocument([]));
+      const fixture = await createFixture(context, createDocument([]), { served: true });
       const result = await reconcileFixture(fixture);
       assert.equal(result.code, EXIT_OK);
       await assertUnchanged(fixture);
-      const lines = composeOutcome(row.composer, fixture.target);
+      const lines = composeOutcome(row.composer, fixture.target, PROFILE_GAPS[0].apply(fixture.root));
       assertEmitted(result.logs, lines);
       const notes = lines.filter((line) => NOTE_RE.test(line)).join(LF);
-      assert.match(notes, PREVIEW_RE);
+      const command = 'node ' + join(HERE, '..', 'rules-insert.mjs') + ' --cwd ' + fixture.root;
+      assert.equal(readFirstSpan(notes), command);
+      assert.ok(result.events.every(({ line }) => !PLACEHOLDER_RE.test(line)));
       assert.ok(notes.includes(BACKTICK + '--apply' + BACKTICK));
       assert.match(notes, CONSENT_RE);
+    });
+  }
+});
+
+describe('runnable absent-section offers spec:rules-regions/S21', () => {
+  for (const suffix of ['', 'with space-']) {
+    it('runs the printed story preview for ' + (suffix || 'plain root'), async (context) => {
+      const text = createDocument([COMMS_REGION], PREVIEW_CAP);
+      const fixture = await createFixture(context, text, { served: true, suffix });
+      const result = await reconcileFixture(fixture);
+      assert.equal(result.code, EXIT_OK);
+      const absent = composeOutcome('storyNoRegion', fixture.target, PROFILE_GAPS[0].apply(fixture.root))[0];
+      const storyIndex = result.logs.indexOf(absent);
+      assert.notEqual(storyIndex, NOT_FOUND);
+      const span = readFirstSpan(result.logs[storyIndex + 1]);
+      const preview = spawnSync('/bin/sh', ['-c', span], { encoding: 'utf8' });
+      assert.equal(preview.status, EXIT_OK, preview.stderr);
+      assert.ok(preview.stdout.includes('story-sessions: planned'));
+      await assertUnchanged(fixture);
+    });
+  }
+
+  it('prints only the absent lines for a target outside the served path', async (context) => {
+    const fixture = await createFixture(context, createDocument([]));
+    const result = await reconcileFixture(fixture);
+    assert.equal(result.code, EXIT_OK);
+    assertNoCommand(fixture, result);
+    await assertUnchanged(fixture);
+  });
+
+  for (const [name, suffix] of [['control byte', CONTROL_BYTE], ['backtick', BACKTICK]]) {
+    it('offers no command for a served root holding a ' + name, async (context) => {
+      const fixture = await createFixture(context, createDocument([]), { served: true, suffix });
+      const result = await reconcileFixture(fixture);
+      assert.equal(result.code, EXIT_OK);
+      assertNoCommand(fixture, result);
+      assert.equal(PROFILE_GAPS[0].apply(fixture.root), '');
+      await assertUnchanged(fixture);
     });
   }
 });

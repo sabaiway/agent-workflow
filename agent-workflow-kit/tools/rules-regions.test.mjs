@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as lens from './lens-region.mjs';
 
 const LF = String.fromCharCode(10);
@@ -72,6 +76,12 @@ const LOW_CAP = 1;
 const RESULT_COUNT = 16;
 const RESULT_CAP = 15;
 const UNCAPPED = null;
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PLAIN_ROOT = '/project';
+const PLAIN_INSERT = '/kit/tools/rules-insert.mjs';
+const PROBE_SOURCE = 'process.stdout.write(JSON.stringify(process.argv.slice(2)))';
+const SHELL_ROOTS = ['a b', 'x$HOME', "it's", 'semi;colon', 'glob*', 'back' + BACKSLASH + 'slash', '"dq"'];
+const REJECTED_BYTES = [1, 9, 10, 31, 127, 96];
 
 const makeHeading = (number, title) => '### 2.' + number + '. ' + title;
 const makeSpanLines = (number, title, body) => [makeHeading(number, title), body, ''];
@@ -162,6 +172,11 @@ const CAP_ENDINGS = [
 ];
 
 const loaded = await import('./rules-regions.mjs').catch(() => ({}));
+const buildInsertPreview = loaded.buildInsertPreview ?? null;
+const getInsertPreview = () => {
+  if (buildInsertPreview === null) throw new Error('buildInsertPreview is absent');
+  return buildInsertPreview;
+};
 const throwAbsent = (name) => {
   throw new Error('rules-regions.mjs is absent or missing export ' + name);
 };
@@ -241,6 +256,41 @@ describe('shared extraction spec:rules-regions/S2', () => {
       assert.notEqual(lens[name], undefined, name);
     }
   });
+});
+
+describe('insert preview shell arguments', () => {
+  it('prints the default insert path and a plain root unquoted', () => {
+    const expected = 'node ' + join(HERE, 'rules-insert.mjs') + ' --cwd ' + PLAIN_ROOT;
+    assert.equal(getInsertPreview()(PLAIN_ROOT), expected);
+  });
+  it('prints an explicit plain insert path and root unquoted', () => {
+    const expected = 'node ' + PLAIN_INSERT + ' --cwd ' + PLAIN_ROOT;
+    assert.equal(getInsertPreview()(PLAIN_ROOT, PLAIN_INSERT), expected);
+  });
+  for (const root of SHELL_ROOTS) {
+    it('passes one exact root argument for ' + JSON.stringify(root), (t) => {
+      const build = getInsertPreview();
+      const directory = mkdtempSync(join(tmpdir(), 'insert preview-'));
+      t.after(() => rmSync(directory, { recursive: true, force: true }));
+      const insertPath = join(directory, 'argv.mjs');
+      writeFileSync(insertPath, PROBE_SOURCE);
+      const line = build(root, insertPath);
+      const result = spawnSync('/bin/sh', ['-c', line], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), ['--cwd', root]);
+    });
+  }
+  for (const code of REJECTED_BYTES) {
+    const byte = String.fromCharCode(code);
+    for (const [name, root, insertPath] of [
+      ['root', PLAIN_ROOT + byte, PLAIN_INSERT],
+      ['insertPath', PLAIN_ROOT, PLAIN_INSERT + byte],
+    ]) {
+      it('withholds a command for byte ' + code + ' in ' + name, () => {
+        assert.equal(getInsertPreview()(root, insertPath), '');
+      });
+    }
+  }
 });
 
 describe('template span reader spec:rules-regions/S3', () => {

@@ -5,6 +5,8 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const loaded = await import('./profile-gaps.mjs').catch(() => ({}));
+const regions = await import('./rules-regions.mjs').catch(() => ({}));
+const buildInsertPreview = regions.buildInsertPreview ?? null;
 const getRegistry = loaded.PROFILE_GAPS === undefined ? () => {
   throw new Error('profile-gaps.mjs is absent');
 } : () => loaded.PROFILE_GAPS;
@@ -19,6 +21,9 @@ const TOOL_PATH = join(HERE, 'rules-insert.mjs');
 const GAP_ID = 'story-sessions-section';
 const LF = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
+const CONTROL_BYTE = String.fromCharCode(1);
+const DELETE_BYTE = String.fromCharCode(127);
+const BACKTICK = String.fromCharCode(96);
 // A lone continuation byte: valid in cp1251 or latin-1, never valid UTF-8.
 const INVALID_UTF8 = Buffer.from([0xA0]);
 const TAB = String.fromCharCode(9);
@@ -200,7 +205,22 @@ describe('spec:rules-regions/S18 preview command and read-only imports', () => {
     assert.ok(!line.includes('--apply'));
     assert.ok(!line.includes(LF));
     assert.ok(!line.includes(CR));
+    if (buildInsertPreview === null) {
+      throw new Error('buildInsertPreview is absent');
+    }
+    assert.equal(line, buildInsertPreview(fixture.root));
   });
+  for (const [name, character] of [
+    ['control byte', CONTROL_BYTE],
+    ['delete byte', DELETE_BYTE],
+    ['line feed', LF],
+    ['backtick', BACKTICK],
+  ]) {
+    it('offers no command for a root carrying a ' + name, () => {
+      const root = ROOT + character;
+      assert.equal(getEntry().apply(root), '');
+    });
+  }
   it('imports the regions leaf and no writer', () => {
     const fixture = createFixture();
     getEntry().apply(fixture.root);

@@ -7,6 +7,7 @@ import {
   planInsert,
   frontmatterMaxLines,
   decodeUtf8Strict,
+  buildInsertPreview,
 } from './rules-regions.mjs';
 
 const GAP_ID = 'story-sessions-section';
@@ -17,9 +18,6 @@ const MISSING_FILE_CODE = 'ENOENT';
 const SINGLE_HEADING = 1;
 const TARGET_PATH = 'docs/ai/agent_rules.md';
 const TEMPLATE_PATH = fileURLToPath(new URL('../references/templates/agent_rules.md', import.meta.url));
-const INSERT_PATH = fileURLToPath(new URL('./rules-insert.mjs', import.meta.url));
-const COMMAND_PREFIX = 'node ';
-const CWD_FLAG = ' --cwd ';
 const VERDICTS = Object.freeze({
   present: 'present',
   absent: 'absent',
@@ -83,8 +81,6 @@ const detectStorySessions = ({ root, deps }) => {
   return { verdict: VERDICTS.absent };
 };
 
-const buildInsertPreview = (root) => COMMAND_PREFIX + INSERT_PATH + CWD_FLAG + root;
-
 export const PROFILE_GAPS = Object.freeze([
-  Object.freeze({ id: GAP_ID, detect: detectStorySessions, apply: buildInsertPreview }),
+  Object.freeze({ id: GAP_ID, detect: detectStorySessions, apply: (root) => buildInsertPreview(root) }),
 ]);

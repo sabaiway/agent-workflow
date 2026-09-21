@@ -2,7 +2,7 @@
 // The only mutation of a deployed rules file the composition root runs WITHOUT a consent ask.
 import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
-import { RULES_REGIONS, extractRegionBy, readTemplateSpan, frontmatterMaxLines, exceedsCap } from './rules-regions.mjs';
+import { RULES_REGIONS, extractRegionBy, readTemplateSpan, frontmatterMaxLines, exceedsCap, buildInsertPreview } from './rules-regions.mjs';
 
 export { frontmatterMaxLines } from './rules-regions.mjs';
 const [COMMUNICATION, STORY, LENS] = RULES_REGIONS;
@@ -13,6 +13,7 @@ const LF = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
 const CRLF = CR + LF;
 const BACKSLASH = String.fromCharCode(92);
+const BACKTICK = String.fromCharCode(96);
 const EM_DASH = String.fromCharCode(8212);
 const EXIT_OK = 0;
 const EXIT_STOP = 1;
@@ -34,12 +35,14 @@ const NEUTRAL_COMMS_RE = /^### 2[.]x[.] Communication [(]user-facing messages[)]
 const NEUTRAL_STORY_RE = /^### 2[.]x[.] Story sessions/;
 const LINE_UNSAFE = new RegExp(`[${BACKSLASH}u007f-${BACKSLASH}u009f${BACKSLASH}u2028${BACKSLASH}u2029]`, 'g');
 const HUMAN_UNSAFE = new RegExp(`[${BACKSLASH}u0000-${BACKSLASH}u001f${BACKSLASH}u007f-${BACKSLASH}u009f${BACKSLASH}u2028${BACKSLASH}u2029]+`, 'g');
-const INSERT_NOTE = '[lens-region] note: preview the absent section with `node <kit>/tools/rules-insert.mjs --cwd <project>`; use `--apply` only after an explicit yes.';
+const SERVED_TARGET = ['docs', 'ai', 'agent_rules.md'];
+const insertNote = (command) => command ? [`[lens-region] note: preview the absent section with \`${command}\`; use \`--apply\` only after an explicit yes.`] : [];
 const OUTCOME_PREFIXES = Object.freeze({ communication: 'comms', 'story-sessions': 'story', lens: 'lens' });
 const stripCr = (line) => (line.endsWith(CR) ? line.slice(0, -1) : line);
 const escUnsafe = (character) => `${BACKSLASH}u${character.codePointAt(0).toString(HEX_RADIX).padStart(UNICODE_WIDTH, '0')}`;
 const errorDetail = (raw) => `[lens-region] error=${JSON.stringify(String(raw)).replace(LINE_UNSAFE, escUnsafe)}`;
 const oneLine = (value) => String(value).replace(HUMAN_UNSAFE, ' ');
+const spanFree = (value) => oneLine(value).replaceAll(BACKTICK, escUnsafe(BACKTICK));
 
 export const parseLensPriors = (text) => {
   const entries = [];
@@ -104,9 +107,9 @@ const RECONCILERS = Object.freeze({ communication: reconcileCommsText, 'story-se
 export const OUTCOME_LINES = Object.freeze({
   errorDetail,
   targetAbsent: (target) => `[lens-region] ${oneLine(target)} is absent ${EM_DASH} skipped (nothing to update; the file is seeded at bootstrap).`,
-  commsNoRegion: (target) => [
-    `[lens-region] no "${COMMUNICATION.label}" section in ${oneLine(target)} ${EM_DASH} left untouched.`,
-    INSERT_NOTE,
+  commsNoRegion: (target, command) => [
+    `[lens-region] no "${COMMUNICATION.label}" section in ${spanFree(target)} ${EM_DASH} left untouched.`,
+    ...insertNote(command),
   ],
   commsCurrent: () => `[lens-region] Communication section already current ${EM_DASH} nothing to do (zero-diff).`,
   commsCustom: () => [
@@ -117,9 +120,9 @@ export const OUTCOME_LINES = Object.freeze({
   commsCapRefused: (target, count, cap) => `[lens-region] refused ${EM_DASH} refreshing the Communication section would push ${oneLine(target)} to ${count} lines (cap ${cap}); trim the file and re-run. The Communication section was not changed.`,
   commsRefreshed: () => '[lens-region] refreshed the Communication section to the current canon.',
   templateCanonStop: () => `[lens-region] STOP ${EM_DASH} the kit's bundled agent_rules.md template canon is unreadable; reinstall the kit: npx @sabaiway/agent-workflow-kit@latest init`,
-  storyNoRegion: (target) => [
-    `[lens-region] no "${STORY.label}" section in ${oneLine(target)} ${EM_DASH} left untouched.`,
-    INSERT_NOTE,
+  storyNoRegion: (target, command) => [
+    `[lens-region] no "${STORY.label}" section in ${spanFree(target)} ${EM_DASH} left untouched.`,
+    ...insertNote(command),
   ],
   storyCurrent: () => `[lens-region] Story sessions section already current ${EM_DASH} nothing to do (zero-diff).`,
   storyCustom: () => [
@@ -187,9 +190,11 @@ export const runCli = async (argv, deps = {}) => {
     return EXIT_USAGE;
   }
   const fs = deps.fs ?? (await import('node:fs/promises'));
-  const { dirname, basename, join, resolve } = await import('node:path');
+  const { dirname, basename, join, resolve, sep } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const targetPath = resolve(argv[1]);
+  const served = targetPath.endsWith(sep + SERVED_TARGET.join(sep));
+  const command = served ? buildInsertPreview(resolve(targetPath, '..', '..', '..')) : '';
   const text = await (async () => {
     try {
       return await fs.readFile(targetPath, UTF8);
@@ -238,7 +243,7 @@ export const runCli = async (argv, deps = {}) => {
       return state;
     }
     if (!region.found) {
-      for (const line of OUTCOME_LINES[`${prefix}NoRegion`](argv[1])) log(line);
+      for (const line of OUTCOME_LINES[`${prefix}NoRegion`](argv[1], command)) log(line);
       return state;
     }
     const canon = descriptor.canon === 'template'

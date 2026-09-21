@@ -9,6 +9,7 @@ const ERROR = 'error';
 const INFO = 'info';
 const OPEN = 'open';
 const LANDED = 'landed';
+const ABSENT = 'absent';
 const EPIC = 'epic';
 const OWN = 'owns';
 const FRONT_DELIMITER = '---';
@@ -122,9 +123,12 @@ const carriesToken = (title, id) => {
   const escaped = id.replace(REGEX_BYTES, '\\$&');
   return new RegExp(`(?<!${TOKEN_EDGE})${escaped}(?!${TOKEN_EDGE})`, 'u').test(title);
 };
+const describeQueue = (queue) => [queue?.outcome, queue?.reason].filter((part) => part !== undefined).join(': ')
+  || (queue === null ? 'null' : typeof queue);
 const checkQueueAbsence = (queue, path, id) => {
   if (typeof queue !== 'string') {
-    return [makeFinding(path, FIRST_LINE, 'queue-read', `${queue?.outcome ?? 'absent'}: ${queue?.reason ?? 'no readable queue text'}`)];
+    if (queue?.outcome === ABSENT) return [];
+    return [makeFinding(path, FIRST_LINE, 'queue-read', describeQueue(queue))];
   }
   try {
     const { rows } = auditQueue(queue, { label: path });
