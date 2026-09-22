@@ -17,6 +17,7 @@ export const MODULE = 'src/greet.mjs';
 export const TEST = 'src/greet.test.mjs';
 export const CONFIG = 'docs/ai/orchestration.json';
 export const QUEUE = 'docs/plans/queue.md';
+export const MODULE_ROW = 'M1 | modify | src/greet.mjs | Greet the reader by name | n/a | src/greet.mjs:1';
 const QUEUE_TEXT = ['# Queue', '', '## Now', ''].join(LF);
 
 export const renderLines = (lines) => lines.join(LF) + LF;
@@ -35,6 +36,22 @@ export const snapshotTree = (root, relative = '') => Object.fromEntries(
     throw new Error(`Unexpected fixture entry: ${absolute}`);
   }),
 );
+export const renderPlan = ({ story = 'Story: S1 of WALK-EPIC', row = MODULE_ROW, next = '- None.' } = {}) => renderLines([
+  '# Plan: Greet the reader', '', '## Goal and boundary', story,
+  'Outcome: greet the reader by name. Governing spec: not adopted. Non-goals: unrelated files.', '',
+  '## Module ledger', row, 'total: 0 → 0 lines', '', '## Verification',
+  `- node --check ${MODULE} exits 0.`, '', '## Phase: Cleanup',
+  '- Preserve the results and remove the temporary plan.', '', '## Next steps', next,
+]);
+export const removeSection = (text, heading) => {
+  const lines = text.split(LF);
+  const start = lines.indexOf(heading);
+  const end = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  if (start < 0 || end < 0) throw new Error(`${heading} is not a closed section`);
+  return [...lines.slice(0, start), ...lines.slice(end)].join(LF);
+};
+export const landStory = (epic) => epic.replace('state: planned', `state: landed ${DATE}`);
+export const addResultLine = (epic) => epic.replace('## Acceptance' + LF, '## Acceptance' + LF + `Result line: ${DATE}` + LF);
 export const listFiles = (tree) => Object.keys(tree).filter((path) => tree[path].kind === 'file').sort();
 export const removeStorySpan = (text) => {
   const lines = text.split(LF);
@@ -44,8 +61,9 @@ export const removeStorySpan = (text) => {
   return [...lines.slice(0, start), ...lines.slice(end < 0 ? lines.length : end)].join(LF);
 };
 
-export const createGround = () => {
+export const createGround = (roots) => {
   const root = mkdtempSync(join(tmpdir(), 'tier-walk-'));
+  roots.push(root);
   const [home, project, bin, temporary] = ['home', 'project', 'bin', 'tmp'].map((name) => join(root, name));
   for (const path of [home, project, bin, temporary]) mkdirSync(path);
   const gitPath = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
@@ -67,7 +85,19 @@ export const createGround = () => {
     return run(label, join(bin, 'node'), [join(kit, 'tools', name), ...args]);
   };
   const git = (label, args) => run(label, join(bin, 'git'), args);
-  return { root, home, project, bin, kit, env, records, toolLabels, run, tool, git };
+  const toolsPrefix = `${join(kit, 'tools')}/`;
+  const shell = (label, line) => {
+    const [command, path = ''] = line.split(' ');
+    if (command === 'node' && path.replaceAll("'", '').startsWith(toolsPrefix)) toolLabels.add(label);
+    return run(label, '/bin/sh', ['-c', line]);
+  };
+  const guide = (stage) => {
+    const json = tool(`guide-${stage}`, 'tier-guide.mjs', ['--dir', project, '--json']);
+    const plain = tool(`guide-${stage}-plain`, 'tier-guide.mjs', ['--dir', project]);
+    if (json.code !== 0 || plain.code !== 0) throw new Error(`the guide at ${stage}: ${json.stderr}${plain.stderr}`);
+    return { envelope: JSON.parse(json.stdout), lines: plain.stdout.split(LF) };
+  };
+  return { root, home, project, bin, kit, env, records, toolLabels, run, tool, git, shell, guide };
 };
 export const probeEnvironment = (ground) => {
   const fakeBin = join(ground.root, 'fake-bin');

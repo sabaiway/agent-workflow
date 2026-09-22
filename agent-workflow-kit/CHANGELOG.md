@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.9.0 — one read-only guide says what an epic, a story and a task are, and names the next step of the walk (AD-155)
+
+**`/agent-workflow-kit tier` answers "what is this tier, and what do I do next?" from the disk alone.** Until 14.9.0
+every tool of the epic, story and task tier worked, but nothing said what the tier is or which step comes next, and
+two refusals of a solo walk had their remedy only in a contract. The new guide prints a fixed text — an epic, a story
+and a task in one sentence each, the five story sessions, both templates by their installed paths, every key of both
+templates with one sentence each, and the Recommendations command — then, per epic, its stage and the ordered steps
+left, the first being the next one. Each step that runs a tool prints its command on its own line, ready to run from
+the project root; an authoring step (copy a template, fill it, edit a row) is named in words. Story S3 of the epic
+`KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contract `docs/ai/specs/kit/tier/tier-guide/` (new), with
+`docs/ai/specs/kit/tier/tier-walk.md` at revision 3.
+
+- **The stages.** Per epic: E1 no epic yet, E2 the epic to fix, E3 open with a story in hand, E4 every story landed
+  and the epic to close, E5 landed. Per story in hand: S1 no plan, S2 a plan and no checkpoint, S3 a checkpoint and
+  no brief, S4 a brief with no binding, S5 a brief bound to an older checkpoint, S6 the task in hand, S7 the brief
+  done, S8 the checkpoints pruned and the story to land. A plan left over from a landed story is named as its
+  Cleanup: the checkpoint prune where one exists, then the removal of the plan and its briefs.
+- **Nothing is guessed.** An unreadable epic file or plan, a plan that does not parse, a second plan for one story, a
+  brief the grammar refuses, a malformed binding block, a checkpoint the reader refuses: each is printed as a state
+  with its reader, file and cause, and the guide still exits 0; an epic its check refuses is stage E2, with the
+  check command. A `{{KEY}}` placeholder left in an accepted epic or a
+  stamped brief is named with its file before the stage's steps. Several epics or stories in hand each render.
+- **Read-only, like `now`.** `node tools/tier-guide.mjs [--dir <project>] [--json]`; `--help` only as the whole
+  invocation. Exit 0 anything rendered, 1 the directory is not a git work tree, 2 usage. `--json` prints the same
+  facts as an envelope `{ schema, command, dir, tier, states, entries, skipped }`, each step carrying its text, its
+  kind (`run`, `write` or `fact`) and its command or null. It writes no file and no git state.
+- **Where to find it.** The mode `tier` (mode doc `references/modes/tier.md`), one Inspect entry in the command
+  catalog (so `/agent-workflow-kit help` lists it) and the `### Mode: tier` header in `SKILL.md`. The other places
+  that should mention it (the help's own text, the readmes, the welcome screen, the install's closing lines) come
+  with the epic's next story.
+- **Internals.** `readPlanEntries` moves from `tools/plan-shape-cli.mjs` into `tools/plan-files.mjs`;
+  `plan-shape-cli` and the guide's facts module import it. The repository walk fixture `test/tier-walk-e2e.test.mjs`
+  now reads the guide at every stage, and every tool step but the designed refusal cells is a line the guide
+  printed, run through `/bin/sh` unchanged. The package-content pin names the two tools and the mode doc, and the
+  tarball holds 336 files. The guide's suites do not ship.
+
 ## 14.8.0 — the kit ships an epic template and a task-brief template, each accepted by its checker once filled in (AD-154)
 
 **A first epic and a first task brief can start from a file instead of from a checker's refusal.** Until 14.8.0 the

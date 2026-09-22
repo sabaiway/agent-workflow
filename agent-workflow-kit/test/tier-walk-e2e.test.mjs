@@ -1,11 +1,12 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DATE, EPIC_KEYS, EPIC_TEMPLATE_TEXT, EPIC_VALUES, LF, MODULE, PLAN, QUEUE, TASK_KEYS,
-  TASK_TEMPLATE_TEXT, TASK_VALUES, TEST, createGround, findSpans, listFiles, prepareSubstrate,
-  probeEnvironment, renderLines, renderTemplate, snapshotTree, writeFixture } from './tier-walk-harness.test.mjs';
+import { EPIC_KEYS, EPIC_TEMPLATE_TEXT, EPIC_VALUES, LF, MODULE, MODULE_ROW, PLAN, QUEUE, TASK_KEYS,
+  TASK_TEMPLATE_TEXT, TASK_VALUES, TEST, addResultLine, createGround, findSpans, landStory, listFiles, prepareSubstrate,
+  probeEnvironment, removeSection, renderLines, renderPlan, renderTemplate, snapshotTree, writeFixture } from './tier-walk-harness.test.mjs';
 
 const KIT_SOURCE = fileURLToPath(new URL('../', import.meta.url));
 const CR = String.fromCharCode(13);
@@ -14,9 +15,7 @@ const EPIC = 'docs/ai/epics/WALK-EPIC.md';
 const BRIEF = 'docs/plans/TASK-greet-T1.md';
 const RULES = 'docs/ai/agent_rules.md';
 const COPIES = 'template-copies';
-const STORY = 'Story: S1 of WALK-EPIC';
 const STORY_ROW = '- S1 | Greet the reader | depends-on: none | owns: src/greet.mjs | shared: none | state: planned';
-const MODULE_ROW = 'M1 | modify | src/greet.mjs | Greet the reader by name | n/a | src/greet.mjs:1';
 const ACCEPTANCE = `- node --test ${TEST} :: exits 0`;
 const AUTHORED = [EPIC, PLAN, BRIEF];
 const STATES = ['bare', 'seeded'];
@@ -24,6 +23,9 @@ const TEMPLATES = [
   { name: 'EPIC_TEMPLATE.md', text: EPIC_TEMPLATE_TEXT, keys: EPIC_KEYS },
   { name: 'TASK_TEMPLATE.md', text: TASK_TEMPLATE_TEXT, keys: TASK_KEYS },
 ];
+const GUIDED_STAGES = ['E1', 'S1', 'S2', 'S3', 'S4', 'S6', 'S7', 'S8', 'E4', 'E5'];
+const GUIDED_STEPS = ['epic-check', 'epic-review', 'plan-check', 'mint', 'stamp', 'check', 'acceptance', 'review',
+  'stage-files', 'commit-files', 'plan-verify', 'prune', 'close'];
 const DIGEST = new RegExp('^task-brief digest sha256:[a-f0-9]{64}' + LF + '$');
 const CHECKPOINT = new RegExp('^checkpoint greet/0 [a-f0-9]{40,64}' + LF + '$');
 const EXPECTED = [
@@ -47,24 +49,13 @@ const EXPECTED = [
 ];
 const fixtures = {};
 const grounds = [];
-const renderPlan = () => renderLines([
-  '# Plan: Greet the reader', '', '## Goal and boundary', STORY,
-  'Outcome: greet the reader by name. Governing spec: not adopted. Non-goals: unrelated files.', '',
-  '## Module ledger', MODULE_ROW, 'total: 0 → 0 lines', '', '## Verification',
-  `- node --check ${MODULE} exits 0.`, '', '## Phase: Cleanup',
-  '- Preserve the results and remove the temporary plan.', '', '## Next steps', '- None.',
-]);
-const removeSection = (text, heading) => {
-  const lines = text.split(LF);
-  const start = lines.indexOf(heading);
-  const end = lines.findIndex((line, index) => index > start && line.startsWith('## '));
-  if (start < 0 || end < 0) throw new Error(`${heading} is not a closed section`);
-  return [...lines.slice(0, start), ...lines.slice(end)].join(LF);
+const stageOf = ({ envelope }) => {
+  const [entry] = envelope.entries;
+  return entry.stories.length ? entry.stories[0] : entry;
 };
 const runWalk = (state) => {
-  const ground = createGround();
-  grounds.push(ground.root);
-  const { project, kit, bin, run, tool, git } = ground;
+  const ground = createGround(grounds);
+  const { project, kit, bin, env, run, tool, shell, guide } = ground;
   probeEnvironment(ground);
   run('install', join(bin, 'node'), [join(KIT_SOURCE, 'bin/install.mjs'), '--dir', kit,
     '--no-launchers', '--no-engine', '--no-memory', '--no-bridges']);
@@ -75,41 +66,62 @@ const runWalk = (state) => {
     brief: renderTemplate(installed['TASK_TEMPLATE.md'].toString('utf8'), TASK_VALUES) };
   prepareSubstrate(ground, state);
   const beforeAuthoring = snapshotTree(project);
-  for (const [path, text] of [[EPIC, rendered.epic], [PLAN, renderPlan()], [BRIEF, rendered.brief]]) {
-    writeFixture(join(project, path), text);
-  }
   const walkStart = ground.records.length;
-  tool('epic-check', 'epic-shape-cli.mjs', ['--check', EPIC]);
-  tool('epic-review', 'epic-shape-cli.mjs', ['--review-brief', EPIC]);
-  tool('plan-check', 'plan-shape-cli.mjs', ['--check', PLAN]);
-  tool('mint', 'checkpoint.mjs', ['mint', '--plan', PLAN]);
-  writeFixture(join(project, BRIEF), removeSection(rendered.brief, '## Negative cases'));
-  tool('first-guess', 'task-brief.mjs', ['stamp', BRIEF]);
-  writeFixture(join(project, BRIEF), rendered.brief);
-  tool('stamp', 'task-brief.mjs', ['stamp', BRIEF]);
-  tool('check', 'task-brief.mjs', ['check', BRIEF]);
-  const beforeSolo = snapshotTree(project);
-  const authored = Object.fromEntries(AUTHORED.map((path) => [path, readFileSync(join(project, path), 'utf8')]));
-  writeFixture(join(project, MODULE), renderLines(["export const greet = (name) => 'Hello, ' + name;"]));
-  writeFixture(join(project, TEST), renderLines([
-    "import assert from 'node:assert/strict';", "import { greet } from './greet.mjs';",
-    "assert.equal(greet('reader'), 'Hello, reader');",
-  ]));
-  const command = authored[BRIEF].split(LF).find((line) => line === ACCEPTANCE).slice(2).split(' :: ')[0];
-  run('acceptance', '/bin/sh', ['-c', command]);
-  tool('review', 'review-state.mjs', ['--check']);
-  git('stage-files', ['add', TEST, MODULE]);
-  git('commit-files', ['commit', '-q', '-m', 'Greet the reader by name']);
-  tool('plan-verify', 'plan-shape-cli.mjs', ['--verify', PLAN]);
-  tool('prune', 'checkpoint.mjs', ['prune', '--plan', PLAN]);
+  const guided = [];
+  const solo = {};
+  const author = {
+    epic: () => writeFixture(join(project, EPIC), rendered.epic),
+    plan: () => writeFixture(join(project, PLAN), renderPlan()),
+    brief: () => {
+      writeFixture(join(project, BRIEF), removeSection(rendered.brief, '## Negative cases'));
+      tool('first-guess', 'task-brief.mjs', ['stamp', BRIEF]);
+      writeFixture(join(project, BRIEF), rendered.brief);
+    },
+    files: () => {
+      solo.beforeSolo = snapshotTree(project);
+      solo.authored = Object.fromEntries(AUTHORED.map((path) => [path, readFileSync(join(project, path), 'utf8')]));
+      writeFixture(join(project, MODULE), renderLines(["export const greet = (name) => 'Hello, ' + name;"]));
+      writeFixture(join(project, TEST), renderLines([
+        "import assert from 'node:assert/strict';", "import { greet } from './greet.mjs';",
+        "assert.equal(greet('reader'), 'Hello, reader');",
+      ]));
+    },
+    landing: () => writeFixture(join(project, EPIC), landStory(readFileSync(join(project, EPIC), 'utf8'))),
+    result: () => writeFixture(join(project, EPIC), addResultLine(readFileSync(join(project, EPIC), 'utf8'))),
+  };
+  const walkStage = (stage, steps, fact) => {
+    const read = guide(stage);
+    const current = stageOf(read);
+    if (current.stage !== stage) throw new Error(`the guide stands at ${current.stage}, the walk expects ${stage}`);
+    const taken = [];
+    const shellLine = (label, item, kinds) => {
+      if (!kinds.includes(item?.kind) || item.command === null) throw new Error(`${stage}: ${label} is not a printed ${kinds} line`);
+      taken.push({ label, command: item.command });
+      shell(label, item.command);
+    };
+    if (fact) shellLine(fact, read.envelope.entries[0].fact, ['fact']);
+    steps.forEach((step, index) => {
+      const item = current.actions[index];
+      if (typeof step === 'string') shellLine(step, item, ['run']);
+      else if (item?.kind !== 'write') throw new Error(`${stage}: action ${index + 1} is not a write`);
+      else step();
+    });
+    guided.push({ stage, lines: read.lines, taken });
+  };
+  walkStage('E1', [author.epic]);
+  walkStage('S1', ['epic-review', author.plan], 'epic-check');
+  walkStage('S2', ['plan-check', 'mint']);
+  walkStage('S3', [author.brief]);
+  walkStage('S4', ['stamp']);
+  walkStage('S6', ['check', author.files, 'acceptance', 'review', 'stage-files', 'commit-files']);
+  walkStage('S7', ['plan-verify', 'prune']);
   tool('newest', 'checkpoint.mjs', ['newest', '--plan', PLAN]);
   tool('close-before-landing', 'epic-shape-cli.mjs', ['--close', EPIC]);
-  const landed = readFileSync(join(project, EPIC), 'utf8').replace('state: planned', `state: landed ${DATE}`)
-    .replace('## Acceptance' + LF, '## Acceptance' + LF + `Result line: ${DATE}` + LF);
-  writeFixture(join(project, EPIC), landed);
-  tool('close', 'epic-shape-cli.mjs', ['--close', EPIC]);
+  walkStage('S8', [author.landing]);
+  walkStage('E4', [author.result, 'close']);
   const closedEpic = readFileSync(join(project, EPIC), 'utf8');
   tool('close-again', 'epic-shape-cli.mjs', ['--close', EPIC]);
+  walkStage('E5', []);
   const reconcile = tool('reconcile', 'lens-region.mjs', ['reconcile', RULES]);
   const lines = reconcile.stdout.split(LF);
   const storyIndex = lines.findIndex((line) => line.includes('no "### 2.x. Story sessions"'));
@@ -117,14 +129,17 @@ const runWalk = (state) => {
   const preview = offer.split(BACKTICK)[1] ?? '';
   run('offer-preview', '/bin/sh', ['-c', preview]);
   for (const { name } of TEMPLATES) writeFixture(join(project, COPIES, name), installed[name]);
-  tool('epic-template-check', 'epic-shape-cli.mjs', ['--check', `${COPIES}/EPIC_TEMPLATE.md`]);
-  tool('task-template-stamp', 'task-brief.mjs', ['stamp', `${COPIES}/TASK_TEMPLATE.md`]);
-  return { ...ground, state, kitBefore, kitAfter: snapshotTree(kit), beforeAuthoring, beforeSolo,
-    installed, rendered, authored, closedEpic, offer, preview, walk: ground.records.slice(walkStart) };
+  const copyChecks = Object.fromEntries([['epic-template-check', 'epic-shape-cli.mjs', '--check', `${COPIES}/EPIC_TEMPLATE.md`],
+    ['task-template-stamp', 'task-brief.mjs', 'stamp', `${COPIES}/TASK_TEMPLATE.md`]].map(([label, name, ...args]) =>
+    [label, spawnSync(join(bin, 'node'), [join(kit, 'tools', name), ...args], { cwd: project, env, encoding: 'utf8' })]));
+  return { ...ground, state, kitBefore, kitAfter: snapshotTree(kit), beforeAuthoring, ...solo, guided, copyChecks,
+    installed, rendered, closedEpic, offer, preview, walk: ground.records.slice(walkStart) };
 };
 const getStep = (fixture, label) => fixture.records.find((record) => record.label === label);
 const assertCode = (record, code) => assert.equal(record.code, code, `${record.label}: ${record.stderr || record.stdout}`);
-const normalizeOutput = (text, root) => text.replaceAll(root, 'GROUND').replace(/[a-f0-9]{40,64}/g, 'OID');
+const normalizeOutput = (text, root) => text.replaceAll(root, 'GROUND').replace(/[a-f0-9]{40,64}/g, 'OID')
+  .replace(/[0-9]{4}-[0-9]{2}-[0-9]{2}/g, 'DAY');
+const isGuideRecord = ({ label }) => label.startsWith('guide-');
 
 before(() => {
   for (const state of STATES) fixtures[state] = runWalk(state);
@@ -146,7 +161,7 @@ describe('spec:tier-walk/S1 isolated ground', () => {
 });
 describe('spec:tier-walk/S2 bare walk named answers', () => {
   it('keeps the required step order', () => {
-    assert.deepEqual(fixtures.bare.walk.slice(0, EXPECTED.length).map(({ label }) => label),
+    assert.deepEqual(fixtures.bare.walk.filter((record) => !isGuideRecord(record)).slice(0, EXPECTED.length).map(({ label }) => label),
       EXPECTED.map(([label]) => label));
   });
   for (const [label, code, channel, pattern] of EXPECTED) it(label, () => {
@@ -249,7 +264,6 @@ describe('spec:tier-templates/S2 installed templates equal the pinned texts', ()
 describe('spec:tier-templates/S3 rendered epic accepted with no span left', () => {
   for (const state of STATES) it(state, () => {
     const fixture = fixtures[state];
-    assert.equal(fixture.rendered.epic, renderTemplate(fixture.installed['EPIC_TEMPLATE.md'].toString('utf8'), EPIC_VALUES));
     assert.equal(fixture.authored[EPIC], fixture.rendered.epic);
     assertCode(getStep(fixture, 'epic-check'), 0);
     assert.deepEqual(findSpans(fixture.rendered.epic), []);
@@ -258,7 +272,6 @@ describe('spec:tier-templates/S3 rendered epic accepted with no span left', () =
 describe('spec:tier-templates/S4 rendered brief stamped and checked with no span left', () => {
   for (const state of STATES) it(state, () => {
     const fixture = fixtures[state];
-    assert.equal(fixture.rendered.brief, renderTemplate(fixture.installed['TASK_TEMPLATE.md'].toString('utf8'), TASK_VALUES));
     assert.ok(fixture.authored[BRIEF].startsWith(fixture.rendered.brief));
     for (const label of ['stamp', 'check']) assert.match(getStep(fixture, label).stdout, DIGEST, label);
     assert.equal(getStep(fixture, 'stamp').stdout, getStep(fixture, 'check').stdout);
@@ -271,11 +284,30 @@ describe('spec:tier-templates/S5 unedited template copies refuse', () => {
     for (const { name } of TEMPLATES) {
       assert.deepEqual(readFileSync(join(fixture.project, COPIES, name)), fixture.installed[name], name);
     }
-    for (const label of ['epic-template-check', 'task-template-stamp']) {
-      const record = getStep(fixture, label);
-      assertCode(record, 1);
-      assert.notEqual(record.stderr.trim(), '', label);
+    for (const [label, result] of Object.entries(fixture.copyChecks)) {
+      assert.equal(result.status, 1, label);
+      assert.notEqual(result.stderr.trim(), '', label);
     }
-    assert.doesNotMatch(getStep(fixture, 'task-template-stamp').stderr, /^(?:reads|no-checkpoint):/m);
+    assert.doesNotMatch(fixture.copyChecks['task-template-stamp'].stderr, /^(?:reads|no-checkpoint):/m);
+  });
+});
+describe('spec:tier-guide/S6 the walk is driven by the guide', () => {
+  for (const state of STATES) it(`${state}: every tool step but the refusal cells is a printed guide line`, () => {
+    const { guided } = fixtures[state];
+    assert.deepEqual(guided.map(({ stage }) => stage), GUIDED_STAGES);
+    assert.deepEqual(guided.flatMap(({ taken }) => taken.map(({ label }) => label)), GUIDED_STEPS);
+    for (const { stage, lines, taken } of guided) {
+      for (const { label, command } of taken) assert.ok(lines.includes(command), `${stage} ${label}: ${command}`);
+    }
+    for (const label of GUIDED_STEPS) assertCode(getStep(fixtures[state], label), 0);
+  });
+  it('both states see the same guide lines, E1 one cause and one mkdir line', () => {
+    const select = (fixture) => fixture.guided.map(({ lines }) => normalizeOutput(lines.join(LF), fixture.root));
+    assert.deepEqual(select(fixtures.seeded), select(fixtures.bare));
+    for (const state of STATES) {
+      const [first] = fixtures[state].guided;
+      assert.ok(first.lines.includes('  no epic file in docs/ai/epics'), state);
+      assert.ok(first.lines.includes('mkdir -p docs/ai/epics'), state);
+    }
   });
 });

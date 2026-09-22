@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-22 — AD-155 one read-only guide states the tier and names the next step of the walk (kit 14.9.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
+
+**`/agent-workflow-kit tier` says what an epic, a story and a task are, and what to do next.** The new read-only
+guide `tools/tier-guide.mjs` prints a fixed text — the three levels, the five story sessions, both templates by their
+installed paths with every key explained — and then, per epic and per story in hand, the stage (E1 to E5, S1 to S8)
+and the ordered steps left, each tool step with a command that runs as printed from the project root. An unreadable
+plan, a second plan for one story or a refused brief is printed as a state with its reader, file and cause; exit 0 when
+anything rendered, 1 outside a git work tree, 2 usage; `--json` carries the same facts. The mode `tier`, one catalog
+entry and the `SKILL.md` header make it reachable; `readPlanEntries` moves into `tools/plan-files.mjs`; every tool
+step of the walk fixture but its designed refusal cells is a line the guide printed. Story S3 of the epic `KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`; contract
+`docs/ai/specs/kit/tier/tier-guide/` (new).
+
 ## 2026-09-21 — AD-154 the kit ships an epic template and a task-brief template (kit 14.8.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
 
 **A first epic and a first task brief can start from a file.** The kit's skill home now carries

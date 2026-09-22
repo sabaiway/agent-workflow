@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 
-import { readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
-import { plansInFlight, PLANS_REL } from './plan-files.mjs';
+import { plansInFlight, PLANS_REL, readPlanEntries } from './plan-files.mjs';
 import { buildFacts, openRepo } from './plan-shape-facts.mjs';
 import { checkPlan, checkPlanStructure, formatFindings, parseLedger, PLAN_TITLE_PREFIX, verifyPlan } from './plan-shape.mjs';
 
@@ -19,15 +18,6 @@ const readPlan = (path) => {
   const result = readRegularFileNoFollow(path);
   if (result.outcome !== 'ok') throw new Error(`${path} must be a readable regular plan file (${result.className ?? result.code ?? result.outcome})`);
   return result.content;
-};
-
-const readPlanEntries = (cwd) => {
-  try {
-    return readdirSync(join(cwd, PLANS_REL), { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === 'ENOENT') return [];
-    throw new Error(`${PLANS_REL} could not be read (${error?.code ?? 'fs error'})`);
-  }
 };
 
 const getPaths = (text) => {

@@ -179,13 +179,16 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/epic-store.mjs',
       'tools/plan-shape-ownership.mjs',
       'tools/queue-row-name.mjs',
-      // the now render (spec kit/now) and its mode doc — by NAME because the mode doc renders the CLI path.
+      // the now render (spec kit/now), the tier guide (spec:tier-guide/S10) and their mode docs — by NAME because each mode doc renders the CLI path.
       'tools/now-status.mjs',
       'tools/now-plan-facts.mjs',
       'tools/now-facts.mjs',
       'tools/now-render.mjs',
       'tools/now-cli.mjs',
       'references/modes/now.md',
+      'tools/tier-guide-facts.mjs',
+      'tools/tier-guide.mjs',
+      'references/modes/tier.md',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -830,7 +833,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 328 = 324 + tools/migration-notes.mjs, tools/migration-blocks.mjs, tools/payload-prune.mjs and references/reference-profile.json — story S1 of the consumers epic
     // 331 = 328 + tools/profile-gaps.mjs, tools/rules-insert.mjs and tools/rules-regions.mjs - story S2 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW (the consumers epic)
     // 333 = 331 + references/authoring/EPIC_TEMPLATE.md and references/authoring/TASK_TEMPLATE.md - story S2 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
-    assert.equal(packed.length, 333, `tarball file count drifted (${packed.length}\u2260 333)`);
+    // 336 = 333 + tools/tier-guide-facts.mjs, tools/tier-guide.mjs and references/modes/tier.md - story S3 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
+    assert.equal(packed.length, 336, `tarball file count drifted (${packed.length}\u2260 336)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

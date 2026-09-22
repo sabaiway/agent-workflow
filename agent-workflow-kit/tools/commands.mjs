@@ -92,6 +92,13 @@ const CATALOG = [
     oneLine: 'Show where work stands: NOW answers the plan and tree, STEPS the evidence-derived ledger state, QUEUE its named positions, and CAMPAIGN its size-practice figures; the plan’s own text never sets a status.',
   },
   {
+    key: 'tier',
+    invocation: invocationOf('tier'),
+    group: 'Inspect',
+    kind: READ_ONLY,
+    oneLine: 'Explain the epic, story and task tier in plain words and name the next step of the walk, with the command that runs it wherever a tool does: the tier guide reads the disk alone.',
+  },
+  {
     key: 'backends',
     invocation: invocationOf('backends'),
     group: 'Inspect',
