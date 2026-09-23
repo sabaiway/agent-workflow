@@ -551,6 +551,7 @@ const main = async () => {
 Next — open your agent inside a project and run the skill:
   • first time in this project  ->  /agent-workflow-kit
   • project already has the kit  ->  /agent-workflow-kit upgrade
+  • new to the epic, story and task tier  ->  /agent-workflow-kit tier
   • per agent: Claude Code -> /agent-workflow-kit · Devin Local -> /agent-workflow-kit ·
     Codex -> its /skills menu -> agent-workflow-kit (Codex may also auto-trigger it)
 

@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.10.0 — every place a user first looks names the epic, story and task tier and the guide that explains it (AD-156)
+
+**A kit user now meets the tier without running the help.** Until 14.10.0 only the help named the tier and its
+guide. Six more places now carry the phrase `epic, story and task` and the command `/agent-workflow-kit tier` on one
+line, each in its own words: the skill's description, a read-only row of the kit README's command table directly after
+`now`, a short paragraph after step 3 of the root README's start section, a fixed line of the welcome mat in the
+bootstrap and upgrade report footer, a read-only entry of the bootstrap's optional block, and a bullet of the install's `Next —` lines.
+Story S4 of the epic `KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`, its last; contract
+`docs/ai/specs/kit/tier/tier-discovery.md` (new).
+
+- **The welcome mat.** The tier line is printed right after the help line, in every footer, whichever rung fires or
+  none; it is not a rung, since a rung prints only when every rung above it is silent and a user with no backend
+  ready would never reach it. The six rungs and their order are unchanged; with no rung, the two lines stand alone.
+- **The bootstrap block.** The lead-in now says every writer previews first, since the new tier entry writes
+  nothing; every other entry is unchanged.
+- **Proof on the installed copies.** The repository walk fixture `test/tier-walk-e2e.test.mjs` checks each
+  installed surface in both of its states — the installer's recorded output, the installed files and the help
+  rendered from the installed `tools/commands.mjs` — and the root README once, from the repository. Each region
+  is cut by asserted anchors (a missing one fails naming the surface and the anchor, from the new test helper
+  `test/doc-region-harness.test.mjs`), and cells that remove, move or case-change a token assert the surface is named.
+- **No budget raised.** The router byte budgets hold unedited; `bin/install.mjs` grows by its one bullet line, a
+  recorded raise to 585 lines. The help's own text, which the 14.9.0 entry expected with this story, stays as it is:
+  its rendered `tier` line already names the tier and the guide. The command catalog, the rungs and `upgrade.md` are
+  unchanged.
+
 ## 14.9.0 — one read-only guide says what an epic, a story and a task are, and names the next step of the walk (AD-155)
 
 **`/agent-workflow-kit tier` answers "what is this tier, and what do I do next?" from the disk alone.** Until 14.9.0

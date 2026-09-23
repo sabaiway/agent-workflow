@@ -122,6 +122,9 @@ OPTIONAL/MACHINE  install a bridge + subscription login -> delegated exec
 3. **Every session afterwards** — the agent reads the small entry layer, loads deeper docs only
    on demand, and writes a handover at the end.
 
+Planning your first epic? Run `/agent-workflow-kit tier` — it explains the epic, story and task
+tier and names your next step.
+
 ---
 
 ## 📦 What you get in your project

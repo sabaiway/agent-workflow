@@ -9,6 +9,8 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkS
   symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { cutRegion } from './doc-region-harness.test.mjs';
 
 export const LF = String.fromCharCode(10);
 export const DATE = '2026-09-21';
@@ -216,3 +218,41 @@ export const TASK_VALUES = { TASK_NAME: 'Greet the reader', STORY_ID: 'S1', EPIC
 export const renderTemplate = (text, values) => text.replace(/\{\{([A-Z][A-Z0-9_]*)\}\}/g,
   (span, key) => (Object.hasOwn(values, key) ? values[key] : span));
 export const findSpans = (text) => [...text.matchAll(/\{\{([\s\S]*?)\}\}/g)].map(([, inner]) => inner);
+
+// The tier's two literal tokens and the closed first-contact surface list (tier-discovery): where each
+// region is read, the two asserted anchors that cut it, and which of the region's lines may carry the pair.
+export const TIER_PHRASE = 'epic, story and task';
+export const TIER_COMMAND = '/agent-workflow-kit tier';
+const anyLine = (lines) => lines;
+const nextLine = (lines) => lines.slice(1, 2);
+export const SURFACES = [
+  { name: 'install Next block', source: 'install stdout', from: 'Next —', to: LF + LF, pick: anyLine },
+  { name: 'skill description', source: 'installed kit file', path: 'SKILL.md', from: 'description: ', to: LF,
+    pick: anyLine },
+  { name: 'kit README Use row', source: 'installed kit file', path: 'README.md',
+    from: '| `/agent-workflow-kit now` |', to: LF + LF, pick: nextLine },
+  { name: 'root README front door', source: 'repository file', path: 'README.md',
+    from: '3. **Every session afterwards**', to: LF + '---' + LF, pick: anyLine },
+  { name: 'welcome mat', source: 'installed kit file', path: 'references/shared/report-footer.md',
+    from: '**Welcome mat', to: '### Version disclosure', pick: anyLine },
+  { name: 'bootstrap block', source: 'installed kit file', path: 'references/modes/bootstrap.md',
+    from: 'present ONE compact optional-accelerators block', to: 'Then **ask before committing**', pick: anyLine },
+  { name: 'help tier line', source: 'help render', from: TIER_COMMAND, to: LF, pick: anyLine },
+];
+// Every surface's source text: the install's recorded stdout, the installed kit files, the repository files,
+// and the help rendered by importing the installed commands.mjs (never spawned, so no walk step is added).
+export const readSurfaces = async ({ kit, installStdout, repository }) => {
+  const { formatHelp } = await import(pathToFileURL(join(kit, 'tools/commands.mjs')).href);
+  const read = { 'install stdout': () => installStdout, 'help render': formatHelp,
+    'installed kit file': (path) => readFileSync(join(kit, path), 'utf8'),
+    'repository file': (path) => readFileSync(join(repository, path), 'utf8') };
+  return Object.fromEntries(SURFACES.map(({ name, source, path }) => [name, read[source](path)]));
+};
+export const surfaceNamed = (name) => SURFACES.find((surface) => surface.name === name);
+export const cutSurface = (surface, text) => cutRegion(text, surface.from, surface.to, surface.name);
+// The one check: the names of the given surfaces whose picked lines carry no line with BOTH tokens, byte
+// for byte (case kept, no whitespace collapsed). `regions` maps a surface name to its cut region.
+export const surfacesLackingPair = (regions) => Object.entries(regions)
+  .filter(([name, region]) => !surfaceNamed(name).pick(region.split(LF))
+    .some((line) => line.includes(TIER_PHRASE) && line.includes(TIER_COMMAND)))
+  .map(([name]) => name);

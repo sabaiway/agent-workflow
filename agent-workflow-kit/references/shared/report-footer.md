@@ -77,7 +77,7 @@ skipping the installed-versions block."* — never a silent skip (Hard Constrain
 the rest of the report — and the commit gate — proceeds.
 
 **Welcome mat — the last line(s) of the footer.** After the version block and the backend-status
-line, print *"Run `/agent-workflow-kit help` to see every command."* then **one** recommended next
+line, print *"Run `/agent-workflow-kit help` to see every command."* and *"New to the epic, story and task tier? Run `/agent-workflow-kit tier`."* then **one** recommended next
 step, chosen **caveat-aware** from signals already in hand (the version block's notes, the settings
 areas of the same `--json` envelope, and the backend-status line — no new helper call) in this
 priority order:
@@ -99,7 +99,7 @@ priority order:
    placed) → the optional *`/agent-workflow-kit agents`* opt-in (never run it without a yes);
 6. else **gates are declared but the approval hook is not wired** (the envelope's hook settings:
    at least one declared gate, wired = no) → the optional *`/agent-workflow-kit hook`* opt-in
-   (never run it without a yes). If no rung applies, the help line above stands alone.
+   (never run it without a yes). If no rung applies, the two lines above stand alone.
 
 Keep it compact — a few short lines, plain language, no kit-internal terms.
 

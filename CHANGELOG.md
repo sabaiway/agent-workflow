@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-23 — AD-156 every place a user first looks names the tier and the guide (kit 14.10.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
+
+**A kit user meets the epic, story and task tier without running the help.** The skill's description, a read-only
+row of the kit README's command table, a paragraph after step 3 of the root README's start section, a fixed welcome-mat
+line printed after the help line in every bootstrap and upgrade report footer, a read-only entry of the bootstrap's optional block and a bullet
+of the install's `Next —` lines each carry `epic, story and task` and `/agent-workflow-kit tier` on one line. The
+welcome-mat line is not a rung, so a user with no backend sees it too; the rungs are unchanged. The walk fixture
+checks each installed surface in both of its states and the root README once, from the repository, each region cut
+by asserted anchors, with no router budget raised. Story S4 of the epic `KIT-USERS-LEARN-THE-TIER-AND-WALK-IT`, its
+last; contract
+`docs/ai/specs/kit/tier/tier-discovery.md` (new).
+
 ## 2026-09-22 — AD-155 one read-only guide states the tier and names the next step of the walk (kit 14.9.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
 
 **`/agent-workflow-kit tier` says what an epic, a story and a task are, and what to do next.** The new read-only

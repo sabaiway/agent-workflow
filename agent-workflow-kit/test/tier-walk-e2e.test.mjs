@@ -4,11 +4,13 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EPIC_KEYS, EPIC_TEMPLATE_TEXT, EPIC_VALUES, LF, MODULE, MODULE_ROW, PLAN, QUEUE, TASK_KEYS,
-  TASK_TEMPLATE_TEXT, TASK_VALUES, TEST, addResultLine, createGround, findSpans, landStory, listFiles, prepareSubstrate,
-  probeEnvironment, removeSection, renderLines, renderPlan, renderTemplate, snapshotTree, writeFixture } from './tier-walk-harness.test.mjs';
+import { EPIC_KEYS, EPIC_TEMPLATE_TEXT, EPIC_VALUES, LF, MODULE, MODULE_ROW, PLAN, QUEUE, SURFACES, TASK_KEYS,
+  TASK_TEMPLATE_TEXT, TASK_VALUES, TEST, TIER_COMMAND, TIER_PHRASE, addResultLine, createGround, cutSurface, findSpans,
+  landStory, listFiles, prepareSubstrate, probeEnvironment, readSurfaces, removeSection, renderLines, renderPlan,
+  renderTemplate, snapshotTree, surfaceNamed, surfacesLackingPair, writeFixture } from './tier-walk-harness.test.mjs';
 
 const KIT_SOURCE = fileURLToPath(new URL('../', import.meta.url));
+const REPOSITORY = fileURLToPath(new URL('../../', import.meta.url));
 const CR = String.fromCharCode(13);
 const BACKTICK = String.fromCharCode(96);
 const EPIC = 'docs/ai/epics/WALK-EPIC.md';
@@ -48,6 +50,7 @@ const EXPECTED = [
   ['close-again', 1, 'stderr', /close-state/],
 ];
 const fixtures = {};
+const texts = {};
 const grounds = [];
 const stageOf = ({ envelope }) => {
   const [entry] = envelope.entries;
@@ -141,8 +144,15 @@ const normalizeOutput = (text, root) => text.replaceAll(root, 'GROUND').replace(
   .replace(/[0-9]{4}-[0-9]{2}-[0-9]{2}/g, 'DAY');
 const isGuideRecord = ({ label }) => label.startsWith('guide-');
 
-before(() => {
-  for (const state of STATES) fixtures[state] = runWalk(state);
+const regionOf = (state, name) => cutSurface(surfaceNamed(name), texts[state][name]);
+const assertPair = (state, name) => assert.deepEqual(surfacesLackingPair({ [name]: regionOf(state, name) }), [], `${state}: ${name}`);
+
+before(async () => {
+  for (const state of STATES) {
+    fixtures[state] = runWalk(state);
+    const installStdout = getStep(fixtures[state], 'install').stdout;
+    texts[state] = await readSurfaces({ kit: fixtures[state].kit, installStdout, repository: REPOSITORY });
+  }
 });
 after(() => {
   for (const root of grounds) rmSync(root, { recursive: true, force: true });
@@ -310,4 +320,73 @@ describe('spec:tier-guide/S6 the walk is driven by the guide', () => {
       assert.ok(first.lines.includes('mkdir -p docs/ai/epics'), state);
     }
   });
+});
+describe('spec:tier-discovery/S1 the install Next block names the tier and the guide', () => {
+  for (const state of STATES) it(state, () => {
+    assertPair(state, 'install Next block');
+    const bullets = regionOf(state, 'install Next block').split(LF).filter((line) => line.startsWith('  • '));
+    const bullet = bullets.find((line) => line.endsWith(`  ->  ${TIER_COMMAND}`)) ?? '';
+    assert.ok(bullet.split('  ->  ')[0].includes(TIER_PHRASE), bullets.join(LF));
+  });
+});
+describe('spec:tier-discovery/S2 the description, the Use row, the bootstrap entry, the help and the front door', () => {
+  const COMMAND_CELL = BACKTICK + TIER_COMMAND + BACKTICK;
+  for (const state of STATES) {
+    it(`${state}: skill description stays one YAML plain scalar`, () => {
+      assertPair(state, 'skill description');
+      assert.doesNotMatch(regionOf(state, 'skill description').slice('description: '.length), /: | #|:$/);
+    });
+    it(`${state}: kit README Use row directly after the now row`, () => {
+      assertPair(state, 'kit README Use row');
+      const row = regionOf(state, 'kit README Use row').split(LF)[1] ?? '';
+      assert.equal(row.split('|')[1]?.trim(), COMMAND_CELL);
+      assert.ok(row.includes('read-only'), row);
+    });
+    it(`${state}: bootstrap entry, read-only, no preview-first lead-in`, () => {
+      assertPair(state, 'bootstrap block');
+      const region = regionOf(state, 'bootstrap block');
+      const entry = region.split(LF).find((line) => line.startsWith(`    - ${COMMAND_CELL}`)) ?? '';
+      assert.ok(entry.includes(TIER_PHRASE) && entry.includes('read-only'), entry);
+      assert.ok(!region.includes('every entry preview-first'));
+    });
+    it(`${state}: help tier line from the installed formatHelp`, () => assertPair(state, 'help tier line'));
+  }
+  it('root README front door keeps three numbered steps', () => {
+    assertPair('bare', 'root README front door');
+    assert.ok(!regionOf('bare', 'root README front door').split(LF).some((line) => line.startsWith('4. ')));
+  });
+});
+describe('spec:tier-discovery/S3 the welcome mat prints a fixed tier line after the help line', () => {
+  const OPENER = 'every command."* and *"';
+  for (const state of STATES) it(state, () => {
+    assertPair(state, 'welcome mat');
+    const mat = regionOf(state, 'welcome mat');
+    const at = mat.indexOf(OPENER);
+    assert.notEqual(at, -1, 'the tier print literal directly follows the help literal');
+    const literal = mat.slice(at + OPENER.length, mat.indexOf('"*', at + OPENER.length));
+    assert.ok(literal.includes(TIER_PHRASE) && literal.includes(TIER_COMMAND) && !literal.includes(LF), literal);
+    assert.ok(at < mat.indexOf('1. a member'));
+    assert.ok(mat.includes('If no rung applies, the two lines above stand alone.'));
+    assert.doesNotMatch(mat, /help line[^.]*stands alone/);
+  });
+});
+describe('spec:tier-discovery/S4 asserted anchors and a named surface on every alteration', () => {
+  const ALTERATIONS = [['removed', () => ''], ['moved to a line of its own', (token) => LF + token + LF],
+    ['case changed', (token) => token.toUpperCase()]];
+  for (const surface of SURFACES) {
+    it(`${surface.name}: a missing anchor fails naming the surface and the anchor`, () => {
+      for (const anchor of [surface.from, surface.to]) {
+        const altered = texts.bare[surface.name].replaceAll(anchor, '');
+        assert.throws(() => cutSurface(surface, altered), { message: `${surface.name}: missing region anchor "${anchor}"` });
+      }
+    });
+    it(`${surface.name}: each token removed, moved or case-changed is named`, () => {
+      const region = regionOf('bare', surface.name);
+      for (const token of [TIER_PHRASE, TIER_COMMAND]) for (const [label, replace] of ALTERATIONS) {
+        const altered = region.replaceAll(token, replace(token));
+        assert.notEqual(altered, region, `${token} ${label}: the alteration changes the region`);
+        assert.deepEqual(surfacesLackingPair({ [surface.name]: altered }), [surface.name], `${token} ${label}`);
+      }
+    });
+  }
 });
