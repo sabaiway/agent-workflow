@@ -293,6 +293,10 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/payload-prune.mjs',
       'tools/profile-gaps.mjs',
       'references/reference-profile.json',
+      // the tier offer (story S3 of the consumers epic): the upgrade's `tier` item runs the CLI, which imports the reader, and step 6 relays the note
+      'tools/tier-preview.mjs',
+      'tools/reference-profile.mjs',
+      'migrations/4.0.0-full-flow-offer.md',
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
@@ -834,7 +838,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 331 = 328 + tools/profile-gaps.mjs, tools/rules-insert.mjs and tools/rules-regions.mjs - story S2 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW (the consumers epic)
     // 333 = 331 + references/authoring/EPIC_TEMPLATE.md and references/authoring/TASK_TEMPLATE.md - story S2 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
     // 336 = 333 + tools/tier-guide-facts.mjs, tools/tier-guide.mjs and references/modes/tier.md - story S3 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
-    assert.equal(packed.length, 336, `tarball file count drifted (${packed.length}\u2260 336)`);
+    // 339 = 336 + tools/tier-preview.mjs, tools/reference-profile.mjs and migrations/4.0.0-full-flow-offer.md - story S3 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
+    assert.equal(packed.length, 339, `tarball file count drifted (${packed.length}\u2260 339)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

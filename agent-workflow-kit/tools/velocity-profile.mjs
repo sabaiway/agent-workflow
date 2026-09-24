@@ -26,7 +26,7 @@ import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './decl
 
 // Deployment-lineage head this velocity build targets; bump together with agent-workflow-memory
 // LINEAGE_HEAD when the deployed docs/ai structure changes.
-export const EXPECTED_WORKFLOW_VERSION = '3.0.0';
+export const EXPECTED_WORKFLOW_VERSION = '4.0.0';
 export const SETTINGS_FILE = '.claude/settings.json';
 export const SETTINGS_LOCAL_FILE = '.claude/settings.local.json';
 export const CLAUDE_DIR = '.claude';

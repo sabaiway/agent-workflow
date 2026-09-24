@@ -1,7 +1,7 @@
 # Migrations
 
 Each upgrade step is one file: `migrations/<version>-<slug>.md`, where `<version>` is the
-skill release that introduced the change (matches a `CHANGELOG.md` heading) and `<slug>`
+deployment-lineage step the note moves a project to (not a skill release) and `<slug>`
 is a short kebab-case name. Empty until the first change that needs migrating — most
 releases add files/templates, which `upgrade` reconciles without a migration.
 
@@ -15,7 +15,7 @@ releases add files/templates, which `upgrade` reconciles without a migration.
    The upgrade must relay those stdout lines verbatim and apply exactly the listed notes.
    A named refusal stops the upgrade, except `stamp-absent`, which routes it back to the upgrade's step 1.
 3. Apply them in the order the tool listed them (**ascending semver order**).
-4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`3.0.0` today — the
+4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`4.0.0` today — the
    shared lineage, **not** this skill's npm package version). A stamp greater than the head → STOP.
 
 ## Authoring rules

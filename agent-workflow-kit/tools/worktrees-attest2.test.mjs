@@ -90,7 +90,7 @@ describe('worktrees attest2 — worktrees.json must be a regular, symlink-free-p
   });
   it('the recommendations advisor renders the same shape as a stated skip', () => {
     const repo = makeRepo('a2-cfg-advisor');
-    writeFileSync(join(repo, 'docs/ai/.workflow-version'), '3.0.0\n');
+    writeFileSync(join(repo, 'docs/ai/.workflow-version'), '4.0.0\n');
     writeFileSync(join(repo, 'docs/ai/real-config.json'), JSON.stringify({ parentDir: TMP }));
     symlinkSync('real-config.json', join(repo, 'docs/ai/worktrees.json'));
     const { items, skips } = buildRecommendations({

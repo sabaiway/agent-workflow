@@ -88,6 +88,12 @@ export const UPGRADE_RUNLIST = Object.freeze([
     ],
   ),
   entry(
+    'tier',
+    'node ${CLAUDE_SKILL_DIR}/tools/tier-preview.mjs --cwd <project>',
+    'preview first — on an explicit yes re-run with --apply and run every other offered line with --apply; on an explicit no re-run with --decline',
+    ['present', 'offered', 'declined', 'undecidable', 'applied', 'recorded', 'refused'],
+  ),
+  entry(
     'bridge-settings',
     'node ${CLAUDE_SKILL_DIR}/tools/bridge-settings.mjs --reconcile',
     null,

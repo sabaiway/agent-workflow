@@ -2,7 +2,12 @@
 
 All notable changes to the methodology engine. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
-(which tracks the shared `agent-workflow` lineage, head `3.0.0`).
+(which tracks the shared `agent-workflow` lineage, head `4.0.0`).
+
+## 5.9.1 — the CHANGELOG names the deployment-lineage head 4.0.0 (AD-157)
+
+This file's preamble names the shared deployment-lineage head `4.0.0`, moved by kit 14.11.0 and memory 8.1.0.
+No canon, script or template changed. PATCH.
 
 ## 5.9.0 — the task canon: a configured delegated `task.execute` engages the held-session gate and a resolved one renders the fold lane (AD-148)
 

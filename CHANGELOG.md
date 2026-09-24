@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-24 — AD-157 lineage step 4.0.0 offers the full flow in the upgrade (kit 14.11.0 MINOR, memory 8.1.0 MINOR, engine 5.9.1 PATCH; both bridges unchanged)
+
+**An upgraded project is offered the epic and task settings and the epic store in one preview, and a no is
+remembered.** The deployment-lineage head moves from `3.0.0` to `4.0.0` in every copy, so every project takes the
+upgrade route once more. Its step 3 gains the item `tier`: `tools/tier-preview.mjs` prints one line per profile gap
+the kit's registry detects, writes on a yes only the absent epic and task settings (each resolved to what this
+environment can run, or to solo with the reason, with set-recipe's `_README` refresh) and `docs/ai/epics/.gitkeep`,
+and on a no records the decline in `docs/ai/profile-declines.json` against the shipped lineage. A setting already
+declared is never changed. The kit ships the note `migrations/4.0.0-full-flow-offer.md`; memory's `LINEAGE_HEAD`
+moves with it; the engine's CHANGELOG preamble names the head. Story S3 of the epic
+`CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract `docs/ai/specs/kit/tier/tier-offer/` (new).
+
 ## 2026-09-23 — AD-156 every place a user first looks names the tier and the guide (kit 14.10.0 MINOR; engine 5.9.0, memory 8.0.2 and both bridges unchanged)
 
 **A kit user meets the epic, story and task tier without running the help.** The skill's description, a read-only

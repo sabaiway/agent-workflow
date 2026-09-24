@@ -1,8 +1,8 @@
 // upgrade-runlist.test.mjs — the structure test over the upgrade step-3 run-list (feedback item 5).
 //
-// Two halves, one contract. (1) The registry's own shape: exactly the seven L1 operations, in the
+// Two halves, one contract. (1) The registry's own shape: exactly the eight L1 operations, in the
 // L1 order, kebab-case ids, the ONE command-path exception (`gates-migration` runs a
-// references/scripts command; the other six live under tools/), consent marked exactly where L1
+// references/scripts command; the other seven live under tools/), consent marked exactly where L1
 // says so, and the `configs` outcome copy held equal to its owning vocabulary leaf. (2) The doc
 // half, asserted against references/modes/upgrade.md step 3: the checklist opens the step BEFORE
 // the first rationale block; checklist rows ↔ registry entries (same backticked ids, same order,
@@ -31,7 +31,7 @@ const UPGRADE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md
 
 // The L1 lock, restated here on purpose: the registry cannot re-order or rename an operation
 // without this test noticing — the ids are the future reconcile driver's item tokens.
-const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'bridge-settings'];
+const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'tier', 'bridge-settings'];
 const SKILL_VAR = '${CLAUDE_SKILL_DIR}';
 
 // ── extraction helpers (anchored, non-vacuous: a missing anchor is red) ─────────────────────────
@@ -77,8 +77,8 @@ const anchorsOf = (section) => {
 };
 
 // ── the registry's own shape ────────────────────────────────────────────────────────────────────
-describe('upgrade-runlist registry — the L1 seven, in order', () => {
-  it('carries exactly the seven L1 ids, in the L1 order', () => {
+describe('upgrade-runlist registry — the L1 eight, in order', () => {
+  it('carries exactly the eight L1 ids, in the L1 order', () => {
     assert.deepEqual(UPGRADE_RUNLIST.map((e) => e.id), L1_IDS);
   });
 
@@ -100,7 +100,7 @@ describe('upgrade-runlist registry — the L1 seven, in order', () => {
     }
   });
 
-  it('six commands live under tools/; the ONE exception is gates-migration (references/scripts)', () => {
+  it('seven commands live under tools/; the ONE exception is gates-migration (references/scripts)', () => {
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'gates-migration') {
         assert.ok(
@@ -113,7 +113,7 @@ describe('upgrade-runlist registry — the L1 seven, in order', () => {
     }
   });
 
-  it('consent marks exactly the two L1 operations: footprint and gates-migration', () => {
+  it('consent marks exactly the three L1 operations: footprint, gates-migration and tier', () => {
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'footprint') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--dry-run'),
@@ -121,6 +121,9 @@ describe('upgrade-runlist registry — the L1 seven, in order', () => {
       } else if (e.id === 'gates-migration') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--apply'),
           'gates-migration consent gates the --apply re-run');
+      } else if (e.id === 'tier') {
+        assert.ok(typeof e.consent === 'string' && e.consent.includes('--apply') && e.consent.includes('--decline'),
+          'tier consent gates the --apply and the --decline re-run');
       } else {
         assert.equal(e.consent, null, `${e.id} carries no consent gate`);
       }
@@ -205,11 +208,41 @@ describe('upgrade.md step 3 — a normative run-list rendered from the registry'
   it('(d) every node ${CLAUDE_SKILL_DIR}/… command in step 3 is a registry command', () => {
     const registryScripts = new Set(UPGRADE_RUNLIST.map((e) => e.command.split(' ')[1]));
     const named = [...section.matchAll(/node (\$\{CLAUDE_SKILL_DIR\}\/[^\s`]+)/g)].map((m) => m[1]);
-    assert.ok(named.length >= UPGRADE_RUNLIST.length, 'the step names at least the seven registry commands');
+    assert.ok(named.length >= UPGRADE_RUNLIST.length, 'the step names at least the eight registry commands');
     for (const script of named) {
       assert.ok(registryScripts.has(script),
         `step 3 names "${script}" — prose cannot run an operation the checklist misses`);
     }
+  });
+});
+
+// ── the tier item: its registry entry and its one ask (spec kit/tier/tier-offer, part lineage-step) ──
+describe('spec:tier-offer/S14 the tier item runs the offer and puts its one ask', () => {
+  const blockOf = (id) => {
+    const section = step3();
+    const anchors = anchorsOf(section);
+    const at = anchors.findIndex((a) => a.id === id);
+    assert.notEqual(at, -1, `step 3 anchors a \`${id}\` rationale block`);
+    return section.slice(anchors[at].index, anchors[at + 1]?.index ?? section.length);
+  };
+
+  it('the tier entry follows lens with the preview command, the two re-runs and the offer words', () => {
+    const ids = UPGRADE_RUNLIST.map((e) => e.id);
+    assert.equal(ids.indexOf('tier'), ids.indexOf('lens') + 1);
+    const tier = UPGRADE_RUNLIST.find((e) => e.id === 'tier');
+    assert.equal(tier.command, `node ${SKILL_VAR}/tools/tier-preview.mjs --cwd <project>`);
+    assert.ok(tier.consent.includes('every other offered line'), tier.consent);
+    assert.deepEqual([...tier.outcomes], ['present', 'offered', 'declined', 'undecidable', 'applied', 'recorded', 'refused']);
+  });
+
+  for (const token of ['`offered`', '`--apply`', '`--decline`', '`story-sessions-section`', '`declined`', 'Communication', '`refused`', 're-stamp']) {
+    it(`the tier block names ${token}`, () => {
+      assert.ok(blockOf('tier').includes(token), `the \`tier\` block names ${token}`);
+    });
+  }
+
+  it('the lens block hands its explicit-yes ask to the tier item', () => {
+    assert.ok(blockOf('lens').includes('`tier`'), 'the lens block names the `tier` ask');
   });
 });
 

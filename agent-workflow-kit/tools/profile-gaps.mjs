@@ -1,5 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CONFIG_REL, validateConfig } from './orchestration-config.mjs';
+import { TIER_TARGETS } from './reference-profile.mjs';
 import {
   RULES_REGIONS,
   extractRegionBy,
@@ -11,6 +13,11 @@ import {
 } from './rules-regions.mjs';
 
 const GAP_ID = 'story-sessions-section';
+const SLOTS_ID = 'epic-task-slots';
+const STORE_ID = 'epic-store-seeded';
+const STORE_PATH = 'docs/ai/epics';
+const DEPLOYMENT_CHAIN = ['.', 'docs', 'docs/ai'];
+const TIER_PREVIEW_PATH = fileURLToPath(new URL('./tier-preview.mjs', import.meta.url));
 const STORY_ID = 'story-sessions';
 const TEMPLATE_CANON = 'template';
 const ENCODING = 'utf8';
@@ -28,6 +35,15 @@ const REASONS = Object.freeze({
   fileAbsent: 'file-absent',
   fileSymlink: 'file-symlink',
   fileUnreadable: 'file-unreadable',
+  noDeployment: 'no-deployment',
+  configAbsent: 'config-absent',
+  configSymlink: 'config-symlink',
+  configUnreadable: 'config-unreadable',
+  configMalformed: 'config-malformed',
+  configInvalid: 'config-invalid',
+  storeNotDirectory: 'store-not-directory',
+  storeSymlink: 'store-symlink',
+  storeUnreadable: 'store-unreadable',
 });
 const TEMPLATE_REGIONS = RULES_REGIONS.filter(({ canon }) => canon === TEMPLATE_CANON);
 const STORY_REGION = RULES_REGIONS.find(({ id }) => id === STORY_ID);
@@ -81,6 +97,76 @@ const detectStorySessions = ({ root, deps }) => {
   return { verdict: VERDICTS.absent };
 };
 
+const isDeployed = (root, deps) => {
+  try {
+    return DEPLOYMENT_CHAIN.every((path, index) => {
+      const stat = deps.lstatSync(resolve(root, path));
+      if (stat.isSymbolicLink()) return false;
+      return index < DEPLOYMENT_CHAIN.length - 1 || stat.isDirectory();
+    });
+  } catch {
+    return false;
+  }
+};
+
+const parseConfig = (bytes) => {
+  let parsed;
+  try {
+    parsed = JSON.parse(decodeUtf8Strict(bytes));
+  } catch (error) {
+    return error instanceof SyntaxError ? { reason: REASONS.configMalformed } : { reason: REASONS.configUnreadable };
+  }
+  try {
+    return { config: validateConfig(parsed) };
+  } catch {
+    return { reason: REASONS.configInvalid };
+  }
+};
+
+export const readTierConfig = (root, deps) => {
+  const path = resolve(root, CONFIG_REL);
+  try {
+    const stat = deps.lstatSync(path);
+    if (stat.isSymbolicLink()) return { reason: REASONS.configSymlink };
+    if (!stat.isFile()) return { reason: REASONS.configUnreadable };
+  } catch (error) {
+    return { reason: error?.code === MISSING_FILE_CODE ? REASONS.configAbsent : REASONS.configUnreadable };
+  }
+  let bytes;
+  try {
+    bytes = deps.readFileSync(path);
+  } catch {
+    return { reason: REASONS.configUnreadable };
+  }
+  return parseConfig(bytes);
+};
+
+const detectSlots = ({ root, deps }) => {
+  if (!isDeployed(root, deps)) return reportUndecidable(REASONS.noDeployment);
+  const read = readTierConfig(root, deps);
+  if (read.reason) return reportUndecidable(read.reason);
+  const declared = TIER_TARGETS.every(({ activity, slot }) => Object.hasOwn(read.config[activity] ?? {}, slot));
+  return { verdict: declared ? VERDICTS.present : VERDICTS.absent };
+};
+
+const detectStore = ({ root, deps }) => {
+  if (!isDeployed(root, deps)) return reportUndecidable(REASONS.noDeployment);
+  let stat;
+  try {
+    stat = deps.lstatSync(resolve(root, STORE_PATH));
+  } catch (error) {
+    if (error?.code === MISSING_FILE_CODE) return { verdict: VERDICTS.absent };
+    return reportUndecidable(REASONS.storeUnreadable);
+  }
+  if (stat.isSymbolicLink()) return reportUndecidable(REASONS.storeSymlink);
+  if (!stat.isDirectory()) return reportUndecidable(REASONS.storeNotDirectory);
+  return { verdict: VERDICTS.present };
+};
+
+const tierPreview = (root) => buildInsertPreview(root, TIER_PREVIEW_PATH);
+
 export const PROFILE_GAPS = Object.freeze([
   Object.freeze({ id: GAP_ID, detect: detectStorySessions, apply: (root) => buildInsertPreview(root) }),
+  Object.freeze({ id: SLOTS_ID, detect: detectSlots, apply: tierPreview }),
+  Object.freeze({ id: STORE_ID, detect: detectStore, apply: tierPreview }),
 ]);

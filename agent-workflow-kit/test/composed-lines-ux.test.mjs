@@ -32,6 +32,8 @@ import { settingsPath } from '../tools/bridge-settings-read.mjs';
 import { OUTCOME_LINES } from '../tools/lens-region.mjs';
 import { PROFILE_GAPS } from '../tools/profile-gaps.mjs';
 const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
+const { OUTCOME_LINES: TIER_LINES } = await import('../tools/tier-preview.mjs').catch(() => ({}));
+import { planRecipe } from '../tools/recipes.mjs';
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { readEngineFragment } from '../tools/engine-source.mjs';
 // The scanner leaf (its own negative controls live in composed-lines-scan.test.mjs); it sits under
@@ -381,6 +383,28 @@ for (const [key, args] of Object.entries(RULES_ARGS)) {
   fx('rules-insert', key, RULES_ABNORMAL.has(key), composeLines(RULES_INSERT_LINES, key, args));
 }
 
+// ── the tier offer's outcome lines (the whole exported table, spec kit/tier/tier-offer) ─────
+const TIER_ARGS = {
+  entry: ['undecidable', 'config-absent'],
+  declinedAt: ['4.0.0'], slotPresent: ['epic', 'review'],
+  applyLine: ['node /kit/tools/tier-preview.mjs --cwd /project'],
+  noCommand: [], nothingOffered: [], help: [],
+  slotValue: ['task', 'author', 'solo', [{ candidate: 'delegated', reason: planRecipe('delegated', []).degradation[0].reason }]],
+  tmpLeft: ['/project/docs/ai/epics/.gitkeep.a1b2c3.tmp'],
+  detectFailed: ['spawn EACCES'],
+  refusal: ['write-failed', 'EACCES: permission denied, open /project/docs/ai/orchestration.json'],
+  usage: ['unknown argument --bogus'],
+};
+const TIER_ABNORMAL = new Set(['noCommand', 'tmpLeft', 'detectFailed', 'refusal', 'usage']);
+for (const [key, args] of Object.entries(TIER_ARGS)) if (key !== 'entry') fx('tier-preview', key, TIER_ABNORMAL.has(key), composeLines(TIER_LINES, key, args));
+// An entry line `<id>: <word>[ — <detail>]` is characterized like the ensure slot: id self-label, closed word, detail scanned.
+const TIER_ENTRY_RE = /^([a-z]+(?:-[a-z]+)+): (present|offered|declined|undecidable|applied|recorded)(?: — (.+))?$/;
+for (const id of ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded']) fx('tier-preview', `entry-${id}`, false, () => {
+  const [, label, , detail] = composeLines(TIER_LINES, 'entry', [id, ...TIER_ARGS.entry])()[0].match(TIER_ENTRY_RE) ?? [];
+  assert.equal(label, id, 'an entry line opens with its registry id');
+  return [detail];
+});
+
 // ── the three L2 invariants over every collected fixture ─────────────────────────
 describe('L2 (a) — alarm words render only under a detected abnormal condition', () => {
   for (const f of SURFACES.filter((s) => !s.abnormal)) {
@@ -461,6 +485,12 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
   it('every rules-insert outcome composer has a fixture', () => {
     assert.ok(RULES_INSERT_LINES, 'rules-insert.mjs OUTCOME_LINES is absent');
     assert.deepEqual(Object.keys(RULES_INSERT_LINES).sort(), Object.keys(RULES_ARGS).sort());
+  });
+  it('every tier-preview outcome composer has a fixture, none printing a placeholder or an unrendered argument', () => {
+    assert.deepEqual(Object.keys(TIER_LINES ?? {}).sort(), Object.keys(TIER_ARGS).sort());
+    for (const [key, args] of Object.entries(TIER_ARGS)) {
+      for (const line of composeLines(TIER_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
+    }
   });
   it('every lens-region outcome composer has a fixture', () => {
     assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort());

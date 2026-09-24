@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
+import { SEED_CONFIG, serializeConfig } from '../tools/orchestration-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = resolve(HERE, '..');
@@ -27,6 +28,18 @@ const INSERT_TOOL = 'rules-insert.mjs';
 const APPLY_ARGS = ['--apply'];
 const ENTRY_ARTIFACT = { path: 'AGENTS.md', key: 'entryPoint' };
 const RULES_ARTIFACT = { path: RULES_PATH, key: 'rules' };
+const CONFIG_PATH = 'docs/ai/orchestration.json';
+const CONFIG_ARTIFACT = { path: CONFIG_PATH, key: 'config' };
+const EPICS_PATH = 'docs/ai/epics';
+const OFFER_TOOL = 'tier-preview.mjs';
+// The SLOT_RECIPES value set of each target slot's type, written out by hand.
+const SLOT_VALUES = [
+  ['epic', 'author', ['solo', 'subagent']],
+  ['epic', 'review', ['solo', 'reviewed', 'council']],
+  ['task', 'author', ['solo', 'delegated', 'subagent']],
+  ['task', 'execute', ['solo', 'delegated', 'subagent']],
+];
+const PRINTED_SLOT_RE = /^ {2}([a-z]+)\.([a-z]+) = ([a-z]+)/;
 const PAYLOAD = ['references', 'launchers', 'migrations', 'tools', 'bridges'];
 const STORIES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
 const ITEM_IDS = [
@@ -42,7 +55,7 @@ const ITEM_IDS = [
   'profile-gap-screen',
 ];
 const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
-const LANDED = new Set(['S1', 'S2']);
+const LANDED = new Set(['S1', 'S2', 'S3']);
 const PENDING = () => ({ reason: 'detector pending' });
 const fixture = {};
 
@@ -95,6 +108,20 @@ const runTool = (home, project, name, extra = [], artifact = ENTRY_ARTIFACT) => 
   };
 };
 
+// S3's second artifact: the epic store listing, null when absent, else each entry with its kind and size.
+const listEpics = (project) => {
+  const path = join(project, EPICS_PATH);
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (!stat.isDirectory()) return [`${EPICS_PATH} is not a directory`];
+  return readdirSync(path).sort().map((name) => {
+    const entry = lstatSync(join(path, name));
+    return `${name} ${entry.isFile() ? 'file' : 'other'} ${entry.size}`;
+  });
+};
+
+const runOffer = (home, project, extra = []) => ({ ...runTool(home, project, OFFER_TOOL, extra, CONFIG_ARTIFACT), epics: listEpics(project) });
+
 const listRegularFiles = (root, relative = '') => {
   const path = join(root, relative);
   const stat = lstatSync(path, { throwIfNoEntry: false });
@@ -139,11 +166,12 @@ const detectNotes = (record) => {
     ['1.1.0', '1.1.0-communication-language.md', 'Migration 1.1.0-communication-language'],
     ['1.2.0', '1.2.0-agent-attribution.md', 'Migration 1.2.0-agent-attribution'],
     ['3.0.0', '3.0.0-hardened-core-loop.md', 'Migration 3.0.0-hardened-core-loop'],
+    ['4.0.0', '4.0.0-full-flow-offer.md', 'Migration 4.0.0-full-flow-offer'],
   ];
   const expected = notes.map(([version, name, headline]) =>
     `note ${version} ${join(record.home, 'migrations', name)} :: ${headline}`);
   return record.slices.S1[0].result.stdout === expected.join(LF) + LF
-    ? null : { reason: 'selected notes differ from the three pinned paths and headlines' };
+    ? null : { reason: 'selected notes differ from the four pinned paths and headlines' };
 };
 
 const detectBlocks = (record) => {
@@ -212,13 +240,53 @@ const detectStorySessions = (record) => {
     ? null : { reason: 'second apply changed the rules file' };
 };
 
+const parseConfig = (bytes) => {
+  try {
+    return JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return null;
+  }
+};
+
+const detectSlots = (record) => {
+  const gap = findCallGap(record.slices.S3);
+  if (gap) return gap;
+  const unreadable = record.slices.S3.find(({ config }) => config.error);
+  if (unreadable) return { reason: `config unreadable: ${unreadable.config.error}` };
+  const [preview, apply, repeated] = record.slices.S3;
+  const unchanged = preview.config.bytes.equals(record.configBefore) && preview.epics === null;
+  if (!unchanged) return { reason: 'preview changed the config or the epic store' };
+  const config = parseConfig(apply.config.bytes);
+  if (config === null) return { reason: 'the applied config is not strict JSON' };
+  const printed = new Map(preview.result.stdout.split(LF).map((line) => line.match(PRINTED_SLOT_RE))
+    .filter(Boolean).map(([, activity, slot, value]) => [`${activity}.${slot}`, value]));
+  for (const [activity, slot, values] of SLOT_VALUES) {
+    const value = config[activity]?.[slot];
+    if (!values.includes(value)) return { reason: `${activity}.${slot} is not a value of its slot type` };
+    if (printed.get(`${activity}.${slot}`) !== value) return { reason: `${activity}.${slot} differs from the preview` };
+  }
+  const kept = Object.entries(parseConfig(record.configBefore)).every(([activity, slots]) => activity === '_README'
+    || Object.entries(slots).every(([slot, value]) => config[activity]?.[slot] === value));
+  if (!kept) return { reason: 'a slot declared before the apply changed' };
+  return repeated.config.bytes.equals(apply.config.bytes) ? null : { reason: 'second apply changed the config' };
+};
+
+const detectStore = (record) => {
+  const gap = findCallGap(record.slices.S3);
+  if (gap) return gap;
+  const [, apply, repeated] = record.slices.S3;
+  const seeded = isDeepStrictEqual(apply.epics, ['.gitkeep file 0']);
+  if (!seeded) return { reason: 'the epic store does not hold exactly an empty .gitkeep' };
+  return isDeepStrictEqual(repeated.epics, apply.epics) ? null : { reason: 'second apply changed the epic store' };
+};
+
 const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
   'payload-converged': detectPayload,
   'story-sessions-section': detectStorySessions,
-  'epic-task-slots': PENDING,
-  'epic-store-seeded': PENDING,
+  'epic-task-slots': detectSlots,
+  'epic-store-seeded': detectStore,
   'checker-gates-declared': PENDING,
   'session-close-rules': PENDING,
   'named-queue-row-seed': PENDING,
@@ -278,6 +346,8 @@ describe('full flow upgrade delivery', () => {
     const rulesTemplate = readFileSync(join(KIT, RULES_TEMPLATE), 'utf8');
     const rulesBefore = Buffer.from(removeRulesSpan(rulesTemplate, STORY_HEADING));
     writeFixture(join(project, RULES_PATH), rulesBefore);
+    const configBefore = Buffer.from(serializeConfig(SEED_CONFIG));
+    writeFixture(join(project, CONFIG_PATH), configBefore);
     const installer = spawnSync(process.execPath, [
       join(KIT, 'bin', 'install.mjs'), '--dir', home,
       '--no-launchers', '--no-engine', '--no-memory', '--no-bridges',
@@ -295,9 +365,10 @@ describe('full flow upgrade delivery', () => {
       runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
       runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
     ];
+    const s3Calls = [runOffer(home, project), runOffer(home, project, APPLY_ARGS), runOffer(home, project, APPLY_ARGS)];
     fixture.record = {
-      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate,
-      slices: { S1: s1Calls, S2: s2Calls }, payload: capturePayload(home),
+      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore,
+      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls }, payload: capturePayload(home),
     };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
@@ -356,6 +427,13 @@ describe('full flow upgrade delivery', () => {
     assert.ok(lens, 'seeded rules retain the lens');
     assert.equal(lens.lines[lens.end], SECTION_BOUNDARY, 'seeded rules retain the section 2 boundary');
     assertStory('S2', fixture.profile, fixture.record);
+  });
+
+  it('spec:tier-offer/S17 offers the epic and task slots and seeds the store in the older project', () => {
+    const before = JSON.parse(fixture.record.configBefore.toString('utf8'));
+    assert.deepEqual(before, SEED_CONFIG);
+    for (const [activity] of SLOT_VALUES) assert.equal(before[activity], undefined);
+    assertStory('S3', fixture.profile, fixture.record);
   });
 
   it('spec:upgrade-delivery/S19 binds every detector to an item and every story to the landed register', () => {

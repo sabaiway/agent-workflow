@@ -196,8 +196,8 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 50176, // 49152 → 50176 (49 KB): router + any single mode file. Consumers epic story S2 — references/modes/upgrade.md gains the story-sessions outcome set in its `lens` rationale and step-4/8 report lists, drops `(never an insert)` and requires an explicit yes for `--apply` (+533 B).
-  // Measured 49634 B (router 11778 + upgrade 37856), 482 B over the 49152 ceiling; 542 B of headroom — one documented KB-multiple bump.
+  routerPlusMode: 51200, // 50176 → 51200 (50 KB): router + any single mode file. Consumers epic story S3 — references/modes/upgrade.md gains the `tier` run-list row and rationale block, hands the lens ask to it and names `tier` in the step-4/8 reports (+1138 B).
+  // Measured 50971 B (router 11947 + upgrade 39024), 795 B over the 50176 ceiling; 229 B of headroom — one documented KB-multiple bump. History: 49152 → 50176 (49 KB): story S2 — the story-sessions outcome set in upgrade.md (+533 B), measured 49634 B.
   // History: 47104 → 49152 (48 KB): AD-123 — upgrade.md
   // gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the
   // retired proxy named, the new token + cause, the adoption-state report) and the contradicted-skip
@@ -261,8 +261,8 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 79872, // 78848 → 79872 (78 KB): router + mode + its declared shared files. Consumers epic story S2 — references/modes/upgrade.md carries the changes above (+533 B); references/shared/composition-handoff.md carries the same story-sessions outcome set, clause removal and explicit-yes `--apply` rule in its lens paragraph (+200 B).
-  // Measured 79569 B (pair 49634 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 29935), 721 B over the 78848 ceiling; 303 B of headroom — one documented KB-multiple bump.
+  fullReadSet: 81920, // 79872 → 81920 (80 KB): router + mode + its declared shared files. Consumers epic story S3 — references/modes/upgrade.md carries the changes above (+1138 B); the shared files are unchanged.
+  // Measured 80983 B (pair 50971 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 30012), 87 B over the 80896 first step, so it takes the second (937 B of headroom) — a documented KB-multiple bump. History: 78848 → 79872 (78 KB): story S2 (+733 B), measured 79569 B.
   // History: 76800 → 78848 (77 KB): AD-123 —
   // upgrade's set carries its own growth (see routerPlusMode above) plus deploy-tail.md's Node-evidence
   // + contradicted-skip gotcha; measures 78084 B, 1284 B over the 75 KB ceiling, and the 76 KB

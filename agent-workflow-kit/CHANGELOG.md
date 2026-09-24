@@ -4,6 +4,51 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.11.0 — the upgrade offers the epic and task settings and the epic store in one preview, and remembers a no (AD-157)
+
+**An upgraded project is now offered the epic tier's settings and store instead of being left to find them.** Up to
+14.10.0 an upgrade seeded no epic or task setting in `docs/ai/orchestration.json` and no epic store, so a project
+reached the epic, story and task tier only by hand. 14.11.0 moves the deployment-lineage head from `3.0.0` to
+`4.0.0`: every project stamped below it takes the upgrade route once more, and the upgrade's step 3 gains the item
+`tier`, which shows every profile gap the kit can detect — the Story sessions section, the epic and task settings
+and the epic store — in one preview and asks once. Story S3 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`;
+contract `docs/ai/specs/kit/tier/tier-offer/` (new).
+
+- **`tools/tier-preview.mjs --cwd <project> [--apply | --decline]`.** Without a flag it writes nothing and prints
+  one line per profile gap the kit knows — `present`, `offered`, `declined` with the lineage it was declined at, or
+  `undecidable` with its reason — and under each offered gap the preview command that closes it when re-run with
+  `--apply`. Under an offered epic and task settings gap it prints one line per setting: `present`, or the value it
+  would write, with the reason for every better value it skipped. With `--apply` it writes only its own two items:
+  the settings that are absent (with the `_README` note refresh `set-recipe --write` also makes), and
+  `docs/ai/epics/.gitkeep`. With `--decline` it records every offered gap as declined. Exit 0 done, 1 one named
+  refusal on stderr, 2 usage, raised before anything is read.
+- **The value written is the best one this environment can run.** `epic.author` tries subagent then solo,
+  `epic.review` reviewed then solo, `task.author` and `task.execute` delegated, subagent, then solo; the first one
+  the kit's own recipe check does not degrade wins, and each skipped one is shown with the kit's own reason (a
+  missing executor names `/agent-workflow-kit agents`). A setting you already have, whatever its value, is reported
+  present and never changed; the file is written by the same chain as `set-recipe --set … --write`, so the bytes are
+  the ones that command would write.
+- **A no is remembered.** `--decline` writes `docs/ai/profile-declines.json`, each gap with the shipped profile's
+  lineage (`4.0.0`). Later runs report it `declined` and do not offer it again until a later lineage step changes
+  the shipped profile's lineage. A record the tool cannot read or parse is refused by name — never overwritten and
+  never ignored. In a hidden deployment the record is local to this machine, like the rest of `docs/ai/`.
+- **Nothing is guessed about a broken config.** The config is checked without following a symlink before it is
+  loaded; a missing, symlinked, unreadable, unparseable or invalid file is reported by one name, and nothing is
+  written to it. The epic store is judged by itself: a regular file or a symlink at `docs/ai/epics` is reported,
+  never replaced.
+- **The offer asks once.** The new `tier` item runs after the agent-rules lens item. The ask is put only when a
+  gap is `offered`; a yes runs the offer and every other offered command with `--apply`, a no runs `--decline`. The
+  lens step's own ask for the Story sessions section folds into it while that section is offered; a Communication
+  section missing while the Story sessions section is present or declined keeps its own ask, shown with the insert's
+  full preview, since one insert adds every missing section. A refusal, or a failed command the ask runs, stops the
+  upgrade before the re-stamp.
+- **The note.** `migrations/4.0.0-full-flow-offer.md` says why the step exists, how to check its outcome and how to
+  undo it, and tells a project that came from kit 14.1.0 to close its open task threads before opening a new one.
+  `migrations/README.md` now says a note's version is the lineage step, not a kit release.
+- **Two new gaps in the registry.** `tools/profile-gaps.mjs` gains `epic-task-slots` and `epic-store-seeded`, each
+  answering present, absent or undecidable from the project's own files, never from a recorded no; the new read-only
+  `tools/reference-profile.mjs` reads the shipped profile and the decline record.
+
 ## 14.10.0 — every place a user first looks names the epic, story and task tier and the guide that explains it (AD-156)
 
 **A kit user now meets the tier without running the help.** Until 14.10.0 only the help named the tier and its

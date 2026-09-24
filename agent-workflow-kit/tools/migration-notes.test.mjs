@@ -30,6 +30,7 @@ const OWN_NOTES = [
   ['1.1.0', '1.1.0-communication-language.md', 'Migration 1.1.0-communication-language'],
   ['1.2.0', '1.2.0-agent-attribution.md', 'Migration 1.2.0-agent-attribution'],
   ['3.0.0', '3.0.0-hardened-core-loop.md', 'Migration 3.0.0-hardened-core-loop'],
+  ['4.0.0', '4.0.0-full-flow-offer.md', 'Migration 4.0.0-full-flow-offer'],
 ];
 const roots = [];
 after(() => {
@@ -133,11 +134,12 @@ describe('spec:upgrade-delivery/S1 selection and headlines', () => {
     const fixture = createFixture({ entries: [['1.1.0-a.md', text]] });
     assertListing(await runFixture(fixture), [`note 1.1.0 ${join(fixture.notesDir, '1.1.0-a.md')} :: Spaced Title`]);
   });
-  it('defaults to the running kit notes directory', async () => {
-    const fixture = createFixture();
-    const result = await runFixture(fixture, undefined, true);
-    assertListing(result, OWN_NOTES.map(([version, name, title]) => `note ${version} ${resolve(MIGRATIONS, name)} :: ${title}`));
-  });
+  for (const [stamp, notes] of [['1.0.0', OWN_NOTES], ['3.0.0', OWN_NOTES.slice(3)]]) {
+    it(`defaults to the running kit notes directory under a ${stamp} stamp`, async () => {
+      const result = await runFixture(createFixture({ stamp }), undefined, true);
+      assertListing(result, notes.map(([version, name, title]) => `note ${version} ${resolve(MIGRATIONS, name)} :: ${title}`));
+    });
+  }
 });
 
 describe('spec:upgrade-delivery/S2 stated empty selections', () => {
@@ -311,9 +313,10 @@ describe('spec:upgrade-delivery/S5 read-only execution, head source and usage', 
     assert.doesNotMatch(source, /(?:from\s*|import\s*(?:\(\s*)?)['"]node:child_process['"]/);
     assert.doesNotMatch(source, /['"`][0-9]+\.[0-9]+\.[0-9]+['"`]/);
   });
-  it('pins the two existing head copies equal', async () => {
+  it('spec:tier-offer/S15 pins the two existing head copies equal at 4.0.0', async () => {
     const other = await import('./velocity-profile.mjs');
     assert.equal(HEAD, other.EXPECTED_WORKFLOW_VERSION);
+    assert.equal(HEAD, '4.0.0');
   });
   for (const stampKind of ['file', 'absent']) {
     for (const usage of ['unknown flag', 'duplicate cwd', 'missing cwd']) {
@@ -393,6 +396,21 @@ describe('spec:upgrade-delivery/S11 one source and documented delivery', () => {
     assert.ok(text.includes('includeCoAuthoredBy'));
     for (const line of text.split(LF).filter((line) => line.includes('✍️ Attribution'))) {
       assert.ok(!line.includes('skip to Verification'));
+    }
+  });
+});
+
+describe('spec:tier-offer/S16 the 4.0.0 note', () => {
+  const text = () => readFileSync(join(MIGRATIONS, '4.0.0-full-flow-offer.md'), 'utf8');
+  it('opens with its headline and carries Why, Steps, Verification and Rollback in order', () => {
+    const lines = text().split(LF);
+    assert.equal(lines.find((line) => line.startsWith('# ')), '# Migration 4.0.0-full-flow-offer');
+    const sections = lines.filter((line) => line.startsWith('## '));
+    assert.deepEqual(sections, ['## Why', '## Steps', '## Verification', '## Rollback']);
+  });
+  it('states the ruling, the kit-14.1.0 task-thread step and the preview command', () => {
+    for (const token of ['AD-151', 'AD-146', '14.1.0', 'tools/tier-preview.mjs --cwd <project>']) {
+      assert.ok(text().includes(token), token);
     }
   });
 });

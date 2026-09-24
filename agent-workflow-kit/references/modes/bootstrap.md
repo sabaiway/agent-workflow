@@ -37,7 +37,7 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
     template copy do (the agent-rules lens,
     `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`); it is idempotent, so an
     untouched tree simply reports `already-current`. Then write the **deployment-lineage head** into
-    `docs/ai/.workflow-version` (one semver line). The lineage head is **`3.0.0`** — the shared
+    `docs/ai/.workflow-version` (one semver line). The lineage head is **`4.0.0`** — the shared
     `agent-workflow` deployment lineage, **NOT** this kit's npm package version (see
     `package.json` / `CHANGELOG.md`). The two are
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a

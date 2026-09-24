@@ -2,7 +2,15 @@
 
 All notable changes to the memory substrate. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's
-`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `3.0.0`).
+`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
+
+## 8.1.0 — the deployment-lineage head moves to 4.0.0 (AD-157)
+
+`scripts/stamp-takeover.mjs`: `LINEAGE_HEAD` is `4.0.0`, so a memory bootstrap stamps `docs/ai/.memory-version` with
+`4.0.0`, and a stamp of `4.0.0` is no longer refused as newer than the head. The kit's step `4.0.0` offers the epic
+and task settings and the epic store (kit 14.11.0); this package gains no `4.0.0` migration note, since its own
+re-stamp needs none. `SKILL.md`, `README.md`, `migrations/README.md` and `migrations/legacy-stamp-takeover.md` name
+the new head. MINOR: the stamp a bootstrap writes changes.
 
 ## 8.0.2 — the rules template gains the Story sessions section (AD-152)
 
