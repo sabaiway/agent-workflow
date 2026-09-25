@@ -297,6 +297,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/tier-preview.mjs',
       'tools/reference-profile.mjs',
       'migrations/4.0.0-full-flow-offer.md',
+      // the checker-gates verb (story S4 of the consumers epic): the gap entry prints its preview line and the verb imports the read leaf
+      'tools/checker-gates-read.mjs',
+      'tools/checker-gates.mjs',
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
@@ -839,7 +842,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 333 = 331 + references/authoring/EPIC_TEMPLATE.md and references/authoring/TASK_TEMPLATE.md - story S2 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
     // 336 = 333 + tools/tier-guide-facts.mjs, tools/tier-guide.mjs and references/modes/tier.md - story S3 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
     // 339 = 336 + tools/tier-preview.mjs, tools/reference-profile.mjs and migrations/4.0.0-full-flow-offer.md - story S3 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
-    assert.equal(packed.length, 339, `tarball file count drifted (${packed.length}\u2260 339)`);
+    // 341 = 339 + tools/checker-gates-read.mjs and tools/checker-gates.mjs - story S4 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
+    assert.equal(packed.length, 341, `tarball file count drifted (${packed.length}\u2260 341)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

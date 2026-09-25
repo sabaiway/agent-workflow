@@ -67,6 +67,8 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   'set-recipe-roster.mjs': '/agent-workflow-kit set-recipe',
   // The read half of the tier offer: the upgrade's step-3 `tier` item runs the offer that uses it.
   'reference-profile.mjs': '/agent-workflow-kit upgrade',
+  // The read half of the checker-gates verb: the same step-3 `tier` item runs the verb that uses it.
+  'checker-gates-read.mjs': '/agent-workflow-kit upgrade',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

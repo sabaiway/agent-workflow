@@ -9,6 +9,7 @@
 import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CHECKER_CLAIM, checkerClaimTool, classifyCheckerClaim } from './checker-claim.mjs';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
 import { isCoverageProducerGate } from './coverage-producer.mjs';
 import { matchesSourceSizeGate } from './source-size-core.mjs';
@@ -224,8 +225,21 @@ export const isReviewDependentGate = (gate, projectDir) =>
 // "does this declaration verify the PROJECT?" through the review-dependent predicate alone read a
 // matrix of nothing but that gate as project verification. Three surfaces asked it, each knowing a
 // different half; this is the one home, so a future kit checker is added once.
+// KIT_CHECKER_CLAIMS is the one statement of the four declarable kit checkers' basenames, tails and
+// canonical paths (docs/ai/specs/kit/tier/checker-gates/, part checker-claim-tail).
+const kitCheckerClaim = (id, basename, tail) => Object.freeze({
+  id, basename, tail, screen: checkerClaimTool(basename, fileURLToPath(new URL(`./${basename}`, import.meta.url)), tail),
+});
+export const KIT_CHECKER_CLAIMS = Object.freeze([
+  kitCheckerClaim('control-bytes', 'control-bytes.mjs', '--check'),
+  kitCheckerClaim('plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'),
+  kitCheckerClaim('spec-check', 'spec-check-cli.mjs', '--all'),
+  kitCheckerClaim('spec-coverage', 'spec-coverage-cli.mjs', '--check'),
+]);
+
 export const isKitOwnedCheckerGate = (gate, projectDir) =>
-  isReviewDependentGate(gate, projectDir) || matchesSourceSizeGate(gate.cmd, projectDir);
+  isReviewDependentGate(gate, projectDir) || matchesSourceSizeGate(gate.cmd, projectDir)
+  || KIT_CHECKER_CLAIMS.some(({ screen }) => classifyCheckerClaim(screen, gate.cmd, projectDir) === CHECKER_CLAIM.CANONICAL);
 
 // ── the pregate subset derivation (#66 / Decision 7 — ONE home for producer and factory) ─────
 

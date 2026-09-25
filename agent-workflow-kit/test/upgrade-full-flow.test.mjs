@@ -32,6 +32,10 @@ const CONFIG_PATH = 'docs/ai/orchestration.json';
 const CONFIG_ARTIFACT = { path: CONFIG_PATH, key: 'config' };
 const EPICS_PATH = 'docs/ai/epics';
 const OFFER_TOOL = 'tier-preview.mjs';
+const GATES_ARTIFACT = { path: 'docs/ai/gates.json', key: 'gates' };
+const STORE_ROOT_PATH = 'docs/ai/specs/index.md';
+const CHECKER_TOOL = 'checker-gates.mjs';
+const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all']];
 // The SLOT_RECIPES value set of each target slot's type, written out by hand.
 const SLOT_VALUES = [
   ['epic', 'author', ['solo', 'subagent']],
@@ -55,7 +59,7 @@ const ITEM_IDS = [
   'profile-gap-screen',
 ];
 const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
-const LANDED = new Set(['S1', 'S2', 'S3']);
+const LANDED = new Set(['S1', 'S2', 'S3', 'S4']);
 const PENDING = () => ({ reason: 'detector pending' });
 const fixture = {};
 
@@ -280,6 +284,26 @@ const detectStore = (record) => {
   return isDeepStrictEqual(repeated.epics, apply.epics) ? null : { reason: 'second apply changed the epic store' };
 };
 
+const detectCheckerGates = (record) => {
+  const gap = findCallGap(record.slices.S4);
+  if (gap) return gap;
+  const unreadable = record.slices.S4.find(({ gates }) => gates.error);
+  if (unreadable) return { reason: `gates.json unreadable: ${unreadable.gates.error}` };
+  const [preview, apply, repeated] = record.slices.S4;
+  if (!preview.gates.bytes.equals(record.gatesBefore)) return { reason: 'preview changed gates.json' };
+  const declaration = parseConfig(apply.gates.bytes);
+  if (declaration === null) return { reason: 'the applied gates.json is not strict JSON' };
+  if (declaration._README !== parseConfig(record.gatesBefore)._README) return { reason: 'the _README changed' };
+  const expected = DECLARED.map(([id, tool, tail]) => [id, `node "${join(record.home, 'tools', tool)}" ${tail}`]);
+  if (!isDeepStrictEqual(declaration.gates.map(({ id, cmd }) => [id, cmd]), expected)) {
+    return { reason: 'gates.json does not carry exactly plan-shape and spec-check with the installed tool paths' };
+  }
+  if (!repeated.gates.bytes.equals(apply.gates.bytes)) return { reason: 'second apply changed gates.json' };
+  const lines = repeated.result.stdout.split(LF);
+  return lines.includes('plan-shape: declared') && lines.includes('spec-check: declared')
+    ? null : { reason: 'the second apply does not report plan-shape and spec-check declared' };
+};
+
 const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
@@ -287,7 +311,7 @@ const DETECTORS = {
   'story-sessions-section': detectStorySessions,
   'epic-task-slots': detectSlots,
   'epic-store-seeded': detectStore,
-  'checker-gates-declared': PENDING,
+  'checker-gates-declared': detectCheckerGates,
   'session-close-rules': PENDING,
   'named-queue-row-seed': PENDING,
   'profile-gap-screen': PENDING,
@@ -348,6 +372,9 @@ describe('full flow upgrade delivery', () => {
     writeFixture(join(project, RULES_PATH), rulesBefore);
     const configBefore = Buffer.from(serializeConfig(SEED_CONFIG));
     writeFixture(join(project, CONFIG_PATH), configBefore);
+    const gatesBefore = readFileSync(join(KIT, 'references/templates/gates.json'));
+    writeFixture(join(project, GATES_ARTIFACT.path), gatesBefore);
+    writeFixture(join(project, STORE_ROOT_PATH), readFileSync(join(KIT, 'references/templates/specs/index.md')));
     const installer = spawnSync(process.execPath, [
       join(KIT, 'bin', 'install.mjs'), '--dir', home,
       '--no-launchers', '--no-engine', '--no-memory', '--no-bridges',
@@ -366,9 +393,10 @@ describe('full flow upgrade delivery', () => {
       runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
     ];
     const s3Calls = [runOffer(home, project), runOffer(home, project, APPLY_ARGS), runOffer(home, project, APPLY_ARGS)];
+    const s4Calls = [[], APPLY_ARGS, APPLY_ARGS].map((extra) => runTool(home, project, CHECKER_TOOL, extra, GATES_ARTIFACT));
     fixture.record = {
-      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore,
-      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls }, payload: capturePayload(home),
+      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore, gatesBefore,
+      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls }, payload: capturePayload(home),
     };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
@@ -434,6 +462,13 @@ describe('full flow upgrade delivery', () => {
     assert.deepEqual(before, SEED_CONFIG);
     for (const [activity] of SLOT_VALUES) assert.equal(before[activity], undefined);
     assertStory('S3', fixture.profile, fixture.record);
+  });
+
+  it('spec:checker-gates/S16 declares the two applicable kit checkers in the older project, a second apply a no-op', () => {
+    const before = JSON.parse(fixture.record.gatesBefore.toString('utf8'));
+    assert.deepEqual(before.gates, []);
+    assert.equal(existsSync(join(fixture.record.project, '.git')), false);
+    assertStory('S4', fixture.profile, fixture.record);
   });
 
   it('spec:upgrade-delivery/S19 binds every detector to an item and every story to the landed register', () => {

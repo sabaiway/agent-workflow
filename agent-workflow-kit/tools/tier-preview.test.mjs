@@ -18,7 +18,8 @@ const CONFIG = 'docs/ai/orchestration.json';
 const RECORD = 'docs/ai/profile-declines.json';
 const STORE = 'docs/ai/epics';
 const RULES = 'docs/ai/agent_rules.md';
-const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded'];
+const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', 'checker-gates-declared'];
+const CHECKER_LINE = 'checker-gates-declared: undecidable — declaration-absent';
 const WORDS = ['present', 'offered', 'declined', 'undecidable'];
 const TARGETS = [['epic', 'author', ['subagent', 'solo']], ['epic', 'review', ['reviewed', 'solo']],
   ['task', 'author', ['delegated', 'subagent', 'solo']], ['task', 'execute', ['delegated', 'subagent', 'solo']]];
@@ -104,7 +105,7 @@ describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule',
 describe('spec:tier-offer/S2 the preview is the default and writes zero bytes', () => {
   it('prints one line per registry entry in registry order, each offered entry with its apply line', async () => {
     const { root, run } = await preview({ files: { [CONFIG]: seed() } }, ALL_READY);
-    assert.deepEqual(entryLines(run.lines), ['story-sessions-section: present', 'epic-task-slots: offered', 'epic-store-seeded: offered']);
+    assert.deepEqual(entryLines(run.lines), ['story-sessions-section: present', 'epic-task-slots: offered', 'epic-store-seeded: offered', CHECKER_LINE]);
     const apply = `  apply: ${buildInsertPreview(root, TOOL)}`;
     assert.equal(under(run.lines, 'epic-task-slots')[0], apply);
     assert.deepEqual(under(run.lines, 'epic-store-seeded'), [apply]);
@@ -116,7 +117,7 @@ describe('spec:tier-offer/S2 the preview is the default and writes zero bytes', 
     const { root, run } = await preview({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' },
       [RULES]: rules.replace(/### 2\.7\. Story sessions\n.*\n\n/, '') } });
     assert.deepEqual(run.lines, ['story-sessions-section: offered', `  apply: ${buildInsertPreview(root, RULES_TOOL)}`,
-      'epic-task-slots: present', 'epic-store-seeded: present']);
+      'epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE]);
   });
 
   it('carries exactly one closed verdict word per entry line', async () => {
@@ -181,7 +182,7 @@ describe('spec:tier-offer/S7 a decline is current while its lineage is the shipp
   it('reports a present item present whatever the record holds', async () => {
     const declines = record({ 'epic-task-slots': LINEAGE, 'epic-store-seeded': LINEAGE });
     const { run } = await preview({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' }, [RECORD]: declines } });
-    assert.deepEqual(entryLines(run.lines).slice(1), ['epic-task-slots: present', 'epic-store-seeded: present']);
+    assert.deepEqual(entryLines(run.lines).slice(1), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE]);
   });
 });
 

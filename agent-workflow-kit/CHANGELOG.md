@@ -4,6 +4,43 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.12.0 — the upgrade offers the kit's own checkers as gates of your project, each only where it can run (AD-158)
+
+**The kit's own checkers can now be declared as gates of your project without a hand edit.** Until 14.12.0 no
+preview offered `control-bytes`, `plan-shape`, `spec-check` or `spec-coverage`, and the `control-bytes` document
+told a user to paste its entry into `docs/ai/gates.json` by hand. 14.12.0 adds a declare verb that previews them, and the
+upgrade's `tier` step now shows them as a fourth entry, `checker-gates-declared`, and writes them on the same one yes.
+No new upgrade item, no migration note and no lineage change: a project already at lineage `4.0.0` is offered them on
+its next upgrade. Story S4 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract
+`docs/ai/specs/kit/tier/checker-gates/` (new).
+
+- **`tools/checker-gates.mjs --cwd <project> [--apply] [--only <id>]…`.** Without a flag it writes nothing and
+  prints one line per checker: `declared`, `id-taken` (a gate with that id runs something else), `probe-unreadable`,
+  `not-applicable`, `offered` or `withheld`, with a detail where one applies; under an offered checker, its paste-ready
+  `entry:` line. The gates-file disclosure is printed once whenever a checker is offered or written. `--apply`
+  writes the offered entries; `--only <id>` (repeatable) narrows the write, and an id that is not offered is a usage
+  error. Exit 0 done, 1 one named refusal on stderr, 2 usage. A second `--apply` writes nothing.
+- **Each checker is offered only where it runs by design.** `control-bytes --check` needs a `.git` directory or
+  gitfile at the project root; `plan-shape --check --in-flight` is offered on any deployment; `spec-check --all`
+  needs a regular `docs/ai/specs/index.md`; `spec-coverage --check` needs a regular `docs/ai/spec-coverage.json`
+  and that store root. The command names the installed tool by its absolute, double-quoted path; a kit path that
+  cannot be written into a command withholds every checker that would be offered, by name, and writes nothing.
+- **Your declaration is only added to.** The write keeps every existing entry's value and order and the `_README`,
+  places each new entry as `gates-init` does (before a trailing coverage checker), must pass the declaration's
+  validation, and is atomic. A checker already declared in the form the verb writes, under any id, reads
+  `declared`. A missing, symlinked, non-regular, unreadable, unparseable or
+  invalid `docs/ai/gates.json`, or one whose coverage checker is already inert, misplaced or declared twice, is
+  reported by one name and nothing is written. The verb never removes an entry: an entry it wrote is removed by hand.
+- **The upgrade relays the preview before the ask.** While `checker-gates-declared` is offered, the `tier` step shows
+  the verb's lines, the disclosure and each `entry:` line included, before its one question.
+- **A matrix of only the kit's checkers is not project verification.** These four now count as kit-owned checkers,
+  so the kit's recommendations report a `docs/ai/gates.json` holding nothing else as carrying no
+  project-verification gate, as they already did for a lone `source-size` gate.
+- **The documents stop saying "declare it by hand".** `references/modes/gates.md` gains the checkers' paragraph,
+  `references/modes/control-bytes.md` step 3 names `--only control-bytes` beside its paste-ready line, and
+  `doc-parity` is no longer described as a project gate: it checks only the kit's own package. `epic-shape` and
+  `queue-audit` take a project operand, so they are not offered.
+
 ## 14.11.0 — the upgrade offers the epic and task settings and the epic store in one preview, and remembers a no (AD-157)
 
 **An upgraded project is now offered the epic tier's settings and store instead of being left to find them.** Up to

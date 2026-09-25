@@ -330,8 +330,8 @@ read only from the surface anchored between the doc's advisor-matrix begin/end m
 elsewhere in the doc can neither stand in for it nor mask its drift, and a drifted header inside the
 anchor fails closed rather than falling through to another table.
 
---check exits 0/1 as a gate (declare it in docs/ai/gates.json by hand). --json prints the structured
-result. Default prints the per-binding report.
+--check exits 0/1 as a gate over the kit's own package, the gate a kit maintainer runs. --json prints
+the structured result. Default prints the per-binding report.
 
 Read-only: never writes, never commits, spawns nothing. Exit codes: 0 pass (or plain report); 1 drift
 (under --check) or error; 2 usage.`;

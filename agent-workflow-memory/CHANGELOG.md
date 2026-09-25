@@ -4,6 +4,14 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.1.1 — the gate-migration's checker screen takes an argument tail (AD-158)
+
+`references/scripts/migrate-gates.mjs`: the guarded `checker-claim canon` region is byte-identical to the kit's
+`tools/checker-claim.mjs` again. `checkerClaimTool` gains an optional third parameter, the exact argument tail
+(default `--check`), matched as literal space-separated tokens at the end of the command; every existing call passes
+two arguments and matches exactly as before. The kit's new declare verb (kit 14.12.0) uses the tail for
+`--check --in-flight` and `--all`. PATCH: no migration result changes.
+
 ## 8.1.0 — the deployment-lineage head moves to 4.0.0 (AD-157)
 
 `scripts/stamp-takeover.mjs`: `LINEAGE_HEAD` is `4.0.0`, so a memory bootstrap stamps `docs/ai/.memory-version` with

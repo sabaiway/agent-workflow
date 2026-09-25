@@ -65,12 +65,15 @@ that directory's work-tree root):
    usage — every operand is validated at parse; an unknown argument is usage. Every content read is
    descriptor-bound (open, fstat, read on the descriptor), never a path read that a symlink swap
    could redirect.
-3. **Wire it as a gate by hand — never without consent (AD-021/D9).** The candidate line for your
-   own `docs/ai/gates.json`: `{ "id": "control-bytes", "title": "No raw control byte in the work
-   tree", "cmd": "node \"<path-to-this-skill>/tools/control-bytes.mjs\" --check" }` — with the path
-   your project actually reaches the kit by, double-quoted inside the JSON string so a path with
-   spaces survives, executable from the project root. `gates-init` does not offer this entry; the full consent-fill contract for the
-   matrix is in `${CLAUDE_SKILL_DIR}/references/modes/gates.md`. Once declared, the opt-in
+3. **Declare it as a gate — never without consent (AD-021/D9).** `node
+   ${CLAUDE_SKILL_DIR}/tools/checker-gates.mjs --cwd <project> --only control-bytes --apply` writes
+   this one entry while the kit offers it; without `--only control-bytes --apply` the same command
+   previews and writes nothing. The upgrade's `tier` ask writes it on your explicit yes. The candidate
+   line to paste into your own `docs/ai/gates.json` instead: `{ "id": "control-bytes", "title": "No raw
+   control byte in the work tree", "cmd": "node \"<path-to-this-skill>/tools/control-bytes.mjs\"
+   --check" }` — with the path your project actually reaches the kit by, double-quoted inside the JSON
+   string so a path with spaces survives, executable from the project root. The full consent-fill
+   contract for the matrix is in `${CLAUDE_SKILL_DIR}/references/modes/gates.md`. Once declared, the opt-in
    `${CLAUDE_SKILL_DIR}/references/modes/hook.md` auto-approves it like any other declared gate.
 
 **Honest bounds (stated, accepted):** the work tree is judged at the moment of the read — a byte

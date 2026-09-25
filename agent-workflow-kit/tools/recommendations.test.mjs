@@ -1879,6 +1879,19 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.match(item.what, /no project-verification command/);
   });
 
+  it('cause B: a matrix of nothing but the four declarable kit checkers fires the no-verification arm', () => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [
+      gate('control-bytes', kitCheck('control-bytes.mjs')),
+      gate('plan-shape', `node "${join(HERE, 'plan-shape-cli.mjs')}" --check --in-flight`),
+      gate('spec-check', `node "${join(HERE, 'spec-check-cli.mjs')}" --all`),
+      gate('spec-coverage', kitCheck('spec-coverage-cli.mjs')),
+    ] }));
+    const item = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
+    rmSync(root, { recursive: true, force: true });
+    assert.equal(item?.variant, 'gates-inert.no-verification', 'the four kit checkers verify no project command');
+  });
+
   // The SAME class as cause A, reached from the other arm: a kit checker the offer also carries is
   // already declared, so an unrestricted preview leads to an id collision here too. The rule is one
   // rule — a rendered preview names only entries the fill would accept — so both arms obey it.

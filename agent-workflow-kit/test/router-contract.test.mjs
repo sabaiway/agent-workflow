@@ -333,7 +333,7 @@ const BUDGET = {
   // Then 54272 → 55296 (54 KB): AD-044 Plan 3 — the same three-pointer contract also lands in
   // composition-handoff.md (a shared file in upgrade's read set), overflowing the pair by ~949 B;
   // the same documented KB-multiple bump.
-  daily: 30720, // the no-shared daily modes (help/backends/recipes/procedures/gates). 27648 →
+  daily: 31744, // the no-shared daily modes; 30720 → 31744: S4's checker paragraph, 31626 B. 27648 →
   // 30720 (30 KB): feedback-hardening Plan 2 Phase 2 — gates.md gains the marker's copyable
   // declaration FRAGMENT (a fenced entry carrying `"lcovProducer": true`, validated through
   // validateDeclaration by a named test, so the shown shape can never drift from the schema), the

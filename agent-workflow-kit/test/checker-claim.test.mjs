@@ -26,6 +26,7 @@ const OWN_SOURCE = join(HERE, '..', 'tools', 'checker-claim.mjs');
 // verbatim and test/scripts-mirror.test.mjs guards that half, so mirror-equality here IS
 // canon-equality — reached without importing either side.
 const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', 'migrate-gates.mjs');
+const MEMORY_CANON = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'scripts', 'migrate-gates.mjs');
 
 const BEGIN = '// checker-claim canon >>> BEGIN drift-guarded region';
 const END = '// checker-claim canon <<< END drift-guarded region';
@@ -208,6 +209,51 @@ describe('checker-claim — not-the-tool: recognition never widened', () => {
       // the helper's DEFAULT project dir and quietly test nothing.
       assert.equal(classifyCheckerClaim(TOOL, `node "vendor/${TOOL_BASENAME}" --check`, value), CHECKER_CLAIM.NOT_THE_TOOL, `projectDir: ${JSON.stringify(value)}`);
     }
+  });
+});
+
+describe('spec:checker-gates/S12 the claim tail', () => {
+  const IN_FLIGHT = '--check --in-flight';
+  const tailed = (tail, canonical = CANONICAL) => checkerClaimTool(TOOL_BASENAME, canonical, tail);
+
+  it('a two-argument call builds the regex source it always built, the default tail --check', () => {
+    const source = String.raw`^node +(?:"((?:[^"]*[/\\])?probe-tool\.mjs)"|((?:[^\s"]*[/\\])?probe-tool\.mjs)) +--check$`;
+    assert.equal(TOOL.re.source, source);
+    assert.equal(tailed('--check').re.source, source);
+  });
+
+  it('claims --check --in-flight and --all at END, canonical or tool-elsewhere', () => {
+    for (const tail of [IN_FLIGHT, '--all']) {
+      assert.equal(classifyCheckerClaim(tailed(tail), `node "${CANONICAL}" ${tail}`, PROJECT), CHECKER_CLAIM.CANONICAL, tail);
+      assert.equal(classifyCheckerClaim(tailed(tail), `node vendor/${TOOL_BASENAME} ${tail}`, PROJECT), CHECKER_CLAIM.ELSEWHERE, tail);
+    }
+  });
+
+  it('a masked, reordered, shortened or newline-joined tail is not the tool', () => {
+    assert.equal(classifyCheckerClaim(tailed(IN_FLIGHT), `node "${CANONICAL}" ${IN_FLIGHT}`, PROJECT), CHECKER_CLAIM.CANONICAL);
+    for (const [tail, cmd] of [
+      [IN_FLIGHT, `node "${CANONICAL}" --check --in-flight --help`],
+      [IN_FLIGHT, `node "${CANONICAL}" --in-flight --check`],
+      [IN_FLIGHT, `node "${CANONICAL}" --check`],
+      [IN_FLIGHT, `node "${CANONICAL}" --check\n--in-flight`],
+      ['--all', `node "${CANONICAL}" --all || true`],
+      ['--all', `true && node "${CANONICAL}" --all`],
+    ]) {
+      assert.equal(classifyCheckerClaim(tailed(tail), cmd, PROJECT), CHECKER_CLAIM.NOT_THE_TOOL, JSON.stringify(cmd));
+    }
+  });
+
+  it('escapes every tail token and joins the tokens by one or more plain spaces', () => {
+    assert.equal(classifyCheckerClaim(tailed('--a.b'), `node "${CANONICAL}" --a.b`, PROJECT), CHECKER_CLAIM.CANONICAL);
+    assert.equal(classifyCheckerClaim(tailed('--a.b'), `node "${CANONICAL}" --aXb`, PROJECT), CHECKER_CLAIM.NOT_THE_TOOL);
+    assert.equal(classifyCheckerClaim(tailed(IN_FLIGHT), `node "${CANONICAL}" --check  --in-flight`, PROJECT), CHECKER_CLAIM.CANONICAL);
+  });
+
+  it('the kit leaf, its in-package mirror and the memory canon hold the region byte-identically', () => {
+    const own = regionOf(readFileSync(OWN_SOURCE, 'utf8'));
+    assert.ok(own?.includes('checkerClaimTool'), 'the kit source carries the region');
+    assert.equal(regionOf(readFileSync(MIRRORED_CANON, 'utf8')), own);
+    assert.equal(regionOf(readFileSync(MEMORY_CANON, 'utf8')), own);
   });
 });
 

@@ -4,9 +4,9 @@
 // explicitly-consenting prose (the init/bootstrap flows and the gates.md consent-fill section) —
 // it is NOT a routable mode token, it sits OUTSIDE every velocity allowlist tier (a
 // consent-per-run writer is never pre-approved), and the shipped gates.json TEMPLATE stays EMPTY
-// (AD-021/AD-038): a populated declaration is per-entry maintainer consent recorded through this
-// preview, never auto-seeding. ONE lifecycle contract: this preview runs at INIT; at UPGRADE the
-// only gates.json writer is the consented legacy migration.
+// (AD-021/AD-038): a populated declaration is per-entry maintainer consent recorded through a
+// consented writer (this preview among them), never auto-seeding. This preview runs at INIT; at UPGRADE step 3's
+// run-list changes entries only through the consented legacy migration and, under `tier`, checker-gates.mjs.
 //
 // What it offers (the derivation invariants, test-pinned) — CLOSED-WORLD since AD-052: an entry
 // is offered only when every axis is proven safe by MEMBERSHIP in a finite, test-guarded set,

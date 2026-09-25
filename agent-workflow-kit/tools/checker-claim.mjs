@@ -1,4 +1,4 @@
-// checker-claim.mjs — what a declared gate cmd CLAIMS about one of the kit's own `--check` tools,
+// checker-claim.mjs — what a declared gate cmd CLAIMS about one of the kit's own checker tools,
 // as three named outcomes instead of a boolean. A LEAF: node built-ins only, so every surface that
 // must recognize a tool invocation (the source-size matcher, the advisor's probes, the standalone
 // migration's twin) decides through ONE screen.
@@ -17,7 +17,7 @@ import { isAbsolute, join } from 'node:path';
 // A cmd makes exactly ONE of three claims about a given tool, and collapsing them into a boolean is
 // what makes a VENDORED copy of the tool read as "the tool is not declared at all" — a false
 // absence, with a remedy (adopt it) that then collides with the entry already there:
-//   • canonical      — this tool's `--check` invocation, resolving to THIS copy of it
+//   • canonical      — this tool's invocation with its tail (`--check` by default), resolving to THIS copy
 //   • tool-elsewhere — the same invocation shape, resolving to a DIFFERENT real copy
 //   • not-the-tool   — anything else: another command, a masked form, an inadmissible token, or a
 //                      path nothing can resolve
@@ -55,16 +55,18 @@ const bareTokenSafe = (text) => text.length > 0 && ![...text].some((ch) => {
 
 const RE_META = /[.*+?^${}()|[\]\\]/g;
 
-// checkerClaimTool(basename, canonicalPath) → the screen for ONE tool. The shape is the STRICT full
-// command — `node` + ONE (quoted or bare) path token + the exact basename + ` --check` + END — so a
-// masked form (`--check --help`, `--check || true`, a prefix command) is never any claim at all.
-// Separators are PLAIN SPACES, not \s: a newline between the tokens is not a command a runner would
-// execute as written. The basename is regex-escaped here, never by the caller — a caller-escaped
-// literal is one forgotten backslash away from a dot matching any byte.
-export const checkerClaimTool = (basename, canonicalPath) => {
+// checkerClaimTool(basename, canonicalPath, tail) → the screen for ONE tool. The shape is the STRICT
+// full command — `node` + ONE (quoted or bare) path token + the exact basename + the exact argument
+// tail (`--check` by default) + END — so a masked form (`--check --help`, `--check || true`, a prefix
+// command) or a reordered tail is never any claim at all. Separators are PLAIN SPACES, not \s: a
+// newline between the tokens is not a command a runner would execute as written. The basename and
+// every tail token are regex-escaped here, never by the caller — a caller-escaped literal is one
+// forgotten backslash away from a dot matching any byte.
+export const checkerClaimTool = (basename, canonicalPath, tail = '--check') => {
   const safe = basename.replace(RE_META, '\\$&');
+  const args = tail.split(' ').map((token) => token.replace(RE_META, '\\$&')).join(' +');
   return Object.freeze({
-    re: new RegExp(`^node +(?:"((?:[^"]*[/\\\\])?${safe})"|((?:[^\\s"]*[/\\\\])?${safe})) +--check$`),
+    re: new RegExp(`^node +(?:"((?:[^"]*[/\\\\])?${safe})"|((?:[^\\s"]*[/\\\\])?${safe})) +${args}$`),
     canonical: canonicalPath,
   });
 };

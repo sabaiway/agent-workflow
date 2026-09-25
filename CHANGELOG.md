@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-25 — AD-158 the kit's own checkers get a declare verb the upgrade offers (kit 14.12.0 MINOR, memory 8.1.1 PATCH; engine 5.9.1 and both bridges unchanged)
+
+**The kit's own checkers can be declared as gates of a project on the upgrade's one yes.** The new
+`tools/checker-gates.mjs` previews `control-bytes`, `plan-shape`, `spec-check` and `spec-coverage`, each offered only
+where its checker runs by design, and on `--apply` adds the offered entries to `docs/ai/gates.json`: existing entries
+kept in value and order, placed as `gates-init` places them, validated, written atomically. The `tier` step's
+registry gains `checker-gates-declared`, so the upgrade shows the verb's lines before its one ask; no new upgrade
+item and no lineage change. `checkerClaimTool` learns an argument tail in its three copies, memory's among them. The
+documents stop telling a user to declare `control-bytes` or `doc-parity` by hand. Story S4 of the epic
+`CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract `docs/ai/specs/kit/tier/checker-gates/` (new).
+
 ## 2026-09-24 — AD-157 lineage step 4.0.0 offers the full flow in the upgrade (kit 14.11.0 MINOR, memory 8.1.0 MINOR, engine 5.9.1 PATCH; both bridges unchanged)
 
 **An upgraded project is offered the epic and task settings and the epic store in one preview, and a no is

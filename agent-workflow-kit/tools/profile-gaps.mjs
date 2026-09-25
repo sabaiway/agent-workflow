@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CANDIDATE_STATES, isDeployed, judgeCheckerGates } from './checker-gates-read.mjs';
 import { CONFIG_REL, validateConfig } from './orchestration-config.mjs';
 import { TIER_TARGETS } from './reference-profile.mjs';
 import {
@@ -16,8 +17,10 @@ const GAP_ID = 'story-sessions-section';
 const SLOTS_ID = 'epic-task-slots';
 const STORE_ID = 'epic-store-seeded';
 const STORE_PATH = 'docs/ai/epics';
-const DEPLOYMENT_CHAIN = ['.', 'docs', 'docs/ai'];
+const CHECKER_GATES_ID = 'checker-gates-declared';
 const TIER_PREVIEW_PATH = fileURLToPath(new URL('./tier-preview.mjs', import.meta.url));
+const CHECKER_GATES_PATH = fileURLToPath(new URL('./checker-gates.mjs', import.meta.url));
+const UNDECIDED_STATES = [CANDIDATE_STATES.idTaken, CANDIDATE_STATES.probeUnreadable, CANDIDATE_STATES.withheld];
 const STORY_ID = 'story-sessions';
 const TEMPLATE_CANON = 'template';
 const ENCODING = 'utf8';
@@ -97,18 +100,6 @@ const detectStorySessions = ({ root, deps }) => {
   return { verdict: VERDICTS.absent };
 };
 
-const isDeployed = (root, deps) => {
-  try {
-    return DEPLOYMENT_CHAIN.every((path, index) => {
-      const stat = deps.lstatSync(resolve(root, path));
-      if (stat.isSymbolicLink()) return false;
-      return index < DEPLOYMENT_CHAIN.length - 1 || stat.isDirectory();
-    });
-  } catch {
-    return false;
-  }
-};
-
 const parseConfig = (bytes) => {
   let parsed;
   try {
@@ -163,10 +154,19 @@ const detectStore = ({ root, deps }) => {
   return { verdict: VERDICTS.present };
 };
 
+const detectCheckerGates = ({ root, deps }) => {
+  const judged = judgeCheckerGates(root, deps);
+  if (judged.refusal) return reportUndecidable(judged.refusal);
+  if (judged.candidates.some(({ state }) => state === CANDIDATE_STATES.offered)) return { verdict: VERDICTS.absent };
+  const undecided = judged.candidates.find(({ state }) => UNDECIDED_STATES.includes(state));
+  return undecided ? reportUndecidable(undecided.state) : { verdict: VERDICTS.present };
+};
+
 const tierPreview = (root) => buildInsertPreview(root, TIER_PREVIEW_PATH);
 
 export const PROFILE_GAPS = Object.freeze([
   Object.freeze({ id: GAP_ID, detect: detectStorySessions, apply: (root) => buildInsertPreview(root) }),
   Object.freeze({ id: SLOTS_ID, detect: detectSlots, apply: tierPreview }),
   Object.freeze({ id: STORE_ID, detect: detectStore, apply: tierPreview }),
+  Object.freeze({ id: CHECKER_GATES_ID, detect: detectCheckerGates, apply: (root) => buildInsertPreview(root, CHECKER_GATES_PATH) }),
 ]);

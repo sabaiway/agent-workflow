@@ -6,7 +6,7 @@ The DOC-PARITY lint (BUGFREE-3 / AD-049, session-economics item (b)) — the det
 
 **Run** — `node ${CLAUDE_SKILL_DIR}/tools/doc-parity.mjs [--check | --json]`:
 - default → the per-binding report (each `constant → file` marked ✓/✗).
-- **`--check`** → the gate exit code (0 consistent, 1 drift). Declare it as a project gate by hand in `docs/ai/gates.json`.
+- **`--check`** → the gate exit code (0 consistent, 1 drift): the lint checks the kit's own package, the gate a kit maintainer runs.
 - `--json` → the structured result.
 
 **What it checks (the closed registry).** The tokens are IMPORTED live from the tools — never re-typed in the lint — so the registry itself can never go stale:

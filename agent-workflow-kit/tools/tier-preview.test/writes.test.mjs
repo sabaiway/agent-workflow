@@ -17,6 +17,7 @@ const RECORD = 'docs/ai/profile-declines.json';
 const STORE = 'docs/ai/epics';
 const SEED_FILE = 'docs/ai/epics/.gitkeep';
 const RULES = 'docs/ai/agent_rules.md';
+const CHECKER_LINE = 'checker-gates-declared: undecidable — declaration-absent';
 const READY = readinessOf({ codex: 'ready', agy: 'ready', executor: 'placed' });
 const NONE = readinessOf();
 const EVERY_TARGET = { epic: { author: 'solo', review: 'solo' }, task: { author: 'solo', execute: 'solo' } };
@@ -81,7 +82,7 @@ describe('spec:tier-offer/S5 a second --apply, like a first with both items pres
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.writes, []);
     assert.deepEqual(run.after, run.before);
-    assert.deepEqual(run.lines.slice(1), ['epic-task-slots: present', 'epic-store-seeded: present']);
+    assert.deepEqual(run.lines.slice(1), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE]);
   });
 
   it('writes nothing when both items are present before the first run', async () => {
@@ -100,7 +101,7 @@ describe('spec:tier-offer/S6 --decline records every offered id at the shipped l
     const run = await runOffer(root, ['--decline'], NONE);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.lines, ['story-sessions-section: recorded', `epic-task-slots: declined — at lineage ${LINEAGE}`,
-      'epic-store-seeded: recorded']);
+      'epic-store-seeded: recorded', CHECKER_LINE]);
     const expected = { 'Zeta-upper': '1.0.0', 'alpha-lower': '9.9.9', 'epic-store-seeded': LINEAGE,
       'epic-task-slots': LINEAGE, 'story-sessions-section': LINEAGE };
     assert.equal(bytesOf(root, RECORD).toString(), record(expected));
@@ -128,7 +129,7 @@ describe('spec:tier-offer/S6 --decline records every offered id at the shipped l
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.after, run.before);
     assert.deepEqual(run.lines, ['story-sessions-section: present', 'epic-task-slots: present', 'epic-store-seeded: present',
-      'nothing offered — nothing recorded']);
+      CHECKER_LINE, 'nothing offered — nothing recorded']);
   });
 });
 

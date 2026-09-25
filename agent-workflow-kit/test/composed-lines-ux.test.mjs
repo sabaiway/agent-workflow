@@ -33,6 +33,7 @@ import { OUTCOME_LINES } from '../tools/lens-region.mjs';
 import { PROFILE_GAPS } from '../tools/profile-gaps.mjs';
 const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
 const { OUTCOME_LINES: TIER_LINES } = await import('../tools/tier-preview.mjs').catch(() => ({}));
+const { OUTCOME_LINES: CHECKER_LINES } = await import('../tools/checker-gates.mjs').catch(() => ({}));
 import { planRecipe } from '../tools/recipes.mjs';
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { readEngineFragment } from '../tools/engine-source.mjs';
@@ -405,6 +406,26 @@ for (const id of ['story-sessions-section', 'epic-task-slots', 'epic-store-seede
   return [detail];
 });
 
+// ── the checker-gates verb's outcome lines (the whole exported table, spec kit/tier/checker-gates) ─────
+const CHECKER_ARGS = {
+  candidate: ['control-bytes', 'offered'],
+  entry: [JSON.stringify({ id: 'plan-shape', title: 'Plans in flight keep the structural planning shape', cmd: 'node "/kit/tools/plan-shape-cli.mjs" --check --in-flight' })],
+  disclosure: [], help: [], usage: ['unknown argument --bogus'], onlyNotOffered: [['nope'], ['plan-shape']],
+  refusal: ['write-failed', 'EIO: i/o error, rename /project/docs/ai/gates.json.a1b2c3.tmp'],
+};
+const CHECKER_ABNORMAL = new Set(['usage', 'onlyNotOffered', 'refusal']);
+for (const [key, args] of Object.entries(CHECKER_ARGS)) if (key !== 'candidate') fx('checker-gates', key, CHECKER_ABNORMAL.has(key), composeLines(CHECKER_LINES, key, args));
+// A candidate line `<id>: <word>[ — <detail>]` is characterized like the tier entry: id self-label, closed word, detail scanned.
+const CHECKER_CANDIDATE_RE = /^(control-bytes): (offered|declared|applied|not-applicable|id-taken|probe-unreadable|withheld)(?: — (.+))?$/;
+for (const [word, detail, abnormal] of [['offered'], ['declared'], ['applied'], ['not-applicable', '.git is not a directory or a regular gitfile'],
+  ['id-taken', 'npm run bytes', true], ['probe-unreadable', '.git: EACCES', true], ['withheld', 'the kit path cannot be rendered into a command: /kit"tools', true]]) {
+  fx('checker-gates', `candidate-${word}`, Boolean(abnormal), () => {
+    const [, label, , rest] = composeLines(CHECKER_LINES, 'candidate', ['control-bytes', word, detail])()[0].match(CHECKER_CANDIDATE_RE) ?? [];
+    assert.equal(label, 'control-bytes', 'a candidate line opens with its candidate id');
+    return [rest ?? ''];
+  });
+}
+
 // ── the three L2 invariants over every collected fixture ─────────────────────────
 describe('L2 (a) — alarm words render only under a detected abnormal condition', () => {
   for (const f of SURFACES.filter((s) => !s.abnormal)) {
@@ -490,6 +511,12 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
     assert.deepEqual(Object.keys(TIER_LINES ?? {}).sort(), Object.keys(TIER_ARGS).sort());
     for (const [key, args] of Object.entries(TIER_ARGS)) {
       for (const line of composeLines(TIER_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
+    }
+  });
+  it('every checker-gates outcome composer has a fixture, none printing a placeholder or an unrendered argument', () => {
+    assert.deepEqual(Object.keys(CHECKER_LINES ?? {}).sort(), Object.keys(CHECKER_ARGS).sort());
+    for (const [key, args] of Object.entries(CHECKER_ARGS)) {
+      for (const line of composeLines(CHECKER_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
     }
   });
   it('every lens-region outcome composer has a fixture', () => {

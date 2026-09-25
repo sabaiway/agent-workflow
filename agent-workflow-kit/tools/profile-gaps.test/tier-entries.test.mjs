@@ -59,7 +59,7 @@ const assertVerdict = (result, verdict, reason) => {
 describe('spec:tier-offer/S13 the two gap entries', () => {
   it('join the registry after story-sessions-section in profile order, frozen and closed', () => {
     const registry = loaded.PROFILE_GAPS ?? [];
-    assert.deepEqual(registry.map(({ id }) => id), IDS);
+    assert.deepEqual(registry.map(({ id }) => id), [...IDS, 'checker-gates-declared']);
     assert.deepEqual(IDS, PROFILE_IDS.filter((id) => IDS.includes(id)));
     for (const id of IDS.slice(1)) {
       const entry = entryOf(id);
