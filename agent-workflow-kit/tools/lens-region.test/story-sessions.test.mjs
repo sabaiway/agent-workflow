@@ -18,6 +18,9 @@ const extractStoryRegion = requireExport(lens, 'extractStoryRegion');
 const normalizeStoryBody = requireExport(lens, 'normalizeStoryBody');
 const renderStory = requireExport(lens, 'renderStory');
 const exceedsCap = requireExport(regions, 'exceedsCap');
+const renderComms = requireExport(lens, 'renderComms');
+const extractCommsRegion = requireExport(lens, 'extractCommsRegion');
+const normalizeCommsBody = requireExport(lens, 'normalizeCommsBody');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE_DIR = join(HERE, '..', '..', '..', 'agent-workflow-engine');
@@ -64,6 +67,9 @@ const DOUBLED_REGIONS = [
   { name: 'story sessions', region: STORY_REGION, label: STORY_LABEL },
   { name: 'lens', region: CUSTOM_LENS, label: LENS_LABEL },
 ];
+const WIDE_CAP = 150;
+const OWN_COMMS_NUMBER = '4';
+const LOW_CAP = 5;
 const ABSENT_NOTES = [
   { name: 'Communication', composer: 'commsNoRegion' },
   { name: 'story sessions', composer: 'storyNoRegion' },
@@ -284,6 +290,55 @@ describe('runnable absent-section offers spec:rules-regions/S21', () => {
       await assertUnchanged(fixture);
     });
   }
+});
+
+// The prior refresh the upgrade's lens step runs, through the CLI over the bundled template: a
+// Communication region on the outgoing body and a Story sessions region on its first prior.
+const TEMPLATE_TEXT = await fs.readFile(TEMPLATE_PATH, 'utf8');
+const storyPrior = () => {
+  const prior = regions.RULES_REGIONS?.[1]?.priors?.[0];
+  assert.equal(typeof prior, 'string', 'story-sessions carries its first prior');
+  return prior;
+};
+const outgoingComms = () => lens.COMMS_PRIORS.at(-1);
+const commsCanon = () => normalizeCommsBody(extractCommsRegion(TEMPLATE_TEXT).body);
+const storyCanon = () => normalizeStoryBody(extractStoryRegion(TEMPLATE_TEXT).body);
+
+describe('the prior refresh through the CLI spec:session-rules/S3', () => {
+  it('refreshes both regions at the file own numbers in its CRLF form, and a second reconcile changes no byte', async (context) => {
+    const crlf = (blocks) => createDocument(blocks, WIDE_CAP).split(LF).join(CRLF);
+    const text = crlf([renderComms(outgoingComms(), OWN_COMMS_NUMBER), renderStory(storyPrior(), OWN_NUMBER)]);
+    const fixture = await createFixture(context, text);
+    const first = await reconcileFixture(fixture, { template: TEMPLATE_TEXT });
+    assert.equal(first.code, EXIT_OK, first.errors.join(LF));
+    assertEmitted(first.logs, [composeOutcome('commsRefreshed'), composeOutcome('storyRefreshed')]);
+    const expected = crlf([renderComms(commsCanon(), OWN_COMMS_NUMBER), renderStory(storyCanon(), OWN_NUMBER)]);
+    assert.equal(await fs.readFile(fixture.target, 'utf8'), expected);
+    const again = await createFixture(context, expected);
+    const second = await reconcileFixture(again, { template: TEMPLATE_TEXT });
+    assert.equal(second.code, EXIT_OK);
+    assertEmitted(second.logs, [composeOutcome('commsCurrent'), composeOutcome('storyCurrent')]);
+    await assertUnchanged(again);
+  });
+
+  it('refuses the story refresh over the file own cap and writes nothing', async (context) => {
+    const fixture = await createFixture(context, createDocument([renderStory(storyPrior(), OWN_NUMBER)], LOW_CAP));
+    const result = await reconcileFixture(fixture, { template: TEMPLATE_TEXT });
+    assert.equal(result.code, EXIT_OK);
+    const refreshed = createDocument([renderStory(storyCanon(), OWN_NUMBER)], LOW_CAP);
+    const { count } = exceedsCap(refreshed, LOW_CAP);
+    assertEmitted(result.logs, [composeOutcome('storyCapRefused', fixture.target, count, LOW_CAP)]);
+    await assertUnchanged(fixture);
+  });
+
+  it('preserves a custom Communication region with its note while the story prior refreshes', async (context) => {
+    const fixture = await createFixture(context, createDocument([COMMS_REGION, renderStory(storyPrior(), OWN_NUMBER)], WIDE_CAP));
+    const result = await reconcileFixture(fixture, { template: TEMPLATE_TEXT });
+    assert.equal(result.code, EXIT_OK);
+    assertEmitted(result.logs, [...composeOutcome('commsCustom'), composeOutcome('storyRefreshed')]);
+    const expected = createDocument([COMMS_REGION, renderStory(storyCanon(), OWN_NUMBER)], WIDE_CAP);
+    assert.equal(await fs.readFile(fixture.target, 'utf8'), expected);
+  });
 });
 
 it('STOPs before judging any region when a template heading occurs twice', async (context) => {

@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { SEED_CONFIG, serializeConfig } from '../tools/orchestration-config.mjs';
+import { COMMS_PRIORS } from '../tools/lens-region.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = resolve(HERE, '..');
@@ -19,6 +20,7 @@ const COMMUNICATION = `## ${String.fromCodePoint(0x1f5e3, 0xfe0f)} Communication
 const ATTRIBUTION = `## ${String.fromCodePoint(0x270d, 0xfe0f)} Attribution`;
 const MEMORY_MAP = `## ${String.fromCodePoint(0x1f9ed)} Memory Map`;
 const STORY_HEADING = '### 2.7. Story sessions';
+const COMMS_HEADING = '### 2.5. Communication (user-facing messages)';
 const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
 const RULES_PATH = 'docs/ai/agent_rules.md';
 const RULES_TEMPLATE = 'references/templates/agent_rules.md';
@@ -35,6 +37,12 @@ const OFFER_TOOL = 'tier-preview.mjs';
 const GATES_ARTIFACT = { path: 'docs/ai/gates.json', key: 'gates' };
 const STORE_ROOT_PATH = 'docs/ai/specs/index.md';
 const CHECKER_TOOL = 'checker-gates.mjs';
+const QUEUE_PATH = 'docs/plans/queue.md';
+const QUEUE_SEED = 'references/authoring/QUEUE_TEMPLATE.md';
+const LENS_TOOL = 'lens-region.mjs';
+const AUDIT_TOOL = 'queue-audit-cli.mjs';
+const SESSION_CLOSE_LEAD = 'Two blocks for the user';
+const TASK_PHRASE = 'one task per session';
 const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all']];
 // The SLOT_RECIPES value set of each target slot's type, written out by hand.
 const SLOT_VALUES = [
@@ -59,7 +67,7 @@ const ITEM_IDS = [
   'profile-gap-screen',
 ];
 const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
-const LANDED = new Set(['S1', 'S2', 'S3', 'S4']);
+const LANDED = new Set(['S1', 'S2', 'S3', 'S4', 'S5']);
 const PENDING = () => ({ reason: 'detector pending' });
 const fixture = {};
 
@@ -79,11 +87,24 @@ const findRegion = (text, heading) => {
   return { lines, start, end: next < 0 ? lines.length : next };
 };
 
-const removeRulesSpan = (text, heading) => {
+const removeRulesSpan = (text, heading, replacement = []) => {
   const region = findRegion(text, heading);
   if (!region) return text;
   const { lines, start, end } = region;
-  return [...lines.slice(0, start), ...lines.slice(end)].join(LF);
+  return [...lines.slice(0, start), ...replacement, ...lines.slice(end)].join(LF);
+};
+
+// S3's third artifact, read only by S5's queue detector: null when absent, else its bytes or error.
+const readQueue = (project) => (lstatSync(join(project, QUEUE_PATH), { throwIfNoEntry: false })
+  ? readProjectFile(project, QUEUE_PATH) : null);
+
+// S5 spawns its own children, never through runTool: no --cwd, and the rules bytes after each call.
+const runChild = (home, project, name, args, env = process.env) => {
+  const tool = join(home, 'tools', name);
+  if (!existsSync(tool)) return { name, result: { absent: true }, rules: readProjectFile(project, RULES_PATH) };
+  const run = spawnSync(process.execPath, [tool, ...args], { encoding: 'utf8', env });
+  const result = { code: run.status, stdout: run.stdout, stderr: run.stderr, error: run.error?.message };
+  return { name, result, rules: readProjectFile(project, RULES_PATH) };
 };
 
 const writeFixture = (path, bytes) => {
@@ -124,7 +145,7 @@ const listEpics = (project) => {
   });
 };
 
-const runOffer = (home, project, extra = []) => ({ ...runTool(home, project, OFFER_TOOL, extra, CONFIG_ARTIFACT), epics: listEpics(project) });
+const runOffer = (home, project, extra = []) => ({ ...runTool(home, project, OFFER_TOOL, extra, CONFIG_ARTIFACT), epics: listEpics(project), queue: readQueue(project) });
 
 const listRegularFiles = (root, relative = '') => {
   const path = join(root, relative);
@@ -304,6 +325,36 @@ const detectCheckerGates = (record) => {
     ? null : { reason: 'the second apply does not report plan-shape and spec-check declared' };
 };
 
+const regionText = (text, heading) => {
+  const region = findRegion(text, heading);
+  return region ? region.lines.slice(region.start, region.end).join(LF) : null;
+};
+
+const detectSessionRules = (record) => {
+  const gap = findCallGap(record.slices.S5);
+  if (gap) return gap;
+  const unreadable = record.slices.S5.find(({ rules }) => rules.error);
+  if (unreadable) return { reason: `rules unreadable: ${unreadable.rules.error}` };
+  const [first, second] = record.slices.S5;
+  const text = first.rules.bytes.toString('utf8');
+  const comms = regionText(text, COMMS_HEADING);
+  const story = regionText(text, STORY_HEADING);
+  if (comms?.split(SESSION_CLOSE_LEAD).length !== 2) return { reason: 'the Communication region does not carry the session-close bullet once' };
+  if (!story?.includes(TASK_PHRASE)) return { reason: 'the Story sessions region does not carry the one-task sentence' };
+  return second.rules.bytes.equals(first.rules.bytes) ? null : { reason: 'the second reconcile changed the rules file' };
+};
+
+const detectQueueSeed = (record) => {
+  const gap = findCallGap(record.slices.S5.slice(2));
+  if (gap) return gap;
+  const [preview, apply, repeated] = record.slices.S3;
+  if (preview.queue !== null) return { reason: 'the S3 preview left a queue' };
+  const seed = readProjectFile(record.home, QUEUE_SEED);
+  if (seed.error) return { reason: `the installed seed is unreadable: ${seed.error}` };
+  if (!apply.queue?.bytes?.equals(seed.bytes)) return { reason: 'the S3 apply did not write the installed seed' };
+  return repeated.queue?.bytes?.equals(apply.queue.bytes) ? null : { reason: 'the second apply changed the queue' };
+};
+
 const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
@@ -312,8 +363,8 @@ const DETECTORS = {
   'epic-task-slots': detectSlots,
   'epic-store-seeded': detectStore,
   'checker-gates-declared': detectCheckerGates,
-  'session-close-rules': PENDING,
-  'named-queue-row-seed': PENDING,
+  'session-close-rules': detectSessionRules,
+  'named-queue-row-seed': detectQueueSeed,
   'profile-gap-screen': PENDING,
 };
 
@@ -368,7 +419,8 @@ describe('full flow upgrade delivery', () => {
     const initialBytes = Buffer.from(removeSpan(withoutCommunication, ATTRIBUTION));
     writeFixture(join(project, 'AGENTS.md'), initialBytes);
     const rulesTemplate = readFileSync(join(KIT, RULES_TEMPLATE), 'utf8');
-    const rulesBefore = Buffer.from(removeRulesSpan(rulesTemplate, STORY_HEADING));
+    const outgoing = [...COMMS_PRIORS.at(-1).replace('### 2.x.', '### 2.5.').split(LF), ''];
+    const rulesBefore = Buffer.from(removeRulesSpan(removeRulesSpan(rulesTemplate, STORY_HEADING), COMMS_HEADING, outgoing));
     writeFixture(join(project, RULES_PATH), rulesBefore);
     const configBefore = Buffer.from(serializeConfig(SEED_CONFIG));
     writeFixture(join(project, CONFIG_PATH), configBefore);
@@ -394,9 +446,16 @@ describe('full flow upgrade delivery', () => {
     ];
     const s3Calls = [runOffer(home, project), runOffer(home, project, APPLY_ARGS), runOffer(home, project, APPLY_ARGS)];
     const s4Calls = [[], APPLY_ARGS, APPLY_ARGS].map((extra) => runTool(home, project, CHECKER_TOOL, extra, GATES_ARTIFACT));
+    const rulesPath = join(project, RULES_PATH);
+    const engineEnv = { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: resolve(KIT, '..', 'agent-workflow-engine') };
+    const s5Calls = [
+      runChild(home, project, LENS_TOOL, ['reconcile', rulesPath], engineEnv),
+      runChild(home, project, LENS_TOOL, ['reconcile', rulesPath], engineEnv),
+      runChild(home, project, AUDIT_TOOL, ['--check', join(project, QUEUE_PATH), '--require-names']),
+    ];
     fixture.record = {
       home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore, gatesBefore,
-      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls }, payload: capturePayload(home),
+      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls, S5: s5Calls }, payload: capturePayload(home),
     };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
@@ -469,6 +528,11 @@ describe('full flow upgrade delivery', () => {
     assert.deepEqual(before.gates, []);
     assert.equal(existsSync(join(fixture.record.project, '.git')), false);
     assertStory('S4', fixture.profile, fixture.record);
+  });
+
+  it('spec:session-rules/S15 refreshes both session rules and seeds a named queue in the older project', () => {
+    assert.ok(!fixture.record.rulesBefore.toString('utf8').includes(SESSION_CLOSE_LEAD), 'the older rules carry the outgoing body');
+    assertStory('S5', fixture.profile, fixture.record);
   });
 
   it('spec:upgrade-delivery/S19 binds every detector to an item and every story to the landed register', () => {

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,8 +23,8 @@ const STORY_TITLE = 'Story sessions';
 const LENS_TITLE = 'Planning, review & process-fidelity invariants';
 const MATCH_NUMBERS = ['5', '17'];
 const REGION_CASES = [
-  { id: 'communication', title: COMMS_TITLE, canon: 'template', priorCount: 4 },
-  { id: 'story-sessions', title: STORY_TITLE, canon: 'template', priorCount: 0 },
+  { id: 'communication', title: COMMS_TITLE, canon: 'template', priorCount: 5 },
+  { id: 'story-sessions', title: STORY_TITLE, canon: 'template', priorCount: 1 },
   { id: 'lens', title: LENS_TITLE, canon: 'engine', priorCount: 0 },
 ];
 const STORY_RE = /^### 2[.]([0-9]+)[.] Story sessions/;
@@ -40,7 +41,12 @@ const RETAINED_FUNCTIONS = [
 ];
 const RETAINED_VALUES = ['LENS_HEADING_RE', 'COMMS_HEADING_RE', 'COMMS_PRIORS', 'OUTCOME_LINES'];
 const VINTAGE_SENTENCE = 'Append the OUTGOING canon here in the same release that changes the template '
-  + SECTION_SIGN + '2.5 region ' + EM_DASH + ' the fragment-or-prior reconcile depends on it.';
+  + SECTION_SIGN + '2.5 or ' + SECTION_SIGN + '2.7 region ' + EM_DASH + ' the fragment-or-prior reconcile depends on it.';
+// The two appended priors: the 7da8cff template's agent_rules.md:66-75 and :95-96, headed 2.x, LF-joined.
+const NEW_PRIORS = [
+  { id: 'communication', index: 4, bytes: 2788, sha256: '8737e992e7a513acf55da93fdc11ac8a22c3c51cb3922681599c9ce36f320279' },
+  { id: 'story-sessions', index: 0, bytes: 923, sha256: '30f85c460df4945fb33aaf438ddbdf33d0ba14fd9bf1863f1c54f47b042dc38a' },
+];
 const IMPORT_RE = new RegExp(BACKSLASH + 'bimport(?:' + BACKSLASH + 's+|[(])[^;]+', 'g');
 const WRITER_RE = /atomic-write|writeFile/;
 const EXTRACT_PREFIX = '# Rules';
@@ -314,17 +320,28 @@ describe('template span reader spec:rules-regions/S3', () => {
 });
 
 describe('prior vintage contract spec:rules-regions/S4', () => {
-  it('keeps all four Communication bodies in vintage order and no story priors', () => {
+  it('keeps five Communication bodies in vintage order and one story prior spec:session-rules/S2', () => {
     const regions = getRegions();
     const communication = regions.find(({ id }) => id === 'communication');
     const story = regions.find(({ id }) => id === 'story-sessions');
     assert.deepEqual(communication.priors, lens.COMMS_PRIORS);
     assert.equal(communication.priors.length, REGION_CASES[0].priorCount);
+    assert.equal(story.priors.length, REGION_CASES[1].priorCount);
     for (const prior of communication.priors) {
       assert.equal(prior.split(LF)[0], makeHeading('x', COMMS_TITLE));
     }
-    assert.deepEqual(story.priors, []);
+    assert.ok(communication.priors[4].startsWith(communication.priors[3] + LF), 'the newest prior extends the one before it');
   });
+
+  for (const { id, index, bytes, sha256 } of NEW_PRIORS) {
+    it('pins the ' + id + ' prior appended by this release by its byte length and sha256', () => {
+      const prior = getRegions().find((region) => region.id === id).priors[index];
+      assert.equal(typeof prior, 'string', id + ' carries prior ' + index);
+      const encoded = Buffer.from(prior, 'utf8');
+      assert.equal(encoded.length, bytes);
+      assert.equal(createHash('sha256').update(encoded).digest('hex'), sha256);
+    });
+  }
 
   it('states the outgoing-canon vintage sentence exactly once', () => {
     const source = readLeafSource();

@@ -12,7 +12,7 @@ const TOOLS = resolve(HERE, '..');
 const MODULE = join(TOOLS, 'profile-gaps.mjs');
 const VERB = join(TOOLS, 'checker-gates.mjs');
 const ID = 'checker-gates-declared';
-const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', ID];
+const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', ID, 'session-close-rules', 'named-queue-row-seed'];
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n' };
 const PLAN_SHAPE = { id: 'mine', title: 't', cmd: `node "${KIT_TOOLS['plan-shape']}" --check --in-flight` };
 const entryOf = () => {

@@ -34,6 +34,7 @@ import { PROFILE_GAPS } from '../tools/profile-gaps.mjs';
 const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
 const { OUTCOME_LINES: TIER_LINES } = await import('../tools/tier-preview.mjs').catch(() => ({}));
 const { OUTCOME_LINES: CHECKER_LINES } = await import('../tools/checker-gates.mjs').catch(() => ({}));
+const { OUTCOME_LINES: CLOSE_LINES } = await import('../tools/session-close-check.mjs').catch(() => ({}));
 import { planRecipe } from '../tools/recipes.mjs';
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { readEngineFragment } from '../tools/engine-source.mjs';
@@ -391,7 +392,7 @@ const TIER_ARGS = {
   applyLine: ['node /kit/tools/tier-preview.mjs --cwd /project'],
   noCommand: [], nothingOffered: [], help: [],
   slotValue: ['task', 'author', 'solo', [{ candidate: 'delegated', reason: planRecipe('delegated', []).degradation[0].reason }]],
-  tmpLeft: ['/project/docs/ai/epics/.gitkeep.a1b2c3.tmp'],
+  tmpLeft: ['docs/plans/queue.md', '/project/docs/plans/queue.md.a1b2c3.tmp'],
   detectFailed: ['spawn EACCES'],
   refusal: ['write-failed', 'EACCES: permission denied, open /project/docs/ai/orchestration.json'],
   usage: ['unknown argument --bogus'],
@@ -400,7 +401,7 @@ const TIER_ABNORMAL = new Set(['noCommand', 'tmpLeft', 'detectFailed', 'refusal'
 for (const [key, args] of Object.entries(TIER_ARGS)) if (key !== 'entry') fx('tier-preview', key, TIER_ABNORMAL.has(key), composeLines(TIER_LINES, key, args));
 // An entry line `<id>: <word>[ — <detail>]` is characterized like the ensure slot: id self-label, closed word, detail scanned.
 const TIER_ENTRY_RE = /^([a-z]+(?:-[a-z]+)+): (present|offered|declined|undecidable|applied|recorded)(?: — (.+))?$/;
-for (const id of ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded']) fx('tier-preview', `entry-${id}`, false, () => {
+for (const id of ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', 'session-close-rules', 'named-queue-row-seed']) fx('tier-preview', `entry-${id}`, false, () => {
   const [, label, , detail] = composeLines(TIER_LINES, 'entry', [id, ...TIER_ARGS.entry])()[0].match(TIER_ENTRY_RE) ?? [];
   assert.equal(label, id, 'an entry line opens with its registry id');
   return [detail];
@@ -425,6 +426,17 @@ for (const [word, detail, abnormal] of [['offered'], ['declared'], ['applied'], 
     return [rest ?? ''];
   });
 }
+
+// ── the session-close checker's outcome lines (the whole exported table, spec kit/tier/session-rules) ─────
+const CLOSE_STATES = ['no-deployment', 'handover-symlink', 'handover-not-regular', 'handover-unreadable', 'handover-absent',
+  'section-absent', 'section-twice', 'label-absent', 'label-twice', 'label-order', 'label-empty'];
+const CLOSE_ARGS = {
+  accept: [], help: [], usage: ['unknown argument --bogus'], state: ['label-order'], labelState: ['label-empty', '**What is next, and why:**'],
+};
+const CLOSE_ABNORMAL = new Set(['usage', 'state', 'labelState']);
+for (const [key, args] of Object.entries(CLOSE_ARGS)) if (key !== 'state') fx('session-close-check', key, CLOSE_ABNORMAL.has(key), composeLines(CLOSE_LINES, key, args));
+// Every state name the checker prints through its one-name composer, each as its own line.
+fx('session-close-check', 'state', true, () => CLOSE_STATES.flatMap((name) => composeLines(CLOSE_LINES, 'state', [name])()));
 
 // ── the three L2 invariants over every collected fixture ─────────────────────────
 describe('L2 (a) — alarm words render only under a detected abnormal condition', () => {
@@ -517,6 +529,12 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
     assert.deepEqual(Object.keys(CHECKER_LINES ?? {}).sort(), Object.keys(CHECKER_ARGS).sort());
     for (const [key, args] of Object.entries(CHECKER_ARGS)) {
       for (const line of composeLines(CHECKER_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
+    }
+  });
+  it('every session-close-check outcome composer has a fixture, none printing a placeholder or an unrendered argument', () => {
+    assert.deepEqual(Object.keys(CLOSE_LINES ?? {}).sort(), Object.keys(CLOSE_ARGS).sort());
+    for (const [key, args] of Object.entries(CLOSE_ARGS)) {
+      for (const line of composeLines(CLOSE_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
     }
   });
   it('every lens-region outcome composer has a fixture', () => {

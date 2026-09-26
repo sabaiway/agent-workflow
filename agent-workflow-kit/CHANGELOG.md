@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.13.0 — every session close tells you what was done and what comes next, and a project without a work queue is offered one (AD-159)
+
+**Your agent now ends a session with two short blocks written for you, and the handover keeps them.** Until 14.13.0
+the rules file did not ask for these two blocks, no memory template had a place for them, and a
+project with no `docs/plans/queue.md` had to write one by hand. 14.13.0 adds the rule, the slot, a checker for the
+slot, and a queue seed on the upgrade's existing one yes. Story S5 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`;
+contract `docs/ai/specs/kit/tier/session-rules/` (new).
+
+- **Two rules in the rules template.** §2.5 Communication gains the bullet `Two blocks for the user`: at a plan's
+  approval, at a release and at every session close the message body carries *What was done, and for what* and
+  *What is next, and why*, in the dialogue language, with no internal ids and no review-round tallies. §2.7 Story
+  sessions gains one sentence: inside the tests and code sessions each task runs as its own carrier session. The
+  upgrade's `lens` step refreshes a region still equal to the text an earlier kit shipped, without an ask; a region
+  you edited is kept and flagged, as before.
+- **A `For the user` slot.** The handover template gains a `## For the user` section with the two labels, and the
+  changelog template's entry a `**For the user:**` line after its Goal. A project bootstrapped from now on starts with
+  them.
+- **`tools/session-close-check.mjs --check [--cwd <project>]`.** Read-only: it judges the `## For the user` section of
+  `docs/ai/handover.md`. Exit 0 prints one accept line; 1 prints every refusal found, one per line, each by its name; 2 is a usage error or a state it cannot judge,
+  named. It checks that both labels carry text, never what language the text is in or what it says. It is not
+  offered as a gate: a session close is not a commit.
+- **The upgrade offers a work queue.** The `tier` step's registry gains two entries after `checker-gates-declared`.
+  `named-queue-row-seed` offers to seed a missing `docs/plans/queue.md`; on the same one yes,
+  `tools/tier-preview.mjs --apply` writes it, create-only, from the kit's `references/authoring/QUEUE_TEMPLATE.md`:
+  the named-row rule, the purge archive, priority order and the check line, and four empty buckets. An existing queue
+  is never touched, and `queue-audit-cli`'s `--require-names` stays opt-in. `session-close-rules` only reports whether
+  both rules are current in your rules file; it never offers a write.
+
 ## 14.12.0 — the upgrade offers the kit's own checkers as gates of your project, each only where it can run (AD-158)
 
 **The kit's own checkers can now be declared as gates of your project without a hand edit.** Until 14.12.0 no

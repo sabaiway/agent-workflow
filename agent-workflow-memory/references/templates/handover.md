@@ -16,6 +16,14 @@ maxLines: 80
 **Branch:** {{BRANCH}}
 **Active recipes:** not recorded yet — paste the configured-recipe line (composed from `docs/ai/orchestration.json`) and refresh it whenever the config changes.
 
+## For the user
+
+**What was done, and for what:**
+- Bootstrap — the project now has an AI-agent memory, so each session starts from what the last one left.
+
+**What is next, and why:**
+- The first real task — its close replaces these two lines with what it did for you and what comes next.
+
 ## What was done last session
 
 - Bootstrap — AI-agent memory system initialised.

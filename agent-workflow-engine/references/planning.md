@@ -188,6 +188,8 @@ heading>' --max-rows <n> --max-row-lines <n>`, declared as a project gate once t
 The opening sentence has a rung too: append `--require-names` and a row whose name is not a sentence
 refuses. It is an OPT-IN a project adds once its rows are named — without the flag a nameless row is
 only a note, so the gate line a project wrote before this rule keeps its verdict byte for byte.
+A project with no queue is offered a seeded one by the kit's full-flow offer: the seed states the row
+shape and holds no row, so its gate line can carry `--require-names` from the first row.
 
 ## The plan must read cold
 

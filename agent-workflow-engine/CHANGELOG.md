@@ -4,6 +4,14 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.10.0 — the queue canon names the seeded queue (AD-159)
+
+`references/planning.md`, *The queue*: one sentence is added after the `--require-names` opt-in paragraph — a project
+with no queue is offered a seeded one by the kit's full-flow offer, and since the seed states the row shape and holds
+no row, its gate line can carry `--require-names` from the first row. The opt-in paragraph is unchanged byte for
+byte, so a queue that predates the rule keeps the flag opt-in. Pinned by `test/planning-canon.test.mjs`. MINOR: the
+canon gains a rule. Published on this train with kit 14.13.0, which ships the seed.
+
 ## 5.9.1 — the CHANGELOG names the deployment-lineage head 4.0.0 (AD-157)
 
 This file's preamble names the shared deployment-lineage head `4.0.0`, moved by kit 14.11.0 and memory 8.1.0.

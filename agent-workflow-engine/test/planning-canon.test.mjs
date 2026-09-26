@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
 const flat = planning.replace(/\s+/g, ' ');
+const LF = String.fromCharCode(10);
+const OPT_IN = 'The opening sentence has a rung too: append `--require-names` and a row whose name is not a sentence' + LF
+  + 'refuses. It is an OPT-IN a project adds once its rows are named \u2014 without the flag a nameless row is' + LF
+  + 'only a note, so the gate line a project wrote before this rule keeps its verdict byte for byte.' + LF;
 
 // Pins the FEW rules a plan cannot lose, never the wording around them. The prior version asserted
 // ~40 sentences, which made every past clause undeletable — that is why the canon reached 152 lines
@@ -139,5 +143,18 @@ describe('planning.md — the plan shape', () => {
   it('keeps plan files ephemeral, never committed, and always cleaned up', () => {
     assert.match(flat, /never committed/);
     assert.match(flat, /Every plan ends with `## Phase: Cleanup`/);
+  });
+});
+
+describe('planning.md — the queue spec:session-rules/S14', () => {
+  const section = planning.split('## The queue')[1].split('## The plan must read cold')[0];
+  it('offers a project with no queue a seeded one whose gate line can carry --require-names from the first row', () => {
+    const text = section.replace(/\s+/g, ' ');
+    assert.match(text, /A project with no queue is offered a seeded one by the kit's full-flow offer/);
+    assert.match(text, /holds no row, so its gate line can carry `--require-names` from the first row/);
+  });
+
+  it('keeps the opt-in paragraph byte for byte', () => {
+    assert.ok(section.includes(OPT_IN), 'the opt-in paragraph is unchanged');
   });
 });

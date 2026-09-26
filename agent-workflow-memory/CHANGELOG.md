@@ -4,6 +4,16 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.1.2 — the templates carry the session close for the user (AD-159)
+
+`references/templates/agent_rules.md`: §2.5 Communication gains the last bullet `Two blocks for the user`, and §2.7
+Story sessions gains one closing sentence on one task per carrier session; both regions stay byte-identical to the
+kit's copies, which are their one source. `references/templates/handover.md` gains a `## For the user` section with
+the labels `What was done, and for what` and `What is next, and why`, each with one bootstrap line;
+`references/templates/changelog.md`'s bootstrap entry gains a `**For the user:**` line after its Goal. The kit's
+`tools/session-close-check.mjs` (kit 14.13.0) judges the handover section. No script changed. PATCH: only a new
+bootstrap's text changes.
+
 ## 8.1.1 — the gate-migration's checker screen takes an argument tail (AD-158)
 
 `references/scripts/migrate-gates.mjs`: the guarded `checker-claim canon` region is byte-identical to the kit's

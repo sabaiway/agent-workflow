@@ -18,12 +18,24 @@ const KIT_TEMPLATES = join(HERE, '..', 'references', 'templates');
 const MEMORY_TEMPLATES = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'templates');
 const LF = String.fromCharCode(10);
 const RULES_FILE = 'agent_rules.md';
+const SESSION_CLOSE_LEAD = '- **Two blocks for the user.**';
+const TASK_PHRASE = 'one task per session';
+const KIT_PATH_RE = /agent-workflow-kit|<kit>|tools\//;
+const FOR_THE_USER = '## For the user';
+const LABELS = ['**What was done, and for what:**', '**What is next, and why:**'];
+const PLACEHOLDER_RE = /\{\{|TODO|<[a-z]/i;
 const STORY_HEADING = '### 2.7. Story sessions';
 const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
 const STRUCTURAL_BOUNDARY = /^(---$|## |### )/;
-const STORY_CANON = ["A story ", " one row of an epic's ledger, carried by one plan ",
+// The literal Story sessions canon, split at its em dashes so no source line passes the line cap.
+const STORY_CANON = [
+  "A story ",
+  " one row of an epic's ledger, carried by one plan ",
   " runs as five sessions, each ending at its own review checkpoint: **spec** (the contract under `docs/ai/specs/`, drafted and reviewed on the `plan-authoring` recipe), **plan** (the ledger, same recipe), **tests** (one task per ledger row, red first), **code** (one task per row, to green), and **diff review, release and record** (the review of the staged tree on the `plan-execution` recipe, the release where the story ships one, then the changelog and handover entries and the plan's Phase: Cleanup). Tests and code never share a session, and a spec and its plan never share one either. A storyless plan runs the same five. **Exception ",
-  " a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup."].join(String.fromCharCode(8212));
+  " a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup. Inside the tests and code sessions it is one task per session: each task runs as its own carrier session ",
+  " one brief, one run, never one run for a whole wave ",
+  " and the orchestrator's session briefs, checks, verifies and folds.",
+].join(String.fromCharCode(8212));
 
 const read = (root, name) => readFileSync(join(root, name), 'utf8');
 
@@ -174,6 +186,64 @@ describe('Story sessions template twins spec:rules-regions/S19', () => {
     const changed = memory.replace(STORY_CANON, STORY_CANON.toUpperCase());
     assert.notEqual(memory, changed);
     assert.throws(() => assert.equal(kit, changed), assert.AssertionError);
+  });
+});
+
+describe('spec:session-rules/S1 the session-close bullet and the one-task sentence in both templates', () => {
+  for (const [label, root] of [['kit', KIT_TEMPLATES], ['memory', MEMORY_TEMPLATES]]) {
+    it(`the Communication region ends with the Two blocks for the user bullet: ${label}`, () => {
+      const lines = extractCommunicationRegion(read(root, RULES_FILE)).split(LF).filter((line) => line.trim() !== '');
+      assert.ok(lines.at(-1).startsWith(SESSION_CLOSE_LEAD), lines.at(-1));
+      assert.equal(lines.filter((line) => line.includes('Two blocks for the user')).length, 1);
+    });
+
+    it(`the Story sessions body line ends with the one-task sentence: ${label}`, () => {
+      const [, body] = extractStoryRegion(read(root, RULES_FILE)).split(LF);
+      assert.match(body.slice(body.lastIndexOf('. ') + 2), new RegExp(TASK_PHRASE));
+      assert.equal(body.split(TASK_PHRASE).length, 2);
+    });
+
+    it(`neither region names a kit path: ${label}`, () => {
+      const text = read(root, RULES_FILE);
+      for (const region of [extractCommunicationRegion(text), extractStoryRegion(text)]) assert.doesNotMatch(region, KIT_PATH_RE);
+    });
+  }
+});
+
+describe('spec:session-rules/S4 the handover section and the changelog field in both templates', () => {
+  for (const [label, root] of [['kit', KIT_TEMPLATES], ['memory', MEMORY_TEMPLATES]]) {
+    it(`the handover carries the section once, after the Active recipes line and before the last-session block: ${label}`, () => {
+      const lines = read(root, 'handover.md').split(LF);
+      const start = lines.indexOf(FOR_THE_USER);
+      assert.equal(lines.filter((line) => line === FOR_THE_USER).length, 1);
+      assert.ok(lines.findIndex((line) => line.startsWith('**Active recipes:**')) < start);
+      assert.ok(start < lines.indexOf('## What was done last session'));
+      const section = lines.slice(start + 1, lines.findIndex((line, index) => index > start && line.startsWith('## ')));
+      const at = LABELS.map((label) => section.indexOf(label));
+      assert.deepEqual(LABELS.map((label) => section.filter((line) => line === label).length), [1, 1]);
+      assert.ok(at[0] < at[1], 'the labels stand in order');
+      for (const [index, from] of at.entries()) {
+        const text = section.slice(from + 1, index === 0 ? at[1] : undefined).filter((line) => line.trim() !== '');
+        assert.equal(text.length, 1, LABELS[index]);
+        assert.ok(text[0].startsWith('- '), text[0]);
+        assert.doesNotMatch(text[0], PLACEHOLDER_RE);
+      }
+    });
+
+    it(`the changelog entry carries the For the user field line after Goal and no such heading: ${label}`, () => {
+      const lines = read(root, 'changelog.md').split(LF);
+      const field = lines.findIndex((line) => line.startsWith('**For the user:** '));
+      assert.equal(lines.filter((line) => line.startsWith('**For the user:**')).length, 1);
+      assert.ok(lines.findIndex((line) => line.startsWith('**Goal:**')) < field);
+      assert.ok(field < lines.findIndex((line) => line.startsWith('**Changes:**')));
+      assert.ok(!lines.some((line) => /^#+ .*For the user/.test(line)));
+    });
+  }
+
+  it('the kit mirrors of both templates are byte-identical to the memory originals', () => {
+    for (const name of ['handover.md', 'changelog.md']) {
+      assert.ok(readFileSync(join(KIT_TEMPLATES, name)).equals(readFileSync(join(MEMORY_TEMPLATES, name))), name);
+    }
   });
 });
 

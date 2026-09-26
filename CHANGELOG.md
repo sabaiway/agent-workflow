@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-26 — AD-159 the session rules become canon the consumer reads (kit 14.13.0 MINOR, memory 8.1.2 PATCH, engine 5.10.0 MINOR; both bridges unchanged)
+
+**A kit user's agent closes each session with two blocks for the user, and a project without a queue is offered
+one.** The rules template's Communication region gains the bullet `Two blocks for the user` and its Story sessions
+region the sentence on one task per carrier session, in the kit and memory copies alike; the outgoing texts become
+priors, so the upgrade's `lens` step refreshes an unedited region without an ask. The handover template gains a
+`## For the user` section, judged by the new read-only `tools/session-close-check.mjs`, and the changelog template a
+`**For the user:**` line. The `tier` registry gains `session-close-rules`, which only reports, and
+`named-queue-row-seed`, which the `tier` step previews and, on its one yes, seeds `docs/plans/queue.md` create-only
+from the kit's seed; the engine's
+queue canon names the seed. Story S5 of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract
+`docs/ai/specs/kit/tier/session-rules/` (new).
+
 ## 2026-09-25 — AD-158 the kit's own checkers get a declare verb the upgrade offers (kit 14.12.0 MINOR, memory 8.1.1 PATCH; engine 5.9.1 and both bridges unchanged)
 
 **The kit's own checkers can be declared as gates of a project on the upgrade's one yes.** The new

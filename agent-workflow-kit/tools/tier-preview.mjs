@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tier-preview.mjs — the offer of lineage step 4.0.0: one preview over the whole profile-gap
-// registry; on an explicit yes (--apply) the absent epic and task slots and the epic store seed;
+// registry; on an explicit yes (--apply) the absent epic and task slots, the epic store seed and the queue seed;
 // on an explicit no (--decline) the decline record. Governing contract:
 // docs/ai/specs/kit/tier/tier-offer/ (part tier-preview). main(argv, deps) returns, never exits,
 // never asks; every read and write goes through deps.
@@ -12,7 +12,7 @@ import { isDirectRun } from './direct-run.mjs';
 import { tmpNote } from './ensure-ops.mjs';
 import { CANON_README, applySetOps, refreshReadme } from './orchestration-config.mjs';
 import { writeConfig } from './orchestration-write.mjs';
-import { PROFILE_GAPS, readTierConfig } from './profile-gaps.mjs';
+import { PROFILE_GAPS, readQueueSeed, readTierConfig } from './profile-gaps.mjs';
 import { composeReadiness, planRecipe } from './recipes.mjs';
 import { TIER_TARGETS, isDeclineCurrent, readDeclines, readShippedProfile } from './reference-profile.mjs';
 
@@ -30,6 +30,10 @@ const SLOTS_ID = 'epic-task-slots';
 const STORE_ID = 'epic-store-seeded';
 const STORE_DIR = 'docs/ai/epics';
 const STORE_SEED = 'docs/ai/epics/.gitkeep';
+const QUEUE_ID = 'named-queue-row-seed';
+const PLANS_DIR = 'docs/plans';
+const QUEUE_SEED = 'docs/plans/queue.md';
+const MISSING_CODE = 'ENOENT';
 const CONFIG_WRITTEN = 'docs/ai/orchestration.json';
 const DECLINES_REL = 'docs/ai/profile-declines.json';
 const SCHEMA = 1;
@@ -53,7 +57,7 @@ export const OUTCOME_LINES = Object.freeze({
   slotValue: (activity, slot, value, skipped = []) => `${INDENT}${activity}.${slot} = ${value}`
     + skipped.map(({ candidate, reason }) => ` — ${candidate} skipped: ${reason}`).join(''),
   slotPresent: (activity, slot) => `${INDENT}${activity}.${slot}: present`,
-  tmpLeft: (tmp) => tmpNote(STORE_SEED, tmp)[0],
+  tmpLeft: (rel, tmp) => tmpNote(rel, tmp)[0],
   nothingOffered: () => 'nothing offered — nothing recorded',
   detectFailed: (cause) => `backend detection failed (${safeLine(cause)}) — every bridge is treated as not ready`,
   refusal: (name, detail) => `tier-preview: refused — ${name}${detail ? `: ${safeLine(detail)}` : ''}`,
@@ -61,7 +65,7 @@ export const OUTCOME_LINES = Object.freeze({
   help: () => [
     'tier-preview.mjs --cwd DIR [--apply | --decline]',
     'Previews every profile gap of the project in DIR; writes nothing by default.',
-    '--apply writes the offered items: the absent epic and task settings and the epic store seed.',
+    '--apply writes the offered items: the absent epic and task settings, the epic store seed and the queue seed.',
     '--decline records every offered item as declined at the shipped profile lineage.',
     'Exit codes: 0 done, 1 one named refusal, 2 usage.',
   ].join(LF),
@@ -149,11 +153,30 @@ const writeSlots = (root, config, slots, deps) => {
   writeConfig(root, refreshReadme(merged).config, deps);
 };
 
-const storeCreated = (root, deps) => {
+const directoryAt = (root, rel, deps) => {
   try {
-    return deps.lstat(resolve(root, STORE_DIR)).isDirectory();
+    return deps.lstat(resolve(root, rel)).isDirectory();
   } catch {
     return false;
+  }
+};
+
+const missingAt = (root, rel, deps) => {
+  try {
+    deps.lstat(resolve(root, rel));
+    return false;
+  } catch (error) {
+    return error?.code === MISSING_CODE;
+  }
+};
+
+const writeQueueSeed = (root, deps, bytes, made) => {
+  const plansMissing = missingAt(root, PLANS_DIR, deps);
+  try {
+    return { seeded: writeProjectFileCreateOnly(root, QUEUE_SEED, bytes, deps, { noun: 'the queue seed' }) };
+  } catch (error) {
+    if (plansMissing && directoryAt(root, PLANS_DIR, deps)) made.push(`${PLANS_DIR} created`);
+    return { refusal: refuse('write-failed', [...made, causeOf(error)].join('; ')) };
   }
 };
 
@@ -161,6 +184,8 @@ const runApply = (root, deps, judged, slots, config) => {
   const byId = new Map(judged.map((item) => [item.entry.id, item]));
   const extra = [];
   const made = [];
+  const seed = byId.get(QUEUE_ID)?.word === WORDS.offered ? readQueueSeed(deps) : null;
+  if (seed?.reason) return { refusal: refuse(seed.reason) };
   if (byId.get(SLOTS_ID)?.word === WORDS.offered) {
     try {
       writeSlots(root, config, slots, deps);
@@ -175,11 +200,21 @@ const runApply = (root, deps, judged, slots, config) => {
     try {
       seeded = writeProjectFileCreateOnly(root, STORE_SEED, '', deps, { noun: 'the epic store seed' });
     } catch (error) {
-      if (storeCreated(root, deps)) made.push(`${STORE_DIR} created`);
+      if (directoryAt(root, STORE_DIR, deps)) made.push(`${STORE_DIR} created`);
       return { refusal: refuse('write-failed', [...made, causeOf(error)].join('; ')) };
     }
     byId.set(STORE_ID, { ...byId.get(STORE_ID), word: seeded.created ? WORDS.applied : WORDS.present });
-    if (seeded.tmpLeftBehind) extra.push(OUTCOME_LINES.tmpLeft(seeded.tmpLeftBehind));
+    if (seeded.created) made.push(`${STORE_SEED} created`);
+    if (seeded.tmpLeftBehind) {
+      extra.push(OUTCOME_LINES.tmpLeft(STORE_SEED, seeded.tmpLeftBehind));
+      made.push(`${seeded.tmpLeftBehind} left behind`);
+    }
+  }
+  if (seed) {
+    const written = writeQueueSeed(root, deps, seed.bytes, made);
+    if (written.refusal) return written;
+    byId.set(QUEUE_ID, { ...byId.get(QUEUE_ID), word: written.seeded.created ? WORDS.applied : WORDS.present });
+    if (written.seeded.tmpLeftBehind) extra.push(OUTCOME_LINES.tmpLeft(QUEUE_SEED, written.seeded.tmpLeftBehind));
   }
   return { judged: judged.map((item) => byId.get(item.entry.id)), extra };
 };

@@ -17,6 +17,7 @@ maxLines: 700
 ## {{DATE}} — Bootstrap
 
 **Goal:** Initialise the AI-agent memory system.
+**For the user:** what was done, and for what — the project now has an AI-agent memory, so each session starts from the last one's record; what is next, and why — the first real task, whose entry says what it did for you.
 **Changes:**
 - Created `AGENTS.md` (entry point) + `CLAUDE.md` symlink.
 - Created `docs/ai/` with the spec files + `pages/`.

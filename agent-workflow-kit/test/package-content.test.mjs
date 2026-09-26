@@ -409,6 +409,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       // the epic and task-brief templates a user renders by hand, outside the deployed templates/ directory
       'references/authoring/EPIC_TEMPLATE.md',
       'references/authoring/TASK_TEMPLATE.md',
+      // the queue seed the tier offer writes, and the session-close checker a close runs
+      'references/authoring/QUEUE_TEMPLATE.md',
+      'tools/session-close-check.mjs',
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
       'tools/autonomy-doctor.mjs',
       'references/modes/autonomy-doctor.md',
@@ -843,7 +846,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 336 = 333 + tools/tier-guide-facts.mjs, tools/tier-guide.mjs and references/modes/tier.md - story S3 of KIT-USERS-LEARN-THE-TIER-AND-WALK-IT
     // 339 = 336 + tools/tier-preview.mjs, tools/reference-profile.mjs and migrations/4.0.0-full-flow-offer.md - story S3 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 341 = 339 + tools/checker-gates-read.mjs and tools/checker-gates.mjs - story S4 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
-    assert.equal(packed.length, 341, `tarball file count drifted (${packed.length}\u2260 341)`);
+    // 343 = 341 + tools/session-close-check.mjs and references/authoring/QUEUE_TEMPLATE.md - story S5 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
+    assert.equal(packed.length, 343, `tarball file count drifted (${packed.length}\u2260 343)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

@@ -17,6 +17,8 @@ const RECORD = 'docs/ai/profile-declines.json';
 const STORE = 'docs/ai/epics';
 const SEED_FILE = 'docs/ai/epics/.gitkeep';
 const RULES = 'docs/ai/agent_rules.md';
+const QUEUE = 'docs/plans/queue.md';
+const S5_PRESENT = ['session-close-rules: present', 'named-queue-row-seed: present'];
 const CHECKER_LINE = 'checker-gates-declared: undecidable — declaration-absent';
 const READY = readinessOf({ codex: 'ready', agy: 'ready', executor: 'placed' });
 const NONE = readinessOf();
@@ -82,11 +84,11 @@ describe('spec:tier-offer/S5 a second --apply, like a first with both items pres
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.writes, []);
     assert.deepEqual(run.after, run.before);
-    assert.deepEqual(run.lines.slice(1), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE]);
+    assert.deepEqual(run.lines.slice(1), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE, ...S5_PRESENT]);
   });
 
   it('writes nothing when both items are present before the first run', async () => {
-    const { root } = makeProject({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' } } });
+    const { root } = makeProject({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' }, [QUEUE]: '# Queue\n' } });
     const run = await runOffer(root, ['--apply'], READY);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.writes, []);
@@ -101,9 +103,10 @@ describe('spec:tier-offer/S6 --decline records every offered id at the shipped l
     const run = await runOffer(root, ['--decline'], NONE);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.lines, ['story-sessions-section: recorded', `epic-task-slots: declined — at lineage ${LINEAGE}`,
-      'epic-store-seeded: recorded', CHECKER_LINE]);
+      'epic-store-seeded: recorded', CHECKER_LINE, 'session-close-rules: undecidable — story-sessions-absent',
+      'named-queue-row-seed: recorded']);
     const expected = { 'Zeta-upper': '1.0.0', 'alpha-lower': '9.9.9', 'epic-store-seeded': LINEAGE,
-      'epic-task-slots': LINEAGE, 'story-sessions-section': LINEAGE };
+      'epic-task-slots': LINEAGE, 'named-queue-row-seed': LINEAGE, 'story-sessions-section': LINEAGE };
     assert.equal(bytesOf(root, RECORD).toString(), record(expected));
     const renames = run.writes.filter(([name]) => name === 'rename');
     assert.equal(renames.length, 1);
@@ -115,7 +118,7 @@ describe('spec:tier-offer/S6 --decline records every offered id at the shipped l
     const { root } = makeProject({ files: { [CONFIG]: seed() } });
     assert.equal((await runOffer(root, ['--decline'], NONE)).code, 0);
     const recorded = bytesOf(root, RECORD);
-    assert.equal(recorded.toString(), record({ 'epic-store-seeded': LINEAGE, 'epic-task-slots': LINEAGE }));
+    assert.equal(recorded.toString(), record({ 'epic-store-seeded': LINEAGE, 'epic-task-slots': LINEAGE, 'named-queue-row-seed': LINEAGE }));
     const run = await runOffer(root, ['--decline'], NONE);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.writes, []);
@@ -124,12 +127,12 @@ describe('spec:tier-offer/S6 --decline records every offered id at the shipped l
   });
 
   it('writes no record when nothing is offered', async () => {
-    const { root } = makeProject({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' } } });
+    const { root } = makeProject({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' }, [QUEUE]: '# Queue\n' } });
     const run = await runOffer(root, ['--decline'], NONE);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.after, run.before);
     assert.deepEqual(run.lines, ['story-sessions-section: present', 'epic-task-slots: present', 'epic-store-seeded: present',
-      CHECKER_LINE, 'nothing offered — nothing recorded']);
+      CHECKER_LINE, ...S5_PRESENT, 'nothing offered — nothing recorded']);
   });
 });
 

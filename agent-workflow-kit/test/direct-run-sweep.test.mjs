@@ -48,6 +48,7 @@ const SWEPT_MODULES = Object.freeze([
   'agent-workflow-kit/tools/rules-insert.mjs',
   'agent-workflow-kit/tools/run-gates.mjs',
   'agent-workflow-kit/tools/sandbox-masks.mjs',
+  'agent-workflow-kit/tools/session-close-check.mjs',
   'agent-workflow-kit/tools/set-autonomy.mjs',
   'agent-workflow-kit/tools/set-flow.mjs',
   'agent-workflow-kit/tools/set-recipe.mjs',
@@ -91,8 +92,8 @@ const REMAINING_STANDALONE_MODULES = Object.freeze([
 test('the swept-module list is complete and duplicate-free', () => {
   // Object.freeze pins the CONTENTS, never the completeness: a dropped entry, or one replaced by a
   // duplicate, would silently narrow both arms below. These two literals are what makes that loud.
-  assert.equal(SWEPT_MODULES.length, 44, 'the frozen W1 site list is 44 files');
-  assert.equal(new Set(SWEPT_MODULES).size, 44, 'the frozen W1 site list has no duplicate entry');
+  assert.equal(SWEPT_MODULES.length, 45, 'the frozen W1 site list is 45 files');
+  assert.equal(new Set(SWEPT_MODULES).size, 45, 'the frozen W1 site list has no duplicate entry');
 });
 
 test('the standalone-module list is complete and duplicate-free', () => {

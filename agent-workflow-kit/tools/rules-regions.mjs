@@ -27,7 +27,7 @@ const SINGLE_QUOTE = "'";
 const QUOTE_ESCAPE = "'\\''";
 
 // Append the OUTGOING canon here in the same release that changes the template
-// §2.5 region — the fragment-or-prior reconcile depends on it.
+// §2.5 or §2.7 region — the fragment-or-prior reconcile depends on it.
 const COMMS_PRIOR_PRE_AD054 = `### 2.x. Communication (user-facing messages)
 Apply this as part of §2 before any user-facing summary:
 - **Deliver the artifact IN the message** — paste the prompt / diff / version / command inline; never "see §X / open the file / run it and you'll see" as a *substitute* for showing what was asked.
@@ -46,7 +46,13 @@ Apply this as part of §2 before any user-facing summary:
 - **Live host/session facts are tool-composed only.** Any claim about the current host or session state (prompts fired, sandbox scope, whether a bypass was needed, network reachability, approval counts) must trace to **live tool output** from **this session**; a memory/handover snapshot is **context, never report facts**, and a claim with no live signal is **omitted or explicitly marked unverified** — never asserted from recollection.`;
 const COMMS_PRIOR_STATE_BLOCK = `${COMMS_PRIOR_PLAIN_LANGUAGE}
 - **The closing state block answers three DIFFERENT questions.** Close a user-facing message with three labelled slots — *now* · *what I need from you* · *what's next*. The slot LABELS stay ENGLISH — an English label is what lets a state-block checker FIND the block and its slots at all; everything written INTO a slot is in the project's dialogue language; when that language is not English, the checker's English phrase sets do not judge those values. **Now** = the state at this instant: what is RUNNING, or what the work is stopped on. It is **never a report of finished work** — what you completed goes in the message BODY, above the block. **From you** = the real unblocker, named; a turn that is ENDING always has one. **Next** = what follows. A *now* slot that opens with what was completed buries the one fact the reader opened the message for, and the three slots collapse into one restatement.`;
-const COMMS_PRIORS = [COMMS_PRIOR_PRE_AD054, COMMS_PRIOR_AD054, COMMS_PRIOR_PLAIN_LANGUAGE, COMMS_PRIOR_STATE_BLOCK];
+const COMMS_PRIOR_SKIP_FINDING = `${COMMS_PRIOR_STATE_BLOCK}
+- **A skip that contradicts the tree is a finding.** A tool-composed \`skipped-*\` line whose stated reason the observed tree disproves (a "no Node" skip beside deployed Node scripts) is raised as a FINDING in the report, never pasted as a neutral outcome — and a tool may not emit a skip whose reason it could itself disprove.`;
+const COMMS_PRIORS = [
+  COMMS_PRIOR_PRE_AD054, COMMS_PRIOR_AD054, COMMS_PRIOR_PLAIN_LANGUAGE, COMMS_PRIOR_STATE_BLOCK, COMMS_PRIOR_SKIP_FINDING,
+];
+const STORY_PRIOR_FIVE_SESSIONS = `### 2.x. Story sessions
+A story — one row of an epic's ledger, carried by one plan — runs as five sessions, each ending at its own review checkpoint: **spec** (the contract under \`docs/ai/specs/\`, drafted and reviewed on the \`plan-authoring\` recipe), **plan** (the ledger, same recipe), **tests** (one task per ledger row, red first), **code** (one task per row, to green), and **diff review, release and record** (the review of the staged tree on the \`plan-execution\` recipe, the release where the story ships one, then the changelog and handover entries and the plan's Phase: Cleanup). Tests and code never share a session, and a spec and its plan never share one either. A storyless plan runs the same five. **Exception — a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup.`;
 
 export const RULES_REGIONS = Object.freeze([
   Object.freeze({
@@ -61,7 +67,7 @@ export const RULES_REGIONS = Object.freeze([
     headingRe: /^### 2[.]([0-9]+)[.] Story sessions/,
     label: '### 2.x. Story sessions',
     canon: TEMPLATE_CANON,
-    priors: [],
+    priors: [STORY_PRIOR_FIVE_SESSIONS],
   }),
   Object.freeze({
     id: 'lens',
