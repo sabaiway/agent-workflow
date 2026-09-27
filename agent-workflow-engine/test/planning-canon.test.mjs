@@ -8,6 +8,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
 const flat = planning.replace(/\s+/g, ' ');
 const LF = String.fromCharCode(10);
+const DASH = String.fromCharCode(8212);
 const OPT_IN = 'The opening sentence has a rung too: append `--require-names` and a row whose name is not a sentence' + LF
   + 'refuses. It is an OPT-IN a project adds once its rows are named \u2014 without the flag a nameless row is' + LF
   + 'only a note, so the gate line a project wrote before this rule keeps its verdict byte for byte.' + LF;
@@ -49,10 +50,11 @@ describe('planning.md — the plan shape', () => {
 
   it('states the one retry from the checkpoint on the posture fallback model as a recorded dispatch whose rationale states the model, and that a second refusal stops the story (spec:executor-vehicle/S7)', () => {
     const section = flat.split('## The task')[1].split('## The queue')[0];
-    assert.match(section, /\bretried\b/);
-    assert.match(section, /\bfallback\b/);
-    assert.match(section, /\brationale\b/);
-    assert.match(section, /\bsecond refusal\b/);
+    const clauses = ["A slice refused for its model's quota is retried ONCE", "from the task's checkpoint",
+      'on the fallback model of the resolved vehicle posture', 'the `fallback` of `docs/ai/vehicles.json`',
+      'the bundled default only when that file is absent', 'as a recorded dispatch of its own whose rationale states the model that ran it',
+      'a second refusal stops the story'];
+    assert.match(section, new RegExp(clauses.join(`[ ,;${DASH}]+`)));
   });
 
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {

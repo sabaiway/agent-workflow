@@ -1,8 +1,8 @@
 import { it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   AGENTS_DIR, CLAUDE_DIR, EXECUTOR_VEHICLE_REL, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION,
   CHEAP_AGENTS_BUNDLE, CHEAP_AGENTS_SYMLINK, preflightCheapAgents, readBundledAgents,
@@ -63,6 +63,17 @@ const traceReads = (overrides = {}) => {
 const denyPath = (target, fallback) => (path, ...args) => {
   if (path === target) throw Object.assign(new Error('denied'), { code: 'EACCES' });
   return fallback(path, ...args);
+};
+const makeOuter = () => {
+  const outer = mkdtempSync(join(tmpdir(), 'cheap-agents-root-'));
+  roots.push(outer);
+  return outer;
+};
+const runMain = (argv, deps = {}) => {
+  const output = [];
+  const errors = [];
+  const exit = main(argv, { ...deps, log: (line) => output.push(line), errlog: (line) => errors.push(line) });
+  return { exit, output, errors };
 };
 const assertPostureReport = (result, posture) => {
   assert.deepEqual(result.posture, posture);
@@ -283,11 +294,7 @@ it('spec:executor-vehicle/S4 refuses unreadable settings before any placement', 
           assertSettingsReason(error.message, expected.reason);
           return true;
         });
-        const output = [];
-        const errors = [];
-        const exit = main([dryRun ? '--dry-run' : '--apply', '--cwd', root], {
-          ...deps, log: (line) => output.push(line), errlog: (line) => errors.push(line),
-        });
+        const { exit, output, errors } = runMain([dryRun ? '--dry-run' : '--apply', '--cwd', root], deps);
         assert.equal(exit, 1);
         assert.deepEqual(output, []);
         assert.equal(errors.length, 1);
@@ -296,5 +303,68 @@ it('spec:executor-vehicle/S4 refuses unreadable settings before any placement', 
         assert.equal(existsSync(join(root, AGENTS_DIR)), false);
       }
     }
+  }
+});
+
+it('spec:executor-vehicle/S8 refuses a symlinked project root before any read or write', () => {
+  const project = makeProject(SETTINGS);
+  const handEdited = executorTemplate(readExecutorPosture(project).posture).content.replace(/^model:.*$/mu, 'model: haiku');
+  placeExecutor(project, handEdited);
+  const link = join(makeOuter(), 'link');
+  symlinkSync(project, link, 'dir');
+  const assertRefusal = (message) => {
+    assert.ok(message.includes(link), message);
+    assertWords(message, 'root symlink refusing write through');
+  };
+  const refused = (error) => {
+    assert.equal(error.code, CHEAP_AGENTS_SYMLINK);
+    assert.equal(error.exitCode, 1);
+    assertRefusal(error.message);
+    return true;
+  };
+  const underRoot = (event) => {
+    const path = event.slice(event.indexOf(':') + 1);
+    return path === project || [link, project].some((top) => path.startsWith(`${top}/`));
+  };
+  for (const cwd of [link, `${link}/`, `${link}/.`]) {
+    for (const dryRun of [true, false]) {
+      const { events, deps } = traceReads();
+      assert.throws(() => writeCheapAgents({ cwd, dryRun }, deps), refused);
+      assert.throws(() => preflightCheapAgents({ cwd }, deps), refused);
+      const { exit, output, errors } = runMain([dryRun ? '--dry-run' : '--apply', '--cwd', cwd], deps);
+      assert.equal(exit, 1);
+      assert.deepEqual(output, []);
+      assert.equal(errors.length, 1);
+      assertRefusal(errors[0]);
+      assert.deepEqual(events.filter(underRoot), []);
+      assert.deepEqual(readdirSync(join(project, AGENTS_DIR)), [EXECUTOR_NAME]);
+      assert.equal(readExecutor(project), handEdited);
+    }
+  }
+  for (const rel of [CONFIG_REL, SETTINGS_REL]) {
+    writeFileSync(join(project, rel), MALFORMED);
+    for (const dryRun of [true, false]) assert.throws(() => writeCheapAgents({ cwd: link, dryRun }), refused);
+  }
+});
+
+it('keeps today\'s answers for a regular-file, an unreadable, an absent and a linked-parent project root', () => {
+  const project = makeProject(SETTINGS);
+  const outer = makeOuter();
+  const file = join(outer, 'file');
+  writeFileSync(file, 'Not a directory\n');
+  symlinkSync(dirname(project), join(outer, 'parent'), 'dir');
+  for (const cwd of [file, join(file, 'project')]) {
+    const { exit, output, errors } = runMain(['--cwd', cwd]);
+    assert.equal(exit, 1);
+    assert.deepEqual(output, []);
+    assert.equal(errors.length, 1);
+    assertSettingsReason(errors[0], 'unreadable ENOTDIR');
+  }
+  for (const cwd of [join(outer, 'absent'), join(outer, 'parent', basename(project))]) {
+    const { exit, output, errors } = runMain(['--cwd', cwd]);
+    assert.equal(exit, 0);
+    assert.deepEqual(errors, []);
+    assert.match(output.join('\n'), /DRY RUN/u);
+    assertWords(output.join('\n'), 'would place');
   }
 });

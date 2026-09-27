@@ -12,8 +12,8 @@
 //   • deployment-gated — `--apply` STOPs unless docs/ai/.workflow-version equals the lineage
 //     head (a dry-run stays usable whatever the stamp says; an unreadable orchestration config
 //     STOPs both, since the derived lenses it names cannot be known);
-//   • symlink-safe — a symlinked `.claude` / `.claude/agents` / target file is a STOP, never a
-//     write-through;
+//   • symlink-safe — a symlinked project root, `.claude`, `.claude/agents` or target file is a
+//     STOP, in a dry-run too, never a write-through;
 //   • preserves differing .claude/agents/ files (`customized — preserved`), except the executor:
 //     on apply its body is re-derived from docs/ai/vehicles.json, replacing a hand edit;
 //     an identical file is `already current` (idempotent re-run);
@@ -31,7 +31,7 @@
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDirectRun } from './direct-run.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
@@ -117,9 +117,21 @@ const writeFsDeps = (deps = {}) => ({
   writeFile: deps.writeFile ?? writeFileSync,
 });
 
+const refuseSymlinkedRoot = (projectDir, deps) => {
+  const root = resolve(projectDir);
+  let stat;
+  try {
+    stat = readFsDeps(deps).lstat(root);
+  } catch {
+    return;
+  }
+  if (stat.isSymbolicLink()) throw makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, `the project root ${root} is a symlink — refusing to write through it`);
+};
+
 export const preflightCheapAgents = ({ cwd, derived = [] }, deps = {}) => {
   const fs = readFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
+  refuseSymlinkedRoot(projectDir, deps);
   const templatesByName = new Map(readBundledAgents(deps).map((template) => [template.name, template]));
   for (const template of derived) templatesByName.set(template.name, template);
   const templates = [...templatesByName.values()];
@@ -169,6 +181,7 @@ export const applyCheapAgentsCommand = (root) =>
 export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const fs = writeFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
+  refuseSymlinkedRoot(projectDir, deps);
   const posture = loadExecutorPostureOrStop(projectDir, deps);
   const derived = [executorTemplate(posture, deps), ...configuredDerivedTemplates(projectDir, deps)];
   const preflight = preflightCheapAgents({ cwd: projectDir, derived }, deps);

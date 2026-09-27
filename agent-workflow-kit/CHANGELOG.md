@@ -4,6 +4,20 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.14.1 — the agents writer stops on a project folder given as a symlink, before it reads or writes anything (AD-161)
+
+**`cheap-agents.mjs --cwd <dir>` now refuses a `<dir>` that is itself a symlink.** Until 14.14.1 an `--apply` there
+wrote the vehicles through the link. With a hand-edited executor it placed `changelog-skeleton.md` and then failed on
+the executor with an uncoded error, leaving `.claude/agents/` half placed; with a trailing `/` even that executor was
+rewritten through the link.
+
+- **The refusal.** `<link>`, `<link>/` and `<link>/.` stop with `CHEAP_AGENTS_SYMLINK`, exit 1, and a message naming
+  the project root as a symlink the writer refuses to write through. It is the first step of `--dry-run` and
+  `--apply` alike and of a direct `preflightCheapAgents` call: nothing under the root is read, nothing is written.
+- **What stays.** A real directory, a regular file, an absent path and a project reached through a linked parent
+  directory get the same answers as in 14.14.0, and so does the default, the current directory. The mode doc's
+  symlink-safe line and the tool header name the project root.
+
 ## 14.14.0 — the Recommendations screen lists each step of the reference setup you have not taken or declined, with its preview command or the reason it has none (AD-160)
 
 **`/agent-workflow-kit recommendations` now shows what your project still lacks of the full flow.** Until 14.14.0
