@@ -7,13 +7,14 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
-## 2026-09-27 — AD-161 the agents writer refuses a symlinked project root (kit 14.14.1 PATCH; memory 8.1.2, engine 5.10.0 and both bridges unchanged)
+## 2026-09-27 — AD-161 the agents writer refuses a symlinked project root (kit 14.14.1 PATCH, engine 5.10.1 PATCH; memory 8.1.2 and both bridges unchanged)
 
 **`cheap-agents.mjs` given a project root that is a symlink — `<link>`, `<link>/` or `<link>/.` — stops with
 `CHEAP_AGENTS_SYMLINK`, exit 1, before it reads anything under the root, in a dry-run and an apply alike.** An
 `--apply` there used to write through the link, or, with a hand-edited executor, leave `.claude/agents/` half placed. The check is the first step of
 `preflightCheapAgents` and `writeCheapAgents`; every other root keeps its 14.14.0 answer. The engine's planning-canon
-suite (not shipped) now matches the one retry sentence clause by clause, so a weakened sentence goes red. Contract
+suite (not shipped) now matches the one retry sentence clause by clause, so a weakened sentence goes red; engine 5.10.1
+ships no other change, bumped because the publish workflow refuses a changed folder at an unchanged version. Contract
 `docs/ai/specs/kit/executor-vehicle.md` (revision 2, S8 bound).
 
 ## 2026-09-27 — AD-160 the Recommendations screen names the gap to the reference profile (kit 14.14.0 MINOR; memory 8.1.2, engine 5.10.0 and both bridges unchanged)

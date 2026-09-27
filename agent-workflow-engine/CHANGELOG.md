@@ -4,6 +4,13 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.10.1 — the planning canon's retry test matches the whole retry sentence (AD-161)
+
+`test/planning-canon.test.mjs` now checks the retry sentence of `references/planning.md` clause by clause, in order,
+so a weakened sentence (a retry "up to three times", or without "from the task's checkpoint") fails the suite. The
+canon, the scripts and the templates are unchanged; the suite is not in the published package. PATCH: the publish
+workflow refuses to skip a package whose folder changed without a version bump. Published with kit 14.14.1.
+
 ## 5.10.0 — the queue canon names the seeded queue (AD-159)
 
 `references/planning.md`, *The queue*: one sentence is added after the `--require-names` opt-in paragraph — a project
