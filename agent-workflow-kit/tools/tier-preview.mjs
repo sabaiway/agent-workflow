@@ -12,9 +12,9 @@ import { isDirectRun } from './direct-run.mjs';
 import { tmpNote } from './ensure-ops.mjs';
 import { CANON_README, applySetOps, refreshReadme } from './orchestration-config.mjs';
 import { writeConfig } from './orchestration-write.mjs';
-import { PROFILE_GAPS, readQueueSeed, readTierConfig } from './profile-gaps.mjs';
+import { GAP_STATES, NO_COMMAND_SENTENCE, judgeProfileGaps, readQueueSeed, readTierConfig } from './profile-gaps.mjs';
 import { composeReadiness, planRecipe } from './recipes.mjs';
-import { TIER_TARGETS, isDeclineCurrent, readDeclines, readShippedProfile } from './reference-profile.mjs';
+import { TIER_TARGETS, readDeclines, readShippedProfile } from './reference-profile.mjs';
 
 const LF = String.fromCharCode(10);
 const ARGV_OFFSET = 2;
@@ -39,21 +39,15 @@ const DECLINES_REL = 'docs/ai/profile-declines.json';
 const SCHEMA = 1;
 const INDENT = '  ';
 const WORDS = Object.freeze({
-  present: 'present',
-  offered: 'offered',
-  declined: 'declined',
-  undecidable: 'undecidable',
   applied: 'applied',
   recorded: 'recorded',
 });
-const ABSENT_VERDICT = 'absent';
-const PRESENT_VERDICT = 'present';
 
 export const OUTCOME_LINES = Object.freeze({
   entry: (id, word, detail) => `${id}: ${word}${detail ? ` — ${detail}` : ''}`,
   declinedAt: (lineage) => `at lineage ${lineage}`,
   applyLine: (command) => `${INDENT}apply: ${command}`,
-  noCommand: () => `${INDENT}apply: no runnable command — the root or the kit path carries a control byte or a backtick`,
+  noCommand: () => `${INDENT}apply: ${NO_COMMAND_SENTENCE}`,
   slotValue: (activity, slot, value, skipped = []) => `${INDENT}${activity}.${slot} = ${value}`
     + skipped.map(({ candidate, reason }) => ` — ${candidate} skipped: ${reason}`).join(''),
   slotPresent: (activity, slot) => `${INDENT}${activity}.${slot}: present`,
@@ -125,23 +119,18 @@ const slotLines = (slots) => slots.map(({ target, declared, value, skipped }) =>
   ? OUTCOME_LINES.slotPresent(target.activity, target.slot)
   : OUTCOME_LINES.slotValue(target.activity, target.slot, value, skipped)));
 
-const judgeEntries = (root, deps, profile, declined) => PROFILE_GAPS.map((entry) => {
-  const detected = entry.detect({ root, deps });
-  if (detected.verdict === PRESENT_VERDICT) return { entry, word: WORDS.present };
-  if (detected.verdict !== ABSENT_VERDICT) return { entry, word: WORDS.undecidable, detail: detected.reason };
-  if (isDeclineCurrent(declined, entry.id, profile.lineage)) {
-    return { entry, word: WORDS.declined, detail: OUTCOME_LINES.declinedAt(declined[entry.id]) };
-  }
-  return { entry, word: WORDS.offered };
-});
+const judgeEntries = (root, deps, profile, declined) => judgeProfileGaps({ root, deps, lineage: profile.lineage, declined })
+  .map(({ entry, state, lineage, reason }) => ({
+    entry, word: state, detail: state === GAP_STATES.declined ? OUTCOME_LINES.declinedAt(lineage) : reason,
+  }));
 
 const renderEntry = ({ entry, word, detail }, root, slots) => {
   const lines = [OUTCOME_LINES.entry(entry.id, word, detail)];
-  if (word === WORDS.offered) {
+  if (word === GAP_STATES.offered) {
     const command = entry.apply(root);
     lines.push(command ? OUTCOME_LINES.applyLine(command) : OUTCOME_LINES.noCommand());
   }
-  if (entry.id === SLOTS_ID && (word === WORDS.offered || word === WORDS.applied)) lines.push(...slotLines(slots));
+  if (entry.id === SLOTS_ID && (word === GAP_STATES.offered || word === WORDS.applied)) lines.push(...slotLines(slots));
   return lines;
 };
 
@@ -184,9 +173,9 @@ const runApply = (root, deps, judged, slots, config) => {
   const byId = new Map(judged.map((item) => [item.entry.id, item]));
   const extra = [];
   const made = [];
-  const seed = byId.get(QUEUE_ID)?.word === WORDS.offered ? readQueueSeed(deps) : null;
+  const seed = byId.get(QUEUE_ID)?.word === GAP_STATES.offered ? readQueueSeed(deps) : null;
   if (seed?.reason) return { refusal: refuse(seed.reason) };
-  if (byId.get(SLOTS_ID)?.word === WORDS.offered) {
+  if (byId.get(SLOTS_ID)?.word === GAP_STATES.offered) {
     try {
       writeSlots(root, config, slots, deps);
     } catch (error) {
@@ -195,7 +184,7 @@ const runApply = (root, deps, judged, slots, config) => {
     made.push(`${CONFIG_WRITTEN} written`);
     byId.set(SLOTS_ID, { ...byId.get(SLOTS_ID), word: WORDS.applied });
   }
-  if (byId.get(STORE_ID)?.word === WORDS.offered) {
+  if (byId.get(STORE_ID)?.word === GAP_STATES.offered) {
     let seeded;
     try {
       seeded = writeProjectFileCreateOnly(root, STORE_SEED, '', deps, { noun: 'the epic store seed' });
@@ -203,7 +192,7 @@ const runApply = (root, deps, judged, slots, config) => {
       if (directoryAt(root, STORE_DIR, deps)) made.push(`${STORE_DIR} created`);
       return { refusal: refuse('write-failed', [...made, causeOf(error)].join('; ')) };
     }
-    byId.set(STORE_ID, { ...byId.get(STORE_ID), word: seeded.created ? WORDS.applied : WORDS.present });
+    byId.set(STORE_ID, { ...byId.get(STORE_ID), word: seeded.created ? WORDS.applied : GAP_STATES.present });
     if (seeded.created) made.push(`${STORE_SEED} created`);
     if (seeded.tmpLeftBehind) {
       extra.push(OUTCOME_LINES.tmpLeft(STORE_SEED, seeded.tmpLeftBehind));
@@ -213,7 +202,7 @@ const runApply = (root, deps, judged, slots, config) => {
   if (seed) {
     const written = writeQueueSeed(root, deps, seed.bytes, made);
     if (written.refusal) return written;
-    byId.set(QUEUE_ID, { ...byId.get(QUEUE_ID), word: written.seeded.created ? WORDS.applied : WORDS.present });
+    byId.set(QUEUE_ID, { ...byId.get(QUEUE_ID), word: written.seeded.created ? WORDS.applied : GAP_STATES.present });
     if (written.seeded.tmpLeftBehind) extra.push(OUTCOME_LINES.tmpLeft(QUEUE_SEED, written.seeded.tmpLeftBehind));
   }
   return { judged: judged.map((item) => byId.get(item.entry.id)), extra };
@@ -225,7 +214,7 @@ const serializeDeclines = (declined) => {
 };
 
 const runDecline = (root, deps, judged, profile, declined) => {
-  const offered = judged.filter(({ word }) => word === WORDS.offered);
+  const offered = judged.filter(({ word }) => word === GAP_STATES.offered);
   if (offered.length === 0) return { judged, extra: [OUTCOME_LINES.nothingOffered()] };
   const merged = { ...(declined ?? {}) };
   for (const { entry } of offered) merged[entry.id] = profile.lineage;
@@ -235,7 +224,7 @@ const runDecline = (root, deps, judged, profile, declined) => {
     return { refusal: refuse('write-failed', causeOf(error)) };
   }
   return {
-    judged: judged.map((item) => (item.word === WORDS.offered ? { ...item, word: WORDS.recorded } : item)),
+    judged: judged.map((item) => (item.word === GAP_STATES.offered ? { ...item, word: WORDS.recorded } : item)),
     extra: [],
   };
 };
@@ -257,7 +246,7 @@ const runOffer = (options, given) => {
     ...deps, onDetectError: (error) => notes.push(OUTCOME_LINES.detectFailed(causeOf(error))),
   });
   const judged = judgeEntries(root, deps, shipped.profile, record.declined);
-  const offersSlots = judged.some(({ entry, word }) => entry.id === SLOTS_ID && word === WORDS.offered);
+  const offersSlots = judged.some(({ entry, word }) => entry.id === SLOTS_ID && word === GAP_STATES.offered);
   const config = offersSlots ? readTierConfig(root, deps).config : null;
   const slots = offersSlots ? planSlots(config, readiness) : [];
   let outcome = { judged, extra: [] };

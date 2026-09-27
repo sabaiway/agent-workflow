@@ -60,8 +60,10 @@ import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_R
 // document builders — a fixture spelling either here would drift off what the probe reads. Dynamic:
 // the suite must LOAD against the pre-fix tree (no leaf, no probe export) so the red proof observes it.
 const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
-const { probeSpecAdoption, probeEnforcement } = await import('./recommendations.mjs');
+const { probeSpecAdoption, probeEnforcement, probeProfileGaps } = await import('./recommendations.mjs');
+const { composeProfileGapScreen } = await import('./profile-gap-screen.mjs').catch(() => ({}));
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
+import { makeProject as makeProfileProject } from './tier-preview.test/harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PACKAGE_JSON = '{"name":"fixture"}\n';
@@ -2904,5 +2906,85 @@ describe('the executor-vehicle apply follows the actual cause (AD-124 fold)', ()
     const item = itemOf(root, { surveyVehicle: survey('missing') });
     rmSync(root, { recursive: true, force: true });
     assert.match(item.apply, /^node .*cheap-agents\.mjs --apply --cwd /u);
+  });
+});
+
+const PROFILE_GAP = 'profile-gap';
+const PROFILE_GAP_BENEFIT = 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step';
+const PLAN_SHAPE_GATE = { id: 'mine', title: 't', cmd: `node "${join(HERE, 'plan-shape-cli.mjs')}" --check --in-flight` };
+const QUEUE_SKIP = 'named-queue-row-seed: plans-not-directory';
+const PROFILE_FILES = Object.freeze({
+  gaps: { 'docs/ai/orchestration.json': '{}\n', 'docs/ai/gates.json': '{"gates":[]}\n' },
+  undecidable: { 'docs/ai/orchestration.json': '{}\n', 'docs/ai/gates.json': '{"gates":[]}\n', 'docs/plans': 'not a directory' },
+  present: { 'docs/ai/orchestration.json': JSON.stringify({ epic: { author: 'solo', review: 'solo' }, task: { author: 'solo', execute: 'solo' } }),
+    'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE] }), 'docs/ai/epics': { kind: 'directory' }, 'docs/plans/queue.md': '# Queue\n' },
+});
+const profileRoot = (kind) => makeProfileProject({ files: PROFILE_FILES[kind] }).root;
+const profileProbe = () => probeProfileGaps ?? (() => { throw new Error('probeProfileGaps is absent'); });
+const screenOf = (root) => (composeProfileGapScreen ?? (() => { throw new Error('composeProfileGapScreen is absent'); }))({ root, deps: {} });
+const aloneDeps = () => ({ probes: [profileProbe()] });
+const expectedItem = ({ what, apply }) => ({ key: PROFILE_GAP, variant: PROFILE_GAP, severity: SEVERITY_OPTIONAL, what, benefit: PROFILE_GAP_BENEFIT, apply, detail: null });
+const numberedLines = (text) => text.split('\n').filter((line) => /^\d+\. /.test(line));
+
+describe('recommendations — the profile-gap probe (spec:gap-screen/S7)', () => {
+  it('runs last in PROBES', () => {
+    const probes = readFileSync(join(HERE, 'recommendations.mjs'), 'utf8').match(/const PROBES = Object\.freeze\(\[([^\]]*)\]\)/)[1];
+    assert.equal(probes.split(',').map((name) => name.trim()).filter(Boolean).at(-1), 'probeProfileGaps');
+  });
+  it('hands each gap to add and each skip reason to skip under the profile-gap key', () => {
+    const root = profileRoot('undecidable');
+    const calls = [];
+    profileProbe()({ root, deps: {}, add: (...call) => calls.push(['add', ...call]), skip: (key, err) => calls.push(['skip', key, err.message]) });
+    const { gaps } = screenOf(root);
+    assert.deepEqual([gaps.length, calls], [3, [...gaps.map(({ what, apply }) => ['add', PROFILE_GAP, what, apply]), ['skip', PROFILE_GAP, QUEUE_SKIP]]]);
+  });
+  it('makes each gap an optional item with the registry benefit, the leaf what and apply and no detail', () => {
+    const root = profileRoot('gaps');
+    const { items, skips } = buildRecommendations({ cwd: root, deps: aloneDeps() });
+    assert.deepEqual([items.length, skips], [4, []]);
+    assert.deepEqual(items, screenOf(root).gaps.map(expectedItem));
+  });
+  it('turns a throw inside the probe into one profile-gap skip', () => {
+    const throwing = Object.defineProperty(aloneDeps(), 'readFileSync', { enumerable: true, get: () => { throw new Error('injected getter failure'); } });
+    const { items, skips } = buildRecommendations({ cwd: profileRoot('gaps'), deps: throwing });
+    assert.deepEqual([items, skips], [[], [{ key: PROFILE_GAP, reason: 'injected getter failure' }]]);
+  });
+  it('carries the row in the registries', () => {
+    assert.deepEqual(
+      [SEVERITIES[PROFILE_GAP], WHATS[PROFILE_GAP], BENEFITS[PROFILE_GAP], RISK_NOTED_KEYS.includes(PROFILE_GAP), OPT_IN_CAPABILITIES.filter(({ advisorKey }) => advisorKey === PROFILE_GAP)],
+      [SEVERITY_OPTIONAL, '{what}', PROFILE_GAP_BENEFIT, true, [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: PROFILE_GAP }]],
+    );
+  });
+});
+
+describe('recommendations — the rendered profile-gap screen (spec:gap-screen/S8)', () => {
+  const render = (kind, args = [], root = profileRoot(kind)) => ({ root, run: main(['--cwd', root, ...args], { deps: aloneDeps() }) });
+  it('renders only profile gaps under the optional verdict line', () => {
+    const { root, run } = render('gaps');
+    assert.equal(run.stdout.split('\n')[2], composeVerdict({ attention: 0, optional: 4, skipped: 0 }));
+    assert.deepEqual(numberedLines(run.stdout), screenOf(root).gaps.map(({ what }, index) => `${index + 1}. optional: ${what}`));
+  });
+  it('adds the skipped-item line for an undecidable entry and withholds flow optimal and nothing is broken', () => {
+    const { stdout } = render('undecidable').run;
+    assert.equal(stdout.split('\n')[2], composeVerdict({ attention: 0, optional: 3, skipped: 1 }));
+    assert.ok(stdout.split('\n').includes(`  ⚠ skipped item profile-gap — probe failed: ${QUEUE_SKIP}`));
+    assert.ok(!stdout.includes(VERDICT_NOTHING_BROKEN) && !stdout.includes(RECOMMENDATIONS_EMPTY_LINE));
+  });
+  it('renders the empty-state line alone when every entry is present', () => {
+    assert.equal(render('present').run.stdout, `${RECOMMENDATIONS_SECTION_HEADER}\n\n${RECOMMENDATIONS_EMPTY_LINE}`);
+  });
+  it('carries the items and the skips as --json data', () => {
+    const { root, run } = render('undecidable', ['--json']);
+    const { items, skips } = JSON.parse(run.stdout);
+    assert.deepEqual([items, skips], [screenOf(root).gaps.map(expectedItem), [{ key: PROFILE_GAP, reason: QUEUE_SKIP }]]);
+  });
+  it('renders the profile gaps after every attention item, last in probe order, in the full chain', () => {
+    const { root } = makeProfileProject({ files: { ...PROFILE_FILES.gaps, 'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE] }) } });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    const first = items.findIndex(({ key }) => key === PROFILE_GAP);
+    assert.ok(items.some(({ severity }) => severity === SEVERITY_ATTENTION), 'the fixture fires an attention item');
+    assert.ok(first > 0 && items.slice(first).every(({ key }) => key === PROFILE_GAP), 'the profile gaps close the probe order');
+    const numbered = numberedLines(formatRecommendations({ items, skips }));
+    assert.deepEqual(numbered.slice(-3), screenOf(root).gaps.map(({ what }, index) => `${numbered.length - 2 + index}. optional: ${what}`));
   });
 });

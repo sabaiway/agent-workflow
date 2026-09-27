@@ -2,6 +2,7 @@
 
 <!-- opt-in-capability: family-freshness -->
 <!-- opt-in-capability: spec-adoption -->
+<!-- opt-in-capability: full-flow-profile -->
 
 Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md · ${CLAUDE_SKILL_DIR}/references/shared/deploy-tail.md · ${CLAUDE_SKILL_DIR}/references/shared/command-shapes.md
 

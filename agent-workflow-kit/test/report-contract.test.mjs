@@ -11,6 +11,7 @@
 
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,5 +150,31 @@ describe('report contract — the number, when shown, is never labelled "lineage
   it('bootstrap does not separately surface the structure number (it uses the shared footer)', () => {
     // Bootstrap step 11 routes through the shared footer contract; it must not print its own semver line.
     assert.doesNotMatch(bootstrap, STRUCTURE_LABEL_LEAK, 'bootstrap has no "Deployment structure:" leak');
+  });
+});
+
+const step11 = between(BOOTSTRAP_FILE, '11. **Report & ask.**', 'Fill strategy:');
+const accelerators = between(step11, 'present ONE compact optional-accelerators block', 'Then **ask before committing**');
+const GATES_CLAUSE = "the Recommendations section's `gates-declaration` item renders that offer first";
+const PRIOR_GATES_CLAUSE = 'this block is where that offer fires';
+const count = (text, literal) => text.split(literal).length - 1;
+
+describe('report contract — bootstrap step 11 renders the Recommendations section (spec:gap-screen/S11)', () => {
+  it('names the advisor command, the presentation contract, the consent lane and the mode-doc pointer once each', () => {
+    for (const literal of [
+      'run `node ${CLAUDE_SKILL_DIR}/tools/recommendations.mjs --cwd <project-root>`',
+      'from the `## Recommendations (agent-workflow)` header', "in the user's conversational language",
+      'commands, paths, hosts and rule strings byte-exact', 'present-even-when-empty and verdict-first',
+      'OFFER the consent-gated applies per `${CLAUDE_SKILL_DIR}/references/modes/recommendations.md`',
+    ]) assert.equal(count(flat(step11), literal), 1, `step 11 carries once: ${literal}`);
+  });
+  it('renders the section after the tree and filled lines and before the footer and the accelerators', () => {
+    const positions = ['Show `tree docs/ai/`', 'left as TODO', 'tools/recommendations.mjs', 'print the **report footer**', 'optional-accelerators block'].map((anchor) => step11.indexOf(anchor));
+    assert.deepEqual(positions.filter((position) => position >= 0).sort((left, right) => left - right), positions, `anchors in order: ${positions}`);
+  });
+  it('keeps the accelerators block byte-equal to HEAD 6fabf9f but for the gates bullet clause', () => {
+    assert.deepEqual([count(accelerators, GATES_CLAUSE), count(accelerators, PRIOR_GATES_CLAUSE)], [1, 0]);
+    const prior = accelerators.replace(GATES_CLAUSE, PRIOR_GATES_CLAUSE);
+    assert.deepEqual([prior.length, createHash('sha256').update(prior).digest('hex')], [1182, '37f564e8d373b2202edce2cd94ec571692356a182d0f984a4814fdcf7683f2cd']);
   });
 });

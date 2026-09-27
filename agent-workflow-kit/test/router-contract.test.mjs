@@ -196,7 +196,9 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 51200, // 50176 → 51200 (50 KB): router + any single mode file. Consumers epic story S3 — references/modes/upgrade.md gains the `tier` run-list row and rationale block, hands the lens ask to it and names `tier` in the step-4/8 reports (+1138 B).
+  routerPlusMode: 52224, // 51200 → 52224 (51 KB): router + any single mode file. Consumers epic story S6 — references/modes/upgrade.md gains the `full-flow-profile` capability declaration (the 46 B line with its LF).
+  // Measured 51232 B (router 11947 + upgrade 39285), 32 B over the 51200 ceiling; 992 B of headroom — one documented KB-multiple bump.
+  // History: 50176 → 51200 (50 KB): story S3 — references/modes/upgrade.md gains the `tier` run-list row and rationale block, hands the lens ask to it and names `tier` in the step-4/8 reports (+1138 B).
   // Measured 50971 B (router 11947 + upgrade 39024), 795 B over the 50176 ceiling; 229 B of headroom — one documented KB-multiple bump. History: 49152 → 50176 (49 KB): story S2 — the story-sessions outcome set in upgrade.md (+533 B), measured 49634 B.
   // History: 47104 → 49152 (48 KB): AD-123 — upgrade.md
   // gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the

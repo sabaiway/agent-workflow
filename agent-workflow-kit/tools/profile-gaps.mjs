@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { CANDIDATE_STATES, isDeployed, judgeCheckerGates } from './checker-gates-read.mjs';
 import { normalizeLensBody, reconcileCommsText, reconcileStoryText } from './lens-region.mjs';
 import { CONFIG_REL, validateConfig } from './orchestration-config.mjs';
-import { TIER_TARGETS } from './reference-profile.mjs';
+import { TIER_TARGETS, isDeclineCurrent } from './reference-profile.mjs';
 import {
   RULES_REGIONS,
   extractRegionBy,
@@ -67,7 +67,8 @@ const REASONS = Object.freeze({
   queueUnreadable: 'queue-unreadable',
   seedUnreadable: 'seed-unreadable',
 });
-const REGION_ABSENT = Object.freeze({ communication: 'communication-absent', 'story-sessions': 'story-sessions-absent' });
+export const STORY_REGION_ABSENT = 'story-sessions-absent';
+const REGION_ABSENT = Object.freeze({ communication: 'communication-absent', 'story-sessions': STORY_REGION_ABSENT });
 const JUDGEMENTS = Object.freeze({ communication: reconcileCommsText, 'story-sessions': reconcileStoryText });
 const TEMPLATE_REGIONS = RULES_REGIONS.filter(({ canon }) => canon === TEMPLATE_CANON);
 const STORY_REGION = RULES_REGIONS.find(({ id }) => id === STORY_ID);
@@ -250,3 +251,22 @@ export const PROFILE_GAPS = Object.freeze([
   Object.freeze({ id: SESSION_RULES_ID, detect: detectSessionRules, apply: (root) => buildInsertPreview(root) }),
   Object.freeze({ id: QUEUE_SEED_ID, detect: detectQueueSeed, apply: tierPreview }),
 ]);
+
+export const GAP_STATES = Object.freeze({
+  present: 'present',
+  offered: 'offered',
+  declined: 'declined',
+  undecidable: 'undecidable',
+});
+
+export const NO_COMMAND_SENTENCE = 'no runnable command — the root or the kit path carries a control byte or a backtick';
+
+export const judgeProfileGaps = ({ root, deps, lineage, declined }) => PROFILE_GAPS.map((entry) => {
+  const detected = entry.detect({ root, deps });
+  if (detected.verdict === VERDICTS.present) return { entry, state: GAP_STATES.present };
+  if (detected.verdict !== VERDICTS.absent) return { entry, state: GAP_STATES.undecidable, reason: detected.reason };
+  if (isDeclineCurrent(declined, entry.id, lineage)) {
+    return { entry, state: GAP_STATES.declined, lineage: declined[entry.id] };
+  }
+  return { entry, state: GAP_STATES.offered };
+});

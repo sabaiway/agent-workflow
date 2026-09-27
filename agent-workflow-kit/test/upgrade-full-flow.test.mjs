@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
-  rmSync, symlinkSync, writeFileSync,
+  realpathSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -41,6 +41,9 @@ const QUEUE_PATH = 'docs/plans/queue.md';
 const QUEUE_SEED = 'references/authoring/QUEUE_TEMPLATE.md';
 const LENS_TOOL = 'lens-region.mjs';
 const AUDIT_TOOL = 'queue-audit-cli.mjs';
+const SCREEN_TOOL = 'recommendations.mjs';
+const PROFILE_PATH = 'references/reference-profile.json';
+const PROFILE_GAP = 'profile-gap';
 const SESSION_CLOSE_LEAD = 'Two blocks for the user';
 const TASK_PHRASE = 'one task per session';
 const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all']];
@@ -52,6 +55,15 @@ const SLOT_VALUES = [
   ['task', 'execute', ['solo', 'delegated', 'subagent']],
 ];
 const PRINTED_SLOT_RE = /^ {2}([a-z]+)\.([a-z]+) = ([a-z]+)/;
+// What the older project lacks before S1, in registry order, with the installed tool each gap's preview runs.
+const SCREEN_GAPS = [
+  ['story-sessions-section', INSERT_TOOL],
+  ['epic-task-slots', OFFER_TOOL],
+  ['epic-store-seeded', OFFER_TOOL],
+  ['checker-gates-declared', CHECKER_TOOL],
+  ['named-queue-row-seed', OFFER_TOOL],
+];
+const SCREEN_SKIPS = ['session-close-rules: region-prior'];
 const PAYLOAD = ['references', 'launchers', 'migrations', 'tools', 'bridges'];
 const STORIES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
 const ITEM_IDS = [
@@ -67,8 +79,7 @@ const ITEM_IDS = [
   'profile-gap-screen',
 ];
 const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
-const LANDED = new Set(['S1', 'S2', 'S3', 'S4', 'S5']);
-const PENDING = () => ({ reason: 'detector pending' });
+const LANDED = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 const fixture = {};
 
 const removeSpan = (text, heading) => {
@@ -355,6 +366,33 @@ const detectQueueSeed = (record) => {
   return repeated.queue?.bytes?.equals(apply.queue.bytes) ? null : { reason: 'the second apply changed the queue' };
 };
 
+const parseScreen = (call) => {
+  const parsed = parseConfig(call.result.stdout);
+  return Array.isArray(parsed?.items) && Array.isArray(parsed?.skips) ? parsed : null;
+};
+const ofGapKey = (list) => list.filter(({ key }) => key === PROFILE_GAP);
+
+// The installed entries resolve their own path through symlinks, so the expected kit path is the home's real path.
+const detectGapScreen = (record) => {
+  const gap = findCallGap(record.slices.S6);
+  if (gap) return gap;
+  const [before, after] = record.slices.S6.map(parseScreen);
+  if (!before || !after) return { reason: 'a screen run is not strict JSON carrying items and skips' };
+  const profile = parseConfig(readProjectFile(record.home, PROFILE_PATH).bytes ?? '');
+  if (!Array.isArray(profile?.items)) return { reason: 'the installed profile is unreadable' };
+  const has = new Map(profile.items.map((item) => [item.id, item.has]));
+  const home = realpathSync(record.home);
+  const expected = SCREEN_GAPS.map(([id, tool]) => ({
+    variant: PROFILE_GAP, severity: 'optional', what: `${id}: ${has.get(id)}`, apply: `node ${join(home, 'tools', tool)} --cwd ${record.project}`,
+  }));
+  const items = ofGapKey(before.items).map(({ variant, severity, what, apply }) => ({ variant, severity, what, apply }));
+  if (!isDeepStrictEqual(items, expected)) return { reason: `the first run's profile-gap items differ: ${JSON.stringify(items)}` };
+  const skips = ofGapKey(before.skips).map(({ reason }) => reason);
+  if (!isDeepStrictEqual(skips, SCREEN_SKIPS)) return { reason: `the first run's profile-gap skips differ: ${JSON.stringify(skips)}` };
+  return ofGapKey(after.items).length + ofGapKey(after.skips).length === 0
+    ? null : { reason: 'the second run still carries a profile-gap item or skip' };
+};
+
 const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
@@ -365,7 +403,7 @@ const DETECTORS = {
   'checker-gates-declared': detectCheckerGates,
   'session-close-rules': detectSessionRules,
   'named-queue-row-seed': detectQueueSeed,
-  'profile-gap-screen': PENDING,
+  'profile-gap-screen': detectGapScreen,
 };
 
 const computeDigest = (profile) => {
@@ -385,9 +423,6 @@ const assertStory = (story, profile, record) => {
   }
   if (LANDED.has(story)) {
     assert.deepEqual(gaps, [], `${story}: ${JSON.stringify(gaps)}`);
-    for (const { id } of items) {
-      assert.notEqual(DETECTORS[id], PENDING, `${story}: ${id} is pending`);
-    }
   } else {
     assert.ok(gaps.length > 0, `${story} is unlanded but reports no gap`);
   }
@@ -432,6 +467,7 @@ describe('full flow upgrade delivery', () => {
       '--no-launchers', '--no-engine', '--no-memory', '--no-bridges',
     ], { encoding: 'utf8' });
     assert.equal(installer.status, 0, installer.stderr || installer.error?.message || installer.stdout);
+    const s6Before = runTool(home, project, SCREEN_TOOL, ['--json']);
     const answers = ['--language', 'Esperanto', '--attribution', 'off', '--apply'];
     const s1Calls = [
       runTool(home, project, 'migration-notes.mjs'),
@@ -453,9 +489,10 @@ describe('full flow upgrade delivery', () => {
       runChild(home, project, LENS_TOOL, ['reconcile', rulesPath], engineEnv),
       runChild(home, project, AUDIT_TOOL, ['--check', join(project, QUEUE_PATH), '--require-names']),
     ];
+    const s6Calls = [s6Before, runTool(home, project, SCREEN_TOOL, ['--json'])];
     fixture.record = {
       home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore, gatesBefore,
-      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls, S5: s5Calls }, payload: capturePayload(home),
+      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls, S5: s5Calls, S6: s6Calls }, payload: capturePayload(home),
     };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
@@ -535,7 +572,13 @@ describe('full flow upgrade delivery', () => {
     assertStory('S5', fixture.profile, fixture.record);
   });
 
+  it('spec:gap-screen/S12 screens the older project before S1 and finds no profile gap after S5', () => {
+    assert.deepEqual(fixture.record.slices.S6.map(({ name }) => name), [SCREEN_TOOL, SCREEN_TOOL]);
+    assertStory('S6', fixture.profile, fixture.record);
+  });
+
   it('spec:upgrade-delivery/S19 binds every detector to an item and every story to the landed register', () => {
+    assert.deepEqual([...LANDED], STORIES);
     const ids = fixture.profile.items.map(({ id }) => id);
     assert.deepEqual(Object.keys(DETECTORS).sort(), [...ids].sort());
     for (const id of ids) {

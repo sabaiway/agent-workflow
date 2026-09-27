@@ -11,10 +11,11 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
+import { OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
 
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(resolve(kitRoot, rel), 'utf8');
@@ -352,5 +353,48 @@ describe('the subagent promise is qualified on every shipped surface (D10)', () 
       assert.doesNotMatch(text, /applies to every future session and to subagents' Bash/, `${name}: the flat claim is gone`);
       assert.doesNotMatch(text, /\(it fires on subagent Bash too\)/, `${name}: the flat parenthetical is gone`);
     }
+  });
+});
+
+const PROFILE_GAP_NOTE_START = '- `profile-gap` — ';
+const PROFILE_GAP_NOTE_LITERALS = Object.freeze([
+  'is a PREVIEW that writes nothing',
+  'the confirmed pick runs the preview and you relay every line it prints',
+  'the same line with ` --apply` appended runs only on a SECOND yes',
+  'Items whose apply lines are byte-equal are one writer and take one answer',
+  "the tier preview's `--apply` writes the absent slots, the store seed and the queue seed together",
+  'the insert writes every region it plans, all or nothing',
+  'a `communication-absent` skip beside a declined `story-sessions-section` gets its own ask',
+  'A no records nothing',
+  'A DECLINE is asked apart from later',
+  'runs `node ${CLAUDE_SKILL_DIR}/tools/tier-preview.mjs --decline --cwd <project-root>` only when the user refuses EVERY item the tier preview then reports offered',
+  'a declined item leaves the screen until a lineage step changes the profile',
+  'An undecidable entry is a stated skip naming its reason',
+  "a prior → the upgrade's `lens` reconcile; an absent region → the insert; a customized region → a hand edit only",
+  'rewrites `docs/ai/orchestration.json` in canonical form with the `_README` note',
+  'the PRIVILEGED `docs/ai/gates.json`',
+]);
+
+describe('recommendations contract — the profile-gap posture note (spec:gap-screen/S9)', () => {
+  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+  const note = notes.slice(notes.indexOf(PROFILE_GAP_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
+  it('the intro names the gap; the profile-gap note occurs once, carries every literal and closes on its risk profile', () => {
+    assert.match(between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts'), /a difference from the reference profile the project has not declined/);
+    assert.equal(notes.split(PROFILE_GAP_NOTE_START).length - 1, 1, 'exactly one profile-gap bullet');
+    for (const literal of PROFILE_GAP_NOTE_LITERALS) assert.ok(note.includes(literal), `the profile-gap note states: ${literal}`);
+    assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
+    assert.doesNotMatch(note, /<kit>/, 'a kit path is written in the ${CLAUDE_SKILL_DIR} form');
+  });
+});
+
+describe('recommendations contract — the full-flow-profile capability (spec:gap-screen/S10)', () => {
+  it('upgrade.md declares it beside its two declarations and changes no other byte', () => {
+    const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
+    assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
+    const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39239, '1ac8080a8fc8dba5cb8f40f62fa5ed898773cee6b80e396bd405bff5f87d5c0a'], 'the HEAD 6fabf9f bytes');
+  });
+  it('the registry row names mode upgrade and advisor key profile-gap', () => {
+    assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
   });
 });

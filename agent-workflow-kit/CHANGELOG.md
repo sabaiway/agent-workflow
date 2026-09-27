@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.14.0 — the Recommendations screen lists each step of the reference setup you have not taken or declined, with its preview command or the reason it has none (AD-160)
+
+**`/agent-workflow-kit recommendations` now shows what your project still lacks of the full flow.** Until 14.14.0
+only the upgrade's `tier` step judged the reference profile: the Recommendations screen, run on its own or at the end
+of an upgrade, read no profile, and a fresh bootstrap was never shown the offer. 14.14.0 puts each remaining difference
+the kit can detect on that screen, and bootstrap now shows the screen too. Story S6 of the epic
+`CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`, its last; contract `docs/ai/specs/kit/tier/gap-screen/` (new).
+
+- **One optional item per gap.** For every entry of the profile-gap registry that your project lacks, has not
+  declined at the current lineage and can close with a command, the screen shows a `profile-gap` item: the step's id
+  and the profile's own sentence for it, and as its apply the same preview line the upgrade's `tier` step prints. A present step, or one you declined, shows
+  no item. A step the screen cannot close with a command — the session-close rules in an older wording, which the
+  upgrade's `lens` step refreshes, or a rules region you customized — is a stated skip with its reason, so the
+  screen does not claim `flow optimal` while it stands.
+- **Consent takes two steps.** The mode doc gains one posture note: the confirmed pick runs the preview and your
+  agent relays its lines; the same line with `--apply` runs only on a second yes. Items whose apply lines are equal
+  share one writer and one answer. A decline runs `tier-preview.mjs --decline` only when you refuse every item the tier
+  preview then reports offered, and a declined item stays off the screen until a lineage step changes the profile.
+- **Bootstrap renders the screen.** Step 11 of bootstrap runs the advisor and presents its section before the report
+  footer, as the upgrade does, so a new project is offered the same steps through the same writers. The accelerators
+  block after the footer keeps its entries; the gates bullet now points at the screen's `gates-declaration` item.
+- **The offer and the screen judge the same way.** `tools/profile-gaps.mjs` now exports the judgement the `tier`
+  step used privately, and both the offer and the new read-only module `tools/profile-gap-screen.mjs` call it, so the
+  two cannot disagree. Every line the `tier` step prints is unchanged. The `4.0.0` migration note now says an item
+  left `offered` stays on the Recommendations section that ends the upgrade, rather than waiting for the next one.
+
+
 ## 14.13.0 — every session close tells you what was done and what comes next, and a project without a work queue is offered one (AD-159)
 
 **Your agent now ends a session with two short blocks written for you, and the handover keeps them.** Until 14.13.0

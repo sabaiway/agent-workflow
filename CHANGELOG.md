@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-27 — AD-160 the Recommendations screen names the gap to the reference profile (kit 14.14.0 MINOR; memory 8.1.2, engine 5.10.0 and both bridges unchanged)
+
+**The Recommendations screen shows the steps of the full flow the kit checks that a project has not taken and not
+declined, each with its preview command or a stated skip.** `tools/profile-gaps.mjs` exports the verdict-and-decline judgement the upgrade's `tier` step
+kept private, and both that offer and the new read-only module `tools/profile-gap-screen.mjs` call it.
+`recommendations.mjs` gains its last probe and one `optional` `profile-gap` item per gap, the entry's own preview
+line as the apply; a step the kit cannot judge is a stated skip. The mode doc gains the two-step consent note, and
+bootstrap's step 11 now renders the Recommendations section before the footer. The shared fixture runs all six
+stories as landed. Story S6, the last, of the epic `CONSUMERS-MOVE-ONTO-THE-FULL-FLOW`; contract
+`docs/ai/specs/kit/tier/gap-screen/` (new).
+
 ## 2026-09-26 — AD-159 the session rules become canon the consumer reads (kit 14.13.0 MINOR, memory 8.1.2 PATCH, engine 5.10.0 MINOR; both bridges unchanged)
 
 **A kit user's agent closes each session with two blocks for the user, and a project without a queue is offered

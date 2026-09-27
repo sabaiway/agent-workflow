@@ -100,6 +100,7 @@ import {
 } from './ack-store.mjs';
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
+import { composeProfileGapScreen } from './profile-gap-screen.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
@@ -198,6 +199,7 @@ export const SEVERITIES = Object.freeze({
   // declaration that is broken): an absent store offers the seed, a store with no live contract offers
   // the decline. Neither arm can leave the flow-optimal line standing — an offer is still an item.
   'spec-adoption': SEVERITY_OPTIONAL,
+  'profile-gap': SEVERITY_OPTIONAL,
   'spec-adoption.adopting': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
@@ -234,7 +236,8 @@ export const composeVerdict = ({ attention, optional, skipped }) => {
 // Every static WHAT template lives here — `<key>` is the item key, `<key>.<variant>` a per-site
 // variant of the same item — so ALL variants are assertable at build time (single line, char cap,
 // banned tokens), never a fixture-coverage gamble. A pure-placeholder template marks a WHAT whose
-// content is fully dynamic (capped at composition by truncation-with-count).
+// content is fully dynamic (capped at composition by truncation-with-count) — except `profile-gap`, whose
+// WHAT is never truncated: the leaf's suite pins every composed WHAT under the cap.
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
   'kit-tools-tier': "the kit's own read-only tools still prompt — {n} kit-tools tier entr(ies) not seeded",
@@ -273,6 +276,7 @@ export const WHATS = Object.freeze({
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
+  'profile-gap': '{what}',
   'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
@@ -333,6 +337,7 @@ export const BENEFITS = Object.freeze({
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
+  'profile-gap': 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -379,6 +384,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // The feature-spec layer is delivered by upgrade's spec-layer ensure (there is no specs mode), so
   // its adoption state is declared where the store is seeded.
   { id: 'spec-adoption', mode: 'upgrade', advisorKey: 'spec-adoption' },
+  { id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' },
   { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
@@ -1297,7 +1303,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1592,6 +1598,16 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
   }
 };
 
+export const probeProfileGaps = ({ root, deps, add, skip }) => {
+  try {
+    const { gaps, skips } = composeProfileGapScreen({ root, deps });
+    for (const { what, apply } of gaps) add('profile-gap', what, apply);
+    for (const reason of skips) skip('profile-gap', new Error(reason));
+  } catch (err) {
+    skip('profile-gap', err);
+  }
+};
+
 // ── assembly (frozen presentation order) ─────────────────────────────────────────────────────────
 const PROBES = Object.freeze([
   probeVelocityItems,
@@ -1614,6 +1630,7 @@ const PROBES = Object.freeze([
   probeWorktreesDir,
   probeMcpChannel,
   probeSpecAdoption,
+  probeProfileGaps,
 ]);
 
 export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
