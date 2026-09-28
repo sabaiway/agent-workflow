@@ -4,6 +4,25 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.15.0 — a sandbox mask made by a bind mount counts as a mask, so the advisor no longer offers to clear a working exclude block (AD-162)
+
+**`/agent-workflow-kit sandbox-masks` now reads the Linux mount table.** Until 14.15.0 a mask was only a device, a
+FIFO or a socket. When the sandbox masked paths with bind mounts of empty files, the probe found no mask, called the
+fenced entries real paths, and the Recommendations screen offered `--apply --clear`, which removed a working block.
+
+- **One test for a mask.** An untracked path is a mask when it is a device, FIFO or socket, or when
+  `/proc/self/mountinfo` shows it as a mount target brought from elsewhere (a foreign mount, usually the sandbox's). The
+  derivation and the check of fenced entries use the same test, so a fenced mount mask is never called a real path.
+  A path bound onto itself is not a mask. The probe's `--json` gains `mountOnly` and `mountSignal`.
+- **No guessing.** Off Linux the probe says the mount signal is not read and judges devices alone. On Linux a mount
+  table it cannot read, or one it cannot parse, stops the probe with exit 1, and the Recommendations screen records a
+  skip. `--apply --clear` never reads the table.
+- **A mount-only mask matters to reviews.** Reviews still ignore device masks only. A mask that is a mount of an
+  ordinary file stays in `git add -A` and the review fingerprint while git does not ignore it, so the Recommendations
+  item is `attention` when a managed block exists but lacks such a mask. The mode doc, the command list, the README
+  row and the item's text now say this instead of calling every mask a device.
+- **New file.** `tools/mount-masks.mjs`, a read-only module with no command of its own.
+
 ## 14.14.1 — the agents writer stops on a project folder given as a symlink, before it reads or writes anything (AD-161)
 
 **`cheap-agents.mjs --cwd <dir>` now refuses a `<dir>` that is itself a symlink.** Until 14.14.1 an `--apply` there

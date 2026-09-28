@@ -1,20 +1,18 @@
 #!/usr/bin/env node
-// sandbox-masks.mjs — the GUARDED cosmetic exclude lane behind `/agent-workflow-kit sandbox-masks`
-// (AD-044 Plan 4, Phase 1.5; design consult codex+agy CONVERGED on B+D — probe-DERIVED, never a
-// frozen list). An OS sandbox (Claude Code) injects character-device masks into the work tree;
-// the review domain already ignores them BY CONSTRUCTION (review-state.mjs + both bridge wrappers,
-// Decision 1), so this lane is COSMETIC ONLY: it hides the masks from `git status` (and from every
-// other --exclude-standard untracked walk) via ONE managed fenced block in the repo's
-// `git rev-parse --git-path info/exclude` file.
+// sandbox-masks.mjs — the GUARDED exclude lane behind `/agent-workflow-kit sandbox-masks` (AD-044
+// Plan 4; probe-DERIVED, never a frozen list; contract docs: specs/kit/review-domain/sandbox-masks).
+// An OS sandbox masks work-tree paths: a device node (the review domain ignores it by construction)
+// or a FOREIGN bind mount of an empty file (the review domain sees it as an untracked file until the
+// block below hides it — load-bearing there). The lane hides the masks from `git status` and every
+// --exclude-standard walk via ONE managed fenced block in `git rev-parse --git-path info/exclude`.
 //
 // Contract:
 //   flagless      READ-ONLY probe/preview. Derives the CURRENT mask set from the UNFILTERED
 //                 untracked walk (`git ls-files --others -z`, WITHOUT standard excludes — an
-//                 already-excluded mask must stay visible to a rerun) + lstat classification.
-//                 ONLY the never-committable classes (char/block devices, FIFOs, sockets — the
-//                 SAME class set as the review-domain filter) are ever candidates; tracked /
-//                 regular / directory / symlink / gitlink / missing paths can never enter the
-//                 block by construction. The probe also REVALIDATES the existing fenced entries
+//                 already-excluded mask must stay visible to a rerun). A mask is a never-committable
+//                 lstat class (char/block device, FIFO, socket) OR a foreign mount target judged
+//                 from /proc/self/mountinfo (mount-masks.mjs; off Linux the arm is absent and said
+//                 so, an unreadable or malformed table refuses). The probe also REVALIDATES the existing fenced entries
 //                 and loudly flags any that became a REAL path (delete that line first — an
 //                 excluded real file is silently skipped by bulk staging, `git add -A`/`git add .`,
 //                 and `.git/info/exclude` never warns). No standing detector: the flags ride probe runs.
@@ -43,6 +41,7 @@ import { fail } from './orchestration-config.mjs';
 import { isNeverCommittableStat, shellQuoteArg } from './review-state.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
+import { foreignMountTargets } from './mount-masks.mjs';
 
 export const MASKS_FENCE_START = '# >>> agent-workflow sandbox-masks — managed block, fully REPLACED by the kit sandbox-masks lane; do not hand-edit inside >>>';
 export const MASKS_FENCE_END = '# <<< agent-workflow sandbox-masks <<<';
@@ -65,7 +64,27 @@ const listUntrackedUnfilteredZ = (root) => {
   return r.stdout.split('\0').filter(Boolean);
 };
 
-// ── derivation (the D5 guard IS the classifier: only never-committable classes survive) ────────
+// ── derivation (the D5 guard IS the classifier) ────────
+
+// The mount signal: text, null (absent by platform — the default answers it off Linux) or a throw.
+const readMountinfoDefault = (platform = process.platform) => (platform === 'linux' ? readFileSync('/proc/self/mountinfo', 'utf8') : null);
+
+// → { foreign: Set of work-tree-relative foreign mount targets, signal: 'read' | 'absent' }; an
+// unreadable or malformed table refuses (never a device-only guess on Linux).
+const mountTargets = (root, readMountinfo) => {
+  let text;
+  try {
+    text = readMountinfo();
+  } catch (err) {
+    throw fail(1, `cannot read /proc/self/mountinfo (${err?.code ?? err?.message ?? err}) — the mount signal is required on Linux`);
+  }
+  if (text == null) return { foreign: new Set(), signal: 'absent' };
+  try {
+    return { foreign: foreignMountTargets(root, text), signal: 'read' };
+  } catch (err) {
+    throw fail(1, `${err.message} — refusing a device-only answer (/proc/self/mountinfo)`);
+  }
+};
 
 // A root-anchored gitignore pattern for one relative path: leading `/` (root-anchored — a mask
 // name can never shadow a deeper real path), glob metacharacters + leading-! / leading-# handled
@@ -77,17 +96,18 @@ export const toExcludePattern = (rel) => {
   return `/${escaped}`;
 };
 
-// deriveMasks({ root, lstat, listUntracked }) → { masks, unrenderable }: sorted rel paths whose
-// lstat class is never-committable (char/block/FIFO/socket). Everything else is refused by
-// construction — tracked paths never appear in an --others walk; regular/dir/symlink/missing fail
-// the predicate. A CR/LF-carrying mask NAME cannot be expressed as ONE gitignore rule — rendering
-// it would split into several rules and could hide unrelated committable paths — so it
-// is a LOUD unrenderable skip, never written (the review domain already ignores the mask itself).
-export const deriveMasks = ({ root, lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ } = {}) => {
+// deriveMasks({ root, lstat, listUntracked, readMountinfo }) → { masks, unrenderable, mountOnly,
+// mountSignal }: sorted rel paths that are a mask (a never-committable lstat class OR a foreign
+// mount target). Tracked paths never appear in an --others walk; everything else fails the
+// predicate. A CR/LF-carrying mask NAME cannot be ONE gitignore rule — rendering it could hide
+// unrelated committable paths — so it is a LOUD unrenderable skip, never written.
+export const deriveMasks = ({ root, lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ, readMountinfo = readMountinfoDefault } = {}) => {
   const entries = listUntracked(root);
   if (entries == null) return null;
+  const { foreign, signal } = mountTargets(root, readMountinfo);
   const masks = [];
   const unrenderable = [];
+  const mountOnly = [];
   for (const rel of entries) {
     let stat = null;
     try {
@@ -95,13 +115,15 @@ export const deriveMasks = ({ root, lstat = lstatSync, listUntracked = listUntra
     } catch {
       stat = null;
     }
-    if (!isNeverCommittableStat(stat)) continue;
+    const device = isNeverCommittableStat(stat);
+    if (!device && !foreign.has(rel)) continue;
+    if (!device) mountOnly.push(rel);
     // CR/LF anywhere, or a trailing TAB (inexpressible in gitignore — only trailing SPACES escape
     // as `\ `), make the name unrenderable as ONE exclude rule.
     if (/[\r\n]/.test(rel) || /\t$/.test(rel)) unrenderable.push(rel);
     else masks.push(rel);
   }
-  return { masks: masks.sort(), unrenderable: unrenderable.sort() };
+  return { masks: masks.sort(), unrenderable: unrenderable.sort(), mountOnly: mountOnly.sort(), mountSignal: signal };
 };
 
 // ── the fence (own block; malformed → fail closed) ─────────────────────────────────
@@ -119,7 +141,7 @@ export const findMasksFence = (lines) => {
 // escaped forms; unescape is its exact inverse — the escaped-space form `\ ` included, so a
 // trailing-space mask round-trips). Non-pattern lines (blank/comment) are skipped;
 // only UNESCAPED trailing whitespace is insignificant (gitignore semantics).
-const patternToRel = (line) => {
+export const patternToRel = (line) => {
   // A trailing CR (a CRLF-saved exclude file) strips FIRST — it would otherwise ride into the rel
   // name and false-ENOENT the revalidation lstat; then only UNESCAPED trailing
   // whitespace is insignificant (gitignore semantics — an escaped `\ ` survives).
@@ -129,9 +151,9 @@ const patternToRel = (line) => {
 };
 
 // Revalidate the CURRENT fence body against the disk: an entry whose path now exists as anything
-// OTHER than a never-committable class is a STALE-REAL flag — the D5 watch (a real file at an
-// excluded path is silently skipped by bulk staging; delete the line before trusting git with it).
-export const revalidateFence = (bodyLines, { root, lstat = lstatSync } = {}) => {
+// that is not a mask (the derivation's predicate) is a STALE-REAL flag — the D5 watch (a real file
+// at an excluded path is silently skipped by bulk staging; delete the line before trusting git).
+export const revalidateFence = (bodyLines, { root, lstat = lstatSync, readMountinfo = readMountinfoDefault, foreign = mountTargets(root, readMountinfo).foreign } = {}) => {
   const staleReal = [];
   for (const line of bodyLines) {
     const rel = patternToRel(line);
@@ -142,7 +164,7 @@ export const revalidateFence = (bodyLines, { root, lstat = lstatSync } = {}) => 
     } catch {
       continue; // vanished mask — the next --apply drops it by construction, nothing real is hidden
     }
-    if (!isNeverCommittableStat(stat)) staleReal.push(rel);
+    if (!isNeverCommittableStat(stat) && !foreign.has(rel)) staleReal.push(rel);
   }
   return staleReal;
 };
@@ -151,7 +173,7 @@ export const revalidateFence = (bodyLines, { root, lstat = lstatSync } = {}) => 
 
 // probeSandboxMasks({ cwd, ... }) → everything the render/apply/advisor needs, or null when not a
 // git work tree. Read-only always.
-export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ, readFile = readFileSync } = {}) => {
+export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ, readFile = readFileSync, readMountinfo = readMountinfoDefault } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (root == null) return null;
   const gitPathRaw = gitLine(['rev-parse', '--git-path', 'info/exclude'], cwd);
@@ -161,9 +183,11 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   // The write-containment root: info/exclude lives in the COMMON git dir (worktree-safe),
   // and the apply must never write through a symlinked component or a non-regular leaf.
   const gitCommonDir = resolve(cwd, commonDirRaw);
-  const derived = deriveMasks({ root, lstat, listUntracked });
+  let text; // read ONCE: derivation and revalidation judge one table
+  const once = () => (text === undefined ? (text = readMountinfo()) : text);
+  const derived = deriveMasks({ root, lstat, listUntracked, readMountinfo: once });
   if (derived == null) return null;
-  const { masks, unrenderable } = derived;
+  const { masks, unrenderable, mountOnly, mountSignal } = derived;
   // The WHOLE chain is guarded BEFORE any read: a symlinked exclude leaf OR a
   // symlinked parent (.git/info) must never be read through, and a FIFO/socket leaf would HANG
   // the read-only probe — parent-chain containment + leaf lstat first, fail closed on everything
@@ -198,9 +222,9 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   }
   const lines = content.split('\n');
   const fence = findMasksFence(lines);
-  const staleReal = fence.state === 'ok' ? revalidateFence(fence.body, { root, lstat }) : [];
+  const staleReal = fence.state === 'ok' ? revalidateFence(fence.body, { root, lstat, readMountinfo: once }) : [];
   const applyCmd = `node ${shellQuoteArg(join(HERE, 'sandbox-masks.mjs'))} --cwd ${shellQuoteArg(root)} --apply`;
-  return { root, excludeFile, gitCommonDir, content, lines, fence, masks, unrenderable, staleReal, applyCmd };
+  return { root, excludeFile, gitCommonDir, content, lines, fence, masks, unrenderable, mountOnly, mountSignal, staleReal, applyCmd };
 };
 
 // needsMasksApply(probe) → whether the CURRENT derivation diverges from the fenced block — the
@@ -261,18 +285,19 @@ export const planApply = (probe, { clear = false } = {}) => {
 
 const formatProbe = (probe) => {
   const lines = [
-    `sandbox-masks — never-committable untracked masks (device/FIFO/socket) in ${probe.root}`,
+    `sandbox-masks — sandbox masks (device/FIFO/socket or foreign mount target) in ${probe.root}`,
     `  exclude file: ${probe.excludeFile}`,
     `  managed block: ${probe.fence.state === 'ok' ? `present (${probe.fence.body.filter((l) => patternToRel(l) != null).length} entr(ies))` : probe.fence.state}`,
   ];
   if (probe.fence.state === 'malformed') lines.push(`  ⚠ MALFORMED managed block (${probe.fence.reason}) — this lane fails closed and will not write until it is fixed by hand`);
   lines.push(`  masks visible now: ${probe.masks.length === 0 ? '0 (outside the sandbox or clean)' : ''}`);
-  for (const m of probe.masks) lines.push(`    · ${m}`);
+  for (const m of probe.masks) lines.push(`    · ${m}${probe.mountOnly.includes(m) ? ' (mount-only: it rides git add -A and the review fingerprint while git does not ignore it)' : ''}`);
+  if (probe.mountSignal === 'absent') lines.push('  mount signal: not read on this platform — only device/FIFO/socket masks are judged');
   for (const rel of probe.staleReal) {
     lines.push(`  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE relying on git for this path: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns`);
   }
   for (const rel of probe.unrenderable) {
-    lines.push(`  ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the review domain already ignores the mask itself): ${JSON.stringify(rel)}`);
+    lines.push(`  ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the mask itself stays untracked): ${JSON.stringify(rel)}`);
   }
   // A stale-real-only fence (empty derivation over a non-empty block) makes the plain --apply
   // REFUSE — the rendered one-liner must be the form planApply actually accepts (--clear), the
@@ -284,15 +309,16 @@ const formatProbe = (probe) => {
   return lines.join('\n');
 };
 
-const HELP = `sandbox-masks — cosmetic exclude lane for sandbox-injected device masks (agent-workflow kit, AD-044).
+const HELP = `sandbox-masks — exclude lane for sandbox masks (agent-workflow kit, AD-044).
 
 Usage:
   node sandbox-masks.mjs [--cwd <dir>] [--json]          # READ-ONLY probe/preview
   node sandbox-masks.mjs [--cwd <dir>] --apply [--clear] # consent-gated FULL-BLOCK replace
 
-The review domain already ignores never-committable untracked paths (char/block devices, FIFOs,
-sockets) BY CONSTRUCTION — this lane is cosmetic: it hides the CURRENT, probe-derived mask set
-from \`git status\` via one managed fenced block in \`git rev-parse --git-path info/exclude\`.
+A mask is an untracked device/FIFO/socket (the review domain already ignores these) or, on Linux,
+a foreign mount target read from /proc/self/mountinfo (the review domain sees it while git does not ignore it).
+The lane hides the CURRENT, probe-derived set from \`git status\` via one managed fenced block in
+\`git rev-parse --git-path info/exclude\`. An unreadable or malformed mountinfo refuses (exit 1).
 Only that block is ever written — never .gitignore, never a global excludesFile. --apply REPLACES
 the whole block from a fresh derivation (stale masks drop by construction); an EMPTY derivation
 over a non-empty block refuses unless --clear is given (you are probably outside the sandbox).
@@ -317,7 +343,9 @@ export const main = (argv, ctx = {}) => {
     const cwd = cwdIdx !== -1 ? argv[cwdIdx + 1] : (ctx.cwd ?? process.cwd());
     if (cwdIdx !== -1 && (!cwd || cwd.startsWith('--'))) throw fail(2, '--cwd requires a directory argument');
     if (argv.includes('--clear') && !argv.includes('--apply')) throw fail(2, '--clear is only valid together with --apply');
-    const probe = probeSandboxMasks({ cwd, ...(ctx.deps ?? {}) });
+    // --apply --clear needs no derivation, so it never reads the mount table (the absent answer).
+    const clearOnly = argv.includes('--apply') && argv.includes('--clear');
+    const probe = probeSandboxMasks({ cwd, ...(ctx.deps ?? {}), ...(clearOnly ? { readMountinfo: () => null } : {}) });
     if (probe == null) throw fail(1, `not a git work tree: ${cwd}`);
     if (!argv.includes('--apply')) {
       if (argv.includes('--json')) {
@@ -330,7 +358,7 @@ export const main = (argv, ctx = {}) => {
     // The unrenderable skips stay LOUD on EVERY apply path — the same warning the
     // probe prints; the renderable subset still applies (a refusal would block the useful masks).
     const skipWarnings = probe.unrenderable
-      .map((rel) => `sandbox-masks: ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the review domain already ignores the mask itself): ${JSON.stringify(rel)}`)
+      .map((rel) => `sandbox-masks: ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the mask itself stays untracked): ${JSON.stringify(rel)}`)
       .join('\n');
     // A refusal carries the unrenderable warnings too — they are never discarded.
     if (plan.action === 'refuse') throw fail(1, skipWarnings ? `${plan.reason}\n${skipWarnings}` : plan.reason);

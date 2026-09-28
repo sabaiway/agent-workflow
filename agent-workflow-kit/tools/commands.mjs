@@ -180,7 +180,7 @@ const CATALOG = [
     invocation: invocationOf('sandbox-masks'),
     group: 'Configure',
     kind: GUARDED,
-    oneLine: 'Hide the sandbox’s injected device masks from git status via one managed block in the repo’s local exclude file — probe-derived (never a frozen list), preview first, full-block replace on your yes; reviews already ignore the masks by construction.',
+    oneLine: 'Hide the sandbox masks (a device, or on Linux a foreign bind mount) from git status via one managed block in the repo’s local exclude file — probe-derived (never a frozen list), preview first, full-block replace on your yes; reviews already ignore device masks, while a mount-only mask stays in git add -A and the review fingerprint as long as git does not ignore it.',
   },
   {
     key: 'mcp',

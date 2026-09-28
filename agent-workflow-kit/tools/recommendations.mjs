@@ -53,7 +53,7 @@ import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
-import { probeSandboxMasks, needsMasksApply } from './sandbox-masks.mjs';
+import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
 import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
@@ -193,6 +193,7 @@ export const SEVERITIES = Object.freeze({
   'family-freshness': SEVERITY_ATTENTION,
   'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
+  'sandbox-masks.unfenced-mount': SEVERITY_ATTENTION,
   'sandbox-lane': SEVERITY_OPTIONAL,
   'worktrees-dir': SEVERITY_OPTIONAL,
   // The layer is opt-in, so both arms are OFFERS under the frozen registry (attention is a CONFIGURED
@@ -271,8 +272,8 @@ export const WHATS = Object.freeze({
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
   'family-freshness': '{parts}',
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
-  'sandbox-masks': '{n} sandbox device mask(s) clutter git status — the managed exclude block is absent or stale',
-  'sandbox-masks.stale-real': '{n} sandbox device mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
+  'sandbox-masks': '{n} sandbox mask(s) clutter git status — the managed exclude block is absent or stale',
+  'sandbox-masks.stale-real': '{n} sandbox mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
   'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
@@ -333,7 +334,7 @@ export const BENEFITS = Object.freeze({
   'executor-vehicle': 'carrier readiness — a slot you configured subagent dispatches the subagent it names instead of silently running solo',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
-  'sandbox-masks': 'zero clutter — git status shows only your changes (the review domain already ignores the masks by construction)',
+  'sandbox-masks': 'zero clutter — a mask git ignores through the block leaves git status; a mount-only one leaves git add -A and the review fingerprint too',
   'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
@@ -1124,7 +1125,8 @@ const probeMasksItem = ({ root, deps, add, skip }) => {
     // A stale-real-only fence (EMPTY derivation over a non-empty block) makes the plain --apply
     // REFUSE — the exact one-liner must carry --clear there (Segment B).
     const apply = p.masks.length === 0 && p.staleReal.length > 0 ? `${p.applyCmd} --clear` : p.applyCmd;
-    add('sandbox-masks', fillTemplate(WHATS[variant], { n: p.masks.length, m: p.staleReal.length }), apply);
+    const unfenced = p.fence.state === 'ok' && p.mountOnly.some((rel) => !p.fence.body.map(patternToRel).includes(rel));
+    add('sandbox-masks', fillTemplate(WHATS[variant], { n: p.masks.length, m: p.staleReal.length }), apply, unfenced ? 'sandbox-masks.unfenced-mount' : 'sandbox-masks');
   } catch (err) {
     skip('sandbox-masks', err);
   }

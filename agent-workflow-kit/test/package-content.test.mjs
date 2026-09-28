@@ -302,6 +302,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/checker-gates.mjs',
       // the gap screen (story S6 of the consumers epic): the advisor imports the read leaf beside the registry it judges
       'tools/profile-gap-screen.mjs',
+      'tools/mount-masks.mjs', // the sandbox-masks lane's mount-table judge: the lane imports it
       // the closed flow-record vocabulary (flow-orchestration Phase 1) — the flow store/checker's
       // record contract; pinned by NAME so it cannot fall out of the payload behind the count
       'tools/flow-record.mjs',
@@ -850,7 +851,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 341 = 339 + tools/checker-gates-read.mjs and tools/checker-gates.mjs - story S4 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 343 = 341 + tools/session-close-check.mjs and references/authoring/QUEUE_TEMPLATE.md - story S5 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 344 = 343 + tools/profile-gap-screen.mjs - story S6 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
-    assert.equal(packed.length, 344, `tarball file count drifted (${packed.length}\u2260 344)`);
+    // 345 = 344 + tools/mount-masks.mjs - the sandbox-masks lane's mount-table judge
+    assert.equal(packed.length, 345, `tarball file count drifted (${packed.length}\u2260 345)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

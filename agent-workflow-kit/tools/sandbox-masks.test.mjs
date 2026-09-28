@@ -67,7 +67,7 @@ const maskDeps = (classes) => ({
   },
 });
 
-describe('sandbox-masks — derivation classes (the D5 guard is the classifier)', () => {
+describe('sandbox-masks — derivation classes (the D5 guard is the classifier) (spec:sandbox-masks/S1)', () => {
   it('ONLY the four never-committable classes derive; file/dir/symlink/missing are refused by construction', () => {
     const root = makeRepo();
     const derived = deriveMasks({
@@ -135,7 +135,7 @@ describe('sandbox-masks — derivation classes (the D5 guard is the classifier)'
   });
 });
 
-describe('sandbox-masks — apply mechanics (full-block replace, own fence only)', () => {
+describe('sandbox-masks — apply mechanics (full-block replace, own fence only) (spec:sandbox-masks/S19)', () => {
   const CLASSES = { '.bashrc': 'char', '.vscode': 'char' };
 
   it('apply writes the managed block to info/exclude ONLY — .gitignore and everything else untouched', () => {
@@ -428,7 +428,7 @@ describe('sandbox-masks — coverage of the defensive arms', () => {
     const r = spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'sandbox-masks.mjs'), '--cwd', root], { encoding: 'utf8' });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /sandbox-masks — never-committable untracked masks/);
+    assert.match(r.stdout, /sandbox-masks — sandbox masks \(device\/FIFO\/socket or foreign mount target\) in /);
   });
 });
 

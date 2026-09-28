@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-28 — AD-162 sandbox masks judged by the mount table (kit 14.15.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**An untracked path that `/proc/self/mountinfo` shows as a foreign mount target is now a sandbox mask, beside the
+device, FIFO and socket classes.** The new read-only module `tools/mount-masks.mjs` parses the table and follows parent
+ids to tell a foreign mount from a self bind; `sandbox-masks.mjs` uses one test for its derivation and for the check of
+fenced entries, so the probe no longer calls a fenced bind-mount mask a real path and the advisor no longer offers to
+clear a working block. Off Linux the mount signal is not read and the probe says so; on Linux an unreadable or
+malformed table refuses the probe. The review fingerprint keeps the device class, so the advisor item turns
+`attention` when a managed block lacks a mount-only mask. Contract `docs/ai/specs/kit/review-domain/sandbox-masks.md`
+(new, live).
+
 ## 2026-09-27 — AD-161 the agents writer refuses a symlinked project root (kit 14.14.1 PATCH, engine 5.10.1 PATCH; memory 8.1.2 and both bridges unchanged)
 
 **`cheap-agents.mjs` given a project root that is a symlink — `<link>`, `<link>/` or `<link>/.` — stops with
