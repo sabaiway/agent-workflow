@@ -4,9 +4,9 @@
 // same lying-dirent mechanism the sandbox exhibits — over a REAL fixture repo whose write
 // mechanics (fence, info/exclude, .gitignore untouched) are asserted on disk.
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync, symlinkSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, lstatSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,37 +23,9 @@ import {
   MASKS_FENCE_START,
   MASKS_FENCE_END,
 } from './sandbox-masks.mjs';
+import { fakeStat, repoFactory } from './sandbox-masks-harness.test.mjs';
 
-const fakeStat = (type) => ({
-  isFile: () => type === 'file',
-  isDirectory: () => type === 'dir',
-  isSymbolicLink: () => type === 'symlink',
-  isCharacterDevice: () => type === 'char',
-  isBlockDevice: () => type === 'block',
-  isFIFO: () => type === 'fifo',
-  isSocket: () => type === 'socket',
-});
-
-// Identical committed base for every test — built once, cloned per test (a per-test
-// `git init`+commit dominated the fixture cost).
-const REPO_TEMPLATE = (() => {
-  const dir = mkdtempSync(join(tmpdir(), 'sandbox-masks-template-'));
-  const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  g('init', '-q');
-  g('config', 'user.email', 'probe@example.com');
-  g('config', 'user.name', 'probe');
-  writeFileSync(join(dir, 'base.txt'), 'committed\n');
-  g('add', '-A');
-  g('commit', '-qm', 'base');
-  return dir;
-})();
-after(() => rmSync(REPO_TEMPLATE, { recursive: true, force: true }));
-
-const makeRepo = () => {
-  const root = mkdtempSync(join(tmpdir(), 'sandbox-masks-'));
-  cpSync(REPO_TEMPLATE, root, { recursive: true });
-  return root;
-};
+const makeRepo = repoFactory('sandbox-masks');
 
 // Deps that make the walk report the given paths with the given lstat classes over a real repo —
 // the injected twin of the sandbox's lying dirent.

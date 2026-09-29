@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-29 — AD-163 a possible sandbox-mask leftover withholds the verdict (kit 14.15.1 PATCH; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**A fenced entry that neither mask rule claims and whose lstat is an empty regular file with no write bit now refuses
+the `sandbox-masks` probe, exit 1, instead of being called a real path.** While one sandboxed command runs, a second
+one sees its masks in exactly that shape, and kit 14.15.0 then offered to clear a working block. The refusal names
+every stale-real entry first, then each possible leftover with its three readings; the advisor records a skip.
+Within one `probeSandboxMasks` call the derivation and the fence check share one lstat answer per work-tree path, and
+`--apply --clear` never judges the fence. The four existing suites now share one fixture module; the new cells live in their
+own suite. Contract `docs/ai/specs/kit/review-domain/sandbox-masks.md` (revision 2, S23/S24 bound).
+
 ## 2026-09-28 — AD-162 sandbox masks judged by the mount table (kit 14.15.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **An untracked path that `/proc/self/mountinfo` shows as a foreign mount target is now a sandbox mask, beside the

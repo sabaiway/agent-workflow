@@ -3,79 +3,17 @@
 // class and the untracked walk are stubbed where a real sandbox cannot be built, and real where a git
 // fixture can carry the fact (S17).
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, cpSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { main, probeSandboxMasks, deriveMasks, revalidateFence, needsMasksApply, MASKS_FENCE_START, MASKS_FENCE_END } from './sandbox-masks.mjs';
-import { buildRecommendations } from './recommendations.mjs';
+import { main, probeSandboxMasks, deriveMasks, revalidateFence, needsMasksApply } from './sandbox-masks.mjs';
 import { computeFingerprintPayload } from './core-evidence-tree.mjs';
 import { countNeverCommittableUntracked } from './review-state.mjs';
+import { git, repoFactory, measured, DEVTMPFS, foreignBashrc, reader, stubs, writeFence, readExclude, adviseMasks } from './sandbox-masks-harness.test.mjs';
 
-const fakeStat = (type) => ({
-  isFile: () => type === 'file',
-  isDirectory: () => type === 'dir',
-  isSymbolicLink: () => type === 'symlink',
-  isCharacterDevice: () => type === 'char',
-  isBlockDevice: () => type === 'block',
-  isFIFO: () => type === 'fifo',
-  isSocket: () => type === 'socket',
-  size: 0,
-});
-
-const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'sandbox-masks-mount-')));
-after(() => rmSync(TMP, { recursive: true, force: true }));
-const TEMPLATE = join(TMP, 'template');
-mkdirSync(TEMPLATE);
-const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-git(TEMPLATE, 'init', '-q');
-git(TEMPLATE, 'config', 'user.email', 'probe@example.com');
-git(TEMPLATE, 'config', 'user.name', 'probe');
-writeFileSync(join(TEMPLATE, 'base.txt'), 'committed\n');
-git(TEMPLATE, 'add', '-A');
-git(TEMPLATE, 'commit', '-qm', 'base');
-let seq = 0;
-const makeRepo = () => {
-  const root = join(TMP, `repo-${seq += 1}`);
-  cpSync(TEMPLATE, root, { recursive: true });
-  return root;
-};
-
-// A mountinfo line; `measured` carries the option and source fields of the lines measured on this host.
-const line = (id, parent, dev, root, point) => `${id} ${parent} ${dev} ${root} ${point} rw,relatime - ext4 /dev/sda rw`;
-const measured = (id, parent, dev, root, point, fs = 'ext4 /dev/sdd rw,discard,errors=remount-ro,data=ordered') =>
-  `${id} ${parent} ${dev} ${root} ${point} ro,nosuid,nodev,relatime - ${fs}`;
-const DEVTMPFS = 'devtmpfs none rw,size=4046008k,nr_inodes=1011502,mode=755';
-// The acceptance table: the root mount at /, the work tree on another device beneath it, and a foreign
-// bind of /tmp/empty (0:40) at <root>/.bashrc on the work-tree mount.
-const foreignBashrc = (root) => `${[line(1, 0, '8:1', '/', '/'), line(2, 1, '8:2', '/wt', root), line(3, 2, '0:40', '/tmp/empty', `${root}/.bashrc`)].join('\n')}\n`;
-// A reader that answers the given text and counts its calls.
-const reader = (text) => {
-  const read = () => {
-    read.calls += 1;
-    return text;
-  };
-  read.calls = 0;
-  return read;
-};
-// The walk lists the given paths and lstat answers the given class for each (the lying-dirent twin).
-const stubs = (classes) => ({
-  listUntracked: () => Object.keys(classes),
-  lstat: (p) => {
-    for (const [rel, type] of Object.entries(classes)) if (p.endsWith(`/${rel}`)) return fakeStat(type);
-    return lstatSync(p);
-  },
-});
-const writeFence = (root, ...rels) => {
-  mkdirSync(join(root, '.git', 'info'), { recursive: true });
-  writeFileSync(join(root, '.git', 'info', 'exclude'), `${[MASKS_FENCE_START, ...rels.map((r) => `/${r}`), MASKS_FENCE_END].join('\n')}\n`);
-};
-const readExclude = (root) => readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8');
-// Keeps the host machine out of every other advisor probe: this suite reads one item.
-const hermetic = (root, extra) => ({ findWrapper: () => false, env: { PATH: '/nonexistent-path-for-tests' }, getenv: { PATH: '/nonexistent-path-for-tests' }, home: root, ...extra });
-const masksItem = (root, deps) => buildRecommendations({ cwd: root, deps: hermetic(root, deps) }).items.find((i) => i.key === 'sandbox-masks');
+const makeRepo = repoFactory('sandbox-masks-mount');
+const masksItem = (root, deps) => adviseMasks(root, deps).item;
 
 describe('sandbox-masks — a foreign bind of an empty file is a mask (spec:sandbox-masks/S2)', () => {
   it('deriveMasks returns .bashrc for the injected foreign bind and an empty regular file (the acceptance red)', () => {

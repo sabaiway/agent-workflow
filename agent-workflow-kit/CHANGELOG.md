@@ -4,6 +4,23 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.15.1 — a fenced empty read-only file no rule calls a mask stops the probe, so a concurrent sandboxed command no longer turns its masks into real paths (AD-163)
+
+**`/agent-workflow-kit sandbox-masks` now withholds its verdict on a possible leftover.** While one sandboxed
+command runs, a second one sees that command's masks as empty read-only regular files; until 14.15.1 the probe called
+each of those fenced masks a real path, and the Recommendations screen offered `--apply --clear`, which would
+remove a working block.
+
+- **The refusal.** A fenced entry that neither rule calls a mask, and whose lstat is an empty regular file with a
+  numeric mode and no write bit, stops the probe with exit 1; the Recommendations screen records a skip. The message
+  lists every fenced entry that became a real path first, then each such file with its three readings: a
+  running sandbox's mask (re-run once no other sandboxed command runs), litter a sandbox left (remove the file outside
+  the sandbox, keep its line), or a real file (delete its line). No `--clear` is offered and no plain `--apply` drops
+  its line.
+- **What stays.** An unfenced file of that shape is not a mask, a fenced foreign mount target of that shape stays a
+  mask, a stat without a numeric mode proves nothing, and `--apply --clear` still removes the block without judging
+  it. The derivation and the check of fenced entries share one lstat answer per work-tree path within a probe.
+
 ## 14.15.0 — a sandbox mask made by a bind mount counts as a mask, so the advisor no longer offers to clear a working exclude block (AD-162)
 
 **`/agent-workflow-kit sandbox-masks` now reads the Linux mount table.** Until 14.15.0 a mask was only a device, a

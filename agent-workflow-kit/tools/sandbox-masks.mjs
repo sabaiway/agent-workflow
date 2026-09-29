@@ -86,6 +86,9 @@ const mountTargets = (root, readMountinfo) => {
   }
 };
 
+// A LEFTOVER: an empty regular file with a numeric mode and no write bit — it only withholds a verdict.
+const isLeftoverStat = (stat) => stat?.isFile?.() === true && stat.size === 0 && typeof stat.mode === 'number' && (stat.mode & 0o222) === 0;
+
 // A root-anchored gitignore pattern for one relative path: leading `/` (root-anchored — a mask
 // name can never shadow a deeper real path), glob metacharacters + leading-! / leading-# handled
 // by the anchor, trailing whitespace escaped (gitignore trims it otherwise).
@@ -150,9 +153,7 @@ export const patternToRel = (line) => {
   return t.slice(1).replace(/\\([\\*?[\] ])/g, '$1');
 };
 
-// Revalidate the CURRENT fence body against the disk: an entry whose path now exists as anything
-// that is not a mask (the derivation's predicate) is a STALE-REAL flag — the D5 watch (a real file
-// at an excluded path is silently skipped by bulk staging; delete the line before trusting git).
+// A fenced entry that exists and fails the derivation's predicate is STALE-REAL (the D5 watch).
 export const revalidateFence = (bodyLines, { root, lstat = lstatSync, readMountinfo = readMountinfoDefault, foreign = mountTargets(root, readMountinfo).foreign } = {}) => {
   const staleReal = [];
   for (const line of bodyLines) {
@@ -172,8 +173,8 @@ export const revalidateFence = (bodyLines, { root, lstat = lstatSync, readMounti
 // ── the probe (read-only; exported — the Recommendations advisor consumes it) ──────
 
 // probeSandboxMasks({ cwd, ... }) → everything the render/apply/advisor needs, or null when not a
-// git work tree. Read-only always.
-export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ, readFile = readFileSync, readMountinfo = readMountinfoDefault } = {}) => {
+// git work tree; a fenced LEFTOVER refuses unless clearOnly. Read-only always.
+export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, listUntracked = listUntrackedUnfilteredZ, readFile = readFileSync, readMountinfo = readMountinfoDefault, clearOnly = false } = {}) => {
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (root == null) return null;
   const gitPathRaw = gitLine(['rev-parse', '--git-path', 'info/exclude'], cwd);
@@ -183,23 +184,23 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   // The write-containment root: info/exclude lives in the COMMON git dir (worktree-safe),
   // and the apply must never write through a symlinked component or a non-regular leaf.
   const gitCommonDir = resolve(cwd, commonDirRaw);
-  let text; // read ONCE: derivation and revalidation judge one table
+  let text; // read ONCE: derivation and revalidation judge one table, and one lstat answer per path
   const once = () => (text === undefined ? (text = readMountinfo()) : text);
-  const derived = deriveMasks({ root, lstat, listUntracked, readMountinfo: once });
+  const answers = new Map();
+  const lstatOnce = (p) => {
+    if (!answers.has(p)) answers.set(p, (() => { try { return { stat: lstat(p) }; } catch (error) { return { error }; } })());
+    if (answers.get(p).error) throw answers.get(p).error;
+    return answers.get(p).stat;
+  };
+  const derived = deriveMasks({ root, lstat: lstatOnce, listUntracked, readMountinfo: once });
   if (derived == null) return null;
   const { masks, unrenderable, mountOnly, mountSignal } = derived;
-  // The WHOLE chain is guarded BEFORE any read: a symlinked exclude leaf OR a
-  // symlinked parent (.git/info) must never be read through, and a FIFO/socket leaf would HANG
-  // the read-only probe — parent-chain containment + leaf lstat first, fail closed on everything
-  // but a plain absent file, then read the existing REGULAR content. The apply re-checks
-  // (defense in depth) before writing.
+  // The whole chain is guarded BEFORE any read (a symlinked component; a FIFO/socket leaf would hang).
   try {
     assertContainedRealPath(gitCommonDir, excludeFile, { lstat });
   } catch (err) {
     throw fail(1, `refusing to touch ${excludeFile}: ${err.message}`);
   }
-  // The chain guard above already refused symlinked components (the leaf included) and PROPAGATED
-  // any non-ENOENT lstat failure — after it, the leaf can only be absent or exist non-symlinked.
   const leafStat = (() => {
     try {
       return lstat(excludeFile);
@@ -222,16 +223,15 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   }
   const lines = content.split('\n');
   const fence = findMasksFence(lines);
-  const staleReal = fence.state === 'ok' ? revalidateFence(fence.body, { root, lstat, readMountinfo: once }) : [];
+  const staleReal = fence.state === 'ok' ? revalidateFence(fence.body, { root, lstat: lstatOnce, readMountinfo: once }) : [];
+  const leftovers = clearOnly ? [] : staleReal.filter((rel) => isLeftoverStat(lstatOnce(join(root, rel))));
+  if (leftovers.length > 0) throw fail(1, [...staleReal.filter((rel) => !leftovers.includes(rel)).map(staleRealLine), ...leftovers.map(leftoverLine)].join('\n'));
   const applyCmd = `node ${shellQuoteArg(join(HERE, 'sandbox-masks.mjs'))} --cwd ${shellQuoteArg(root)} --apply`;
   return { root, excludeFile, gitCommonDir, content, lines, fence, masks, unrenderable, mountOnly, mountSignal, staleReal, applyCmd };
 };
 
-// needsMasksApply(probe) → whether the CURRENT derivation diverges from the fenced block — the
-// Recommendations advisor's fire condition (Phase 3, AD-044 Plan 4). True when any fenced entry
-// became a real path (stale-real), or when visible masks exist and the derived set ≠ the fenced
-// set. A malformed fence is NOT an apply item (the apply would fail closed — it needs a hand fix,
-// which the probe render itself flags loudly). Pure over the probe result.
+// needsMasksApply(probe) → the advisor's fire condition: a stale-real entry, or visible masks whose set
+// differs from the fenced one; a malformed fence is never an item (the render flags it). Pure.
 export const needsMasksApply = (probe) => {
   if (probe == null) return false;
   if (probe.staleReal.length > 0) return true;
@@ -262,10 +262,8 @@ export const planApply = (probe, { clear = false } = {}) => {
   }
   const masks = clear ? [] : probe.masks;
   const block = masks.length === 0 ? [] : [MASKS_FENCE_START, ...masks.map(toExcludePattern), MASKS_FENCE_END];
-  // EVERY hand byte outside the managed fence is preserved EXACTLY: the first-apply
-  // append adds at most ONE separator newline, and the existing-block replace splices via RAW
-  // string offsets around the fence lines — a split/join('\n') rebuild would silently normalize
-  // CRLF hand content outside the block. Only the fenced block itself is ours (always LF).
+  // Every hand byte outside the fence is preserved EXACTLY (raw offsets, never a split/join rebuild
+  // that would normalize CRLF); only the fenced block itself is ours (always LF).
   const rendered = block.length ? `${block.join('\n')}\n` : '';
   let content;
   if (probe.fence.state === 'ok') {
@@ -283,6 +281,9 @@ export const planApply = (probe, { clear = false } = {}) => {
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
 
+const staleRealLine = (rel) => `  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE relying on git for this path: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns`;
+const leftoverLine = (rel) => `  ⚠ refusing: fenced entry ${rel} is an empty read-only file no arm calls a mask, so neither verdict is given — a running sandbox's mask: re-run once no other sandboxed command runs; litter a sandbox left: remove the file outside the sandbox and keep its line; a real file: delete its line`;
+
 const formatProbe = (probe) => {
   const lines = [
     `sandbox-masks — sandbox masks (device/FIFO/socket or foreign mount target) in ${probe.root}`,
@@ -293,9 +294,7 @@ const formatProbe = (probe) => {
   lines.push(`  masks visible now: ${probe.masks.length === 0 ? '0 (outside the sandbox or clean)' : ''}`);
   for (const m of probe.masks) lines.push(`    · ${m}${probe.mountOnly.includes(m) ? ' (mount-only: it rides git add -A and the review fingerprint while git does not ignore it)' : ''}`);
   if (probe.mountSignal === 'absent') lines.push('  mount signal: not read on this platform — only device/FIFO/socket masks are judged');
-  for (const rel of probe.staleReal) {
-    lines.push(`  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE relying on git for this path: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns`);
-  }
+  lines.push(...probe.staleReal.map(staleRealLine));
   for (const rel of probe.unrenderable) {
     lines.push(`  ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the mask itself stays untracked): ${JSON.stringify(rel)}`);
   }
@@ -343,9 +342,9 @@ export const main = (argv, ctx = {}) => {
     const cwd = cwdIdx !== -1 ? argv[cwdIdx + 1] : (ctx.cwd ?? process.cwd());
     if (cwdIdx !== -1 && (!cwd || cwd.startsWith('--'))) throw fail(2, '--cwd requires a directory argument');
     if (argv.includes('--clear') && !argv.includes('--apply')) throw fail(2, '--clear is only valid together with --apply');
-    // --apply --clear needs no derivation, so it never reads the mount table (the absent answer).
+    // --apply --clear needs no derivation: it never reads the mount table and never judges the fence.
     const clearOnly = argv.includes('--apply') && argv.includes('--clear');
-    const probe = probeSandboxMasks({ cwd, ...(ctx.deps ?? {}), ...(clearOnly ? { readMountinfo: () => null } : {}) });
+    const probe = probeSandboxMasks({ cwd, ...(ctx.deps ?? {}), ...(clearOnly ? { readMountinfo: () => null, clearOnly } : {}) });
     if (probe == null) throw fail(1, `not a git work tree: ${cwd}`);
     if (!argv.includes('--apply')) {
       if (argv.includes('--json')) {

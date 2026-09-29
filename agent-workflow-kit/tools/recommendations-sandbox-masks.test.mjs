@@ -3,67 +3,28 @@
 // fingerprint until the managed block holds it, so a PRESENT block that lacks one is attention-class;
 // every other firing stays an optional offer. A new suite: recommendations.test.mjs is over-cap debt.
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, lstatSync, cpSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { buildRecommendations, WHATS, BENEFITS, SEVERITY_ATTENTION, SEVERITY_OPTIONAL } from './recommendations.mjs';
-import { main, probeSandboxMasks, MASKS_FENCE_START, MASKS_FENCE_END } from './sandbox-masks.mjs';
+import { WHATS, BENEFITS, SEVERITY_ATTENTION, SEVERITY_OPTIONAL } from './recommendations.mjs';
+import { main, probeSandboxMasks, MASKS_FENCE_START } from './sandbox-masks.mjs';
+import { git, repoFactory, line, stubs, writeFence, readExclude, adviseMasks } from './sandbox-masks-harness.test.mjs';
 
-const fakeStat = (type) => ({
-  isFile: () => type === 'file',
-  isDirectory: () => type === 'dir',
-  isSymbolicLink: () => type === 'symlink',
-  isCharacterDevice: () => type === 'char',
-  isBlockDevice: () => type === 'block',
-  isFIFO: () => type === 'fifo',
-  isSocket: () => type === 'socket',
-});
-
-const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'recommendations-sandbox-masks-')));
-after(() => rmSync(TMP, { recursive: true, force: true }));
-const TEMPLATE = join(TMP, 'template');
-mkdirSync(join(TEMPLATE, 'docs', 'ai'), { recursive: true });
-const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-git(TEMPLATE, 'init', '-q');
-git(TEMPLATE, 'config', 'user.email', 'probe@example.com');
-git(TEMPLATE, 'config', 'user.name', 'probe');
-writeFileSync(join(TEMPLATE, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
-git(TEMPLATE, 'add', '-A');
-git(TEMPLATE, 'commit', '-qm', 'base');
-let seq = 0;
+const freshRepo = repoFactory('recommendations-sandbox-masks', { 'docs/ai/.workflow-version': '4.0.0\n' });
 const makeRepo = (...fenced) => {
-  const root = join(TMP, `repo-${seq += 1}`);
-  cpSync(TEMPLATE, root, { recursive: true });
-  if (fenced.length > 0) {
-    mkdirSync(join(root, '.git', 'info'), { recursive: true });
-    writeFileSync(join(root, '.git', 'info', 'exclude'), `${[MASKS_FENCE_START, ...fenced.map((r) => `/${r}`), MASKS_FENCE_END].join('\n')}\n`);
-  }
+  const root = freshRepo();
+  if (fenced.length > 0) writeFence(root, ...fenced);
   return root;
 };
 
-const line = (id, parent, dev, root, point) => `${id} ${parent} ${dev} ${root} ${point} rw,relatime - ext4 /dev/sda rw`;
 // The root mount, the work tree on 8:2, and a foreign bind of /tmp/empty at each named path.
 const tableWith = (root, ...foreign) => () => `${[
   line(1, 0, '8:1', '/', '/'),
   line(2, 1, '8:2', '/wt', root),
   ...foreign.map((rel, i) => line(3 + i, 2, '0:40', '/tmp/empty', `${root}/${rel}`)),
 ].join('\n')}\n`;
-// The walk lists the given paths and lstat answers the given class for each (the lying-dirent twin).
-const stubs = (classes) => ({
-  listUntracked: () => Object.keys(classes),
-  lstat: (p) => {
-    for (const [rel, type] of Object.entries(classes)) if (p.endsWith(`/${rel}`)) return fakeStat(type);
-    return lstatSync(p);
-  },
-});
-// Keeps the host machine out of every other advisor probe: this suite reads one item.
-const masksItem = (root, deps) => buildRecommendations({
-  cwd: root,
-  deps: { findWrapper: () => false, env: { PATH: '/nonexistent-path-for-tests' }, getenv: { PATH: '/nonexistent-path-for-tests' }, home: root, ...deps },
-}).items.find((i) => i.key === 'sandbox-masks');
+const masksItem = (root, deps) => adviseMasks(root, deps).item;
 
 describe('recommendations — the sandbox-masks wording (spec:sandbox-masks/S18)', () => {
   it('both WHATS strings say sandbox mask(s), never device masks', () => {
@@ -140,7 +101,7 @@ describe('recommendations — the sandbox-masks severity rule (spec:sandbox-mask
     const cleared = main(['--cwd', root, '--apply', '--clear'], { deps });
     assert.equal(cleared.code, 0, cleared.stderr);
     assert.match(cleared.stdout, /managed block removed/);
-    assert.ok(!readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8').includes(MASKS_FENCE_START));
+    assert.ok(!readExclude(root).includes(MASKS_FENCE_START));
     assert.equal(calls, 0, 'the clear never called the reader');
   });
 });

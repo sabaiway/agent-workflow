@@ -3,50 +3,20 @@
 // default answers it off Linux); a throwing reader is an unreadable table; a malformed table refuses too.
 // Each refusal carries its own message, exits 1 on the CLI, and is a stated skip in the advisor.
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, lstatSync, cpSync, realpathSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
 import { main, probeSandboxMasks } from './sandbox-masks.mjs';
-import { buildRecommendations } from './recommendations.mjs';
+import { fakeStat, repoFactory, line, plainTable, adviseMasks } from './sandbox-masks-harness.test.mjs';
 
-const fakeStat = (type) => ({
-  isFile: () => type === 'file',
-  isDirectory: () => type === 'dir',
-  isSymbolicLink: () => type === 'symlink',
-  isCharacterDevice: () => type === 'char',
-  isBlockDevice: () => type === 'block',
-  isFIFO: () => type === 'fifo',
-  isSocket: () => type === 'socket',
-});
-
-const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'sandbox-masks-signal-')));
-after(() => rmSync(TMP, { recursive: true, force: true }));
-const TEMPLATE = join(TMP, 'template');
-mkdirSync(TEMPLATE);
-const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
-git(TEMPLATE, 'init', '-q');
-git(TEMPLATE, 'config', 'user.email', 'probe@example.com');
-git(TEMPLATE, 'config', 'user.name', 'probe');
-writeFileSync(join(TEMPLATE, 'base.txt'), 'committed\n');
-git(TEMPLATE, 'add', '-A');
-git(TEMPLATE, 'commit', '-qm', 'base');
-let seq = 0;
-const makeRepo = () => {
-  const root = join(TMP, `repo-${seq += 1}`);
-  cpSync(TEMPLATE, root, { recursive: true });
-  return root;
-};
+const makeRepo = repoFactory('sandbox-masks-signal');
 
 // A device mask and a plain file: the device arm alone derives exactly the first.
 const stubs = () => ({
   listUntracked: () => ['.bashrc', '.zshrc'],
   lstat: (p) => (p.endsWith('/.bashrc') ? fakeStat('char') : p.endsWith('/.zshrc') ? fakeStat('file') : lstatSync(p)),
 });
-const line = (id, parent, dev, root, point) => `${id} ${parent} ${dev} ${root} ${point} rw,relatime - ext4 /dev/sda rw`;
-const readTable = (root) => () => `${[line(1, 0, '8:1', '/', '/'), line(2, 1, '8:2', '/wt', root)].join('\n')}\n`;
+const readTable = (root) => () => plainTable(root);
 const absent = () => null;
 const unreadable = () => {
   throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
@@ -60,14 +30,7 @@ const UNREADABLE = /cannot read \/proc\/self\/mountinfo/;
 const MALFORMED = /malformed mountinfo/;
 const PLATFORM_LINE = /^ {2}mount signal: not read on this platform\b/;
 
-// Keeps the host machine out of every other advisor probe: this suite reads one item.
-const advise = (root, deps) => {
-  const built = buildRecommendations({
-    cwd: root,
-    deps: { findWrapper: () => false, env: { PATH: '/nonexistent-path-for-tests' }, getenv: { PATH: '/nonexistent-path-for-tests' }, home: root, ...deps },
-  });
-  return { item: built.items.find((i) => i.key === 'sandbox-masks'), skip: built.skips.find((s) => s.key === 'sandbox-masks') };
-};
+const advise = adviseMasks;
 
 describe('sandbox-masks — the mount signal absent by platform (spec:sandbox-masks/S12)', () => {
   it('a reader answering absent leaves the device arm alone', () => {
