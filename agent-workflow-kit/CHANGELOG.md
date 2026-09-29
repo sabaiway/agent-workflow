@@ -4,6 +4,28 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.16.0 — `/agent-workflow-kit jev` walks you to a first Jev request: what it is, what it is not, three steps and three prompts where it pays (AD-164)
+
+**A new read-only command, `/agent-workflow-kit jev`, recommends Jev (TypeSafe), a decision model that returns a typed
+answer with probabilities and a confidence.** It says what Jev is, why it pays in this workflow, and what it is not,
+quoting the vendor's own sentence that it is not a drop-in replacement for the LLM behind Claude Code, Cursor, opencode
+or Copilot, then the jagged edges of jev-1.13, the confidence caveat and the retention terms as the vendor states them,
+and its sources, each with the date it was read.
+
+- **Three steps to a first request.** The vendor skill: both install forms, Claude Code's and the other agents', in a
+  fixed order, and a mark: `found` names each of five skill paths that holds a `typesafe-ai/SKILL.md`, `not seen`
+  says a plugin install is not visible to a file check and names the checks that do see it. The key: where to get it,
+  `TYPESAFE_API_KEY` exported before the agent starts, never pasted into the chat, and a `set` / `not set` mark. The
+  first use: a prompt routing three tickets, then the vendor's smallest documented request and response with the
+  field and error meanings, quoted.
+- **Three prompts where it pays here:** the first real error in a red gate log, the decided-register entry a council
+  finding repeats, a paragraph that restates a named rule. Each tells the agent to keep every request within the vendor
+  limits (255 options, 64k tokens, 32k for the state plus the longest question), and each answer is a hint the agent
+  checks, never a gate; every candidate text goes to the vendor.
+- **Safe to run anywhere.** The guide writes nothing, opens no connection and never prints the key's value; `--json`
+  gives the same content as an envelope. The command appears in the command list, the skill description and the
+  README's Use table.
+
 ## 14.15.1 — a fenced empty read-only file no rule calls a mask stops the probe, so a concurrent sandboxed command no longer turns its masks into real paths (AD-163)
 
 **`/agent-workflow-kit sandbox-masks` now withholds its verdict on a possible leftover.** While one sandboxed

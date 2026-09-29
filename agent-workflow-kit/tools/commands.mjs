@@ -99,6 +99,13 @@ const CATALOG = [
     oneLine: 'Explain the epic, story and task tier in plain words and name the next step of the walk, with the command that runs it wherever a tool does: the tier guide reads the disk alone.',
   },
   {
+    key: 'jev',
+    invocation: invocationOf('jev'),
+    group: 'Inspect',
+    kind: READ_ONLY,
+    oneLine: 'Guide to Jev (TypeSafe), a decision model: what it is, why it pays here, the steps to a first request and three prompts where it pays; the guide opens no connection.',
+  },
+  {
     key: 'backends',
     invocation: invocationOf('backends'),
     group: 'Inspect',

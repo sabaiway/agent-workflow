@@ -1,9 +1,9 @@
 ---
 name: agent-workflow-kit
-description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow". New to the epic, story and task tier? Run `/agent-workflow-kit tier`.
+description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow". New to the epic, story and task tier? Run `/agent-workflow-kit tier`. A typed decision with a confidence from Jev? Run `/agent-workflow-kit jev`.
 disable-model-invocation: true
 metadata:
-  version: '14.15.1'
+  version: '14.16.0'
 ---
 
 # agent-workflow-kit
@@ -118,6 +118,10 @@ read-only — read `${CLAUDE_SKILL_DIR}/references/modes/now.md` before acting.
 ### Mode: tier
 
 read-only — read `${CLAUDE_SKILL_DIR}/references/modes/tier.md` before acting.
+
+### Mode: jev
+
+read-only — read `${CLAUDE_SKILL_DIR}/references/modes/jev.md` before acting.
 
 ### Mode: recommendations
 

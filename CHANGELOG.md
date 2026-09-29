@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-29 — AD-164 the Jev guide (kit 14.16.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**`/agent-workflow-kit jev` is a new read-only mode: the kit recommends Jev (TypeSafe) and walks a user to a first
+request.** The new leaf `tools/jev-guide.mjs` prints a fixed, vendor-sourced text (what Jev is, why it pays here, what
+it is not, dated sources), three steps (the vendor skill with a presence mark over five skill paths, the key with the
+`TYPESAFE_API_KEY` presence boolean, the first use with the vendor's smallest documented request quoted) and three
+workflow prompts; `--json`
+gives the envelope. It imports a closed named list, opens no connection and never prints the key's value. It is
+registered after `tier` in the catalog, the router and the kit README, with one sentence on the skill description;
+the `daily` router budget rises 31744 to 32768 B and the tarball pin by the two new files. Contract
+`docs/ai/specs/kit/jev-guide/` (revision 1, live, S1–S14 bound).
+
 ## 2026-09-29 — AD-163 a possible sandbox-mask leftover withholds the verdict (kit 14.15.1 PATCH; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **A fenced entry that neither mask rule claims and whose lstat is an empty regular file with no write bit now refuses

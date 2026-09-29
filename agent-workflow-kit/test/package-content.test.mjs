@@ -189,6 +189,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/tier-guide-facts.mjs',
       'tools/tier-guide.mjs',
       'references/modes/tier.md',
+      // the Jev guide (spec:jev-guide/S13) and its mode doc — by NAME because the mode doc renders the CLI path.
+      'tools/jev-guide.mjs',
+      'references/modes/jev.md',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -852,7 +855,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 343 = 341 + tools/session-close-check.mjs and references/authoring/QUEUE_TEMPLATE.md - story S5 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 344 = 343 + tools/profile-gap-screen.mjs - story S6 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 345 = 344 + tools/mount-masks.mjs - the sandbox-masks lane's mount-table judge
-    assert.equal(packed.length, 345, `tarball file count drifted (${packed.length}\u2260 345)`);
+    // 347 = 345 + tools/jev-guide.mjs and references/modes/jev.md - the Jev guide
+    assert.equal(packed.length, 347, `tarball file count drifted (${packed.length}\u2260 347)`);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break
