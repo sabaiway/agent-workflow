@@ -2,14 +2,16 @@
 // spec:jev-guide — docs/ai/specs/kit/jev-guide/index.md
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { fail } from '../references/scripts/markdown-blocks.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import { KEY_VARIABLE, connectLine, keySet } from './jev-facts.mjs';
 
 const SCHEMA = 1;
-const KEY_VARIABLE = 'TYPESAFE_API_KEY';
+const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SKILL_FILE = join('typesafe-ai', 'SKILL.md');
-const HELP = `jev — read-only: what Jev (TypeSafe) is, why it pays here, and the steps to a first request.
+const HELP = `jev — read-only: what Jev (TypeSafe) is, why it pays here, and the two steps to a connected key.
 
 Usage:
   node jev-guide.mjs [--dir PROJECT] [--json]
@@ -20,7 +22,7 @@ Usage:
 
 Exit codes: 0 rendered; 1 nothing rendered (a --dir that is not a directory); 2 usage.
 
-Reads only: the --dir, the home directory, the key variable's presence, the SHELL variable and five skill paths; no network.`;
+Reads only: the --dir, the home directory, the key variable's presence and five skill paths; no network.`;
 
 export const JEV_TEXT = Object.freeze([
   'WHAT: Jev is a decision model: it takes a state and typed questions (choice, score, noul) and returns typed answers with probabilities and a confidence; it does not write text.',
@@ -42,7 +44,13 @@ export const JEV_TEXT = Object.freeze([
   'code.claude.com for claude plugin list, read 2026-09-29.',
 ]);
 
+const KEY_GET = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
+const KEY_CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and, for bash or zsh, saves it to your shell\'s startup files.';
+const KEY_RESTART = 'Then quit the agent, start it again from a new terminal, and run /agent-workflow-kit jev again: the key mark should read set.';
+const KEY_NEVER = 'Never paste the key into the chat or into a project file.';
+const KEY_NOT_SET = `key: ${KEY_VARIABLE} not set. A host setting that filters the environment of the agent's commands also hides it. If it still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads its startup file: export the variable in the file the agent's launcher reads, then restart.`;
 const INSTALL = [
+  'Optional, for your own code and prompts — the vendor skill:',
   'Claude Code:',
   'claude plugin marketplace add typesafe-ai/skills',
   'claude plugin install typesafe@typesafe-ai',
@@ -55,28 +63,8 @@ const NOT_SEEN = [
   'in a Claude Code session (the vendor); ask any other agent to use the TypeSafe skill (the vendor); or run Claude Code\'s own',
   'claude plugin list',
 ];
-const PROFILES = Object.freeze({ zsh: '~/.zshrc', bash: '~/.bashrc' });
-const KEY_LINE = 'set +x; printf \'TYPESAFE_API_KEY: \' && read -rs k && echo && { echo; printf \'export TYPESAFE_API_KEY=%q\' "$k"; echo; } >> PROFILE && unset k';
-const KEY_GET = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const KEY_RUN = 'Run this line yourself in a terminal of your own, outside the agent: it reads the key with no echo, so the key never passes through the agent or its transcript.';
-const KEY_EDITOR = 'Set TYPESAFE_API_KEY to your key in your shell\'s startup file, in an editor and in that shell\'s own syntax, never through the chat or a project file.';
-const KEY_RESTART = 'Then quit the agent, start it again from a new terminal, and run /agent-workflow-kit jev again: the key mark reads set.';
-const KEY_NEVER = 'Never paste the key into the chat or into a project file.';
-const keyNotSet = (profile) => `key: ${KEY_VARIABLE} not set. A host setting that filters the environment of the agent's commands also hides it. If it still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads ${profile ?? 'that startup file'}: export the variable in the file the agent's launcher reads, then restart.`;
-const CURL = 'set +x; curl -q -sS -w \' HTTP %{http_code}\' -X POST https://api.typesafe.ai/v1/systemone -H "Authorization: Bearer $TYPESAFE_API_KEY" -H "Content-Type: application/json" -d \'{"state":"Help! My payouts have been failing for 3 days.","model":"jev-latest","questions":{"department":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments, invoicing, refunds","technical":"Bugs, outages, integrations","sales":"Pricing, upgrades, new accounts"}}}}\'';
-const FIRST_USE = [
-  'The vendor\'s smallest documented request, reading the key from the environment:',
-  CURL,
-  'The check: HTTP 200 and a response whose answers.department carries a choice and a confidence; any other code reads by the four error meanings below.',
-  'Its documented response:',
-  '{"model":"jev-1.13.0","answers":{"department":{"type":"choice","choice":"billing","probabilities":{"billing":0.88,"technical":0.12,"sales":0.0},"confidence":0.81}},"usage":{"input_tokens":318,"output_tokens":34}}',
-  'choice: "The highest-probability option."',
-  'probabilities: "Every option mapped to its probability (floats that sum to 1)."',
-  'confidence: "How certain the model is, derived from probabilities."',
-  '401: "Missing or invalid API key. Check the `Authorization` header."',
-  '422: "The request body failed validation — for example a missing required field or a malformed question. The body details the offending field."',
-  '429: "You have exceeded your rate limit. Back off and retry after a short delay."',
-  '529: "TypeSafe is temporarily overloaded. Retry after a short delay."',
+const AFTER_INSTALL = [
+  'After an install, quit the agent and start it again from a new terminal.',
   'Then give the agent this prompt: using the TypeSafe skill, route these three tickets to billing, technical or sales, one request each, and print each choice and confidence — "I was charged twice this month.", "The app crashes when I upload a file.", "Is there a discount for a yearly plan?".',
   'Success: three choices, each with a confidence.',
 ];
@@ -109,18 +97,18 @@ const parseArgv = (argv) => {
 const statIs = (path, kind) => {
   try { return kind === 'file' ? statSync(path).isFile() : statSync(path).isDirectory(); } catch { return false; }
 };
+const homeOf = (io) => {
+  if (io.home !== undefined) return io.home;
+  try { return homedir(); } catch { return ''; }
+};
 const skillPaths = (dir, home) => [...new Set([join(dir, '.claude', 'skills'), join(dir, '.agents', 'skills'),
-  join(home, '.claude', 'skills'), join(home, '.codex', 'skills'), join(home, '.cursor', 'skills')]
+  ...(home === '' ? [] : [join(home, '.claude', 'skills'), join(home, '.codex', 'skills'), join(home, '.cursor', 'skills')])]
   .map((root) => join(root, SKILL_FILE)))];
-export const keySet = (env) => typeof env[KEY_VARIABLE] === 'string' && env[KEY_VARIABLE].trim() !== '';
-const profileOf = (env) => (typeof env.SHELL === 'string' && Object.hasOwn(PROFILES, basename(env.SHELL)) ? PROFILES[basename(env.SHELL)] : null);
 
-const renderSteps = (found, set, profile) => [
-  ['STEP 1 — the key', KEY_GET, ...(profile ? [KEY_RUN, KEY_LINE.replace('PROFILE', profile)] : [KEY_EDITOR]), KEY_RESTART,
-    KEY_NEVER, set ? `key: ${KEY_VARIABLE} set.` : keyNotSet(profile)],
+const renderSteps = (found, set, connect) => [
+  ['STEP 1 — the key', KEY_GET, KEY_CONNECT, connect, KEY_RESTART, KEY_NEVER, set ? `key: ${KEY_VARIABLE} set.` : KEY_NOT_SET],
   ['STEP 2 — the vendor skill', ...INSTALL,
-    ...(found.length ? found.map((path) => `skill: found at ${path}`) : NOT_SEEN)],
-  ['STEP 3 — the first request', ...FIRST_USE],
+    ...(found.length ? found.map((path) => `skill: found at ${path}`) : NOT_SEEN), ...AFTER_INSTALL],
 ];
 
 export const main = (argv, io = {}) => {
@@ -133,14 +121,13 @@ export const main = (argv, io = {}) => {
   if (parsed.help) { log(HELP); return 0; }
   const dir = resolve(io.cwd ?? process.cwd(), parsed.dir);
   if (!statIs(dir, 'directory')) { error(`${dir} is not a directory`); return 1; }
-  const found = skillPaths(dir, io.home ?? homedir()).filter((path) => statIs(path, 'file'));
+  const found = skillPaths(dir, homeOf(io)).filter((path) => statIs(path, 'file'));
   const env = io.env ?? process.env;
   const set = keySet(env);
-  const profile = profileOf(env);
-  const steps = renderSteps(found, set, profile);
+  const connect = connectLine(io.toolsDir ?? TOOLS);
+  const steps = renderSteps(found, set, connect);
   log(parsed.json
-    ? JSON.stringify({ schema: SCHEMA, command: 'jev', dir, text: JEV_TEXT, skill: { found }, key: { set, profile },
-      steps, prompts: PROMPTS }, null, 2)
+    ? JSON.stringify({ schema: SCHEMA, command: 'jev', dir, text: JEV_TEXT, skill: { found }, key: { set }, connect, steps, prompts: PROMPTS }, null, 2)
     : [...JEV_TEXT, ...steps.flat(), 'WHERE IT PAYS IN THIS WORKFLOW', ...PROMPTS].join('\n'));
   return 0;
 };

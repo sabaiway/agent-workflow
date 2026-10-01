@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-01 — AD-165: Jev connects from one command the user runs (kit 14.18.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**The `jev-connect` Recommendations item now carries the user to the result: its apply is `HAND-APPLY: node
+<kit>/tools/jev-connect.mjs`, a command the user runs in a terminal of their own.** The new command refuses without a
+terminal, reads the key with no echo, verifies it with one in-process request (the key in a header, never an argument),
+saves it as managed `export` lines in the shell's startup files (zsh `~/.zshrc`, under `ZDOTDIR` when set; bash
+`~/.bashrc` plus the login file bash reads; an earlier export line replaced in place; never through a link) and says
+to restart the agent; another shell or Windows gets the editor sentence, exit 4. The new leaf `tools/jev-facts.mjs` is
+the one source of the key rule, the connect line and the vendor's request facts for the guide, the advisor and the
+command. The guide shrinks to two steps and its mode doc loses the walk; the shell key
+line and the curl line leave the kit. Contract `docs/ai/specs/kit/jev-guide/` revision 3 (S22–S26 bound; S5, S15, S16
+retired); tarball 347 → 349; Issue-027 items 23–26 and 28–30 closed.
+
 ## 2026-09-30 — AD-164 revised: the Jev offer and the key-first walk (kit 14.17.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **The Recommendations advisor gains one optional item, `jev-connect`, rendered while `TYPESAFE_API_KEY` is not set

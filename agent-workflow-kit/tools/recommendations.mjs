@@ -102,7 +102,7 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
-import { keySet } from './jev-guide.mjs';
+import { connectLine, keySet } from './jev-facts.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
@@ -283,7 +283,7 @@ export const WHATS = Object.freeze({
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
-  'jev-connect': 'TYPESAFE_API_KEY is not set on this host — Jev (TypeSafe), a typed decision model, is not connected machine-wide',
+  'jev-connect': 'Jev (TypeSafe) is not connected: TYPESAFE_API_KEY is not in the environment the agent\'s commands run in',
   'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
@@ -1608,14 +1608,14 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
   }
 };
 
-// The Jev offer (contract: kit/jev-guide, part jev-offer). The key is judged first, through the
-// guide's own rule over the injected environment only; the ack store is read only when it is not set.
+// The Jev offer (contract: kit/jev-guide, part jev-offer). The key is judged first, through the facts leaf's one rule over
+// the injected environment; the apply is the connect command the USER runs in a terminal of their own (HAND-APPLY), never a guide.
 export const probeJevConnect = ({ root, deps, add, skip }) => {
   try {
     if (keySet(deps.getenv ?? {})) return;
     if (readAckValue(root, deps, ACKS_JEV_CONNECT_KEY) === JEV_CONNECT_DECLINE) return;
     const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
-    add('jev-connect', WHATS['jev-connect'], `node ${q(toolPath('jev-guide.mjs'))} --dir ${q(root)} --json`, 'jev-connect',
+    add('jev-connect', WHATS['jev-connect'], `HAND-APPLY: ${connectLine(HERE)}`, 'jev-connect',
       `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
   } catch (err) {
     skip('jev-connect', err);

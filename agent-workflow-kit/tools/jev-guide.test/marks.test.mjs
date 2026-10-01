@@ -6,23 +6,31 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+// The guide and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
+const connectLine = (await import('../jev-facts.mjs').catch(() => ({}))).connectLine ?? (() => { throw new Error('connectLine is absent'); });
 const LF = '\n';
 const KEY = 'TYPESAFE_API_KEY';
 const SKILL = join('typesafe-ai', 'SKILL.md');
+const TOOLS_DIR = '/kit tools/dir';
 // The five roots of the part, in its order: [the base, the root under it].
 const ROOTS = [['dir', '.claude/skills'], ['dir', '.agents/skills'], ['home', '.claude/skills'], ['home', '.codex/skills'],
   ['home', '.cursor/skills']];
+const OPTIONAL = 'Optional, for your own code and prompts — the vendor skill:';
 const INSTALL = ['claude plugin marketplace add typesafe-ai/skills', 'claude plugin install typesafe@typesafe-ai',
   'npx skills add typesafe-ai/skills --skill typesafe-ai'];
+const AFTER_INSTALL = 'After an install, quit the agent and start it again from a new terminal.';
+const TICKETS = ['"I was charged twice this month."', '"The app crashes when I upload a file."', '"Is there a discount for a yearly plan?"'];
+const SUCCESS = 'Success: three choices, each with a confidence.';
 const HOST_VARIANTS = [{}, { CLAUDECODE: '1', CODEX_HOME: '/opt/codex-home', TERM_PROGRAM: 'vscode' }];
 const CANARIES = ['tsk-A1b2', 'Zq9_longer-canary-value-with-a-suffix.x'];
 const HOST_FILTER = /host setting (that filters|filtering) the environment of the agent's commands also hides it/;
 const KEY_STEP = 'STEP 1 — the key';
 const SKILL_STEP = 'STEP 2 — the vendor skill';
 const GET_KEY = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const EDITOR = "Set TYPESAFE_API_KEY to your key in your shell's startup file, in an editor and in that shell's own syntax, never through the chat or a project file.";
+const CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and, for bash or zsh, saves it to your shell\'s startup files.';
+const RESTART = 'Then quit the agent, start it again from a new terminal, and run /agent-workflow-kit jev again: the key mark should read set.';
 const NEVER_PASTE = 'Never paste the key into the chat or into a project file.';
 
 const made = [];
@@ -93,6 +101,10 @@ const SKILL_CASES = {
     writeFile(join(cell.home, '.claude', 'plugins', 'cache', 'typesafe-ai', 'typesafe', '1.0.0', 'skills', SKILL));
   }),
   'a home component of 256 bytes (ENAMETOOLONG)': notSeen((cell) => { cell.home = join(cell.home, 'h'.repeat(256)); }),
+  'an empty home drops the three home roots': notSeen((cell) => {
+    writeFile(join(cell.home, '.claude', 'skills', SKILL));
+    cell.home = '';
+  }),
   'the near-miss roots': notSeen((cell) => {
     for (const [base, root] of [['home', '.agents/skills'], ['dir', '.codex/skills'], ['dir', '.cursor/skills']]) {
       writeFile(join(cell[base], root, SKILL));
@@ -120,7 +132,7 @@ const cells = Object.fromEntries(CELL_NAMES.map((name) => [name, buildCell(name)
 const run = (cell, argv = [], env = cell.env) => {
   const out = [];
   const err = [];
-  const code = main(['--dir', cell.dir, ...argv], { cwd: cell.root, env, home: cell.home,
+  const code = main(['--dir', cell.dir, ...argv], { cwd: cell.root, env, home: cell.home, toolsDir: TOOLS_DIR,
     log: (text) => out.push(text), error: (text) => err.push(text) });
   return { code, stdout: out.join(LF), stderr: err.join(LF) };
 };
@@ -179,17 +191,17 @@ describe('spec:jev-guide/S2 the skill table by proof', () => {
   }
 });
 
-describe('spec:jev-guide/S3 the key step and its presence mark', () => {
-  it('opens on the console, then the run-it-yourself and key lines on zsh or the editor sentence, then the restart and never-paste lines', () => {
-    for (const [name, zsh] of [['a zsh SHELL, no key', true], ['an absent variable', false]]) {
+describe('spec:jev-guide/S3 the key step: the connect line and the presence mark', () => {
+  it('prints the console line, the connect sentence, the connect line, the restart and never-paste lines, then the mark, whatever the SHELL', () => {
+    for (const name of ['a zsh SHELL, no key', 'an absent variable', 'two canaries: the first']) {
       const step = stepOf(envelopeOf(cells[name]), KEY_STEP);
-      const run = step.findIndex((line) => /yourself in a terminal of your own, outside the agent/.test(line));
-      const keyLines = step.filter((line) => line.includes('read -rs'));
-      assert.deepEqual([run >= 0, keyLines.length, step.filter((line) => line === EDITOR).length], zsh ? [true, 1, 0] : [false, 0, 1], name);
-      const restart = step.findIndex((line) => /quit the agent, start it again from a new terminal, and run \/agent-workflow-kit jev again/.test(line));
-      const order = [step.indexOf(GET_KEY), ...(zsh ? [run, step.indexOf(keyLines[0])] : [step.indexOf(EDITOR)]), restart, step.indexOf(NEVER_PASTE)];
-      assert.ok(order.every((at, index) => at > 0 && (index === 0 || at > order[index - 1])), `${name}: ${order}`);
+      assert.deepEqual(step.slice(0, 6), [KEY_STEP, GET_KEY, CONNECT, connectLine(TOOLS_DIR), RESTART, NEVER_PASTE], name);
+      assert.equal(step.length, 7, name);
+      assert.match(step[6], /^key: TYPESAFE_API_KEY (set\.|not set\.)/, name);
+      assert.equal(step.filter((line) => line.includes('read -rs') || line.includes('curl')).length, 0, name);
     }
+    assert.equal(connectLine(TOOLS_DIR), "node '/kit tools/dir/jev-connect.mjs'", 'a path with a space is quoted');
+    assert.equal(connectLine('/kit/tools'), 'node /kit/tools/jev-connect.mjs', 'a safe path is bare');
   });
 
   it('renders every output byte-identical under two canaries differing in length, prefix and suffix, and set', () => {
@@ -201,44 +213,56 @@ describe('spec:jev-guide/S3 the key step and its presence mark', () => {
     }
     for (const cell of [first, second]) {
       const envelope = envelopeOf(cell);
-      assert.deepEqual(envelope.key, { set: true, profile: null });
+      assert.deepEqual(envelope.key, { set: true });
       assert.ok(!stepOf(envelope, KEY_STEP).some((line) => HOST_FILTER.test(line)));
     }
   });
 
   it('renders not set, with the host-filter and the launcher sentences, for an absent, an empty and a whitespace-only variable', () => {
-    for (const [name, profile] of [['an absent variable', null], ['an empty string', null], ['a whitespace-only string', null], ['a zsh SHELL, no key', '~/.zshrc']]) {
+    for (const name of ['an absent variable', 'an empty string', 'a whitespace-only string', 'a zsh SHELL, no key']) {
       const envelope = envelopeOf(cells[name]);
-      assert.deepEqual(envelope.key, { set: false, profile }, name);
+      assert.deepEqual(envelope.key, { set: false }, name);
       const step = stepOf(envelope, KEY_STEP);
       assert.equal(step.filter((line) => line.startsWith(`key: ${KEY} not set`)).length, 1, name);
       const text = step.join(LF);
       assert.match(text, HOST_FILTER, name);
-      assert.ok(text.includes(`still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads ${profile ?? 'that startup file'}`), name);
+      assert.ok(text.includes('still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads its startup file'), name);
       assert.match(text, /export the variable in the file the agent's launcher reads, then restart/, name);
+    }
+  });
+
+  it('reads io.env for the key variable only', () => {
+    for (const name of CELL_NAMES) {
+      const reads = new Set();
+      envelopeOf(cells[name], recordingEnv({ ...cells[name].env }, reads));
+      assert.deepEqual([...reads], [KEY], name);
     }
   });
 });
 
 describe('spec:jev-guide/S4 the install block is fixed in every case and under every host variable', () => {
-  it('prints the Claude Code label and its two commands, then the other-agents label and its command', () => {
+  it('prints the optional label, the Claude Code label and its two commands, the other-agents label and its command, then the restart, the prompt and the success', () => {
     let reference = null;
     for (const name of CELL_NAMES) {
       for (const variant of HOST_VARIANTS) {
-        const reads = new Set();
-        const env = recordingEnv({ ...cells[name].env, ...variant }, reads);
+        const env = { ...cells[name].env, ...variant };
         const step = stepOf(envelopeOf(cells[name], env), SKILL_STEP);
         const plain = run(cells[name], [], env).stdout.split(LF);
         const at = INSTALL.map((command) => step.indexOf(command));
         for (const command of INSTALL) assert.equal(step.filter((line) => line === command).length, 1, `${name}: ${command}`);
         assert.deepEqual([at[1] - at[0], at[2] - at[1]], [1, 2], `${name}: ${at}`);
+        assert.equal(step[at[0] - 2], OPTIONAL, name);
         assert.match(step[at[0] - 1], /^Claude Code\b/, name);
         assert.match(step[at[2] - 1], /other agents/i, name);
-        const block = step.slice(at[0] - 1, at[2] + 1);
+        const block = step.slice(at[0] - 2, at[2] + 1);
         reference ??= block;
         assert.deepEqual(block, reference, name);
-        for (const line of block) assert.ok(plain.includes(line), `${name}: ${line}`);
-        assert.deepEqual([...reads].sort(), ['SHELL', KEY], `${name}: io.env reads`);
+        const tail = step.slice(-3);
+        assert.equal(tail[0], AFTER_INSTALL, name);
+        assert.ok(['using the TypeSafe skill', 'billing, technical or sales', 'one request each', 'choice and confidence', ...TICKETS]
+          .every((part) => tail[1].includes(part)), `${name}: ${tail[1]}`);
+        assert.equal(tail[2], SUCCESS, name);
+        for (const line of [...block, ...tail]) assert.ok(plain.includes(line), `${name}: ${line}`);
       }
     }
   });

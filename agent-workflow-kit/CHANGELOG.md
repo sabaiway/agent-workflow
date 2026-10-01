@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.18.0 — Jev connects from ONE command you run: the Recommendations item hands it over, the guide prints it, and one leaf names it (AD-165)
+
+**While `TYPESAFE_API_KEY` is not in the environment the agent's commands run in, the Recommendations item `jev-connect`
+now carries you to the result.** Its apply is `HAND-APPLY: node <kit>/tools/jev-connect.mjs` — a command YOU run in a
+terminal of your own; the agent hands it over and never runs it. In 14.17.0 the apply ran the read-only guide, which
+sets nothing: a user who ran it believed Jev was connected. The rule now: a recommendation reaches the result.
+
+- **`jev-connect`, the one command.** It refuses without a terminal (exit 3), asks for the key with no echo, verifies
+  it with one request to api.typesafe.ai (the vendor's sample body, the key in a header from an in-process fetch —
+  never an argument, never a shell trace; the four documented error codes print the vendor's meanings), and saves it
+  as managed `export` lines in your shell's startup files: zsh → `~/.zshrc` (under `ZDOTDIR` when set); bash →
+  `~/.bashrc` and the login file bash reads (`.bash_profile`, `.bash_login` or `.profile`, the first that exists;
+  `.bash_profile` created when none; written even when it sources `.bashrc`). Then: `connected — quit the agent and
+  start it again from a new terminal`, exit 0. Every earlier line that starts `export TYPESAFE_API_KEY=` is replaced in
+  place by the managed line, so no `if` branch is emptied; a linked file or directory is never written through, nor a
+  file outside your home; a new file is created 0600.
+  Another shell, or Windows: the key is verified but not saved, the last line says what to set by hand, exit 4. A key
+  the vendor refuses: `nothing written`, exit 1. `--unverified` saves without the request. The key's value never
+  appears in any output.
+- **The guide shrinks to two steps.** `/agent-workflow-kit jev` prints the key mark and the connect line, then the
+  optional vendor skill with its own restart line and first prompt. The shell key line, the curl line, the response
+  and the error meanings left the guide; its mode doc lost the walk — no command the guide prints is run by the agent.
+- **One leaf, no restatement.** `tools/jev-facts.mjs` holds the key rule, the connect line and the vendor's request
+  facts; the guide, the advisor and the command import it. The advisor's WHAT now names the environment the agent's
+  commands run in, never "this host".
+- Closes items 23–26 and 28–30 of Issue-027 (the unguarded `homedir()`, the missing restart after the skill install,
+  the key in curl's argv, `ZDOTDIR`, the `&& unset k`, the WHAT, the login bash that never reads `~/.bashrc`).
+
 ## 14.17.0 — the Recommendations screen offers the Jev walk while `TYPESAFE_API_KEY` is not set, and the walk starts with the key (AD-164 revised)
 
 **While `TYPESAFE_API_KEY` is not in the environment the agent's commands run in, the Recommendations screen now

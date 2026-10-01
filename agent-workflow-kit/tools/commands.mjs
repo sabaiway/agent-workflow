@@ -103,7 +103,7 @@ const CATALOG = [
     invocation: invocationOf('jev'),
     group: 'Inspect',
     kind: READ_ONLY,
-    oneLine: 'Guide to Jev (TypeSafe), a decision model: what it is, why it pays here, the steps to a first request and three prompts where it pays; the guide opens no connection.',
+    oneLine: 'Guide to Jev (TypeSafe), a decision model: what it is, why it pays here, the two steps to a connected key and three prompts where it pays; the guide opens no connection.',
   },
   {
     key: 'backends',

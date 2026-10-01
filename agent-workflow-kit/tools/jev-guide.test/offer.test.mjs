@@ -9,15 +9,16 @@ import { ACKS_FILE, factFingerprint } from '../ack-store.mjs';
 import { buildRecommendations, formatRecommendations, main, SEVERITY_OPTIONAL } from '../recommendations.mjs';
 import { shellQuoteArg as q } from '../review-state.mjs';
 
-// The probe is loaded dynamically, so the suite loads on a tree without it and each cell fails at its first call.
+// The probe and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../recommendations.mjs');
 const probeJevConnect = loaded.probeJevConnect ?? (() => { throw new Error('probeJevConnect is absent'); });
+const connectLine = (await import('../jev-facts.mjs').catch(() => ({}))).connectLine ?? (() => { throw new Error('connectLine is absent'); });
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KEY = 'TYPESAFE_API_KEY';
 const LANE = 'jev-connect';
 const DECLINE = factFingerprint('jev-connect:declined');
 const OTHER = factFingerprint('jev-connect:another-fact');
-const WHAT = 'TYPESAFE_API_KEY is not set on this host — Jev (TypeSafe), a typed decision model, is not connected machine-wide';
+const WHAT = "Jev (TypeSafe) is not connected: TYPESAFE_API_KEY is not in the environment the agent's commands run in";
 const BENEFIT = "decisions — a typed choice with a confidence in under a second for your code and the agent's scripts, once for every project here";
 const CANARIES = ['tsk-G7h8', 'Vs6_a-longer-canary-value-for-the-advisor.k'];
 const KEYS = { set: { [KEY]: CANARIES[0] }, absent: {}, empty: { [KEY]: '' }, 'whitespace-only': { [KEY]: ' \t ' } };
@@ -84,12 +85,12 @@ describe('spec:jev-guide/S17 the state table: key × ack, one conjunction admits
 });
 
 describe('spec:jev-guide/S18 the item and the decline round trip', () => {
-  it('renders one optional jev-connect item: the WHAT and BENEFIT literals, the guide apply and the decline recipe line', () => {
+  it('renders one optional jev-connect item: the WHAT and BENEFIT literals, the HAND-APPLY connect apply and the decline recipe line', () => {
     const root = projectOf();
     const { items, skips } = alone(root, { getenv: {} });
     assert.equal(skips.length, 0);
     assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, what: WHAT, benefit: BENEFIT,
-      apply: `node ${q(join(TOOLS, 'jev-guide.mjs'))} --dir ${q(root)} --json`,
+      apply: `HAND-APPLY: ${connectLine(TOOLS)}`,
       detail: `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${LANE} --fingerprint ${DECLINE} --cwd ${q(root)}` }]);
     assert.ok(formatRecommendations({ items, skips }).includes(WHAT));
   });
@@ -128,12 +129,22 @@ describe('spec:jev-guide/S20 the hermetic seam and the canary', () => {
   });
 });
 
-describe('spec:jev-guide/S21 one key rule: the guide exports it and the probe calls it', () => {
-  it('the probe span calls keySet( and carries no .trim( and no key name; the import line from ./jev-guide.mjs names keySet', () => {
+describe('spec:jev-guide/S21 one key rule, one leaf: the facts leaf exports it, the probe and the guide import it', () => {
+  it('the probe span calls keySet( and connectLine( and carries no .trim( and no key name; the advisor imports both from ./jev-facts.mjs and nothing from the guide', () => {
     const source = readFileSync(join(TOOLS, 'recommendations.mjs'), 'utf8');
     const span = probeSpan(source);
-    assert.ok(span.includes('keySet('), span);
+    assert.ok(span.includes('keySet(') && span.includes('connectLine('), span);
     assert.ok(!span.includes('.trim(') && !span.includes(KEY), span);
-    assert.match(source, /^import \{[^}]*\bkeySet\b[^}]*\} from '\.\/jev-guide\.mjs';$/m);
+    const line = source.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
+    assert.ok(line && /\bkeySet\b/.test(line) && /\bconnectLine\b/.test(line), line);
+    assert.doesNotMatch(source, /from '\.\/jev-guide\.mjs'/);
+  });
+
+  it('the guide imports keySet and connectLine from ./jev-facts.mjs; the facts leaf imports only join from node:path', () => {
+    const guide = readFileSync(join(TOOLS, 'jev-guide.mjs'), 'utf8');
+    const line = guide.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
+    assert.ok(line && /\bkeySet\b/.test(line) && /\bconnectLine\b/.test(line), line);
+    const facts = readFileSync(join(TOOLS, 'jev-facts.mjs'), 'utf8');
+    assert.deepEqual(facts.match(/^import .*$/gm), ["import { join } from 'node:path';"]);
   });
 });

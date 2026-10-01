@@ -18,7 +18,8 @@ const COMMAND = /\/agent-workflow-kit jev\b/;
 const WORDS = /\bjev\b|typesafe/i;
 // The contract's closed import surface: specifier → the names it may give (null: any name).
 const NAMED = new Map([['node:fs', ['statSync']], ['node:os', ['homedir']], ['node:path', null], ['node:url', null],
-  ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']]]);
+  ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']],
+  ['tools/jev-facts.mjs', ['KEY_VARIABLE', 'connectLine', 'keySet']]]);
 const TOKENS = ['import(', 'require(', 'process.getBuiltinModule', 'process.binding', 'fetch', 'WebSocket', 'plugins',
   'CLAUDE_CODE_PLUGIN_CACHE_DIR'];
 const BARE_NAMES = /\b(getBuiltinModule|binding|dlopen|eval|Function)\b/;
@@ -111,10 +112,12 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
     }
   });
 
-  it('keeps the transitive static import graph within the six listed modules', () => {
+  it('keeps the transitive static import graph within the seven listed modules and never reaches the connect command', () => {
     const graph = [...graphOf(GUIDE)];
     assert.ok(graph.includes('tools/direct-run.mjs'), 'the walk reaches the direct-run leaf');
+    assert.ok(graph.includes('tools/jev-facts.mjs'), 'the walk reaches the facts leaf');
     assert.deepEqual(graph.filter((identity) => !NAMED.has(identity)), []);
+    assert.ok(!graph.includes('tools/jev-connect.mjs'));
   });
 
   it('carries none of the listed tokens nor their bare names, and names process.env once, as the default of io.env', () => {
@@ -153,7 +156,8 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     const end = catalog.findIndex(({ text }, index) => index > key && text.trim() === '},');
     return catalog.slice(key - 1, end + 1);
   };
-  const guideFile = ({ file }) => ['kit:tools/jev-guide.mjs', 'kit:references/modes/jev.md'].includes(file);
+  const guideFile = ({ file }) => ['kit:tools/jev-guide.mjs', 'kit:references/modes/jev.md', 'kit:tools/jev-facts.mjs',
+    'kit:tools/jev-connect.mjs'].includes(file) || file.startsWith('kit:tools/jev-connect.test');
   const fileLines = (name) => lines.filter(({ file }) => file === name);
   const onlyOne = (found, label) => {
     assert.equal(found.length, 1, label);
@@ -180,7 +184,7 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
       one((text) => text.trim() === "{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },", 'the opt-in row'),
       one((text) => text.startsWith('export const RISK_NOTED_KEYS = '), 'RISK_NOTED_KEYS'),
       one((text) => /^const [A-Z_]+ = 'jev-connect:declined';$/.test(text), 'the decline fact'),
-      one((text) => /^import \{[^}]*\} from '\.\/jev-guide\.mjs';$/.test(text), 'the import line'), ...all.slice(first, close + 1)];
+      one((text) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(text), 'the import line'), ...all.slice(first, close + 1)];
   };
 
   it('names /agent-workflow-kit jev only on the description line, the README row, the mode doc and the guide', () => {
