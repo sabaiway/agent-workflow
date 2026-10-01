@@ -19,6 +19,11 @@ const INSTALL = ['claude plugin marketplace add typesafe-ai/skills', 'claude plu
 const HOST_VARIANTS = [{}, { CLAUDECODE: '1', CODEX_HOME: '/opt/codex-home', TERM_PROGRAM: 'vscode' }];
 const CANARIES = ['tsk-A1b2', 'Zq9_longer-canary-value-with-a-suffix.x'];
 const HOST_FILTER = /host setting (that filters|filtering) the environment of the agent's commands also hides it/;
+const KEY_STEP = 'STEP 1 — the key';
+const SKILL_STEP = 'STEP 2 — the vendor skill';
+const GET_KEY = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
+const EDITOR = "Set TYPESAFE_API_KEY to your key in your shell's startup file, in an editor and in that shell's own syntax, never through the chat or a project file.";
+const NEVER_PASTE = 'Never paste the key into the chat or into a project file.';
 
 const made = [];
 after(() => {
@@ -100,6 +105,7 @@ const KEY_CASES = {
   'an absent variable': {},
   'an empty string': { [KEY]: '' },
   'a whitespace-only string': { [KEY]: ' \t ' },
+  'a zsh SHELL, no key': { SHELL: '/bin/zsh' },
 };
 
 const buildCell = (name) => {
@@ -118,6 +124,7 @@ const run = (cell, argv = [], env = cell.env) => {
     log: (text) => out.push(text), error: (text) => err.push(text) });
   return { code, stdout: out.join(LF), stderr: err.join(LF) };
 };
+const stepOf = (envelope, heading) => envelope.steps.find(([first]) => first === heading);
 const envelopeOf = (cell, env) => {
   const result = run(cell, ['--json'], env);
   assert.equal(result.code, 0, result.stderr);
@@ -154,7 +161,7 @@ describe('spec:jev-guide/S2 the skill table by proof', () => {
       const envelope = envelopeOf(cell);
       assert.deepEqual([...envelope.skill.found].sort(), [...cell.expected].sort());
       assert.equal(new Set(envelope.skill.found).size, envelope.skill.found.length, 'each path once');
-      const [step] = envelope.steps;
+      const step = stepOf(envelope, SKILL_STEP);
       const lines = run(cell).stdout.split(LF);
       for (const path of cell.expected) assert.equal(lines.filter((line) => line.includes(path)).length, 1, path);
       assert.equal(step.some((line) => /not seen/.test(line)), !SKILL_CASES[name].seen);
@@ -173,11 +180,16 @@ describe('spec:jev-guide/S2 the skill table by proof', () => {
 });
 
 describe('spec:jev-guide/S3 the key step and its presence mark', () => {
-  it('names the console, the variable exported before the agent starts or with a restart, and never pasting', () => {
-    const [, step] = envelopeOf(cells['an absent variable']).steps;
-    const text = step.join(LF);
-    for (const part of ['console.typesafe.ai', `Export ${KEY}`, 'restart', 'Never paste the key']) assert.ok(text.includes(part), part);
-    assert.match(text, /export before starting it or restart it/);
+  it('opens on the console, then the run-it-yourself and key lines on zsh or the editor sentence, then the restart and never-paste lines', () => {
+    for (const [name, zsh] of [['a zsh SHELL, no key', true], ['an absent variable', false]]) {
+      const step = stepOf(envelopeOf(cells[name]), KEY_STEP);
+      const run = step.findIndex((line) => /yourself in a terminal of your own, outside the agent/.test(line));
+      const keyLines = step.filter((line) => line.includes('read -rs'));
+      assert.deepEqual([run >= 0, keyLines.length, step.filter((line) => line === EDITOR).length], zsh ? [true, 1, 0] : [false, 0, 1], name);
+      const restart = step.findIndex((line) => /quit the agent, start it again from a new terminal, and run \/agent-workflow-kit jev again/.test(line));
+      const order = [step.indexOf(GET_KEY), ...(zsh ? [run, step.indexOf(keyLines[0])] : [step.indexOf(EDITOR)]), restart, step.indexOf(NEVER_PASTE)];
+      assert.ok(order.every((at, index) => at > 0 && (index === 0 || at > order[index - 1])), `${name}: ${order}`);
+    }
   });
 
   it('renders every output byte-identical under two canaries differing in length, prefix and suffix, and set', () => {
@@ -189,18 +201,21 @@ describe('spec:jev-guide/S3 the key step and its presence mark', () => {
     }
     for (const cell of [first, second]) {
       const envelope = envelopeOf(cell);
-      assert.deepEqual(envelope.key, { set: true });
-      assert.ok(!envelope.steps[1].some((line) => HOST_FILTER.test(line)));
+      assert.deepEqual(envelope.key, { set: true, profile: null });
+      assert.ok(!stepOf(envelope, KEY_STEP).some((line) => HOST_FILTER.test(line)));
     }
   });
 
-  it('renders not set, with the host-filter sentence, for an absent, an empty and a whitespace-only variable', () => {
-    for (const name of ['an absent variable', 'an empty string', 'a whitespace-only string']) {
+  it('renders not set, with the host-filter and the launcher sentences, for an absent, an empty and a whitespace-only variable', () => {
+    for (const [name, profile] of [['an absent variable', null], ['an empty string', null], ['a whitespace-only string', null], ['a zsh SHELL, no key', '~/.zshrc']]) {
       const envelope = envelopeOf(cells[name]);
-      assert.deepEqual(envelope.key, { set: false }, name);
-      const mark = envelope.steps[1].filter((line) => /not set/.test(line));
-      assert.equal(mark.length, 1, name);
-      assert.ok(envelope.steps[1].some((line) => HOST_FILTER.test(line)), name);
+      assert.deepEqual(envelope.key, { set: false, profile }, name);
+      const step = stepOf(envelope, KEY_STEP);
+      assert.equal(step.filter((line) => line.startsWith(`key: ${KEY} not set`)).length, 1, name);
+      const text = step.join(LF);
+      assert.match(text, HOST_FILTER, name);
+      assert.ok(text.includes(`still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads ${profile ?? 'that startup file'}`), name);
+      assert.match(text, /export the variable in the file the agent's launcher reads, then restart/, name);
     }
   });
 });
@@ -212,7 +227,7 @@ describe('spec:jev-guide/S4 the install block is fixed in every case and under e
       for (const variant of HOST_VARIANTS) {
         const reads = new Set();
         const env = recordingEnv({ ...cells[name].env, ...variant }, reads);
-        const [step] = envelopeOf(cells[name], env).steps;
+        const step = stepOf(envelopeOf(cells[name], env), SKILL_STEP);
         const plain = run(cells[name], [], env).stdout.split(LF);
         const at = INSTALL.map((command) => step.indexOf(command));
         for (const command of INSTALL) assert.equal(step.filter((line) => line === command).length, 1, `${name}: ${command}`);
@@ -223,7 +238,7 @@ describe('spec:jev-guide/S4 the install block is fixed in every case and under e
         reference ??= block;
         assert.deepEqual(block, reference, name);
         for (const line of block) assert.ok(plain.includes(line), `${name}: ${line}`);
-        assert.deepEqual([...reads], [KEY], `${name}: io.env reads`);
+        assert.deepEqual([...reads].sort(), ['SHELL', KEY], `${name}: io.env reads`);
       }
     }
   });

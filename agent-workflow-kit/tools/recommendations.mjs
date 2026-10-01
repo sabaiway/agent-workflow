@@ -94,6 +94,7 @@ import {
   ACKS_WORKTREES_DIR_KEY,
   ACKS_COVERAGE_DOMAIN_KEY,
   ACKS_SOURCE_SIZE_COPY_KEY,
+  ACKS_JEV_CONNECT_KEY,
   ACK_LANES,
   factFingerprint,
   readAckValue,
@@ -101,9 +102,12 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
+import { keySet } from './jev-guide.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
+const JEV_CONNECT_DECLINED = 'jev-connect:declined';
+const JEV_CONNECT_DECLINE = factFingerprint(JEV_CONNECT_DECLINED);
 
 export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_KEY, ACKS_SOURCE_SIZE_COPY_KEY, ACK_LANES, factFingerprint };
 
@@ -201,6 +205,7 @@ export const SEVERITIES = Object.freeze({
   // the decline. Neither arm can leave the flow-optimal line standing — an offer is still an item.
   'spec-adoption': SEVERITY_OPTIONAL,
   'profile-gap': SEVERITY_OPTIONAL,
+  'jev-connect': SEVERITY_OPTIONAL,
   'spec-adoption.adopting': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
@@ -278,6 +283,7 @@ export const WHATS = Object.freeze({
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
+  'jev-connect': 'TYPESAFE_API_KEY is not set on this host — Jev (TypeSafe), a typed decision model, is not connected machine-wide',
   'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
@@ -339,6 +345,7 @@ export const BENEFITS = Object.freeze({
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
   'profile-gap': 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step',
+  'jev-connect': 'decisions — a typed choice with a confidence in under a second for your code and the agent\'s scripts, once for every project here',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -386,6 +393,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // its adoption state is declared where the store is seeded.
   { id: 'spec-adoption', mode: 'upgrade', advisorKey: 'spec-adoption' },
   { id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' },
+  { id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
   { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
@@ -1305,7 +1313,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1600,6 +1608,20 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
   }
 };
 
+// The Jev offer (contract: kit/jev-guide, part jev-offer). The key is judged first, through the
+// guide's own rule over the injected environment only; the ack store is read only when it is not set.
+export const probeJevConnect = ({ root, deps, add, skip }) => {
+  try {
+    if (keySet(deps.getenv ?? {})) return;
+    if (readAckValue(root, deps, ACKS_JEV_CONNECT_KEY) === JEV_CONNECT_DECLINE) return;
+    const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
+    add('jev-connect', WHATS['jev-connect'], `node ${q(toolPath('jev-guide.mjs'))} --dir ${q(root)} --json`, 'jev-connect',
+      `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
+  } catch (err) {
+    skip('jev-connect', err);
+  }
+};
+
 export const probeProfileGaps = ({ root, deps, add, skip }) => {
   try {
     const { gaps, skips } = composeProfileGapScreen({ root, deps });
@@ -1632,6 +1654,7 @@ const PROBES = Object.freeze([
   probeWorktreesDir,
   probeMcpChannel,
   probeSpecAdoption,
+  probeJevConnect,
   probeProfileGaps,
 ]);
 
@@ -1758,7 +1781,7 @@ export const main = (argv, ctx = {}) => {
       }
     })();
     if (st == null || !st.isDirectory()) throw Object.assign(new Error(`--cwd is not a directory: ${cwd}`), { exitCode: 1 });
-    const result = buildRecommendations({ cwd, deps: ctx.deps ?? {} });
+    const result = buildRecommendations({ cwd, deps: ctx.deps ?? { getenv: process.env } });
     if (json) return { code: 0, stdout: JSON.stringify(result, null, 2), stderr: '' };
     return { code: 0, stdout: formatRecommendations(result), stderr: '' };
   } catch (err) {

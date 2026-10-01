@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-09-30 — AD-164 revised: the Jev offer and the key-first walk (kit 14.17.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**The Recommendations advisor gains one optional item, `jev-connect`, rendered while `TYPESAFE_API_KEY` is not set
+and the project has not declined it.** The new `probeJevConnect` sits directly before `probeProfileGaps` and judges the
+key through the guide's exported `keySet` over `deps.getenv`; `main` passes `process.env` by default. The ack is read
+only when the key is not set; a decline is the lane `jev-connect` of `ack-store.mjs` (`jevConnectAck`), and the item
+is registered in `OPT_IN_CAPABILITIES`, `RISK_NOTED_KEYS` and the jev mode doc's line 3, with a posture note in the
+recommendations mode doc. `tools/jev-guide.mjs` walks key → vendor skill → first request: a bash or zsh `SHELL` gets a
+no-echo line that appends the export to `~/.bashrc` or `~/.zshrc` (`key.profile` in the envelope), and STEP 3 is the
+vendor's request as a `curl` line with its check. Two new suites, `key-line` and `offer`; no router budget moves, and
+the tarball file list is unchanged. Contract `docs/ai/specs/kit/jev-guide/` (revision 2, live, S15–S21 bound).
+
 ## 2026-09-29 — AD-164 the Jev guide (kit 14.16.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **`/agent-workflow-kit jev` is a new read-only mode: the kit recommends Jev (TypeSafe) and walks a user to a first

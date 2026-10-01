@@ -154,6 +154,34 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     return catalog.slice(key - 1, end + 1);
   };
   const guideFile = ({ file }) => ['kit:tools/jev-guide.mjs', 'kit:references/modes/jev.md'].includes(file);
+  const fileLines = (name) => lines.filter(({ file }) => file === name);
+  const onlyOne = (found, label) => {
+    assert.equal(found.length, 1, label);
+    return found[0];
+  };
+  const rowIn = (name, opener) => {
+    const all = fileLines(name);
+    const start = all.findIndex(({ text }) => text.startsWith(opener));
+    const end = all.findIndex(({ text }, index) => index > start && text === '});');
+    assert.ok(start >= 0 && end > start, opener);
+    return onlyOne(all.slice(start, end).filter(({ text }) => text.startsWith("  'jev-connect': ")), `${opener}: the jev-connect row`);
+  };
+  // The advisor's closed set: the three registry rows, the opt-in row, RISK_NOTED_KEYS, the decline fact, the import line and
+  // the probe span, from the comment block directly above export const probeJevConnect to its closing `};`.
+  const advisorLines = () => {
+    const advisor = 'kit:tools/recommendations.mjs';
+    const all = fileLines(advisor);
+    const one = (test, label) => onlyOne(all.filter(({ text }) => test(text)), label);
+    const probe = all.findIndex(({ text }) => text.startsWith('export const probeJevConnect = '));
+    assert.ok(probe > 0, 'the probe');
+    const first = probe - [...all.slice(0, probe)].reverse().findIndex(({ text }) => !text.startsWith('//'));
+    const close = all.findIndex(({ text }, index) => index > probe && text === '};');
+    return [...['export const SEVERITIES', 'export const WHATS', 'export const BENEFITS'].map((opener) => rowIn(advisor, opener)),
+      one((text) => text.trim() === "{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },", 'the opt-in row'),
+      one((text) => text.startsWith('export const RISK_NOTED_KEYS = '), 'RISK_NOTED_KEYS'),
+      one((text) => /^const [A-Z_]+ = 'jev-connect:declined';$/.test(text), 'the decline fact'),
+      one((text) => /^import \{[^}]*\} from '\.\/jev-guide\.mjs';$/.test(text), 'the import line'), ...all.slice(first, close + 1)];
+  };
 
   it('names /agent-workflow-kit jev only on the description line, the README row, the mode doc and the guide', () => {
     const allowed = [descriptionOf(), readmeRow()];
@@ -174,18 +202,23 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     assert.equal(formatHelp().split(LF).filter((line) => COMMAND.test(line)).length, 1);
   });
 
-  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the mode doc and the guide', () => {
+  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the ack lane row, the note and the intro words, the mode doc and the guide', () => {
     const header = skillLines().findIndex(({ text }) => text === '### Mode: jev');
     assert.ok(header >= 0, 'the jev header');
-    const allowed = [descriptionOf(), readmeRow(), skillLines()[header], skillLines()[header + 2], ...entryLines()];
+    const doc = fileLines('kit:references/modes/recommendations.md');
+    const note = onlyOne(doc.filter(({ text }) => text.startsWith('- `jev-connect` — ')), 'the jev-connect note');
+    const intro = onlyOne(doc.filter(({ text }) => text.includes('Jev not connected on this host')), 'the intro-list words');
+    assert.doesNotMatch(intro.text.replace('Jev not connected on this host', ''), WORDS, 'the intro line says nothing else');
+    const allowed = [descriptionOf(), readmeRow(), skillLines()[header], skillLines()[header + 2], ...entryLines(), ...advisorLines(),
+      rowIn('kit:tools/ack-store.mjs', 'export const ACK_LANES'), note, intro];
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line)).map(where), []);
   });
 
-  it('gives the Recommendations registry and the reference profile no jev key', () => {
+  it('gives the Recommendations registries exactly one jev key, jev-connect, and the reference profile none', () => {
     const profile = JSON.parse(readFileSync(join(KIT, 'references', 'reference-profile.json'), 'utf8'));
-    const keys = [...Object.keys(SEVERITIES), ...Object.keys(WHATS), ...Object.keys(BENEFITS), ...profile.items.map(({ id }) => id)];
-    assert.ok(keys.length > 0);
-    assert.deepEqual(keys.filter((key) => WORDS.test(key)), []);
+    for (const registry of [SEVERITIES, WHATS, BENEFITS]) assert.deepEqual(Object.keys(registry).filter((key) => WORDS.test(key)), ['jev-connect']);
+    assert.ok(profile.items.length > 0);
+    assert.deepEqual(profile.items.map(({ id }) => id).filter((id) => WORDS.test(id)), []);
   });
 });

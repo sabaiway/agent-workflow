@@ -14,6 +14,7 @@ export const ACKS_WORKTREES_DIR_KEY = 'worktreesDirAck';
 export const ACKS_COVERAGE_DOMAIN_KEY = 'coverageDomainAck';
 export const ACKS_SOURCE_SIZE_COPY_KEY = 'sourceSizeCopyAck';
 export const ACKS_SPEC_ADOPTION_KEY = 'specAdoptionAck';
+export const ACKS_JEV_CONNECT_KEY = 'jevConnectAck';
 
 // The CLOSED-WORLD ack-lane registry: the lane name an advisor item renders on the writer's command line ->
 // the store key that writer sets. A lane the registry does not name is a usage refusal at the writer.
@@ -23,6 +24,7 @@ export const ACK_LANES = Object.freeze({
   'coverage-domain': ACKS_COVERAGE_DOMAIN_KEY,
   'source-size-copy': ACKS_SOURCE_SIZE_COPY_KEY,
   'spec-adoption': ACKS_SPEC_ADOPTION_KEY,
+  'jev-connect': ACKS_JEV_CONNECT_KEY,
 });
 
 export const FINGERPRINT_LENGTH = 16;

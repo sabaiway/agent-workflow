@@ -22,11 +22,8 @@ const RUN_LINE = 'node ${CLAUDE_SKILL_DIR}/tools/jev-guide.mjs --dir <project> -
 const NOT_A_REPLACEMENT = '"Jev is not a drop-in replacement for the LLM behind Claude Code, Cursor, opencode, Copilot"';
 const TICKETS = ['"I was charged twice this month."', '"The app crashes when I upload a file."',
   '"Is there a discount for a yearly plan?"'];
-const REQUEST = [
-  'POST https://api.typesafe.ai/v1/systemone',
-  'Authorization: Bearer <API_KEY>',
-  '{"state":"Help! My payouts have been failing for 3 days.","model":"jev-latest","questions":{"department":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments, invoicing, refunds","technical":"Bugs, outages, integrations","sales":"Pricing, upgrades, new accounts"}}}}',
-];
+const CURL = `set +x; curl -q -sS -w ' HTTP %{http_code}' -X POST https://api.typesafe.ai/v1/systemone -H "Authorization: Bearer $TYPESAFE_API_KEY" -H "Content-Type: application/json" -d '{"state":"Help! My payouts have been failing for 3 days.","model":"jev-latest","questions":{"department":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments, invoicing, refunds","technical":"Bugs, outages, integrations","sales":"Pricing, upgrades, new accounts"}}}}'`;
+const CHECK = 'HTTP 200 and a response whose answers.department carries a choice and a confidence; any other code reads by the four error meanings below';
 const RESPONSE = '{"model":"jev-1.13.0","answers":{"department":{"type":"choice","choice":"billing","probabilities":{"billing":0.88,"technical":0.12,"sales":0.0},"confidence":0.81}},"usage":{"input_tokens":318,"output_tokens":34}}';
 const FIELDS = [
   ['choice', 'The highest-probability option.'],
@@ -70,6 +67,10 @@ const PROMPT_CHECKS = [
   has(/finding/i, 'decided register', /register id/, /\bchoice\b/, /\bnone\b/),
   has(/paragraph/i, /\bnoul\b/, 'named rule'),
 ];
+const STEP_HEADINGS = ['STEP 1 — the key', 'STEP 2 — the vendor skill', 'STEP 3 — the first request'];
+const ORDER_LINE = 'Keep this order: the fixed text (WHAT, WHY HERE, NOT, SOURCES); then the three steps — the key with its line or its editor sentence and its mark, the vendor skill with its install lines and its mark, the first request with its curl line and its check; then the three prompts where it pays.';
+const INVARIANTS_LINE = "**Invariants:** the guide is read-only and opens no connection · the agent runs STEP 3's curl line only on the user's explicit yes · the key's value never printed · compact user-language render with paths, commands and vendor quotes verbatim · process.exitCode, never process.exit().";
+const CANARIES = ['tsk-C3d4', 'Yp8_another-longer-canary-value.z'];
 const USAGE = [['--bogus'], ['--dir'], ['--dir', '--json'], ['--json', 'extra'], ['--help', '--json'],
   ['-h', '--dir', '.'], ['--help', '--help'], ['-h', '-h']];
 
@@ -105,7 +106,7 @@ const spawnCli = (args) => {
 before(() => {
   cells.bare = { dir: tmp('bare'), home: tmp('home'), env: {} };
   const found = tmp('found');
-  cells.found = { dir: found, home: tmp('home'), env: { [KEY]: 'jev-canary-value' }, skill: withSkill(found) };
+  cells.found = { dir: found, home: tmp('home'), env: { [KEY]: 'jev-canary-value', SHELL: '/bin/bash' }, skill: withSkill(found) };
   const api = join(tmp('api'), 'api.typesafe.ai');
   mkdirSync(api);
   cells.api = { dir: api, home: tmp('home'), env: {}, skill: withSkill(api) };
@@ -133,16 +134,20 @@ describe('spec:jev-guide/S1 the fixed text first, seventeen strings each claimed
   });
 });
 
-describe('spec:jev-guide/S5 the first-use block quotes the vendor byte for byte', () => {
-  it('carries the prompt with the three tickets, the request, the response and the success criterion', () => {
+describe('spec:jev-guide/S5 the first-request block quotes the vendor byte for byte', () => {
+  it('carries the curl line, the check, the response, the meanings, the prompt and the success criterion, in that order', () => {
     for (const cell of ['bare', 'found']) {
       const [, , firstUse] = envelopeOf(cell).steps;
-      const prompt = firstUse.filter(has('using the TypeSafe skill', 'billing, technical or sales', 'one request each',
+      const [prompt, ...extra] = firstUse.filter(has('using the TypeSafe skill', 'billing, technical or sales', 'one request each',
         'choice and confidence', ...TICKETS));
-      assert.equal(prompt.length, 1, cell);
-      for (const line of [...REQUEST, RESPONSE]) assert.equal(firstUse.filter((item) => item === line).length, 1, line);
-      assert.ok(firstUse.indexOf(REQUEST[2]) < firstUse.indexOf(RESPONSE), cell);
-      assert.equal(firstUse.filter((item) => /three choices, each with a confidence/i.test(item)).length, 1, cell);
+      assert.deepEqual(extra, [], cell);
+      for (const line of [CURL, RESPONSE]) assert.equal(firstUse.filter((item) => item === line).length, 1, line);
+      const [check] = firstUse.filter((item) => item.includes(CHECK));
+      const [success] = firstUse.filter((item) => /three choices, each with a confidence/i.test(item));
+      assert.equal(firstUse.filter((item) => item === check || item === success).length, 2, cell);
+      const meanings = [...FIELDS, ...ERRORS].map(([, meaning]) => firstUse.findIndex((item) => item.includes(`"${meaning}"`)));
+      const order = [CURL, check, RESPONSE].map((line) => firstUse.indexOf(line)).concat(meanings, [prompt, success].map((line) => firstUse.indexOf(line)));
+      assert.ok(order.every((at, index) => at >= 0 && (index === 0 || at > order[index - 1])), `${cell}: ${order}`);
     }
   });
 
@@ -162,16 +167,28 @@ describe('spec:jev-guide/S5 the first-use block quotes the vendor byte for byte'
     }
   });
 
-  it('names api.typesafe.ai on exactly one line, the POST line, outside the lines naming a found path', () => {
+  it('names api.typesafe.ai on exactly one line, the curl line, outside the lines naming a found path', () => {
     for (const cell of ['bare', 'found', 'api']) {
       const envelope = envelopeOf(cell);
       const { found } = envelope.skill;
       const outside = (items) => items.filter((item) => !found.some((path) => item.includes(path)))
         .filter((item) => item.includes('api.typesafe.ai'));
-      assert.deepEqual(outside(linesOf(cell)), [REQUEST[0]], cell);
-      assert.deepEqual(outside([...envelope.steps.flat(), ...envelope.prompts]), [REQUEST[0]], cell);
+      assert.deepEqual(outside(linesOf(cell)), [CURL], cell);
+      assert.deepEqual(outside([...envelope.steps.flat(), ...envelope.prompts]), [CURL], cell);
     }
     assert.ok(envelopeOf('api').skill.found.some((path) => path.includes('api.typesafe.ai')), 'the api cell finds its skill');
+  });
+
+  it('writes neither canary to stdout or stderr when bash -x runs the printed curl line with a stub curl first on PATH', () => {
+    const bin = tmp('bin');
+    writeFileSync(join(bin, 'curl'), "#!/bin/sh\nprintf ' HTTP 200'\n", { mode: 0o755 });
+    const [curl] = linesOf('bare').filter((line) => line.includes('api.typesafe.ai'));
+    assert.equal(curl, CURL);
+    for (const canary of CANARIES) {
+      const run = spawnSync('bash', ['-x', '-c', curl], { encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}`, [KEY]: canary } });
+      assert.deepEqual([run.status, run.stdout], [0, ' HTTP 200'], run.stderr);
+      for (const value of CANARIES) assert.ok(!run.stdout.includes(value) && !run.stderr.includes(value), `${canary}: ${value}`);
+    }
   });
 });
 
@@ -192,7 +209,7 @@ describe('spec:jev-guide/S6 three workflow prompts where Jev pays', () => {
 });
 
 describe('spec:jev-guide/S9 the exit table', () => {
-  it('answers --help or -h alone with the usage text at exit 0, reading neither the dir, the home nor the key', () => {
+  it('answers --help or -h alone with the usage text at exit 0, reading neither the dir, the home, the key nor SHELL', () => {
     for (const flag of ['--help', '-h']) {
       const reads = [];
       const out = [];
@@ -201,6 +218,7 @@ describe('spec:jev-guide/S9 the exit table', () => {
       assert.equal(main([flag], io), 0, flag);
       assert.deepEqual(reads.filter((prop) => !['log', 'error'].includes(prop)), [], flag);
       assert.match(out.join(LF), /Usage/, flag);
+      assert.match(out.join(LF), /Reads only:[^\n]*\bSHELL\b/, `${flag}: the Reads only sentence names SHELL`);
       for (const element of loaded.JEV_TEXT) assert.ok(!out.join(LF).includes(element), `${flag}: ${element}`);
     }
   });
@@ -239,18 +257,15 @@ describe('spec:jev-guide/S9 the exit table', () => {
 
 describe('spec:jev-guide/S10 the JSON envelope and the plain render carry the same facts', () => {
   it('keeps the envelope keys and the plain composition in a bare cell and in a found-and-set cell', () => {
-    for (const [cell, found, set] of [['bare', [], false], ['found', [join('.claude', 'skills', 'typesafe-ai', 'SKILL.md')], true]]) {
+    for (const [cell, found, set, profile] of [['bare', [], false, null], ['found', [join('.claude', 'skills', 'typesafe-ai', 'SKILL.md')], true, '~/.bashrc']]) {
       const envelope = envelopeOf(cell);
       assert.deepEqual(Object.keys(envelope), ENVELOPE_KEYS, cell);
       assert.deepEqual([envelope.schema, envelope.command, envelope.dir], [1, 'jev', cells[cell].dir], cell);
       assert.deepEqual(envelope.text, [...loaded.JEV_TEXT], cell);
       assert.deepEqual(envelope.skill, { found: found.map((path) => join(cells[cell].dir, path)) }, cell);
-      assert.deepEqual(envelope.key, { set }, cell);
-      assert.equal(envelope.steps.length, 3, cell);
-      envelope.steps.forEach((step, index) => {
-        assert.ok(step.every((line) => typeof line === 'string'), cell);
-        assert.match(step[0], new RegExp(`\\bstep ${index + 1}\\b`, 'i'), cell);
-      });
+      assert.deepEqual(envelope.key, { set, profile }, cell);
+      assert.deepEqual(envelope.steps.map(([heading]) => heading), STEP_HEADINGS, cell);
+      assert.ok(envelope.steps.every((step) => step.every((line) => typeof line === 'string')), cell);
       assert.ok(envelope.prompts.length === 3 && envelope.prompts.every((prompt) => typeof prompt === 'string'), cell);
       const composed = [...envelope.text, ...envelope.steps.flat(), HEADING, ...envelope.prompts].join(LF);
       assert.equal(render(cell).stdout, composed, cell);
@@ -278,12 +293,20 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
     assert.ok(skill.includes(`### Mode: jev${LF}${LF}${ROUTER_LINE}${LF}`));
   });
 
-  it('gives the mode doc its run line, the opt-in none declaration with a reason and both render sentences', () => {
+  it('gives the mode doc its run line, the jev-connect declaration on line 3, both render sentences, the order and the invariants', () => {
     const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
     assert.ok(doc.includes(RUN_LINE));
-    assert.match(doc, /<!-- opt-in-capability: none — \S[^\n]*-->/);
-    assert.ok(has(/the user's (conversational )?language/, /never paste the JSON/i, /every path and (every )?command verbatim/i,
-      /\border\b/)(doc));
-    assert.match(doc, /vendor-quoted text verbatim and (in quotes|quoted), never translated or reflowed: the not-a-replacement sentence, the request, the response, the three field meanings and the four error meanings/);
+    assert.equal(doc.split(LF)[2], '<!-- opt-in-capability: jev-connect -->');
+    assert.ok(has(/the user's (conversational )?language/, /never paste the JSON/i, /every path and (every )?command verbatim/i)(doc));
+    assert.match(doc, /vendor-quoted text verbatim and (in quotes|quoted), never translated or reflowed: the not-a-replacement sentence, the curl line, the response, the three field meanings and the four error meanings/);
+    for (const line of [ORDER_LINE, INVARIANTS_LINE]) assert.equal(doc.split(LF).filter((item) => item === line).length, 1, line);
+  });
+
+  it('states the walk rules: one step at a time, who runs each line, the curl line only on a yes and never tracing, the blocked host', () => {
+    const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
+    for (const rule of [/one at a time/, /move on when the step's check passes or the user skips it/,
+      /STEP 1: the user runs the key line[^.]*never the agent/, /STEP 2: the user runs the install lines/,
+      /STEP 3: run the curl line only on the user's explicit yes/, /never with `-v`, `--trace` or any flag that prints request headers/,
+      /a blocked host is named by the sandbox: the user allows it or runs the line in their own terminal/]) assert.match(doc, rule);
   });
 });

@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.17.0 — the Recommendations screen offers the Jev walk while `TYPESAFE_API_KEY` is not set, and the walk starts with the key (AD-164 revised)
+
+**While `TYPESAFE_API_KEY` is not in the environment the agent's commands run in, the Recommendations screen now
+carries one optional item, `jev-connect`.** Its apply runs the read-only `/agent-workflow-kit jev` guide. Its
+`recipe:` line is the decline: a preview of the ack writer that prints its `--apply` form; applied, it records
+`jevConnectAck` in `docs/ai/acks.json`, and the item no longer shows for that project. With the key in the agent's
+environment, no project shows it, and the key's value appears in no item, skip line or `--json` field.
+
+- **The key comes first.** The walk now runs the key, the vendor skill, the first request. When `SHELL` is bash or
+  zsh, STEP 1 prints one line you run in a terminal of your own, outside the agent: it reads the key with no echo and
+  appends `export TYPESAFE_API_KEY=…` to `~/.bashrc` or `~/.zshrc`, so the key never passes through the agent or its
+  transcript. Any other shell gets a sentence to set it in an editor. Then restart the agent from a new terminal; if
+  the mark still reads `not set`, the mark's own text says to export the key in the file the agent's launcher reads,
+  then restart. `--json` gains `key.profile`.
+- **The first request is one `curl` line.** STEP 3 prints the vendor's smallest documented request as a `curl`
+  command that reads the key from the environment, with its check (HTTP 200 and a department choice with a
+  confidence), then the three-ticket prompt. The mode doc tells the agent to run it only on your explicit yes in the
+  chat, since it sends the sample text to api.typesafe.ai, and never with a flag that prints request headers.
+- **The guide itself is unchanged in kind:** it writes nothing, opens no connection and never prints the key's value.
+
 ## 14.16.0 — `/agent-workflow-kit jev` walks you to a first Jev request: what it is, what it is not, three steps and three prompts where it pays (AD-164)
 
 **A new read-only command, `/agent-workflow-kit jev`, recommends Jev (TypeSafe), a decision model that returns a typed
