@@ -4,6 +4,14 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.19.1 — the ADR navigator stamps a cap it honours (AD-167)
+
+`references/scripts/archive-decisions.mjs` and its test: byte-identical to memory 8.1.3. `--write-navigator` stamps
+`maxLines` 200 while `docs/ai/adr/log.md` fits and the navigator's own line count past it, so a navigator past 200
+lines no longer fails the docs gate. An upgrade keeps a project's deployed `scripts/archive-decisions.mjs` byte for
+byte: a project already on the ADR store copies `archive-decisions.mjs` and `archive-decisions.test.mjs` from the
+kit's `references/scripts/` into its `scripts/`, then runs `--write-navigator` once. Nothing else in the kit changed.
+
 ## 14.19.0 — the Jev key the vendor's way: `jev-connect` claims no connection, names one restart step and saves for fish and Windows; the guide and the Recommendations item say where to run it (AD-166)
 
 **`jev-connect` no longer prints `connected`.** A saved key reaches the agent only once the agent's environment is read

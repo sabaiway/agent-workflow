@@ -2,7 +2,7 @@
 // One-file-per-ADR store for docs/ai/decisions.md (ADRs) — the durable replacement for the retired
 // 3-tier cascade (HOT → WARM archive → a single COLD monolith whose cap was raised release after
 // release). Every ADR beyond the HOT window becomes its OWN immutable record so no artifact is ever
-// O(n) and no cap is ever raised again.
+// O(n) and no cap is raised by hand again (the navigator stamps its own count past 200).
 //
 // HOT   (docs/ai/decisions.md)          — the active ADR window (newest at the bottom), self-bounding
 //                                         under its own frontmatter maxLines.
@@ -95,7 +95,8 @@ export const ADR_DIR_REL = 'docs/ai/adr';
 export const NAV_REL = 'docs/ai/adr/log.md';
 
 // A per-record cap (generous vs the largest real ADR ~74 lines; a body over it is a genuine smell) and
-// the navigator cap (bounded — exceeding it is the future plateau-shard trigger, Decision 8).
+// the navigator's FLOOR: the navigator stamps 200 while it fits and its own line count past it, since
+// nothing rotates a governing row out (docs/ai/specs/memory/adr-navigator.md).
 export const RECORD_CAP = 400;
 export const NAV_MAXLINES = 200;
 // How many most-recent ids the navigator's recent window carries (status-annotated, incl. supersessions).
@@ -701,8 +702,8 @@ export const computeGoverningIds = (entries) => {
   return new Set(entries.filter((e) => e.status === IN_FORCE_STATUS && !superseded.has(e.id)).map((e) => e.id));
 };
 
-const NAV_FRONTMATTER = (today) =>
-  `---\ntype: reference\nlastUpdated: ${today}\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: ${NAV_MAXLINES}\n---\n`;
+const NAV_FRONTMATTER = (today, cap) =>
+  `---\ntype: reference\nlastUpdated: ${today}\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: ${cap}\n---\n`;
 
 // Build docs/ai/adr/log.md from the WHOLE corpus (HOT entries ∪ adr/ records). Governing heads
 // (accepted ∧ not-superseded) sorted newest-first; superseded ADRs drop OUT (still reachable by
@@ -744,7 +745,9 @@ export const buildNavigator = (corpus, today) => {
     '',
     ...recent,
   ].join('\n');
-  return `${NAV_FRONTMATTER(today)}\n${body}\n`;
+  // The cap sits on one line whatever its value, so the count with the floor is the final count.
+  const count = lineCountOf(`${NAV_FRONTMATTER(today, NAV_MAXLINES)}\n${body}\n`);
+  return `${NAV_FRONTMATTER(today, Math.max(NAV_MAXLINES, count))}\n${body}\n`;
 };
 
 // ── snapshot (durable, pre-delete — Decision 5) ─────────────────────────────────────────

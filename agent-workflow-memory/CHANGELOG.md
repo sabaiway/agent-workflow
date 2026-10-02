@@ -4,6 +4,18 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.1.3 — the ADR navigator stamps a cap it honours (AD-167)
+
+`references/scripts/archive-decisions.mjs`: `--write-navigator` stamped `maxLines: 200` into `docs/ai/adr/log.md`
+whatever its length, and the navigator grows by one row per governing ADR, so past 162 governing ADRs the docs gate
+refused the generator's own output. The stamp is now 200 while the navigator fits and its own line count past it,
+counted the way `check-docs-size.mjs` counts. A navigator of 200 lines or fewer is written byte for byte as before, and
+`--check` still compares the whole file with a regeneration, so a hand-edited cap reads as stale. PATCH: a navigator
+of 200 lines or fewer is written as before. An upgrade keeps a deployed `scripts/archive-decisions.mjs` byte for byte,
+so a project already on the ADR store takes the fix by copying `archive-decisions.mjs` and `archive-decisions.test.mjs`
+from this package's `references/scripts/` into its `scripts/`; a project whose navigator is past 200 lines then runs
+`node scripts/archive-decisions.mjs --write-navigator` once.
+
 ## 8.1.2 — the templates carry the session close for the user (AD-159)
 
 `references/templates/agent_rules.md`: §2.5 Communication gains the last bullet `Two blocks for the user`, and §2.7

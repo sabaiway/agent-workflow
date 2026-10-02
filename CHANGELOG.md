@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-02 — AD-167: the ADR navigator stamps a cap it honours (memory 8.1.3 PATCH, kit 14.19.1 PATCH; engine 5.10.1 and both bridges unchanged)
+
+**`archive-decisions.mjs --write-navigator` stamps `maxLines` 200 while `docs/ai/adr/log.md` fits and the navigator's
+own line count past it.** The navigator grows by one row per governing ADR and nothing rotates a row out, so the fixed
+200 made the docs gate refuse the generator's own output past 162 governing ADRs. A navigator under the floor is
+written byte for byte as before. An upgrade does not overwrite a deployed `scripts/archive-decisions.mjs`: a project
+already on the ADR store copies the pair from the package's `references/scripts/` by hand, then runs
+`--write-navigator` once. Contract `docs/ai/specs/memory/adr-navigator.md` revision 1 (S1, S2 bound); Issue-033
+closed.
+
 ## 2026-10-02 — AD-166: the Jev key the vendor's way (kit 14.19.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **`jev-connect` claims no connection: every run that saves every target closes with `saved —`, the one restart step

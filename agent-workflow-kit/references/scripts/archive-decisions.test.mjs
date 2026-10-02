@@ -800,6 +800,47 @@ describe('1.5 navigator — governing heads (computed), superseded drop out but 
   });
 });
 
+// ── the navigator's stamped cap (docs/ai/specs/memory/adr-navigator.md) ─────────────────
+//
+// The frame is 38 lines (15 ADRs or more), so 162 governing heads make exactly 200, 163 make 201 and 170 make 208.
+
+const capOf = (text) => Number(text.match(/^maxLines: (\d+)$/m)[1]);
+const corpusOf = (n) =>
+  Array.from({ length: n }, (_, i) => {
+    const id = String(i + 1).padStart(3, '0');
+    return { id, idNum: i + 1, title: `T${id}`, status: 'accepted', supersedes: [], supersededBy: [], fileName: `AD-${id}-t.md` };
+  });
+
+describe('the navigator stamps a cap it honours', () => {
+  it('200 while it fits, its own line count past it', () => {
+    // spec:adr-navigator/S1
+    for (const heads of [2, 162]) {
+      const nav = buildNavigator(corpusOf(heads), '2026-07-09');
+      assert.equal(capOf(nav), 200, `${heads} heads keep the 200 floor`);
+    }
+    assert.equal(lineCountOf(buildNavigator(corpusOf(162), '2026-07-09')), 200);
+    // 165 entries, two superseded: 163 heads, 201 lines — a stamp from the entry count would read 203.
+    const corpus = corpusOf(165).map((e, i) => (i < 2 ? { ...e, supersededBy: ['003'] } : e));
+    const big = buildNavigator(corpus, '2026-07-09');
+    assert.equal(lineCountOf(big), 201);
+    assert.equal(capOf(big), 201, 'past the floor the stamp is the file\'s own count');
+  });
+
+  it('a written navigator past 200 lines fits its cap, --check is green, a hand-edited cap is stale', () => {
+    // spec:adr-navigator/S2
+    const root = makeRoot();
+    seedMigrated(root, { hotIds: ['901'], storeIds: corpusOf(169).map((e) => e.id) });
+    const nav = readFileSync(join(root, NAV_REL), 'utf8');
+    assert.ok(lineCountOf(nav) > 200, 'the fixture is past the floor');
+    assert.ok(lineCountOf(nav) <= capOf(nav), 'the docs gate accepts the written navigator');
+    assert.equal(run(['--check', '--today=2026-07-09'], root).code, 0);
+    writeFileSync(join(root, NAV_REL), nav.replace(/^maxLines: \d+$/m, 'maxLines: 999'));
+    const stale = run(['--check', '--today=2026-07-09'], root);
+    assert.equal(stale.code, 1);
+    assert.match(stale.errText, /log\.md is stale/);
+  });
+});
+
 // ── item (h) degrade branches on the REAL default regenerator (no injection) ───────────
 
 describe('defaultRegenerateIndex — loud-degrade branches', () => {
