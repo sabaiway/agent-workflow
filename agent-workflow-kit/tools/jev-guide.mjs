@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // spec:jev-guide — docs/ai/specs/kit/jev-guide/index.md
 import { statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fail } from '../references/scripts/markdown-blocks.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { KEY_VARIABLE, connectLine, keySet } from './jev-facts.mjs';
+import { KEY_VARIABLE, RESTART_STEP, connectLine, keySet, placeOf } from './jev-facts.mjs';
 
 const SCHEMA = 1;
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SKILL_FILE = join('typesafe-ai', 'SKILL.md');
-const HELP = `jev — read-only: what Jev (TypeSafe) is, why it pays here, and the two steps to a connected key.
+const HELP = `jev — read-only: what Jev (TypeSafe) is, why it pays here, and the two steps to a set key.
 
 Usage:
   node jev-guide.mjs [--dir PROJECT] [--json]
@@ -22,7 +22,7 @@ Usage:
 
 Exit codes: 0 rendered; 1 nothing rendered (a --dir that is not a directory); 2 usage.
 
-Reads only: the --dir, the home directory, the key variable's presence and five skill paths; no network.`;
+Reads only: the --dir, the home directory, the key variable's presence, five skill paths, and for the place WSL_DISTRO_NAME, SSH_CONNECTION, REMOTE_CONTAINERS, CODESPACES, the platform, the hostname and /.dockerenv; no network.`;
 
 export const JEV_TEXT = Object.freeze([
   'WHAT: Jev is a decision model: it takes a state and typed questions (choice, score, noul) and returns typed answers with probabilities and a confidence; it does not write text.',
@@ -45,10 +45,10 @@ export const JEV_TEXT = Object.freeze([
 ]);
 
 const KEY_GET = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const KEY_CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and, for bash or zsh, saves it to your shell\'s startup files.';
-const KEY_RESTART = 'Then quit the agent, start it again from a new terminal, and run /agent-workflow-kit jev again: the key mark should read set.';
+const KEY_CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
+const KEY_RESTART = `Then ${RESTART_STEP}. Run /agent-workflow-kit jev again: the key mark should read set.`;
 const KEY_NEVER = 'Never paste the key into the chat or into a project file.';
-const KEY_NOT_SET = `key: ${KEY_VARIABLE} not set. A host setting that filters the environment of the agent's commands also hides it. If it still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads its startup file: export the variable in the file the agent's launcher reads, then restart.`;
+const KEY_NOT_SET = `key: ${KEY_VARIABLE} not set. A host setting that filters the environment of the agent's commands also hides it. If it still reads not set after that restart and no such setting applies, run the connect line again and follow its last line.`;
 const INSTALL = [
   'Optional, for your own code and prompts — the vendor skill:',
   'Claude Code:',
@@ -101,12 +101,17 @@ const homeOf = (io) => {
   if (io.home !== undefined) return io.home;
   try { return homedir(); } catch { return ''; }
 };
+// The place's host facts: each injected, else read once from the host, a failing read reading as none.
+const placeFor = (io, env, platform) => placeOf({ env, platform,
+  hostname: io.hostname ?? (() => { try { return hostname(); } catch { return ''; } })(),
+  container: io.container ?? statIs('/.dockerenv', 'file') });
 const skillPaths = (dir, home) => [...new Set([join(dir, '.claude', 'skills'), join(dir, '.agents', 'skills'),
   ...(home === '' ? [] : [join(home, '.claude', 'skills'), join(home, '.codex', 'skills'), join(home, '.cursor', 'skills')])]
   .map((root) => join(root, SKILL_FILE)))];
 
-const renderSteps = (found, set, connect) => [
-  ['STEP 1 — the key', KEY_GET, KEY_CONNECT, connect, KEY_RESTART, KEY_NEVER, set ? `key: ${KEY_VARIABLE} set.` : KEY_NOT_SET],
+const renderSteps = (found, set, connect, where) => [
+  ['STEP 1 — the key', KEY_GET, KEY_CONNECT, ...(where ? [`Run it in ${where}:`] : []), connect, KEY_RESTART, KEY_NEVER,
+    set ? `key: ${KEY_VARIABLE} set.` : KEY_NOT_SET],
   ['STEP 2 — the vendor skill', ...INSTALL,
     ...(found.length ? found.map((path) => `skill: found at ${path}`) : NOT_SEEN), ...AFTER_INSTALL],
 ];
@@ -124,10 +129,12 @@ export const main = (argv, io = {}) => {
   const found = skillPaths(dir, homeOf(io)).filter((path) => statIs(path, 'file'));
   const env = io.env ?? process.env;
   const set = keySet(env);
-  const connect = connectLine(io.toolsDir ?? TOOLS);
-  const steps = renderSteps(found, set, connect);
+  const platform = io.platform ?? process.platform;
+  const connect = connectLine(io.toolsDir ?? TOOLS, platform);
+  const where = placeFor(io, env, platform);
+  const steps = renderSteps(found, set, connect, where);
   log(parsed.json
-    ? JSON.stringify({ schema: SCHEMA, command: 'jev', dir, text: JEV_TEXT, skill: { found }, key: { set }, connect, steps, prompts: PROMPTS }, null, 2)
+    ? JSON.stringify({ schema: SCHEMA, command: 'jev', dir, text: JEV_TEXT, skill: { found }, key: { set }, connect, where, steps, prompts: PROMPTS }, null, 2)
     : [...JEV_TEXT, ...steps.flat(), 'WHERE IT PAYS IN THIS WORKFLOW', ...PROMPTS].join('\n'));
   return 0;
 };

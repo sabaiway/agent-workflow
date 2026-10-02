@@ -5,13 +5,15 @@ import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The command is loaded dynamically, so the suite loads on a tree without it and each cell fails at its first call.
 const loaded = await import('./jev-connect.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
+const { RESTART_STEP } = await import('./jev-facts.mjs').catch(() => ({}));
+const RETRY = 'not saved — fix the cause on the line above and run this command again';
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const CLI = join(TOOLS, 'jev-connect.mjs');
 const KEY = 'TYPESAFE_API_KEY';
@@ -20,6 +22,7 @@ const OK_BODY = { answers: { department: { choice: 'billing', confidence: 0.81 }
 const USAGE = [['--bogus'], ['--help', '--unverified'], ['-h', '-h'], ['--unverified', 'extra']];
 
 const made = [];
+const outputs = [];
 after(() => {
   for (const dir of made) rmSync(dir, { recursive: true, force: true });
 });
@@ -73,6 +76,7 @@ const run = async (argv, { feed = [], tty = true, rawThrows = false, fetchImpl, 
   const at = home ?? tmp('home');
   const code = await main(argv, { stdin, stdout: { write: (text) => written.push(text) }, log: (text) => out.push(text),
     error: (text) => err.push(text), env: env ?? { SHELL: '/bin/bash' }, home: at, platform, fetch });
+  outputs.push(...out, ...err);
   return { code, stdout: out.join('\n'), stderr: err.join('\n'), written: written.join(''), stdin, calls, home: at };
 };
 const spawnCli = (args, { input = '', env = {} } = {}) => {
@@ -106,8 +110,11 @@ describe('spec:jev-guide/S22 the terminal rule and the exit table', () => {
       const io = new Proxy({ log: (text) => out.push(text), error: (text) => out.push(text) }, { get: (target, prop) => { reads.push(String(prop)); return target[prop]; } });
       assert.equal(await main([flag], io), 0, flag);
       assert.deepEqual(reads.filter((prop) => !['log', 'error'].includes(prop)), [], flag);
-      assert.match(out.join('\n'), /Usage:/);
-      assert.match(out.join('\n'), /--unverified/);
+      const [head, tail] = out.join('\n').split('Exit codes:');
+      assert.ok(['Usage:', '--unverified', 'bash', 'zsh', 'fish', 'Windows'].every((word) => head.includes(word)), head);
+      const exit4 = tail.slice(tail.indexOf('4 not saved'));
+      assert.ok(exit4.startsWith('4 not saved (a refused or failed target, or a shell it does not save for) — the last line says what to do next.'), tail);
+      assert.ok(!/fish|Windows/.test(exit4) && !out.join('\n').includes('by hand'), tail);
     }
     const spawned = spawnCli(['--help']);
     assert.deepEqual([spawned.status, /Usage:/.test(spawned.stdout)], [0, true], spawned.stderr);
@@ -184,39 +191,58 @@ describe('spec:jev-guide/S23 the no-echo read over a fake terminal', () => {
 });
 
 describe('spec:jev-guide/S26 the closing lines and the pseudo-terminal run', () => {
-  it('every target saved: the verified line, one saved line per target, the connected line, exit 0', async () => {
+  it('every target saved: the verified line, one saved line per target, the all-saved line with the restart step, exit 0', async () => {
     const home = tmp('ok');
     const result = await run([], { feed: [`${CANARIES[1]}\r`], home });
     assert.equal(result.code, 0, result.stderr);
+    assert.equal(loaded.ALL_SAVED, `saved — ${RESTART_STEP}; then ask the agent to check Jev`);
     assert.deepEqual(result.stdout.split('\n'), ['verified: HTTP 200 — department billing, confidence 0.81',
-      `saved: ${join(home, '.bashrc')}`, `saved: ${join(home, '.bash_profile')}`, loaded.CONNECTED]);
+      `saved: ${join(home, '.bashrc')}`, `saved: ${join(home, '.bash_profile')}`, loaded.ALL_SAVED]);
     assert.equal(readFileSync(join(home, '.bashrc'), 'utf8'), `${loaded.managedLine(CANARIES[1])}\n`);
     assert.equal(statSync(join(home, '.bashrc')).mode & 0o777, 0o600);
     noCanary([result.stdout, result.stderr, result.written], 'ok');
   });
 
-  it('no target (another shell, win32, no home): the editor sentence, exit 4, nothing written', async () => {
-    for (const [env, platform] of [[{ SHELL: '/usr/bin/fish' }, 'linux'], [{}, 'linux'], [{ SHELL: '/bin/bash' }, 'win32']]) {
+  it('targets named and none saved (both bash files links): the retry sentence, exit 4, nothing written through', async () => {
+    for (const argv of [[], ['--unverified']]) {
+      const home = tmp('none-saved');
+      writeFileSync(join(home, 'elsewhere'), 'kept\n');
+      for (const name of ['.bashrc', '.bash_profile']) symlinkSync(join(home, 'elsewhere'), join(home, name));
+      const result = await run(argv, { feed: ['tsk-k\r'], home });
+      assert.deepEqual([result.code, result.stdout.split('\n').at(-1)], [4, `${argv.length ? '' : 'verified, '}${RETRY}`], argv.join(' '));
+      assert.equal(readFileSync(join(home, 'elsewhere'), 'utf8'), 'kept\n');
+    }
+  });
+
+  it('no target (ksh, dash, an absent SHELL off win32): the editor sentence, exit 4, nothing written', async () => {
+    for (const env of [{ SHELL: '/bin/ksh' }, { SHELL: '/bin/dash' }, {}]) {
       const home = tmp('none');
-      const result = await run([], { feed: ['tsk-k\r'], env, home, platform });
-      assert.deepEqual([result.code, result.stdout.split('\n').at(-1)], [4, loaded.EDITOR_SENTENCE], JSON.stringify([env, platform]));
+      const result = await run([], { feed: ['tsk-k\r'], env, home });
+      assert.deepEqual([result.code, result.stdout.split('\n').at(-1)], [4, loaded.EDITOR_SENTENCE], JSON.stringify(env));
       assert.deepEqual(readdirSync(home), []);
     }
   });
 
   it('--unverified with no target: the not-saved sentence without verified, exit 4, no line claiming a verification', async () => {
     const home = tmp('unverified');
-    const result = await run(['--unverified'], { feed: ['tsk-k\r'], env: { SHELL: '/usr/bin/fish' }, home });
+    const result = await run(['--unverified'], { feed: ['tsk-k\r'], env: { SHELL: '/bin/dash' }, home });
     assert.ok(!result.stdout.split('\n').some((line) => line.startsWith('verified')), result.stdout);
     assert.deepEqual([result.code, result.stdout.split('\n').at(-1)], [4, loaded.NOT_SAVED_SENTENCE]);
     assert.deepEqual(readdirSync(home), []);
   });
 
-  it('with no injected home and an empty HOME the home falls back to the user\'s own, and a fish SHELL still names no target', async () => {
-    const out = [];
-    const code = await main([], { stdin: new FakeStdin(['tsk-k\r']), stdout: { write: () => {} }, log: (text) => out.push(text), error: (text) => out.push(text),
-      env: { SHELL: '/usr/bin/fish', HOME: '' }, platform: 'linux', fetch: async () => ({ status: 200, json: async () => OK_BODY }) });
-    assert.deepEqual([code, out.at(-1)], [4, loaded.EDITOR_SENTENCE]);
+  it('with no injected home and an empty HOME the home falls back to homedir(), and a bash SHELL saves both files there', async () => {
+    const home = tmp('fallback');
+    const saved = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      assert.equal(homedir(), home);
+      const out = [];
+      const code = await main([], { stdin: new FakeStdin(['tsk-k\r']), stdout: { write: () => {} }, log: (text) => out.push(text), error: (text) => out.push(text),
+        env: { SHELL: '/bin/bash', HOME: '' }, platform: 'linux', fetch: async () => ({ status: 200, json: async () => OK_BODY }) });
+      outputs.push(...out);
+      assert.deepEqual([code, out.slice(1)], [0, [`saved: ${join(home, '.bashrc')}`, `saved: ${join(home, '.bash_profile')}`, loaded.ALL_SAVED]]);
+    } finally { process.env.HOME = saved; }
   });
 
   it('some saved: the bashrc line, a not-saved line for the linked login file, the saved-in-part line, exit 4', async () => {
@@ -226,7 +252,7 @@ describe('spec:jev-guide/S26 the closing lines and the pseudo-terminal run', () 
     const result = await run([], { feed: ['tsk-k\r'], home });
     assert.equal(result.code, 4);
     assert.deepEqual(result.stdout.split('\n').slice(1), [`saved: ${join(home, '.bashrc')}`,
-      `not saved: ${join(home, '.bash_profile')} is a link — add the export line by hand`, loaded.SAVED_IN_PART]);
+      `not saved: ${join(home, '.bash_profile')} is a link — nothing written`, loaded.SAVED_IN_PART]);
     assert.equal(readFileSync(join(home, 'elsewhere'), 'utf8'), '# a login file kept elsewhere\n');
   });
 
@@ -243,7 +269,13 @@ describe('spec:jev-guide/S26 the closing lines and the pseudo-terminal run', () 
       assert.equal(readFileSync(join(home, name), 'utf8'), `${loaded.managedLine(CANARIES[0])}\n`, name);
       assert.equal(statSync(join(home, name)).mode & 0o777, 0o600, name);
     }
-    assert.ok(result.stdout.includes(loaded.CONNECTED), result.stdout);
+    assert.ok(result.stdout.includes(loaded.ALL_SAVED), result.stdout);
     assert.ok(!existsSync(join(home, '.zshrc')));
+  });
+
+  it('no line of any cell says connected or by hand, and in an editor only on the editor and not-saved sentences', () => {
+    assert.ok(outputs.length > 0);
+    assert.deepEqual(outputs.filter((line) => /\bconnected\b|by hand/.test(line)), []);
+    assert.deepEqual(outputs.filter((line) => line.includes('in an editor') && ![loaded.EDITOR_SENTENCE, loaded.NOT_SAVED_SENTENCE].includes(line)), []);
   });
 });

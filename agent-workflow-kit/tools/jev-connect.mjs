@@ -1,41 +1,49 @@
 #!/usr/bin/env node
 // spec:jev-guide — docs/ai/specs/kit/jev-guide/jev-connect.md
-// The one command that connects Jev (TypeSafe) on a host. The USER runs it in a terminal of their
-// own: it reads the key with no echo, verifies it with one request, saves it as managed export lines
-// in the shell's startup files and says to restart the agent. It never prints the key, never puts it in
-// an argv, and refuses when stdin is not a terminal, so a non-interactive run (the agent's) cannot
-// reach the prompt — the mode doc keeps the rule that the agent never runs it.
-import { lstatSync, readFileSync, writeFileSync } from 'node:fs';
+// The one command that saves the Jev (TypeSafe) key on a host. The USER runs it in a terminal of
+// their own: it reads the key with no echo, verifies it with one request, saves it where the shell
+// reads it (bash, zsh, fish) or in the Windows user environment, and prints the restart step. It never
+// prints the key, never puts it in an argv, and refuses when stdin is not a terminal, so a
+// non-interactive run (the agent's) cannot reach the prompt — the mode doc keeps the rule that the
+// agent never runs it. It claims no connection: the guide's key mark, read after the restart, is the proof.
+import { spawnSync } from 'node:child_process';
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fail } from '../references/scripts/markdown-blocks.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { JEV_ENDPOINT, JEV_ERROR_MEANINGS, JEV_SAMPLE_BODY, KEY_VARIABLE } from './jev-facts.mjs';
+import { JEV_ENDPOINT, JEV_ERROR_MEANINGS, JEV_SAMPLE_BODY, KEY_VARIABLE, RESTART_STEP } from './jev-facts.mjs';
 
 export const EXIT = Object.freeze({ saved: 0, notVerified: 1, usage: 2, noTerminal: 3, notSaved: 4 });
 export const MARK = '# agent-workflow jev';
 export const TIMEOUT_MS = 15000;
 const LOGIN_FILES = ['.bash_profile', '.bash_login', '.profile'];
+const FISH_FILE = join('fish', 'conf.d', 'typesafe-api-key.fish');
+const WINDOWS_TARGET = `the Windows user environment variable ${KEY_VARIABLE}`;
+const WINDOWS_SCRIPT = `$ErrorActionPreference='Stop'; [Environment]::SetEnvironmentVariable('${KEY_VARIABLE}', [Console]::In.ReadLine(), 'User')`;
 export const TERMINAL_SENTENCE = 'run this in a terminal of your own: it asks for the key there, so the agent never sees it';
-export const CONNECTED = 'connected — quit the agent and start it again from a new terminal';
-export const SAVED_IN_PART = 'saved in part — add the export line by hand where a line above says not saved, then restart the agent';
+export const ALL_SAVED = `saved — ${RESTART_STEP}; then ask the agent to check Jev`;
+export const SAVED_IN_PART = 'saved in part — fix the cause on the not saved: line above and run this command again, then restart the agent';
+const RETRY_SENTENCE = 'not saved — fix the cause on the line above and run this command again';
 export const NOT_SAVED_SENTENCE = `not saved — set ${KEY_VARIABLE} to your key in your shell's startup file, in an editor and in that shell's own syntax, then restart the agent`;
 export const EDITOR_SENTENCE = `verified, ${NOT_SAVED_SENTENCE}`;
-const HELP = `jev-connect — connects Jev (TypeSafe) on this host; run it in a terminal of your own.
+const HELP = `jev-connect — saves the Jev (TypeSafe) key on this host; run it in a terminal of your own.
 
 Usage:
   node jev-connect.mjs [--unverified]
 
-Asks for ${KEY_VARIABLE} with no echo, verifies the key with one request to api.typesafe.ai, saves it
-as managed export lines in your shell's startup files (bash: ~/.bashrc and the login file bash
-reads; zsh: ~/.zshrc, under ZDOTDIR when set) and says to restart the agent. The key is never printed and never put in an argument.
+Asks for ${KEY_VARIABLE} with no echo, verifies the key with one request to api.typesafe.ai and
+saves it: for bash and zsh as managed export lines in your shell's startup files (bash: ~/.bashrc
+and the login file bash reads; zsh: ~/.zshrc, under ZDOTDIR when set), for fish as the file
+~/.config/fish/conf.d/typesafe-api-key.fish (under XDG_CONFIG_HOME when set), on Windows as the user
+environment variable. Then it prints the restart step. The key is never printed and never put in an argument.
 
 --unverified  save without the request (no network from here).
 --help        answered only when it is the whole invocation.
 
-Exit codes: 0 saved; 1 not verified, nothing written; 2 usage; 3 no terminal, aborted or no key,
-nothing written; 4 not saved (another shell, Windows, a linked startup file or directory) — the
-last line says what to set by hand.`;
+Exit codes: 0 saved; 1 not verified, nothing written; 2 usage; 3 no terminal, aborted, no key or a
+failed read, nothing written;
+4 not saved (a refused or failed target, or a shell it does not save for) — the last line says what to do next.`;
 
 const parseArgv = (argv) => {
   if (argv.includes('--help') || argv.includes('-h')) {
@@ -112,22 +120,31 @@ export const verifyKey = async (key, io = {}) => {
   return { ok: true, line: `verified: HTTP 200 — department ${scrub(answer.choice, key)}, confidence ${answer.confidence}` };
 };
 
-// The startup files the key goes to, by a closed rule over the shell: zsh reads ~/.zshrc (under
-// ZDOTDIR when set); an interactive bash reads ~/.bashrc and a login bash the first of
-// .bash_profile, .bash_login, .profile that exists — created as .bash_profile when none does. Both
-// bash files always: no file content decides the set, so a login file's own older export is
-// rewritten too. Any other shell, and Windows, gets no target.
-export const targetsFor = ({ shell, home, zdotdir, platform = 'linux' }, deps = {}) => {
+// The targets the key goes to, as descriptors { form, path }, by a closed rule over the platform and
+// the shell: Windows → the user environment variable (one spawn); zsh reads ~/.zshrc (under ZDOTDIR
+// when set); an interactive bash reads ~/.bashrc and a login bash the first of .bash_profile,
+// .bash_login, .profile that exists — created as .bash_profile when none does. Both bash files
+// always: no file content decides the set. fish reads its conf.d (under XDG_CONFIG_HOME when it is
+// absolute). Any other shell gets no target.
+export const targetsFor = ({ shell, home, zdotdir, xdgConfigHome, platform = 'linux' }, deps = {}) => {
   const exists = deps.exists ?? ((path) => { try { lstatSync(path); return true; } catch { return false; } });
-  if (platform === 'win32' || typeof home !== 'string' || home === '') return [];
+  if (platform === 'win32') return [{ form: 'windows', path: null }];
+  if (typeof home !== 'string' || home === '') return [];
   const name = typeof shell === 'string' ? basename(shell) : '';
-  if (name === 'zsh') return [join(typeof zdotdir === 'string' && zdotdir !== '' ? zdotdir : home, '.zshrc')];
+  const exported = (path) => ({ form: 'export', path });
+  if (name === 'zsh') return [exported(join(typeof zdotdir === 'string' && zdotdir !== '' ? zdotdir : home, '.zshrc'))];
+  if (name === 'fish') {
+    const config = typeof xdgConfigHome === 'string' && isAbsolute(xdgConfigHome) ? xdgConfigHome : join(home, '.config');
+    return [{ form: 'fish', path: join(config, FISH_FILE) }];
+  }
   if (name !== 'bash') return [];
   const login = LOGIN_FILES.map((file) => join(home, file)).find(exists) ?? join(home, LOGIN_FILES[0]);
-  return [join(home, '.bashrc'), login];
+  return [exported(join(home, '.bashrc')), exported(login)];
 };
 
 export const managedLine = (key) => `export ${KEY_VARIABLE}='${key.replace(/'/g, `'\\''`)}'  ${MARK}`;
+// fish's single quotes take two escapes: a backslash doubled, a quote after a backslash.
+export const fishLine = (key) => `set -gx ${KEY_VARIABLE} '${key.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'  ${MARK}`;
 const isExportLine = (line) => new RegExp(`^\\s*export\\s+${KEY_VARIABLE}=`).test(line);
 
 // Replace matching export lines in place, their indent and CR kept, so no if/case branch is
@@ -143,42 +160,73 @@ export const upsertManagedLine = (text, line) => {
 };
 
 // The directories between the home and the target, each lstat'ed: a link among them is never written
-// through (a stow'd ZDOTDIR is a dotfiles repo); a target outside the home is not written at all.
-const parentRefusal = (path, home, lstat) => {
+// through (a stow'd ZDOTDIR is a dotfiles repo); a target outside the home is not written at all. The
+// walk stops at the first missing directory: nothing below it exists, so nothing below is a link.
+const walkParents = (path, home, lstat) => {
   const rel = relative(home, dirname(path));
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return `${path} is outside the home`;
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { refusal: `${path} is outside the home` };
+  const missing = [];
   let dir = home;
   for (const part of rel.split(sep).filter(Boolean)) {
     dir = join(dir, part);
-    if (lstat(dir).isSymbolicLink()) return `${path} — ${dir} is a link`;
+    if (missing.length > 0) { missing.push(dir); continue; }
+    let stat;
+    try { stat = lstat(dir); } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      missing.push(dir);
+      continue;
+    }
+    if (stat.isSymbolicLink()) return { refusal: `${path} — ${dir} is a link` };
   }
-  return null;
+  return { refusal: null, missing };
 };
 
-// One line per target: `saved: <path>` or `not saved: <path> — <why>`. A link — the target or a
-// directory below the home — or a non-regular entry is never written through; a new file is created
-// 0600; an existing file keeps its mode.
-export const saveKey = (key, targets, home, deps = {}) => targets.map((path) => {
+// A file target: the export form upserts its managed line and creates no directory; the fish form is
+// the kit's own file, written whole, its missing directories created 0700. A new file is 0600; an
+// existing one keeps its mode.
+const saveFile = (key, { form, path }, home, deps) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.read ?? ((at) => readFileSync(at, 'utf8'));
   const write = deps.write ?? writeFileSync;
+  const mkdir = deps.mkdir ?? mkdirSync;
+  const no = (line) => ({ path, saved: false, line });
   let stat = null;
   try {
-    const refusal = parentRefusal(path, home, lstat);
-    if (refusal) return { path, saved: false, line: `not saved: ${refusal} — add the export line by hand` };
-    stat = lstat(path);
+    const { refusal, missing } = walkParents(path, home, lstat);
+    if (refusal) return no(`not saved: ${refusal} — nothing written`);
+    if (form === 'fish') for (const dir of missing) mkdir(dir, { mode: 0o700 });
+    if (form === 'fish' || missing.length === 0) stat = lstat(path);
   } catch (error) {
-    if (error?.code !== 'ENOENT') return { path, saved: false, line: `not saved: ${path} — ${error?.code ?? error?.message}` };
+    if (error?.code !== 'ENOENT') return no(`not saved: ${path} — ${error?.code ?? error?.message}`);
   }
-  if (stat?.isSymbolicLink()) return { path, saved: false, line: `not saved: ${path} is a link — add the export line by hand` };
-  if (stat && !stat.isFile()) return { path, saved: false, line: `not saved: ${path} is not a regular file` };
+  if (stat?.isSymbolicLink()) return no(`not saved: ${path} is a link — nothing written`);
+  if (stat && !stat.isFile()) return no(`not saved: ${path} is not a regular file`);
   try {
-    write(path, upsertManagedLine(stat ? read(path) : '', managedLine(key)), stat ? {} : { mode: 0o600 });
+    const text = form === 'fish' ? `${fishLine(key)}\n` : upsertManagedLine(stat ? read(path) : '', managedLine(key));
+    write(path, text, stat ? {} : { mode: 0o600 });
     return { path, saved: true, line: `saved: ${path}` };
   } catch (error) {
-    return { path, saved: false, line: `not saved: ${path} — ${error?.code ?? error?.message}` };
+    return no(`not saved: ${path} — ${error?.code ?? error?.message}`);
   }
-});
+};
+
+// The Windows target: one powershell.exe fed the key on stdin, never in an argv. The default spawn
+// starts a process only on Windows; nothing the child printed is relayed.
+const saveWindows = (key, deps) => {
+  const no = (cause) => ({ path: null, saved: false, line: `not saved: ${WINDOWS_TARGET} — ${cause}` });
+  if (!deps.spawn && process.platform !== 'win32') return no('not on Windows');
+  const timeoutMs = deps.timeoutMs ?? TIMEOUT_MS;
+  const result = (deps.spawn ?? spawnSync)('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_SCRIPT],
+    { input: `${key}\n`, timeout: timeoutMs, encoding: 'utf8', windowsHide: true });
+  if (result.error?.code === 'ETIMEDOUT') return no(`no answer within ${timeoutMs / 1000} s`);
+  if (result.error) return no(result.error.code ?? result.error.message);
+  if (result.status !== 0) return no(`powershell.exe exited ${result.status}`);
+  return { path: null, saved: true, line: `saved: ${WINDOWS_TARGET}` };
+};
+
+// One line per target: `saved: <where>` or `not saved: <where> — <why>`.
+export const saveKey = (key, targets, home, deps = {}) => targets.map((target) => (target.form === 'windows'
+  ? saveWindows(key, deps) : saveFile(key, target, home, deps)));
 
 const safeHome = (env) => {
   if (typeof env.HOME === 'string' && env.HOME !== '') return env.HOME;
@@ -206,12 +254,15 @@ export const main = async (argv, io = {}) => {
   }
   const env = io.env ?? process.env;
   const home = io.home ?? safeHome(env);
-  const targets = targetsFor({ shell: env.SHELL, home, zdotdir: env.ZDOTDIR, platform: io.platform ?? process.platform }, io);
+  const targets = targetsFor({ shell: env.SHELL, home, zdotdir: env.ZDOTDIR, xdgConfigHome: env.XDG_CONFIG_HOME,
+    platform: io.platform ?? process.platform }, io);
   const results = saveKey(key, targets, home, io);
   for (const result of results) log(result.line);
   const saved = results.filter((result) => result.saved).length;
-  if (results.length > 0 && saved === results.length) { log(CONNECTED); return EXIT.saved; }
+  const verified = parsed.unverified ? '' : 'verified, ';
+  if (results.length > 0 && saved === results.length) { log(ALL_SAVED); return EXIT.saved; }
   if (saved > 0) log(SAVED_IN_PART);
+  else if (results.length > 0) log(`${verified}${RETRY_SENTENCE}`);
   else log(parsed.unverified ? NOT_SAVED_SENTENCE : EDITOR_SENTENCE);
   return EXIT.notSaved;
 };

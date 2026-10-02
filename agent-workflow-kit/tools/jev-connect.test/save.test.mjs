@@ -30,27 +30,33 @@ const tmp = () => {
 // A fake home: the files that exist and their bytes.
 const fakeFs = (files) => ({ exists: (path) => Object.hasOwn(files, path), read: (path) => files[path] });
 const at = (name) => join(HOME, name);
+// The target descriptors: the export form per path, the fish form under a config dir, the windows form.
+const ex = (...paths) => paths.map((path) => ({ form: 'export', path }));
+const fish = (config) => [{ form: 'fish', path: join(config, 'fish', 'conf.d', 'typesafe-api-key.fish') }];
+const WINDOWS = [{ form: 'windows', path: null }];
 
 describe('spec:jev-guide/S25 the save rule: the targets by shell', () => {
   const CELLS = [
-    ['zsh, no ZDOTDIR', { shell: '/bin/zsh' }, {}, [at('.zshrc')]],
-    ['zsh, ZDOTDIR set', { shell: '/usr/local/bin/zsh', zdotdir: '/h/user/.config/zsh' }, {}, ['/h/user/.config/zsh/.zshrc']],
-    ['zsh, ZDOTDIR empty', { shell: 'zsh', zdotdir: '' }, {}, [at('.zshrc')]],
-    ['bash, no login file', { shell: '/bin/bash' }, {}, [at('.bashrc'), at('.bash_profile')]],
-    ['bash, .profile only', { shell: 'bash' }, { [at('.profile')]: '# login\n' }, [at('.bashrc'), at('.profile')]],
-    ['bash, .bash_login and .profile', { shell: '/bin/bash' }, { [at('.bash_login')]: '', [at('.profile')]: '. ~/.bashrc\n' }, [at('.bashrc'), at('.bash_login')]],
-    ['bash, .bash_profile first of three', { shell: '/bin/bash' }, { [at('.bash_profile')]: '# x\n', [at('.bash_login')]: '', [at('.profile')]: '' }, [at('.bashrc'), at('.bash_profile')]],
-    ['bash, .bash_profile sources .bashrc: still both', { shell: '/bin/bash' }, { [at('.bash_profile')]: '[ -f ~/.bashrc ] && . ~/.bashrc\n' }, [at('.bashrc'), at('.bash_profile')]],
-    ['bash, the sourcing line commented out', { shell: '/bin/bash' }, { [at('.bash_profile')]: '  # . ~/.bashrc\n' }, [at('.bashrc'), at('.bash_profile')]],
-    ['bash, .profile sources .bashrc but .bash_profile exists', { shell: '/bin/bash' }, { [at('.bash_profile')]: '# x\n', [at('.profile')]: '. ~/.bashrc\n' }, [at('.bashrc'), at('.bash_profile')]],
-    ['fish', { shell: '/usr/bin/fish' }, {}, []],
-    ['ksh', { shell: '/bin/ksh' }, {}, []],
-    ['dash', { shell: '/bin/dash' }, {}, []],
-    ['a near-miss name', { shell: '/bin/bashful' }, {}, []],
-    ['an absent SHELL', {}, {}, []],
-    ['an empty SHELL', { shell: '' }, {}, []],
-    ['win32 under bash', { shell: '/bin/bash', platform: 'win32' }, {}, []],
-    ['an empty home', { shell: '/bin/bash', home: '' }, {}, []],
+    ['zsh, no ZDOTDIR', { shell: '/bin/zsh' }, {}, ex(at('.zshrc'))],
+    ['zsh, ZDOTDIR set', { shell: '/usr/local/bin/zsh', zdotdir: '/h/user/.config/zsh' }, {}, ex('/h/user/.config/zsh/.zshrc')],
+    ['zsh, ZDOTDIR empty', { shell: 'zsh', zdotdir: '' }, {}, ex(at('.zshrc'))],
+    ['bash, no login file', { shell: '/bin/bash' }, {}, ex(at('.bashrc'), at('.bash_profile'))],
+    ['bash, .profile only', { shell: 'bash' }, { [at('.profile')]: '# login\n' }, ex(at('.bashrc'), at('.profile'))],
+    ['bash, .bash_login and .profile', { shell: '/bin/bash' }, { [at('.bash_login')]: '', [at('.profile')]: '. ~/.bashrc\n' }, ex(at('.bashrc'), at('.bash_login'))],
+    ['bash, .bash_profile first of three', { shell: '/bin/bash' }, { [at('.bash_profile')]: '# x\n', [at('.bash_login')]: '', [at('.profile')]: '' }, ex(at('.bashrc'), at('.bash_profile'))],
+    ['bash, .bash_profile sources .bashrc: still both', { shell: '/bin/bash' }, { [at('.bash_profile')]: '[ -f ~/.bashrc ] && . ~/.bashrc\n' }, ex(at('.bashrc'), at('.bash_profile'))],
+    ['bash, the sourcing line commented out', { shell: '/bin/bash' }, { [at('.bash_profile')]: '  # . ~/.bashrc\n' }, ex(at('.bashrc'), at('.bash_profile'))],
+    ['bash, .profile sources .bashrc but .bash_profile exists', { shell: '/bin/bash' }, { [at('.bash_profile')]: '# x\n', [at('.profile')]: '. ~/.bashrc\n' }, ex(at('.bashrc'), at('.bash_profile'))],
+    ['fish, no XDG_CONFIG_HOME', { shell: '/usr/bin/fish' }, {}, fish(at('.config'))],
+    ['fish, XDG_CONFIG_HOME absolute', { shell: 'fish', xdgConfigHome: '/x/cfg' }, {}, fish('/x/cfg')],
+    ['fish, XDG_CONFIG_HOME relative is ignored', { shell: '/usr/bin/fish', xdgConfigHome: 'cfg' }, {}, fish(at('.config'))],
+    ['fish, XDG_CONFIG_HOME empty', { shell: '/usr/bin/fish', xdgConfigHome: '' }, {}, fish(at('.config'))],
+    ['win32 under bash', { shell: '/bin/bash', platform: 'win32' }, {}, WINDOWS],
+    ['win32 under fish', { shell: '/usr/bin/fish', platform: 'win32' }, {}, WINDOWS],
+    ['win32, an absent SHELL', { platform: 'win32' }, {}, WINDOWS],
+    ['win32, an empty home', { shell: '/bin/bash', platform: 'win32', home: '' }, {}, WINDOWS],
+    ...['/bin/ksh', '/bin/dash', '/bin/tcsh', '/bin/bashful', undefined, ''].map((shell) => [`no target: SHELL ${JSON.stringify(shell)}`, { shell }, {}, []]),
+    ['an empty home off win32', { shell: '/bin/bash', home: '' }, {}, []],
   ];
   for (const [name, input, files, expected] of CELLS) {
     it(name, () => {
@@ -62,7 +68,7 @@ describe('spec:jev-guide/S25 the save rule: the targets by shell', () => {
     const files = { [at('.bash_profile')]: '. ~/.bashrc\n' };
     const reads = [];
     const deps = { exists: (path) => Object.hasOwn(files, path), read: (path) => { reads.push(path); return files[path]; } };
-    assert.deepEqual(targetsFor({ shell: '/bin/bash', home: HOME }, deps), [at('.bashrc'), at('.bash_profile')]);
+    assert.deepEqual(targetsFor({ shell: '/bin/bash', home: HOME }, deps), ex(at('.bashrc'), at('.bash_profile')));
     assert.deepEqual(reads, []);
   });
 
@@ -73,7 +79,7 @@ describe('spec:jev-guide/S25 the save rule: the targets by shell', () => {
     writeFileSync(join(home, '.bashrc'), '');
     writeFileSync(join(home, '.bash_profile'), `. ~/.bashrc\n${LEGACY('old')}\n`);
     const targets = targetsFor({ shell: '/bin/bash', home });
-    assert.deepEqual(targets, [join(home, '.bashrc'), join(home, '.bash_profile')]);
+    assert.deepEqual(targets, ex(join(home, '.bashrc'), join(home, '.bash_profile')));
     assert.ok(saveKey('k-new', targets, home).every(({ saved }) => saved));
     const back = spawnSync('bash', ['--noprofile', '--norc', '-c', `. "$HOME/.bash_profile"; printf %s "$${KEY}"`], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
     assert.deepEqual([back.status, back.stdout], [0, 'k-new'], back.stderr);
@@ -108,7 +114,7 @@ describe('the managed line and the upsert (S25, continued)', () => {
     const home = tmp();
     const file = join(home, '.bashrc');
     writeFileSync(file, prior);
-    assert.ok(saveKey('k-new', [file], home)[0].saved);
+    assert.ok(saveKey('k-new', ex(file), home)[0].saved);
     const syntax = spawnSync('bash', ['-n', file], { encoding: 'utf8' });
     assert.equal(syntax.status, 0, syntax.stderr);
     for (const branch of ['', 'set']) {
@@ -131,7 +137,7 @@ describe('saveKey on a real tree (S25, continued)', () => {
     const kept = join(home, '.bash_profile');
     writeFileSync(kept, `# mine\n${LEGACY('old')}\nexport PATH=$PATH:/x\n`);
     chmodSync(kept, 0o644);
-    const results = saveKey('k1', [fresh, kept], home);
+    const results = saveKey('k1', ex(fresh, kept), home);
     assert.deepEqual(results.map(({ saved, line }) => [saved, line]), [[true, `saved: ${fresh}`], [true, `saved: ${kept}`]]);
     assert.equal(readFileSync(fresh, 'utf8'), `${managedLine('k1')}\n`);
     assert.equal(statSync(fresh).mode & 0o777, 0o600);
@@ -144,9 +150,9 @@ describe('saveKey on a real tree (S25, continued)', () => {
     writeFileSync(join(home, 'real'), 'untouched\n');
     symlinkSync(join(home, 'real'), join(home, '.zshrc'));
     mkdirSync(join(home, '.bashrc'));
-    const results = saveKey('k', [join(home, '.zshrc'), join(home, '.bashrc'), join(home, 'missing-dir', '.profile')], home);
+    const results = saveKey('k', ex(join(home, '.zshrc'), join(home, '.bashrc'), join(home, 'missing-dir', '.profile')), home);
     assert.deepEqual(results.map(({ saved }) => saved), [false, false, false]);
-    assert.equal(results[0].line, `not saved: ${join(home, '.zshrc')} is a link — add the export line by hand`);
+    assert.equal(results[0].line, `not saved: ${join(home, '.zshrc')} is a link — nothing written`);
     assert.equal(results[1].line, `not saved: ${join(home, '.bashrc')} is not a regular file`);
     assert.equal(results[2].line, `not saved: ${join(home, 'missing-dir', '.profile')} — ENOENT`);
     assert.equal(readFileSync(join(home, 'real'), 'utf8'), 'untouched\n');
@@ -160,10 +166,10 @@ describe('saveKey on a real tree (S25, continued)', () => {
     symlinkSync(join(home, 'dotfiles', 'zsh'), join(home, '.config', 'zsh'));
     const linked = join(home, '.config', 'zsh', 'rc', '.zshrc');
     const outside = join(tmp(), '.zshrc');
-    const results = saveKey('k', [linked, outside], home);
+    const results = saveKey('k', ex(linked, outside), home);
     assert.deepEqual(results.map(({ saved, line }) => [saved, line]), [
-      [false, `not saved: ${linked} — ${join(home, '.config', 'zsh')} is a link — add the export line by hand`],
-      [false, `not saved: ${outside} is outside the home — add the export line by hand`]]);
+      [false, `not saved: ${linked} — ${join(home, '.config', 'zsh')} is a link — nothing written`],
+      [false, `not saved: ${outside} is outside the home — nothing written`]]);
     assert.deepEqual([existsSync(join(home, 'dotfiles', 'zsh', 'rc', '.zshrc')), existsSync(outside)], [false, false]);
   });
 
@@ -175,7 +181,7 @@ describe('saveKey on a real tree (S25, continued)', () => {
         const home = tmp();
         const file = join(home, shell === 'zsh' ? '.zshrc' : '.bashrc');
         writeFileSync(file, `${LEGACY('stale')}\n`);
-        assert.ok(saveKey(key, [file], home)[0].saved, key);
+        assert.ok(saveKey(key, ex(file), home)[0].saved, key);
         const back = spawnSync(shell, ['-c', `. "$1"; printf %s "$${KEY}"`, shell, file], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
         assert.deepEqual([back.status, back.stdout], [0, key], `${shell}: ${key} ${back.stderr}`);
         assert.equal(readFileSync(file, 'utf8').split('\n').filter((line) => line.includes(`export ${KEY}`)).length, 1, key);

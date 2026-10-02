@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-02 — AD-166: the Jev key the vendor's way (kit 14.19.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
+
+**`jev-connect` claims no connection: every run that saves every target closes with `saved —`, the one restart step
+from `tools/jev-facts.mjs`, and `then ask the agent to check Jev`; the guide's key mark is the proof.** The guide prints
+the same restart step and, on a line of its own directly before the connect line, where to run it (`placeOf` in the
+facts leaf: Windows, a WSL distro, an SSH host, a container), also as `where` in its JSON; the advisor's recipe line
+opens with that place. fish saves to the kit's own file `~/.config/fish/conf.d/typesafe-api-key.fish`, Windows to the
+user environment variable through one `powershell.exe` run fed the key on its input. Contract
+`docs/ai/specs/kit/jev-guide/` revision 4 (S27–S29 bound); Issue-032 closed.
+
 ## 2026-10-01 — AD-165: Jev connects from one command the user runs (kit 14.18.0 MINOR; memory 8.1.2, engine 5.10.1 and both bridges unchanged)
 
 **The `jev-connect` Recommendations item now carries the user to the result: its apply is `HAND-APPLY: node

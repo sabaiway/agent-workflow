@@ -402,7 +402,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
 });
 
 const JEV_NOTE_START = '- `jev-connect` — ';
-const JEV_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run", 'plain text', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json']);
+const JEV_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run", 'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json']);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
   'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
   'probeMasksItem', 'probeSandboxLane', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);

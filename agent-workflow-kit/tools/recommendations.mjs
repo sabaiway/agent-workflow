@@ -31,8 +31,8 @@
 // read-only git queries. Dependency-free, Node >= 22. No side effects on import (the isDirectRun
 // idiom).
 
-import { readFileSync, readdirSync, lstatSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync, readdirSync, lstatSync, existsSync, statSync } from 'node:fs';
+import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -102,7 +102,7 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
-import { connectLine, keySet } from './jev-facts.mjs';
+import { connectLine, keySet, placeOf } from './jev-facts.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
@@ -1612,11 +1612,14 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
 // the injected environment; the apply is the connect command the USER runs in a terminal of their own (HAND-APPLY), never a guide.
 export const probeJevConnect = ({ root, deps, add, skip }) => {
   try {
-    if (keySet(deps.getenv ?? {})) return;
+    const env = deps.getenv ?? {};
+    if (keySet(env)) return;
     if (readAckValue(root, deps, ACKS_JEV_CONNECT_KEY) === JEV_CONNECT_DECLINE) return;
+    const host = deps.jevHost ?? {};
+    const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
     const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
-    add('jev-connect', WHATS['jev-connect'], `HAND-APPLY: ${connectLine(HERE)}`, 'jev-connect',
-      `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
+    add('jev-connect', WHATS['jev-connect'], `HAND-APPLY: ${connectLine(HERE, host.platform)}`, 'jev-connect',
+      `${place ? `run the apply in ${place}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
   } catch (err) {
     skip('jev-connect', err);
   }
@@ -1757,6 +1760,10 @@ the consent-gated ack writer into docs/ai/acks.json (never a security key).
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report
 rendered (items or empty); 1 error; 2 usage.`;
 
+// The host facts of the key offer's place: the platform, the hostname (a throw reads as none), /.dockerenv a regular file.
+const hostFacts = () => ({ platform: process.platform, hostname: (() => { try { return hostname(); } catch { return ''; } })(),
+  container: (() => { try { return statSync('/.dockerenv').isFile(); } catch { return false; } })() });
+
 export const main = (argv, ctx = {}) => {
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
@@ -1781,7 +1788,7 @@ export const main = (argv, ctx = {}) => {
       }
     })();
     if (st == null || !st.isDirectory()) throw Object.assign(new Error(`--cwd is not a directory: ${cwd}`), { exitCode: 1 });
-    const result = buildRecommendations({ cwd, deps: ctx.deps ?? { getenv: process.env } });
+    const result = buildRecommendations({ cwd, deps: ctx.deps ?? { getenv: process.env, jevHost: hostFacts() } });
     if (json) return { code: 0, stdout: JSON.stringify(result, null, 2), stderr: '' };
     return { code: 0, stdout: formatRecommendations(result), stderr: '' };
   } catch (err) {

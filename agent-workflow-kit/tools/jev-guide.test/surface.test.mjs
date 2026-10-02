@@ -17,9 +17,9 @@ const LF = '\n';
 const COMMAND = /\/agent-workflow-kit jev\b/;
 const WORDS = /\bjev\b|typesafe/i;
 // The contract's closed import surface: specifier → the names it may give (null: any name).
-const NAMED = new Map([['node:fs', ['statSync']], ['node:os', ['homedir']], ['node:path', null], ['node:url', null],
+const NAMED = new Map([['node:fs', ['statSync']], ['node:os', ['homedir', 'hostname']], ['node:path', null], ['node:url', null],
   ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']],
-  ['tools/jev-facts.mjs', ['KEY_VARIABLE', 'connectLine', 'keySet']]]);
+  ['tools/jev-facts.mjs', ['KEY_VARIABLE', 'RESTART_STEP', 'connectLine', 'keySet', 'placeOf']]]);
 const TOKENS = ['import(', 'require(', 'process.getBuiltinModule', 'process.binding', 'fetch', 'WebSocket', 'plugins',
   'CLAUDE_CODE_PLUGIN_CACHE_DIR'];
 const BARE_NAMES = /\b(getBuiltinModule|binding|dlopen|eval|Function)\b/;
@@ -110,6 +110,12 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
       const names = named[1].split(',').map((name) => name.trim().split(/\s+as\s+/)[0]).filter(Boolean);
       for (const name of names) assert.ok(NAMED.get(identity) === null || NAMED.get(identity).includes(name), `${identity}: ${name}`);
     }
+  });
+
+  it('names homedir and hostname in its one node:os statement', () => {
+    const os = statementsOf(sourceOf()).filter((statement) => identityOf(specifierOf(statement), GUIDE) === 'node:os');
+    assert.equal(os.length, 1, os.join(LF));
+    assert.deepEqual(os[0].match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).sort(), ['homedir', 'hostname']);
   });
 
   it('keeps the transitive static import graph within the seven listed modules and never reaches the connect command', () => {

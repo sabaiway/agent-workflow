@@ -95,6 +95,16 @@ describe('spec:jev-guide/S18 the item and the decline round trip', () => {
     assert.ok(formatRecommendations({ items, skips }).includes(WHAT));
   });
 
+  it('opens the recipe line with the place under deps.jevHost { container: true }, the apply still the bare connect line', () => {
+    const root = projectOf();
+    const [plain] = alone(root, { getenv: {} }).items;
+    const { items, skips } = alone(root, { getenv: {}, jevHost: { container: true } });
+    assert.equal(skips.length, 0);
+    assert.deepEqual(items.map(({ apply }) => apply), [`HAND-APPLY: ${connectLine(TOOLS, undefined)}`]);
+    assert.equal(items[0].detail, `run the apply in a terminal inside this container; ${plain.detail}`);
+    assert.ok(plain.detail.startsWith('HAND-APPLY alternative'), plain.detail);
+  });
+
   it('the recipe line run with --apply records the decline at jevConnectAck and the next run renders no item', () => {
     const root = projectOf();
     const [item] = alone(root, { getenv: {} }).items;

@@ -16,7 +16,9 @@ const CLI = join(TOOLS, 'jev-guide.mjs');
 const LF = '\n';
 const KEY = 'TYPESAFE_API_KEY';
 const HEADING = 'WHERE IT PAYS IN THIS WORKFLOW';
-const ENVELOPE_KEYS = ['schema', 'command', 'dir', 'text', 'skill', 'key', 'connect', 'steps', 'prompts'];
+const ENVELOPE_KEYS = ['schema', 'command', 'dir', 'text', 'skill', 'key', 'connect', 'where', 'steps', 'prompts'];
+const READS_ONLY = ['key variable', 'five skill paths', 'WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES', 'the platform',
+  'the hostname', '/.dockerenv'];
 const ROUTER_LINE = 'read-only — read `${CLAUDE_SKILL_DIR}/references/modes/jev.md` before acting.';
 const RUN_LINE = 'node ${CLAUDE_SKILL_DIR}/tools/jev-guide.mjs --dir <project> --json';
 const NOT_A_REPLACEMENT = '"Jev is not a drop-in replacement for the LLM behind Claude Code, Cursor, opencode, Copilot"';
@@ -77,8 +79,8 @@ const runMain = (argv, io) => {
   return { code, stdout: out.join(LF), stderr: err.join(LF) };
 };
 const ioOf = (cell) => ({ cwd: cells[cell].dir, env: cells[cell].env, home: cells[cell].home });
-const render = (cell, argv = []) => runMain(['--dir', cells[cell].dir, ...argv], ioOf(cell));
-const envelopeOf = (cell) => JSON.parse(render(cell, ['--json']).stdout);
+const render = (cell, argv = [], host = {}) => runMain(['--dir', cells[cell].dir, ...argv], { ...ioOf(cell), ...host });
+const envelopeOf = (cell, host) => JSON.parse(render(cell, ['--json'], host).stdout);
 const linesOf = (cell) => render(cell).stdout.split(LF);
 const spawnCli = (args) => {
   const env = { ...process.env };
@@ -140,8 +142,9 @@ describe('spec:jev-guide/S9 the exit table', () => {
       assert.equal(main([flag], io), 0, flag);
       assert.deepEqual(reads.filter((prop) => !['log', 'error'].includes(prop)), [], flag);
       assert.match(out.join(LF), /Usage/, flag);
-      assert.match(out.join(LF), /Reads only:[^\n]*key variable[^\n]*five skill paths/, `${flag}: the Reads only sentence names the key and the five paths`);
-      assert.doesNotMatch(out.join(LF), /Reads only:[^\n]*\bSHELL\b/, `${flag}: SHELL is no longer read`);
+      const sentence = out.join(LF).split(LF).find((line) => line.startsWith('Reads only:')) ?? '';
+      for (const fact of READS_ONLY) assert.ok(sentence.includes(fact), `${flag}: the Reads only sentence names ${fact}`);
+      assert.doesNotMatch(sentence, /\bSHELL\b/, `${flag}: SHELL is no longer read`);
       for (const element of loaded.JEV_TEXT) assert.ok(!out.join(LF).includes(element), `${flag}: ${element}`);
     }
   });
@@ -179,20 +182,24 @@ describe('spec:jev-guide/S9 the exit table', () => {
 });
 
 describe('spec:jev-guide/S10 the JSON envelope and the plain render carry the same facts', () => {
-  it('keeps the envelope keys and the plain composition in a bare cell and in a found-and-set cell', () => {
-    for (const [cell, found, set] of [['bare', [], false], ['found', [join('.claude', 'skills', 'typesafe-ai', 'SKILL.md')], true]]) {
-      const envelope = envelopeOf(cell);
+  it('keeps the envelope keys and the plain composition in a bare empty-where cell and in a found-and-set container cell', () => {
+    const container = 'a terminal inside this container';
+    for (const [cell, found, set, inside] of [['bare', [], false, false], ['found', [join('.claude', 'skills', 'typesafe-ai', 'SKILL.md')], true, true]]) {
+      const host = { platform: 'linux', hostname: '', container: inside };
+      const envelope = envelopeOf(cell, host);
       assert.deepEqual(Object.keys(envelope), ENVELOPE_KEYS, cell);
       assert.deepEqual([envelope.schema, envelope.command, envelope.dir], [1, 'jev', cells[cell].dir], cell);
       assert.deepEqual(envelope.text, [...loaded.JEV_TEXT], cell);
       assert.deepEqual(envelope.skill, { found: found.map((path) => join(cells[cell].dir, path)) }, cell);
       assert.deepEqual(envelope.key, { set }, cell);
-      assert.equal(envelope.connect, connectLine(TOOLS), cell);
+      assert.deepEqual([envelope.connect, envelope.where], [connectLine(TOOLS, 'linux'), inside ? container : ''], cell);
+      const [first] = envelope.steps;
+      assert.equal(first[first.indexOf(envelope.connect) - 1], inside ? `Run it in ${container}:` : first[2], cell);
       assert.deepEqual(envelope.steps.map(([heading]) => heading), STEP_HEADINGS, cell);
       assert.ok(envelope.steps.every((step) => step.every((line) => typeof line === 'string')), cell);
       assert.ok(envelope.prompts.length === 3 && envelope.prompts.every((prompt) => typeof prompt === 'string'), cell);
       const composed = [...envelope.text, ...envelope.steps.flat(), HEADING, ...envelope.prompts].join(LF);
-      assert.equal(render(cell).stdout, composed, cell);
+      assert.equal(render(cell, [], host).stdout, composed, cell);
     }
   });
 });

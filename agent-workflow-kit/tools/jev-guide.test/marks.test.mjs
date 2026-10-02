@@ -9,7 +9,8 @@ import { dirname, join } from 'node:path';
 // The guide and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
-const connectLine = (await import('../jev-facts.mjs').catch(() => ({}))).connectLine ?? (() => { throw new Error('connectLine is absent'); });
+const facts = await import('../jev-facts.mjs').catch(() => ({}));
+const connectLine = facts.connectLine ?? (() => { throw new Error('connectLine is absent'); });
 const LF = '\n';
 const KEY = 'TYPESAFE_API_KEY';
 const SKILL = join('typesafe-ai', 'SKILL.md');
@@ -29,9 +30,13 @@ const HOST_FILTER = /host setting (that filters|filtering) the environment of th
 const KEY_STEP = 'STEP 1 — the key';
 const SKILL_STEP = 'STEP 2 — the vendor skill';
 const GET_KEY = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and, for bash or zsh, saves it to your shell\'s startup files.';
-const RESTART = 'Then quit the agent, start it again from a new terminal, and run /agent-workflow-kit jev again: the key mark should read set.';
+const CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
+// The literal jev-steps quotes in STEP 1 item 5, written here, never imported.
+const RESTART_STEP = 'restart the agent so it reads the key: in VS Code or a VS Code fork, quit the editor completely (every window) and open it again; in a terminal, open a new terminal and start the agent there';
+const RESTART = `Then ${RESTART_STEP}. Run /agent-workflow-kit jev again: the key mark should read set.`;
 const NEVER_PASTE = 'Never paste the key into the chat or into a project file.';
+const RUN_AGAIN = 'If it still reads not set after that restart and no such setting applies, run the connect line again and follow its last line.';
+const PLACE_VARIABLES = ['WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES'];
 
 const made = [];
 after(() => {
@@ -129,16 +134,17 @@ const buildCell = (name) => {
 const CELL_NAMES = [...Object.keys(SKILL_CASES), ...Object.keys(KEY_CASES)];
 const cells = Object.fromEntries(CELL_NAMES.map((name) => [name, buildCell(name)]));
 
-const run = (cell, argv = [], env = cell.env) => {
+// Every cell injects the three host facts of the place: linux, no hostname, no container unless a cell says otherwise.
+const run = (cell, argv = [], env = cell.env, host = {}) => {
   const out = [];
   const err = [];
   const code = main(['--dir', cell.dir, ...argv], { cwd: cell.root, env, home: cell.home, toolsDir: TOOLS_DIR,
-    log: (text) => out.push(text), error: (text) => err.push(text) });
+    platform: 'linux', hostname: '', container: false, ...host, log: (text) => out.push(text), error: (text) => err.push(text) });
   return { code, stdout: out.join(LF), stderr: err.join(LF) };
 };
 const stepOf = (envelope, heading) => envelope.steps.find(([first]) => first === heading);
-const envelopeOf = (cell, env) => {
-  const result = run(cell, ['--json'], env);
+const envelopeOf = (cell, env, host) => {
+  const result = run(cell, ['--json'], env, host);
   assert.equal(result.code, 0, result.stderr);
   return JSON.parse(result.stdout);
 };
@@ -192,16 +198,20 @@ describe('spec:jev-guide/S2 the skill table by proof', () => {
 });
 
 describe('spec:jev-guide/S3 the key step: the connect line and the presence mark', () => {
-  it('prints the console line, the connect sentence, the connect line, the restart and never-paste lines, then the mark, whatever the SHELL', () => {
+  it('prints the console line, the connect sentence, the place line exactly when there is a place, the connect line, the restart and never-paste lines, then the mark, whatever the SHELL', () => {
+    const HOSTS =[[{}, []], [{ container: true }, ['Run it in a terminal inside this container:']], [{ platform: 'win32' }, ['Run it in a PowerShell terminal:']]];
     for (const name of ['a zsh SHELL, no key', 'an absent variable', 'two canaries: the first']) {
-      const step = stepOf(envelopeOf(cells[name]), KEY_STEP);
-      assert.deepEqual(step.slice(0, 6), [KEY_STEP, GET_KEY, CONNECT, connectLine(TOOLS_DIR), RESTART, NEVER_PASTE], name);
-      assert.equal(step.length, 7, name);
-      assert.match(step[6], /^key: TYPESAFE_API_KEY (set\.|not set\.)/, name);
-      assert.equal(step.filter((line) => line.includes('read -rs') || line.includes('curl')).length, 0, name);
+      for (const [host, place] of HOSTS) {
+        const step = stepOf(envelopeOf(cells[name], undefined, host), KEY_STEP);
+        const connect = connectLine(TOOLS_DIR, host.platform ?? 'linux');
+        assert.deepEqual(step.slice(0, -1), [KEY_STEP, GET_KEY, CONNECT, ...place, connect, RESTART, NEVER_PASTE], `${name} ${JSON.stringify(host)}`);
+        assert.match(step.at(-1), /^key: TYPESAFE_API_KEY (set\.|not set\.)/, name);
+        assert.equal(step.filter((line) => line.includes('read -rs') || line.includes('curl')).length, 0, name);
+      }
     }
-    assert.equal(connectLine(TOOLS_DIR), "node '/kit tools/dir/jev-connect.mjs'", 'a path with a space is quoted');
-    assert.equal(connectLine('/kit/tools'), 'node /kit/tools/jev-connect.mjs', 'a safe path is bare');
+    assert.equal(connectLine(TOOLS_DIR, 'linux'), "node '/kit tools/dir/jev-connect.mjs'", 'a path with a space is quoted');
+    assert.equal(connectLine('/kit/tools', 'linux'), 'node /kit/tools/jev-connect.mjs', 'a safe path is bare');
+    assert.equal(facts.RESTART_STEP, RESTART_STEP, 'the facts leaf holds the literal the part quotes');
   });
 
   it('renders every output byte-identical under two canaries differing in length, prefix and suffix, and set', () => {
@@ -218,7 +228,7 @@ describe('spec:jev-guide/S3 the key step: the connect line and the presence mark
     }
   });
 
-  it('renders not set, with the host-filter and the launcher sentences, for an absent, an empty and a whitespace-only variable', () => {
+  it('renders not set, with the host-filter and the run-again sentences, for an absent, an empty and a whitespace-only variable; no step line says launcher or export', () => {
     for (const name of ['an absent variable', 'an empty string', 'a whitespace-only string', 'a zsh SHELL, no key']) {
       const envelope = envelopeOf(cells[name]);
       assert.deepEqual(envelope.key, { set: false }, name);
@@ -226,16 +236,17 @@ describe('spec:jev-guide/S3 the key step: the connect line and the presence mark
       assert.equal(step.filter((line) => line.startsWith(`key: ${KEY} not set`)).length, 1, name);
       const text = step.join(LF);
       assert.match(text, HOST_FILTER, name);
-      assert.ok(text.includes('still reads not set after a restart and no such setting applies, the agent may not have been started from a shell that reads its startup file'), name);
-      assert.match(text, /export the variable in the file the agent's launcher reads, then restart/, name);
+      assert.ok(step.at(-1).endsWith(RUN_AGAIN), name);
+      assert.deepEqual(step.filter((line) => /launcher|export/.test(line)), [], name);
     }
   });
 
-  it('reads io.env for the key variable only', () => {
+  it('reads io.env for no name outside the key variable and the four place variables', () => {
     for (const name of CELL_NAMES) {
       const reads = new Set();
       envelopeOf(cells[name], recordingEnv({ ...cells[name].env }, reads));
-      assert.deepEqual([...reads], [KEY], name);
+      assert.ok(reads.has(KEY), name);
+      assert.deepEqual([...reads].filter((read) => ![KEY, ...PLACE_VARIABLES].includes(read)), [], name);
     }
   });
 });

@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.19.0 — the Jev key the vendor's way: `jev-connect` claims no connection, names one restart step and saves for fish and Windows; the guide and the Recommendations item say where to run it (AD-166)
+
+**`jev-connect` no longer prints `connected`.** A saved key reaches the agent only once the agent's environment is read
+again, which the command cannot see; the guide's key mark is the proof. A run that saves every target now closes with
+`saved — restart the agent so it reads the key: in VS Code or a VS Code fork, quit the editor completely (every window)
+and open it again; in a terminal, open a new terminal and start the agent there; then ask the agent to check Jev`,
+exit 0. The key still reaches the agent only through `TYPESAFE_API_KEY`: the kit takes it from no file, and nothing is
+pasted into the chat.
+
+- **One restart step.** The command's all-saved line and the guide's STEP 1 print the same step from
+  `tools/jev-facts.mjs`. When targets are named and none is saved, the command's last line says to fix the cause on the
+  line above and run the command again (exit 4); `saved in part` gives the same remedy. Only a run with no target — off
+  Windows, a shell the command does not save for or an empty home — keeps the editor sentence.
+- **Where to run it.** The guide prints `Run it in <place>:` directly before the connect line and carries `where` in
+  its JSON: `a PowerShell terminal` on Windows, `the WSL distro <name> terminal`, `a terminal on SSH host <host>`, or
+  `a terminal inside this container`; nothing when none applies. The Recommendations item's recipe line opens with
+  `run the apply in <place>;`. The connect line and the apply stay pure commands; on Windows the line is quoted for
+  PowerShell.
+- **fish and Windows save.** fish: the kit's own file `~/.config/fish/conf.d/typesafe-api-key.fish` (under an absolute
+  `XDG_CONFIG_HOME` when set), written whole, its missing directories created 0700, a new file 0600, never through a
+  link. Windows: the user environment variable `TYPESAFE_API_KEY`, set by one `powershell.exe` run that reads the key
+  from its input, never from an argument; a failure names its cause on a `not saved:` line.
+- **The guide's not-set mark asks no hand edit.** After the restart it says to run the connect line again and follow
+  its last line; the guide's help names the place facts it reads.
+- Closes Issue-032. Unproven on the release host and stated: a live Windows run (a stub proves the route) and the fish
+  readback.
+
 ## 14.18.0 — Jev connects from ONE command you run: the Recommendations item hands it over, the guide prints it, and one leaf names it (AD-165)
 
 **While `TYPESAFE_API_KEY` is not in the environment the agent's commands run in, the Recommendations item `jev-connect`

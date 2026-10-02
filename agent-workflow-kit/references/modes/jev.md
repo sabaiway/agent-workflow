@@ -2,11 +2,11 @@
 
 <!-- opt-in-capability: jev-connect -->
 
-Read-only. The Jev guide: what Jev (TypeSafe) is, why it pays in this workflow, what it is not, the two steps to a connected key and three prompts where it pays. The guide writes no file, opens no connection, never prints the key's value and never commits.
+Read-only. The Jev guide: what Jev (TypeSafe) is, why it pays in this workflow, what it is not, the two steps to a set key and three prompts where it pays. The guide writes no file, opens no connection, never prints the key's value and never commits.
 
 Run `node ${CLAUDE_SKILL_DIR}/tools/jev-guide.mjs --dir <project> --json`.
 
-Render the returned envelope compactly in the user's conversational language. Never paste the JSON. Keep every path and every command verbatim, each command on its own line so it runs as printed; translate only the prose around them. Keep the one vendor-quoted text verbatim and in quotes, never translated or reflowed: the not-a-replacement sentence.
+Render the returned envelope compactly in the user's conversational language. Never paste the JSON. Keep every path and every command verbatim, each command on its own line so it runs as printed; translate only the prose around them. Keep the one vendor-quoted text verbatim and in quotes, never translated or reflowed: the not-a-replacement sentence. The `Run it in <place>:` line, when the guide printed one, stays directly before the connect line and is never folded into it; the restart step is relayed whole.
 
 The connect line is the user's: hand it over as printed and never run it — the command refuses without a terminal, and a terminal is not consent. The install lines are the user's too: they change the agent's own configuration outside the project. No command the guide prints is run by the agent.
 
