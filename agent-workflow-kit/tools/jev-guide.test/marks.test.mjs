@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync,
   writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The guide and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../jev-guide.mjs').catch(() => ({}));
@@ -18,9 +19,14 @@ const TOOLS_DIR = '/kit tools/dir';
 // The five roots of the part, in its order: [the base, the root under it].
 const ROOTS = [['dir', '.claude/skills'], ['dir', '.agents/skills'], ['home', '.claude/skills'], ['home', '.codex/skills'],
   ['home', '.cursor/skills']];
-const OPTIONAL = 'Optional, for your own code and prompts — the vendor skill:';
-const INSTALL = ['claude plugin marketplace add typesafe-ai/skills', 'claude plugin install typesafe@typesafe-ai',
-  'npx skills add typesafe-ai/skills --skill typesafe-ai'];
+const KIT_ROUTE = 'Optional, for your own code and prompts — the vendor skill. The kit installs it pinned, one verified copy per agent skill root (Codex, Claude Code, Antigravity CLI); after your yes in the chat, run this in a terminal of your own:';
+const VENDOR_ROUTES = ['Or the vendor\'s own routes:', 'Claude Code:', 'claude plugin marketplace add typesafe-ai/skills',
+  'claude plugin install typesafe@typesafe-ai', 'Other agents:', 'npx skills add typesafe-ai/skills --skill typesafe-ai'];
+const NO_HOME = 'no home directory found: the kit\'s install needs one';
+const NO_APPLY_LINE = 'the apply line cannot be printed here: a path holds a control character';
+const MARK = /^(Codex|Claude Code|Antigravity CLI) skill root: (current|earlier|absent|foreign) at /;
+const CONFIG_VARIANTS = [{}, { CLAUDE_CONFIG_DIR: 'rel/cc' }, { CLAUDE_CONFIG_DIR: '/abs/cc' }];
+const VENDOR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'references', 'vendor', 'typesafe-ai');
 const AFTER_INSTALL = 'After an install, quit the agent and start it again from a new terminal.';
 const TICKETS = ['"I was charged twice this month."', '"The app crashes when I upload a file."', '"Is there a discount for a yearly plan?"'];
 const SUCCESS = 'Success: three choices, each with a confidence.';
@@ -241,41 +247,53 @@ describe('spec:jev-guide/S3 the key step: the connect line and the presence mark
     }
   });
 
-  it('reads io.env for no name outside the key variable and the four place variables', () => {
+  it('reads io.env for no name outside the key variable, CLAUDE_CONFIG_DIR and the four place variables', () => {
     for (const name of CELL_NAMES) {
       const reads = new Set();
       envelopeOf(cells[name], recordingEnv({ ...cells[name].env }, reads));
       assert.ok(reads.has(KEY), name);
-      assert.deepEqual([...reads].filter((read) => ![KEY, ...PLACE_VARIABLES].includes(read)), [], name);
+      assert.deepEqual([...reads].filter((read) => ![KEY, 'CLAUDE_CONFIG_DIR', ...PLACE_VARIABLES].includes(read)), [], name);
     }
   });
 });
 
-describe('spec:jev-guide/S4 the install block is fixed in every case and under every host variable', () => {
-  it('prints the optional label, the Claude Code label and its two commands, the other-agents label and its command, then the restart, the prompt and the success', () => {
-    let reference = null;
+describe('spec:jev-guide/S4 STEP 2: the kit route, the vendor routes, the marks and the first use, in every case', () => {
+  it('prints the label, the place line, the apply line and the note, the vendor routes, the three target marks, the presence mark and the close', () => {
     for (const name of CELL_NAMES) {
-      for (const variant of HOST_VARIANTS) {
-        const env = { ...cells[name].env, ...variant };
-        const step = stepOf(envelopeOf(cells[name], env), SKILL_STEP);
-        const plain = run(cells[name], [], env).stdout.split(LF);
-        const at = INSTALL.map((command) => step.indexOf(command));
-        for (const command of INSTALL) assert.equal(step.filter((line) => line === command).length, 1, `${name}: ${command}`);
-        assert.deepEqual([at[1] - at[0], at[2] - at[1]], [1, 2], `${name}: ${at}`);
-        assert.equal(step[at[0] - 2], OPTIONAL, name);
-        assert.match(step[at[0] - 1], /^Claude Code\b/, name);
-        assert.match(step[at[2] - 1], /other agents/i, name);
-        const block = step.slice(at[0] - 2, at[2] + 1);
-        reference ??= block;
-        assert.deepEqual(block, reference, name);
-        const tail = step.slice(-3);
-        assert.equal(tail[0], AFTER_INSTALL, name);
-        assert.ok(['using the TypeSafe skill', 'billing, technical or sales', 'one request each', 'choice and confidence', ...TICKETS]
-          .every((part) => tail[1].includes(part)), `${name}: ${tail[1]}`);
-        assert.equal(tail[2], SUCCESS, name);
-        for (const line of [...block, ...tail]) assert.ok(plain.includes(line), `${name}: ${line}`);
+      for (const variant of [...HOST_VARIANTS, ...CONFIG_VARIANTS]) {
+        for (const host of [{}, { container: true }]) {
+          const cell = cells[name];
+          const env = { ...cell.env, ...variant };
+          const label = `${name} ${JSON.stringify(variant)} ${JSON.stringify(host)}`;
+          const step = stepOf(envelopeOf(cell, env, host), SKILL_STEP);
+          const { dir, note } = facts.claudeDirOf(env, cell.home, 'linux');
+          const line = facts.skillLine(TOOLS_DIR, 'linux', dir);
+          assert.match(line, / --apply --claude-dir /, label);
+          const head = cell.home === '' ? [NO_HOME]
+            : [...(host.container ? ['Run it in a terminal inside this container:'] : []), line, ...(note ? [note] : [])];
+          assert.equal(note !== '' && cell.home !== '', variant.CLAUDE_CONFIG_DIR === 'rel/cc' && cell.home !== '', label);
+          const routes = 2 + head.length;
+          assert.deepEqual(step.slice(0, routes + VENDOR_ROUTES.length), [SKILL_STEP, KIT_ROUTE, ...head, ...VENDOR_ROUTES], label);
+          const marks = step.slice(routes + VENDOR_ROUTES.length).filter((item) => MARK.test(item));
+          assert.equal(marks.length, cell.home === '' ? 0 : 3, label);
+          assert.deepEqual(step.slice(routes + VENDOR_ROUTES.length, routes + VENDOR_ROUTES.length + marks.length), marks, label);
+          assert.match(step[routes + VENDOR_ROUTES.length + marks.length], /^skill: /, label);
+          const tail = step.slice(-3);
+          assert.equal(tail[0], AFTER_INSTALL, label);
+          assert.ok(['using the TypeSafe skill', 'billing, technical or sales', 'one request each', 'choice and confidence', ...TICKETS]
+            .every((part) => tail[1].includes(part)), `${label}: ${tail[1]}`);
+          assert.equal(tail[2], SUCCESS, label);
+          const plain = run(cell, [], env, host).stdout.split(LF);
+          assert.ok(step.every((item) => plain.includes(item)), label);
+        }
       }
     }
+  });
+
+  it('prints NO_APPLY_LINE in the apply line\'s place for a claude dir holding a control byte', () => {
+    const cell = cells['no entry'];
+    const step = stepOf(envelopeOf(cell, { CLAUDE_CONFIG_DIR: `/c${String.fromCharCode(9)}c` }), SKILL_STEP);
+    assert.equal(step[2], NO_APPLY_LINE);
   });
 });
 
@@ -290,5 +308,78 @@ describe('spec:jev-guide/S8 read-only: the dir and the home hash alike before an
       assert.deepEqual([plain[1].stdout, plain[1].stderr], [plain[0].stdout, plain[0].stderr], name);
       assert.deepEqual([json[1].stdout, json[1].stderr], [json[0].stdout, json[0].stderr], name);
     }
+  });
+});
+
+const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// The vendored pair is read guarded, so the suite loads on a tree without it and each cell fails on its own.
+const vendorRead = (name) => { try { return readFileSync(join(VENDOR, name)); } catch { return Buffer.from(`the vendored ${name} is absent\n`); } };
+const PAIRS = {
+  current: { 'SKILL.md': vendorRead('SKILL.md.pinned'), LICENSE: vendorRead('LICENSE') },
+  older: { 'SKILL.md': Buffer.from('# the vendor skill at v0.5.6\n'), LICENSE: Buffer.from('MIT at v0.5.6\n') },
+};
+const pinOf = (tag, pair) => ({ tag, commit: tag, digests: { 'SKILL.md': digestOf(pair['SKILL.md']), LICENSE: digestOf(pair.LICENSE) } });
+const PINS = [pinOf('v0.5.7', PAIRS.current), pinOf('v0.5.6', PAIRS.older)];
+const fillPair = (dir, pair) => {
+  mkdirSync(dir, { recursive: true });
+  for (const [name, bytes] of Object.entries(pair)) writeFileSync(join(dir, name), bytes);
+};
+const TARGETS = (home, claude = join(home, '.claude')) => [['Codex', join(home, '.agents', 'skills', 'typesafe-ai')],
+  ['Claude Code', join(claude, 'skills', 'typesafe-ai')], ['Antigravity CLI', join(home, '.gemini', 'config', 'skills', 'typesafe-ai')]];
+const marksOf = (step) => step.filter((line) => / skill root: /.test(line));
+
+describe('spec:jev-guide/S36 the STEP 2 target marks over a temp home', () => {
+  it('reads current, earlier and absent with their tags, in the order Codex, Claude Code, Antigravity CLI, envelope and plain alike', () => {
+    const cell = makeCell();
+    const [codex, claude, agy] = TARGETS(cell.home);
+    fillPair(codex[1], PAIRS.current);
+    fillPair(claude[1], PAIRS.older);
+    const before = [hashTree(cell.dir), hashTree(cell.home)];
+    const envelope = envelopeOf(cell, {}, { pins: PINS });
+    assert.deepEqual(envelope.skill.targets, [
+      { agent: 'Codex', path: codex[1], state: 'current', tag: 'v0.5.7', reason: null },
+      { agent: 'Claude Code', path: claude[1], state: 'earlier', tag: 'v0.5.6', reason: null },
+      { agent: 'Antigravity CLI', path: agy[1], state: 'absent', tag: null, reason: null },
+    ]);
+    const marks = [`Codex skill root: current at ${codex[1]} (v0.5.7)`, `Claude Code skill root: earlier at ${claude[1]} (v0.5.6)`,
+      `Antigravity CLI skill root: absent at ${agy[1]}`];
+    assert.deepEqual(marksOf(stepOf(envelope, SKILL_STEP)), marks);
+    assert.deepEqual(marksOf(run(cell, [], {}, { pins: PINS }).stdout.split(LF)), marks);
+    assert.equal(envelope.skill.install, facts.skillLine(TOOLS_DIR, 'linux', join(cell.home, '.claude')));
+    assert.deepEqual(envelope.skill.found, [join(claude[1], 'SKILL.md')], 'the S2 five-path table is unchanged: it finds the Claude Code copy at its own path');
+    assert.deepEqual([hashTree(cell.dir), hashTree(cell.home)], before, 'read-only');
+  });
+
+  it('reads a foreign target with its reason and a merged record with both agents', () => {
+    const cell = makeCell();
+    const [codex] = TARGETS(cell.home);
+    fillPair(codex[1], { ...PAIRS.current, '.DS_Store': 'meta\n' });
+    assert.deepEqual(marksOf(stepOf(envelopeOf(cell), SKILL_STEP))[0], `Codex skill root: foreign at ${codex[1]} — holds .DS_Store, LICENSE, SKILL.md`);
+    const merged = marksOf(stepOf(envelopeOf(cell, { CLAUDE_CONFIG_DIR: join(cell.home, '.agents') }), SKILL_STEP));
+    assert.equal(merged.length, 2);
+    assert.match(merged[0], /^Codex and Claude Code skill root: foreign at /);
+  });
+
+  it('an absolute CLAUDE_CONFIG_DIR moves the Claude Code target and the install; a relative one prints the note', () => {
+    const cell = makeCell();
+    const cc = join(cell.root, 'cc');
+    const moved = envelopeOf(cell, { CLAUDE_CONFIG_DIR: cc });
+    assert.equal(moved.skill.targets[1].path, join(cc, 'skills', 'typesafe-ai'));
+    assert.equal(moved.skill.install, facts.skillLine(TOOLS_DIR, 'linux', cc));
+    assert.ok(moved.skill.install.endsWith(` --apply --claude-dir ${cc}`), moved.skill.install);
+    const relative = stepOf(envelopeOf(cell, { CLAUDE_CONFIG_DIR: 'rel/cc' }), SKILL_STEP);
+    const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(cell.home, '.claude')}`;
+    assert.equal(relative[relative.indexOf(facts.skillLine(TOOLS_DIR, 'linux', join(cell.home, '.claude'))) + 1], note);
+  });
+
+  it('an empty home prints the no-home line and no mark, with empty targets and install', () => {
+    const cell = makeCell();
+    cell.home = '';
+    const envelope = envelopeOf(cell, { CLAUDE_CONFIG_DIR: '/abs/cc' });
+    assert.deepEqual([envelope.skill.targets, envelope.skill.install], [[], '']);
+    const step = stepOf(envelope, SKILL_STEP);
+    assert.equal(step[2], NO_HOME);
+    assert.deepEqual(marksOf(step), []);
+    assert.ok(!step.some((line) => line.includes('jev-skill.mjs')));
   });
 });

@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '5.7.0'
+  version: '5.7.1'
 ---
 
 # antigravity-cli-bridge
@@ -233,6 +233,13 @@ AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
 AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
   "Without me pointing you at any file, name a project-specific skill under .agents/skills/ here and cite its path."
 ```
+
+**The Jev skill in a delegated run.** A headless `agy-run` loads the vendor's Jev skill from the user root the kit's
+`jev-skill` command fills, `~/.gemini/config/skills` — measured 2026-10-02 on agy 1.2.14: a probe skill under that
+root was listed, and none under `~/.gemini/antigravity-cli/skills`. The run never inherits `TYPESAFE_API_KEY`: the
+wrapper unsets every `*_API_KEY` before agy starts. Jev requests are the orchestrator's own, made in the user's
+environment, and their answers are passed into a brief as text; whether a headless agy command reaches a network
+host is governed by the user's agy permissions and sandbox settings, not by the bridge.
 
 ## How the main agent drives `agy` efficiently
 

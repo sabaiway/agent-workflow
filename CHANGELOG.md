@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-02 — AD-168: the kit installs the Jev vendor skill (kit 14.20.0 MINOR, codex-cli-bridge 3.8.1 and antigravity-cli-bridge 5.7.1 PATCH; memory 8.1.3 and engine 5.10.1 unchanged)
+
+**The new command `tools/jev-skill.mjs` writes the vendor's Jev skill, pinned at v0.5.7 and digest-checked, as one
+verified copy into the Codex, Claude Code and Antigravity CLI skill roots (`~/.agents/skills`, `<claude dir>/skills`,
+`~/.gemini/config/skills`); the user runs it with `--apply` after a yes in the chat, and without `--apply` it is a dry
+run.** The Recommendations item `jev-skill` offers it once the key is set (one jev item at a time, decline lane
+`jev-skill`); the guide's STEP 2 prints the kit route first, the vendor's routes after it, then one mark per target. A
+foreign copy is never touched, no link below the home or an outside Claude dir is written through, and nothing updates
+the skill silently. The vendor pair ships as `references/vendor/typesafe-ai/{SKILL.md.pinned,LICENSE}`. Each bridge's
+`SKILL.md` gains one paragraph: a delegated run reads the skill from the root the kit fills, never inherits
+`TYPESAFE_API_KEY`, and leaves Jev requests to the orchestrator. Contract `docs/ai/specs/kit/jev-guide/` revision 5
+(S30–S36 bound); three diff-council minors recorded as Issue-027 (39)-(41).
+
 ## 2026-10-02 — AD-167: the ADR navigator stamps a cap it honours (memory 8.1.3 PATCH, kit 14.19.1 PATCH; engine 5.10.1 and both bridges unchanged)
 
 **`archive-decisions.mjs --write-navigator` stamps `maxLines` 200 while `docs/ai/adr/log.md` fits and the navigator's

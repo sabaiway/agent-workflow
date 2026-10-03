@@ -17,9 +17,13 @@ const LF = '\n';
 const COMMAND = /\/agent-workflow-kit jev\b/;
 const WORDS = /\bjev\b|typesafe/i;
 // The contract's closed import surface: specifier → the names it may give (null: any name).
-const NAMED = new Map([['node:fs', ['statSync']], ['node:os', ['homedir', 'hostname']], ['node:path', null], ['node:url', null],
-  ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']],
-  ['tools/jev-facts.mjs', ['KEY_VARIABLE', 'RESTART_STEP', 'connectLine', 'keySet', 'placeOf']]]);
+const FACTS = ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
+  'printable', 'skillLine', 'skillState', 'skillTargets'];
+const NAMED = new Map([['node:fs', ['lstatSync', 'readFileSync', 'readdirSync', 'statSync']], ['node:os', ['homedir', 'hostname']],
+  ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']],
+  ['tools/jev-facts.mjs', FACTS]]);
+// The one module the graph may reach beyond the guide's own imports, and only through the facts leaf.
+const THROUGH_FACTS = 'node:crypto';
 const TOKENS = ['import(', 'require(', 'process.getBuiltinModule', 'process.binding', 'fetch', 'WebSocket', 'plugins',
   'CLAUDE_CODE_PLUGIN_CACHE_DIR'];
 const BARE_NAMES = /\b(getBuiltinModule|binding|dlopen|eval|Function)\b/;
@@ -112,18 +116,22 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
     }
   });
 
-  it('names homedir and hostname in its one node:os statement', () => {
-    const os = statementsOf(sourceOf()).filter((statement) => identityOf(specifierOf(statement), GUIDE) === 'node:os');
-    assert.equal(os.length, 1, os.join(LF));
-    assert.deepEqual(os[0].match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).sort(), ['homedir', 'hostname']);
+  it('names exactly its names in its one node:fs, node:os and facts-leaf statement', () => {
+    for (const identity of ['node:fs', 'node:os', 'tools/jev-facts.mjs']) {
+      const found = statementsOf(sourceOf()).filter((statement) => identityOf(specifierOf(statement), GUIDE) === identity);
+      assert.equal(found.length, 1, found.join(LF));
+      assert.deepEqual(found[0].match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).sort(), [...NAMED.get(identity)].sort(), identity);
+    }
   });
 
-  it('keeps the transitive static import graph within the seven listed modules and never reaches the connect command', () => {
+  it('keeps the transitive static import graph within the seven listed modules plus node:crypto through the facts leaf, never a command', () => {
     const graph = [...graphOf(GUIDE)];
     assert.ok(graph.includes('tools/direct-run.mjs'), 'the walk reaches the direct-run leaf');
     assert.ok(graph.includes('tools/jev-facts.mjs'), 'the walk reaches the facts leaf');
-    assert.deepEqual(graph.filter((identity) => !NAMED.has(identity)), []);
-    assert.ok(!graph.includes('tools/jev-connect.mjs'));
+    assert.deepEqual(graph.filter((identity) => !NAMED.has(identity) && identity !== THROUGH_FACTS), []);
+    assert.ok(!statementsOf(sourceOf()).some((statement) => identityOf(specifierOf(statement), GUIDE) === THROUGH_FACTS), 'not the guide\'s own import');
+    assert.ok(graphOf(join(KIT, 'tools', 'jev-facts.mjs')).has(THROUGH_FACTS), 'reached through the facts leaf');
+    assert.ok(!graph.includes('tools/jev-connect.mjs') && !graph.includes('tools/jev-skill.mjs'));
   });
 
   it('carries none of the listed tokens nor their bare names, and names process.env once, as the default of io.env', () => {
@@ -163,34 +171,52 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     return catalog.slice(key - 1, end + 1);
   };
   const guideFile = ({ file }) => ['kit:tools/jev-guide.mjs', 'kit:references/modes/jev.md', 'kit:tools/jev-facts.mjs',
-    'kit:tools/jev-connect.mjs'].includes(file) || file.startsWith('kit:tools/jev-connect.test');
+    'kit:tools/jev-connect.mjs', 'kit:tools/jev-skill.mjs', 'kit:references/vendor/typesafe-ai/SKILL.md.pinned',
+    'kit:references/vendor/typesafe-ai/LICENSE'].includes(file) || file.startsWith('kit:tools/jev-connect.test')
+    || file.startsWith('kit:tools/jev-skill.test');
   const fileLines = (name) => lines.filter(({ file }) => file === name);
   const onlyOne = (found, label) => {
     assert.equal(found.length, 1, label);
     return found[0];
   };
-  const rowIn = (name, opener) => {
+  const rowIn = (name, opener, key = 'jev-connect') => {
     const all = fileLines(name);
     const start = all.findIndex(({ text }) => text.startsWith(opener));
     const end = all.findIndex(({ text }, index) => index > start && text === '});');
     assert.ok(start >= 0 && end > start, opener);
-    return onlyOne(all.slice(start, end).filter(({ text }) => text.startsWith("  'jev-connect': ")), `${opener}: the jev-connect row`);
+    return onlyOne(all.slice(start, end).filter(({ text }) => text.startsWith(`  '${key}': `)), `${opener}: the ${key} row`);
   };
-  // The advisor's closed set: the three registry rows, the opt-in row, RISK_NOTED_KEYS, the decline fact, the import line and
-  // the probe span, from the comment block directly above export const probeJevConnect to its closing `};`.
+  // A span from the comment block directly above `export const <name> = ` to its closing `};`.
+  const spanOf = (all, name) => {
+    const probe = all.findIndex(({ text }) => text.startsWith(`export const ${name} = `));
+    assert.ok(probe > 0, name);
+    const first = probe - [...all.slice(0, probe)].reverse().findIndex(({ text }) => !text.startsWith('//'));
+    const close = all.findIndex(({ text }, index) => index > probe && text === '};');
+    return all.slice(first, close + 1);
+  };
+  // The one Jev paragraph of a bridge SKILL.md mirror: from its opening line to the blank line closing it.
+  const paragraphOf = (name) => {
+    const all = fileLines(name);
+    const start = all.findIndex(({ text }) => text.startsWith('**The Jev skill in a delegated run.**'));
+    assert.ok(start >= 0, `${name}: the Jev paragraph`);
+    return all.slice(start, all.findIndex(({ text }, index) => index > start && text === ''));
+  };
+  // The advisor's closed set: the registry rows, the two opt-in rows, RISK_NOTED_KEYS, the two decline facts, the import line and
+  // the two probe spans.
   const advisorLines = () => {
     const advisor = 'kit:tools/recommendations.mjs';
     const all = fileLines(advisor);
     const one = (test, label) => onlyOne(all.filter(({ text }) => test(text)), label);
-    const probe = all.findIndex(({ text }) => text.startsWith('export const probeJevConnect = '));
-    assert.ok(probe > 0, 'the probe');
-    const first = probe - [...all.slice(0, probe)].reverse().findIndex(({ text }) => !text.startsWith('//'));
-    const close = all.findIndex(({ text }, index) => index > probe && text === '};');
-    return [...['export const SEVERITIES', 'export const WHATS', 'export const BENEFITS'].map((opener) => rowIn(advisor, opener)),
-      one((text) => text.trim() === "{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },", 'the opt-in row'),
+    const rows = [['export const SEVERITIES', ['jev-connect', 'jev-skill', 'jev-skill.earlier']],
+      ['export const WHATS', ['jev-connect', 'jev-skill', 'jev-skill.earlier']], ['export const BENEFITS', ['jev-connect', 'jev-skill']]]
+      .flatMap(([opener, keys]) => keys.map((key) => rowIn(advisor, opener, key)));
+    return [...rows,
+      ...['jev-connect', 'jev-skill'].map((id) => one((text) => text.trim() === `{ id: '${id}', mode: 'jev', advisorKey: '${id}' },`, `the ${id} opt-in row`)),
       one((text) => text.startsWith('export const RISK_NOTED_KEYS = '), 'RISK_NOTED_KEYS'),
-      one((text) => /^const [A-Z_]+ = 'jev-connect:declined';$/.test(text), 'the decline fact'),
-      one((text) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(text), 'the import line'), ...all.slice(first, close + 1)];
+      one((text) => /^const [A-Z_]+ = 'jev-connect:declined';$/.test(text), 'the connect decline fact'),
+      one((text) => /^const [A-Z_]+ = 'jev-skill:declined:';$/.test(text), 'the skill decline fact'),
+      one((text) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(text), 'the import line'),
+      ...spanOf(all, 'probeJevConnect'), ...spanOf(all, 'probeJevSkill')];
   };
 
   it('names /agent-workflow-kit jev only on the description line, the README row, the mode doc and the guide', () => {
@@ -212,22 +238,27 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     assert.equal(formatHelp().split(LF).filter((line) => COMMAND.test(line)).length, 1);
   });
 
-  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the ack lane row, the note and the intro words, the mode doc and the guide', () => {
+  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the two ack lane rows, the two notes and the intro words, the bridge paragraphs, the mode doc and the guide', () => {
     const header = skillLines().findIndex(({ text }) => text === '### Mode: jev');
     assert.ok(header >= 0, 'the jev header');
     const doc = fileLines('kit:references/modes/recommendations.md');
-    const note = onlyOne(doc.filter(({ text }) => text.startsWith('- `jev-connect` — ')), 'the jev-connect note');
+    const notes = ['jev-connect', 'jev-skill'].map((key) => onlyOne(doc.filter(({ text }) => text.startsWith(`- \`${key}\` — `)), `the ${key} note`));
     const intro = onlyOne(doc.filter(({ text }) => text.includes('Jev not connected on this host')), 'the intro-list words');
-    assert.doesNotMatch(intro.text.replace('Jev not connected on this host', ''), WORDS, 'the intro line says nothing else');
+    assert.doesNotMatch(intro.text.replace('Jev not connected on this host', '').replace('the Jev skill not installed for every agent', ''), WORDS,
+      'the intro line says nothing else');
     const allowed = [descriptionOf(), readmeRow(), skillLines()[header], skillLines()[header + 2], ...entryLines(), ...advisorLines(),
-      rowIn('kit:tools/ack-store.mjs', 'export const ACK_LANES'), note, intro];
+      ...['jev-connect', 'jev-skill'].map((key) => rowIn('kit:tools/ack-store.mjs', 'export const ACK_LANES', key)), ...notes, intro,
+      ...paragraphOf('kit:bridges/codex-cli-bridge/SKILL.md'), ...paragraphOf('kit:bridges/antigravity-cli-bridge/SKILL.md')];
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line)).map(where), []);
   });
 
-  it('gives the Recommendations registries exactly one jev key, jev-connect, and the reference profile none', () => {
+  it('gives the Recommendations registries exactly the jev keys jev-connect and jev-skill, the variant beside them, and the reference profile none', () => {
     const profile = JSON.parse(readFileSync(join(KIT, 'references', 'reference-profile.json'), 'utf8'));
-    for (const registry of [SEVERITIES, WHATS, BENEFITS]) assert.deepEqual(Object.keys(registry).filter((key) => WORDS.test(key)), ['jev-connect']);
+    for (const registry of [SEVERITIES, WHATS]) {
+      assert.deepEqual(Object.keys(registry).filter((key) => WORDS.test(key)).sort(), ['jev-connect', 'jev-skill', 'jev-skill.earlier']);
+    }
+    assert.deepEqual(Object.keys(BENEFITS).filter((key) => WORDS.test(key)).sort(), ['jev-connect', 'jev-skill']);
     assert.ok(profile.items.length > 0);
     assert.deepEqual(profile.items.map(({ id }) => id).filter((id) => WORDS.test(id)), []);
   });

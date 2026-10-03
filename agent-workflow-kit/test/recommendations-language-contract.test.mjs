@@ -402,34 +402,46 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
 });
 
 const JEV_NOTE_START = '- `jev-connect` — ';
+const JEV_SKILL_NOTE_START = '- `jev-skill` — ';
+const JEV_SKILL_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'third-party text', 'pinned', 'verified copy', 'never updated silently', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json']);
 const JEV_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run", 'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json']);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
   'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
   'probeMasksItem', 'probeSandboxLane', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
-describe('recommendations contract — the jev-connect offer (spec:jev-guide/S19)', () => {
+describe('recommendations contract — the jev-connect and jev-skill offers (spec:jev-guide/S19)', () => {
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
-  it('the opt-in row, the jev.md declaration on line 3 and the RISK_NOTED_KEYS entry', () => {
-    assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'jev-connect'), [{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' }]);
-    assert.equal(read('references/modes/jev.md').split('\n')[2], '<!-- opt-in-capability: jev-connect -->');
-    assert.ok(RISK_NOTED_KEYS.includes('jev-connect'));
+  it('the two opt-in rows, the jev.md declarations on lines 3 and 4 and the two RISK_NOTED_KEYS entries', () => {
+    assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ mode }) => mode === 'jev'), [{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
+      { id: 'jev-skill', mode: 'jev', advisorKey: 'jev-skill' }]);
+    assert.deepEqual(read('references/modes/jev.md').split('\n').slice(2, 4), ['<!-- opt-in-capability: jev-connect -->', '<!-- opt-in-capability: jev-skill -->']);
+    assert.ok(RISK_NOTED_KEYS.includes('jev-connect') && RISK_NOTED_KEYS.includes('jev-skill'));
   });
   it('the jev-connect note occurs once, carries every literal and closes on its risk profile; the intro list names the offer', () => {
     assert.equal(notes.split(JEV_NOTE_START).length - 1, 1, 'exactly one jev-connect bullet');
     const note = notes.slice(notes.indexOf(JEV_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
     for (const literal of JEV_NOTE_LITERALS) assert.ok(note.includes(literal), `the jev-connect note states: ${literal}`);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
-    assert.match(between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts'), /Jev not connected on this host/);
+    assert.match(between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts'), /Jev not connected on this host, the Jev skill not installed for every agent/);
   });
-  it('ACK_LANES maps jev-connect to jevConnectAck and the writer usage names the lane', () => {
+  it('the jev-skill note occurs once, carries every literal and closes on its risk profile', () => {
+    assert.equal(notes.split(JEV_SKILL_NOTE_START).length - 1, 1, 'exactly one jev-skill bullet');
+    const note = notes.slice(notes.indexOf(JEV_SKILL_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
+    for (const literal of JEV_SKILL_NOTE_LITERALS) assert.ok(note.includes(literal), `the jev-skill note states: ${literal}`);
+    assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
+  });
+  it('ACK_LANES maps jev-connect to jevConnectAck and jev-skill to jevSkillAck, and the writer usage names both lanes', () => {
     assert.equal(ACK_LANES['jev-connect'], 'jevConnectAck');
+    assert.equal(ACK_LANES['jev-skill'], 'jevSkillAck');
     const usage = spawnSync(process.execPath, [resolve(kitRoot, 'tools/ack-write.mjs'), '--help'], { encoding: 'utf8' });
     assert.deepEqual([usage.error, usage.status], [undefined, 0], usage.stderr);
     assert.match(usage.stdout, /--lane <[^>]*\bjev-connect\b[^>]*>/);
+    assert.match(usage.stdout, /--lane <[^>]*\bjev-skill\b[^>]*>/);
   });
-  it('probeJevConnect is declared export const and sits in PROBES directly before probeProfileGaps, every other probe in its order', () => {
+  it('probeJevConnect and probeJevSkill are declared export const and sit in PROBES in that order directly before probeProfileGaps, every other probe in its order', () => {
     assert.match(TOOL_SOURCE, /^export const probeJevConnect = /m);
+    assert.match(TOOL_SOURCE, /^export const probeJevSkill = /m);
     const probes = between(TOOL_SOURCE, 'const PROBES = Object.freeze([', ']);').split('\n').slice(1).map((line) => line.trim().replace(/,$/, ''));
-    assert.deepEqual(probes.filter(Boolean), [...PROBE_ORDER.slice(0, -1), 'probeJevConnect', PROBE_ORDER.at(-1)]);
+    assert.deepEqual(probes.filter(Boolean), [...PROBE_ORDER.slice(0, -1), 'probeJevConnect', 'probeJevSkill', PROBE_ORDER.at(-1)]);
   });
 });

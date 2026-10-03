@@ -95,6 +95,7 @@ import {
   ACKS_COVERAGE_DOMAIN_KEY,
   ACKS_SOURCE_SIZE_COPY_KEY,
   ACKS_JEV_CONNECT_KEY,
+  ACKS_JEV_SKILL_KEY,
   ACK_LANES,
   factFingerprint,
   readAckValue,
@@ -102,12 +103,14 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
-import { connectLine, keySet, placeOf } from './jev-facts.mjs';
+import { NO_APPLY_LINE, SKILL_PINS, claudeDirOf, connectLine, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
 const JEV_CONNECT_DECLINED = 'jev-connect:declined';
 const JEV_CONNECT_DECLINE = factFingerprint(JEV_CONNECT_DECLINED);
+// The skill decline names the pin it declined, so a pin move brings the update offer back once.
+const JEV_SKILL_DECLINED = 'jev-skill:declined:';
 
 export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_KEY, ACKS_SOURCE_SIZE_COPY_KEY, ACK_LANES, factFingerprint };
 
@@ -206,6 +209,8 @@ export const SEVERITIES = Object.freeze({
   'spec-adoption': SEVERITY_OPTIONAL,
   'profile-gap': SEVERITY_OPTIONAL,
   'jev-connect': SEVERITY_OPTIONAL,
+  'jev-skill': SEVERITY_OPTIONAL,
+  'jev-skill.earlier': SEVERITY_OPTIONAL,
   'spec-adoption.adopting': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
@@ -284,6 +289,8 @@ export const WHATS = Object.freeze({
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
   'jev-connect': 'Jev (TypeSafe) is not connected: TYPESAFE_API_KEY is not in the environment the agent\'s commands run in',
+  'jev-skill': 'Jev\'s vendor skill is not installed for every agent here: a skill root the kit fills is absent or behind the kit\'s pin',
+  'jev-skill.earlier': 'Jev\'s vendor skill in the agent skill roots is at {old}, behind the kit\'s pin {new}; only copies matching a kit pin change',
   'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
@@ -346,6 +353,7 @@ export const BENEFITS = Object.freeze({
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
   'profile-gap': 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step',
   'jev-connect': 'decisions — a typed choice with a confidence in under a second for your code and the agent\'s scripts, once for every project here',
+  'jev-skill': 'the TypeSafe skill for Claude Code, Codex and Antigravity CLI, one pinned verified copy per agent root, from one command you run',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -394,6 +402,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'spec-adoption', mode: 'upgrade', advisorKey: 'spec-adoption' },
   { id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' },
   { id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
+  { id: 'jev-skill', mode: 'jev', advisorKey: 'jev-skill' },
   { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
@@ -1313,7 +1322,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect']);
+export const RISK_NOTED_KEYS = Object.freeze(['sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1625,6 +1634,40 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
   }
 };
 
+// The Jev skill offer (contract: kit/jev-guide, part jev-offer): only once the key is set, so one jev item shows at a time.
+// Each target is judged by the facts leaf's one state rule; the apply is the skill command the USER runs (HAND-APPLY).
+export const probeJevSkill = ({ root, deps, add, skip }) => {
+  try {
+    const env = deps.getenv ?? {};
+    if (!keySet(env)) return;
+    const host = deps.jevHost ?? {};
+    if (typeof host.home !== 'string' || host.home === '') return;
+    const pins = deps.jevPins ?? SKILL_PINS;
+    const { dir, note } = claudeDirOf(env, host.home, host.platform);
+    const io = { lstat: deps.lstat ?? lstatSync, readdir: deps.readdir ?? readdirSync, readFile: deps.readFile ?? readFileSync, pins };
+    const judged = skillTargets({ home: host.home, claudeDir: dir }).map((target) => ({ ...target, ...skillState(target, io) }));
+    if (!judged.some(({ state }) => state === 'absent' || state === 'earlier')) return;
+    const decline = factFingerprint(`${JEV_SKILL_DECLINED}${pins[0].tag}`);
+    if (readAckValue(root, deps, ACKS_JEV_SKILL_KEY) === decline) return;
+    const line = skillLine(HERE, host.platform, dir);
+    if (line === '') {
+      skip('jev-skill', new Error(NO_APPLY_LINE));
+      return;
+    }
+    const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
+    const behind = judged.filter(({ state }) => state === 'earlier').map(({ tag }) => pins.findIndex((pin) => pin.tag === tag));
+    const what = behind.length ? fillTemplate(WHATS['jev-skill.earlier'], { old: pins[Math.max(...behind)].tag, new: pins[0].tag })
+      : WHATS['jev-skill'];
+    const untouched = judged.filter(({ state }) => state === 'foreign')
+      .map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}; `).join('');
+    const record = `node ${q(toolPath('ack-write.mjs'))} --lane jev-skill --fingerprint ${decline} --cwd ${q(root)}`;
+    add('jev-skill', what, `HAND-APPLY: ${line}`, behind.length ? 'jev-skill.earlier' : 'jev-skill',
+      `${place ? `run the apply in ${place}; ` : ''}${untouched}${note ? `${note}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${record}`);
+  } catch (err) {
+    skip('jev-skill', err);
+  }
+};
+
 export const probeProfileGaps = ({ root, deps, add, skip }) => {
   try {
     const { gaps, skips } = composeProfileGapScreen({ root, deps });
@@ -1658,6 +1701,7 @@ const PROBES = Object.freeze([
   probeMcpChannel,
   probeSpecAdoption,
   probeJevConnect,
+  probeJevSkill,
   probeProfileGaps,
 ]);
 
@@ -1760,9 +1804,10 @@ the consent-gated ack writer into docs/ai/acks.json (never a security key).
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report
 rendered (items or empty); 1 error; 2 usage.`;
 
-// The host facts of the key offer's place: the platform, the hostname (a throw reads as none), /.dockerenv a regular file.
+// The host facts of the key and skill offers: the platform, the hostname (a throw reads as none), /.dockerenv a regular file, the home.
 const hostFacts = () => ({ platform: process.platform, hostname: (() => { try { return hostname(); } catch { return ''; } })(),
-  container: (() => { try { return statSync('/.dockerenv').isFile(); } catch { return false; } })() });
+  container: (() => { try { return statSync('/.dockerenv').isFile(); } catch { return false; } })(),
+  home: (() => { try { return homedir(); } catch { return ''; } })() });
 
 export const main = (argv, ctx = {}) => {
   try {

@@ -1,10 +1,12 @@
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scanText } from '../tools/release-scan.mjs';
 
 // Tarball-content guard for the kit package. `files[]` whitelists whole directories, so the
 // package's OWN colocated *.test.mjs (bin/, tools/, tools/manifest/) and the manifest fixtures
@@ -189,9 +191,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/tier-guide-facts.mjs',
       'tools/tier-guide.mjs',
       'references/modes/tier.md',
-      // the Jev guide, its mode doc, the facts leaf and the connect command (spec:jev-guide/S13) — by NAME: the mode doc and the advisor render the CLI paths.
-      'tools/jev-guide.mjs', 'tools/jev-facts.mjs', 'tools/jev-connect.mjs',
+      // the Jev guide, its mode doc, the facts leaf, the connect and the skill commands and the vendored skill pair (the
+      // jev-guide S13 cell below) — by NAME: the mode doc and the advisor render the CLI paths, the skill command copies the pair.
+      'tools/jev-guide.mjs', 'tools/jev-facts.mjs', 'tools/jev-connect.mjs', 'tools/jev-skill.mjs',
       'references/modes/jev.md',
+      'references/vendor/typesafe-ai/SKILL.md.pinned', 'references/vendor/typesafe-ai/LICENSE',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -856,7 +860,22 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 344 = 343 + tools/profile-gap-screen.mjs - story S6 of CONSUMERS-MOVE-ONTO-THE-FULL-FLOW
     // 345 = 344 + tools/mount-masks.mjs - the sandbox-masks lane's mount-table judge
     // 347 = 345 + tools/jev-guide.mjs and references/modes/jev.md - the Jev guide; 349 = 347 + tools/jev-facts.mjs and tools/jev-connect.mjs - the connect command (story S8)
-    assert.equal(packed.length, 349, `tarball file count drifted (${packed.length}\u2260 349)`);
+    // 352 = 349 + tools/jev-skill.mjs and the vendored pair references/vendor/typesafe-ai/{SKILL.md.pinned,LICENSE} - the skill command (story S9)
+    assert.equal(packed.length, 352, `tarball file count drifted (${packed.length}\u2260 352)`);
+  });
+
+  it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {
+    const { SKILL_FILES, SKILL_PINS } = await import('../tools/jev-facts.mjs');
+    const packed = pack();
+    const vendor = 'references/vendor/typesafe-ai';
+    assert.deepEqual(packed.filter((path) => path.startsWith('references/vendor/')).sort(), [`${vendor}/LICENSE`, `${vendor}/SKILL.md.pinned`]);
+    assert.ok(!packed.some((path) => path.startsWith('references/vendor/') && path.endsWith('/SKILL.md')), 'no packed vendor SKILL.md');
+    for (const [name, shipped] of Object.entries(SKILL_FILES)) {
+      const bytes = readFileSync(join(ROOT, vendor, shipped));
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), SKILL_PINS[0].digests[name], shipped);
+    }
+    // release-scan's directory walk skips the .pinned extension, so the vendor's skill text is scanned here.
+    assert.deepEqual(scanText(readFileSync(join(ROOT, vendor, 'SKILL.md.pinned'), 'utf8')), []);
   });
 
   // The byte-equality mirror guard does NOT cover the exec bit, and a non-+x agy-review.sh would break

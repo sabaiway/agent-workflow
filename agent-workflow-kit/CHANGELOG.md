@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.20.0 — the kit installs the Jev vendor skill: pinned, one verified copy per agent skill root, by one command you run (AD-168)
+
+**Once `TYPESAFE_API_KEY` is set, the Recommendations item `jev-skill` offers the vendor's Jev skill for every agent the
+family drives.** Its apply is `HAND-APPLY: node <kit>/tools/jev-skill.mjs --apply --claude-dir <dir>`: after your yes
+in the chat the agent hands the line over and you run it in a terminal of your own. It writes a verified copy of the
+skill into the three agent skill roots: Codex `~/.agents/skills`, Claude Code `<claude dir>/skills`
+(`CLAUDE_CONFIG_DIR` when absolute, else `~/.claude`; the line always names the dir the agent resolved) and
+Antigravity CLI `~/.gemini/config/skills`. Then restart the agent from a new terminal.
+
+- **Pinned, never updated silently.** The kit ships the vendor's `SKILL.md` and MIT `LICENSE` at v0.5.7 (commit
+  65a39f39) under `references/vendor/typesafe-ai/`, the skill text as `SKILL.md.pinned` so no agent loads the kit's own
+  copy; the command checks both digests before any write and downloads nothing. A copy at an earlier pin is replaced
+  only by your own `--apply`.
+- **Your files stay yours.** Each target is judged by content: `current`, `earlier`, `absent` or `foreign`. A foreign
+  copy, a link, an extra file or another digest is left untouched and named. The command writes through no link below
+  your home or below a Claude dir outside it, makes its temp and aside directories beside a root, never inside one,
+  re-checks each target before its rename, and lists a leftover from an interrupted run instead of removing it.
+- **A dry run first.** Without `--apply` the command writes nothing and prints the plan, the leftovers and, when
+  something is to install or replace, the apply line; the agent runs only this form, and only when you ask to see the
+  plan.
+- **One jev item at a time.** `jev-connect` while the key is not set, `jev-skill` after. A decline is recorded per
+  project as `jevSkillAck` in `docs/ai/acks.json` (`ack-write --lane jev-skill`).
+- **The guide.** `/agent-workflow-kit jev` STEP 2 prints the kit route first; the vendor's own routes follow as
+  alternatives, then one mark per target.
+- **Delegated runs.** The bundled codex and agy bridge docs say a delegated run reads the skill from its root, never
+  inherits the key, and leaves Jev requests to the orchestrator.
+- Recorded debt (Issue-027 (39)-(41)): a cleanup removal that fails after a refused rename ends the run with an
+  exception; a home or Claude dir that is not normalized (`/x/claude/.`) is walked at a wrong path; on POSIX a
+  backslash in a Claude dir name is split as a separator.
+
 ## 14.19.1 — the ADR navigator stamps a cap it honours (AD-167)
 
 `references/scripts/archive-decisions.mjs` and its test: byte-identical to memory 8.1.3. `--write-navigator` stamps

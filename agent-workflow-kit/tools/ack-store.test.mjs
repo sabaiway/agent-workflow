@@ -65,7 +65,7 @@ describe('the fingerprint shape and the lane registry', () => {
     assert.equal(fp, factFingerprint('spec-adoption:declined:docs/ai/specs/'), 'deterministic');
     assert.notEqual(fp, factFingerprint('another fact'));
     assert.ok(Object.isFrozen(ACK_LANES));
-    assert.deepEqual(Object.entries(ACK_LANES).sort(), [['coverage-domain', 'coverageDomainAck'], ['jev-connect', 'jevConnectAck'], ['sandbox-lane', 'sandboxLaneAck'], ['source-size-copy', 'sourceSizeCopyAck'], ['spec-adoption', 'specAdoptionAck'], ['worktrees-dir', 'worktreesDirAck']]);
+    assert.deepEqual(Object.entries(ACK_LANES).sort(), [['coverage-domain', 'coverageDomainAck'], ['jev-connect', 'jevConnectAck'], ['jev-skill', 'jevSkillAck'], ['sandbox-lane', 'sandboxLaneAck'], ['source-size-copy', 'sourceSizeCopyAck'], ['spec-adoption', 'specAdoptionAck'], ['worktrees-dir', 'worktreesDirAck']]);
     for (const key of Object.values(ACK_LANES)) assert.match(key, /^[a-z][A-Za-z]+Ack$/, key);
     assert.equal(new Set(Object.values(ACK_LANES)).size, Object.keys(ACK_LANES).length, 'no two lanes share a key');
   });

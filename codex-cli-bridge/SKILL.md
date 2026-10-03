@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '3.8.0'
+  version: '3.8.1'
 ---
 
 # codex-cli-bridge
@@ -235,6 +235,12 @@ telling codex to go *read* a file that is already in context.
 avoided). And the execution contract tells codex: if the project declares **no** verification/gate
 set, **STOP and report** rather than invent checks. Pass `--skip-git-repo-check` to codex only when
 you truly mean it.
+
+**The Jev skill in a delegated run.** A `codex-exec` run loads the vendor's Jev skill from the user root the kit's
+`jev-skill` command fills, `~/.agents/skills` — measured 2026-10-02: a run under `--ignore-user-config` listed the
+skills of that root. The run never inherits `TYPESAFE_API_KEY`: the wrappers unset every `*_API_KEY` before codex
+starts. codex exec has no network, so Jev requests are the orchestrator's own, made in the user's environment, and
+their answers are passed into a brief as text.
 
 ## How the main agent drives `codex` efficiently
 

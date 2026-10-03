@@ -1,6 +1,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -12,7 +13,10 @@ import { shellQuoteArg as q } from '../review-state.mjs';
 // The probe and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../recommendations.mjs');
 const probeJevConnect = loaded.probeJevConnect ?? (() => { throw new Error('probeJevConnect is absent'); });
-const connectLine = (await import('../jev-facts.mjs').catch(() => ({}))).connectLine ?? (() => { throw new Error('connectLine is absent'); });
+const probeJevSkill = loaded.probeJevSkill ?? (() => { throw new Error('probeJevSkill is absent'); });
+const facts = await import('../jev-facts.mjs').catch(() => ({}));
+const connectLine = facts.connectLine ?? (() => { throw new Error('connectLine is absent'); });
+const skillLine = facts.skillLine ?? (() => { throw new Error('skillLine is absent'); });
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KEY = 'TYPESAFE_API_KEY';
 const LANE = 'jev-connect';
@@ -42,6 +46,19 @@ const recordingLstat = (root, unreadable, seen) => (path) => {
   return lstatSync(path);
 };
 const alone = (root, deps = {}) => buildRecommendations({ cwd: root, deps: { probes: [probeJevConnect], ...deps } });
+// HOME at a temp dir and CLAUDE_CONFIG_DIR unset for a main with no ctx.deps, so the default route never reads the real skill roots.
+const withHome = (fn) => {
+  const saved = { HOME: process.env.HOME, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR };
+  process.env.HOME = mkdtempSync(join(tmpdir(), 'jev-offer-home-'));
+  made.push(process.env.HOME);
+  delete process.env.CLAUDE_CONFIG_DIR;
+  try { return fn(); } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+};
 const withKey = (value, fn) => {
   const saved = Object.hasOwn(process.env, KEY) ? process.env[KEY] : undefined;
   if (value === undefined) delete process.env[KEY];
@@ -52,16 +69,16 @@ const withKey = (value, fn) => {
   }
 };
 const advisorRun = (root, argv = []) => {
-  const result = main(['--cwd', root, ...argv]);
+  const result = withHome(() => main(['--cwd', root, ...argv]));
   assert.equal(result.code, 0, result.stderr);
   return result;
 };
 const offersIn = (result) => JSON.parse(result.stdout).items.filter(({ key }) => key === LANE);
-// The probe span: from the comment block directly above export const probeJevConnect to its closing `};`.
-const probeSpan = (source) => {
+// A probe span: from the comment block directly above export const <name> to its closing `};`.
+const probeSpan = (source, name = 'probeJevConnect') => {
   const lines = source.split('\n');
-  const at = lines.findIndex((line) => line.startsWith('export const probeJevConnect = '));
-  assert.ok(at > 0, 'export const probeJevConnect');
+  const at = lines.findIndex((line) => line.startsWith(`export const ${name} = `));
+  assert.ok(at > 0, `export const ${name}`);
   const first = at - [...lines.slice(0, at)].reverse().findIndex((line) => !line.startsWith('//'));
   return lines.slice(first, lines.findIndex((line, index) => index > at && line === '};') + 1).join('\n');
 };
@@ -139,22 +156,177 @@ describe('spec:jev-guide/S20 the hermetic seam and the canary', () => {
   });
 });
 
-describe('spec:jev-guide/S21 one key rule, one leaf: the facts leaf exports it, the probe and the guide import it', () => {
-  it('the probe span calls keySet( and connectLine( and carries no .trim( and no key name; the advisor imports both from ./jev-facts.mjs and nothing from the guide', () => {
+describe('spec:jev-guide/S21 one key rule, one leaf: the facts leaf exports it, the probes and the guide import it', () => {
+  const importLine = (source) => source.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
+  const namesOf = (line) => line.match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).filter(Boolean).sort();
+
+  it('each probe span calls keySet( and carries no .trim( and no key name; the connect span calls connectLine(, the skill span skillLine(', () => {
     const source = readFileSync(join(TOOLS, 'recommendations.mjs'), 'utf8');
-    const span = probeSpan(source);
-    assert.ok(span.includes('keySet(') && span.includes('connectLine('), span);
-    assert.ok(!span.includes('.trim(') && !span.includes(KEY), span);
-    const line = source.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
-    assert.ok(line && /\bkeySet\b/.test(line) && /\bconnectLine\b/.test(line), line);
+    for (const [name, call] of [['probeJevConnect', 'connectLine('], ['probeJevSkill', 'skillLine(']]) {
+      const span = probeSpan(source, name);
+      assert.ok(span.includes('keySet(') && span.includes(call), span);
+      assert.ok(!span.includes('.trim(') && !span.includes(KEY), span);
+    }
+  });
+
+  it('the advisor imports exactly its nine names from ./jev-facts.mjs and nothing from the guide', () => {
+    const source = readFileSync(join(TOOLS, 'recommendations.mjs'), 'utf8');
+    assert.deepEqual(namesOf(importLine(source)), ['NO_APPLY_LINE', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
+      'printable', 'skillLine', 'skillState', 'skillTargets'].sort());
     assert.doesNotMatch(source, /from '\.\/jev-guide\.mjs'/);
   });
 
-  it('the guide imports keySet and connectLine from ./jev-facts.mjs; the facts leaf imports only join from node:path', () => {
+  it('the guide imports exactly the thirteen names of S7; the facts leaf imports join, posix and win32 and createHash only', () => {
     const guide = readFileSync(join(TOOLS, 'jev-guide.mjs'), 'utf8');
-    const line = guide.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
-    assert.ok(line && /\bkeySet\b/.test(line) && /\bconnectLine\b/.test(line), line);
+    assert.deepEqual(namesOf(importLine(guide)), ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP', 'SKILL_PINS',
+      'claudeDirOf', 'connectLine', 'keySet', 'placeOf', 'printable', 'skillLine', 'skillState', 'skillTargets'].sort());
     const facts = readFileSync(join(TOOLS, 'jev-facts.mjs'), 'utf8');
-    assert.deepEqual(facts.match(/^import .*$/gm), ["import { join } from 'node:path';"]);
+    assert.deepEqual(facts.match(/^import .*$/gm).sort(), ["import { createHash } from 'node:crypto';", "import { join, posix, win32 } from 'node:path';"]);
+  });
+});
+
+// ── the jev-skill item (part jev-offer, revision 5) ──────────────────────────────────────────────────
+const SKILL_LANE = 'jev-skill';
+const VENDOR = resolve(TOOLS, '..', 'references', 'vendor', 'typesafe-ai');
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+// The vendored pair is read guarded, so the suite loads on a tree without it and each cell fails on its own.
+const vendorRead = (name) => { try { return readFileSync(join(VENDOR, name)); } catch { return Buffer.from(`the vendored ${name} is absent\n`); } };
+const pairs = {
+  current: { 'SKILL.md': vendorRead('SKILL.md.pinned'), LICENSE: vendorRead('LICENSE') },
+  older: { 'SKILL.md': Buffer.from('# the vendor skill at v0.5.6\n'), LICENSE: Buffer.from('MIT at v0.5.6\n') },
+  oldest: { 'SKILL.md': Buffer.from('# the vendor skill at v0.5.5\n'), LICENSE: Buffer.from('MIT at v0.5.5\n') },
+};
+const pinOf = (tag, pair) => ({ tag, commit: tag, digests: { 'SKILL.md': digest(pair['SKILL.md']), LICENSE: digest(pair.LICENSE) } });
+const PINS = [pinOf('v0.5.7', pairs.current), pinOf('v0.5.6', pairs.older), pinOf('v0.5.5', pairs.oldest)];
+const SKILL_DECLINE = factFingerprint('jev-skill:declined:v0.5.7');
+const SKILL_WHAT = "Jev's vendor skill is not installed for every agent here: a skill root the kit fills is absent or behind the kit's pin";
+const SKILL_BENEFIT = 'the TypeSafe skill for Claude Code, Codex and Antigravity CLI, one pinned verified copy per agent root, from one command you run';
+const earlierWhat = (old) => `Jev's vendor skill in the agent skill roots is at ${old}, behind the kit's pin v0.5.7; only copies matching a kit pin change`;
+const fillPair = (dir, pair) => {
+  mkdirSync(dir, { recursive: true });
+  for (const [name, bytes] of Object.entries(pair)) writeFileSync(join(dir, name), bytes);
+};
+const homeTargets = (home, claude = join(home, '.claude')) => [join(home, '.agents', 'skills', 'typesafe-ai'),
+  join(claude, 'skills', 'typesafe-ai'), join(home, '.gemini', 'config', 'skills', 'typesafe-ai')];
+// A home whose three targets hold the given pairs (null: absent, 'foreign': a copy holding an extra entry).
+const homeOf = (states) => {
+  const home = mkdtempSync(join(tmpdir(), 'jev-offer-skill-'));
+  made.push(home);
+  homeTargets(home).forEach((path, index) => {
+    const state = states[index];
+    if (state === 'foreign') fillPair(path, { ...pairs.current, 'notes.txt': 'mine\n' });
+    else if (state) fillPair(path, pairs[state]);
+  });
+  return home;
+};
+const skillAlone = (root, deps) => buildRecommendations({ cwd: root, deps: { probes: [probeJevSkill], jevPins: PINS, ...deps } });
+const skillAckRoot = (ack) => {
+  const root = projectOf();
+  if (ack !== null) writeFileSync(join(root, ACKS_FILE), `${JSON.stringify({ jevSkillAck: ack })}\n`);
+  return root;
+};
+const TARGET_ROWS = {
+  'all current': ['current', 'current', 'current'],
+  'one absent': [null, 'current', 'current'],
+  'one earlier': ['current', 'older', 'current'],
+  'one foreign only': ['foreign', 'current', 'current'],
+  'absent and earlier mixed': [null, 'older', 'current'],
+};
+const SKILL_ACKS = { absent: null, declined: SKILL_DECLINE, 'another fingerprint': OTHER, unreadable: null };
+const recordFor = (root) => `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${SKILL_LANE} --fingerprint ${SKILL_DECLINE} --cwd ${q(root)}`;
+
+describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () => {
+  for (const [keyName, env] of Object.entries(KEYS)) {
+    for (const [rowName, states] of Object.entries(TARGET_ROWS)) {
+      for (const [ackName, ack] of Object.entries(SKILL_ACKS)) {
+        it(`key ${keyName} × ${rowName} × ack ${ackName}`, () => {
+          const root = skillAckRoot(ack);
+          const home = homeOf(states);
+          const seen = [];
+          const { items, skips } = skillAlone(root, { getenv: env, jevHost: { home }, lstat: recordingLstat(root, ackName === 'unreadable', seen) });
+          const needs = states.some((state) => state === null || state === 'older');
+          const judged = keyName === 'set' && needs;
+          const offered = judged && ['absent', 'another fingerprint'].includes(ackName);
+          assert.deepEqual(items.map(({ key }) => key), offered ? [SKILL_LANE] : []);
+          assert.deepEqual(skips.map(({ key }) => key), judged && ackName === 'unreadable' ? [SKILL_LANE] : []);
+          if (!judged) assert.ok(!seen.includes(join(root, ACKS_FILE)), 'the ack is read only when some target needs the install');
+          if (offered) assert.equal(items[0].variant, states.includes('older') ? 'jev-skill.earlier' : SKILL_LANE);
+        });
+      }
+    }
+  }
+
+  it('renders one optional item: the WHAT and BENEFIT literals, the HAND-APPLY skill line with --claude-dir, and the decline as the recipe tail', () => {
+    const root = projectOf();
+    const home = homeOf([null, 'current', 'current']);
+    const { items, skips } = skillAlone(root, { getenv: KEYS.set, jevHost: { home } });
+    assert.equal(skips.length, 0);
+    assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, what: SKILL_WHAT, benefit: SKILL_BENEFIT,
+      apply: `HAND-APPLY: ${skillLine(TOOLS, undefined, join(home, '.claude'))}`, detail: recordFor(root) }]);
+    assert.ok(items[0].apply.endsWith(` --apply --claude-dir ${q(join(home, '.claude'))}`), items[0].apply);
+  });
+
+  it('the earlier variant names the earliest tag found and the judged pins\' first tag', () => {
+    const root = projectOf();
+    const two = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['current', 'older', 'current']) } }).items;
+    assert.deepEqual(two.map(({ variant, what }) => [variant, what]), [['jev-skill.earlier', earlierWhat('v0.5.6')]]);
+    const three = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['older', 'current', 'oldest']) } }).items;
+    assert.deepEqual(three.map(({ what }) => what), [earlierWhat('v0.5.5')]);
+  });
+
+  it('renders nothing for a deps without jevHost.home and nothing, no skip, for a foreign-only home', () => {
+    const root = projectOf();
+    assert.deepEqual(skillAlone(root, { getenv: KEYS.set }), { root, items: [], skips: [] });
+    assert.deepEqual(skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['foreign', 'foreign', 'foreign']) } }),
+      { root, items: [], skips: [] });
+  });
+
+  it('an absolute CLAUDE_CONFIG_DIR moves the judged Claude Code target and the --claude-dir; a relative one keeps <home>/.claude with the note', () => {
+    const root = projectOf();
+    const home = homeOf(['current', 'current', 'current']);
+    const cc = join(home, 'elsewhere', 'cc');
+    const [moved] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: cc }, jevHost: { home } }).items;
+    assert.equal(moved.apply, `HAND-APPLY: ${skillLine(TOOLS, undefined, cc)}`);
+    assert.equal(moved.detail, recordFor(root));
+    const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(home, '.claude')}`;
+    assert.deepEqual(skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' }, jevHost: { home } }).items, []);
+    rmSync(homeTargets(home)[1], { recursive: true });
+    const [relative] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' }, jevHost: { home } }).items;
+    assert.equal(relative.apply, `HAND-APPLY: ${skillLine(TOOLS, undefined, join(home, '.claude'))}`);
+    assert.equal(relative.detail, `${note}; ${recordFor(root)}`);
+  });
+
+  it('a claude dir holding a tab renders no item and one stated skip whose reason is NO_APPLY_LINE', () => {
+    const root = projectOf();
+    const home = homeOf(['current', 'current', 'current']);
+    const { items, skips } = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: join(home, `c${String.fromCharCode(9)}c`) }, jevHost: { home } });
+    assert.deepEqual(items, []);
+    assert.deepEqual(skips, [{ key: SKILL_LANE, reason: facts.NO_APPLY_LINE }]);
+  });
+
+  it('the recipe line opens with the place, names each foreign target through printable and the note, and ends with the decline', () => {
+    const root = projectOf();
+    const home = homeOf(['foreign', null, 'current']);
+    const odd = join(home, `odd${String.fromCharCode(7)}`);
+    const env = { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' };
+    const [item] = skillAlone(root, { getenv: env, jevHost: { home, container: true } }).items;
+    const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(home, '.claude')}`;
+    assert.equal(item.detail, `run the apply in a terminal inside this container; left untouched: ${homeTargets(home)[0]} — holds LICENSE, SKILL.md, notes.txt; ${note}; ${recordFor(root)}`);
+    fillPair(join(odd, '.agents', 'skills', 'typesafe-ai'), { ...pairs.current, 'notes.txt': 'mine\n' });
+    const clean = join(home, 'cc');
+    const [shown] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: clean }, jevHost: { home: odd } }).items;
+    assert.ok(shown.detail.startsWith(`left untouched: ${join(home, 'odd?', '.agents', 'skills', 'typesafe-ai')} — holds `), shown.detail);
+    assert.ok(!shown.detail.includes(String.fromCharCode(7)));
+  });
+
+  it('the recipe line run with --apply records the decline at jevSkillAck and the next run renders no item', () => {
+    const root = projectOf();
+    const home = homeOf([null, null, null]);
+    const [item] = skillAlone(root, { getenv: KEYS.set, jevHost: { home } }).items;
+    const command = item.detail.slice(item.detail.lastIndexOf('— ') + '— '.length);
+    const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8' });
+    assert.equal(written.status, 0, written.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, ACKS_FILE), 'utf8')), { jevSkillAck: SKILL_DECLINE });
+    assert.deepEqual(skillAlone(root, { getenv: KEYS.set, jevHost: { home } }), { root, items: [], skips: [] });
   });
 });

@@ -10,14 +10,16 @@ import { COMMANDS, READ_ONLY, commandFor, routeInvocation } from './commands.mjs
 // The guide and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('./jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
-const connectLine = (await import('./jev-facts.mjs').catch(() => ({}))).connectLine ?? (() => { throw new Error('connectLine is absent'); });
+const facts = await import('./jev-facts.mjs').catch(() => ({}));
+const connectLine = facts.connectLine ?? (() => { throw new Error('connectLine is absent'); });
+const skillLine = facts.skillLine ?? (() => { throw new Error('skillLine is absent'); });
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const CLI = join(TOOLS, 'jev-guide.mjs');
 const LF = '\n';
 const KEY = 'TYPESAFE_API_KEY';
 const HEADING = 'WHERE IT PAYS IN THIS WORKFLOW';
 const ENVELOPE_KEYS = ['schema', 'command', 'dir', 'text', 'skill', 'key', 'connect', 'where', 'steps', 'prompts'];
-const READS_ONLY = ['key variable', 'five skill paths', 'WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES', 'the platform',
+const READS_ONLY = ['key variable', 'CLAUDE_CONFIG_DIR', 'five skill paths', 'the three skill targets', 'WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES', 'the platform',
   'the hostname', '/.dockerenv'];
 const ROUTER_LINE = 'read-only — read `${CLAUDE_SKILL_DIR}/references/modes/jev.md` before acting.';
 const RUN_LINE = 'node ${CLAUDE_SKILL_DIR}/tools/jev-guide.mjs --dir <project> --json';
@@ -82,9 +84,11 @@ const ioOf = (cell) => ({ cwd: cells[cell].dir, env: cells[cell].env, home: cell
 const render = (cell, argv = [], host = {}) => runMain(['--dir', cells[cell].dir, ...argv], { ...ioOf(cell), ...host });
 const envelopeOf = (cell, host) => JSON.parse(render(cell, ['--json'], host).stdout);
 const linesOf = (cell) => render(cell).stdout.split(LF);
+// HOME at a temp dir and CLAUDE_CONFIG_DIR unset: the spawned guide never reads the real skill roots.
 const spawnCli = (args) => {
-  const env = { ...process.env };
+  const env = { ...process.env, HOME: tmp('spawn-home') };
   delete env.NODE_TEST_CONTEXT;
+  delete env.CLAUDE_CONFIG_DIR;
   return spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8' });
 };
 
@@ -190,7 +194,15 @@ describe('spec:jev-guide/S10 the JSON envelope and the plain render carry the sa
       assert.deepEqual(Object.keys(envelope), ENVELOPE_KEYS, cell);
       assert.deepEqual([envelope.schema, envelope.command, envelope.dir], [1, 'jev', cells[cell].dir], cell);
       assert.deepEqual(envelope.text, [...loaded.JEV_TEXT], cell);
-      assert.deepEqual(envelope.skill, { found: found.map((path) => join(cells[cell].dir, path)) }, cell);
+      const home = cells[cell].home;
+      const targets = [['Codex', join(home, '.agents', 'skills', 'typesafe-ai')], ['Claude Code', join(home, '.claude', 'skills', 'typesafe-ai')],
+        ['Antigravity CLI', join(home, '.gemini', 'config', 'skills', 'typesafe-ai')]]
+        .map(([agent, path]) => ({ agent, path, state: 'absent', tag: null, reason: null }));
+      const install = skillLine(TOOLS, 'linux', join(home, '.claude'));
+      assert.deepEqual(envelope.skill, { found: found.map((path) => join(cells[cell].dir, path)), targets, install }, cell);
+      const [, second] = envelope.steps;
+      assert.equal(second[second.indexOf(install) - 1], inside ? `Run it in ${container}:` : second[1], cell);
+      assert.ok(second[1].startsWith('Optional, for your own code and prompts'), cell);
       assert.deepEqual(envelope.key, { set }, cell);
       assert.deepEqual([envelope.connect, envelope.where], [connectLine(TOOLS, 'linux'), inside ? container : ''], cell);
       const [first] = envelope.steps;
@@ -224,10 +236,10 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
     assert.ok(skill.includes(`### Mode: jev${LF}${LF}${ROUTER_LINE}${LF}`));
   });
 
-  it('gives the mode doc its run line, the jev-connect declaration on line 3, the render sentences, the order and the invariants', () => {
+  it('gives the mode doc its run line, the jev-connect and jev-skill declarations on lines 3 and 4, the render sentences, the order and the invariants', () => {
     const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
     assert.ok(doc.includes(RUN_LINE));
-    assert.equal(doc.split(LF)[2], '<!-- opt-in-capability: jev-connect -->');
+    assert.deepEqual(doc.split(LF).slice(2, 4), ['<!-- opt-in-capability: jev-connect -->', '<!-- opt-in-capability: jev-skill -->']);
     assert.ok(has(/the user's (conversational )?language/, /never paste the JSON/i, /every path and (every )?command verbatim/i)(doc));
     assert.match(doc, /vendor-quoted text verbatim and (in quotes|quoted), never translated or reflowed: the not-a-replacement sentence\./);
     for (const line of [ORDER_LINE, INVARIANTS_LINE]) assert.equal(doc.split(LF).filter((item) => item === line).length, 1, line);
@@ -235,8 +247,10 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
 
   it('states the hand-over rule and carries no walk, no curl and no network sentence', () => {
     const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
-    for (const rule of [/The connect line is the user's: hand it over as printed and never run it/,
-      /refuses without a terminal, and a terminal is not consent/, /install lines are the user's too/,
+    for (const rule of [/The connect line and the skill's apply line are the user's: hand each over as printed and never run it/,
+      /refuses without a terminal, and a terminal is not consent for either/,
+      /Only when the user asks to see the plan, run the skill command without `--apply` yourself: a read-only dry run/,
+      /install lines are the user's too/,
       /No command the guide prints is run by the agent\./]) assert.match(doc, rule);
     assert.doesNotMatch(doc, /Nothing in this mode is run/);
     assert.doesNotMatch(doc, /curl|STEP 3|walk|--trace|explicit yes|blocked host/i);

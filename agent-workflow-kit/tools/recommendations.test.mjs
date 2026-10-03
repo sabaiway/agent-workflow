@@ -643,6 +643,13 @@ const buildInventoryFixtures = () => {
   writeFileSync(join(root11, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
   results.push(buildRecommendations({ cwd: root11, deps: hermeticDeps(root11) }));
   rmSync(root11, { recursive: true, force: true });
+  // (12) the Jev key set with an empty temp home, so every skill target is absent: jev-skill.
+  const root12 = makeProject();
+  const home12 = mkdtempSync(join(tmpdir(), 'rec-jev-home-'));
+  results.push(buildRecommendations({ cwd: root12, deps: hermeticDeps(root12, {
+    getenv: { PATH: '/nonexistent-path-for-tests', TYPESAFE_API_KEY: 'a-test-key' }, jevHost: { home: home12 } }) }));
+  rmSync(root12, { recursive: true, force: true });
+  rmSync(home12, { recursive: true, force: true });
   return results;
 };
 
@@ -2374,8 +2381,13 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
 
   it('the direct CLI run renders the section and exits 0 (the spawn covers the emit tail)', () => {
     const root = makeProject();
-    const out = execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8' });
+    // HOME at a temp dir and CLAUDE_CONFIG_DIR unset: the default route never reads the real skill roots.
+    const home = mkdtempSync(join(tmpdir(), 'rec-cli-home-'));
+    const env = { ...process.env, HOME: home };
+    delete env.CLAUDE_CONFIG_DIR;
+    const out = execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8', env });
     rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
     assert.ok(out.startsWith(RECOMMENDATIONS_SECTION_HEADER));
   });
 });

@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "5.7.0",
+  "version": "5.7.1",
   "provides": ["review", "probe"],
   "posture": { "model": "Gemini 3.8 Flash (High)" },
   "roles": {

@@ -17,7 +17,8 @@ const BS = '\\';
 const CONTAINER = 'a terminal inside this container';
 const SSH = 'a terminal on SSH host build-7';
 const PLACE_WORDS = /#|PowerShell|WSL|SSH|container|terminal/;
-const PLACE_ENV = ['WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES', 'TYPESAFE_API_KEY'];
+// HOME and CLAUDE_CONFIG_DIR ride the same save-and-restore, so a default route never reads the real skill roots.
+const PLACE_ENV = ['WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES', 'TYPESAFE_API_KEY', 'HOME', 'CLAUDE_CONFIG_DIR'];
 // [name, env, platform, hostname, container, the place]
 const CELLS = [
   ['win32 whatever else is set', { WSL_DISTRO_NAME: 'Ubuntu', SSH_CONNECTION: '1 2 3 4', CODESPACES: 'true' }, 'win32', 'build-7', true, 'a PowerShell terminal'],
@@ -105,7 +106,7 @@ describe('spec:jev-guide/S27 the place by proof: one ordered rule, a line of its
   });
 
   it('the advisor\'s default route: main with no ctx.deps and SSH_CONNECTION set renders the detail prefix by the host\'s own facts', () => {
-    withEnv({ SSH_CONNECTION: 'x' }, () => {
+    withEnv({ SSH_CONNECTION: 'x', HOME: tmp() }, () => {
       const result = advisorMain(['--cwd', tmp(), '--json']);
       assert.equal(result.code, 0, result.stderr);
       const [item] = JSON.parse(result.stdout).items.filter(({ key }) => key === 'jev-connect');
