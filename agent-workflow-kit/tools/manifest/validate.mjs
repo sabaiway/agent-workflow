@@ -40,7 +40,7 @@ export const INVALID = 'invalid';
 // declared `default`), the kit-side bridge-settings writer (for a user-supplied value), and — mirrored
 // in shell as aw_settings_valid — the wrappers all use, so a value the writer accepts is exactly a
 // value a wrapper honors. A value is always compared as a STRING (the settings-file wire format).
-export const SETTING_KINDS = new Set(['enum', 'integer', 'duration', 'boolean']);
+export const SETTING_KINDS = new Set(['enum', 'integer', 'duration', 'boolean', 'posture']);
 // The wrappers' shell duration grammar: a unit suffix is REQUIRED (a bare integer is invalid), and
 // zero durations are rejected — `timeout 0` DISABLES a hard cap, so a persistent settings line could
 // otherwise silently remove the stall guard.
@@ -56,6 +56,7 @@ export const settingValueValid = (entry, value) => {
     }
     case 'duration': return DURATION_RE.test(value) && !ZERO_DURATION_RE.test(value);
     case 'boolean': return value === '0' || value === '1';
+    case 'posture': return value !== '' && !/[\u0000-\u001f\u007f]/u.test(value) && !/^\s|\s$/u.test(value);
     default: return false;
   }
 };
@@ -613,7 +614,7 @@ export const validateManifest = (skillDir) => {
           }
         }
         if (!SETTING_KINDS.has(entry.kind)) {
-          errors.push(`${at}.kind must be one of enum|integer|duration|boolean`);
+          errors.push(`${at}.kind must be one of enum|integer|duration|boolean|posture`);
           return; // the typed checks below are meaningless without a kind
         }
         if (entry.kind === 'enum'

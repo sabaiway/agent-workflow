@@ -122,11 +122,13 @@ dropping a ready backend within a round — both still run every round.
 
 ## 5. Quota & health guard (advisory)
 
-Backends are **subscription** services with **finite** quota. The orchestrator should: prefer the
-cheapest model that fits the task; not reach for a top-tier model by reflex; and remember that
-**Council spends two backends' quota** for one decision.
+Backends are **subscription** services with **finite** quota. Each bridge runs on its **host
+posture** — the model the user set in the bridge settings file, else the bridge's built-in default; a
+weaker model is the user's choice in that setting, never the orchestrator's per call (a probe is the
+one route to a one-off, and its review receipt never attests). The orchestrator's quota lever is the
+recipe: remember that **Council spends two backends' quota** for one decision.
 
-This guides *which recipe to choose up front* and *which model to run within a backend* — it is
+This guides *which recipe to choose up front* — it is
 **never a licence to drop a ready backend mid-Council** (that is the §4 fidelity breach, not a quota
 saving). Once `council` is the resolved recipe and both backends are `ready`, the two-backend cost is
 already accepted: run both, every round, until a round comes back clean — or until **backend divergence**
@@ -148,15 +150,15 @@ Model quota is one axis of a wider guard: work has **lanes**, and every step rou
   failing output. Extraction and drafting ONLY; the orchestrator verifies the output against
   sources and owns every conclusion.
 - **L2 — subscription bridge** (`codex` / `agy`): review and bounded delegated execution,
-  governed by the recipes above; real review work stays on frontier bridge models
-  (quality-first — economy on this lane comes from precomputed context, never a weaker model).
+  governed by the recipes above; every kept or attesting run is on the bridge's host posture
+  (economy on this lane comes from precomputed context, never a per-call downgrade).
 - **L3 — frontier main lane**: judgment — plans, folds, syntheses, ADR / handover /
   changelog-entry wording, user-facing copy, go/no-go, real code.
 
 Two rules bound the routing. **A step with no named guardrail does not move down a lane** — a
 deterministic checker, a pinned test, or a verifying orchestrator must catch a cheaper executor's
 error, otherwise the step stays where it is. And the **red lines never move down**: council
-reviews on frontier bridge models · real code implementation · ADR / plan / handover /
+reviews on the bridges' host posture · real code implementation · ADR / plan / handover /
 changelog-entry wording · persuasive user-facing copy · go/no-go judgment · the maintainer's
 approval asks (commit / push / publish — cost tiering never touches approval gates).
 

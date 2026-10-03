@@ -4,6 +4,47 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.21.0 — the bridge model is one host setting: your choice, else the default, checked against the installed CLI before any run (AD-169)
+
+**Each bridge now runs the model you set, and `/agent-workflow-kit bridge-settings` shows and sets it.** The read-out
+names, per bridge, the model (codex: and effort), where it comes from (`default`, `setting` or `environment`) and the
+models the installed CLI offers, in text and `--json`. `--set CODEX_MODEL|CODEX_EFFORT|AGY_MODEL=…` is checked
+against that list before anything is written, on the preview and `--apply` alike; the choice lives in the host file
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf`, holds for every later run on that host and
+survives a kit upgrade. A new vendor model needs no kit release.
+
+> ### ⚠ BREAKING — inherited from codex-cli-bridge 4.0.0 and antigravity-cli-bridge 6.0.0
+>
+> `codex-exec`, `codex-review` and `agy-review` refuse before any spend (exit 2) a run off the host posture — an
+> environment `CODEX_MODEL`, `CODEX_EFFORT` or `AGY_MODEL` that differs from your setting, else the default — unless
+> it is a probe (`CODEX_PROBE=1`, `AGY_PROBE=1`), whose review receipt never attests; `codex-exec` also refuses a
+> probe one-off that carries a dispatch nonce. The refusal names the settings lines that make the model your posture.
+> All four wrappers, `agy-run` included, refuse (exit 2) a model the installed CLI's catalog does not offer, the
+> default included; an unreadable catalog never refuses. A model or effort flag after `--` is refused by `codex-exec`
+> and `agy-run`. To keep a model you used to pass through the environment, set it once with
+> `bridge-settings --set … --apply`.
+
+- **New codex default.** codex runs `gpt-6.1-sol` at effort `high`; agy keeps `Gemini 3.8 Flash (High)`.
+- **Checked before any run.** Each wrapper checks the effective model (codex: and effort) against the installed CLI's
+  catalog (`codex debug models`, `agy models`) with every `*_API_KEY` cleared (codex: `OPENAI_BASE_URL` too); a
+  model the CLI does not offer is refused with the offered list and one remedy. An unreadable catalog is stated and
+  never refuses.
+- **The banners say where the model came from.** Every receipt still names what was handed to the CLI (codex: model,
+  effort and tier; agy: model); the posture banners of `codex-exec`, `codex-review` and `agy-review` now name where
+  the model and, for codex, the effort came from.
+- **The command runs no model.** It runs only the two catalog commands, concurrently and bounded as the wrappers are
+  (codex 15 s, agy 30 s), through the new leaf `tools/bridge-catalog.mjs`; a missing, failing or hung CLI is one line,
+  and a set then proceeds stating the value was not checked. The status line and the recipes renders show a set model
+  with its source and read no catalog.
+- **The manifests declare the keys.** A new setting kind `posture` in `tools/manifest/validate.mjs` (a non-empty
+  string, no control byte, no edge whitespace); `--reconcile` reports the three keys current.
+- **The text names the default only.** The bridges' skill files, references and wrapper headers name each default and
+  point at the command; the agy frontier list, its off-frontier warning, its probe advice and the retired 3.5 Flash
+  text are gone. The recipes quota note gives no per-call cheapest-model advice.
+- Recorded debt (`docs/debt.md`, twelve rows): among them the posture kind admits line separators and the settings
+  reader misses a NUL, the agy catalog lookup ignores `~/.local/bin`, a catalog read whose detached child holds its
+  output never settles, and the posture render folds whitespace.
+
 ## 14.20.0 — the kit installs the Jev vendor skill: pinned, one verified copy per agent skill root, by one command you run (AD-168)
 
 **Once `TYPESAFE_API_KEY` is set, the Recommendations item `jev-skill` offers the vendor's Jev skill for every agent the

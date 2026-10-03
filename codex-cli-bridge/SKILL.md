@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '3.8.1'
+  version: '4.0.0'
 ---
 
 # codex-cli-bridge
@@ -46,39 +46,40 @@ this skill. Both wrappers enforce the subscription path before invoking codex:
   regardless of that flag);
 - they **preflight `codex login status`** and refuse to run unless it reports `Logged in using ChatGPT`.
 
-## Models quality-first pinned
+## Models: the host posture
 
-Delegated codex work ALWAYS runs on the **PINNED model at the PINNED reasoning effort**: the wrappers
-**pin** `gpt-6-astra` / `high` and **refuse** (exit 2, loud) a non-default `CODEX_MODEL` / `CODEX_EFFORT`
-— knowingly-worse output is never traded for quota. The pin is deliberate: an explicit `-m gpt-6-astra`
-names one model rather than following the CLI's current default. That the pinned id is also the
-*strongest* selectable Codex model is a **separate, time-bounded claim**, checked BY HAND against
-<https://developers.openai.com/codex/models>. There is **no automated gate and this file records no
-date for that check**, so treat "strongest" as unverified until someone looks. Upstream can move
-either way between releases:
-- **retirement** is loud — the pinned id stops being served and codex fails with an error naming the
-  model. That is an upstream failure, not a wrapper refusal; the fix is a pin bump in its own reviewed
-  commit, never a `CODEX_PROBE=1` run, whose output is never delegated work.
-- **a newer, stronger model is SILENT** — nothing fails, and the pin simply stops being the best
-  available until someone re-checks the page.
+Delegated codex work runs on the **host posture**: `CODEX_MODEL` and `CODEX_EFFORT` from the bridge
+settings file `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf`, else the built-in
+default `gpt-6.1-sol` / `high`. **`/agent-workflow-kit bridge-settings`** shows the models the
+installed `codex` offers and sets the host posture (checked against that list before it writes).
+Before any run is spent the wrappers check the effective model and
+effort against the installed CLI's catalog (`codex debug models`, the entries offered for listing): a
+model or effort it does not offer is refused (exit 2) with the offered list and the settings-file lines
+that set an offered posture. An unreadable catalog is one stderr warning and the run proceeds — codex
+itself then refuses a model it does not serve.
 
-The guard is therefore a **pin-integrity** guard, not a quality guarantee: it enforces that runs use
-the id named here, and it refuses a *stronger* model exactly as it refuses a weaker one. The effort
-pin is the same kind of decision: `high` is a deliberate posture, not the catalog maximum (`xhigh`,
-`max` and `ultra` exist above it), and the guard refuses a higher effort exactly as it refuses a lower
-one. Read a refusal as "not the pinned id", never as "a downgrade was prevented".
+The environment overrides the host posture for one run. A run on anything other than the host posture
+is a **one-off**, whatever set it, and only a probe runs one: without `CODEX_PROBE=1` the wrappers refuse
+it pre-spend (exit 2) and name the remedy — the settings-file lines that make it the host posture, plus
+unsetting `CODEX_MODEL` and `CODEX_EFFORT` in the environment. An environment value equal to the host
+posture is not a one-off; an explicitly empty `CODEX_MODEL=` or `CODEX_EFFORT=` selects the built-in
+default. A nonced `codex-exec` probe one-off is refused too (the exec receipt could not say it ran off
+the host posture), and a probe review's receipt is `probe:true` and never attests.
+
+A weaker model is therefore the user's choice in the setting, never the orchestrator's per call. `high`
+is the default effort, not the catalog maximum (`xhigh`, `max` and `ultra` exist above it). Whether the
+default is also the *strongest* selectable Codex model is a hand-checked claim against
+<https://developers.openai.com/codex/models>, with **no automated gate and no recorded date** — a newer
+model is silent until the user sets it or a bridge release moves the default. A retired model fails
+loudly: the catalog check refuses it pre-spend with the offered list and the remedy.
 
 Economy comes only from **quality-neutral waste removal** (clean capture, a hard timeout,
-a precomputed review diff, `resume` instead of re-sending context), never from a downgrade.
-
-The ONLY escape is a **throwaway probe** whose result is effort-independent (a reachability / smoke
-check): set `CODEX_PROBE=1` (echoed loudly) to relax the model/effort guard. Never use a probe run's
-output as real delegated work.
+a precomputed review diff, `resume` instead of re-sending context), never from a per-call downgrade.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | `gpt-6-astra` (pinned) | model passed to `-m`; a non-default is REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_EFFORT` | `high` (pinned) | reasoning effort (`-c model_reasoning_effort=…`); non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | the setting, else `gpt-6.1-sol` | model passed to `-m`; an environment value off the host posture is a one-off, REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | the setting, else `high` | reasoning effort (`-c model_reasoning_effort=…`); an environment value off the host posture is a one-off, REFUSED unless `CODEX_PROBE=1` |
 
 `codex --version` reports the CLI version, **not** the model list. Quota is metered in **messages**
 (a rolling 5h window + a weekly cap), not raw tokens — which is why the levers above are about removing
@@ -117,14 +118,15 @@ codex-review code "focus on the new reducer"     # review with extra focus
 **Honesty + posture (D4/D5):** a run whose final message has no recognized
 `Verdict: <ship|revise|rethink>` line — empty or missing output included — **exits 4 with NO
 receipt**: treat it as a *failed review to re-run*, never a fatal session error. One stderr banner
-states the actual posture (`review posture: model=… effort=… tier=… timeout=…`) and the receipt
-records the same `posture {model, effort, tier}` (tier `null` on the standard tier); control bytes
-in a posture value refuse pre-spend in every mode. `codex-exec` states its posture the same way —
+states the actual posture (`review posture: model=… effort=… tier=… source=… timeout=…`) and the
+receipt records the same `posture {model, effort, tier}` (tier `null` on the standard tier); control
+bytes in a posture value refuse pre-spend in every mode. `codex-exec` states its posture the same way —
 ONE `exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id>
-timeout=…` stderr line before dispatch (the resume id validated pre-spend). The `timeout=` field
-is **banner-only** (exactly the duration handed to `timeout(1)`; on exec `uncapped` without a
-capping binary, while `codex-review` **fails CLOSED pre-spend** there) — informational, never a
-receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
+source=… timeout=…` stderr line before dispatch (the resume id validated pre-spend). The `source=`
+field (`model:<s>,effort:<s>`, each `default`, `setting` or `environment`) and the `timeout=` field
+are **banner-only** (`timeout=` is exactly the duration handed to `timeout(1)`; on exec `uncapped`
+without a capping binary, while `codex-review` **fails CLOSED pre-spend** there) — informational,
+never a receipt field. **Quote the posture banner verbatim** when labeling a dispatch.
 
 Every successful review receipt carries integer `durationS` and `blocking`; the wrapper prints
 `review duration: <n>s`. A plan receipt also carries `artifactPath`, normalized to a repo-relative
@@ -146,29 +148,29 @@ failure carries both a sandbox-mechanism and a permission/read-only token in its
 The exit status stays 0 there (warning, not gate) — read the stderr line. A successful **non-resume**
 `codex-exec` also records the session id to a sidecar
 (`${CODEX_SESSION_FILE:-./.codex-last-session}`) so `--resume-last` can find it. Extra `codex` flags
-go after a literal `--`; the wrapper rejects any that would defeat the policy or the pinned model (see
+go after a literal `--`; the wrapper rejects any that would defeat the policy or the host posture (see
 [§ Environment knobs](#environment-knobs) and the flag tiers in
 [`references/sandbox-and-flags.md`](references/sandbox-and-flags.md)); args without the separator are
 rejected, never silently dropped.
 
 ## Environment knobs
 
-All optional; the defaults are the supported path. Anything that would lower quality (model/effort) or
-defeat a policy is guarded — see [§ Models](#models-quality-first-pinned).
+All optional; the defaults are the supported path. The model and effort are the host posture, and
+anything that would defeat a policy is guarded — see [§ Models](#models-the-host-posture).
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | `gpt-6-astra` (pinned) | model; non-default REFUSED unless `CODEX_PROBE=1` |
-| `CODEX_EFFORT` | `high` (pinned) | reasoning effort; non-default REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | the setting, else `gpt-6.1-sol` | model; off the host posture REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_EFFORT` | the setting, else `high` | reasoning effort; off the host posture REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ a nonce-less exec warns loudly + runs uncapped, a **nonced** exec REFUSES pre-spend (an accounted dispatch that cannot be capped can never honour the terminal-exit rule), and `codex-review` REFUSES pre-spend (fail-closed preflight). |
-| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = "2x speed, **increased usage**" in the codex catalog's own words for gpt-6-astra (cache fetched 2026-09-05); it states no credit-rate figure — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-verified), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
+| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = "2x speed, **increased usage**" in the codex catalog's own words for gpt-6.1-sol (cache fetched 2026-10-03); it states no credit-rate figure — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-verified), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
 | `AW_REVIEW_NONCE` | unset | the flow dispatch nonce (safe grammar `[A-Za-z0-9._-]{1,64}` — anything else refuses pre-spend). `codex-review … --nonce <n>` is the plain-argument equivalent (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane for hosts whose dispatch policy has no env-prefix form. When supplied, a successful review first mints the finding MANIFEST `agent-workflow-finding-manifest-codex-<nonce>.json` beside the receipts file (atomic, no-clobber, ORDERED before the receipt append) — a failed mint EXCLUDES the receipt, so a nonce-supplied dispatch never lands a receipt without its readable manifest; nonce-less runs add no nonce field and mint nothing (the `wrapperVersion` field every receipt carries moves with each release) |
 | `AW_DISPATCH_NONCE` | unset | the **delegation** dispatch nonce (same safe grammar; anything else refuses pre-spend). `codex-exec [--nonce <n>] <plan-file>` is the plain-argument equivalent — ONE seam, recognised only BEFORE the prompt operand (after it, or after a literal `--`, it is passthrough payload). When supplied, the run is ACCOUNTED: see [§ Dispatch identity](#dispatch-identity-the-accounted-exec-lane). |
 | `AW_DELEGATION_STORE` | unset (the git common dir) | absolute path of the delegation ledger; its **dirname** is where a nonced run's receipt and report land. Relative, or ending in a path separator, refuses pre-spend — the same rule the kit's store applies. |
 | `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
-| `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: relaxes the model/effort guard AND the tier-2 passthrough guard (echoed loudly). Never for real work. |
+| `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: the one route to a one-off model or effort, and it relaxes the tier-2 passthrough guard (echoed loudly); a probe review's receipt never attests. Never for real work. |
 
 The git-write shim, `--ignore-user-config`, and the `*_API_KEY` scrub are NOT env-tunable — they are
 fixed invariants.
@@ -212,11 +214,11 @@ skipped entirely without a nonce: the wrapper is byte-unchanged, writes no artif
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
 **parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
 empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
-bridge: `CODEX_SERVICE_TIER` (the Fast tier — **increased usage**; enabling it is a consented
-per-host spend decision, never a default), `CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES` —
-exactly the manifest `settings` block (the single source; the wrapper constants and `--help` are
-drift-guarded against it). Model/effort keys are **not** file-settable — the quality guard above
-is untouched. The file lives **outside every kit-managed tree**, so a kit refresh/upgrade can
+bridge: `CODEX_MODEL` and `CODEX_EFFORT` (the host posture — see [§ Models](#models-the-host-posture)),
+`CODEX_SERVICE_TIER` (the Fast tier — **increased usage**; enabling it is a consented per-host spend
+decision, never a default), `CODEX_HARD_TIMEOUT`, `CODEX_REVIEW_MAX_TOTAL_BYTES` — exactly the
+manifest `settings` block (the single source; the wrapper constants and `--help` are drift-guarded
+against it, the model keys read by the posture reader instead). The file lives **outside every kit-managed tree**, so a kit refresh/upgrade can
 never wipe it; edit it by hand or via `/agent-workflow-kit bridge-settings` (preview-first,
 consent-gated).
 
@@ -259,7 +261,7 @@ See [`references/driving-codex.md`](references/driving-codex.md) for the full pl
   embed the goal, the relevant paths, and the expected result; codex reads `AGENTS.md` for the rules.
 - **Iterate with `codex-exec --resume-last` / `--resume <id>`** instead of re-sending context. The
   resume entrypoint re-establishes EVERY wrapper invariant (subscription-only, `--ignore-user-config`,
-  the pinned model/effort) and **restates the full posture via `-c`** — `codex exec resume` resets the
+  the host posture's model/effort) and **restates the full posture via `-c`** — `codex exec resume` resets the
   sandbox/approval/network posture and rejects the `-s`/`--add-dir`/`-C` posture flags, so the wrapper
   sets `sandbox_mode=workspace-write` + `approval_policy=never` +
   `sandbox_workspace_write.network_access=false` explicitly. It reads the session id from the sidecar

@@ -1,6 +1,6 @@
 // agy-review-model-screen.test.mjs — the round-2 ordering pin (strip Phase 4, M6): the
-// control-byte screen fires IMMEDIATELY after AGY_MODEL resolution — BEFORE the off-frontier
-// advisory (or any other interpolation) can echo raw control bytes into stderr/the terminal.
+// control-byte screen fires IMMEDIATELY after AGY_MODEL resolution — BEFORE the catalog check, the
+// one-off refusal (or any other interpolation) can echo raw control bytes into stderr/the terminal.
 // Colocated separately: both earlier agy spec files are red-proof-frozen. Standalone harness.
 
 import { describe, it } from 'node:test';
@@ -33,7 +33,7 @@ const makePathWithout = (root, exclude = []) => {
 };
 
 describe('agy-review — the control-byte screen precedes EVERY interpolation of AGY_MODEL (M6)', () => {
-  it('a control-byte NON-frontier model refuses pre-spend with NO advisory echo and NO raw byte on stderr', () => {
+  it('a control-byte model refuses pre-spend with NO later diagnostic and NO raw byte on stderr', () => {
     const home = mkdtempSync(join(tmpdir(), 'agy-model-screen-'));
     const bin = join(home, '.local', 'bin');
     mkdirSync(bin, { recursive: true });
@@ -70,7 +70,7 @@ describe('agy-review — the control-byte screen precedes EVERY interpolation of
     assert.equal(invoked, false, 'agy is never invoked');
     assert.equal(receipts, '', 'no receipt is minted');
     assert.match(r.stderr, /control/i, 'named as the control-byte class');
-    assert.doesNotMatch(r.stderr, /non-frontier model/, 'the advisory never fires on a value the screen must refuse');
+    assert.doesNotMatch(r.stderr, /frontier|catalog|one-off/i, 'no retired advisory and no later check echoes a value the screen must refuse');
     assert.ok(!r.stderr.includes(String.fromCharCode(27)), 'no raw control byte ever reaches stderr');
   });
 });

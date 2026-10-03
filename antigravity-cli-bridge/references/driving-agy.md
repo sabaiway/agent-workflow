@@ -8,7 +8,7 @@ edits, verification, and final judgment.
 ## Delegation checklist
 
 1. Pick the narrowest useful question.
-2. Choose the cheapest model that can answer it.
+2. Run on the host posture (the user's `AGY_MODEL` setting); only an `agy-run` probe names a one-run model.
 3. Include only the relevant excerpts, paths, constraints, and the expected output shape.
 4. State permission boundaries in the prompt (no edits, no git writes).
 5. Run `agy-run` headlessly.
@@ -16,17 +16,11 @@ edits, verification, and final judgment.
 
 ## Model selection
 
-| Task | Model |
-|---|---|
-| Reachability / smoke / "is it wired?" | `Gemini 3.8 Flash (Low)` |
-| Cheap probes, summaries | `Gemini 3.8 Flash (Medium)` |
-| Review, reasoning, careful drafting | `Gemini 3.8 Flash (High)` (wrapper default; asserted frontier-grade, AD-136) |
-| The previous Flash generation, still frontier-grade for review | `Gemini 3.7 Flash (High)` (fork (a)) |
-| Slower, deeper reasoning pass | `Gemini 3.1 Pro (High)` |
-| Same Pro reasoning, lower quota cost | `Gemini 3.1 Pro (Low)` |
-| A different engine's opinion | `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, or `GPT-OSS 120B (Medium)` |
+Reviews and kept work run on the host posture: `AGY_MODEL` in the bridge settings file, else
+`Gemini 3.8 Flash (High)`; a weaker model is the user's choice in that setting, never a per-call pick.
+**`/agent-workflow-kit bridge-settings`** shows the models the installed `agy` offers and sets that
+setting; an `agy-run` probe may name any offered display string as its one-run model.
 
-The 3.7 / 3.6 / 3.5 Flash families remain served — prefer 3.8 (newest generation at the same tiers).
 Don't reach for Pro by reflex — Flash answers most reachability/probe questions for a fraction of the
 quota.
 
@@ -96,13 +90,15 @@ What it does for you, and what YOU must supply:
   `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED** (recognized, arms nothing): headless `agy` auto-denies its
   own `read_file`, so the offload it armed could return a confident fabrication with no way to tell.
   The kit never grants that permission — the feed exists so none is needed.
-- **Model:** frontier default `Gemini 3.8 Flash (High)`; any model is allowed (a sub-frontier one earns a
-  silenceable `AGY_PROBE=1` advisory). The service can still **stall on large/substantive prompts**
+- **Model:** the host posture (the `AGY_MODEL` setting, else `Gemini 3.8 Flash (High)`), checked once
+  per run against `agy models`; an `AGY_MODEL` environment value off it is a one-off, refused pre-spend
+  unless `AGY_PROBE=1` (a probe review never attests). The service can still **stall on large/substantive prompts**
   (Issue-001) — keep reviews **focused**; the hard timeout is the guard.
 - **Posture banner — quote it verbatim.** Every review states its ACTUAL posture on ONE stderr line
-  (`review posture: model=… timeout=…`). When you label a dispatch for a user or a record, **quote
-  the posture banner verbatim** — the banner is the machine-stated posture; a prose re-type drifts.
-  The `timeout=` field is **banner-only** (exactly the duration `agy-run` hands to `timeout(1)`;
+  (`review posture: model=… source=… timeout=…`). When you label a dispatch for a user or a record,
+  **quote the posture banner verbatim** — the banner is the machine-stated posture; a prose re-type
+  drifts. The `source=` field (`model:<s>`, `default`, `setting` or `environment`) and the `timeout=`
+  field are **banner-only** (`timeout=` is exactly the duration `agy-run` hands to `timeout(1)`;
   without a capping binary `agy-review` fails CLOSED pre-spend, so an uncapped review banner no
   longer exists) — informational, never part of the receipt posture.
 
@@ -125,13 +121,13 @@ rewrite history. Return findings and suggested changes only.
 
 ## Project-context prompts
 
-Probe **reachability** from a project root (cheap model) — this is the one place `agy` reading its cwd
+Probe **reachability** from a project root (an `agy-run` probe, so a one-run model is fine) — this is the one place `agy` reading its cwd
 context file is the point of the prompt:
 
 ```bash
-AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
+AGY_MODEL="<an offered display string>" agy-run \
   "Read the cwd context file and report the dialogue language plus one Hard Constraint."
-AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
+AGY_MODEL="<an offered display string>" agy-run \
   "Without using a file pointer, is there a project-specific planning skill in this repo? Name it and cite its path."
 ```
 

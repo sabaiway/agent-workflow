@@ -47,7 +47,7 @@ carries the session id) into the run trace, with stderr merged into it; `--color
 `--color`, which stays on the fresh lane), so the resume lane is no longer the odd one out: it used
 to print its final message straight to stdout with the event stream nowhere, which left the very
 mode a nested-sandbox incident fired on without a structured evidence surface. Net effect: the wrapper prints just the final answer. **Reasoning still runs at
-the pinned effort** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
+the run's effort** — quality is unchanged; only the *noise* is dropped. On success `codex-exec` extracts the
 session id from the trace and records it to `${CODEX_SESSION_FILE:-./.codex-last-session}` (so
 `--resume-last` can find it) and echoes `session: <id>` to stderr. On a missing/empty final-message
 file it falls back to the trace tail (loud, never silent).
@@ -61,13 +61,16 @@ well-formed item is simply not evidence, never a parse error. See the dual polic
 its loose whole-trace rule, and the successful-run arm demands both tokens inside ONE item whose
 failure is proven.
 
-## Quality-first guard (pinned model & effort)
+## Host posture (model & effort)
 
-The wrappers default `CODEX_MODEL=gpt-6-astra` and `CODEX_EFFORT=high` and **refuse** (exit 2, loud) any
-non-default — delegated work always uses the PINNED model at the pinned effort; quality is never traded for
-quota. (Whether the pinned id is still the strongest selectable model is a hand-checked claim with no
-automated gate — see SKILL.md.) `CODEX_PROBE=1` relaxes this for a throwaway, effort-independent probe only (echoed loudly), and
-a probe still runs on the subscription, in the sandbox, with clean capture.
+The wrappers run on the host posture: `CODEX_MODEL` / `CODEX_EFFORT` from the bridge settings file, else
+the built-in default `gpt-6.1-sol` / `high`, checked pre-spend against the installed CLI's catalog
+(`codex debug models`); `/agent-workflow-kit bridge-settings` shows the models offered and sets one. A model or effort the catalog does not offer, and an environment value off the
+host posture (a one-off), are **refused** (exit 2, loud) with the settings-file remedy; a weaker model
+is the user's choice in the setting, never a per-call downgrade. (Whether the default is the strongest
+selectable model is a hand-checked claim with no automated gate — see SKILL.md.) `CODEX_PROBE=1` is the
+one route to a one-off, for a throwaway probe only (echoed loudly; a nonced `codex-exec` probe one-off
+is refused), and a probe still runs on the subscription, in the sandbox, with clean capture.
 
 ## Passthrough guard (two tiers, after a literal `--`)
 
@@ -75,7 +78,7 @@ a probe still runs on the subscription, in the sandbox, with clean capture.
 
 - **Tier 1 — ALWAYS rejected, even under `CODEX_PROBE=1`:** anything that would defeat the policy or the
   capture — `-c`/`--config`, `-s`/`--sandbox`, `--full-auto`, `--dangerously-bypass-*`, `--oss`,
-  `--local-provider`, `-p`/`--profile`, `-m`/`--model` (the model is pinned via `CODEX_MODEL`), and the
+  `--local-provider`, `-p`/`--profile`, `-m`/`--model` (the model is the host posture or `CODEX_MODEL`), and the
   capture flags `-o`/`--output-last-message`/`--json`/`--color`/`--output-schema`/`--ephemeral`.
 - **Tier 2 — context/discovery knobs, rejected for a real run but allowed under `CODEX_PROBE=1`:**
   `--add-dir`, `-C`/`--cd`, `--skip-git-repo-check`, `--ignore-rules`, `--enable`/`--disable`.
@@ -155,7 +158,7 @@ run starts, so the failure is loud and costs no quota; the wrapper's own test pi
 (`RESUME_ACCEPTED_FLAGS`) precisely because the hermetic fake CLI accepts any argv and cannot answer
 this question. The `codex-exec --resume`/`--resume-last` entrypoint handles the reset: it restates
 the entire policy via `-c` (`sandbox_mode=workspace-write`, `approval_policy=never`,
-`sandbox_workspace_write.network_access=false`) plus the pinned `-m`/effort and
+`sandbox_workspace_write.network_access=false`) plus the host posture's `-m`/effort and
 `--ignore-user-config`, reads the session id from the sidecar (or an argument), and applies the same
 EVIDENCE posture as a fresh run — `-o` for the final message, `--json` into the trace. Only a *raw*
 `codex exec resume` outside the wrapper loses the posture.
@@ -164,7 +167,7 @@ EVIDENCE posture as a fresh run — `-o` for the final message, `--json` into th
 
 A backgrounded/hung run survives otherwise, so both wrappers wrap codex in `timeout`/`gtimeout`
 (`--kill-after=15s`): `CODEX_HARD_TIMEOUT` defaults to **3600s (exec)** / **1800s (review)**, sized for a
-slow run at the pinned effort. Exit 124/137 ⇒ "exceeded the hard cap" (raise the cap or narrow the task). If neither
+slow run at the host posture's effort. Exit 124/137 ⇒ "exceeded the hard cap" (raise the cap or narrow the task). If neither
 `timeout` nor `gtimeout` is on `PATH`, `codex-exec` **warns loudly and runs uncapped** — never a silent
 no-op — while `codex-review` **refuses pre-spend** (the fail-closed hard-timeout preflight).
 
@@ -205,8 +208,9 @@ exec` over the precomputed diff instead, keeping every invariant intact.
 | `-o, --output-last-message <f>` | write ONLY the final message (clean capture) |
 | `--json` | structured event stream (`thread.started` ⇒ session id) |
 | `--output-schema <f>` | constrain output to a JSON schema (`CODEX_REVIEW_SCHEMA=1`) |
-| `-m <model>` | model (wrapper default `gpt-6-astra`, pinned via `CODEX_MODEL`) |
-| `-c model_reasoning_effort=<effort>` | reasoning effort (wrapper default `high`, pinned via `CODEX_EFFORT`) |
+| `-m <model>` | model (the host posture: the `CODEX_MODEL` setting, else `gpt-6.1-sol`) |
+| `-c model_reasoning_effort=<effort>` | reasoning effort (the host posture: the `CODEX_EFFORT` setting, else `high`) |
+| `codex debug models` | the model catalog as JSON `models[]` (`slug`, `visibility`, `priority`, `supported_reasoning_levels`, `default_reasoning_level`) — the wrappers' pre-spend check; reads no stdin (probed on 0.160.0) |
 | `--ignore-user-config` | do NOT load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME` |
 | `--color never` | disable ANSI colour in output |
 

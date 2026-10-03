@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, cpSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateManifest, VALID, UNSUPPORTED, INVALID, CATALOG_LINE_MAX } from './validate.mjs';
+import { validateManifest, settingValueValid, VALID, UNSUPPORTED, INVALID, CATALOG_LINE_MAX } from './validate.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const at = (name) => join(FIX, name);
@@ -231,6 +232,28 @@ describe('validateManifest — modeCatalog string caps', () => {
         if (typeof s === 'string') assert.ok(s.length <= CATALOG_LINE_MAX, `over cap: ${s}`);
       }
     }
+  });
+});
+
+describe('settings kind posture — the model keys value kind (spec bridge-settings)', () => {
+  const withSetting = (setting) => {
+    const dir = mkdtempSync(join(tmpdir(), 'awf-posture-kind-'));
+    cpSync(at('settings-valid'), dir, { recursive: true });
+    const manifest = manifestOf('settings-valid');
+    manifest.settings.push({ key: 'FIX_MODEL', appliesTo: ['fixture-exec'], effect: 'a posture knob', ...setting });
+    writeFileSync(join(dir, 'capability.json'), JSON.stringify(manifest));
+    try { return validateManifest(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+  };
+  const ch = (code) => String.fromCharCode(code);
+  it('a trimmed non-empty control-free string passes; an empty, padded or control-byte one is refused', () => {
+    for (const v of ['gpt-6.1-sol', 'Gemini 3.8 Flash (High)']) assert.equal(settingValueValid({ kind: 'posture' }, v), true, v);
+    const refused = ['', ' gpt', 'gpt ', `${ch(160)}gpt`, `gpt${ch(9)}`, `g${ch(1)}t`, `g${ch(127)}t`, `g${ch(10)}t`];
+    for (const v of refused) assert.equal(settingValueValid({ kind: 'posture' }, v), false, JSON.stringify(v));
+  });
+  it('a valid posture default passes --strict; an empty or padded one fails naming the kind', () => {
+    assert.equal(withSetting({ kind: 'posture', default: 'gpt-6.1-sol' }).result, VALID);
+    for (const bad of ['', ' padded']) assert.ok(withSetting({ kind: 'posture', default: bad }).errors.some((e) => /passes the posture validation/.test(e)), bad);
+    assert.ok(withSetting({ kind: 'model', default: null }).errors.some((e) => /kind must be one of enum\|integer\|duration\|boolean\|posture$/.test(e)));
   });
 });
 

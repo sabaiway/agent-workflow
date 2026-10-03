@@ -11,29 +11,97 @@
 // out-of-range value, and — loudly, naming the key — a file that already carries DUPLICATE keys (it
 // never emits duplicates and never edits blindly around them). It touches only the KEY= line it owns,
 // preserving every comment/blank/other line verbatim, and creates the dir + file on first apply via
-// the hardened out-of-tree atomic writer (symlink/parent/TOCTOU-safe). Model/effort are NOT in the
-// allowlist — the wrappers' quality-first guard is untouched (D4). CODEX_SERVICE_TIER carries the
+// the hardened out-of-tree atomic writer (symlink/parent/TOCTOU-safe). The model keys (kind `posture`,
+// spec bridge-settings) are settable: the read-out shows each bridge's host posture and the models its
+// installed CLI offers, and a set naming a model key is judged against that bridge's catalog before
+// any write. It runs only the catalog commands, never a model. CODEX_SERVICE_TIER carries the
 // credit-rate caveat wherever it renders (from the manifest `effect`).
 //
 // Output is ENGLISH/structured (repo-artifact Hard Constraint); the agent localizes when narrating.
-// Exit codes: 0 success (reader, preview, or apply); 2 usage (bad args / unknown key / invalid value);
-// 1 precondition STOP (duplicate-carrying / symlinked / unreadable file, a write STOP) or a corrupt
-// bundle (cannot determine the allowlist). main(argv, ctx) → { code, stdout, stderr }; getenv / home /
-// bundleRoot / fs are injectable for host-independent tests.
+// Exit codes: 0 success (reader, preview, or apply); 2 usage (bad args / unknown key / invalid value /
+// a model or effort the catalog does not offer); 1 precondition STOP (duplicate-carrying / symlinked /
+// unreadable file, a write STOP) or a corrupt bundle (cannot determine the allowlist).
+// main(argv, ctx) → Promise of { code, stdout, stderr }; getenv / home / bundleRoot / fs and the
+// catalog bounds are injectable for host-independent tests.
 //
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
 import { isDirectRun } from './direct-run.mjs';
 import { settingValueValid } from './manifest/validate.mjs';
 import { writeHostConfigFileAtomic } from './atomic-write.mjs';
+import { readCatalogs } from './bridge-catalog.mjs';
 import {
   SETTINGS_SUBDIR, SETTINGS_FILENAME, fail, loadRegistry, allowedLabel, settingsDir, settingsPath,
   joinLines, readFileState, parseSettings, duplicateKeys, effectiveOf, displayValue,
 } from './bridge-settings-read.mjs';
 
+// ── host posture (the model keys) ──────────────────────────────────────────────────────
+
+const slotOf = (key) => (key.endsWith('_EFFORT') ? 'effort' : 'model');
+const postureBridges = (registry) => [...new Set([...registry.values()].filter((e) => e.kind === 'posture').map((e) => e.bridge))];
+
+// One bridge's posture as { model: {key, value, source, note}, effort?: … } under the given env.
+const postureOfBridge = (registry, parsed, getenv, bridge) => Object.fromEntries([...registry.values()]
+  .filter((e) => e.kind === 'posture' && e.bridge === bridge)
+  .map((e) => {
+    const eff = effectiveOf(e, parsed, getenv);
+    return [slotOf(e.key), { key: e.key, value: eff.value, source: eff.source, note: eff.note ?? null, retired: e.retired ?? null }];
+  }));
+
+const showModel = (v) => (v == null ? '(none)' : v);
+const offeredLabel = (catalog) => catalog.entries
+  .map((e) => (e.efforts === undefined ? e.model : `${e.model} (${e.efforts === null ? 'efforts unknown' : e.efforts.join(', ')})`))
+  .join(', ');
+const catalogWarning = (bridge, catalog) => (catalog.state === 'not-installed'
+  ? `⚠ ${bridge}: not installed (${catalog.cause}) — no offered list`
+  : `⚠ ${bridge}: the model catalog is unreadable (${catalog.cause}) — the offered list is unknown`);
+
+const renderPosture = (registry, parsed, getenv, catalogs) => {
+  const lines = ['', '  host posture (the model each bridge runs; the offered models are read from the installed CLI, none is run):'];
+  for (const bridge of postureBridges(registry)) {
+    const p = postureOfBridge(registry, parsed, getenv, bridge);
+    const effort = p.effort ? ` · effort ${showModel(p.effort.value)} [${p.effort.source}]` : '';
+    const notes = [p.model.note, p.effort?.note].filter(Boolean).map((n) => `  — ${n}`).join('');
+    lines.push(`    ${bridge}: model ${showModel(p.model.value)} [${p.model.source}]${effort}${notes}`);
+    const catalog = catalogs[bridge];
+    lines.push(catalog.state === 'offered' ? `      offered: ${offeredLabel(catalog)}` : `      ${catalogWarning(bridge, catalog)}`);
+  }
+  return lines;
+};
+
+const postureJson = (registry, parsed, getenv, catalogs) => postureBridges(registry).map((bridge) => ({
+  bridge, ...postureOfBridge(registry, parsed, getenv, bridge), catalog: catalogs[bridge],
+}));
+
+// The set judgment: the posture the file would give after the ops (the environment ignored), judged
+// against each touched bridge's catalog. Refuses (exit 2) only a model the catalog does not offer or a
+// codex effort that model does not offer; an unreadable catalog yields an "unchecked" statement.
+const judgePosture = async (ops, registry, newLines, ctx) => {
+  const bridges = [...new Set(ops.map((op) => registry.get(op.key)).filter((e) => e.kind === 'posture').map((e) => e.bridge))];
+  if (!bridges.length) return [];
+  const after = parseSettings(joinLines(newLines));
+  const catalogs = await readCatalogs(bridges, ctx);
+  const unchecked = [];
+  for (const bridge of bridges) {
+    const { model, effort } = postureOfBridge(registry, after, {}, bridge);
+    const catalog = catalogs[bridge];
+    if (catalog.state !== 'offered') {
+      unchecked.push(`${bridge}: the value was not checked — ${catalog.state === 'not-installed' ? 'not installed' : 'the model catalog is unreadable'} (${catalog.cause}); the wrapper checks it at run time`);
+      continue;
+    }
+    const entry = catalog.entries.find((e) => e.model === model.value);
+    if (!entry) throw fail(2, `${model.key}=${model.value} is not a model the installed ${bridge} catalog offers — refusing before any write. Offered: ${catalog.entries.map((e) => e.model).join(', ')}`);
+    if (effort && entry.efforts === null) unchecked.push(`${bridge}: the effort was not checked — the catalog entry for ${model.value} lists no efforts; the wrapper checks it at run time`);
+    else if (effort && !entry.efforts.includes(effort.value)) {
+      throw fail(2, `${effort.key}=${effort.value} is not an effort the installed ${bridge} catalog offers for ${model.value} — refusing before any write. Offered: ${entry.efforts.join(', ')}`);
+    }
+  }
+  return unchecked;
+};
+
 // ── reader render ──────────────────────────────────────────────────────────────────
 
-const renderReader = (registry, parsed, fileState, ctx, path) => {
+const renderReader = (registry, parsed, fileState, ctx, path, catalogs) => {
   const getenv = ctx.getenv ?? process.env;
   const lines = [`bridge settings — ${path}`];
   if (fileState.state === 'absent') lines.push('  (no settings file yet — every knob is at its built-in default)');
@@ -43,10 +111,12 @@ const renderReader = (registry, parsed, fileState, ctx, path) => {
     const eff = effectiveOf(entry, parsed, getenv);
     const note = eff.note ? `  — ${eff.note}` : '';
     const retired = entry.retired ? '  ⚠ RETIRED' : '';
-    lines.push(`    ${entry.key} = ${displayValue(eff.value)}  [${eff.source}]${retired}${note}`);
+    const shown = entry.kind === 'posture' ? showModel(eff.value) : displayValue(eff.value);
+    lines.push(`    ${entry.key} = ${shown}  [${eff.source}]${retired}${note}`);
     lines.push(`        ${entry.bridge} · ${allowedLabel(entry)} · ${entry.effect}`);
     if (entry.retired) lines.push(`        RETIRED — ${entry.retired}`);
   }
+  lines.push(...renderPosture(registry, parsed, getenv, catalogs));
   const dups = duplicateKeys(parsed);
   const unknown = [...parsed.byKey.keys()].filter((k) => !registry.has(k));
   if (dups.length) lines.push('', `  ⚠ duplicate keys in the file (last wins at read time; the writer refuses to edit until you fix these): ${dups.join(', ')}`);
@@ -56,7 +126,7 @@ const renderReader = (registry, parsed, fileState, ctx, path) => {
   return lines.join('\n');
 };
 
-const buildReaderJson = (registry, parsed, fileState, ctx, path) => {
+const buildReaderJson = (registry, parsed, fileState, ctx, path, catalogs) => {
   const getenv = ctx.getenv ?? process.env;
   return {
     path,
@@ -65,6 +135,7 @@ const buildReaderJson = (registry, parsed, fileState, ctx, path) => {
       const eff = effectiveOf(entry, parsed, getenv);
       return { key: entry.key, bridge: entry.bridge, kind: entry.kind, effective: eff.value, source: eff.source, note: eff.note ?? null, default: entry.default, retired: entry.retired ?? null };
     }),
+    bridges: postureJson(registry, parsed, getenv, catalogs),
     duplicateKeys: duplicateKeys(parsed),
     unknownKeys: [...parsed.byKey.keys()].filter((k) => !registry.has(k)),
     malformedLines: parsed.malformed.map((m) => m.index + 1),
@@ -182,12 +253,22 @@ const changeLine = (c) => {
   return `  ${c.key}: ${b} → ${a}`;
 };
 
-const renderWriter = ({ changes, wrote, path, willWrite, envShadows, caveats }) => {
+// A model key's env value off the host posture is a one-off the wrappers refuse (spec bridge-model),
+// so its shadow line says that instead of "it wins".
+const SHADOW_EFFECT = {
+  'codex-cli-bridge': 'an environment value off the host posture is a one-off, which codex-exec and codex-review refuse unless CODEX_PROBE=1; unset it.',
+  'antigravity-cli-bridge': 'an environment value off the host posture (an empty one included) is a one-off, which agy-review refuses unless AGY_PROBE=1 (agy-run, the probe role, runs it); unset it.',
+};
+const shadowLine = (entry) => `  ⚠ ${entry.key} is currently set in the environment — ${entry.kind === 'posture'
+  ? SHADOW_EFFECT[entry.bridge] : 'the env value overrides the file for this session (unset it, or it wins until you do).'}`;
+
+const renderWriter = ({ registry, changes, wrote, path, willWrite, envShadows, caveats, unchecked }) => {
   const lines = [];
   lines.push(wrote ? `wrote ${path}` : 'bridge-settings — preview (nothing written; re-run with --apply to write)');
   for (const c of changes) lines.push(changeLine(c));
   for (const cav of caveats) lines.push(`      ↳ ${cav}`);
-  for (const key of envShadows) lines.push(`  ⚠ ${key} is currently set in the environment — the env value overrides the file for this session (unset it, or it wins until you do).`);
+  for (const u of unchecked) lines.push(`  ⚠ ${u}`);
+  for (const key of envShadows) lines.push(shadowLine(registry.get(key)));
   if (!wrote && willWrite) lines.push('', `re-run with --apply to write ${path}.`);
   if (!wrote && !willWrite) lines.push('  no change — the file already reads this way.');
   return lines.join('\n');
@@ -200,7 +281,9 @@ const HELP = `bridge-settings — read / write the host-level bridge settings fi
   ${'${XDG_CONFIG_HOME:-~/.config}'}/${SETTINGS_SUBDIR}/${SETTINGS_FILENAME}   (KEY=VALUE lines; parsed, never sourced)
 
 Usage:
-  node bridge-settings.mjs                          show every knob's effective value + source
+  node bridge-settings.mjs                          show every knob's effective value + source, each
+                                                    bridge's model (codex: and effort) and the models
+                                                    its installed CLI offers
   node bridge-settings.mjs --set KEY=VALUE          preview a change (writes nothing)
   node bridge-settings.mjs --set KEY=VALUE --apply  write the change (atomic; creates the file on first use)
   node bridge-settings.mjs --unset KEY [--apply]    return a knob to its built-in default
@@ -209,14 +292,17 @@ Usage:
                                                     keys (preserved verbatim), never writes
 
 Precedence at run time: explicit env (even empty: KEY= disables) > this file > the wrapper's built-in
-default. Allowed keys + value rules come from the bundled bridge manifests; model/effort are NOT
-settable here (the wrappers' quality guard is untouched). This host file survives every kit upgrade —
+default. Allowed keys + value rules come from the bundled bridge manifests. CODEX_MODEL, CODEX_EFFORT
+and AGY_MODEL set each bridge's host posture; a set of one is checked against that bridge's installed
+CLI catalog before anything is written (an unreadable catalog leaves it unchecked, and says so). The
+command runs only the catalog commands, never a model. This host file survives every kit upgrade —
 a kit refresh never writes or clobbers it.
 
-Exit codes: 0 success (read / preview / write); 2 usage (bad args, unknown key, invalid value);
-            1 precondition STOP (duplicate-carrying / symlinked / unreadable file, or a corrupt bundle).`;
+Exit codes: 0 success (read / preview / write); 2 usage (bad args, unknown key, invalid value, a model
+            or effort the catalog does not offer); 1 precondition STOP (duplicate-carrying / symlinked /
+            unreadable file, or a corrupt bundle).`;
 
-export const main = (argv = [], ctx = {}) => {
+export const main = async (argv = [], ctx = {}) => {
   const getenv = ctx.getenv ?? process.env;
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
@@ -236,9 +322,10 @@ export const main = (argv = [], ctx = {}) => {
     if (ops.length === 0) {
       const fileState = readFileState(path, ctx);
       const parsed = parseSettings(fileState.text ?? '');
+      const catalogs = await readCatalogs(postureBridges(registry), ctx);
       const stdout = json
-        ? JSON.stringify(buildReaderJson(registry, parsed, fileState, ctx, path), null, 2)
-        : renderReader(registry, parsed, fileState, ctx, path);
+        ? JSON.stringify(buildReaderJson(registry, parsed, fileState, ctx, path, catalogs), null, 2)
+        : renderReader(registry, parsed, fileState, ctx, path, catalogs);
       return { code: 0, stdout, stderr: '' };
     }
 
@@ -271,15 +358,16 @@ export const main = (argv = [], ctx = {}) => {
 
     const newLines = ops.reduce(applyOp, parsed.lines);
     const body = joinLines(newLines);
+    const unchecked = await judgePosture(ops, registry, newLines, ctx);
 
     // The machine surface carries the SAME spend/credit-rate caveats the human preview prints (D4) — a
     // --json consumer must not miss the spend consent warning the human render shows.
-    const jsonBody = (wrote) => ({ path, wrote, noop, changes: changes.map((c) => ({ key: c.key, kind: c.kind, before: c.before, after: c.after })), envShadows, caveats });
+    const jsonBody = (wrote) => ({ path, wrote, noop, changes: changes.map((c) => ({ key: c.key, kind: c.kind, before: c.before, after: c.after })), envShadows, caveats, unchecked });
 
     if (!apply || noop) {
       const stdout = json
         ? JSON.stringify(jsonBody(false), null, 2)
-        : renderWriter({ changes, wrote: false, path, willWrite: !noop, envShadows, caveats });
+        : renderWriter({ registry, changes, wrote: false, path, willWrite: !noop, envShadows, caveats, unchecked });
       return { code: 0, stdout, stderr: '' };
     }
 
@@ -287,7 +375,7 @@ export const main = (argv = [], ctx = {}) => {
     writeHostConfigFileAtomic(settingsDir(ctx), SETTINGS_FILENAME, body, ctx, { noun: 'the bridge settings file' });
     const stdout = json
       ? JSON.stringify(jsonBody(true), null, 2)
-      : renderWriter({ changes, wrote: true, path, willWrite: false, envShadows, caveats });
+      : renderWriter({ registry, changes, wrote: true, path, willWrite: false, envShadows, caveats, unchecked });
     return { code: 0, stdout, stderr: '' };
   } catch (err) {
     return { code: err.exitCode ?? 1, stdout: '', stderr: `bridge-settings: ${err.message}` };
@@ -295,7 +383,7 @@ export const main = (argv = [], ctx = {}) => {
 };
 
 if (isDirectRun(import.meta.url)) {
-  const r = main(process.argv.slice(2));
+  const r = await main(process.argv.slice(2));
   if (r.stdout) console.log(r.stdout);
   if (r.stderr) console.error(r.stderr);
   process.exit(r.code);

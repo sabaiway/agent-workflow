@@ -12,9 +12,18 @@ const validPosture = (posture) => posture !== null && typeof posture === 'object
   && (!Object.hasOwn(posture, 'tier') || posture.tier === null || (typeof posture.tier === 'string' && posture.tier.length > 0))
   && Object.keys(posture).every((key) => ['model', 'effort', 'tier'].includes(key));
 
+// A posture key the settings file or the environment sets replaces the manifest default and names its
+// source; an explicitly empty AGY_MODEL (value null) renders as no model.
+const overlaid = (slot, fallback, backend, settings) => {
+  const row = (settings?.posture ?? []).find((r) => r.bridge === backend.name && r.source !== 'default'
+    && (r.key.endsWith('_EFFORT') ? 'effort' : 'model') === slot);
+  if (!row) return oneLine(fallback);
+  return `${row.value == null ? 'none' : oneLine(row.value)} (${row.source})`;
+};
+
 const postureString = (posture, backend, settings) => {
-  const parts = [`model=${oneLine(posture.model)}`];
-  if (Object.hasOwn(posture, 'effort')) parts.push(`effort=${oneLine(posture.effort)}`);
+  const parts = [`model=${overlaid('model', posture.model, backend, settings)}`];
+  if (Object.hasOwn(posture, 'effort')) parts.push(`effort=${overlaid('effort', posture.effort, backend, settings)}`);
   if (Object.hasOwn(posture, 'tier')) {
     const knob = (settings?.active ?? []).find((row) => row.key === 'CODEX_SERVICE_TIER' && row.bridge === backend.name);
     parts.push(knob ? `tier=${oneLine(knob.value)} (bridge-settings)` : `tier=${posture.tier ?? 'standard'}`);

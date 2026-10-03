@@ -171,11 +171,11 @@ const dispatchFor = (recipe, detection) => {
     });
 };
 
-const QUOTA_NOTE = "Prefer the cheapest model that fits the task; don't reach for a top-tier model by reflex.";
+const QUOTA_NOTE = "Each bridge runs the host posture the user set; a weaker model is the user's bridge setting, never a per-call choice.";
 const COUNCIL_QUOTA_NOTE = "Council spends two backends' quota for one decision — reserve it for changes that justify the cost.";
 
 // The quota reminder rides a subscription-BACKEND dispatch only: the executor vehicle spends no
-// bridge quota, and its recipe is a frontier one, so the cheapest-model reminder would contradict it.
+// bridge quota, and its recipe is a frontier one, so a bridge-posture reminder would not apply to it.
 const notesFor = (recipe, dispatch) => {
   const notes = [];
   if (dispatch.some((d) => d.role !== CARRY_ROLE)) notes.push(QUOTA_NOTE);

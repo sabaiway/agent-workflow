@@ -33,9 +33,10 @@ const WRAPPERS = [
 // aw_effective_timeout + aw_timeout_label + aw_resolve_timeout_bin are the AD-061
 // effective-timeout resolver trio (env-bypass closure, the banner render rule, and the
 // shadow-proof absolute-path binary resolution) — same byte-identical discipline, all wrappers.
+// aw_read_posture is the host-posture reader (spec bridge-model): one model-key read, all wrappers.
 const SHARED_FNS = [
   'aw_settings_file', 'aw_settings_known', 'aw_int_in_range', 'aw_settings_valid', 'aw_apply_settings',
-  'aw_effective_timeout', 'aw_timeout_label', 'aw_resolve_timeout_bin',
+  'aw_read_posture', 'aw_effective_timeout', 'aw_timeout_label', 'aw_resolve_timeout_bin',
 ];
 
 // Extract a top-level `name() {` … column-0 `}` bash function from a wrapper source, verbatim.

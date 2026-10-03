@@ -186,6 +186,57 @@ describe('effectiveOf — control bytes render a REFUSAL, never a raw byte (AD-0
   });
 });
 
+// A model key (kind posture) follows the wrappers' aw_read_posture, not the applied-settings lane:
+// an env key set at all wins, a usable file value is the setting, the sources are the banner's words.
+describe('effectiveOf — kind posture mirrors the wrappers host-posture reader (spec bridge-settings)', () => {
+  const CODEX_MODEL = { key: 'CODEX_MODEL', kind: 'posture', default: 'gpt-6.1-sol' };
+  const AGY_MODEL = { key: 'AGY_MODEL', kind: 'posture', default: 'Gemini 3.8 Flash (High)' };
+  const file = (value) => ({ byKey: new Map([[CODEX_MODEL.key, [{ value }]]]) });
+  const C1 = String.fromCharCode(1);
+
+  it('an env value set at all wins over the file, source environment', () => {
+    assert.deepEqual(effectiveOf(CODEX_MODEL, file('gpt-6-luna'), { CODEX_MODEL: 'gpt-6-astra' }), { value: 'gpt-6-astra', source: 'environment', configuredIn: 'env' });
+  });
+
+  it('an explicitly empty codex key selects its default; an empty AGY_MODEL is no model', () => {
+    const codex = effectiveOf(CODEX_MODEL, file('gpt-6-luna'), { CODEX_MODEL: '' });
+    assert.deepEqual([codex.value, codex.source, codex.configuredIn], ['gpt-6.1-sol', 'environment', 'env']);
+    const agy = effectiveOf(AGY_MODEL, { byKey: new Map() }, { AGY_MODEL: '' });
+    assert.deepEqual([agy.value, agy.source, agy.configuredIn], [null, 'environment', 'env']);
+  });
+
+  it('a control byte in the env value is never shown raw', () => {
+    const eff = effectiveOf(CODEX_MODEL, file('gpt-6-luna'), { CODEX_MODEL: `gpt${C1}\nmodel=FORGED` });
+    assert.deepEqual([eff.value, eff.source], [null, 'environment']);
+    assert.doesNotMatch(eff.note, /[\x01-\x1f\x7f]/);
+  });
+
+  it('a usable file value is the setting, padded included, as the wrapper reads it', () => {
+    assert.deepEqual(effectiveOf(CODEX_MODEL, file('gpt-6-luna'), {}), { value: 'gpt-6-luna', source: 'setting', configuredIn: 'file' });
+    assert.equal(effectiveOf(CODEX_MODEL, file(' gpt-6-luna'), {}).value, ' gpt-6-luna');
+  });
+
+  for (const [name, value] of [['an empty', ''], ['a control-byte', `gpt${C1}x`], ['a DEL-carrying', `gpt${String.fromCharCode(127)}x`]]) {
+    it(`${name} file value falls back to the default with a note carrying no raw byte`, () => {
+      const eff = effectiveOf(CODEX_MODEL, file(value), {});
+      assert.deepEqual([eff.value, eff.source, eff.configuredIn], ['gpt-6.1-sol', 'default', 'file']);
+      assert.doesNotMatch(eff.note, /[\x01-\x1f\x7f]/);
+    });
+  }
+
+  it('the snapshot carries one posture row per model key and never lists one as active', () => {
+    seedConf('CODEX_MODEL=gpt-6-luna\n');
+    const snap = settingsSnapshot(ctx({ AGY_MODEL: '' }));
+    const rows = Object.fromEntries(snap.posture.map((r) => [r.key, [r.bridge, r.value, r.source]]));
+    assert.deepEqual(rows, {
+      CODEX_MODEL: ['codex-cli-bridge', 'gpt-6-luna', 'setting'],
+      CODEX_EFFORT: ['codex-cli-bridge', 'high', 'default'],
+      AGY_MODEL: ['antigravity-cli-bridge', null, 'environment'],
+    });
+    assert.deepEqual(snap.active, []);
+  });
+});
+
 describe('settingsSnapshot — file state matches the wrappers exactly (review-bridge-settings-r02-blocker-01: no follow mismatch)', () => {
   it('a symlink → regular file is FOLLOWED and read, exactly as the wrappers do (never falsely "ignored")', () => {
     // The wrappers use -e/-f/-r (follow) — a symlinked config IS honored, so the reader must reflect it.

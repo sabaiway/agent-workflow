@@ -68,7 +68,7 @@ unlike `contract`, it is validated by `validate.mjs` itself: a malformed entry *
 this block). Each entry:
 
 - `key` (string, required) — UPPER_SNAKE_CASE env-var name; unique across the array.
-- `kind` (string, required) — `enum | integer | duration | boolean`.
+- `kind` (string, required) — `enum | integer | duration | boolean | posture` (`posture`: a non-empty string with no control byte and no leading or trailing whitespace — a bridge model or effort; the catalog, not the kind, decides which values a host offers).
   - `enum` → `values` (string[], non-empty, unique).
   - `integer` → `min` / `max` (safe integers, `min <= max`); values are decimal strings.
   - `duration` → the wrappers' shell duration grammar (`5m`, `30m`, `90s`): a unit suffix

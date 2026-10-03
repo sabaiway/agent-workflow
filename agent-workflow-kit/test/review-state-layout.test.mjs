@@ -137,8 +137,8 @@ describe('normative header has one home — spec:review-state/S3', () => {
     'HUMAN residual (accepted, documented)',
   ];
   it('keeps the header byte count and sha256', () => {
-    assert.equal(Buffer.byteLength(header), 8535);
-    assert.equal(createHash('sha256').update(header).digest('hex'), '25255899d1b4c00eef387c70cd2495e5f659d88b21126678c07cf2d5caa5705f');
+    assert.equal(Buffer.byteLength(header), 8531);
+    assert.equal(createHash('sha256').update(header).digest('hex'), '77fb17f4b1c028b486f155d77dd0dd8428a7532c9c6d303a2e94fa3fea0cb95c');
   });
   it('keeps each opening once in the facade and inside its header', () => {
     for (const opening of openings) {

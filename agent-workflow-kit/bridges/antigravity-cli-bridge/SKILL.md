@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '5.7.1'
+  version: '6.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -47,34 +47,19 @@ this skill. The wrapper [`bin/agy.sh`](bin/agy.sh) **unsets every `*_API_KEY`** 
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`) before invoking `agy`, so a stray key can
 never silently switch you to pay-as-you-go billing.
 
-**Caveat:** the subscription has a finite quota. Prefer the cheapest model that fits the task, and
-keep probes short (see *How the main agent drives agy*).
+**Caveat:** the subscription has a finite quota. Keep probes short (see *How the main agent drives
+agy*); the model every review and kept run uses is the host posture below, never a per-call pick.
 
 ## Models
 
-Pass the **exact display string** to `--model` (or set `AGY_MODEL`). The wrapper defaults to
-`Gemini 3.8 Flash (High)`. Run `agy models` for the live list — if it differs from this table, the
-live list wins.
-
-| Model string | Use it for |
-|---|---|
-| `Gemini 3.8 Flash (Low)` | cheapest; reachability checks, smoke tests, simple transforms |
-| `Gemini 3.8 Flash (Medium)` | cheap probes, context-reachability checks, quick summaries |
-| `Gemini 3.8 Flash (High)` | wrapper + review default; asserted frontier-grade (AD-136) |
-| `Gemini 3.7 Flash (Low)` | previous Flash generation, still served — prefer 3.8 |
-| `Gemini 3.7 Flash (Medium)` | previous Flash generation, still served — prefer 3.8 |
-| `Gemini 3.7 Flash (High)` | previous Flash generation, still frontier-grade for review (fork (a)) |
-| `Gemini 3.6 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.6 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.6 Flash (High)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
-| `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
-| `Claude Sonnet 4.6 (Thinking)` | a Claude second opinion through the same subscription |
-| `Claude Opus 4.6 (Thinking)` | strongest Claude reasoning available via `agy` |
-| `GPT-OSS 120B (Medium)` | an open-weights cross-check / diversity pass |
+The model is **one host setting**: `AGY_MODEL=<exact display string>` in the bridge settings file
+`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` is the host posture, else the
+built-in default `Gemini 3.8 Flash (High)`. An `AGY_MODEL` environment value off the host posture
+(an explicitly empty one included) is a one-off, which `agy-run` (the probe role) runs and
+`agy-review` refuses pre-spend unless `AGY_PROBE=1`; a `--model`/`--effort` flag after `--` is refused. Before any run the wrappers check the
+model against `agy models` (the live list): a model it does not offer is refused with the offered list
+and the settings-file remedy. **`/agent-workflow-kit bridge-settings`** shows the models the installed
+`agy` offers, in its own order, and sets the host posture (checked against that list before it writes).
 
 ## Usage
 
@@ -92,10 +77,10 @@ Drive `agy` only through the wrapper [`bin/agy.sh`](bin/agy.sh) (installed on `P
 agy-run "your prompt"                         # prompt as an argument
 echo "your prompt" | agy-run -                # prompt from stdin
 agy-run @path/to/prompt.md                    # prompt from a file
-AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
+AGY_MODEL="<display string>" agy-run "..."    # a one-run model (a probe's one-off)
 AGY_TIMEOUT=10m agy-run "..."                 # agy's soft --print-timeout
 AGY_HARD_TIMEOUT=8m agy-run "..."             # hard wall-clock cap via timeout(1)
-agy-run "..." -- --add-dir .                  # passthrough agy flags (never a permission widener)
+agy-run "..." -- --add-dir .                  # passthrough agy flags (never a permission widener; --model*/--effort* refuse)
 ```
 
 `agy` is **headless-only** here (`-p`/`--print`). `agy-run` stays **text**: `--output-format json`
@@ -112,13 +97,14 @@ after `--`. Full detail: [`references/models-and-flags.md`](references/models-an
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` holds `KEY=VALUE` lines,
 **parsed, never sourced** — a file line can never execute code. Precedence: explicit env (even
 empty — `KEY=` disables a knob for one run) > file > built-in default. File-settable keys for this
-bridge: `AGY_HARD_TIMEOUT` (duration string, e.g. `5m`/`30m`) and `AGY_REVIEW_MAX_TOTAL_BYTES`
+bridge: `AGY_MODEL` (the host posture — see [§ Models](#models)), `AGY_HARD_TIMEOUT` (duration
+string, e.g. `5m`/`30m`) and `AGY_REVIEW_MAX_TOTAL_BYTES`
 (integer bytes, default `240000` — the ceiling on the SUM of all outgoing prompt bytes an oversized
 `code` review may feed). `AGY_REVIEW_ALLOW_ADDDIR` is **RETIRED**: still recognized so an existing
 line never warns as unknown, but it arms nothing — the writer refuses a new `--set` and `--unset`
 clears it — exactly the manifest `settings` block (the single source; the wrapper
-constants and `--help` are drift-guarded against it). Model keys are **not** file-settable. The
-file lives **outside every kit-managed tree**, so a kit refresh/upgrade can never wipe it; edit it
+constants and `--help` are drift-guarded against it, the model key read by the posture reader
+instead). The file lives **outside every kit-managed tree**, so a kit refresh/upgrade can never wipe it; edit it
 by hand or via `/agent-workflow-kit bridge-settings` (preview-first, consent-gated).
 
 ## Review mode (`agy-review`)
@@ -168,12 +154,13 @@ billed turn restating the model's own prose (16,585 → 33,446 tokens on a match
 included — **exits 4 with NO receipt**: treat it as a *failed review to re-run*, never a fatal
 session error. The verdict vocabulary is closed (SHIP / SHIP WITH NITS / REWORK), and a
 ship-class verdict arriving beside a numbered `### Blocking` finding is a verdict-body
-contradiction: the same exit 4, NO receipt, both halves named. One stderr banner states the actual posture (`review posture: model=… timeout=…`)
-and the receipt records the same `posture {model}`; an attesting review with `AGY_MODEL` explicitly
-emptied refuses pre-spend (`AGY_PROBE=1` exempt), and control bytes in a model string refuse
-pre-spend in every mode. The `timeout=` field is **banner-only** (exactly the duration `agy-run`
-hands to `timeout(1)`; without a capping binary `agy-review` fails CLOSED pre-spend) —
-informational, never a receipt field. **Quote the posture banner verbatim** when labeling a
+contradiction: the same exit 4, NO receipt, both halves named. One stderr banner states the actual posture (`review posture: model=… source=… timeout=…`)
+and the receipt records the same `posture {model}`; a one-off model — an `AGY_MODEL` differing from
+the host posture, an explicitly empty one included — refuses pre-spend unless `AGY_PROBE=1`, and
+control bytes in a model string refuse pre-spend in every mode. The `source=` field (`model:<s>`,
+`default`, `setting` or `environment`) and the `timeout=` field are **banner-only** (`timeout=` is
+exactly the duration `agy-run` hands to `timeout(1)`; without a capping binary `agy-review` fails
+CLOSED pre-spend) — informational, never a receipt field. **Quote the posture banner verbatim** when labeling a
 dispatch.
 
 Every successful review receipt carries integer `durationS` and `blocking`; the wrapper prints
@@ -192,8 +179,9 @@ release). `agy-review … --nonce <n>` is the plain-argument equivalent
 (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane
 for hosts whose dispatch policy has no env-prefix form.
 
-Frontier default `Gemini 3.8 Flash (High)`; **any** model is allowed (a sub-frontier one earns a
-silenceable `AGY_PROBE=1` advisory). An oversized `code` review is **DELIVERED, not refused**: the
+The review runs on the host posture (the `AGY_MODEL` setting, else `Gemini 3.8 Flash (High)`),
+checked once per run against `agy models`; `AGY_PROBE=1` is the one route to a one-off model, and a
+probe review never attests. An oversized `code` review is **DELIVERED, not refused**: the
 change set is cut into under-cap parts, fed over continuation turns and reviewed in a final turn, and
 the answer must reproduce a line the wrapper picked from each part — a missing or wrong echo is a
 FAILED review (`exit 4`, no receipt). `plan`/`diff` still refuse over the cap (their artifact is a
@@ -225,12 +213,12 @@ being pointed at any file** (auto-discovery), but that is `agy`'s own mechanism,
 Claude-style description-dispatch engine; don't promise more than the probe shows in a given repo.
 **A review, though, must never *depend* on this** — `agy` does not read your repo code or a diff
 without an explicit `--add-dir`, so ground a review **self-contained** via `agy-review --facts` (above)
-rather than relying on `agy` to read the change set. Re-runnable from a project root (use a cheap model):
+rather than relying on `agy` to read the change set. Re-runnable from a project root (an `agy-run` probe, so a one-run model is fine):
 
 ```bash
-AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
+AGY_MODEL="<an offered display string>" agy-run \
   "Read the cwd context file and state the dialogue language plus one Hard Constraint, in two lines."
-AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run \
+AGY_MODEL="<an offered display string>" agy-run \
   "Without me pointing you at any file, name a project-specific skill under .agents/skills/ here and cite its path."
 ```
 
@@ -246,10 +234,10 @@ host is governed by the user's agy permissions and sandbox settings, not by the 
 See [`references/driving-agy.md`](references/driving-agy.md) for the full playbook (delegation
 checklist, prompt templates, output handling). Essentials:
 
-- **Pick the cheapest model that fits.** Flash (Low/Medium) for reachability/probes; Pro (High) for
-  reasoning; `Claude Sonnet 4.6 (Thinking)`, `Claude Opus 4.6 (Thinking)`, or `GPT-OSS 120B (Medium)`
-  for a different engine's opinion (exact strings — see the Models table) — all on the same
-  subscription. Quota is finite, so don't reach for Pro by reflex.
+- **The model is the host posture.** Reviews and kept runs use the user's `AGY_MODEL` setting (else
+  the default), never a per-call pick. An `agy-run` probe may set `AGY_MODEL` for one run — a
+  lighter model for reachability, or another engine for a different opinion, all on the same
+  subscription (exact display strings: `/agent-workflow-kit bridge-settings` lists what is offered).
 - **Hand `agy` a self-contained prompt.** It cannot see your conversation — embed the goal,
   constraints, relevant excerpts, and the expected output shape; nothing more.
 - **Continue a thread** with `-- --continue` (most recent) or `-- --conversation <id>` (by id) instead
@@ -291,13 +279,13 @@ checklist, prompt templates, output handling). Essentials:
   parses the envelope; only `stream-json` stays deferred there.) And there is **no `agy inspect`**:
   no machine-readable introspection.
 - Model names must match the `agy models` display strings **exactly**.
-- **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription; prefer Flash for
-  cheap work.
+- **Quota is finite.** Heavy use of Pro/Claude models can exhaust the subscription — weigh that when
+  choosing the `AGY_MODEL` setting.
 - **A run can't hang forever.** The wrapper caps `agy` with `timeout(1)` (`AGY_HARD_TIMEOUT`,
   default = `AGY_TIMEOUT`) because `agy`'s own `--print-timeout` is **not** a reliable wall-clock
   kill (a run was seen surviving 32 min past a 10m `--print-timeout`). A heavy `--add-dir` agentic
-  prompt on a slow model (e.g. `Gemini 3.1 Pro (High)`) can run unbounded — prefer a faster model or
-  a **self-contained prompt** (no `--add-dir`); an "exceeded the hard cap" error is the guard firing.
+  prompt on a slow model (e.g. a Pro-class one) can run unbounded — prefer a
+  **self-contained prompt** (no `--add-dir`); an "exceeded the hard cap" error is the guard firing.
 - `agy` output may be incomplete or out of date — treat it as advisory until the main agent verifies
   it. (Its FORMAT is not one thing: see the transport section for which wrapper prints text, when,
   and what a failing run prints instead.)

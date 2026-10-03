@@ -48,7 +48,7 @@
 // (artifact ≠ "code") and continuations (fresh:false — agy --continue/--conversation cannot attest
 // a folded tree; only a fresh grounded re-run mints a gate-satisfying receipt).
 // PROBE receipts never satisfy either (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 / AGY_PROBE=1
-// review runs with the frontier-model/max-effort guard OFF, so the wrappers stamp `probe:true` and
+// review is the one route to a one-off model or effort, so the wrappers stamp `probe:true` and
 // this checker drops those receipts — PER RECEIPT, so a normal receipt at the same fingerprint still
 // satisfies, and a backend whose ONLY current receipts are probes fails with its own stated reason
 // (never the stale one). Every receipt from a marker-aware wrapper SELF-DECLARES — `probe` is written

@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-exec.sh');
 
-// A hermetic fake `codex`: answers `login status`, captures argv/env/stdin to the
+// A hermetic fake `codex`: answers `login status` and `debug models`, captures argv/env/stdin to the
 // files named by CODEX_FAKE_*, honours -o by writing a final-message file, and
 // emits a minimal --json event stream (thread.started carries the session id).
 // Written with shell double-quotes + a heredoc ONLY (no single-quotes, no
@@ -22,6 +22,10 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
+  'if [[ "${1:-}" == "debug" ]]; then cat <<EOF',
+  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
+  'EOF',
+  'exit 0; fi',
   'if [[ -n "${CODEX_FAKE_STDERR:-}" ]]; then echo "$CODEX_FAKE_STDERR" >&2; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
@@ -182,31 +186,14 @@ const run = ({ repo, bin }, { args = ['-'], input = 'do the thing', env = {}, pa
 // run() IS that twin now, so the twin is one name pointing at it — two spawn paths could only drift.
 const runAsync = run;
 
-describe('codex-exec.sh — quality-first model/effort guard (1.1)', { concurrency: 2 }, () => {
-  it('refuses a non-default CODEX_MODEL and never spends a run', async () => {
+describe('codex-exec.sh — the probe one-off (1.1)', { concurrency: 2 }, () => {
+  it('CODEX_PROBE=1 runs a one-off model and warns loudly', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
-    rmSync(sb.root, { recursive: true, force: true });
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned model/);
-    assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
-  });
-
-  it('refuses a non-default CODEX_EFFORT', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_EFFORT: 'xhigh' } });
-    rmSync(sb.root, { recursive: true, force: true });
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned effort/);
-  });
-
-  it('CODEX_PROBE=1 allows a non-default model and warns loudly', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5.4-mini' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-6-astra' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /THROWAWAY PROBE MODE/);
-    assert.match(r.argv, /gpt-5\.4-mini/, 'the probe model must reach codex');
+    assert.match(r.argv, /gpt-6-astra/, 'the probe model must reach codex');
   });
 });
 
@@ -650,7 +637,7 @@ describe('codex-exec.sh — preflight (unchanged invariants)', { concurrency: 2 
 
 describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', { concurrency: 2 }, () => {
   const RESUME_INVARIANTS = [
-    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-6-astra(\n|$)/,
+    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-6\.1-sol(\n|$)/,
     /model_reasoning_effort=high/, /sandbox_mode=workspace-write/,
     /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
   ];
@@ -1216,23 +1203,8 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('the catalog claims CODEX_PROBE over the resume modes because the guard really precedes resume parsing', async () => {
-    // Verified in source: the quality guard runs BEFORE the resume dispatch, so a resume run is
-    // relaxed too — the catalog must say so, and this pins the ORDER the claim rests on.
-    const lines = executableLines(source);
-    const guardAt = lines.findIndex((l) => /\$\{?CODEX_PROBE/.test(l));
-    const resumeAt = lines.findIndex((l) => /^\s*--resume-last\)/.test(l));
-    assert.ok(guardAt !== -1 && resumeAt !== -1, 'both the probe guard and the resume arm must exist');
-    assert.ok(guardAt < resumeAt, 'the probe guard must precede resume parsing — else the resume parents are a false claim');
-    const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
-    for (const key of ['exec.resume-last', 'exec.resume']) {
-      assert.ok(hook.parents.includes(key), `${key} is relaxed by the hook, so the catalog must declare it a parent`);
-    }
-  });
-
-  it('CODEX_PROBE really relaxes the guard on EVERY execute parent the catalog claims (behavioural)', async () => {
-    // Source ORDER alone is not the claim: a branch bug after resume parsing would keep it green.
-    // Drive each claimed parent for real — the guard must stop the dispatch without the hook, and
+  it('a one-off is refused on EVERY execute parent and CODEX_PROBE=1 runs it (behavioural)', async () => {
+    // Drive each claimed parent for real — the one-off must stop the dispatch without the hook, and
     // codex must really be reached with it (r.argv is non-empty only on a real invocation).
     const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
     const drive = {
@@ -1244,20 +1216,21 @@ describe('codex-exec.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
       'exec.resume': () => ({ args: ['--resume', 'sess-xyz', '-'], input: 'continue' }),
     };
     const execParents = hook.parents.filter((p) => execEntries.some((x) => x.key === p));
-    assert.ok(execParents.length > 0, 'CODEX_PROBE must claim at least one execute parent');
+    assert.deepEqual(execParents, ['exec', 'exec.resume-last', 'exec.resume'], 'CODEX_PROBE claims every execute parent');
     for (const parent of execParents) {
       assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
 
       const guarded = makeSandbox();
-      const off = await run(guarded, { ...drive[parent](guarded), env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      const off = await run(guarded, { ...drive[parent](guarded), env: { CODEX_MODEL: 'gpt-6-astra' } });
       rmSync(guarded.root, { recursive: true, force: true });
-      assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
-      assert.equal(off.argv, '', `${parent}: the guard must refuse BEFORE spending a run`);
+      assert.equal(off.status, 2, `${parent}: a one-off must be refused without the hook`);
+      assert.match(off.stderr, /one-off/, `${parent}: the refusal names the one-off`);
+      assert.equal(off.argv, '', `${parent}: the one-off must refuse BEFORE spending a run`);
 
       const probed = makeSandbox();
-      const on = await run(probed, { ...drive[parent](probed), env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      const on = await run(probed, { ...drive[parent](probed), env: { CODEX_MODEL: 'gpt-6-astra', CODEX_PROBE: '1' } });
       rmSync(probed.root, { recursive: true, force: true });
-      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
+      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really run the one-off — the catalog claims it does`);
       assert.notEqual(on.argv, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
     }
   });
@@ -1489,7 +1462,7 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
-    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
     setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
     assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
@@ -1507,7 +1480,7 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
-    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = ALL_SETTINGS.filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0);
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
@@ -1516,8 +1489,8 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
-    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
-    for (const s of ALL_SETTINGS) {
+    setEq(armKeys, ALL_SETTINGS.filter((s) => s.kind !== 'posture').map((s) => s.key), 'validation arms ⟷ manifest keys (a posture key is read by aw_read_posture, never validated here)');
+    for (const s of ALL_SETTINGS.filter((x) => x.kind !== 'posture')) {
       const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
       assert.ok(arm, `no validation arm for ${s.key}`);
       if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);
@@ -1546,7 +1519,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
     const lines = banners(r.stderr);
     assert.equal(lines.length, 1, 'EXACTLY ONE banner line per run');
     assert.equal(lines[0],
-      'exec posture: model=gpt-6-astra effort=high tier=standard sandbox=workspace-write session=fresh timeout=3600s');
+      'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh source=model:default,effort:default timeout=3600s');
   });
 
   it('an ARMED Fast tier rides the banner (tier=priority)', async () => {
@@ -1642,11 +1615,11 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
 
   it('a banner field carrying CONTROL BYTES refuses pre-spend (model / effort / tier / timeout / DEL)', async () => {
     const cases = [
-      { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(1)}` },
+      { CODEX_MODEL: `gpt-6.1-sol${String.fromCharCode(1)}` },
       { CODEX_EFFORT: `high${String.fromCharCode(2)}` },
       { CODEX_SERVICE_TIER: `priority${String.fromCharCode(3)}` },
       { CODEX_HARD_TIMEOUT: `3600${String.fromCharCode(4)}` },
-      { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(127)}` },
+      { CODEX_MODEL: `gpt-6.1-sol${String.fromCharCode(127)}` },
     ];
     for (const env of cases) {
       const sb = makeSandbox();
@@ -2014,7 +1987,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2
     assert.match(plain.stderr, /running codex WITHOUT a hard wall-clock cap/, 'the nonce-less lane is unchanged');
   });
 
-  it('a PREFLIGHT refusal leaves NO reservation (login guard, missing AGENTS.md, off-pin model)', async () => {
+  it('a PREFLIGHT refusal leaves NO reservation (login guard, missing AGENTS.md, an unoffered model)', async () => {
     const cases = [
       { label: 'login', env: { CODEX_FAKE_LOGIN: 'Not logged in' } },
       { label: 'model', env: { CODEX_MODEL: 'gpt-5.4-mini' } },
@@ -2047,7 +2020,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2
     assert.equal(r.status, 71, r.stderr);
     assert.equal(held.state, 'reserved');
     assert.equal(held.wrapperVersion, MANIFEST.version, 'the receipt stamps the bridge version version-sync bumps');
-    assert.deepEqual(held.posture, { model: 'gpt-6-astra', effort: 'high', tier: null });
+    assert.deepEqual(held.posture, { model: 'gpt-6.1-sol', effort: 'high', tier: null });
     assert.equal(held.capS, 3600);
     assert.equal(held.killGraceS, 15);
     assert.match(held.contractDigest, /^[0-9a-f]{64}$/);

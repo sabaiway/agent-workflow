@@ -75,6 +75,7 @@ export const allowedLabel = (entry) => {
     case 'integer': return `integer ${entry.min}..${entry.max}`;
     case 'duration': return 'duration (e.g. 5m, 30m, 90s — a unit is required, nonzero)';
     case 'boolean': return '"0" | "1"';
+    case 'posture': return 'a value the installed CLI offers (checked when set)';
     default: return entry.kind;
   }
 };
@@ -172,8 +173,34 @@ const REFUSED = (key, v) => ({ value: null, source: 'default', configuredIn: 'en
 // built-in default (`source: 'default'`) while still being an explicit line the operator wrote — and
 // for a RETIRED knob that is exactly the line the retirement asks them to clear, so it must not
 // vanish from the surfaces (council fold: `AGY_REVIEW_ALLOW_ADDDIR=2` and `=` both disappeared).
+// A posture key (the model and effort, spec bridge-model) follows the wrappers' aw_read_posture, not
+// the applied-settings lane: an env key set at all wins, its empty value meaning the key's default
+// (AGY_MODEL: no model, agy's own settings decide); else a non-empty, control-free file value; else the
+// default. Its sources are the wrappers' banner words: default, setting, environment.
+const EMPTY_ENV_DROPS_MODEL = new Set(['AGY_MODEL']);
+const postureOf = (entry, parsed, getenv) => {
+  const key = entry.key;
+  if (Object.prototype.hasOwnProperty.call(getenv, key)) {
+    const v = getenv[key];
+    if (v === '' && EMPTY_ENV_DROPS_MODEL.has(key)) return { value: null, source: 'environment', configuredIn: 'env', note: `the env ${key}= drops the model — agy's own settings decide` };
+    if (v === '') return { value: entry.default, source: 'environment', configuredIn: 'env', note: `the env ${key}= selects the built-in default` };
+    if (hasControlByte(v)) return { value: null, source: 'environment', configuredIn: 'env', note: `env value "${safeShow(v)}" carries control bytes for ${key} — ${entry.bridge === 'antigravity-cli-bridge'
+      ? 'agy-review refuses the run pre-spend; agy-run has no control-byte screen and refuses it only through its catalog check (it runs it when the catalog is unreadable)'
+      : 'the codex wrappers refuse the run pre-spend'}` };
+    return { value: v, source: 'environment', configuredIn: 'env' };
+  }
+  const fileEntries = parsed.byKey.get(key);
+  if (fileEntries && fileEntries.length) {
+    const v = fileEntries[fileEntries.length - 1].value;
+    if (v !== '' && !hasControlByte(v)) return { value: v, source: 'setting', configuredIn: 'file' };
+    return { value: entry.default, source: 'default', configuredIn: 'file', note: `file value "${safeShow(v)}" is empty or carries a control byte — falls back to the built-in default` };
+  }
+  return { value: entry.default, source: 'default', configuredIn: null };
+};
+
 export const effectiveOf = (entry, parsed, getenv) => {
   const key = entry.key;
+  if (entry.kind === 'posture') return postureOf(entry, parsed, getenv);
   if (Object.prototype.hasOwnProperty.call(getenv, key)) {
     const v = getenv[key];
     // An EXPLICITLY-EMPTY env (`KEY=`) suppresses the FILE override for this run (the wrapper skips a
@@ -222,21 +249,29 @@ export const displayValue = (v) => (v == null ? '(unset — wrapper built-in app
 // ── the fact-only snapshot the read-only status/advisor surfaces consume ────────────────
 
 // Best-effort, never throws: the ACTIVE knobs (a non-default value is in play — source env/file,
-// non-null) plus file presence + any unknown/duplicate keys. Model/effort are structurally excluded
-// from the registry, so `active` can NEVER carry a model claim (the fact-only guarantee). A corrupt
-// bundle or fs error degrades to `{ error }` — the caller renders that localized-on-error, never crashes.
+// non-null), every posture key's effective value and source (`posture`), plus file presence + any
+// unknown/duplicate keys. A posture key's sources are default/setting/environment, so it never enters
+// `active`. A corrupt bundle or fs error degrades to `{ error }` — the caller renders that
+// localized-on-error, never crashes.
+const postureRows = (registry, parsed, getenv) => [...registry.values()]
+  .filter((entry) => entry.kind === 'posture')
+  .map((entry) => {
+    const eff = effectiveOf(entry, parsed, getenv);
+    return { key: entry.key, bridge: entry.bridge, value: eff.value, source: eff.source, retired: entry.retired ?? null };
+  });
+
 export const settingsSnapshot = (ctx = {}) => {
   try {
     const registry = loadRegistry(ctx);
     const path = settingsPath(ctx);
     const fileState = readFileState(path, ctx);
+    const getenv = ctx.getenv ?? process.env;
     // A symlink / non-regular / unreadable file is IGNORED by the wrappers (built-in defaults apply) —
     // surface that honestly instead of silently omitting it (the wrappers warn; the status must too).
     if (fileState.state === 'unusable') {
-      return { path, fileState: 'unusable', active: [], unknown: [], duplicates: [], error: 'the settings file is a symlink / not a regular file — ignored, built-in defaults apply' };
+      return { path, fileState: 'unusable', active: [], posture: postureRows(registry, parseSettings(''), getenv), unknown: [], duplicates: [], error: 'the settings file is a symlink / not a regular file — ignored, built-in defaults apply' };
     }
     const parsed = parseSettings(fileState.text ?? '');
-    const getenv = ctx.getenv ?? process.env;
     const active = [];
     for (const entry of registry.values()) {
       const eff = effectiveOf(entry, parsed, getenv);
@@ -262,6 +297,7 @@ export const settingsSnapshot = (ctx = {}) => {
       path,
       fileState: fileState.state,
       active,
+      posture: postureRows(registry, parsed, getenv),
       unknown: [...parsed.byKey.keys()].filter((k) => !registry.has(k)),
       duplicates: duplicateKeys(parsed),
     };

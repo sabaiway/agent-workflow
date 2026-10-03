@@ -18,26 +18,29 @@ judgment.
 4. Let codex run; then **review its diff yourself** and re-run the project's gates.
 5. **Commit yourself** — codex never commits (a git-write shim enforces it; see below).
 
-## Quality-first: model & effort are pinned
+## Model & effort: the host posture
 
-Delegated codex work ALWAYS runs on the PINNED model at the pinned effort: `gpt-6-astra` / `high` are **pinned**
-and a non-default `CODEX_MODEL`/`CODEX_EFFORT` is **refused** (exit 2). That the pinned id is still the
-strongest selectable model is a hand-checked claim with no automated gate and no recorded date — see
-SKILL.md. Do not try to "tune down" the
-model or effort for a real run — the wrapper will stop you. Quota is metered in **messages** (rolling
-5h + weekly), so economy comes from removing waste (clean capture, the precomputed review diff, resume),
-never from a downgrade. The only opt-out is a throwaway, effort-independent probe: `CODEX_PROBE=1`
-(loud) — never use its output as real work.
+Delegated codex work runs on the host posture: `CODEX_MODEL` / `CODEX_EFFORT` from the bridge settings
+file, else the built-in default `gpt-6.1-sol` / `high`, checked against the installed CLI's catalog
+before any spend. `/agent-workflow-kit bridge-settings` shows the models the installed codex offers and
+sets the host posture. An environment value off the host posture is a one-off and is **refused** (exit 2)
+with the settings-file remedy unless `CODEX_PROBE=1` — do not "tune down" the model or effort per call;
+a weaker model is the user's choice in the setting. Whether the default is the strongest selectable
+model is a hand-checked claim with no automated gate and no recorded date — see SKILL.md. Quota is
+metered in **messages** (rolling 5h + weekly), so economy comes from removing waste (clean capture, the
+precomputed review diff, resume), never from a per-call downgrade. A probe (`CODEX_PROBE=1`, loud) is
+the one route to a one-off — never use its output as real work; its review receipt never attests.
 
 ## Posture banners — quote them verbatim
 
 Every dispatch states its ACTUAL posture on ONE stderr line: `codex-exec` emits
-`exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> timeout=…`
+`exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> source=… timeout=…`
 (fresh and resume alike, only after the resume id is resolved and validated), `codex-review` emits
-`review posture: model=… effort=… tier=… timeout=…`. When you label a dispatch for a user or a
+`review posture: model=… effort=… tier=… source=… timeout=…`. When you label a dispatch for a user or a
 record, **quote the posture banner verbatim** — the banner is the machine-stated posture; a prose
-re-type drifts. The `timeout=` field is **banner-only** (exactly the duration handed to
-`timeout(1)`; on exec `uncapped` when no capping binary is on PATH, while `codex-review` fails
+re-type drifts. The `source=` field (`model:<s>,effort:<s>`, each `default`, `setting` or
+`environment`) and the `timeout=` field are **banner-only** (`timeout=` is exactly the duration handed
+to `timeout(1)`; on exec `uncapped` when no capping binary is on PATH, while `codex-review` fails
 CLOSED pre-spend there) — informational, never part of a receipt or the banner↔receipt parity.
 
 ## Exec vs review
@@ -92,7 +95,7 @@ codex-exec --resume <session-id> <file|->  # explicit session id
 
 Resume continues the SAME codex session, so you avoid re-sending the original context. It runs through
 the wrapper, which **re-establishes every invariant** (subscription-only `*_API_KEY` scrub,
-`--ignore-user-config`, the pinned `gpt-6-astra`/`high`) and **restates the full posture via `-c`** —
+`--ignore-user-config`, the host posture's model/effort) and **restates the full posture via `-c`** —
 because `codex exec resume` resets the sandbox/approval/network posture and rejects `-s`/`--add-dir`/`-C`,
 the wrapper passes `-c sandbox_mode=workspace-write -c approval_policy=never -c
 sandbox_workspace_write.network_access=false` explicitly. A resume takes no passthrough flags and an

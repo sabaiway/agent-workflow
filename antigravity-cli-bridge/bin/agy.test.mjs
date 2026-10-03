@@ -52,7 +52,7 @@ describe('agy.sh — hard wall-clock cap (timeout(1))', { concurrency: true }, (
     rmSync(home, { recursive: true, force: true });
     assert.ok(elapsed < 13000, `wrapper must return well under the kill-after window, took ${elapsed}ms`);
     assert.notEqual(r.status, 0, 'a timed-out run must exit non-zero');
-    assert.match(r.stderr, /exceeded the hard cap/, 'must explain the hard-cap kill');
+    assert.ok(/exceeded the hard cap/.test(r.stderr) && !/faster model/i.test(r.stderr), `must explain the hard-cap kill and never send the run to a faster model: ${r.stderr}`);
   });
 
   it('passes a fast agy run through unchanged (exit 0, stdout preserved)', async () => {
@@ -511,7 +511,7 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
   it('--help Settings section keys set-EQUAL the manifest appliesTo subset', () => {
     const section = helpSection(runHelpText(), SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
-    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
     setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
     assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
@@ -529,7 +529,7 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
-    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = ALL_SETTINGS.filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0);
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
@@ -538,8 +538,8 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
-    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
-    for (const s of ALL_SETTINGS) {
+    setEq(armKeys, ALL_SETTINGS.filter((s) => s.kind !== 'posture').map((s) => s.key), 'validation arms ⟷ manifest keys (a posture key is read by aw_read_posture, never validated here)');
+    for (const s of ALL_SETTINGS.filter((x) => x.kind !== 'posture')) {
       const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
       assert.ok(arm, `no validation arm for ${s.key}`);
       if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);

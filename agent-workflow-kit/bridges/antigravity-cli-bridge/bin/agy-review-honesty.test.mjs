@@ -1,8 +1,8 @@
 // agy-review-honesty.test.mjs — the round-1 hardening pins for the D4/D5 arms (strip Phase 4):
 // the verdict parse is EXACT (an inexact heading or a token buried mid-line never attests —
-// `NOT SHIP` must not read as SHIP), and the empty-AGY_MODEL pre-spend refusal is scoped to the
-// ATTESTING branch only (plan / diff / --ungrounded code never attest, so they run and record
-// posture.model null). Colocated separately from agy-review.test.mjs — that file is
+// `NOT SHIP` must not read as SHIP), and an explicitly empty AGY_MODEL is a one-off on every
+// branch: refused pre-spend unless AGY_PROBE=1, whose receipt records posture.model null.
+// Colocated separately from agy-review.test.mjs — that file is
 // red-proof-frozen; this one carries its own minimal standalone harness (the family idiom).
 
 import { describe, it, after } from 'node:test';
@@ -156,30 +156,29 @@ describe('agy-review — the verdict parse is EXACT (M1): a buried token never a
   });
 });
 
-describe('agy-review — the empty-model refusal is scoped to the ATTESTING branch (M3)', () => {
-  it('plan and diff modes with AGY_MODEL= RUN (never attest) and record posture.model null', () => {
-    for (const args of [['plan', 'plan.md'], ['diff', 'plan.md']]) {
+describe('agy-review — an explicitly empty AGY_MODEL is a one-off on every branch (M3)', () => {
+  it('plan, diff, --ungrounded and grounded code with AGY_MODEL= refuse pre-spend naming unset AGY_MODEL', () => {
+    for (const args of [['plan', 'plan.md'], ['diff', 'plan.md'], ['code', '--ungrounded'], ['code', '--facts', 'a tiny fact']]) {
       const sb = makeSandbox();
-      const r = run(sb, { args, env: { AGY_MODEL: '', AGY_FAKE_OUTPUT: '### Verdict\nSHIP — fine.' } });
+      const r = run(sb, { args, env: { AGY_MODEL: '' } });
       const receipts = readReceipts(sb.repo);
       rmSync(sb.home, { recursive: true, force: true });
-      assert.equal(r.status, 0, `${args[0]} must run with an emptied model: ${r.stderr}`);
-      assert.equal(r.invoked, true);
-      assert.deepEqual(receipts[0].posture, { model: null }, 'an unknowable model is recorded null');
+      assert.equal(r.status, 2, `${args.join(' ')}: ${r.stderr}`);
+      assert.equal(r.invoked, false, 'refused BEFORE any spend');
+      assert.equal(receipts.length, 0);
+      assert.match(r.stderr, /unset AGY_MODEL/, 'the remedy names unsetting it');
     }
   });
 
-  it('code --ungrounded with AGY_MODEL= RUNS (its receipt never attests); grounded code still refuses', () => {
-    const sb = makeSandbox();
-    const un = run(sb, { args: ['code', '--ungrounded'], env: { AGY_MODEL: '', AGY_FAKE_OUTPUT: '### Verdict\nSHIP — throwaway.' } });
-    const unReceipts = readReceipts(sb.repo);
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(un.status, 0, un.stderr);
-    assert.deepEqual(unReceipts[0].posture, { model: null });
-    const sb2 = makeSandbox();
-    const grounded = run(sb2, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: '' } });
-    rmSync(sb2.home, { recursive: true, force: true });
-    assert.notEqual(grounded.status, 0, 'the ATTESTING branch still refuses pre-spend');
-    assert.equal(grounded.invoked, false);
+  it('under AGY_PROBE=1 plan and diff modes with AGY_MODEL= run and record posture.model null', () => {
+    for (const args of [['plan', 'plan.md'], ['diff', 'plan.md']]) {
+      const sb = makeSandbox();
+      const r = run(sb, { args, env: { AGY_MODEL: '', AGY_PROBE: '1', AGY_FAKE_OUTPUT: '### Verdict\nSHIP — fine.' } });
+      const receipts = readReceipts(sb.repo);
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.equal(r.status, 0, `${args[0]} must run as a probe: ${r.stderr}`);
+      assert.equal(r.invoked, true);
+      assert.deepEqual(receipts[0].posture, { model: null }, 'an unknowable model is recorded null');
+    }
   });
 });

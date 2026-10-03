@@ -13,17 +13,17 @@
 #   - network access OFF: new dependencies / network installs are done by a human
 #   - approval_policy=never: there is no TTY in exec; anything needing escalation
 #     is refused and reported, then handled by hand
-#   - the PINNED model at the PINNED reasoning effort (quality-first — see below)
+#   - the host posture's model and reasoning effort (see below)
 #   - git WRITES are blocked by a physical shim (codex spawns git via execve, which
 #     bypasses shell functions) — the orchestrator owns the commit boundary.
 #
-# Quality-first (hard rule): delegated codex work ALWAYS runs on the PINNED
-# model at the PINNED reasoning effort. The defaults below are pinned and the wrapper
-# REFUSES a non-default CODEX_MODEL/CODEX_EFFORT — knowingly-worse output is never
-# traded for quota. The ONLY exception is a throwaway probe whose result does not
-# depend on effort: set CODEX_PROBE=1 (echoed loudly) to relax the guard. Economy
-# comes from quality-neutral waste removal (clean capture, a hard timeout, a lean
-# prompt, resume instead of re-sending context), never from a downgrade.
+# Host posture (hard rule): delegated codex work runs on the host posture — CODEX_MODEL and
+# CODEX_EFFORT from the bridge settings file, else the built-in default gpt-6.1-sol at effort high
+# (`/agent-workflow-kit bridge-settings` shows the models offered and sets one) — checked against the
+# installed CLI's catalog before any spend. A run on anything else is a one-off, refused unless
+# it is a probe (CODEX_PROBE=1); a nonced dispatch never runs a one-off. Economy comes from
+# quality-neutral waste removal (clean capture, a hard timeout, a lean prompt, resume instead of
+# re-sending context), never from a per-call downgrade.
 #
 # Auth: SUBSCRIPTION ONLY. Uses the cached ChatGPT login under CODEX_HOME
 # (~/.codex). The wrapper unsets every *_API_KEY plus OPENAI_BASE_URL and passes
@@ -37,7 +37,7 @@
 #   codex-exec --resume-last <file|->                # continue the last session (iterate, no re-send)
 #   codex-exec --resume <session-id> <file|->        # continue a specific session
 #   CODEX_HARD_TIMEOUT=7200 codex-exec <file>        # raise the hard wall-clock cap (integer seconds)
-#   CODEX_PROBE=1 CODEX_MODEL=<slug> codex-exec <file>   # throwaway probe (relaxes the guard)
+#   CODEX_PROBE=1 CODEX_MODEL=<slug> codex-exec <file>   # throwaway probe (the one route to a one-off)
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
@@ -113,7 +113,7 @@ Receipt:
   reads it, report-if-present). The post-report lane never claims the reservation still stands,
   because after that point its fate is no longer something this run observed. Every lane names the
   tree as partial/dirtied rather than untouched. A nonce-LESS invocation is byte-unchanged: no
-  reservation, no receipt, no artifact, no node.
+  reservation, no receipt, no artifact, and it needs no node.
 
 Notes:
   nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run
@@ -121,7 +121,7 @@ Notes:
   (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a
   preemptive blanket
   exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture —
-  exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> timeout=… —
+  exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> source=… timeout=… —
   from RESOLVED post-validation values; the resume id is validated pre-spend, and control bytes in
   any banner field refuse pre-spend
   threat model: the sidecar byte and grammar screens detect corrupted input under a trusted parent
@@ -129,9 +129,10 @@ Notes:
   substitution of core/backend commands — is outside the threat model and can substitute the
   backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from accidental
   shadowing; it is not an environment security boundary
-  the exec posture banner appends a banner-only timeout=<duration|uncapped> field — exactly the
-  duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run;
-  INFORMATIONAL only: it is never persisted in a receipt or session sidecar
+  the exec posture banner appends a banner-only source=model:<s>,effort:<s> field — where each value
+  came from: default, setting or environment — then a banner-only timeout=<duration|uncapped> field
+  — exactly the duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the
+  run; INFORMATIONAL only: neither is persisted in a receipt or session sidecar
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
   every-run nested-sandbox scan (DUAL policy, deliberately two different rules): the scan runs on
@@ -149,7 +150,7 @@ Notes:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6-astra, cache fetched 2026-09-05; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6.1-sol, cache fetched 2026-10-03; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 3600)
 
 Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only), AW_DISPATCH_NONCE (delegation dispatch nonce — mints the exec receipt; the --nonce <n> flag is its plain-argument equivalent), AW_DELEGATION_STORE (absolute delegation-store path; its dirname is where the receipt lands).
@@ -161,6 +162,8 @@ esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT"
+DEFAULT_CODEX_MODEL="gpt-6.1-sol"
+DEFAULT_CODEX_EFFORT="high"
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -181,7 +184,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -266,6 +269,37 @@ aw_apply_settings() {
   done
   return 0
 }
+aw_read_posture() {
+  local key="$1" default="$2" empty="$3" file line value notify=1
+  AW_HOST_VALUE="$default"
+  AW_HOST_SOURCE="default"
+  file="$(aw_settings_file)"
+  [[ -n "${AW_SETTINGS_NOTIFIED:-}" ]] && notify=0
+  if [[ -f "$file" && -r "$file" ]]; then
+    line="$(grep "^${key}=" "$file" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      value="${line##*$'\n'}"
+      value="${value#*=}"
+      if [[ -n "$value" && "$value" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        AW_HOST_VALUE="$value"
+        AW_HOST_SOURCE="setting"
+      elif (( notify )); then
+        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+      fi
+    fi
+  fi
+  AW_RUN_VALUE="$AW_HOST_VALUE"
+  AW_RUN_SOURCE="$AW_HOST_SOURCE"
+  if [[ -n "${!key+x}" ]]; then
+    AW_RUN_VALUE="${!key:-$empty}"
+    AW_RUN_SOURCE="environment"
+  fi
+  return 0
+}
+aw_read_posture CODEX_MODEL "$DEFAULT_CODEX_MODEL" "$DEFAULT_CODEX_MODEL"
+HOST_CODEX_MODEL="$AW_HOST_VALUE"; CODEX_MODEL="$AW_RUN_VALUE"; CODEX_MODEL_SOURCE="$AW_RUN_SOURCE"
+aw_read_posture CODEX_EFFORT "$DEFAULT_CODEX_EFFORT" "$DEFAULT_CODEX_EFFORT"
+HOST_CODEX_EFFORT="$AW_HOST_VALUE"; CODEX_EFFORT="$AW_RUN_VALUE"; CODEX_EFFORT_SOURCE="$AW_RUN_SOURCE"
 aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
@@ -319,19 +353,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_CODEX_MODEL="gpt-6-astra"   # pinned model id (see SKILL.md: strongest-model status is hand-checked, ungated)
-DEFAULT_CODEX_EFFORT="high"    # pinned reasoning effort — a deliberate posture, not the catalog maximum
-CODEX_MODEL="${CODEX_MODEL:-$DEFAULT_CODEX_MODEL}"
-CODEX_EFFORT="${CODEX_EFFORT:-$DEFAULT_CODEX_EFFORT}"
-# Generous hard wall-clock cap, sized for a slow run at the pinned effort (subscription latency
+# Generous hard wall-clock cap, sized for a slow run at the host posture's effort (subscription latency
 # varies — a trivial reply was observed taking minutes). Raise for a known-healthy
 # long run; lowering it only risks killing real work.
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-3600}"
 # Codex service tier (quality-neutral speed knob): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6-astra, cache
-# fetched 2026-09-05; it states no credit-rate figure; quality-neutral — same model). codex itself
+# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6.1-sol, cache
+# fetched 2026-10-03; it states no credit-rate figure; quality-neutral — same model). codex itself
 # accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
@@ -373,31 +403,15 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="3.8.1"  # aw-version-anchor
+AW_BRIDGE_VERSION="4.0.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.
 CODEX_KILL_GRACE_S=15
 
-# --- Quality-first guard: refuse any non-pinned model/effort ---------------
-# Real delegated runs must use the pinned model at the pinned effort. A throwaway probe
-# (effort-independent result) may opt out with CODEX_PROBE=1, announced loudly.
 if [[ "${CODEX_PROBE:-}" == "1" ]]; then
   echo "warning: CODEX_PROBE=1 — THROWAWAY PROBE MODE. Quality guards relaxed; do NOT use this run's" >&2
   echo "         output as real delegated work (model='$CODEX_MODEL' effort='$CODEX_EFFORT')." >&2
-else
-  if [[ "$CODEX_MODEL" != "$DEFAULT_CODEX_MODEL" ]]; then
-    echo "error: CODEX_MODEL='$CODEX_MODEL' is not the pinned model '$DEFAULT_CODEX_MODEL'." >&2
-    echo "       Delegated codex work must run on the pinned model at the pinned effort (quality-first)." >&2
-    echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
-    exit 2
-  fi
-  if [[ "$CODEX_EFFORT" != "$DEFAULT_CODEX_EFFORT" ]]; then
-    echo "error: CODEX_EFFORT='$CODEX_EFFORT' is not the pinned effort '$DEFAULT_CODEX_EFFORT'." >&2
-    echo "       Delegated codex work must run at the pinned reasoning effort (quality-first)." >&2
-    echo "       For a throwaway probe whose result is effort-independent, set CODEX_PROBE=1." >&2
-    exit 2
-  fi
 fi
 
 # --- Subscription-only guard -------------------------------------------------
@@ -624,10 +638,10 @@ else
   #  (1) ALWAYS rejected — they would defeat the subscription / sandbox / approval /
   #      config-isolation policy (-c/-s/--full-auto/bypass), switch the provider off
   #      the subscription (--oss/--local-provider), load alternate config (-p/--profile),
-  #      override the pinned model (-m), or break the wrapper-owned clean
+  #      override the host posture's model (-m), or break the wrapper-owned clean
   #      output / session capture (-o/--json/--color/--output-schema/--ephemeral).
   #      CODEX_PROBE=1 NEVER relaxes these: a probe still runs on the subscription, in
-  #      the sandbox, with clean capture; its model is chosen via CODEX_MODEL, not -m.
+  #      the sandbox, with clean capture; its model is chosen via CODEX_MODEL, never a flag.
   #  (2) Probe-relaxable — context/discovery knobs the wrapper otherwise pins; a
   #      throwaway probe (CODEX_PROBE=1) may pass them. Need more? invoke `codex` direct.
   if [[ ${#passthrough[@]} -gt 0 ]]; then
@@ -635,7 +649,7 @@ else
       case "$_arg" in
         -c*|--config*|-s*|--sandbox*|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--full-auto|--oss|--local-provider*|-p*|--profile*|-m*|--model*|-o*|--output-last-message*|--json*|--color*|--output-schema*|--ephemeral*)
           echo "error: passthrough flag '$_arg' is not allowed — it would defeat the subscription / sandbox /" >&2
-          echo "       approval / config-isolation policy, the pinned model, or the clean output/session" >&2
+          echo "       approval / config-isolation policy, the host posture, or the clean output/session" >&2
           echo "       capture. It stays blocked even under CODEX_PROBE=1. Invoke 'codex' directly if you must." >&2
           exit 2
           ;;
@@ -666,7 +680,7 @@ if [[ -z "${task//[[:space:]]/}" ]]; then
 fi
 
 # --- The ACCOUNTED lane: everything below fires only for a NONCED run ---------
-# A nonce-LESS invocation is byte-unchanged — no reservation, no receipt, no artifact, no node —
+# A nonce-LESS invocation is byte-unchanged — no reservation, no receipt, no artifact, needs no node —
 # which is what keeps every existing caller working. The whole mint core rides ONE node script per
 # step (the family floor, codex-review.sh's finding-manifest precedent): a bash re-implementation of
 # atomic no-clobber publication, JSON composition and canonical digesting would be a second, drifting
@@ -933,7 +947,7 @@ if [[ -n "$resume_mode" ]]; then
 else
   # `-o` writes ONLY codex's final message; `--json` streams structured events
   # (thread.started carries the session id). CoT is dropped and colour disabled, so
-  # the captured surfaces stay clean. Reasoning still runs at the pinned effort — quality is
+  # the captured surfaces stay clean. Reasoning still runs at the run's effort — quality is
   # unchanged; we only stop printing the noise.
   codex_cmd=(codex exec
     --ignore-user-config
@@ -981,6 +995,91 @@ if [[ -z "$timeout_bin" ]]; then
   echo "         (install coreutils to enable CODEX_HARD_TIMEOUT=$CODEX_HARD_TIMEOUT)." >&2
 fi
 
+# --- The effective model checked against the installed CLI's catalog, then the one-off rule ---
+# Both refuse BEFORE any spend. The read runs after the subscription guard, with the run's
+# CODEX_HOME and the built-in provider, bounded by the same timeout binary as the run.
+catalog_env=(env)
+CODEX_CATALOG_TIMEOUT_S=15
+aw_codex_remedy() {
+  echo "       remedy: set these lines in $(aw_settings_file):" >&2
+  echo "         CODEX_MODEL=$1" >&2
+  echo "         CODEX_EFFORT=$2" >&2
+  echo "       and unset CODEX_MODEL and CODEX_EFFORT in the environment." >&2
+}
+aw_codex_catalog_check() {
+  local raw="" rc=0 verdict="" kind="" offered="" model="" effort="" catalog_js=""
+  if [[ -n "$timeout_bin" ]]; then
+    raw="$("${catalog_env[@]}" "$timeout_bin" --kill-after=5s "$CODEX_CATALOG_TIMEOUT_S" codex debug models -c model_provider=openai </dev/null 2>/dev/null)" || rc=$?
+  else
+    raw="$("${catalog_env[@]}" codex debug models -c model_provider=openai </dev/null 2>/dev/null)" || rc=$?
+  fi
+  if (( rc == 124 || rc == 137 )); then
+    verdict="unreadable"$'\t'"it exceeded ${CODEX_CATALOG_TIMEOUT_S}s"
+  elif (( rc != 0 )); then
+    verdict="unreadable"$'\t'"codex debug models exited $rc"
+  elif ! command -v node >/dev/null 2>&1; then
+    verdict="unreadable"$'\t'"no node to parse it"
+  else
+    IFS= read -r -d '' catalog_js <<'CATALOG_JS' || true
+const [model, effort, defaultModel, defaultEffort] = process.argv.slice(1);
+const answer = (...fields) => { process.stdout.write(fields.join("\t")); process.exit(0); };
+const CONTROL = /[\u0000-\u001f\u007f]/;
+let doc;
+try { doc = JSON.parse(require("node:fs").readFileSync(0, "utf8")); } catch { answer("unreadable", "its output is not JSON"); }
+if (doc === null || typeof doc !== "object" || !Array.isArray(doc.models)) answer("unreadable", "it carries no models[]");
+const offered = doc.models.filter((m) => m !== null && typeof m === "object" && m.visibility === "list");
+if (offered.some((m) => typeof m.slug !== "string" || m.slug === "" || CONTROL.test(m.slug))) answer("unreadable", "an offered entry carries no usable slug");
+if (offered.length === 0) answer("unreadable", "it offers no model");
+const effortsOf = (m) => (Array.isArray(m.supported_reasoning_levels)
+  && m.supported_reasoning_levels.every((l) => l !== null && typeof l === "object" && typeof l.effort === "string" && !CONTROL.test(l.effort))
+  ? m.supported_reasoning_levels.map((l) => l.effort) : null);
+const rank = (m) => (typeof m.priority === "number" ? m.priority : Number.MAX_SAFE_INTEGER);
+const refuse = (kind, list) => {
+  const builtIn = offered.find((m) => m.slug === defaultModel);
+  if (builtIn && (effortsOf(builtIn) ?? []).includes(defaultEffort)) answer(kind, list, defaultModel, defaultEffort);
+  const first = [...offered].sort((a, b) => rank(a) - rank(b))[0];
+  const level = first.default_reasoning_level;
+  if (typeof level !== "string" || level === "" || CONTROL.test(level)) answer("unreadable", "the entry for " + first.slug + " carries no default_reasoning_level");
+  answer(kind, list, first.slug, level);
+};
+const entry = offered.find((m) => m.slug === model);
+if (entry === undefined) refuse("model", offered.map((m) => m.slug).join(", "));
+const efforts = effortsOf(entry);
+if (efforts === null) answer("unreadable", "the entry for " + model + " carries no supported_reasoning_levels");
+if (!efforts.includes(effort)) refuse("effort", efforts.join(", "));
+answer("ok");
+CATALOG_JS
+    verdict="$(printf '%s' "$raw" | NODE_OPTIONS= node -e "$catalog_js" -- "$CODEX_MODEL" "$CODEX_EFFORT" "$DEFAULT_CODEX_MODEL" "$DEFAULT_CODEX_EFFORT" 2>/dev/null)" || verdict="unreadable"$'\t'"its parser failed"
+  fi
+  IFS=$'\t' read -r kind offered model effort <<<"$verdict" || true
+  case "$kind" in
+    ok) return 0 ;;
+    model)
+      echo "error: CODEX_MODEL='$CODEX_MODEL' ($CODEX_MODEL_SOURCE) is not a model the installed codex offers — refusing before any run is spent." >&2
+      echo "       offered: $offered" >&2 ;;
+    effort)
+      echo "error: CODEX_EFFORT='$CODEX_EFFORT' ($CODEX_EFFORT_SOURCE) is not an effort the installed codex offers for $CODEX_MODEL — refusing before any run is spent." >&2
+      echo "       offered: $offered" >&2 ;;
+    *)
+      echo "warning: the codex model catalog is unreadable (${offered:-no answer}) — the run proceeds unchecked; codex itself refuses a model it does not serve." >&2
+      return 0 ;;
+  esac
+  aw_codex_remedy "$model" "$effort"
+  exit 2
+}
+aw_codex_catalog_check
+if [[ "$CODEX_MODEL" != "$HOST_CODEX_MODEL" || "$CODEX_EFFORT" != "$HOST_CODEX_EFFORT" ]]; then
+  if [[ "${CODEX_PROBE:-}" != "1" ]]; then
+    echo "error: model=$CODEX_MODEL effort=$CODEX_EFFORT is a one-off — the host posture is model=$HOST_CODEX_MODEL effort=$HOST_CODEX_EFFORT, and only a probe (CODEX_PROBE=1) runs a one-off; refusing before any run is spent." >&2
+    aw_codex_remedy "$CODEX_MODEL" "$CODEX_EFFORT"
+    exit 2
+  fi
+  if [[ -n "$aw_nonce" ]]; then
+    echo "error: a probe one-off (model=$CODEX_MODEL effort=$CODEX_EFFORT) cannot carry a dispatch nonce — the exec receipt could not say it ran off the host posture; refusing before any run is spent (drop the nonce, or run on the host posture)." >&2
+    exit 2
+  fi
+fi
+
 # --- D5 exec banner (one line, the ACTUAL run posture; AD-061) -----------------
 # Emitted from RESOLVED post-validation values, AFTER the resume id is resolved and validated,
 # BEFORE the dispatch. The timeout field is banner-only (never a receipt/sidecar field): it
@@ -988,7 +1087,7 @@ fi
 aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
 aw_session_label="fresh"
 [[ -n "$resume_mode" ]] && aw_session_label="resume:$resume_id"
-echo "exec posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} sandbox=workspace-write session=$aw_session_label timeout=$aw_timeout_banner" >&2
+echo "exec posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} sandbox=workspace-write session=$aw_session_label source=model:$CODEX_MODEL_SOURCE,effort:$CODEX_EFFORT_SOURCE timeout=$aw_timeout_banner" >&2
 
 # --- The PRE-SPEND reservation (delegation Plan 2 / D1) ------------------------
 # Written immediately before the CLI runs — after EVERY preflight and after the posture banner, so a

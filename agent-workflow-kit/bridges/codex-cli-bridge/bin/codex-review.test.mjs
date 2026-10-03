@@ -19,6 +19,10 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
+  'if [[ "${1:-}" == "debug" ]]; then [[ -z "${CODEX_FAKE_NO_CATALOG:-}" ]] || exit 1; cat <<EOF',
+  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
+  'EOF',
+  'exit 0; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
   ': "${CODEX_FAKE_ENV:=/dev/null}"',
   ': "${CODEX_FAKE_STDIN:=/dev/null}"',
@@ -160,25 +164,8 @@ const run = ({ repo, bin }, { args = ['code'], env = {}, path, cwd } = {}) => ne
 // run() IS that twin now, so the twin is one name pointing at it — two spawn paths could only drift.
 const runAsync = run;
 
-describe('codex-review.sh — quality-first model/effort guard (1.1)', { concurrency: 2 }, () => {
-  it('refuses a non-default CODEX_MODEL', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: 'gpt-5.4-mini' } });
-    rmSync(sb.root, { recursive: true, force: true });
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned model/);
-    assert.equal(r.capStdin, '', 'codex must not be invoked when the guard fires');
-  });
-
-  it('refuses a non-default CODEX_EFFORT', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_EFFORT: 'xhigh' } });
-    rmSync(sb.root, { recursive: true, force: true });
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /not the pinned effort/);
-  });
-
-  it('CODEX_PROBE=1 relaxes the guard and warns', async () => {
+describe('codex-review.sh — the probe one-off (1.1)', { concurrency: 2 }, () => {
+  it('CODEX_PROBE=1 runs a one-off effort and warns', async () => {
     const sb = makeSandbox();
     const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_EFFORT: 'low' } });
     rmSync(sb.root, { recursive: true, force: true });
@@ -890,27 +877,28 @@ describe('codex-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)
     }
   });
 
-  it('CODEX_PROBE really relaxes the guard on EVERY review parent the catalog claims (behavioural)', async () => {
+  it('a one-off is refused on EVERY review parent and CODEX_PROBE=1 runs it (behavioural)', async () => {
     // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
-    // trusting a source scan: an off-pin model is exit 2 normally, exit 0 under probe.
+    // trusting a source scan: a one-off model is exit 2 normally, exit 0 under probe.
     const hook = catalog.find((e) => e.key === 'CODEX_PROBE');
     const drive = { 'review.plan': ['plan', 'plan.md'], 'review.code': ['code'] };
     const reviewParents = hook.parents.filter((p) => reviewPrimaries.some((r) => r.key === p));
-    assert.ok(reviewParents.length > 0, 'CODEX_PROBE must claim at least one review parent');
+    assert.deepEqual(reviewParents, ['review.plan', 'review.code'], 'CODEX_PROBE claims every review parent');
     for (const parent of reviewParents) {
       assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
       // The exit code alone is weak evidence: pin the real DISPATCH too (capStdin is non-empty only
       // when codex was actually invoked), so a run that dies early can never pass the probe-on branch.
       const guarded = makeSandbox();
-      const off = await run(guarded, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model' } });
+      const off = await run(guarded, { args: drive[parent], env: { CODEX_MODEL: 'gpt-6-astra' } });
       rmSync(guarded.root, { recursive: true, force: true });
-      assert.equal(off.status, 2, `${parent}: the quality guard must refuse an off-pin model without the hook`);
-      assert.equal(off.capStdin, '', `${parent}: the guard must refuse BEFORE spending a run`);
+      assert.equal(off.status, 2, `${parent}: a one-off must be refused without the hook`);
+      assert.match(off.stderr, /one-off/, `${parent}: the refusal names the one-off`);
+      assert.equal(off.capStdin, '', `${parent}: the one-off must refuse BEFORE spending a run`);
 
       const probed = makeSandbox();
-      const on = await run(probed, { args: drive[parent], env: { CODEX_MODEL: 'not-the-pinned-model', CODEX_PROBE: '1' } });
+      const on = await run(probed, { args: drive[parent], env: { CODEX_MODEL: 'gpt-6-astra', CODEX_PROBE: '1' } });
       rmSync(probed.root, { recursive: true, force: true });
-      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really relax the guard — the catalog claims it does`);
+      assert.equal(on.status, 0, `${parent}: CODEX_PROBE=1 must really run the one-off — the catalog claims it does`);
       assert.notEqual(on.capStdin, '', `${parent}: CODEX_PROBE=1 must really reach codex, not merely exit 0`);
     }
   });
@@ -958,8 +946,8 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
     for (const field of ['durationS', 'blocking', 'artifactPath']) assert.ok(REVIEW_CONTRACT.receipt.includes(`${field} = `), `the manifest receipt contract declares ${field}`);
   });
 
-  // The probe marker (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 review runs with the
-  // pinned-model/max-effort guard OFF, so its receipt must be distinguishable — the kit's
+  // The probe marker (BRIDGE-MODES-CATALOG, D3): a CODEX_PROBE=1 review is the one route to a
+  // one-off model or effort, so its receipt must be distinguishable — the kit's
   // review-state gate rejects a probe-marked receipt. EVERY receipt carries the marker (true or
   // false): it self-declares, so the gate reads the fact rather than inferring it from a version
   // string that bumps in a different release phase. Silence is not a declaration.
@@ -983,13 +971,13 @@ describe('codex-review.sh — review receipts (AD-038)', { concurrency: 2 }, () 
     assert.equal(receipts[0].probe, false, 'silence is not a declaration — the gate rejects an unmarked receipt');
   });
 
-  it('the marker tracks the RELAXED GUARD, not the model — a probe on an off-pinned model still marks', async () => {
+  it('the marker tracks the probe flag, not the model — a probe one-off still marks', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-5-mini', CODEX_EFFORT: 'low', CODEX_FAKE_FINAL: 'Verdict: ship' } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-6-astra', CODEX_EFFORT: 'medium', CODEX_FAKE_FINAL: 'Verdict: ship' } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.equal(receipts[0].probe, true, 'exactly the runs the guard let through unpinned are marked');
+    assert.equal(receipts[0].probe, true, 'exactly the probe runs are marked');
   });
 
   it('the code-mode fingerprint tracks the uncommitted state (same tree → same hash; edit → different)', async () => {
@@ -1561,7 +1549,7 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
-    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
     setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
     assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
@@ -1579,7 +1567,7 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
-    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = ALL_SETTINGS.filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0);
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
@@ -1588,8 +1576,8 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
-    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
-    for (const s of ALL_SETTINGS) {
+    setEq(armKeys, ALL_SETTINGS.filter((s) => s.kind !== 'posture').map((s) => s.key), 'validation arms ⟷ manifest keys (a posture key is read by aw_read_posture, never validated here)');
+    for (const s of ALL_SETTINGS.filter((x) => x.kind !== 'posture')) {
       const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
       assert.ok(arm, `no validation arm for ${s.key}`);
       if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);
@@ -1646,8 +1634,8 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-6-astra effort=high tier=standard/, 'the banner states the actual run posture');
-    assert.deepEqual(receipts[0].posture, { model: 'gpt-6-astra', effort: 'high', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
+    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=standard source=model:default,effort:default/, 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, { model: 'gpt-6.1-sol', effort: 'high', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
@@ -1657,24 +1645,24 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-6-astra effort=high tier=priority/);
+    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=priority/);
     assert.equal(receipts[0].posture.tier, 'priority');
   });
 
   it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded (probe lane)', async () => {
     const hostile = 'we"ird \\ mo"del';
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: hostile } });
+    const r = await run(sb, { env: { CODEX_PROBE: '1', CODEX_MODEL: hostile, CODEX_FAKE_NO_CATALOG: '1' } });
     const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(receipts[0].posture.model, hostile, 'the exact bytes round-trip through strict encoding');
-    assert.equal(receipts[0].probe, true, 'an off-pinned model runs only on the probe lane');
+    assert.equal(receipts[0].probe, true, 'a one-off model runs only on the probe lane');
   });
 
-  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the pinned-model guard', async () => {
+  it('a posture value carrying CONTROL BYTES refuses pre-spend, BEFORE the catalog check', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(1)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6.1-sol${String.fromCharCode(1)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);
@@ -1689,7 +1677,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=gpt-6-astra effort=high tier=standard timeout=1800s$/m);
+    assert.match(r.stderr, /^review posture: model=gpt-6\.1-sol effort=high tier=standard source=model:default,effort:default timeout=1800s$/m);
     assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
   });
 
@@ -1715,7 +1703,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
 
   it('a DEL (0x7f) byte in a banner field refuses pre-spend like the C0 range', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6-astra${String.fromCharCode(127)}` } });
+    const r = await run(sb, { env: { CODEX_MODEL: `gpt-6.1-sol${String.fromCharCode(127)}` } });
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.notEqual(r.status, 0);

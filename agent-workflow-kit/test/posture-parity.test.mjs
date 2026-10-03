@@ -42,15 +42,15 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
       assert.deepEqual(Object.keys(manifest.posture), ['model', 'effort', 'tier'], 'codex declares exactly {model, effort, tier}');
     });
 
-    it('the kit RENDER composes exactly the manifest pins (+ the bridge-settings tier overlay)', () => {
+    it('the kit RENDER composes exactly the manifest pins (+ the bridge-settings tier overlay) — spec:bridge-model/S16', () => {
       const bundleRoot = base === ROOT ? join(ROOT, 'agent-workflow-kit', 'bridges') : base;
       const rendered = composeConfiguredPosture({ bundleRoot, settings: { active: [] } });
-      assert.equal(rendered, 'codex model=gpt-6-astra effort=high tier=standard · agy model=Gemini 3.8 Flash (High)');
+      assert.equal(rendered, 'codex model=gpt-6.1-sol effort=high tier=standard · agy model=Gemini 3.8 Flash (High)');
       const fast = composeConfiguredPosture({
         bundleRoot,
         settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', bridge: 'codex-cli-bridge' }] },
       });
-      assert.match(fast, /codex model=gpt-6-astra effort=high tier=priority \(bridge-settings\)/, 'an armed tier knob overlays the pin and names its source');
+      assert.match(fast, /codex model=gpt-6\.1-sol effort=high tier=priority \(bridge-settings\)/, 'an armed tier knob overlays the pin and names its source');
       const empty = composeConfiguredPosture({ bundleRoot: join(HERE, '__no_bundle__') });
       assert.equal(empty, null, 'no posture-declaring bundle → null (every surface stays byte-identical)');
       const hostile = composeConfiguredPosture({ bundleRoot, settings: { active: 42 } });
@@ -59,17 +59,17 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
 
     it('the receipt writer and the banner both ride the SAME resolved values (source-level pins)', () => {
       const agy = readFileSync(join(base, 'antigravity-cli-bridge', 'bin', 'agy-review.sh'), 'utf8');
-      assert.match(agy, /^echo "review posture: model=\$\{AGY_MODEL:-<agy settings default>\} timeout=\$aw_timeout_banner" >&2$/m);
+      assert.match(agy, /^echo "review posture: model=\$\{AGY_MODEL:-<agy settings default>\} source=model:\$AGY_MODEL_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(agy, /posture_json\(\)/, 'the agy receipt posture rides posture_json');
       const codex = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-review.sh'), 'utf8');
-      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} timeout=\$aw_timeout_banner" >&2$/m);
+      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(codex, /posture_json\(\)/, 'the codex receipt posture rides posture_json');
     });
 
     it('codex-exec emits the D5 exec banner from RESOLVED values (source-level pin, AD-061)', () => {
       const exec = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-exec.sh'), 'utf8');
       assert.match(exec,
-        /^echo "exec posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} sandbox=workspace-write session=\$aw_session_label timeout=\$aw_timeout_banner" >&2$/m);
+        /^echo "exec posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} sandbox=workspace-write session=\$aw_session_label source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
     });
 
     it('timeout is BANNER-ONLY (AD-061): posture blocks gain NO timeout key; both manifests state the clause', () => {

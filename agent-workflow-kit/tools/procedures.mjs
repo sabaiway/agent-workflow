@@ -154,8 +154,8 @@ export const extractSection = (text, activity) => {
 
 const resolveAllSlots = ({ activity, config, detection, overrides, surveyLens }) => {
   // The host-level settings knobs (manifest-as-source), best-effort: a corrupt bundle degrades to none
-  // and the advisor never crashes. Attached per wrapper cmd via each knob's `appliesTo`. Fact-only —
-  // model/effort are not knobs, so no model claim can ride here.
+  // and the advisor never crashes. Attached per wrapper cmd via each knob's `appliesTo` — the model
+  // keys included, as knobs with their allowed-value label, never an effective-model claim.
   const registry = (() => {
     try {
       return loadRegistry({});
@@ -494,7 +494,7 @@ const costLanesAdvice = () => [
   'Cost lanes (orchestration.md §5) — route every step to the cheapest adequate executor:',
   '  • L0 deterministic script — run the gate matrix as ONE batch: /agent-workflow-kit gates (the project-declared docs/ai/gates.json); rotation headroom: archive-changelog / archive-issues / archive-decisions --check. An exit code beats a model re-read.',
   '  • L1 cheap subagent (small model, low effort, read-only tools — /agent-workflow-kit agents places the vehicles) — mechanical sweeps, changelog fact-skeletons, gate-failure triage. Extraction/drafting ONLY; the orchestrator verifies the output and owns every conclusion.',
-  '  • L2 subscription bridge (codex / agy) — reviews per the resolved recipe above, on frontier bridge models (quality-first).',
+  '  • L2 subscription bridge (codex / agy) — reviews per the resolved recipe above, on each bridge\'s host posture (the model the user set, else the bridge default); a weaker model is the user\'s setting, never a per-call choice — a probe is the one route to a one-off and its review receipt never attests.',
   '  • L3 frontier — judgment: plan/fold/synthesis, ADR/handover/changelog-entry wording, persuasive copy, go/no-go, real code.',
   '  • A step with no named guardrail does not move down a lane; red lines never move down (council review models · real code · memory/copy wording · the maintainer approval asks).',
   '  • Sandbox lanes (under an OS sandbox): the L0 surfaces are sandbox-safe — gates/ledger/state/fold checks, git reads, plain no-network tests; the bridge wrappers are genuinely unsandboxed (network); npm-cache-touching commands are COMMAND-SHAPE dependent — first try the sandbox-safe shape (cache under $TMPDIR, offline/notifier off). Move ONLY the failing command out of the sandbox, never its class; BATCH consecutive unsandboxed calls. Pre-dispatch host-diff: before the FIRST dispatch of each bridge, diff its manifest networkHosts against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt. Nested-sandbox honesty: a backend CLI shipping its OWN OS sandbox cannot run nested inside a harness sandbox — route it outside (excludedCommands / a per-run consented bypass) on the OBSERVED failure, never a preemptive blanket.',

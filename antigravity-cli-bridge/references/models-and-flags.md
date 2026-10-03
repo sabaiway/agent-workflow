@@ -46,7 +46,7 @@ Environment:
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.8 Flash (High)` | model display string; set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
+| `AGY_MODEL` | the setting, else `Gemini 3.8 Flash (High)` | model display string, checked pre-spend against `agy models`; the environment value is a one-run model (a probe's one-off); set empty (`AGY_MODEL=`) to drop `--model` and let `agy` use `settings.json` |
 | `AGY_TIMEOUT` | `5m` | value passed to `--print-timeout` |
 | `AGY_HARD_TIMEOUT` | `= AGY_TIMEOUT` | hard `timeout(1)` wall-clock cap (a duration string) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | single-argv byte ceiling. `agy` takes the prompt as ONE `-p` argv; past `MAX_ARG_STRLEN` (~131072) `execve` fails with a cryptic `Argument list too long`. The wrapper measures the resolved `-`/`@file` prompt and fails loud over the ceiling. A huge **literal** `agy-run "<huge>"` fails at the wrapper's own `exec`, so route large prompts via `-`/`@file`. |
@@ -71,8 +71,8 @@ agy-review --continue | --conversation <id>   [--decided @f] [--focus "…"]   #
 
 | Var | Default | Effect |
 |---|---|---|
-| `AGY_MODEL` | `Gemini 3.8 Flash (High)` | frontier default (AD-136, 2026-09-09; 3.7 Flash (High) stays frontier, fork (a)); **any** model is allowed — a sub-frontier one earns a silenceable advisory (quality-first, not a gate) |
-| `AGY_PROBE` | `0` | `1` silences the off-frontier model advisory AND lets `code` run without `--facts` (an ungrounded probe never attests — its receipt is probe-marked) |
+| `AGY_MODEL` | the setting, else `Gemini 3.8 Flash (High)` | the host posture is the `AGY_MODEL` line of the bridge settings file; an environment value off it (an explicitly empty one included) is a one-off, refused pre-spend unless `AGY_PROBE=1` |
+| `AGY_PROBE` | `0` | `1` is the one route to a one-off model AND lets `code` run without `--facts` (a probe never attests — its receipt is probe-marked) |
 | `AGY_REVIEW_MAX_TOTAL_BYTES` | `240000` | the ceiling on the SUM of all outgoing prompt bytes an oversized `code` review's chunked feed may send; checked BEFORE the first turn is spent |
 | `AGY_REVIEW_ALLOW_ADDDIR` | `0` | **RETIRED** — recognized so an existing settings line never warns as unknown, but it arms nothing. An oversized `code` review is a chunked feed with a per-part delivery proof; the `--add-dir` offload it armed could not be verified (headless `agy` auto-denies `read_file`) |
 | `AGY_HARD_TIMEOUT` | `30m` | the review's hard cap (longer default than a probe — reviews are slower) |
@@ -93,33 +93,16 @@ as "capability present".
 
 ## Models
 
-Pass the **exact display string** from `agy models`, or set `AGY_MODEL`.
-
-| Model string | Practical use |
-|---|---|
-| `Gemini 3.8 Flash (Low)` | lowest-cost smoke tests, cheap probes, simple rewrites (newest Flash) |
-| `Gemini 3.8 Flash (Medium)` | fast summaries, context-reachability checks |
-| `Gemini 3.8 Flash (High)` | wrapper + review default — asserted frontier-grade (AD-136) |
-| `Gemini 3.7 Flash (Low)` | previous Flash generation, still served — prefer 3.8 |
-| `Gemini 3.7 Flash (Medium)` | previous Flash generation, still served — prefer 3.8 |
-| `Gemini 3.7 Flash (High)` | previous Flash generation, still frontier-grade for review (fork (a)) |
-| `Gemini 3.6 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.6 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.6 Flash (High)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (Low)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (Medium)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.5 Flash (High)` | older Flash generation, still served — prefer 3.8 |
-| `Gemini 3.1 Pro (Low)` | cheaper Pro pass for medium reasoning |
-| `Gemini 3.1 Pro (High)` | hard reasoning, plan critique, architecture review (slower, deeper) |
-| `Claude Sonnet 4.6 (Thinking)` | cross-vendor reasoning comparison |
-| `Claude Opus 4.6 (Thinking)` | expensive deep critique when the user wants another high-end pass |
-| `GPT-OSS 120B (Medium)` | open-weights-style comparison / diversity pass |
+Set the **exact display string** from `agy models` as `AGY_MODEL` — in the bridge settings file for
+the host posture, or in the environment for one run (`--model` after `--` is refused). The built-in
+default is `Gemini 3.8 Flash (High)`. **`/agent-workflow-kit bridge-settings`** shows the models the
+installed `agy` offers, in its own order, and sets the host posture after checking it against that list.
 
 Examples:
 
 ```bash
-AGY_MODEL="Gemini 3.7 Flash (Low)" agy-run "Read AGENTS.md and report one Hard Constraint."
-AGY_MODEL="Claude Sonnet 4.6 (Thinking)" AGY_TIMEOUT=10m agy-run @review-prompt.md
+agy-run "Read AGENTS.md and report one Hard Constraint."             # the host posture
+AGY_MODEL="<an offered display string>" AGY_TIMEOUT=10m agy-run @review-prompt.md   # a one-run model
 ```
 
 ## Flags (from `agy --help`, v1.1.13)
@@ -128,7 +111,7 @@ AGY_MODEL="Claude Sonnet 4.6 (Thinking)" AGY_TIMEOUT=10m agy-run @review-prompt.
 |---|---|---|
 | `-p`, `--print`, `--prompt` | run one headless prompt and print the text response | the wrapper uses `-p` |
 | `--print-timeout <dur>` | cap headless wait time | CLI default `5m0s`; wrapper default `5m` via `AGY_TIMEOUT` |
-| `--model <string>` | select a model | must match an `agy models` display string exactly |
+| `--model <string>` | select a model | must match an `agy models` display string exactly; the wrappers set it from `AGY_MODEL` and refuse it after `--` |
 | `-i`, `--prompt-interactive` | run an initial prompt, then continue interactively | not used by the wrapper |
 | `-c`, `--continue` | continue the most recent conversation | pass after the wrapper's `--` |
 | `--conversation <id>` | resume a specific conversation by id | use only when the user provides/records the id |

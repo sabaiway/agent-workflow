@@ -17,23 +17,22 @@
 # policy (no plan contract, no auto-approve, no workspace edits) — that is left
 # to whatever flow we design later, which can opt in via passthrough flags.
 #
-# Model families (compact inventory only; run `agy models` for exact display strings, then pass
-# one via AGY_MODEL):
-#   Gemini 3.8 Flash (Low|Medium|High), Gemini 3.7 Flash (Low|Medium|High),
-#   Gemini 3.6 Flash (Low|Medium|High), Gemini 3.5 Flash (Low|Medium|High), Gemini 3.1 Pro (Low|High),
-#   Claude Sonnet 4.6 (Thinking), Claude Opus 4.6 (Thinking), GPT-OSS 120B (Medium)
+# Model: the host posture — AGY_MODEL in the bridge settings file, else the built-in default
+# "Gemini 3.8 Flash (High)". `/agent-workflow-kit bridge-settings` shows the models the installed
+# agy offers and sets one.
 #
 # Usage (installed on PATH as `agy-run`):
 #   agy-run "your prompt"                    # prompt as an argument
 #   echo "your prompt" | agy-run -           # prompt from stdin
 #   agy-run @path/to/prompt.md               # prompt from a file
-#   AGY_MODEL="Claude Opus 4.6 (Thinking)" agy-run "..."   # pick a model
+#   AGY_MODEL="<display string>" agy-run "..."   # a one-run model (default: the host posture)
 #   AGY_TIMEOUT=10m agy-run "..."            # override print timeout (agy's soft bound)
 #   AGY_HARD_TIMEOUT=8m agy-run "..."        # override the hard wall-clock cap (timeout(1))
 #   AGY_MAX_PROMPT_BYTES=60000 agy-run @big.md    # LOWER the single-argv byte ceiling (default 120000;
 #                                            # the override only tightens it — it can never exceed the OS ~131072 limit)
 #   agy-run "..." -- --add-dir .             # passthrough agy flags (this wrapper stays
-#                                            # flow-agnostic; it never widens agy's own permissions)
+#                                            # flow-agnostic; it never widens agy's own permissions;
+#                                            # --model* and --effort* refuse — the model is AGY_MODEL)
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no agy, no login needed) ----------------------
@@ -56,7 +55,7 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
   AGY_HARD_TIMEOUT — hard wall-clock cap, duration string like 5m/30m/90s (built-in default = AGY_TIMEOUT, 5m)
 
-Environment: AGY_MODEL (exact display string from `agy models`; empty ⇒ agy's settings.json), AGY_TIMEOUT / AGY_HARD_TIMEOUT (duration strings), AGY_MAX_PROMPT_BYTES (single-argv byte ceiling; the override only lowers it).
+Environment: AGY_MODEL (exact display string from `agy models` — a one-run override of the host posture; empty ⇒ agy's settings.json), AGY_TIMEOUT / AGY_HARD_TIMEOUT (duration strings), AGY_MAX_PROMPT_BYTES (single-argv byte ceiling; the override only lowers it).
 Requires at run time: the agy CLI on PATH + a Google AI subscription login (--help needs neither).
 HELP
     exit 0
@@ -76,6 +75,7 @@ done < <(compgen -v 2>/dev/null | grep '_API_KEY$' || true)
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT"
+DEFAULT_AGY_MODEL="Gemini 3.8 Flash (High)"
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -96,7 +96,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -181,6 +181,35 @@ aw_apply_settings() {
   done
   return 0
 }
+aw_read_posture() {
+  local key="$1" default="$2" empty="$3" file line value notify=1
+  AW_HOST_VALUE="$default"
+  AW_HOST_SOURCE="default"
+  file="$(aw_settings_file)"
+  [[ -n "${AW_SETTINGS_NOTIFIED:-}" ]] && notify=0
+  if [[ -f "$file" && -r "$file" ]]; then
+    line="$(grep "^${key}=" "$file" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      value="${line##*$'\n'}"
+      value="${value#*=}"
+      if [[ -n "$value" && "$value" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        AW_HOST_VALUE="$value"
+        AW_HOST_SOURCE="setting"
+      elif (( notify )); then
+        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+      fi
+    fi
+  fi
+  AW_RUN_VALUE="$AW_HOST_VALUE"
+  AW_RUN_SOURCE="$AW_HOST_SOURCE"
+  if [[ -n "${!key+x}" ]]; then
+    AW_RUN_VALUE="${!key:-$empty}"
+    AW_RUN_SOURCE="environment"
+  fi
+  return 0
+}
+aw_read_posture AGY_MODEL "$DEFAULT_AGY_MODEL" ""
+AGY_MODEL="$AW_RUN_VALUE"; AGY_MODEL_SOURCE="$AW_RUN_SOURCE"
 aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
@@ -239,9 +268,6 @@ if ! command -v agy >/dev/null 2>&1; then
   exit 127
 fi
 
-# `-` (empty) => skip --model and let agy use settings.json; default to Flash (High) — asserted
-# frontier-grade (fork (a), maintainer 2026-08-14; the 3.8 pin AD-136, 2026-09-09).
-AGY_MODEL="${AGY_MODEL-Gemini 3.8 Flash (High)}"
 AGY_TIMEOUT="${AGY_TIMEOUT:-5m}"
 AGY_TIMEOUT="$(aw_effective_timeout AGY_TIMEOUT 5m)"
 # Hard wall-clock cap (defaults to AGY_TIMEOUT). agy's own --print-timeout is NOT a reliable
@@ -271,6 +297,13 @@ if [[ $# -gt 0 ]]; then
     exit 2
   fi
 fi
+for _arg in ${passthrough[@]+"${passthrough[@]}"}; do
+  case "$_arg" in
+    --model*|--effort*)
+      echo "error: passthrough flag '$_arg' is not allowed — the model is the host posture (AGY_MODEL in $(aw_settings_file)) or the AGY_MODEL environment value for one run, never a flag." >&2
+      exit 2 ;;
+  esac
+done
 
 if [[ "$prompt_src" == "-" ]]; then
   prompt="$(cat)"
@@ -321,6 +354,67 @@ if (( prompt_bytes > AGY_MAX_PROMPT_BYTES )); then
   exit 2
 fi
 
+# The effective model against the installed CLI's catalog, pre-spend — skipped when agy-review read
+# it once for the whole run (its marker), and when AGY_MODEL is explicitly empty (no model string).
+timeout_bin="$(aw_resolve_timeout_bin)"
+AGY_CATALOG_TIMEOUT=30s
+aw_agy_remedy() {
+  if [[ -z "$1" ]]; then
+    echo "       remedy: unset AGY_MODEL in the environment (the host posture then decides)." >&2
+    return 0
+  fi
+  echo "       remedy: set this line in $(aw_settings_file):" >&2
+  echo "         AGY_MODEL=$1" >&2
+  echo "       and unset AGY_MODEL in the environment." >&2
+}
+aw_agy_shown_model() {
+  if [[ -z "$AGY_MODEL" ]]; then printf '%s' "AGY_MODEL= (explicitly empty)"; return 0; fi
+  if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then printf '%s' "AGY_MODEL (a value carrying a control byte)"; return 0; fi
+  printf '%s' "AGY_MODEL='$AGY_MODEL'"
+}
+aw_agy_catalog_check() {
+  local raw="" rc=0 line="" remedy="" reason="" offered=()
+  if [[ -n "$1" ]]; then
+    raw="$("$1" --kill-after=5s "$AGY_CATALOG_TIMEOUT" agy models </dev/null 2>/dev/null)" || rc=$?
+  else
+    raw="$(agy models </dev/null 2>/dev/null)" || rc=$?
+  fi
+  if (( rc == 0 )); then
+    while IFS= read -r line; do
+      line="${line%$'\r'}"
+      [[ "$line" == *$'\t'* ]] || continue
+      line="${line#*$'\t'}"
+      if [[ -n "$line" && "$line" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then offered+=("$line"); fi
+    done <<<"$raw"
+  fi
+  if (( rc == 124 || rc == 137 )); then
+    reason="it exceeded $AGY_CATALOG_TIMEOUT"
+  elif (( rc != 0 )); then
+    reason="agy models exited $rc"
+  elif (( ${#offered[@]} == 0 )); then
+    reason="it offers no model"
+  fi
+  if [[ -n "$reason" ]]; then
+    echo "warning: the agy model catalog is unreadable ($reason) — the run proceeds unchecked; agy itself refuses a model it does not serve." >&2
+    return 0
+  fi
+  for line in "${offered[@]}"; do
+    if [[ "$line" == "$AGY_MODEL" ]]; then return 0; fi
+  done
+  remedy="${offered[0]}"
+  for line in "${offered[@]}"; do
+    if [[ "$line" == "$2" ]]; then remedy="$line"; fi
+  done
+  echo "error: $(aw_agy_shown_model) ($AGY_MODEL_SOURCE) is not a model the installed agy offers — refusing before any run is spent." >&2
+  printf -v line '%s, ' "${offered[@]}"
+  echo "       offered: ${line%, }" >&2
+  aw_agy_remedy "$remedy"
+  exit 2
+}
+if [[ -n "$AGY_MODEL" && -z "${AW_AGY_CATALOG_READ:-}" ]]; then
+  aw_agy_catalog_check "$timeout_bin" "$DEFAULT_AGY_MODEL"
+fi
+
 model_flag=()
 if [[ -n "$AGY_MODEL" ]]; then
   model_flag=(--model "$AGY_MODEL")
@@ -332,7 +426,6 @@ agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]
 # This is the real guard — a backgrounded, hung agy survives its own --print-timeout otherwise.
 # aw_resolve_timeout_bin: builtin type -P (an exported function can shadow neither `timeout` nor
 # `type` itself), normalized to an ABSOLUTE path fail-closed — nothing can masquerade as the cap.
-timeout_bin="$(aw_resolve_timeout_bin)"
 
 if [[ -z "$timeout_bin" ]]; then
   # The review child seam (flow-orchestration Phase 4): agy-review fails CLOSED at its own
@@ -357,8 +450,8 @@ rc=$?
 set -e
 if [[ $rc -eq 124 || $rc -eq 137 ]]; then
   echo "error: agy exceeded the hard cap AGY_HARD_TIMEOUT=$AGY_HARD_TIMEOUT and was terminated." >&2
-  echo "       This usually means a heavy '--add-dir' agentic run, or the slowest model looping." >&2
-  echo "       Retry with a faster model (e.g. AGY_MODEL='Gemini 3.7 Flash (Low)') or a" >&2
-  echo "       self-contained prompt without --add-dir. Raise AGY_HARD_TIMEOUT only if the run is healthy." >&2
+  echo "       This usually means a heavy '--add-dir' agentic run, or a run looping." >&2
+  echo "       Retry with a narrower, self-contained prompt without --add-dir. Raise AGY_HARD_TIMEOUT" >&2
+  echo "       only if the run is healthy." >&2
 fi
 exit $rc

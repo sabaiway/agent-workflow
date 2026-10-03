@@ -17,44 +17,6 @@ import {
   isAssemblerBanner, seedFedChangeSet, inlineArtifactOf, bodyOf, requestedBlockOf, requestedOf, fedRun,
 } from './agy-review-harness.test.mjs';
 
-describe('agy-review.sh — model policy advisory (1)', { concurrency: 2 }, () => {
-  it('warns for a non-frontier model but still runs', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)' } });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /non-frontier model 'Gemini 3.5 Flash \(Low\)'/);
-    assert.equal(r.invoked, true, 'a non-frontier model still runs (advisory, not a gate)');
-    assert.match(r.argv, /Gemini 3\.5 Flash \(Low\)/, 'the chosen model reaches agy via --model');
-  });
-
-  it('AGY_PROBE=1 silences the advisory', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.5 Flash (Low)', AGY_PROBE: '1' } });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.doesNotMatch(r.stderr, /non-frontier model/);
-  });
-
-  it('the frontier default (no AGY_MODEL) earns no advisory', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'] });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.doesNotMatch(r.stderr, /non-frontier model/);
-    assert.match(r.argv, /Gemini 3\.8 Flash \(High\)/, 'the frontier default reaches agy');
-  });
-
-  it('an explicit Gemini 3.7 Flash (High) stays FRONTIER after the 3.8 pin move — no advisory (AD-136)', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: 'Gemini 3.7 Flash (High)' } });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 0, r.stderr);
-    assert.doesNotMatch(r.stderr, /non-frontier model/, 'a FRONTIER_SET member never warns');
-    assert.match(r.argv, /Gemini 3\.7 Flash \(High\)/);
-  });
-});
-
 // ── the pre-spend capability door (AGY-1.1.13, Decision 2) ───────────────────────────────────────
 // The wrapper drives agy in --output-format json and reads the returned envelope in node, so a host
 // that cannot do that must refuse BEFORE a subscription turn is spent. The door probes CAPABILITY,
@@ -1974,9 +1936,9 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
     }
   });
 
-  it('AGY_PROBE really silences the advisory on EVERY review parent the catalog claims (behavioural)', async () => {
+  it('a one-off is refused on EVERY review parent and AGY_PROBE=1 runs it (behavioural)', async () => {
     // The catalog CLAIMS these modes are modified by the hook; prove it per parent rather than
-    // trusting a source scan: the off-frontier advisory fires without it, is silent with it.
+    // trusting a source scan: a one-off model is refused without it and runs with it.
     const hook = catalog.find((e) => e.key === 'AGY_PROBE');
     const drive = {
       'review.code': () => ['code', '--facts', 'f'],
@@ -1985,24 +1947,22 @@ describe('agy-review.sh — mode catalog ⟷ wrapper reality (manifest-pinned)',
       'review.continue': () => ['--continue'],
       'review.conversation': () => ['--conversation', 'conv-1'],
     };
-    assert.ok(hook.parents.length > 0, 'AGY_PROBE must claim at least one parent');
+    assert.deepEqual(hook.parents, Object.keys(drive), 'AGY_PROBE claims every review parent');
     for (const parent of hook.parents) {
       assert.ok(drive[parent], `no behavioural drive for claimed parent "${parent}" — add one`);
-      // Both runs must really REACH agy: asserting the diagnostic text alone would let an early
-      // failure that never dispatched pass the probe-on branch (its stderr simply lacks the string).
-      const noisy = makeSandbox();
-      const off = await run(noisy, { args: drive[parent](noisy), env: { AGY_MODEL: 'Some Weak Model' } });
-      rmSync(noisy.home, { recursive: true, force: true });
-      assert.equal(off.status, 0, `${parent}: ${off.stderr}`);
-      assert.equal(off.invoked, true, `${parent}: the control run must reach agy`);
-      assert.match(off.stderr, /non-frontier model/, `${parent}: the advisory must fire without the hook`);
+      // The probe run must really REACH agy: an early failure that never dispatched must not pass.
+      const refused = makeSandbox();
+      const off = await run(refused, { args: drive[parent](refused), env: { AGY_MODEL: 'Gemini 3.7 Flash (Low)' } });
+      rmSync(refused.home, { recursive: true, force: true });
+      assert.equal(off.status, 2, `${parent}: ${off.stderr}`);
+      assert.equal(off.invoked, false, `${parent}: a one-off is refused BEFORE any spend`);
+      assert.match(off.stderr, /one-off/, `${parent}: the refusal names the one-off`);
 
-      const quiet = makeSandbox();
-      const on = await run(quiet, { args: drive[parent](quiet), env: { AGY_MODEL: 'Some Weak Model', AGY_PROBE: '1' } });
-      rmSync(quiet.home, { recursive: true, force: true });
+      const probed = makeSandbox();
+      const on = await run(probed, { args: drive[parent](probed), env: { AGY_MODEL: 'Gemini 3.7 Flash (Low)', AGY_PROBE: '1' } });
+      rmSync(probed.home, { recursive: true, force: true });
       assert.equal(on.status, 0, `${parent}: ${on.stderr}`);
-      assert.equal(on.invoked, true, `${parent}: AGY_PROBE=1 must still reach agy — silence must come from the hook, not from an early exit`);
-      assert.doesNotMatch(on.stderr, /non-frontier model/, `${parent}: AGY_PROBE=1 must really silence it — the catalog claims it does`);
+      assert.equal(on.invoked, true, `${parent}: AGY_PROBE=1 must really run the one-off — the catalog claims it does`);
     }
   });
 });
@@ -2098,7 +2058,7 @@ describe('agy-review.sh — review receipts (AD-038)', { concurrency: 2 }, () =>
   });
 
   // The probe marker (BRIDGE-MODES-CATALOG, D3) — the twin of the sibling bridge's arm: an
-  // AGY_PROBE=1 review runs with the frontier-model advisory silenced, so its receipt is marked and
+  // AGY_PROBE=1 review is the one route to a one-off model, so its receipt is marked and
   // the kit's review-state gate rejects it. EVERY receipt carries the marker (true or false): it
   // self-declares, so the gate reads the fact rather than inferring it from a version string that
   // bumps in a different release phase. Silence is not a declaration.
@@ -2689,7 +2649,7 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     const help = runHelp('--help').stdout;
     const section = helpSection(help, SETTINGS_HEADER);
     const got = section.filter((l) => /^[A-Z][A-Z0-9_]+ —/.test(l)).map((l) => l.split(' ')[0]);
-    const want = (MANIFEST.settings ?? []).filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = (MANIFEST.settings ?? []).filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0, 'the manifest must declare settings for this wrapper');
     setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
     assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
@@ -2707,7 +2667,7 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
-    const want = ALL_SETTINGS.filter((s) => s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
+    const want = ALL_SETTINGS.filter((s) => s.kind !== 'posture' && s.appliesTo.includes(SETTINGS_CMD)).map((s) => s.key);
     assert.ok(want.length > 0);
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
@@ -2716,8 +2676,8 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');
     const armKeys = [...body[0].matchAll(/^    ([A-Z][A-Z0-9_]*)\)/gm)].map((x) => x[1]);
-    setEq(armKeys, ALL_SETTINGS.map((s) => s.key), 'validation arms ⟷ manifest keys');
-    for (const s of ALL_SETTINGS) {
+    setEq(armKeys, ALL_SETTINGS.filter((s) => s.kind !== 'posture').map((s) => s.key), 'validation arms ⟷ manifest keys (a posture key is read by aw_read_posture, never validated here)');
+    for (const s of ALL_SETTINGS.filter((x) => x.kind !== 'posture')) {
       const arm = body[0].match(new RegExp(`^    ${s.key}\\) (.*) ;;$`, 'm'));
       assert.ok(arm, `no validation arm for ${s.key}`);
       if (s.kind === 'enum') for (const v of s.values) assert.ok(arm[1].includes(`"${v}"`), `${s.key}: enum value '${v}' not pinned`);
@@ -2805,7 +2765,7 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 },
   it('a HOSTILE model string (quotes + backslash) rides the receipt strictly JSON-encoded', async () => {
     const hostile = 'we"ird \\ mo"del';
     const sb = makeSandbox();
-    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: hostile } });
+    const r = await run(sb, { args: ['code', '--facts', 'a tiny fact'], env: { AGY_MODEL: hostile, AGY_PROBE: '1', AGY_FAKE_MODELS: `id\t${hostile}\n` } });
     const receipts = readReceipts(sb.repo); // JSON.parse throwing here IS the encoding failure
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2830,7 +2790,7 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 },
     const receipts = readReceipts(sb.repo);
     rmSync(sb.home, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=Gemini 3\.8 Flash \(High\) timeout=30m$/m);
+    assert.match(r.stderr, /^review posture: model=Gemini 3\.8 Flash \(High\) source=model:default timeout=30m$/m);
     assert.deepEqual(Object.keys(receipts[0].posture), ['model'], 'timeout never enters the receipt posture');
   });
 

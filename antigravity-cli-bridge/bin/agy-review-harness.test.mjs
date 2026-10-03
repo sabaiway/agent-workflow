@@ -38,6 +38,13 @@ export const FAKE_AGY = [
   '    if [[ -n "${AGY_FAKE_HELP_EXTRA:-}" ]]; then printf "%s\\n" "$AGY_FAKE_HELP_EXTRA"; fi',
   '    exit 0 ;;',
   '  --version) printf "%s\\n" "${AGY_FAKE_VERSION:-1.1.13}"; exit 0 ;;',
+  '  models)',
+  '    printf "models %s %s\\n" "${FOO_API_KEY:-unset}" "${ANTIGRAVITY_API_KEY:-unset}" >> "${AGY_FAKE_MODELS_LOG:-/dev/null}"',
+  '    if [[ -n "${AGY_FAKE_MODELS_SLEEP:-}" ]]; then sleep "$AGY_FAKE_MODELS_SLEEP"; fi',
+  '    if [[ -n "${AGY_FAKE_MODELS+x}" ]]; then printf "%s" "$AGY_FAKE_MODELS"; else',
+  '      printf "%s\\t%s\\n" gemini-3.8-flash-high "Gemini 3.8 Flash (High)" gemini-3.7-flash-low "Gemini 3.7 Flash (Low)" claude-opus-4-6-thinking "Claude Opus 4.6 (Thinking)"',
+  '    fi',
+  '    exit "${AGY_FAKE_MODELS_STATUS:-0}" ;;',
   'esac',
   ': "${AGY_FAKE_ARGV:=/dev/null}"',
   ': "${AGY_FAKE_ENV:=/dev/null}"',
@@ -200,7 +207,7 @@ export const run = (sb, { args, env = {}, cwd, wrapper } = {}) => new Promise((s
     sentinel: join(home, `${tag}-sentinel`), adddir: join(home, `${tag}-adddir`),
     adddirMode: join(home, `${tag}-adddir-mode`), artifactMode: join(home, `${tag}-artifact-mode`),
     artifactCopy: join(home, `${tag}-artifact-copy`), turns: join(home, `${tag}-turns`),
-    dispatchCwd: join(home, `${tag}-dispatch-cwd`),
+    dispatchCwd: join(home, `${tag}-dispatch-cwd`), models: join(home, `${tag}-models`),
   };
   const child = execFile('bash', [wrapper || WRAPPER, ...args], {
     cwd: cwd || repo,
@@ -214,7 +221,7 @@ export const run = (sb, { args, env = {}, cwd, wrapper } = {}) => new Promise((s
       AGY_FAKE_ARGV: cap.argv, AGY_FAKE_ENV: cap.env, AGY_FAKE_PROMPT: cap.prompt,
       AGY_FAKE_SENTINEL: cap.sentinel, AGY_FAKE_ADDDIR: cap.adddir, AGY_FAKE_ADDDIR_MODE: cap.adddirMode,
       AGY_FAKE_ARTIFACT_MODE: cap.artifactMode, AGY_FAKE_ARTIFACT_COPY: cap.artifactCopy,
-      AGY_FAKE_TURNS: cap.turns, AGY_FAKE_CWD: cap.dispatchCwd,
+      AGY_FAKE_TURNS: cap.turns, AGY_FAKE_CWD: cap.dispatchCwd, AGY_FAKE_MODELS_LOG: cap.models,
       ...env,
     },
   }, (error, stdout, stderr) => {
@@ -232,7 +239,7 @@ export const run = (sb, { args, env = {}, cwd, wrapper } = {}) => new Promise((s
       argv: readIf(cap.argv), capEnv: readIf(cap.env), prompt: readIf(cap.prompt),
       adddir: readIf(cap.adddir).trim(), adddirMode: readIf(cap.adddirMode).trim(),
       artifactMode: readIf(cap.artifactMode).trim(), artifactCopy: readIf(cap.artifactCopy),
-      dispatchCwd: readIf(cap.dispatchCwd).trim(), turns, prompts, argvs,
+      dispatchCwd: readIf(cap.dispatchCwd).trim(), turns, prompts, argvs, modelsLog: readIf(cap.models),
     });
   });
   // Only EPIPE is a refusal working — any other stdin write failure must reach the test.

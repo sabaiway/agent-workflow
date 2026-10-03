@@ -35,12 +35,14 @@
 #   agy-review --conversation <id> [--decided @f] [--focus "…"]   # resume a specific conversation
 #
 # Environment (every optional var has an explicit default so a no-env run is safe under set -u):
-#   AGY_MODEL                default "Gemini 3.8 Flash (High)"; ANY model allowed (advisory warn off-frontier).
-#                            Set empty (AGY_MODEL=) to drop --model and use agy's settings.json.
+#   AGY_MODEL                an environment value off the host posture (AGY_MODEL in the settings file, else
+#                            "Gemini 3.8 Flash (High)") is a one-off — an explicitly empty one included —
+#                            refused pre-spend unless AGY_PROBE=1. `/agent-workflow-kit bridge-settings`
+#                            shows the models the installed agy offers and sets the host posture.
 #   AGY_HARD_TIMEOUT         default 30m  (duration string; the timeout(1) hard cap via agy-run)
 #   AGY_TIMEOUT              default = AGY_HARD_TIMEOUT (agy's soft --print-timeout)
 #   AGY_MAX_PROMPT_BYTES     default 120000 (single-argv byte ceiling; see agy.sh)
-#   AGY_PROBE=1              throwaway probe — silences the off-frontier model advisory
+#   AGY_PROBE=1              throwaway probe — the one route to a one-off model; its receipt never attests
 #   AGY_REVIEW_MAX_TOTAL_BYTES default 240000 (the chunked feed's total outgoing prompt-byte ceiling)
 #   AGY_REVIEW_ALLOW_ADDDIR  RETIRED — recognized so an existing settings line never warns, but it
 #                            arms nothing; an oversized CODE review is delivered as a chunked feed
@@ -95,10 +97,12 @@ Notes:
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
   dispatching, never fired into a known prompt
-  the review posture banner appends a banner-only timeout=<duration> field — exactly the duration
-  agy-run hands to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout
-  binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no
-  longer happen), and the field never enters the receipt posture or the D5 banner↔receipt parity
+  the review posture banner appends a banner-only source=model:<s> field — where the model came
+  from: default, setting or environment — then a banner-only timeout=<duration> field — exactly the
+  duration agy-run hands to timeout(1); the hard-timeout preflight fails CLOSED when no
+  timeout/gtimeout binary exists (the wrapper refuses by name before any CLI run, so an uncapped
+  review run can no longer happen), and neither field enters the receipt posture or the D5
+  banner↔receipt parity
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
 
@@ -130,9 +134,9 @@ Receipt:
   review never attests) and equally rejects an unmarked one (silence is not a declaration);
   posture = the ACTUAL run posture {model} (agy has no tier), written on EVERY receipt (D5) — the
   gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the
-  review), one stderr banner line states the same posture, an ATTESTING review with AGY_MODEL
-  explicitly emptied refuses pre-spend, and a model string carrying control bytes refuses
-  pre-spend in every mode; delivery = how the change set REACHED the model, currently emitted as
+  review), one stderr banner line states the same posture, a one-off model (an explicitly empty
+  AGY_MODEL included) refuses pre-spend unless AGY_PROBE=1, and a model string carrying control
+  bytes refuses pre-spend in every mode; delivery = how the change set REACHED the model, currently emitted as
   'inline' (the whole set rode one prompt — proven by construction) or 'fed' (a chunked feed whose
   per-part echo proof verified); REQUIRED on every agy code receipt and its ABSENCE is what stops a
   pre-fed-lane receipt attesting, while the gate accepts any well-formed declaration rather than a
@@ -160,11 +164,11 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
 Honesty + posture (D4/D5):
   a run whose output carries NO recognized '### Verdict' section — empty output included — exits 4
   with NO receipt: a FAILED review to RE-RUN, never a fatal session error. One stderr banner line
-  states the ACTUAL run posture (review posture: model=… timeout=…) and the receipt records the
+  states the ACTUAL run posture (review posture: model=… source=… timeout=…) and the receipt records the
   same posture {model} (agy has no tier; the timeout field is banner-only — never a receipt
-  field). Quote the posture banner verbatim when labeling this dispatch. An ATTESTING review with
-  AGY_MODEL explicitly emptied refuses pre-spend (the actual model would be unknowable;
-  AGY_PROBE=1 is exempt), and a model string carrying control bytes refuses pre-spend in every
+  field). Quote the posture banner verbatim when labeling this dispatch. A one-off model — an
+  AGY_MODEL differing from the host posture, an explicitly empty one included — refuses pre-spend
+  unless AGY_PROBE=1, and a model string carrying control bytes refuses pre-spend in every
   mode.
 
 Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escape is AGY_PROBE=1).
@@ -176,6 +180,7 @@ esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES"
+DEFAULT_AGY_REVIEW_MODEL="Gemini 3.8 Flash (High)"
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -196,7 +201,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -281,11 +286,40 @@ aw_apply_settings() {
   done
   return 0
 }
+aw_read_posture() {
+  local key="$1" default="$2" empty="$3" file line value notify=1
+  AW_HOST_VALUE="$default"
+  AW_HOST_SOURCE="default"
+  file="$(aw_settings_file)"
+  [[ -n "${AW_SETTINGS_NOTIFIED:-}" ]] && notify=0
+  if [[ -f "$file" && -r "$file" ]]; then
+    line="$(grep "^${key}=" "$file" 2>/dev/null || true)"
+    if [[ -n "$line" ]]; then
+      value="${line##*$'\n'}"
+      value="${value#*=}"
+      if [[ -n "$value" && "$value" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        AW_HOST_VALUE="$value"
+        AW_HOST_SOURCE="setting"
+      elif (( notify )); then
+        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+      fi
+    fi
+  fi
+  AW_RUN_VALUE="$AW_HOST_VALUE"
+  AW_RUN_SOURCE="$AW_HOST_SOURCE"
+  if [[ -n "${!key+x}" ]]; then
+    AW_RUN_VALUE="${!key:-$empty}"
+    AW_RUN_SOURCE="environment"
+  fi
+  return 0
+}
 # Snapshot BEFORE the shared reader runs: it EXPORTS a settings-file value under the same name, so a
 # check made afterwards cannot tell a file value from an env override — and the retirement notice's
 # recovery differs by source (a file `--unset` cannot clear an env override).
 AGY_ALLOW_ADDDIR_FROM_ENV=0
 if [[ -n "${AGY_REVIEW_ALLOW_ADDDIR+x}" ]]; then AGY_ALLOW_ADDDIR_FROM_ENV=1; fi
+aw_read_posture AGY_MODEL "$DEFAULT_AGY_REVIEW_MODEL" ""
+HOST_AGY_MODEL="$AW_HOST_VALUE"; AGY_MODEL="$AW_RUN_VALUE"; AGY_MODEL_SOURCE="$AW_RUN_SOURCE"
 aw_apply_settings
 
 # --- Effective-timeout resolver (D5 banner honesty; AD-061) --------------------
@@ -339,23 +373,16 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 
-DEFAULT_AGY_REVIEW_MODEL="Gemini 3.8 Flash (High)"
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="5.7.1"  # aw-version-anchor
-# `-` not `:-` so an EXPLICIT empty AGY_MODEL= survives (drop --model, use settings.json — agy.sh:52).
-AGY_MODEL="${AGY_MODEL-$DEFAULT_AGY_REVIEW_MODEL}"
-# D5 control-byte screen — IMMEDIATELY after resolution, BEFORE the off-frontier advisory (or any
-# other interpolation) can echo raw newline/ESC bytes into stderr/the terminal (round-2 fold).
+AW_BRIDGE_VERSION="6.0.0"  # aw-version-anchor
+# D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
+# newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
   echo "error: AGY_MODEL contains control bytes — fix the setting (env or bridge-settings.conf) and re-run." >&2
   exit 2
 fi
-# Frontier review models. ANY model is allowed; a sub-frontier one only earns a soft, silenceable
-# warning. Gemini 3.8 Flash (High) is asserted frontier-grade (AD-136, maintainer 2026-09-09); 3.7 Flash
-# (High) stays in the set (fork (a), maintainer 2026-08-14).
-FRONTIER_SET=("Gemini 3.8 Flash (High)" "Gemini 3.7 Flash (High)" "Gemini 3.1 Pro (High)" "Claude Opus 4.6 (Thinking)" "Claude Sonnet 4.6 (Thinking)")
 
 # Duration-string timeouts (NOT codex's bare seconds): agy-run forwards a duration to --print-timeout,
 # and the timeout(1) hard cap is a duration too — never numerically compared, so 30m vs 2h is fine.
@@ -678,14 +705,69 @@ if [[ ! -f "$AGY_ENVELOPE_READER" ]]; then
   exit 127
 fi
 
-# --- Model policy (advisory, NOT a gate) -------------------------------------
-is_frontier=0
-for _m in "${FRONTIER_SET[@]}"; do
-  [[ "$AGY_MODEL" == "$_m" ]] && { is_frontier=1; break; }
-done
-if [[ "$is_frontier" != "1" && "$AGY_PROBE" != "1" ]]; then
-  echo "warning: reviewing with a non-frontier model '${AGY_MODEL:-<settings.json default>}' — results may be" >&2
-  echo "         weaker (quality-first). Set AGY_PROBE=1 to silence, or AGY_MODEL to a frontier model." >&2
+# --- The effective model against the installed CLI's catalog, then the one-off rule (pre-spend) ---
+# ONE catalog read per user-visible run: the exported marker makes every child agy-run (the single
+# dispatch and every fed turn) skip its own read, whatever this read's outcome or its absence.
+AGY_CATALOG_TIMEOUT=30s
+aw_agy_remedy() {
+  if [[ -z "$1" ]]; then
+    echo "       remedy: unset AGY_MODEL in the environment (the host posture then decides)." >&2
+    return 0
+  fi
+  echo "       remedy: set this line in $(aw_settings_file):" >&2
+  echo "         AGY_MODEL=$1" >&2
+  echo "       and unset AGY_MODEL in the environment." >&2
+}
+aw_agy_shown_model() {
+  if [[ -z "$AGY_MODEL" ]]; then printf '%s' "AGY_MODEL= (explicitly empty)"; return 0; fi
+  if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then printf '%s' "AGY_MODEL (a value carrying a control byte)"; return 0; fi
+  printf '%s' "AGY_MODEL='$AGY_MODEL'"
+}
+aw_agy_catalog_check() {
+  local raw="" rc=0 line="" remedy="" reason="" offered=()
+  if [[ -n "$1" ]]; then
+    raw="$("$1" --kill-after=5s "$AGY_CATALOG_TIMEOUT" agy models </dev/null 2>/dev/null)" || rc=$?
+  else
+    raw="$(agy models </dev/null 2>/dev/null)" || rc=$?
+  fi
+  if (( rc == 0 )); then
+    while IFS= read -r line; do
+      line="${line%$'\r'}"
+      [[ "$line" == *$'\t'* ]] || continue
+      line="${line#*$'\t'}"
+      if [[ -n "$line" && "$line" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then offered+=("$line"); fi
+    done <<<"$raw"
+  fi
+  if (( rc == 124 || rc == 137 )); then
+    reason="it exceeded $AGY_CATALOG_TIMEOUT"
+  elif (( rc != 0 )); then
+    reason="agy models exited $rc"
+  elif (( ${#offered[@]} == 0 )); then
+    reason="it offers no model"
+  fi
+  if [[ -n "$reason" ]]; then
+    echo "warning: the agy model catalog is unreadable ($reason) — the run proceeds unchecked; agy itself refuses a model it does not serve." >&2
+    return 0
+  fi
+  for line in "${offered[@]}"; do
+    if [[ "$line" == "$AGY_MODEL" ]]; then return 0; fi
+  done
+  remedy="${offered[0]}"
+  for line in "${offered[@]}"; do
+    if [[ "$line" == "$2" ]]; then remedy="$line"; fi
+  done
+  echo "error: $(aw_agy_shown_model) ($AGY_MODEL_SOURCE) is not a model the installed agy offers — refusing before any run is spent." >&2
+  printf -v line '%s, ' "${offered[@]}"
+  echo "       offered: ${line%, }" >&2
+  aw_agy_remedy "$remedy"
+  exit 2
+}
+export AW_AGY_CATALOG_READ=1
+if [[ -n "$AGY_MODEL" ]]; then aw_agy_catalog_check "$aw_review_timeout_bin" "$DEFAULT_AGY_REVIEW_MODEL"; fi
+if [[ "$AGY_MODEL" != "$HOST_AGY_MODEL" && "$AGY_PROBE" != "1" ]]; then
+  echo "error: $(aw_agy_shown_model) is a one-off — the host posture is '$HOST_AGY_MODEL', and only a probe (AGY_PROBE=1) runs a one-off; refusing before any run is spent." >&2
+  aw_agy_remedy "$AGY_MODEL"
+  exit 2
 fi
 
 # --- Output shape + grounding helpers (the wrapper is the source of truth) -----
@@ -1691,7 +1773,7 @@ while [[ $# -gt 0 ]]; do
       NONCE_FLAG="$2"; NONCE_FLAG_SET=1; shift 2 ;;
     --)
       echo "error: this wrapper OWNS the review posture — no '--' passthrough. The only escapes are" >&2
-      echo "       AGY_PROBE=1 (off-frontier model). An oversized code review is a chunked feed, not a flag." >&2
+      echo "       AGY_PROBE=1 (a probe, the one route to a one-off model). An oversized code review is a chunked feed, not a flag." >&2
       exit 2 ;;
     --*)
       echo "error: unknown flag '$1'." >&2; usage; exit 2 ;;
@@ -2076,26 +2158,16 @@ else
   fi
 fi
 
-# --- D5 pre-spend posture gate + banner (one line, the ACTUAL run posture) ------------------
-# The control-byte screen already ran at AGY_MODEL resolution (before any interpolation). An
-# ATTESTING review (fresh code mode, guards on) whose wrapper cannot know the actual model
-# (AGY_MODEL explicitly emptied → the CLI's own settings default decides) refuses pre-spend;
-# AGY_PROBE=1 runs are exempt (their receipts never attest and record model null).
-# Scoped to the ATTESTING branch only (grounded code, guards on): plan / diff / --ungrounded
-# code mint receipts that never attest, so an emptied model just records posture.model null.
-if [[ -z "$AGY_MODEL" && -z "$resume_mode" && "$REVIEW_PROBE" != "true" && "$REVIEW_ARTIFACT" == "code" && -n "$FACTS_CONTENT" ]]; then
-  echo "error: AGY_MODEL is explicitly empty, so the ACTUAL review model is unknowable (the agy CLI's" >&2
-  echo "       own settings default decides) — an attesting review refuses pre-spend. Fix: unset" >&2
-  echo "       AGY_MODEL (wrapper default), or set the real model display string; AGY_PROBE=1 is exempt." >&2
-  exit 2
-fi
+# --- D5 banner (one line, the ACTUAL run posture) ------------------------------------------
+# An explicitly empty AGY_MODEL reaches here only as a probe (the one-off rule above); its receipt
+# records model null.
 # The timeout field is BANNER-ONLY (AD-061): it prints exactly the duration agy-run hands to
 # timeout(1) and never enters the receipt posture. The banner uses the PARENT-preflight-resolved
 # path (builtin type -P, absolute); the child re-resolves at dispatch under the exported
 # AGY_REQUIRE_TIMEOUT_BIN seam, whose missing-binary lane refuses — so an uncapped review
 # dispatch cannot exist on either stage.
 aw_timeout_banner="$(aw_timeout_label "$aw_review_timeout_bin" "$AGY_HARD_TIMEOUT")"
-echo "review posture: model=${AGY_MODEL:-<agy settings default>} timeout=$aw_timeout_banner" >&2
+echo "review posture: model=${AGY_MODEL:-<agy settings default>} source=model:$AGY_MODEL_SOURCE timeout=$aw_timeout_banner" >&2
 
 # --- Execute via agy-run (single home of timeout + subscription + byte ceiling) ---
 # The dispatch is captured PRIVATELY as an envelope and its `response` becomes both the

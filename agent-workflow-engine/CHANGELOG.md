@@ -4,6 +4,15 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.11.0 — the quality-first rule: every kept or attesting bridge run is on the user's chosen model (AD-169)
+
+`references/orchestration.md`, §5: each bridge runs on its **host posture** — the model the user set in the bridge
+settings file, else the bridge's built-in default. A weaker model is the user's choice in that setting, never the
+orchestrator's per call; a probe is the one route to a one-off, and its review receipt never attests. The quota
+lever left to the orchestrator is the recipe. The "prefer the cheapest model that fits" advice is gone, and the L2
+lane and the red lines name the host posture where they named "frontier bridge models". MINOR: the canon's rule
+changes; no script or template changed. Published with kit 14.21.0, whose bundled bridges enforce it.
+
 ## 5.10.1 — the planning canon's retry test matches the whole retry sentence (AD-161)
 
 `test/planning-canon.test.mjs` now checks the retry sentence of `references/planning.md` clause by clause, in order,

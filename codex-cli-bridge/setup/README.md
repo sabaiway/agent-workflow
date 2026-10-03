@@ -70,9 +70,9 @@ if it reports a missing git work tree or root `AGENTS.md`, run it from a project
 
 - The wrappers are **subscription-only** by design and will not use api-key billing.
 - `codex-exec` runs a **workspace-write** sandbox with **network OFF**; `codex-review` runs
-  **read-only**. They also pin the model/effort (refusing ANY non-pinned model or effort, a stronger
-  one included; whether the pinned id is still the strongest selectable model is a hand-checked claim
-  with no gate — see `../SKILL.md`), enforce a hard
+  **read-only**. They also run on the host posture — `CODEX_MODEL` / `CODEX_EFFORT` from the
+  bridge settings file, else `gpt-6.1-sol` / `high` — checked against the installed CLI's catalog,
+  and refuse a one-off model or effort unless `CODEX_PROBE=1` (see `../SKILL.md`), enforce a hard
   timeout, capture only codex's final message, and block codex from writing git via a shim — see
   [`../references/sandbox-and-flags.md`](../references/sandbox-and-flags.md) and the knob table in
   [`../SKILL.md`](../SKILL.md#environment-knobs). No setup is needed to enable these — they are on by

@@ -672,9 +672,9 @@ export const surveyBridges = (deps = {}) => {
     // Preserve findOnPath's THREE-state result (present | missing | unknown): an `unknown` (EACCES,
     // "cannot confirm") must stay distinct from a real `missing` — never flattened to a false boolean.
     const wrappers = m.wrapperCmds.map((cmd) => ({ cmd, state: probe(cmd, deps).state }));
-    // Fact-only: the settings knobs ACTIVE (env/file, non-default) for THIS bridge. Model/effort are
-    // structurally absent from the registry, so this can NEVER carry a model claim (the survey's
-    // no-default-model-claim invariant). Localized-on-error like every other survey.
+    // Fact-only: the settings knobs ACTIVE (env/file, non-default) for THIS bridge. The model keys are
+    // knobs too, but their rows live in the snapshot's `posture`, never `active`, so the survey still
+    // emits no model field (its no-default-model-claim invariant). Localized-on-error like every survey.
     const settings = snapshot.error
       ? { error: snapshot.error }
       : { active: snapshot.active.filter((a) => a.bridge === m.name) };

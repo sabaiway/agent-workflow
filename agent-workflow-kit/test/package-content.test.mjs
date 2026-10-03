@@ -79,9 +79,11 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review-await-guard.test.mjs',
+      'bridges/antigravity-cli-bridge/bin/agy-model-posture.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-exec.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-review.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-await-guard.test.mjs',
+      'bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
@@ -216,6 +218,7 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/set-recipe-roster.mjs',
       'tools/orchestration-readme.mjs',
       'tools/bridge-posture.mjs',
+      'tools/bridge-catalog.mjs',
       // the cheap-lane subagent writer, its READ core (recipes.mjs imports it, so a payload drop
       // breaks the advisor at load) + the bundled vehicles
       'tools/cheap-agents.mjs',
@@ -861,7 +864,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 345 = 344 + tools/mount-masks.mjs - the sandbox-masks lane's mount-table judge
     // 347 = 345 + tools/jev-guide.mjs and references/modes/jev.md - the Jev guide; 349 = 347 + tools/jev-facts.mjs and tools/jev-connect.mjs - the connect command (story S8)
     // 352 = 349 + tools/jev-skill.mjs and the vendored pair references/vendor/typesafe-ai/{SKILL.md.pinned,LICENSE} - the skill command (story S9)
-    assert.equal(packed.length, 352, `tarball file count drifted (${packed.length}\u2260 352)`);
+    // 354 = 352 + bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs and bridges/antigravity-cli-bridge/bin/agy-model-posture.test.mjs - the model posture suites (story S1 of BRIDGE-MODEL-IS-ONE-USER-SETTING)
+    // 355 = 354 + tools/bridge-catalog.mjs - the model catalog reader (story S2 of BRIDGE-MODEL-IS-ONE-USER-SETTING)
+    assert.equal(packed.length, 355, `tarball file count drifted (${packed.length}\u2260 355)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

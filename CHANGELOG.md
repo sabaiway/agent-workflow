@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-03 — AD-169: the bridge model is one host setting (codex-cli-bridge 4.0.0 and antigravity-cli-bridge 6.0.0 MAJOR, engine 5.11.0 MINOR, kit 14.21.0 MINOR; memory 8.1.3 unchanged)
+
+**Each bridge runs the model the user set in the host bridge settings file (`CODEX_MODEL`, `CODEX_EFFORT`,
+`AGY_MODEL`), else its default — codex now `gpt-6.1-sol` at effort `high`, agy `Gemini 3.8 Flash (High)` — checked
+before any run against the models the installed CLI offers; `/agent-workflow-kit bridge-settings` shows each bridge's
+model, its source and the offered models, and checks a set model against that list before writing it.** A run off the
+host posture is a one-off that only a probe may run: `codex-exec`, `codex-review` and `agy-review` refuse any other
+before any spend, naming the settings lines that fix it, `codex-exec` and `agy-run` refuse a model flag after `--`, and
+every wrapper refuses a model its installed CLI does not offer (the bridges' MAJOR). The manifests declare the keys with a new setting kind `posture`; the new leaf
+`tools/bridge-catalog.mjs` reads both catalogs, bounded, with the API keys cleared. The engine's quality-first rule
+now reads: every kept or attesting run is on the user's chosen model, the frontier pick being the default. The agy
+frontier list, its warning and the 3.5 Flash text are gone; the shipped text names each default and points at the
+command. Contracts `docs/ai/specs/bridges/bridge-model.md` (S1–S17) and `bridge-settings.md` (S1–S14), live; twelve
+diff-council minors recorded in `docs/debt.md`.
+
 ## 2026-10-02 — AD-168: the kit installs the Jev vendor skill (kit 14.20.0 MINOR, codex-cli-bridge 3.8.1 and antigravity-cli-bridge 5.7.1 PATCH; memory 8.1.3 and engine 5.10.1 unchanged)
 
 **The new command `tools/jev-skill.mjs` writes the vendor's Jev skill, pinned at v0.5.7 and digest-checked, as one

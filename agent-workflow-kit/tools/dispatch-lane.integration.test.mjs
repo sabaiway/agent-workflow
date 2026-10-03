@@ -77,11 +77,15 @@ const FAKE_CODEX = [
 
 // The delegate that never finishes: the wrapper is SIGKILLed from outside while this one sleeps,
 // which is exactly the state a reaped host leaves — the pre-spend reservation published, the
-// terminal receipt never.
+// terminal receipt never. It answers the catalog read at once, so the kill lands after the reservation.
 const SLEEPING_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'if [[ "${1:-}" == "debug" ]]; then cat <<EOF',
+  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"}]}]}',
+  'EOF',
+  'exit 0; fi',
   'cat >/dev/null',
   'sleep 30',
   '',
