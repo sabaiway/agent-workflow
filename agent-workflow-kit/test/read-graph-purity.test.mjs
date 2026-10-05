@@ -110,14 +110,14 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     assert.match(readFileSync(writer, 'utf8'), /fs\.writeFile\(/u, 'cheap-agents.mjs really does write, directly');
   });
 
-  it('spec:held-session/S4 procedures reaches the delegation read leaf and never its append facade', () => {
-    const root = resolve(TOOLS_DIR, 'procedures.mjs');
+  it('spec:held-session/S4 review-state reaches the delegation read leaf; procedures reaches neither it nor the append lane', () => {
     const leaf = resolve(TOOLS_DIR, 'dispatch-store-read.mjs');
     const facade = resolve(TOOLS_DIR, 'dispatch-store.mjs');
     const append = resolve(TOOLS_DIR, 'store-append.mjs');
-    const closure = closureOf([root]);
     assert.ok(edges.has(leaf), 'dispatch-store-read.mjs must be a tools module');
-    assert.ok(closure.has(leaf), 'procedures.mjs must reach dispatch-store-read.mjs');
+    assert.ok(closureOf([resolve(TOOLS_DIR, 'review-state.mjs')]).has(leaf), 'review-state.mjs must reach dispatch-store-read.mjs — otherwise this claim is about nothing');
+    const closure = closureOf([resolve(TOOLS_DIR, 'procedures.mjs')]);
+    assert.equal(closure.has(leaf), false, 'S4: procedures.mjs still reaches the delegation read leaf');
     assert.equal(closure.has(facade), false, 'procedures.mjs must not reach dispatch-store.mjs');
     assert.equal(closure.has(append), false, 'procedures.mjs must not reach store-append.mjs');
     assert.equal([...closureOf([leaf])].includes(facade), false, 'the read leaf must not import its facade');

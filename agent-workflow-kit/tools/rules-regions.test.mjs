@@ -24,7 +24,7 @@ const LENS_TITLE = 'Planning, review & process-fidelity invariants';
 const MATCH_NUMBERS = ['5', '17'];
 const REGION_CASES = [
   { id: 'communication', title: COMMS_TITLE, canon: 'template', priorCount: 5 },
-  { id: 'story-sessions', title: STORY_TITLE, canon: 'template', priorCount: 1 },
+  { id: 'story-sessions', title: STORY_TITLE, canon: 'template', priorCount: 2 },
   { id: 'lens', title: LENS_TITLE, canon: 'engine', priorCount: 0 },
 ];
 const STORY_RE = /^### 2[.]([0-9]+)[.] Story sessions/;
@@ -42,10 +42,11 @@ const RETAINED_FUNCTIONS = [
 const RETAINED_VALUES = ['LENS_HEADING_RE', 'COMMS_HEADING_RE', 'COMMS_PRIORS', 'OUTCOME_LINES'];
 const VINTAGE_SENTENCE = 'Append the OUTGOING canon here in the same release that changes the template '
   + SECTION_SIGN + '2.5 or ' + SECTION_SIGN + '2.7 region ' + EM_DASH + ' the fragment-or-prior reconcile depends on it.';
-// The two appended priors: the 7da8cff template's agent_rules.md:66-75 and :95-96, headed 2.x, LF-joined.
+// Appended priors, headed 2.x, LF-joined: 7da8cff's agent_rules.md:66-75 and :95-96, a1a704d's :96-97.
 const NEW_PRIORS = [
   { id: 'communication', index: 4, bytes: 2788, sha256: '8737e992e7a513acf55da93fdc11ac8a22c3c51cb3922681599c9ce36f320279' },
   { id: 'story-sessions', index: 0, bytes: 923, sha256: '30f85c460df4945fb33aaf438ddbdf33d0ba14fd9bf1863f1c54f47b042dc38a' },
+  { id: 'story-sessions', index: 1, bytes: 1154, sha256: 'bcafadebf34d0f08c68da0e4f98f633202db089d5617914c0022c9fffd22a0b9' },
 ];
 const IMPORT_RE = new RegExp(BACKSLASH + 'bimport(?:' + BACKSLASH + 's+|[(])[^;]+', 'g');
 const WRITER_RE = /atomic-write|writeFile/;
@@ -209,7 +210,7 @@ describe('closed region table spec:rules-regions/S1', () => {
       assert.equal(region.label, makeHeading('x', expected.title));
       assert.equal(region.canon, expected.canon);
       assert.ok(Array.isArray(region.priors));
-      assert.equal(region.priors.length, expected.priorCount);
+      assert.equal(region.priors.length, expected.priorCount, expected.id + ' prior count (S6: two story priors)');
       for (const number of MATCH_NUMBERS) {
         const match = makeHeading(number, expected.title).match(region.headingRe);
         assert.ok(match, expected.id + ' matches heading ' + number);
@@ -320,23 +321,22 @@ describe('template span reader spec:rules-regions/S3', () => {
 });
 
 describe('prior vintage contract spec:rules-regions/S4', () => {
-  it('keeps five Communication bodies in vintage order and one story prior spec:session-rules/S2', () => {
+  it('keeps five Communication bodies and two story priors in vintage order spec:session-rules/S2 spec:story-flow/S6', () => {
     const regions = getRegions();
     const communication = regions.find(({ id }) => id === 'communication');
     const story = regions.find(({ id }) => id === 'story-sessions');
     assert.deepEqual(communication.priors, lens.COMMS_PRIORS);
     assert.equal(communication.priors.length, REGION_CASES[0].priorCount);
-    assert.equal(story.priors.length, REGION_CASES[1].priorCount);
+    assert.equal(story.priors.length, REGION_CASES[1].priorCount, 'S6: the one-task body is not the second story prior');
     for (const prior of communication.priors) {
       assert.equal(prior.split(LF)[0], makeHeading('x', COMMS_TITLE));
     }
     assert.ok(communication.priors[4].startsWith(communication.priors[3] + LF), 'the newest prior extends the one before it');
   });
-
   for (const { id, index, bytes, sha256 } of NEW_PRIORS) {
-    it('pins the ' + id + ' prior appended by this release by its byte length and sha256', () => {
+    it('pins the ' + id + ' prior ' + index + ' by its byte length and sha256', () => {
       const prior = getRegions().find((region) => region.id === id).priors[index];
-      assert.equal(typeof prior, 'string', id + ' carries prior ' + index);
+      assert.equal(typeof prior, 'string', 'S6: ' + id + ' carries no prior ' + index);
       const encoded = Buffer.from(prior, 'utf8');
       assert.equal(encoded.length, bytes);
       assert.equal(createHash('sha256').update(encoded).digest('hex'), sha256);

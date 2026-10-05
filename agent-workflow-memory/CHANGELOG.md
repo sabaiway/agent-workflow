@@ -4,6 +4,16 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.1.4 — the templates carry the four-session story flow (AD-170)
+
+`references/templates/agent_rules.md`: §2.6 is the engine 5.12.0 lens render (the Finding scope, Spec-first, Fold
+minimally and Heavy review bullets name the spec review) and §2.7 Story sessions states four sessions (spec and plan,
+tests, code, then diff review, release and record) and gives a bridge executor only work that writes new tests or
+code; both regions stay byte-identical to the kit's copies; §2.7's one source is the kit's template, §2.6's the
+engine's `references/agent-rules-lens.md`.
+`references/templates/SPEC_TEMPLATE.md`: a draft spec exists at the spec review of the session that writes its plan.
+No script changed. PATCH: only a new bootstrap's text changes.
+
 ## 8.1.3 — the ADR navigator stamps a cap it honours (AD-167)
 
 `references/scripts/archive-decisions.mjs`: `--write-navigator` stamped `maxLines: 200` into `docs/ai/adr/log.md`

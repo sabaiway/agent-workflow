@@ -27,6 +27,11 @@ const ROUTER_LINE = 'read-only — read `${CLAUDE_SKILL_DIR}/references/modes/ti
 const RUN_LINE = 'node ${CLAUDE_SKILL_DIR}/tools/tier-guide.mjs --dir <project> --json';
 const USAGE = [['--bogus'], ['--dir'], ['--dir', '--json'], ['--format=json'], ['--json', 'extra'],
   ['--help', '--json'], ['-h', '--dir', '.'], ['--help', '--help']];
+const TASK_LINE = 'A task is one row of a story\'s plan, handed out in one prompt from the task template; the story commits once, after its diff review.';
+const TASK_MEANINGS = { TASK_NAME: /the task in a few plain words/, PLAN_PATH: /the plan under docs\/plans that carries the row/,
+  ROW_LINE: /the ledger row, copied verbatim/, FILE_PATH: /a path the carrier may write, one line per path, none ignored by git/,
+  SCENARIO_LINE: /a scenario line of the governing spec, verbatim, or the acceptance bullet of a plan that governs none/,
+  RUN_COMMAND: /a command line the carrier runs, the row's tests/, FORBIDDEN_COMMAND: /a command the carrier must not run, such as git commit before the diff review/ };
 const cells = {};
 
 const runMain = (argv, env) => {
@@ -60,9 +65,9 @@ after(() => {
 });
 
 describe('spec:tier-guide/S1 the tier text in every rendered state', { skip: skipWithoutGit }, () => {
-  it('names the tier, the sessions, both templates, every key and the Recommendations pointer', () => {
+  it('names the tier, the task line, the four sessions, both templates, every key and the Recommendations pointer spec:story-flow/S7', () => {
     const { tier } = envelopeOf('E1-absent');
-    for (const pattern of [/^An epic is /, /^A story is /, /^A task is /, /spec, plan, tests, code, diff review \+ release \+ record/]) {
+    for (const pattern of [/^An epic is /, /^A story is /, /^A task is /, /four sessions: spec and plan, tests, code, diff review \+ release \+ record/]) {
       assert.equal(tier.filter((line) => pattern.test(line)).length, 1, String(pattern));
     }
     for (const name of ['EPIC_TEMPLATE.md', 'TASK_TEMPLATE.md']) {
@@ -73,6 +78,10 @@ describe('spec:tier-guide/S1 the tier text in every rendered state', { skip: ski
       assert.equal(tier.filter((line) => new RegExp(`^\\s*${key}: \\S`).test(line)).length, expected, key);
     }
     assert.match(tier.find((line) => /^\s*EPIC_ID: /.test(line)), /stem.*Queue|Queue.*stem/);
+    assert.deepEqual(tier.filter((line) => line.startsWith('A task is ')), [TASK_LINE]);
+    const taskKeys = ((rest) => rest.slice(0, rest.findIndex((line) => !/^\s/.test(line))))(tier.slice(tier.indexOf('Task template keys:') + 1));
+    assert.deepEqual(taskKeys.map((line) => line.trim().split(':')[0]), TASK_KEYS, 'the seven keys, in the template\'s order');
+    for (const line of taskKeys) assert.match(line, TASK_MEANINGS[line.trim().split(':')[0]], line);
     const pointer = `node ${shellQuoteArg(`${TOOLS}/recommendations.mjs`)} --cwd ${shellQuoteArg(cells['E1-absent'].dir)}`;
     assert.equal(tier.filter((line) => line === pointer).length, 1);
   });
@@ -177,10 +186,10 @@ describe('spec:tier-guide/S11 the JSON envelope carries the facts of the render'
     }
   });
 
-  it('prints an E3 epic\'s leftover Cleanup after its stories in hand, so the next step is the story\'s', () => {
-    const lines = render('E3-cleanup').stdout.split(LF);
-    const story = lines.indexOf('  story S2 - stage S1');
-    const cleanup = lines.findIndex((line) => /^ {2}1\. prune the checkpoints of the plan/.test(line));
-    assert.ok(story > 0 && cleanup > story, `story ${story}, cleanup ${cleanup}`);
+  it('prints an E3 epic\'s leftover in its order and no story line beside it', () => {
+    const lines = render('E3-leftover-staged').stdout.split(LF);
+    assert.ok(!lines.some((line) => line.startsWith('  story ')), 'no story is in hand while the leftover stands');
+    const [diff, commit] = ['git diff --cached', "git commit -m 'Greet the reader'"].map((line) => lines.indexOf(line));
+    assert.ok(diff > 0 && commit > diff, `diff ${diff}, commit ${commit}`);
   });
 });

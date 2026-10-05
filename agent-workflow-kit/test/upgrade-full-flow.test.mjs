@@ -45,7 +45,7 @@ const SCREEN_TOOL = 'recommendations.mjs';
 const PROFILE_PATH = 'references/reference-profile.json';
 const PROFILE_GAP = 'profile-gap';
 const SESSION_CLOSE_LEAD = 'Two blocks for the user';
-const TASK_PHRASE = 'one task per session';
+const TASK_PHRASE = 'only when it writes new tests or code';
 const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all']];
 // The SLOT_RECIPES value set of each target slot's type, written out by hand.
 const SLOT_VALUES = [
@@ -351,7 +351,7 @@ const detectSessionRules = (record) => {
   const comms = regionText(text, COMMS_HEADING);
   const story = regionText(text, STORY_HEADING);
   if (comms?.split(SESSION_CLOSE_LEAD).length !== 2) return { reason: 'the Communication region does not carry the session-close bullet once' };
-  if (!story?.includes(TASK_PHRASE)) return { reason: 'the Story sessions region does not carry the one-task sentence' };
+  if (!story?.includes(TASK_PHRASE)) return { reason: 'the Story sessions region does not carry the bridge-executor sentence' };
   return second.rules.bytes.equals(first.rules.bytes) ? null : { reason: 'the second reconcile changed the rules file' };
 };
 

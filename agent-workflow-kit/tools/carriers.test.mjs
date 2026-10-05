@@ -249,8 +249,8 @@ describe('carriers - the epic and task tier rows (spec:carriers/S11)', () => {
 
   it('pins the three exact slice sentences for the epic and task slots', () => {
     assert.equal(SLICE_BY_SLOT['epic.author'], 'a slice is a brief naming the intent, the value, the non-goals and the stories in order; the subagent drafts the epic file from it, and the orchestrator runs the shape check on the draft as its own');
-    assert.equal(SLICE_BY_SLOT['task.author'], 'a slice is one ledger row of the plan with the contracts it reads; the subagent writes the task brief from it, and the orchestrator stamps and checks the brief itself');
-    assert.equal(SLICE_BY_SLOT['task.execute'], 'a slice is one stamped brief; the subagent runs it inside the Files the brief names and reports the paths it changed, and the orchestrator runs the Acceptance commands itself');
+    assert.equal(SLICE_BY_SLOT['task.author'], "no slice the flow dispatches: the orchestrator writes each row's prompt itself, whatever this slot resolves to", 'S11: task.author still words a slice the flow dispatches');
+    assert.equal(SLICE_BY_SLOT['task.execute'], "a slice is one prompt the orchestrator wrote from one ledger row; the subagent runs it inside the Files the prompt names and reports the paths it changed, and the orchestrator runs the row's tests itself", 'S11: task.execute still words a stamped brief');
   });
 
   it('dispatches the task execute slice and never carries the epic review slot', () => {
@@ -258,6 +258,10 @@ describe('carriers - the epic and task tier rows (spec:carriers/S11)', () => {
     assert.equal(dispatchForm({ activity: 'task', slot: 'execute', state: 'placed' })[0], SLICE_BY_SLOT['task.execute']);
     assert.deepEqual(dispatchForm({ activity: 'epic', slot: 'review', state: 'placed' }), []);
   });
+});
+
+describe('spec:story-flow/S19 dispatchForm for task.author returns its slice sentence alone', () => {
+  it('renders no dispatch line for a slot whose slice the flow never dispatches', () => assert.deepEqual(dispatchForm({ activity: 'task', slot: 'author', state: 'placed' }), [SLICE_BY_SLOT['task.author']], 'S19: task.author still renders the dispatch lines'));
 });
 
 describe('the dispatch form — the ONE wording source, pinned whole', () => {

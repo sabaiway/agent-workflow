@@ -127,7 +127,7 @@ describe('FALLBACK_LENS_ADDITIONAL_ONLY — the formalized fallback-lens contrac
   it('the constant is the exact additional-only sentence and the report renders it verbatim', () => {
     assert.equal(
       FALLBACK_LENS_ADDITIONAL_ONLY,
-      'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe.',
+      'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your plan or diff review recipe.',
     );
     const project = makeProject();
     const out = formatResult(writeCheapAgents({ cwd: project, dryRun: true }));

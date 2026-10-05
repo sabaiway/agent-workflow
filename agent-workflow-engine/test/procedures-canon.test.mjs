@@ -110,14 +110,6 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
-  it('pins the round render as the plan-authoring verdict source; plan-execution names no render (spec:plan-review-loop/S18)', () => {
-    const authoring = stepOf(sectionOf(procedures, 'plan-authoring'), 5).replace(/\s+/g, ' ');
-    const verdict = authoring.indexOf('READ its verdict half from the round render');
-    const tally = authoring.indexOf("append the orchestrator's finding-origin tally");
-    assert.ok(verdict >= 0 && tally > verdict, 'plan-authoring §5 reads the verdict half from the round render, then appends the tally');
-    assert.doesNotMatch(stepOf(sectionOf(procedures, 'plan-execution'), 5), /round render|review-rounds/i, 'a code receipt carries no artifact path, so plan-execution names no render');
-  });
-
   // The finding-scope rule is plan-execution-only; `stepOf` is declared below.
   it('the plan-execution review STEP (5) carries the finding-scope rule + the two round bars; plan-authoring carries none', () => {
     const step5 = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
@@ -153,12 +145,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!execution.includes(walk));
   });
 
-  // The activity-aware LEDGER pointer (AD-046): the review-round ledger is plan-EXECUTION-scoped
-  // (AD-045), so the canon points at it from the plan-execution review step ONLY — the plan-authoring
-  // step keeps the tally + the triage classification vocabulary with NO tool pointer. Pinned in BOTH
-  // directions so neither a silent deletion nor a scope-creeping copy into plan-authoring survives.
-  // Extract numbered step N of a section (the "N. **…**" line up to the next "M. " line) — the
-  // ledger pointer must live in the REVIEW step itself, not merely somewhere in the section.
+  // Extract numbered step N of a section (the "N. **…**" line up to the next "M. " line) — a review
+  // rule must live in the REVIEW step itself, not merely somewhere in the section.
   const stepOf = (section, n) => {
     const lines = section.split('\n');
     const start = lines.findIndex((l) => new RegExp(`^${n}\\. `).test(l));
@@ -170,42 +158,34 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     return lines.slice(start, end).join('\n');
   };
 
-  it('the plan-execution review STEP (5) names the D3 instruments (incl. commit-guard --check); plan-authoring never does', () => {
-    const execStep5 = stepOf(sectionOf(procedures, 'plan-execution'), 5);
-    for (const token of ['core-evidence red-proof', 'core-evidence\n   degrade', 'run-gates --final', 'commit-guard --check']) {
-      assert.ok(execStep5.includes(token), `plan-execution step 5 names "${token.replace(/\s+/g, ' ')}"`);
-    }
+  it('the plan-execution review STEP (5) names the degrade record and the final-gate instruments (incl. commit-guard --check); plan-authoring never does', () => {
+    const execStep5 = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
+    for (const token of ['core-evidence degrade', 'run-gates --final', 'commit-guard --check']) assert.ok(execStep5.includes(token), `plan-execution step 5 names "${token}"`);
     const auth = sectionOf(procedures, 'plan-authoring');
-    assert.ok(!auth.includes('run-gates --final'), 'plan-authoring must not point at the plan-execution loop instruments');
-    assert.ok(!auth.includes('review-ledger'), 'the retired ledger is never named');
+    assert.ok(!auth.includes('run-gates --final') && !auth.includes('review-ledger'), 'plan-authoring points at neither the plan-execution loop instruments nor the retired ledger');
   });
 
-  it('spec:held-session/S6 pins the held-session sentence group in plan-execution step 5', () => {
+  it('spec:held-session/S6 pins that plan-execution step 5 names no held id, no substitution and no fold brief', () => {
     const execution = sectionOf(procedures, 'plan-execution');
     const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
-    for (const token of [
-      'codex-exec --resume <held id> --nonce <nonce> <fold-brief>',
-      "the session the first FOLDED delegated dispatch's exec receipt minted",
-      "never an earlier failed or unfolded run", "held until the row's commit",
-      'a nonce-less run mints no receipt',
-      'a fresh session for a fold is a forbidden substitution',
-      'a retry of a failed thread',
-      'a recorded execute degrade',
-      'runs the suites', 'verifies the returned diff', 're-mints the red-proofs', 'owns the commit',
-      'folds by hand only what the delegate cannot reach',
-    ]) assert.ok(step5.includes(token), token);
+    const start = step5.indexOf(HELD_SESSION_SENTENCE_GROUP.start);
+    const end = step5.indexOf(HELD_SESSION_SENTENCE_GROUP.end, start);
+    assert.ok(start !== -1 && end !== -1, 'S6: step 5 keeps the group between its two anchors');
+    const group = step5.slice(start, end + HELD_SESSION_SENTENCE_GROUP.end.length);
+    for (const [name, pattern] of [['a held id', /held id/i], ['a substitution', /substitution/i], ['<fold-brief>', /<fold-brief>/], ["a hold until the row's commit", /held until the row's commit/]]) {
+      assert.doesNotMatch(step5, pattern, `S6: step 5 still names ${name}`);
+    }
+    for (const token of ['--resume', 'runs the suites', 'owns the commit']) assert.ok(group.includes(token), `S6: the fold group lost ${token}`);
     assert.equal(slotsLineOf(execution), 'Slots: execute, review');
     assert.deepEqual([...execution.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it('plan-execution pins coverage-to-brief order and the walk/cap round gates', () => {
+  it('plan-execution pins coverage-to-brief order', () => {
     const execution = sectionOf(procedures, 'plan-execution');
     const step2 = stepOf(execution, 2).replace(/\s+/g, ' ');
     const positions = ['--coverage', 'tags', 'plan-shape --check', 'generated robustness-literals block'].map((token) => step2.indexOf(token));
     assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `coverage order: ${positions.join(' < ')}`);
     assert.ok(step2.indexOf('Otherwise implement directly.') < step2.indexOf('The dispatch brief'), 'direct implementation precedes the dispatch brief');
-    const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
-    for (const token of ['--walk', 'every fold owes a walk', 'cap reached', 'crossover', 'round table', 'never a tool', 'custody-lost', 'escalated', '--claim']) assert.ok(step5.includes(token), `step 5 carries ${token}`);
   });
 
   // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
@@ -222,15 +202,6 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.ok(!/Module ledger/.test(sectionOf(procedures, 'plan-execution')), 'the rung lives in plan-authoring only');
   });
 
-  it('BOTH review steps (5) carry the triage classification vocabulary', () => {
-    for (const activity of ['plan-authoring', 'plan-execution']) {
-      const step5 = stepOf(sectionOf(procedures, activity), 5);
-      for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
-        assert.ok(step5.includes(token), `${activity} step 5 carries the classification token "${token}"`);
-      }
-    }
-  });
-
   it('plan-authoring step 3 opens with the readers sweep before its existing checks', () => {
     const step3 = stepOf(sectionOf(procedures, 'plan-authoring'), 3).replace(/\s+/g, ' ');
     assert.match(step3, /^3\. \*\*Self-review\*\* — run the \*\*readers sweep before the first review\*\*/u);
@@ -239,24 +210,18 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     }
   });
 
-  it('both step 5s put ASK, WAIT and READ before the fold edit', () => {
+  it('both step 5s ASK each raising member ONE ask per round, WAIT and READ before the fold edit, with no armed sequence or round render (spec:plan-review-loop/S18)', () => {
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const step5 = stepOf(sectionOf(procedures, activity), 5).replace(/\s+/g, ' ');
       for (const token of ['raised by a **review member**', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'folded directly']) assert.ok(step5.includes(token), `${activity} names ${token}`);
       if (activity === 'plan-authoring') {
+        for (const [reason, pattern] of [['one ask per member', /\bONE ask\b/i], ['one ask per round', /\bper round\b/i], ["all of that member's findings with their proposed folds", /\ball\b[^.]*\bfindings\b[^.]*\bproposed folds\b/i]]) assert.match(step5, pattern, `the fold ask is not ${reason}`);
         for (const token of ['`agy-review --continue --decided @f` for agy', '`codex-review plan <consult-brief>` for codex', 'a fresh re-dispatch of the same lens vehicle for a lens member']) assert.ok(step5.includes(token), `the consult form carries ${token}`);
+        for (const token of ['resolved `fold` carrier', 'Solo', 'Subagent', "round's findings with their dispositions", 'self-consistency read']) assert.ok(step5.includes(token), `the explicit authoring fold carrier names ${token}`);
       }
       assert.ok(step5.indexOf('ASK') < step5.indexOf('WAIT') && step5.indexOf('WAIT') < step5.indexOf('READ') && step5.indexOf('READ') < step5.indexOf('accepted or corrected'), `${activity} consult order`);
+      for (const token of ['round render', 'review-rounds', 'ARMED flow', 'consult-attestation', 'internal-attestation', '--proposed-fix-digest', 'round-open']) assert.ok(!step5.includes(token), `${activity} step 5 still names the round render or the armed sequence (${token})`);
     }
-  });
-
-  it('the authoring fold carrier is explicit, and execution carries the armed attestation sequence', () => {
-    const authoring = stepOf(sectionOf(procedures, 'plan-authoring'), 5).replace(/\s+/g, ' ');
-    for (const token of ['resolved `fold` carrier', 'Solo', 'Subagent', "round's findings with their dispositions", 'self-consistency read']) assert.ok(authoring.includes(token), `authoring fold names ${token}`);
-    const execution = stepOf(sectionOf(procedures, 'plan-execution'), 5).replace(/\s+/g, ' ');
-    for (const token of ['ARMED flow', 'a **bridge-raised** finding', 'round is open', 'nonce', 'flow-writer consult-attestation', '--proposed-fix-digest', 'then edit', 'A **lens-raised** finding instead re-dispatches the lens without a nonce']) assert.ok(execution.includes(token), `armed sequence names ${token}`);
-    const lensBranch = execution.slice(execution.indexOf('A **lens-raised** finding'));
-    assert.ok(!lensBranch.includes('consult-attestation') && lensBranch.includes('no attestation'), 'the lens branch mints nothing');
   });
 
   // Cost lanes (cost-tiered execution): the kit advisor renders an unconditional cost-lane block
@@ -333,9 +298,6 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     const atStages = closing.indexOf('workflow:methodology');
     const atCleanup = closing.indexOf('Phase: Cleanup');
     assert.ok(atStages !== -1 && atCleanup !== -1 && atStages < atCleanup, 'plan-execution closes with the project stages, then Phase: Cleanup');
-    // Post-row mutations are not exempt from the loop: they run as rows, through the same steps.
-    assert.match(closing, /rows of their own/, 'the project stages and Cleanup run as rows of their own');
-    assert.match(closing, /each through steps 1.7/, 'each such row passes steps 1–7 (review, gates, commit boundary)');
     assert.ok(!/release-engineering/.test(procedures), 'no concrete release-engineering skill bake-in');
     assert.ok(!/release-marketing/.test(procedures), 'no concrete release-marketing skill bake-in');
     assert.ok(!/Phase:\s*Release Publishing/i.test(procedures), 'no mandatory Release-Publishing phase bake-in');
@@ -420,21 +382,14 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   });
 
   describe('epic and task canon (spec:carriers/S17)', () => {
-    it('epic carries its slots, six steps and review contract', () => {
-      const section = sectionOf(procedures, 'epic'); assert.ok(section, 'has a ## epic section');
-      assert.equal(slotsLineOf(section), 'Slots: author, review');
-      assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6]);
-      for (const [number, token] of ['Brief', 'Draft', 'Check', 'review {recipe}', 'Fold', 'Land'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(token), `step ${number + 1} names ${token}`);
-      const flat = section.replace(/\s+/g, ' ');
-      for (const token of ['*The epic*', 'no commit boundary of its own', 'epic-shape-cli --check <epic>', 'epic-shape-cli --review-brief <epic>', 'never the file', 'a bridge in plan mode over it', "One lens is the tier's roster", 'epic-shape-cli --fold', 'At most two rounds', '--close']) assert.ok(flat.includes(token), `epic names ${token}`);
-    });
-    it('task carries its slots, five steps and execution contract (spec:carriers/S21)', () => {
+    it('task carries its slots and the four steps Prompt, Execute, Verify, Return, with no retired tool and no held session (spec:carriers/S21)', () => {
       const section = sectionOf(procedures, 'task'); assert.ok(section, 'has a ## task section');
-      assert.equal(slotsLineOf(section), 'Slots: author, execute'); assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5]);
-      for (const [number, token] of ['Mint', 'Brief', 'Execute', 'Verify', 'Return'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(token), `step ${number + 1} names ${token}`);
-      const flat = section.replace(/\s+/g, ' '); const step5 = stepOf(section, 5).replace(/\s+/g, ' ');
-      for (const token of ['*The task*', 'its tests are its only review', 'checkpoint mint --plan <plan>', "or before the first of a wave's", 'task-brief stamp <brief>', 'task-brief check <brief>', 'with `--dispatch <dispatch-file>` when the run is a bridge dispatch', 'dispatch open --checkpoint <oid> --task <brief>', 'one session per task', 'the whole-tree restore under its precondition', 'retried once', 'never a shared one']) assert.ok(flat.includes(token), `task names ${token}`);
-      for (const token of ['configured delegated engages the held-session gate', 'resolves to delegated renders the fold lane', 'whatever `plan-execution.execute` is', 'never a per-run override', 'a solo or subagent task holds none']) assert.ok(step5.includes(token), token); assert.doesNotMatch(step5, /read `plan-execution\.execute`, never `task\.execute`/u);
+      assert.equal(slotsLineOf(section), 'Slots: author, execute'); assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4], 'S21: task has four steps');
+      for (const [number, token] of ['Prompt', 'Execute', 'Verify', 'Return'].entries()) assert.ok(stepOf(section, number + 1).replace(/\s+/g, ' ').includes(`**${token}**`), `S21: step ${number + 1} names ${token}`);
+      const flat = section.replace(/\s+/g, ' '); const ret = stepOf(section, 4).replace(/\s+/g, ' ');
+      for (const token of ['*The task*', 'no commit boundary', "row's tests"]) assert.ok(flat.includes(token), `S21: task names ${token}`);
+      for (const [name, pattern] of [['checkpoint', /checkpoint/i], ['task-brief', /task-brief/], ['stamp', /\bstamp\b/], ['dispatch open', /dispatch open/], ['--dispatch', /--dispatch\b/], ['a held session', /held[- ]session/i], ["a brief's chain", /chain/]]) assert.doesNotMatch(flat, pattern, `S21: task still names ${name}`);
+      for (const token of ['--resume', 'exec receipt']) assert.ok(ret.includes(token), `S21: Return folds on the run's receipt session (${token})`);
     });
     it('keeps epic and task after feedback-triage and project-neutral', () => {
       assert.deepEqual([...procedures.matchAll(/^## (.+)$/gmu)].map((match) => match[1]).slice(-3), ['feedback-triage', 'epic', 'task']);
@@ -443,9 +398,11 @@ describe('procedures.md — canonical activity-procedures reference', () => {
         assert.doesNotMatch(section, /docs\/|agent-workflow-kit\/|agent-workflow-engine\//u, `${activity} stays project-neutral`);
       }
     });
-    it('plan-execution step 2 assigns each brief and run to the task slots', () => {
+    it('plan-execution step 2 names each prompt and each run of a row carried as tasks and keeps the row boundary', () => {
       const section = sectionOf(procedures, 'plan-execution'); assert.ok(section, 'has a ## plan-execution section');
-      assert.ok(stepOf(section, 2).replace(/\s+/g, ' ').includes("When a row is carried as tasks, the `task` activity's slots carry each brief and each run (its section below); the row's fold, gates and commit stay here."), 'step 2 names the task slots and keeps the row boundary');
+      const step2 = stepOf(section, 2).replace(/\s+/g, ' ');
+      for (const token of ['When a row is carried as tasks', 'each prompt and each run']) assert.ok(step2.includes(token), `S17: step 2 names ${token}`);
+      assert.ok(!step2.includes('each brief'), 'S17: step 2 still carries each brief');
     });
   });
   describe('feedback-triage canon [spec:feedback-triage/S12]', () => {
@@ -459,6 +416,47 @@ describe('procedures.md — canonical activity-procedures reference', () => {
       for (const token of ['--check <record>', '--excerpts', '--rows <record>', 'queue-audit --check']) assert.ok(section.includes(token), `section names ${token}`);
       assert.doesNotMatch(section, /docs\/|agent-workflow-kit\/|agent-workflow-engine\//u, 'the canon stays project-neutral');
     });
+  });
+
+  // story-flow's review-loop part: one fold ask per member per round, the raiser's re-read of a
+  // last-round fold, the re-check of a moved staged tree, one commit after the diff review.
+  const flatStep = (activity, n) => stepOf(sectionOf(procedures, activity), n).replace(/\s+/g, ' ');
+  const holds = (text, scenario, present, absent = []) => {
+    for (const [reason, pattern] of present) assert.match(text, pattern, `${scenario}: ${reason}`);
+    for (const [reason, pattern] of absent) assert.doesNotMatch(text, pattern, `${scenario}: ${reason}`);
+  };
+  const LAST_ROUND_RE_READ = ['a fold of the last round is not re-read', /\blast round\b[^.]*\bre-read\b|\bre-read\b[^.]*\blast round\b/i];
+  it('spec:story-flow/S11 plan-authoring step 5 reads round two over the folded artifact, has a last-round fold re-read by its raiser or sent to the maintainer, and names no third round, round render or cap triage', () => holds(flatStep('plan-authoring', 5), 'S11', [
+    ['step 5 names no round two', /\bround two\b|\bsecond round\b|\bround 2\b/i], ['round two does not read the folded artifact', /\bfolded (artifact|spec)\b/i],
+    ['round two does not read the decided register', /\bdecided register\b/i], ["round two does not read each fold's diff", /\bfold's diff\b|\bfold diffs?\b|\bdiff of each fold\b/i], LAST_ROUND_RE_READ,
+    ['the re-read is not by the member that raised the finding', /\bre-reads?\b[^.]*\b(raiser|member that raised it|that member)\b|\b(raiser|member that raised it|that member)\b[^.]*\bre-reads?\b/i],
+    ['an unresolved fold does not go to the maintainer', /\bmaintainer\b/], ['resolving at altitude is not such a fold', /\bat altitude\b[^.]*\bfold\b/i], ['step 5 allows a third round', /\bno third round\b/i],
+  ], [['step 5 still names the round render', /round render|review-rounds/i], ['step 5 still carries the cap triage', /fixable-bug|inherent-layer-residual|\*\*escalate\*\*/]]));
+
+  it('spec:story-flow/S12 plan-execution step 5 reviews the staged diff with the fold ask, the last-round re-read and a re-check of a moved tree by every member, and names no armed sequence, walk, flow disposition or red-proof record', () => {
+    holds(flatStep('plan-execution', 5), 'S12', [
+      ["step 5 does not review the story's staged diff", /\bstaged diff\b/], ['step 5 does not apply the fold ask', /\bfold ask\b|\bONE ask\b/i], LAST_ROUND_RE_READ,
+      ['the re-check is not of a tree that moves', /\bre-check[^.]*\bmov(es|ed)\b|\bmov(es|ed)\b[^.]*\bre-check/i],
+      ['the re-check is not run by every member, the lens included', /re-check[^.]*\bevery member\b[^.]*\blens\b|\bevery member\b[^.]*\blens\b[^.]*re-check/i], ['the brief does not list every test changed since the recorded tree', /`git diff --cached --name-only <recorded tree>`/], ["the brief does not carry each test's text before and after, its scenario line and its red run", /\btext before and after, its scenario line and its red run\b/],
+    ], [['step 5 still names an armed sequence', /ARMED flow|consult-attestation|internal-attestation|--proposed-fix-digest|round-open/], ['step 5 still owes a walk', /--walk\b|owes a walk/],
+      ['step 5 still names a flow disposition', /custody-lost|`queued`|`escalated`|`rejected`|cap reached/], ['step 5 still names a red-proof record', /core-evidence red-proof|red-proofs/]]);
+  }); // S12's unchanged step numbers and Slots line: the held-session S6 cell above
+
+  it("spec:story-flow/S13 plan-execution runs steps 1-4 per row and steps 5-7 once on the staged diff, no row commits, and step 8's stages write before step 5", () => {
+    holds(procedures.replace(/\s+/g, ' '), 'S13', [], [['plan-execution still commits per ledger row', /commits per ledger row|Each ledger row is one logical commit/i]]);
+    holds(sectionOf(procedures, 'plan-execution').replace(/\s+/g, ' '), 'S13', [['steps 1-4 do not run per row', /steps 1 (to|–|-) ?4[^.]*\bper row\b/i], ['steps 5-7 do not run once on the staged diff', /steps 5 (to|–|-) ?7[^.]*\bonce\b[^.]*\bstaged diff\b/i]]);
+    holds(flatStep('plan-execution', 2), 'S13', [], [["step 2 still keeps the row's commit", /\bcommit\b/]]);
+    holds(flatStep('plan-execution', 8), 'S13', [["step 8's stages do not write their outputs before step 5", /\bbefore step 5\b/]], [['step 8 still runs its stages through steps 1-7', /each through steps 1.7/]]);
+  });
+
+  it('spec:story-flow/S15 the epic keeps Brief, Draft, Check, the review, Fold (at most two rounds) and Land, the review one lens over the rendered brief whatever its slot resolves to', () => {
+    const section = sectionOf(procedures, 'epic');
+    assert.equal(slotsLineOf(section), 'Slots: author, review', 'S15: the Slots line changed');
+    assert.deepEqual([...section.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6], 'S15: the epic lost a step');
+    for (const [number, token] of ['Brief', 'Draft', 'Check', 'review', 'Fold', 'Land'].entries()) assert.ok(flatStep('epic', number + 1).includes(token), `S15: step ${number + 1} names ${token}`);
+    for (const token of ['*The epic*', 'no commit boundary of its own', 'epic-shape-cli --check <epic>', 'epic-shape-cli --review-brief <epic>', 'never the file', 'epic-shape-cli --fold', 'At most two rounds', '--close']) assert.ok(section.replace(/\s+/g, ' ').includes(token), `S15: epic names ${token}`);
+    holds(flatStep('epic', 4), 'S15', [['the epic review is not one lens', /\b(one|a single) review[- ]lens\b|\b(the|a) lens alone\b/i], ['the lens review depends on what the review slot resolves to', /\bwhatever `?(epic\.)?review`? resolves to\b/]],
+      [['step 4 still hands the brief to a bridge or to every member', /a bridge in plan mode|pays them|every member/]]);
   });
 });
 

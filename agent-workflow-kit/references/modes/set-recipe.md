@@ -15,7 +15,7 @@ mapping their wording onto them is your job, not a shipped phrase list.
 | "both review" | `--set <activity>.review=council` | **disambiguate**: which activity? If both, pass `--set plan-authoring.review=council --set plan-execution.review=council`. |
 | "one reviewer" | `--set <activity>.review=reviewed` | per the named activity, else ask |
 | "delegate execution" | `--set plan-execution.execute=delegated` | execution only (a **bridge** runs the change) |
-| "let a subagent do it" | `--set <activity>.<slot>=subagent` | **disambiguate**: which work? `--set plan-execution.execute=subagent` (a slice of the change), `--set plan-authoring.author=subagent` (a plan/contract brief), `--set plan-authoring.fold=subagent` (the round's findings and dispositions), `--set routine.carrier=subagent` (a bounded chore), `--set epic.author=subagent` (an epic brief), `--set task.author=subagent` (a task brief), `--set task.execute=subagent` (one stamped task brief) |
+| "let a subagent do it" | `--set <activity>.<slot>=subagent` | **disambiguate**: which work? `--set plan-execution.execute=subagent` (a slice of the change), `--set plan-authoring.author=subagent` (a plan/contract brief), `--set plan-authoring.fold=subagent` (the round's findings and dispositions), `--set routine.carrier=subagent` (a bounded chore), `--set epic.author=subagent` (an epic brief), `--set task.execute=subagent` (one row's prompt run inside its Files; `task.author` dispatches no slice) |
 | "one slice at a time" | `--set routine.parallel=off` | `routine` only — `parallel` is a **flag**, not a recipe |
 | "revert / do it myself" | `--unset <activity>.<slot>` | the named slot → its computed default |
 

@@ -155,26 +155,13 @@ describe('task chains in review-state, commit-guard and the fold lane — spec:t
     assert.ok(review.reason.includes('"b2"'), review.reason);
   });
 
-  it('renders one populated fold command per task chain with its brief and no caveat', () => {
-    const result = renderLane(buildPair());
-    assert.equal(result.code, 0, result.stderr);
-    assert.equal((result.stdout.match(/Fold lane \(execute = delegated\)/gu) ?? []).length, 1, result.stdout);
-    assert.equal((result.stdout.match(/run:  codex-exec --resume /gu) ?? []).length, 2, result.stdout);
-    assert.match(result.stdout, /run:  codex-exec --resume session-a --nonce <nonce> <fold-brief>\s+\(task docs\/plans\/TASK-fixture-T1\.md\)/u);
-    assert.match(result.stdout, /run:  codex-exec --resume session-b --nonce <nonce> <fold-brief>\s+\(task docs\/plans\/TASK-fixture-T2\.md\)/u);
-    assert.doesNotMatch(result.stdout, /caveat:/u);
-  });
-
-  it('renders an untasked fold command without a task marker beside a marked task command', () => {
-    const result = renderLane([
-      buildRegistration(),
-      ...thread({ nonce: 'u1', sessionId: 'session-u', second: 1 }),
-      ...thread({ nonce: 'a1', sessionId: 'session-a', second: 4, task: TASK_A }),
-    ]);
-    assert.equal(result.code, 0, result.stderr);
-    assert.equal((result.stdout.match(/run:  codex-exec --resume /gu) ?? []).length, 2, result.stdout);
-    assert.match(result.stdout, /run:  codex-exec --resume session-u --nonce <nonce> <fold-brief>(?!\s+\(task)/u);
-    assert.match(result.stdout, /run:  codex-exec --resume session-a --nonce <nonce> <fold-brief>\s+\(task docs\/plans\/TASK-fixture-T1\.md\)/u);
-    assert.doesNotMatch(result.stdout, /caveat:/u);
+  it('renders one fold-lane line and no per-chain run line, whatever task chains the ledger holds (held-session S5)', () => {
+    const untaskedBeside = [buildRegistration(), ...thread({ nonce: 'u1', sessionId: 'session-u', second: 1 }), ...thread({ nonce: 'a1', sessionId: 'session-a', second: 4, task: TASK_A })];
+    for (const records of [buildPair(), untaskedBeside]) {
+      const result = renderLane(records);
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal((result.stdout.match(/Fold lane \(execute = delegated\)/gu) ?? []).length, 1, result.stdout);
+      assert.doesNotMatch(result.stdout, /run: {2}codex-exec --resume |\(task docs\/plans\/|caveat:/u, 'S4: the fold lane still renders a per-chain run line');
+    }
   });
 });

@@ -94,7 +94,7 @@ const EXIT_USAGE = 2;
 // the internal-attestation evaluation consumes this sentence — a lens set claiming a configured
 // backend's slot without a then-active down-mark REFUSES, quoting it (substitution is recorded,
 // never silent).
-export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your configured review recipe.';
+export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your plan or diff review recipe.';
 
 const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 

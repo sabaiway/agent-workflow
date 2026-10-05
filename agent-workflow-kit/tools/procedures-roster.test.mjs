@@ -183,12 +183,10 @@ describe('procedures on the epic and task rows [spec:carriers/S16]', () => {
     assert.deepEqual(slots.review.roster.map(({ member, kind, state }) => ({ member, kind, state })), [{ member: 'review-lens', kind: 'lens', state: 'placed' }]);
     assert.deepEqual([slots.author.recipe, slots.author.source], ['solo', 'default']); assert.deepEqual(groundingPreStep, []); assert.deepEqual(warnings, []);
   }));
-  it('epic on a shorthand renders the grounding operand as the brief file in plan mode, never the code form, with no plan operand', () => withTierFixture('epic', { epic: { review: 'reviewed' } }, detect(NEEDS_SKILL, READY), (run) => {
+  it('epic on a shorthand naming agy renders no grounding pre-step and no driving contract', () => withTierFixture('epic', { epic: { review: 'reviewed' } }, detect(NEEDS_SKILL, READY), (run) => {
     const r = run(); assert.equal(r.code, 0, r.stderr);
-    const { slots, groundingPreStep: steps, warnings } = JSON.parse(r.stdout); assert.deepEqual(slots.review.backends, ['agy-review']);
-    assert.ok(steps.length > 0); assert.ok(steps.some((step) => /grounding\.mjs" --constraints --autonomy --out \/tmp\/review-facts\.md$/u.test(step)));
-    assert.ok(steps.some((step) => step.includes('then: agy-review plan <brief-file> --facts @/tmp/review-facts.md')));
-    for (const text of ['agy-review code', '--plan', 'plan discovery']) assert.ok(steps.every((step) => !step.includes(text)), text); assert.deepEqual(warnings, []);
+    const { slots, groundingPreStep, warnings } = JSON.parse(r.stdout); assert.deepEqual(warnings, []);
+    for (const [field, value] of [['a grounding pre-step', groundingPreStep], ['a driving contract', slots.review.contracts]]) assert.deepEqual(value, [], `carriers S16: the epic still renders ${field}`);
   }));
   it('task renders the driving contract for a delegated slot and has no review slot', () => withTierFixture('task', { task: { author: 'delegated', execute: 'delegated' } }, detect(READY, NEEDS_SKILL), (run) => {
     const r = run(); assert.equal(r.code, 0, r.stderr);
@@ -197,4 +195,18 @@ describe('procedures on the epic and task rows [spec:carriers/S16]', () => {
     assert.deepEqual(groundingPreStep, []); assert.deepEqual(warnings, []);
     const human = run(false); assert.equal(human.code, 0, human.stderr); assert.ok(human.stdout.includes('codex-exec — driving contract'));
   }));
+});
+
+describe('spec:story-flow/S17 procedures epic renders the lens review whatever epic.review resolves to', () => {
+  for (const [label, review] of [['a reviewed shorthand', 'reviewed'], ['a council shorthand', 'council'], ['a bridge roster', ['codex-review', 'agy-review']], ['a mixed roster', ['codex-review', 'review-lens']]]) {
+    it(`${label}: no bridge wrapper set, driving contract or grounding pre-step, and the lens review renders`, () => withTierFixture('epic', { epic: { review } }, detect(READY, READY), (run) => {
+      const r = run(); assert.equal(r.code, 0, r.stderr);
+      const { slots, groundingPreStep, warnings } = JSON.parse(r.stdout);
+      assert.deepEqual(Object.keys(slots), ['author', 'review'], 'S17: the epic slot keys changed');
+      for (const [field, value] of [['bridge wrappers', slots.review.backends], ['a driving contract', slots.review.contracts], ['a grounding pre-step', groundingPreStep], ['a warning', warnings]]) assert.deepEqual(value, [], `S17: ${label} still renders ${field}`);
+      const human = run(false); assert.equal(human.code, 0, human.stderr);
+      for (const text of ['driving contract', 'Grounding pre-step', 'run every backend every round', 'codex-review plan', 'agy-review plan']) assert.ok(!human.stdout.includes(text), `S17: ${label} still renders ${text}`);
+      assert.match(human.stdout, /^ {2}review: [^\n]*\blens\b/mu, `S17: ${label}: the review slot line renders no lens review`);
+    }));
+  }
 });

@@ -1,4 +1,4 @@
-import { escapeForDisplay, isRenderableLine, shellQuoteArg } from './repo-lex.mjs';
+import { escapeForDisplay } from './repo-lex.mjs';
 import { wrapperCmdFor } from './detect-backends.mjs';
 import { DISPLAY_ALIASES } from './recipes.mjs';
 import { readsBaseline, TERMINAL_RETURN_OUTCOMES } from './dispatch-record.mjs';
@@ -9,7 +9,6 @@ const FOLD_KIND = 'fold';
 const RETURN_KIND = 'return';
 const DEGRADE_KIND = 'degrade';
 const EXECUTE_BACKEND = 'codex-cli-bridge';
-const UNPOPULATED_HELD_ID = '<held id>';
 
 export const HELD_RECEIPT_BACKEND = DISPLAY_ALIASES[EXECUTE_BACKEND];
 export const HELD_EXECUTE_WRAPPER = wrapperCmdFor(EXECUTE_BACKEND, 'execute');
@@ -183,35 +182,4 @@ export const decideHeldSession = (facts) => {
   if (facts.heldId === null) return { code: 0, reason: 'no held session stands: no folded code thread established one in this commit epoch, or the last one was withdrawn by a checkpoint thread\'s ledger degrade', line: 'held session: none' };
   const heldId = escapeForDisplay(facts.heldId);
   return { code: 0, reason: `held session "${heldId}" is continuous`, line: `held session: ${heldId} — ${facts.folds} fold(s) rode it` };
-};
-
-const describesLaneCaveat = (facts) => {
-  if (facts.state === 'absent') return decideHeldSession(facts).reason;
-  if (facts.state === 'error') return decideHeldSession(facts).reason;
-  if (facts.substitution !== null) return decideHeldSession(facts).reason;
-  if (facts.heldId === null) return decideHeldSession(facts).reason;
-  if (!isRenderableLine(facts.heldId)) return 'the held session id cannot be rendered on one command line';
-  return null;
-};
-
-const chainLaneLines = (facts, chain) => {
-  const substitution = facts.threads.find((thread) => thread.chainKey === chain.key && thread.substituted) ?? null;
-  const caveat = describesLaneCaveat({ state: facts.state, heldId: chain.heldId, substitution });
-  const task = chain.key === null ? '' : `  (task ${escapeForDisplay(chain.key)})`;
-  if (caveat !== null) return [`  caveat: ${caveat}${task}`];
-  return [`  run:  ${HELD_EXECUTE_WRAPPER} --resume ${shellQuoteArg(chain.heldId)} --nonce <nonce> <fold-brief>${task}`];
-};
-
-export const foldLaneLines = (facts) => {
-  const lines = [
-    'Fold lane (execute = delegated) — a fold rides the delegate\'s HELD session:',
-    '  the fold brief is a dispatch file carrying the finding and the accepted fold; dispatch open precedes the run, then dispatch return and fold follow it',
-    '  the orchestrator runs the suites, verifies the returned diff, re-mints the red-proofs and owns the commit',
-    '  a fresh session is a forbidden substitution; a retry of a failed thread or, for a head base, a recorded execute degrade is the exception (a checkpoint thread\'s substitution closes by its ledger degrade); the wrapper sidecar is never read',
-  ];
-  if (facts.chains !== undefined) return [...lines, ...facts.chains.flatMap((chain) => chainLaneLines(facts, chain))];
-  const caveat = describesLaneCaveat(facts);
-  const heldId = caveat === null ? shellQuoteArg(facts.heldId) : UNPOPULATED_HELD_ID;
-  lines.splice(1, 0, `  run:  ${HELD_EXECUTE_WRAPPER} --resume ${heldId} --nonce <nonce> <fold-brief>`);
-  return caveat === null ? lines : [...lines, `  caveat: ${caveat}`];
 };

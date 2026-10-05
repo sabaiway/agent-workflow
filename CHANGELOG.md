@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-04 — AD-170: a story runs in four sessions, each step with one checked result (engine 5.12.0 MINOR, kit 14.22.0 MINOR, memory 8.1.4 PATCH; both bridges unchanged)
+
+**The engine's planning canon gains `## The story flow`: seven steps, each naming its result, maker, one check and
+cost, run as four sessions per story — spec and plan, tests, code, then diff review, release and record.** Review
+runs on the spec with the plan's ledger in the same rounds, on the story's staged diff with every committable output
+staged first, and on the epic by the review lens alone, at most two rounds each: one fold ask per member per round, a
+fold of the last round re-read by its raiser, a staged tree that moves after the last verdict re-checked. The story
+commits once, after its diff review. A bridge executor gets one prompt per ledger row from the orchestrator, with no
+brief draft, checkpoint, stamp or dispatch record around it. The kit's `procedures` advisor renders the same loop
+and a one-line fold lane, `task.author` dispatches no slice, and both rules templates carry the new lens and
+Story sessions bodies, refreshed on upgrade through their priors. The kit's tier guide walks a story on the same
+flow: one prompt per plan row from the seven-key task template, and a landed story's leftover (the staged diff read,
+the review state, the one commit, the plan's removal) before any other story is put in hand or any other epic
+closes, so the story commits before its epic closes. Contract `docs/ai/specs/kit/tier/story-flow/` revision 4, live, S1-S20 bound; tier-guide revision 3,
+tier-walk revision 5, tier-templates revision 2.
+
 ## 2026-10-03 — AD-169: the bridge model is one host setting (codex-cli-bridge 4.0.0 and antigravity-cli-bridge 6.0.0 MAJOR, engine 5.11.0 MINOR, kit 14.21.0 MINOR; memory 8.1.3 unchanged)
 
 **Each bridge runs the model the user set in the host bridge settings file (`CODEX_MODEL`, `CODEX_EFFORT`,

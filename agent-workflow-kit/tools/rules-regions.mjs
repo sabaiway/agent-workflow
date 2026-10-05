@@ -53,6 +53,7 @@ const COMMS_PRIORS = [
 ];
 const STORY_PRIOR_FIVE_SESSIONS = `### 2.x. Story sessions
 A story — one row of an epic's ledger, carried by one plan — runs as five sessions, each ending at its own review checkpoint: **spec** (the contract under \`docs/ai/specs/\`, drafted and reviewed on the \`plan-authoring\` recipe), **plan** (the ledger, same recipe), **tests** (one task per ledger row, red first), **code** (one task per row, to green), and **diff review, release and record** (the review of the staged tree on the \`plan-execution\` recipe, the release where the story ships one, then the changelog and handover entries and the plan's Phase: Cleanup). Tests and code never share a session, and a spec and its plan never share one either. A storyless plan runs the same five. **Exception — a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup.`;
+const STORY_PRIOR_ONE_TASK = `${STORY_PRIOR_FIVE_SESSIONS} Inside the tests and code sessions it is one task per session: each task runs as its own carrier session — one brief, one run, never one run for a whole wave — and the orchestrator's session briefs, checks, verifies and folds.`;
 
 export const RULES_REGIONS = Object.freeze([
   Object.freeze({
@@ -67,7 +68,7 @@ export const RULES_REGIONS = Object.freeze([
     headingRe: /^### 2[.]([0-9]+)[.] Story sessions/,
     label: '### 2.x. Story sessions',
     canon: TEMPLATE_CANON,
-    priors: [STORY_PRIOR_FIVE_SESSIONS],
+    priors: [STORY_PRIOR_FIVE_SESSIONS, STORY_PRIOR_ONE_TASK],
   }),
   Object.freeze({
     id: 'lens',

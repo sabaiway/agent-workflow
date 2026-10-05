@@ -112,8 +112,8 @@ export const SLICE_BY_SLOT = {
   'plan-execution.execute': 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line',
   'routine.carrier': "a slice is a bounded mechanical task; a read-only one (a sweep, gate triage) rides its placed read-only vehicle, or is carried solo with a stated reason when that vehicle is absent; a write-capable one (a regeneration, a fixture build) rides the executor; the changelog stays the orchestrator's",
   'epic.author': 'a slice is a brief naming the intent, the value, the non-goals and the stories in order; the subagent drafts the epic file from it, and the orchestrator runs the shape check on the draft as its own',
-  'task.author': 'a slice is one ledger row of the plan with the contracts it reads; the subagent writes the task brief from it, and the orchestrator stamps and checks the brief itself',
-  'task.execute': 'a slice is one stamped brief; the subagent runs it inside the Files the brief names and reports the paths it changed, and the orchestrator runs the Acceptance commands itself',
+  'task.author': "no slice the flow dispatches: the orchestrator writes each row's prompt itself, whatever this slot resolves to",
+  'task.execute': "a slice is one prompt the orchestrator wrote from one ledger row; the subagent runs it inside the Files the prompt names and reports the paths it changed, and the orchestrator runs the row's tests itself",
 };
 
 export const VEHICLE_STATE_TOKEN = '<state>';
@@ -139,12 +139,14 @@ export const SUBAGENT_SLOT_TYPES = Object.entries(SLOT_RECIPES)
 
 // dispatchForm({ activity, slot, state }) → the lines a `subagent`-resolved slot renders: the
 // slot's slice sentence, then the four shared lines with the surveyed vehicle state filled in.
-// A slot whose type cannot hold `subagent` (a review slot) and an unknown activity render nothing.
+// A slot type that cannot hold `subagent` (review) and an unknown activity render nothing; a slot
+// whose slice the flow never dispatches renders its sentence alone.
+const UNDISPATCHED_SLOTS = new Set(['task.author']);
 export const dispatchForm = ({ activity, slot, state } = {}) => {
   const slice = SLICE_BY_SLOT[`${activity}.${slot}`];
   const slotType = ACTIVITIES[activity]?.slots?.[slot];
   if (!slice || !SUBAGENT_SLOT_TYPES.includes(slotType)) return [];
-  return [slice, ...DISPATCH_LINES.map((line) => line.replace(VEHICLE_STATE_TOKEN, state ?? MISSING))];
+  return UNDISPATCHED_SLOTS.has(`${activity}.${slot}`) ? [slice] : [slice, ...DISPATCH_LINES.map((line) => line.replace(VEHICLE_STATE_TOKEN, state ?? MISSING))];
 };
 
 // parallelLine({ value, carrier }) → the `routine` switch line. The concurrency claim is TRUE only

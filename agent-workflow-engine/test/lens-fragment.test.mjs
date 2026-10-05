@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,7 +93,7 @@ const DISCIPLINE_TOKENS = [
   'zero, one or many',
   'no global union',
   'before approval',
-  'exists at plan review',
+  'spec review',
   'lands with the code',
   'adoption shim',
   // the adoption state (AD-123) — a zero governing-spec citation names the state it relies on
@@ -108,10 +109,17 @@ const CURRENT_INTRO =
 const PRE_E4_INTRO =
   "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)";
 
-// The IMMEDIATELY-previous release's Spec-first line (this release's delta is its REWORDING —
-// the adoption-state clause). Held here so the exact outgoing body is computable without git history.
-const PREVIOUS_SPEC_FIRST =
-  "- **Spec-first.** A plan names its GOVERNING spec(s) — zero, one or many, one per touched spec-covered slice (the feature spec under `docs/ai/specs/`; page-only coverage governs as an ADOPTION SHIM, with Out of scope + Revision stated inline in the plan). Each cited spec's Out of scope bounds that slice's work and the plan's non-goals restate it per slice — no global union; a cross-spec conflict is resolved by a spec revision BEFORE approval, never by silent precedence. A NEW feature's draft spec exists AT plan review (a `create` row); a change to a governed contract rides the plan as its proposed revision (a `modify` row); approval confirms plan and contract atomically, and the revision lands with the code. Scenario bindings are per scenario: a new scenario is `unbound` until its test lands in the same plan, and a status never regresses for an extension.";
+// This release's delta: the four review bullets move to the spec review. The previous release's line of
+// each is pinned by its sha256, so the outgoing body is checkable without git history.
+const OUTGOING_BULLETS = {
+  '- **Finding scope': '6c87401b5fb7b941ec3bdabd3f001d8837b82bed71a3c2ae5b62682b3727b063',
+  '- **Spec-first.**': '63103e3751328213e7eec5d8bcc01d354469a58850054fe5e413525692ac11ac',
+  '- **Fold minimally': 'd8593615bb06b2bf0fcf0138e33ea813fa5258dc3608b58fb57dc885739a9414',
+  '- **Heavy review': '796be6ece068a99c557b8abe925512a38d2a6ac5f0ea3ca945f9b697571ef1dc',
+};
+const PLAN_REVIEW_RE = /plan[- ]review|reviews? (a|the) plan/i;
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+const leadOf = (line) => Object.keys(OUTGOING_BULLETS).find((lead) => line.startsWith(lead));
 
 describe('agent-rules-lens fragment — canon presence', () => {
   it('starts with the number-neutral heading', () => {
@@ -127,6 +135,18 @@ describe('agent-rules-lens fragment — canon presence', () => {
 
   it('carries the Decision-7 provenance intro (rendered-from-canon honesty)', () => {
     assert.ok(fragment.includes(CURRENT_INTRO), 'the fragment intro must carry the provenance clause verbatim');
+  });
+
+  it("spec:story-flow/S4 the four review bullets name the spec review, the heavy-review bullet has it read the plan's ledger in the same rounds, and no bullet gives the plan a review of its own", () => {
+    const bullets = fragment.split('\n').filter((line) => line.startsWith('- '));
+    for (const lead of Object.keys(OUTGOING_BULLETS)) {
+      const found = bullets.filter((line) => line.startsWith(lead));
+      assert.ok(found.length === 1 && /spec review/i.test(found[0]), `S4: the ${lead}** bullet names the spec review`);
+    }
+    const heavy = bullets.find((line) => line.startsWith('- **Heavy review'));
+    for (const [reason, pattern] of [["have the spec review read the plan's ledger", /\bplan's ledger\b/], ["read the plan's ledger in the spec review's rounds", /\bsame rounds\b/]]) assert.match(heavy, pattern, `S4: the heavy-review bullet does not ${reason}`);
+    assert.doesNotMatch(heavy, /\bnever reviewed\b/i, 'S4: the heavy-review bullet still keeps the plan out of the spec review');
+    for (const line of bullets) assert.doesNotMatch(line, PLAN_REVIEW_RE, `S4: a bullet gives the plan a review of its own: ${line.slice(0, 40)}`);
   });
 
   it('is path-neutral — no kit-command literals (the engine knows nobody)', () => {
@@ -163,20 +183,18 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
     }
   });
 
-  it('the OUTGOING body of the previous release IS the newest entry — exact normalized equality', () => {
-    // The current fragment differs from the IMMEDIATELY-previous release's body by EXACTLY the
-    // REWORDED spec-first bullet (the adoption-state clause) — so the exact expected outgoing body
-    // is computable, and a typo in the prior entry goes red instead of sliding past a spot-check.
-    // This line moves with every canon release: it names THIS release's delta, never a past one.
-    const lines = fragment.split('\n');
-    const specFirst = lines.filter((l) => l.startsWith('- **Spec-first.**'));
-    assert.equal(specFirst.length, 1, 'sanity: exactly ONE spec-first bullet is this release\'s delta');
-    const outgoing = normalize(
-      lines.map((l) => (l.startsWith('- **Spec-first.**') ? PREVIOUS_SPEC_FIRST : l)).join('\n'),
-    );
-    assert.notEqual(outgoing, normalize(fragment), 'sanity: the swap actually changes the body');
-    assert.ok(outgoing.includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
-    assert.equal(priors[priors.length - 1], outgoing, 'the newest prior byte-equals the pre-strip fragment (normalized)');
+  it('the OUTGOING body of the previous release IS the newest entry — line by line', () => {
+    // The newest prior equals the fragment on every line but this release's delta, which carries the
+    // pinned outgoing lines. This pin moves with every canon release: it names THIS release's delta.
+    const lines = normalize(fragment).split('\n');
+    for (const line of lines.filter(leadOf)) assert.notEqual(sha256(line), OUTGOING_BULLETS[leadOf(line)], `S4: the ${leadOf(line)}** bullet is still the outgoing one`);
+    const newest = priors[priors.length - 1].split('\n');
+    assert.ok(priors[priors.length - 1].includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
+    assert.equal(newest.length, lines.length, 'S4: the newest prior has the fragment\'s line count');
+    for (const [index, line] of lines.entries()) {
+      if (leadOf(line)) assert.equal(sha256(newest[index]), OUTGOING_BULLETS[leadOf(line)], `S4: the newest prior's ${leadOf(line)}** bullet`);
+      else assert.equal(newest[index], line, `S4: the newest prior's line ${index + 1}`);
+    }
   });
 
   it('the pre-E4 body REMAINS an entry (append-only: a deployment seeded from any past release keeps converging)', () => {

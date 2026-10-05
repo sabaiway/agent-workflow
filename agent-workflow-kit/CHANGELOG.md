@@ -4,6 +4,52 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.22.0 — a story runs in four sessions, each step with one checked result; the advisor renders the new review loop (AD-170)
+
+**Your project's rules now state the story flow the engine's canon (5.12.0) defines: four sessions — spec and plan,
+tests, code, then diff review, release and record — with review on the spec with the plan's ledger and on the staged
+diff.** The canon adds the epic's review by the review lens alone and the one commit after the diff review;
+`/agent-workflow-kit procedures` renders both. Both rules templates' §2.6 (the lens) and §2.7
+(Story sessions) carry the new bodies; the outgoing ones are priors, so an upgrade refreshes an unedited region and
+keeps a custom edit, flagged.
+
+- **`/agent-workflow-kit procedures` renders the loop the canon states.** One fold ask per member per round, carrying
+  all of its findings; round two with the folded artifact, the decided register and the fold diffs; a fold of the
+  last round re-read by its raiser; for `plan-execution`, the re-check of a staged tree that moves after a member's
+  last ship-class verdict. The round render, the cap triage and the red-proof instrument are gone from the
+  plan-authoring and plan-execution renders; `feedback-triage` keeps its round table. plan-authoring's agy review
+  reads the spec review file, and the unarmed flow line names no arming command. On a project that armed the flow
+  chain itself, `plan-execution` still renders the armed pre-fold line, a stated residual.
+- **The epic by the lens.** `procedures epic` renders the lens review and, whatever `epic.review` resolves to, no
+  bridge wrapper, driving contract or grounding pre-step; the slot keys and the Slots line are unchanged.
+  `references/modes/agents.md` and the README say the lens is the whole review of an epic and never replaces the
+  review recipe of a plan or a diff; the `agents` report and `dispatch advise` say it never replaces a plan or diff
+  review recipe.
+- **Cleanup after the commit.** The rules template's §1.3 Task Completion asks before committing first and runs the
+  plan's Phase: Cleanup after the commit.
+- **One fold line.** Under a delegated execute slot the fold lane is one line: resume the run's session with
+  `codex-exec --resume <session id> --nonce <n> <prompt file>`, the id read from the run's exec receipt. The advisor
+  no longer reads the delegation ledger; `tools/held-session.mjs` drops `foldLaneLines`, which nothing else read.
+- **`task.author` dispatches no slice.** `tools/carriers.mjs`: the orchestrator writes each row's prompt, so under
+  `subagent` `dispatchForm` prints the slot's sentence alone, without the executor dispatch lines; under `delegated`
+  the slot still renders `codex-exec` and its driving contract, which no step reads (display only, recorded debt).
+  `task.execute`'s slice is one prompt the orchestrator wrote from one ledger row; `references/modes/{agents,recipes,
+  set-recipe,procedures}.md` say the same.
+- `tools/tier-guide.mjs`, `references/modes/tier.md` and the reference profile say four story sessions;
+  `references/templates/SPEC_TEMPLATE.md` says a draft exists at the spec review.
+- Recorded debt (`docs/debt.md`): `recipes --active-line` (`→ codex-review`), the orchestration README default
+  sentence, the tier offer and `status` still render `epic.review` as a bridge review (`reviewed`), and `recipes
+  --active-line`, `procedures task` and the tier offer still name `codex-exec` for a delegated `task.author`; no
+  step reads either slot; display only.
+- **The tier guide walks a story on this flow.** `tools/tier-guide.mjs` says a task is one plan row handed out in
+  one prompt from the task template, and the story commits once, after its diff review.
+  `references/authoring/TASK_TEMPLATE.md` is that prompt's form: Row, Files, Reads, Run and Do not run, seven keys;
+  a bridge prompt adds the contract block with a fresh nonce that the engine's *The task* names. The
+  guide's story stages are S1-S4: it reads each row's prompt at its canonical name, and a landed story's leftover
+  (read the staged diff, check the review state, the one commit, remove the plan) holds every other story and
+  every other epic's close until it is done, so the story commits before its epic closes. The guide no longer judges the plan, mints a checkpoint, stamps
+  or checks a brief, or commits per task; it prints `plan-shape-cli --check` as a step.
+
 ## 14.21.0 — the bridge model is one host setting: your choice, else the default, checked against the installed CLI before any run (AD-169)
 
 **Each bridge now runs the model you set, and `/agent-workflow-kit bridge-settings` shows and sets it.** The read-out

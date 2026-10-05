@@ -4,6 +4,38 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.12.0 — the story flow: seven steps with one checked result each, four sessions, review on the spec with the plan's ledger and on the staged diff, one commit after the diff review (AD-170)
+
+`references/planning.md` gains `## The story flow`: Epic, Spec, Plan, Tests, Code, Diff review and Release and
+record, each naming its result, its maker, its one check and its cost, run as four sessions per story (spec and plan,
+tests, code, then diff review, release and record). The rows of a plan no longer commit: the story's staged diff is
+reviewed whole and committed once, after its diff review. *Cleanup* writes no tracked text after the review, so the
+durable outputs are staged before it wherever they are tracked.
+
+- **Review where it catches defects.** `procedures.md` plan-authoring step 4 is the spec review: it reads every
+  contract the story creates or revises and the plan's Goal and boundary, ledger and Verification in the same rounds,
+  at most two; the plan has no rounds of its own. Step 5 asks each member that raised a finding ONE fold ask per
+  round, gives round two the folded artifact, the decided register and each fold's diff, and has a fold of the last
+  round re-read by its raiser. plan-execution runs steps 1-4 per row and steps 5-7 once on the story's staged diff,
+  every committable output staged first, its brief listing every test changed since the tests session's recorded
+  tree with its text before and after, its scenario line and its red run; a staged tree that moves after a
+  member's last ship-class verdict is re-checked by every member over the move. The round render, the cap triage and the flow and red-proof instruments
+  leave the loop; a code fold is shown red by its test's run.
+- **The epic by the lens.** *The epic* and the `epic` procedure: one review-lens read per round of the rendered
+  brief, at most two rounds, whatever `epic.review` resolves to; no bridge run is spent on an epic.
+- **One prompt per row.** *The task* and the `task` procedure (four steps: Prompt, Execute, Verify, Return): the
+  orchestrator writes one prompt file from one ledger row, whatever `task.author` resolves to; a hand-out starts with
+  the story's changes staged and the git-excluded paths a run could write copied; the read after the runs restores
+  writes outside the Files; the row's tests are the one check. No brief draft, checkpoint, stamp or dispatch record
+  wraps a run, and a fold of bridge-written code resumes that run's session, its id read from its exec receipt.
+- `references/agent-rules-lens.md`: the Finding scope, Spec-first, Fold minimally and Heavy review bullets name the
+  spec review; the outgoing fragment joins `references/agent-rules-lens-priors.md`, so a deployed copy of it
+  refreshes on upgrade. `references/specs.md`: a contract change is reviewable at the spec review.
+  `references/orchestration.md`: the Subagent recipe's task slice is one prompt the orchestrator wrote.
+
+MINOR: the canon's rules change; no script or template changed. The kit's advisor, carriers and rules templates
+follow in kit 14.22.0.
+
 ## 5.11.0 — the quality-first rule: every kept or attesting bridge run is on the user's chosen model (AD-169)
 
 `references/orchestration.md`, §5: each bridge runs on its **host posture** — the model the user set in the bridge

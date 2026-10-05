@@ -8,7 +8,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
 const flat = planning.replace(/\s+/g, ' ');
 const LF = String.fromCharCode(10);
-const DASH = String.fromCharCode(8212);
 const OPT_IN = 'The opening sentence has a rung too: append `--require-names` and a row whose name is not a sentence' + LF
   + 'refuses. It is an OPT-IN a project adds once its rows are named \u2014 without the flag a nameless row is' + LF
   + 'only a note, so the gate line a project wrote before this rule keeps its verdict byte for byte.' + LF;
@@ -36,25 +35,29 @@ describe('planning.md — the plan shape', () => {
     assert.doesNotMatch(section, /```/);
   });
 
-  it('pins ## The task between The epic and The queue, fence-free, naming the two tools, the prune before the plan is deleted and the no-concurrent-writer rule (spec:checkpoint/S10)', () => {
+  it('pins ## The task between The epic and The queue, fence-free, naming neither checkpoint.mjs nor task-brief.mjs (spec:checkpoint/S10)', () => {
     assert.match(flat, /## The task/);
     assert.ok(flat.indexOf('## The epic') < flat.indexOf('## The task'));
     assert.ok(flat.indexOf('## The task') < flat.indexOf('## The queue'));
     const section = flat.split('## The task')[1].split('## The queue')[0];
-    assert.match(section, /checkpoint\.mjs/);
-    assert.match(section, /task-brief\.mjs/);
-    assert.match(section, /the prune before the plan file is deleted/);
-    assert.match(section, /no other session writes in scope/);
     assert.doesNotMatch(section, /```/);
+    assert.doesNotMatch(section, /checkpoint\.mjs/, 'S10: The task still calls checkpoint.mjs');
+    assert.doesNotMatch(section, /task-brief\.mjs/, 'S10: The task still calls task-brief.mjs');
   });
 
-  it('states the one retry from the checkpoint on the posture fallback model as a recorded dispatch whose rationale states the model, and that a second refusal stops the story (spec:executor-vehicle/S7)', () => {
+  it('keeps the one quota retry on the posture fallback model with the model named, a second refusal stopping the story, and no checkpoint or recorded dispatch (spec:executor-vehicle/S7)', () => {
     const section = flat.split('## The task')[1].split('## The queue')[0];
-    const clauses = ["A slice refused for its model's quota is retried ONCE", "from the task's checkpoint",
-      'on the fallback model of the resolved vehicle posture', 'the `fallback` of `docs/ai/vehicles.json`',
-      'the bundled default only when that file is absent', 'as a recorded dispatch of its own whose rationale states the model that ran it',
-      'a second refusal stops the story'];
-    assert.match(section, new RegExp(clauses.join(`[ ,;${DASH}]+`)));
+    const clauses = [/A run of the executor vehicle refused for its model's quota is retried once/i, /on the fallback model of the resolved vehicle posture/,
+      /the `fallback` of `docs\/ai\/vehicles\.json`/, /the bundled default only when that file is absent/,
+      /the model that ran it/, /a second refusal stops the story/];
+    let from = 0;
+    for (const clause of clauses) {
+      const at = section.slice(from).search(clause);
+      assert.notEqual(at, -1, `S7: the retry lost or reordered ${clause}`);
+      from += at;
+    }
+    assert.doesNotMatch(section, /from the task's checkpoint/, "S7: the retry still starts from the task's checkpoint");
+    assert.doesNotMatch(section, /as a recorded dispatch/, 'S7: the retry is still a recorded dispatch');
   });
 
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
@@ -137,7 +140,7 @@ describe('planning.md — the plan shape', () => {
   });
 
   it('keeps review subtractive and un-run logic out of plan prose', () => {
-    assert.match(flat, /Review asks what to cut, not what is missing/);
+    assert.match(flat, /asks what to cut, not what is missing/);
     assert.match(flat, /deleting at least as many lower-value lines/);
     assert.match(flat, /prose has no checker/);
   });
@@ -145,6 +148,38 @@ describe('planning.md — the plan shape', () => {
   it('keeps plan files ephemeral, never committed, and always cleaned up', () => {
     assert.match(flat, /never committed/);
     assert.match(flat, /Every plan ends with `## Phase: Cleanup`/);
+  });
+});
+
+// A `## <heading>` section, flattened: its last occurrence, so the Shape skeleton's fenced headings are never taken for one.
+const sectionText = (heading) => {
+  const start = planning.lastIndexOf(`${LF}## ${heading}${LF}`);
+  assert.notEqual(start, -1, `planning.md has no ## ${heading}`);
+  const end = planning.indexOf(`${LF}## `, start + heading.length + 4);
+  return planning.slice(start, end === -1 ? undefined : end).replace(/\s+/g, ' ');
+};
+const holds = (scenario, cases) => {
+  for (const [text, reason, pattern, absent = false] of cases) (absent ? assert.doesNotMatch : assert.match)(text, pattern, `${scenario}: ${reason}`);
+};
+
+describe('spec:story-flow/S14 planning.md states the review loop: the spec review reads the ledger, one commit after the diff review', () => {
+  it('What gets cut, the Module ledger, Cleanup, The epic and the red run of a changed test follow the review loop', () => holds('S14', [
+    [sectionText('What gets cut'), 'What gets cut does not address the spec review', /\bspec review\b/], [sectionText('What gets cut'), 'What gets cut does not say the spec review reads the ledger', /\bledger\b/],
+    [sectionText('Module ledger'), 'each ledger row is still one commit', /each row is one logical commit/i, true],
+    [sectionText('Module ledger'), 'the story is not committed after its diff review', /\bcommit[^.]*\bafter\b[^.]*\bdiff review\b|\bdiff review\b[^.]*\bcommit/i],
+    [sectionText("Cleanup, and the plan's own life"), 'tracked outputs are not written before the diff review', /\btracked\b[^.]*\bbefore the diff review\b|\bbefore the diff review\b[^.]*\btracked\b/i],
+    [sectionText('The epic'), 'The epic is not reviewed by the lens alone', /\b(the|a) lens alone\b|\b(one|a single) review[- ]lens\b|\bonly by the lens\b/i],
+    [flat, 'a changed test is not shown red on a scratch copy of the recorded tree', /\bred\b[^.]*\bscratch copy\b[^.]*\btests session recorded\b/i],
+  ]));
+});
+
+describe('spec:story-flow/S20 The task copies the git-excluded paths before a hand-out and restores them wholesale in the read', () => {
+  it('copies the excluded paths a run could write, then restores each copied path wholesale, entries the copy lacks deleted', () => {
+    const task = sectionText('The task');
+    const COPY = /\bcop(y|ies)\b[^.]*\b(git-)?excluded paths?\b|\b(git-)?excluded paths?\b[^.]*\bcop(y|ies)\b/i;
+    holds('S20', [[task, 'The task does not copy the excluded paths a run could write', /\bcop(y|ies)\b[^.]*\bexcluded paths?\b[^.]*\bcould write\b|\bexcluded paths?\b[^.]*\bcould write\b[^.]*\bcop(y|ies)\b/i],
+      [task, 'the read does not restore each copied path wholesale', /\bcopied path\b[^.]*\bwholesale\b/i], [task, 'entries the copy lacks are not deleted', /\bentries the copy lacks\b[^.]*\bdeleted\b/i]]);
+    assert.ok(task.search(COPY) < task.search(/\bwholesale\b/i), 'S20: the copy is not taken before the read restores from it');
   });
 });
 

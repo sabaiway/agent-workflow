@@ -140,9 +140,10 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
   exclusions bound only the work inside that slice, and the plan's non-goals restate them per slice.
   A cross-spec conflict is resolved by a spec REVISION BEFORE plan approval — never by silent
   precedence or review-time improvisation.
-- **Every contract change is reviewable at plan review.** A NEW feature's draft spec is authored WITH
-  the plan and exists AT review (a `create` ledger row); a plan that ALTERS a governed contract
-  carries the proposed revision at review the same way (a `modify` row). Approval confirms the plan
+- **Every contract change is reviewable at the spec review, before the plan's approval.** A NEW
+  feature's draft spec is authored in the session that writes its plan and exists AT the spec review
+  (a `create` ledger row); a plan that ALTERS a governed contract carries the proposed revision, read
+  at the spec review the same way (a `modify` row). Approval confirms the plan
   and every cited draft or revision atomically; the rows then land them. A contract is never
   "confirmed" before it is visible.
 - **Test-as-spec binding is per scenario.** Every scenario names the test that pins it; a NEW

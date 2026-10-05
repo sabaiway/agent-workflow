@@ -19,7 +19,7 @@ const MEMORY_TEMPLATES = join(HERE, '..', '..', 'agent-workflow-memory', 'refere
 const LF = String.fromCharCode(10);
 const RULES_FILE = 'agent_rules.md';
 const SESSION_CLOSE_LEAD = '- **Two blocks for the user.**';
-const TASK_PHRASE = 'one task per session';
+const TASK_PHRASE = 'only when it writes new tests or code';
 const KIT_PATH_RE = /agent-workflow-kit|<kit>|tools\//;
 const FOR_THE_USER = '## For the user';
 const LABELS = ['**What was done, and for what:**', '**What is next, and why:**'];
@@ -27,14 +27,13 @@ const PLACEHOLDER_RE = /\{\{|TODO|<[a-z]/i;
 const STORY_HEADING = '### 2.7. Story sessions';
 const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
 const STRUCTURAL_BOUNDARY = /^(---$|## |### )/;
-// The literal Story sessions canon, split at its em dashes so no source line passes the line cap.
+// The literal Story sessions canon, copied byte for byte from the story-flow contract's flow-steps
+// part, split at its em dashes so no source line passes the line cap.
 const STORY_CANON = [
   "A story ",
   " one row of an epic's ledger, carried by one plan ",
-  " runs as five sessions, each ending at its own review checkpoint: **spec** (the contract under `docs/ai/specs/`, drafted and reviewed on the `plan-authoring` recipe), **plan** (the ledger, same recipe), **tests** (one task per ledger row, red first), **code** (one task per row, to green), and **diff review, release and record** (the review of the staged tree on the `plan-execution` recipe, the release where the story ships one, then the changelog and handover entries and the plan's Phase: Cleanup). Tests and code never share a session, and a spec and its plan never share one either. A storyless plan runs the same five. **Exception ",
-  " a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup. Inside the tests and code sessions it is one task per session: each task runs as its own carrier session ",
-  " one brief, one run, never one run for a whole wave ",
-  " and the orchestrator's session briefs, checks, verifies and folds.",
+  " runs as four sessions, each step in them giving one checked result: **spec and plan** (every contract the story creates or revises and the plan's ledger beside them, checked by the spec gate, the plan-shape gate and one review of at most two rounds that reads both, then the plan's approval), **tests** (only tests, each new one failing for the reason its scenario or acceptance bullet states, or on the absence of a name the plan adds, imported inside the test; no code and no prototype), **code** (code until the tests and the pre-review gates pass; a wrong test is changed only back to what its scenario states), and **diff review, release and record** (every committable output, tracked records included, staged first, the review of the staged diff in at most two rounds, the final gates and the release where the story ships one, then the plan's Phase: Cleanup). Tests and code never share a session. A storyless plan runs the same four. **Exception ",
+  " a split:** moving code and its existing cases into modules, with no new logic and no new case, is one session: a short spec (the Module list), the split, the diff review, the release, Cleanup. A bridge executor gets a task only when it writes new tests or code, from one prompt of the orchestrator; a file the orchestrator already wrote is laid down by the orchestrator, never relayed through a bridge.",
 ].join(String.fromCharCode(8212));
 
 const read = (root, name) => readFileSync(join(root, name), 'utf8');
@@ -173,23 +172,24 @@ describe('Story sessions template twins spec:rules-regions/S19', () => {
       assert.ok(text.slice(text.indexOf(lens) + lens.length).startsWith(STORY_HEADING), root);
     }
   });
-  it('both Story sessions bodies equal the literal canon', () => {
+  it('both Story sessions bodies equal the literal canon, and the guard reads nothing under the project docs spec:story-flow/S5', () => {
     for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) {
       const region = extractStoryRegion(read(root, RULES_FILE));
-      assert.equal(region, [STORY_HEADING, STORY_CANON, '', ''].join(LF), root);
+      assert.equal(region, [STORY_HEADING, STORY_CANON, '', ''].join(LF), `S5: the ${root} Story sessions body is not the four-session canon`);
     }
+    assert.doesNotMatch(readFileSync(fileURLToPath(import.meta.url), 'utf8'), new RegExp(['docs', 'ai'].join('/')));
   });
   it('the parity comparison rejects a twin changed in memory', () => {
     const kit = extractStoryRegion(read(KIT_TEMPLATES, RULES_FILE));
     const memory = extractStoryRegion(read(MEMORY_TEMPLATES, RULES_FILE));
     assert.equal(kit, memory);
-    const changed = memory.replace(STORY_CANON, STORY_CANON.toUpperCase());
+    const changed = memory.replace(LF + 'A story', LF + 'A STORY');
     assert.notEqual(memory, changed);
     assert.throws(() => assert.equal(kit, changed), assert.AssertionError);
   });
 });
 
-describe('spec:session-rules/S1 the session-close bullet and the one-task sentence in both templates', () => {
+describe('spec:session-rules/S1 the session-close bullet and the bridge-executor sentence in both templates', () => {
   for (const [label, root] of [['kit', KIT_TEMPLATES], ['memory', MEMORY_TEMPLATES]]) {
     it(`the Communication region ends with the Two blocks for the user bullet: ${label}`, () => {
       const lines = extractCommunicationRegion(read(root, RULES_FILE)).split(LF).filter((line) => line.trim() !== '');
@@ -197,9 +197,9 @@ describe('spec:session-rules/S1 the session-close bullet and the one-task senten
       assert.equal(lines.filter((line) => line.includes('Two blocks for the user')).length, 1);
     });
 
-    it(`the Story sessions body line ends with the one-task sentence: ${label}`, () => {
+    it(`the Story sessions body line ends with the bridge-executor sentence: ${label}`, () => {
       const [, body] = extractStoryRegion(read(root, RULES_FILE)).split(LF);
-      assert.match(body.slice(body.lastIndexOf('. ') + 2), new RegExp(TASK_PHRASE));
+      assert.match(body.slice(body.lastIndexOf('. ') + 2), new RegExp(TASK_PHRASE), 'the body does not end with the bridge-executor sentence');
       assert.equal(body.split(TASK_PHRASE).length, 2);
     });
 

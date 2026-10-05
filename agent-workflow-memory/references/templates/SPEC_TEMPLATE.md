@@ -21,7 +21,8 @@ revision: 1
 ## Contract
 
 What the feature accepts and returns, stated as invariants a test can pin. A `draft` spec is authored
-WITH the plan that lands the feature and exists at plan review; approval of that plan confirms the
+in the session that writes the plan landing the feature and exists at its spec review; approval of
+that plan confirms the
 contract (no separate stop). It becomes `live` on the plan's landing row; `revision` increments by one
 per live contract change; `retired` on the removal row — never backwards.
 

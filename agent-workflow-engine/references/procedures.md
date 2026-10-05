@@ -7,7 +7,7 @@ only each section's `Slots:` line. `review`: `solo | reviewed | council`; `execu
 
 **When an activity has a commit boundary, the orchestrator owns that commit; every other carrier
 never commits** (`orchestration.md` §6). `plan-authoring` ends at **approval**: plans are ephemeral,
-never committed; `plan-execution` commits per ledger row.
+never committed; `plan-execution` commits the story once, after its diff review.
 
 **Read your preference at session start.** At the start of a planning or execution session, read
 `docs/ai/orchestration.json` (`/agent-workflow-kit set-recipe`) and never re-ask it. Read the **autonomy policy** the
@@ -37,34 +37,47 @@ Slots: author, fold, review
    that pin the text). Every reader becomes a ledger row, a stated non-goal, or unchanged with
    the test or fixture that proves it. Then apply *What gets cut*; fold by code
    (read and cite the `file:line`); update `queue.md` for a series, to the shape *The queue* fixes.
-4. **review {recipe}** — Solo (self-review only) / Reviewed (one backend) / Council (both; you
+4. **review {recipe}** — the spec review: it reads the spec and every contract the story creates or
+   revises (a live sibling's revision as the new contract states it) and the plan's ledger with its
+   Goal and boundary and Verification, in the same rounds, at most two rounds; the plan has no rounds of
+   its own. Solo (self-review only) / Reviewed (one backend) / Council (both; you
    synthesize), as the resolved `review` recipe selects. The review brief of EVERY member (bridge
    focus, agy `--facts`, the lens brief) carries the walk-around lens: for every check bullet of each
    governing spec, name the invariant it proves and one state that walks around it; a named state
    rewrites the spec BEFORE code, as a `modify` row of the plan.
-5. **Fold + loop** — before folding a finding raised by a **review member**, **ASK** that member whether the
-   proposed fold solves it without a new problem; **WAIT**, **READ**, then hand the accepted or
-   corrected fold to the resolved `fold` carrier. Self-review findings, or findings with no review
-   member, are folded directly. Forms: `agy-review --continue --decided @f` for agy, a
-   fresh `codex-review plan <consult-brief>` for
-   codex, or a fresh re-dispatch of the same lens vehicle for a lens member; write the finding and
-   fold before the tree changes. Solo: orchestrator edits. Subagent: the round's findings with their
-   dispositions are the slice; it edits the plan or contract and returns; orchestrator runs the
-   self-consistency read.
-   Fold and re-review every finding; CLEAN is **0 blockers + 0 majors** from each named backend;
-   folding ≠ convergence. Fold code findings **test-as-spec**, with **no code-mechanics** in the
-   plan: only **checked syntax** its Verification runs; un-run,
-   **logic-bearing** syntax never enters prose (*Un-run syntax never ships in prose*). Council runs
-   every named backend **every round** (recipe fidelity, `orchestration.md` §4). Cap architecture
-   review at **≤2 rounds**; **backend divergence** (one ships, one keeps revising mechanics) IS the
-   **crossover** — resolve the major at altitude, not by exhausting that backend.
+5. **Fold + loop** — after a round, write every fold you propose and **ASK** each member that raised a
+   finding (a finding raised by a **review member**) in ONE ask per round, carrying all of that
+   member's findings with their proposed folds, whether each fold solves its finding and adds no new
+   problem; **WAIT**, **READ**, then hand the folds as accepted or corrected to the resolved `fold`
+   carrier. Forms: `agy-review --continue --decided @f` for agy, a fresh `codex-review plan
+   <consult-brief>` for codex, or a fresh re-dispatch of the same lens vehicle for a lens member; write
+   the findings and folds before the tree changes. Self-review findings, or findings with no review
+   member, are folded directly before a remaining round; a real minor goes to the debt queue, and a
+   declined finding enters the decided register with its reason. Solo: orchestrator edits. Subagent:
+   the round's findings with their dispositions are the slice; it edits the plan or contract and
+   returns; orchestrator runs the self-consistency read.
+   CLEAN is **0 blockers + 0 majors** from each named backend, each verdict ship-class on the artifact
+   as it stands; folding ≠ convergence. Fold code findings **test-as-spec**, with **no code-mechanics**
+   in the plan: only **checked syntax** its Verification runs; un-run, **logic-bearing** syntax never
+   enters prose (*Un-run syntax never ships in prose*). Council runs every named backend **every
+   round** (recipe fidelity, `orchestration.md` §4). Cap architecture review at **≤2 rounds**, with no
+   third round: round two gives every member the folded artifact whole, the decided register (each
+   round-one finding with its disposition) and each fold's diff, and re-raises nothing the register
+   settles unless a fold made it false. A blocker or major still open after round two is folded once,
+   through the fold ask, and a fold of the last round is re-read by the member that raised it, one run
+   over the folded artifact whole, every fold diff of that round and the register; a fold not accepted,
+   or whose re-read is not ship-class, goes to the maintainer, who cuts the clause or rules.
+   **Backend divergence** (one ships, one keeps revising mechanics) IS the **crossover**: resolving the
+   major at altitude is a fold like any other, never a close of its own or the exhausting of that
+   backend. After the last round nothing is folded unread: a new real minor goes to the debt queue, a
+   new blocker or major to the maintainer.
    A **self-consistency** read precedes each re-review; all-mechanics or prose-only takes a thin plan
    + **diff-review** (*The plan must read cold*). Each round MUST emit
-   **{round N · finding-origin tally · per-backend verdict}**: READ its verdict half from the round
-   render (`review-rounds`, the kit's table over the review receipts); append the orchestrator's finding-origin tally
-   judgment. At the cap, classify surviving blockers/majors: **fixable-bug** (fold ONCE as a red→green test, re-review) /
-   **inherent-layer-residual** (raise to an acceptance criterion) / **escalate**.
-6. **Present for approval** — never execute here: a harness "approved — start coding" prompt
+   **{round N · finding-origin tally · per-backend verdict}**: the verdicts read from the round's
+   receipts and the lens's answer, plus the orchestrator's finding-origin tally.
+6. **Present for approval** — finish the plan folded with the spec (the readers sweep of step 3 over
+   every name the fold changed), run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`, and present
+   the plan with its contracts. Never execute here: a harness "approved — start coding" prompt
    (**ExitPlanMode**) authorizes the PLAN only; `plan-execution` is a deliberate transition once
    the plan and its cold-start prompt exist.
 
@@ -75,7 +88,8 @@ execution prompt to begin the next session — both without the user asking.
 
 Slots: execute, review
 
-Each ledger row is one logical commit.
+Steps 1 to 4 run per row, in the tests and code sessions; steps 5 to 7 run once, on the story's
+staged diff, so no row commits before the diff review.
 
 1. **Resolve the recipe per row** — `execute` and `review` from `docs/ai/orchestration.json` +
    readiness (`--override <slot>=<value>` per run).
@@ -88,48 +102,44 @@ Each ledger row is one logical commit.
    `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, re-run
    `plan-shape --check`, and only then generate the brief. The dispatch brief — Delegated or
    Subagent — carries the generated robustness-literals block for every tagged row.
-   When a row is carried as tasks, the `task` activity's slots carry each brief and each run
-   (its section below); the row's fold, gates and commit stay here.
+   When a row is carried as tasks, the `task` activity carries each prompt and each run (its section
+   below): the orchestrator writes the prompt, whatever `task.author` resolves to, the `task.execute`
+   carrier runs it, and the read after the hand-out and the row's tests accept it; the row's fold and
+   the story's review and gates stay here.
 3. **Implement / integrate** — your own edits or the reviewed delegated diff; a spec row lands its
    approved draft or revision WITH the code ([`specs.md`](specs.md)).
 4. **Self-review** — the change against its [`planning.md`](planning.md) ledger row and the plan's
    Verification, under the project's reuse and clean-code rules; fold by code (cite the
    `file:line`); **characterize-first**: pin uncovered code's behaviour in a green test before
    editing it; fold each finding test-as-spec (red→green); atomic, reversible edits.
-5. **review {recipe}** — the **heavy review at the diff** (*The plan must read cold*): real code +
-   full suite. Authoring loop applies unchanged: every named backend every round; a finding raised
-   by a **review member**: **ASK**, **WAIT**, **READ**, fold only as accepted or corrected; a
-   self-review finding is folded directly (forms: its step 5). CLEAN:
-   **0 blockers + 0 majors**; the **{round N · finding-origin tally · per-backend verdict}**
-   emission; **fixable-bug / inherent-layer-residual / escalate** at the cap. Its instruments:
-   when `execute` resolved to Delegated, a fold of a review finding is `codex-exec --resume <held id>
-   --nonce <nonce> <fold-brief>` — the session the first FOLDED delegated dispatch's exec receipt minted
-   — the first delegated code that entered the tree, never an earlier failed or unfolded run — held
-   until the row's commit (a nonce-less run mints no receipt and is invisible to the judge); a fresh session for
-   a fold is a forbidden substitution `review-state` names (a retry of a failed thread and a recorded
-   execute degrade excepted); the orchestrator still runs the suites, verifies the returned diff,
-   re-mints the red-proofs and owns the commit, and folds by hand only what the delegate cannot reach.
-   A task thread's held session is keyed to its task's chain (its brief), so each task of a wave
-   holds its own session; an untasked thread keeps the epoch's one chain.
-   `core-evidence red-proof` declares each bugfix red BEFORE the fix; `core-evidence
-   degrade` records an unavailable backend; reviews run on the STAGED tree; `run-gates --final`
-   mints the ONE receipt `commit-guard --check` gates the commit against.
-
-   On an **ARMED flow**, a **bridge-raised** finding uses this order: the round is open; dispatch
-   its consult with a nonce; WAIT and READ; accept or correct the fold; run
-   `flow-writer consult-attestation <planId> --backend <id> --nonce <n> --proposed-fix-digest
-   <the-sha256-of-the-fold-text>`; then edit. The attestation records the manifest and fold digest,
-   never the run or answer. A **lens-raised** finding instead re-dispatches the lens without a nonce
-   (WAIT and READ, edit as accepted or corrected); it mints no manifest and no attestation; only its
-   per-round participation rides `internal-attestation`.
-
-   For an ARMED flow, every fold owes a walk: run `flow-writer internal-attestation <planId> …
-   --walk <file>` on folded bytes before the next `round-open`; it records `uncovered` and never
-   refuses it, while `--justification` lifts the walk refusal as an echoed input. The cap is the round
-   table's own signal (`cap reached` / `crossover`, computed by `round-open` from the round's landed dispatches), never a tool's constant:
-   past it `round-open` refuses until every blocking item of the latest round has one disposition:
-   `folded` (its proof), `queued` (`--claim` plus a bound proof and the fold-scope ACCEPT), `rejected`
-   (its reason), `escalated` (its maintainer-override), or `custody-lost` (a lost manifest, recorded first).
+5. **review {recipe}** — the **heavy review at the diff** (*The plan must read cold*), once, on the
+   story's staged diff (from the tree the previous story's diff review judged when stories of one
+   release are staged together, else from HEAD), every committable output staged before it: real code
+   + full suite. Authoring loop applies unchanged: every named backend every round, at most two rounds;
+   a finding raised by a **review member**: **ASK**, **WAIT**, **READ** in the fold ask, ONE ask per
+   member per round, fold only as accepted or corrected, code red first (its test run failing before
+   the fix, the run named in the session record); a self-review finding is folded directly (forms: its
+   step 5). CLEAN: **0 blockers + 0 majors**; the
+   **{round N · finding-origin tally · per-backend verdict}** emission; a blocker or major open after
+   round two is folded once and a fold of the last round is re-read by its raiser inside the re-check;
+   one not accepted or not ship-class goes to the maintainer. The brief lists every test path shown by
+   `git diff --cached --name-only <recorded tree>` (the tree the tests session recorded), and every test
+   a fold added or changed, each with its text before and after, its scenario line and its red run; a
+   re-check's brief lists the red run of each test its move adds or changes.
+   **The re-check** — when the staged tree moves after a member's last ship-class verdict (a fold of
+   the last round, a tracked record edited, a version bumped), every member, the lens included, reads
+   only the move with the decided register, one fresh grounded code-mode run per bridge; a re-check
+   that is not ship-class is never folded and re-checked again: the fold's finding goes to the
+   maintainer, any other move is undone or put to the maintainer. A move confined to paths no review
+   reads needs none; the session record names the tree each last round and re-check judged.
+   Its instruments:
+   when `execute` resolved to Delegated, a fold of a review finding in code a bridge wrote is handed
+   back to that run's session, `codex-exec --resume <session id> --nonce <n> <prompt file>`, with a new
+   prompt and a fresh nonce, the session id read from the `sessionId` of the run's exec receipt; the
+   orchestrator may make the fold itself, still runs the suites, verifies the returned diff and owns
+   the commit, and folds by hand what the delegate cannot reach.
+   `core-evidence degrade` records an unavailable backend; reviews run on the STAGED tree;
+   `run-gates --final` mints the ONE receipt `commit-guard --check` gates the commit against.
 
    **Finding scope** — every finding NAMES the invariant its fix enforces, BEFORE the edit, every
    round. Already an acceptance criterion (*Verification*'s `- ` bullets) → **fold here**. It would
@@ -142,11 +152,13 @@ Each ledger row is one logical commit.
    When the repeat finding named by bar 2 is a second case against the same check bullet, the fold
    proposes the REPLACEMENT invariant — the closing clause — never an added case, and its consult asks for it.
 6. **Gates** — the project's verification gate to green.
-7. **Commit boundary** — the orchestrator makes the single commit; every other carrier never commits; the
-   commit-approval policy lives in the project's own rules.
+7. **Commit boundary** — the orchestrator makes the single commit of the reviewed staged diff once the
+   review closes (a release that ships several stories carries their diffs in its one commit); every
+   other carrier never commits; the commit-approval policy lives in the project's own rules.
 8. **After the last row** — the project-declared release or extra stages (the `workflow:methodology`
-   slot; this canon bakes in none) and then `## Phase: Cleanup` (*Cleanup, and the plan's own
-   life*) run as rows of their own, each through steps 1–7.
+   slot; this canon bakes in none) write their committable outputs before step 5, so the diff review
+   judges them; `## Phase: Cleanup` (*Cleanup, and the plan's own life*) runs after the commit and
+   changes nothing the review judged.
 
 ## routine
 
@@ -198,12 +210,15 @@ lives in the memory substrate and is committed, where that substrate is tracked,
    Subagent: the orchestrator writes the brief of step 1, the subagent drafts the file from it, and the
    orchestrator runs the shape check on the draft as its own before step 3.
 3. **Check** — `epic-shape-cli --check <epic>` accepts the file, or nothing is reviewed.
-4. **review {recipe}** — over the RENDERED brief, never the file: write `epic-shape-cli --review-brief
-   <epic>` to a scratch file and hand that file to every member — a bridge in plan mode over it, a lens
-   with it as its artifact. One lens is the tier's roster; a project that names bridges pays them.
+4. **review {recipe}** — one review-lens read over the RENDERED brief, never the file, whatever
+   `epic.review` resolves to: write `epic-shape-cli --review-brief <epic>` to a scratch file and hand it
+   to the lens as its artifact, so no bridge run is spent on an epic. Where no lens can run, the review
+   closes with a stated degrade the maintainer weighs at the go.
 5. **Fold** — the findings file goes through `epic-shape-cli --fold`; only the entries it keeps are folded,
-   by hand, at concept altitude; then step 3 again. At most two rounds: a surviving finding at altitude
-   becomes a story or a non-goal, never a mechanism.
+   through the fold ask (a lens re-dispatch carrying them), by hand, at concept altitude; then step 3
+   again. At most two rounds: a fold of the second round is re-read by the lens or goes to the
+   maintainer with the go; a surviving finding at altitude becomes a story or a non-goal, never a
+   mechanism.
 6. **Land** — the queue row; each story's ledger row is the go for its plan; `--close` after the last
    story lands, as *The epic* states.
 
@@ -211,25 +226,21 @@ lives in the memory substrate and is committed, where that substrate is tracked,
 
 Slots: author, execute
 
-A task binds to *The task* and runs inside its story's `plan-execution` session: no commit boundary and no
-review of its own — its tests are its only review, and the story's row commits.
+A task binds to *The task* and runs inside its story's tests or code session: no commit boundary and no
+review of its own — the row's tests are its one check, and the story commits after its diff review.
 
-1. **Mint** — `checkpoint mint --plan <plan>` before a single task's execute dispatch, or before the first
-   of a wave's; every brief of that checkpoint is written, stamped and checked before its first dispatch.
-2. **Brief** — the resolved `author` carrier writes `TASK-<stem>-T<n>.md` from ONE ledger row. Solo: the
-   orchestrator; Delegated: a bridge run whose deliverable is the brief file, before any task thread of
-   that checkpoint opens; Subagent: the executor vehicle from the orchestrator's slice. Then `task-brief
-   stamp <brief>`, and `task-brief check <brief>` immediately before the run — with `--dispatch
-   <dispatch-file>` when the run is a bridge dispatch.
-3. **Execute** — the resolved `execute` carrier runs the brief inside its Files. Delegated: `dispatch open
-   --checkpoint <oid> --task <brief>`, then the bridge run, one session per task; Subagent: the executor
-   vehicle with the brief — not a ledger thread, so a failed slice is undone by the whole-tree restore
-   under its precondition; Solo: the orchestrator edits the Files itself.
-4. **Verify** — the orchestrator runs the brief's Acceptance commands and its Negative cases itself; a red
-   task is undone by the restore *The task* names before any retry opens on its checkpoint; a slice refused
-   for its model's quota is retried once on the fallback model, as *The task* states.
-5. **Return** — the returned diff is the story's row from plan-execution step 3 onward; a delegated task's
-   fold rides that task's own held session (its brief's chain), never a shared one; a task whose
-   `task.execute` is configured delegated engages the held-session gate, and one whose `execute` resolves
-   to delegated renders the fold lane, whatever `plan-execution.execute` is — the gate reads the
-   configuration, never a per-run override; a solo or subagent task holds none.
+1. **Prompt** — the orchestrator writes one prompt file from ONE ledger row, whatever `author` resolves
+   to: the row line, its Files, its Reads and the commands; a bridge prompt adds a fresh nonce in its
+   contract block.
+2. **Execute** — with the story's changes staged, the excluded paths a run could write copied and no
+   other writer, the resolved `execute` carrier runs
+   the prompt inside its Files. Delegated: `codex-exec --nonce <n> <prompt file>`; Subagent: the executor
+   vehicle with the same file; Solo: the orchestrator edits the Files itself.
+3. **Verify** — the read after the hand-out, once every run has stopped: a path written outside the out
+   rows' Files is restored from the index and each copied path from its copy, and only then does the
+   orchestrator run the row's tests itself;
+   a run not accepted is restored the same way and retried in the next hand-out, and a run of the executor
+   vehicle refused for its model's quota is retried once on the fallback model, as *The task* states.
+4. **Return** — an accepted run's Files are staged and are the story's row from plan-execution step 3
+   onward; a fold of code a bridge wrote resumes that run's session with `--resume`, its session id read
+   from the run's exec receipt.

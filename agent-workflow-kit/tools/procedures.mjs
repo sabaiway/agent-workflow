@@ -37,7 +37,7 @@ import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from '.
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 // The family's ONE shell quoter for a RENDERED command operand (bare when the value is already safe,
 // single-quoted otherwise) — the same leaf eight other command renderers here read through.
-import { shellQuoteArg, isSeedablePathToken, isRenderableLine, escapeForDisplay, isArtifactPathCarriable } from './repo-lex.mjs';
+import { shellQuoteArg, isSeedablePathToken, isRenderableLine, escapeForDisplay } from './repo-lex.mjs';
 // The config schema/read core (orchestration-config.mjs, the single config contract): the reader +
 // the SHARED slot/recipe validity, never the fs-writer (orchestration-write.mjs) DIRECTLY — the
 // import-split test pins the direct-import rule.
@@ -48,8 +48,6 @@ import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, isSparseSeedConfig } from 
 // orchestration-write (the import-split test pins both direct rules; the TRANSITIVE claim is
 // structural — test/read-graph-purity.test.mjs pins it).
 import { resolveFlowStorePath, readFlowStore } from './flow-store-read.mjs';
-import { readDelegationLedger } from './dispatch-store-read.mjs';
-import { foldLaneLines, HELD_RECEIPT_BACKEND, judgeLedger } from './held-session.mjs';
 import { CHAIN_KIND } from './flow-record.mjs';
 import { readRegistration } from './mcp-registration.mjs';
 // The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
@@ -166,7 +164,8 @@ const resolveAllSlots = ({ activity, config, detection, overrides, surveyLens })
   const knobsFor = (cmd) => [...registry.values()].filter((k) => (k.appliesTo ?? []).includes(cmd));
   return Object.entries(ACTIVITIES[activity].slots).map(([slot, slotType]) => {
     const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity, slot, override: overrides[slot], surveyLens });
-    if (isSwitchSlot(slotType)) return { slot, slotType, ...resolved, backends: [], contracts: [], vehicles: [] };
+    // The epic is reviewed by the lens alone whatever its review slot resolves to: no bridge is dispatched.
+    if (isSwitchSlot(slotType) || isEpicLensReview(activity, slot)) return { slot, slotType, ...resolved, backends: [], contracts: [], vehicles: [] };
     // The concrete wrapper set this slot's EFFECTIVE recipe dispatches (empty for solo). Reuse
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
     // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here. A vehicle
@@ -213,61 +212,71 @@ const SOURCE_LABEL = {
 
 // The explicit wrapper set a review/execute recipe dispatches, printed beside the recipe name so the A2
 // recipe-fidelity obligation ("run every named backend, every round") is mechanical at the point of use.
-// ≥2 backends (Council) → the every-round reminder; exactly 1 → the lone wrapper; Solo dispatches none → ''.
-const backendSetLabel = (backends) =>
-  !backends || backends.length === 0
-    ? ''
-    : backends.length >= 2
-      ? ` → run every backend every round: ${backends.join(' + ')}`
-      : ` → ${backends[0]}`;
+// ≥2 backends (Council) → the every-round reminder; exactly 1 → the lone wrapper; Solo dispatches none → '';
+// the epic's review slot names its lens review instead.
+const EPIC_LENS_LABEL = ' → the lens review: one review-lens read of the rendered brief; epic.review dispatches no bridge';
+const backendSetLabel = (backends, lensReview = false) =>
+  lensReview
+    ? EPIC_LENS_LABEL
+    : !backends || backends.length === 0
+      ? ''
+      : backends.length >= 2
+        ? ` → run every backend every round: ${backends.join(' + ')}`
+        : ` → ${backends[0]}`;
 
 // The review-loop economics block (M1 + M6's firing half) — printed when the activity engages a review
 // member: a slot RESOLVING reviewed | council, a roster, or one whose config or override REQUESTED a
 // review recipe and degraded (readiness removes no configured obligation, and the table still judges
 // it); omitted only for a solo nobody asked to be otherwise. It paraphrases the procedures.md
-// Fold + loop step + orchestration §4 canon (no rival rule): the ≤2-round architecture cap, the bar met by RAISING a
-// surviving major to an acceptance invariant (not exhausting prose), backend divergence = the crossover
-// stop, the thin-plan/diff-review carve-out, a self-consistency read before every re-review, and the
-// REQUIRED per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a
-// review slot can resolve or request reviewed|council (execute floors at solo|delegated), so the gate
-// reads the recipe, the requested recipe and the roster.
+// Fold + loop step + orchestration §4 canon (no rival rule), as story-flow's review-loop part states it:
+// one fold ask per member per round, at most two rounds with the raiser's re-read of a last-round fold,
+// the re-check of a moved staged tree for plan-execution, backend divergence = the crossover stop, the
+// thin-plan/diff-review carve-out, a self-consistency read before every re-review, and the REQUIRED
+// per-round structured emission {round N · finding-origin tally · per-backend verdict}. Only a review
+// slot can resolve or request reviewed|council (execute floors at solo|delegated), so the gate reads the
+// recipe, the requested recipe and the roster. The epic renders its lens review whatever its slot says.
 const REVIEW_RECIPES = new Set(['reviewed', 'council']);
-const CONSULT_LINE = '  • Before every fold of a finding raised by a review member (a bridge backend or a placed lens): ASK that member whether the proposed fold solves it and adds no new problem; WAIT for its answer, READ it, then edit only as accepted or corrected — agy: agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>. Does this proposed fold solve the finding and add no new problem? If this finding is the second case against the same check, reply with the replacement invariant, not an added case. ' +
-  'Reply accept, or correct with exact replacement text."; codex: fresh codex-review plan <consult-brief> with the same payload written before the working tree changes; a placed lens: re-dispatch the same lens vehicle with the same payload. A self-review finding, or any finding when no review member ran, is folded directly — the exemption is the finding\'s ORIGIN, never the recipe word on the slot line.';
+const CONSULT_LINE = '  • Before every fold of a finding raised by a review member (a bridge backend or a placed lens): after the round, ASK each member that raised a finding in ONE ask per round carrying all of its findings with their proposed folds, whether each fold solves its finding and adds no new problem; WAIT for its answer, READ it, then edit only as accepted or corrected — agy: agy-review --continue --decided @f --focus "Findings and proposed folds: <each finding with its exact fold>. Does each proposed fold solve its finding and add no new problem? If a finding is the second case against the same check, reply with the replacement invariant, not an added case. ' +
+  'Reply accept, or correct with exact replacement text, per fold."; codex: fresh codex-review plan <consult-brief> with the same payload written before the working tree changes; a placed lens: re-dispatch the same lens vehicle with the same payload. A self-review finding, or any finding when no review member ran, is folded directly — the exemption is the finding\'s ORIGIN, never the recipe word on the slot line.';
+const CAP_LINE = "  • Cap architecture review at ≤2 rounds, with no third round: a surviving blocker or major goes to one fold — raising it to an acceptance invariant or handing its mechanics to the diff review included — through the fold ask and its raiser's re-read, or to the maintainer, who cuts the clause or rules; never by exhausting the strictest backend.";
+const RE_READ_LINE = "  • Round two gives every member the folded artifact whole, the decided register (each round-one finding with its disposition: the fold, the debt row, or the reason it was declined) and each fold's diff; a fold of the last round is re-read by the member that raised it, and one not accepted or whose re-read is not ship-class goes to the maintainer; after the last round nothing is folded unread.";
+const RE_CHECK_LINE = "  • The re-check of a moved staged tree: when the staged tree moves after a member's last ship-class verdict (a fold of the last round, a tracked record edited, a version bumped), every member, the lens included, reads only the move with the decided register, the raiser of a folded finding judging its fold — one fresh grounded code-mode run per bridge, whose receipt binds the moved tree; a re-check that is not ship-class is never folded and re-checked again: a fold's finding goes to the maintainer, any other move is undone to the judged tree or put to the maintainer.";
+const EPIC_LENS_LINES = [
+  'Review loop (procedures.md epic · the lens review) — whatever epic.review resolves to, no bridge run is spent on an epic:',
+  '  • One review-lens read per round over the brief epic-shape-cli --review-brief <epic> renders, never the file; where no lens can run, the review closes with a stated degrade the maintainer weighs at the go.',
+  '  • Before every fold of a finding the lens raised: ASK it in ONE ask per round carrying all of its findings with their proposed folds (a re-dispatch of the same lens vehicle), WAIT, READ, then fold only as accepted or corrected, through epic-shape-cli --fold, at concept altitude.',
+  '  • At most two rounds: a fold of the second round is re-read by the lens or goes to the maintainer with the go.',
+];
 const ARMED_CONSULT_LINE = '  • ARMED pre-fold sequence for a bridge-raised finding: the round is open → dispatch that bridge\'s consult with a nonce → WAIT and READ → fold accepted or corrected → flow-writer consult-attestation <planId> --backend <id> --nonce <n> --proposed-fix-digest <the-sha256-of-the-fold-text> → then edit. A lens-raised finding re-dispatches the lens without a nonce, WAIT and READ, then edit as accepted or corrected — it mints no manifest and no attestation — only its per-round participation rides its internal-attestation.';
-// activity-aware (AD-046): the triage classification vocabulary rides EVERY review-backed activity;
-// the LEDGER pointer renders ONLY for plan-execution — the ledger is plan-execution-scoped (AD-045),
-// and pointing plan-authoring at it would send rounds of the wrong activity into the code loop's gate.
-// A lens-only roster resolves to `solo` and a fully degraded request resolves to `solo`: both still run
-// a review round, which is why the gate never reads the effective recipe alone.
-const reviewLoopAdvice = (slots, activity, flowArmed = false, plans = []) =>
-  slots.some((s) => s.roster != null || REVIEW_RECIPES.has(s.recipe) || REVIEW_RECIPES.has(s.degradedFrom))
-    ? [
-        'Review-loop economics (procedures.md Fold + loop · orchestration.md §4) — the review this recipe runs:',
-        CONSULT_LINE,
-        ...(activity === 'plan-execution' && flowArmed ? [ARMED_CONSULT_LINE] : []),
-        '  • Cap architecture plan-review at ≤2 rounds; the bar is met by RAISING a surviving major to an acceptance invariant (or handing it to Execute/diff-review), never by exhausting the strictest backend.',
-        '  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop.',
-        '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
-        '  • Each round MUST emit {round N · finding-origin tally (first-draft / fold-induced / mechanics) · per-backend verdict} so the crossover is a computed signal.',
-        ...(activity === 'plan-authoring' ? roundRenderAdvice(slots, plans) : []),
-        '  • At the cap, classify every surviving blocking finding: fixable-bug (fold ONCE as a red→green test, re-review) / inherent-layer-residual (document + raise to an acceptance criterion) / escalate (the maintainer decides); a minor never forces triage.',
-        ...(activity === 'plan-execution'
-          ? [
-              '  • The computed instrument for THIS loop: declare each bugfix red BEFORE the fix (core-evidence red-proof — observed N/N red, custody-hashed); an unavailable backend gets an explicit core-evidence degrade record, never a silent skip; then stage everything, run the reviews on the STAGED tree, and mint the ONE receipt with run-gates --final (coverage + red-proof verification ride the final run); the commit is gated by commit-guard --check (the D13 ordering: any edit after the final run re-stales it); read the loop state statelessly with core-evidence summary.',
-            ]
-          : []),
-      ]
-    : [];
+// The instrument line renders ONLY for plan-execution — its gates judge the commit. A lens-only roster
+// resolves to `solo` and a fully degraded request resolves to `solo`: both still run a review round,
+// which is why the gate never reads the effective recipe alone.
+const reviewLoopAdvice = (slots, activity, flowArmed = false) => {
+  if (activity === EPIC) return EPIC_LENS_LINES;
+  if (!slots.some((s) => s.roster != null || REVIEW_RECIPES.has(s.recipe) || REVIEW_RECIPES.has(s.degradedFrom))) return [];
+  return [
+    'Review-loop economics (procedures.md Fold + loop · orchestration.md §4) — the review this recipe runs:',
+    CONSULT_LINE,
+    ...(activity === 'plan-execution' && flowArmed ? [ARMED_CONSULT_LINE] : []),
+    CAP_LINE,
+    RE_READ_LINE,
+    ...(activity === 'plan-execution' ? [RE_CHECK_LINE] : []),
+    "  • Backend divergence (one backend grounded-ships while another keeps revising mechanics) IS the crossover stop: resolving it at altitude is a fold like any other, through the fold ask and its raiser's re-read.",
+    '  • Route an all-mechanics/CI or prose-only artifact to a thin plan + diff-review; run a self-consistency read before every re-review.',
+    "  • Each round MUST emit {round N · finding-origin tally (first-draft / fold-induced / mechanics) · per-backend verdict} so the crossover is a computed signal: the verdicts read from the round's receipts and each lens member's answer.",
+    ...(activity === 'plan-execution'
+      ? ["  • The computed instrument for THIS loop: a code fold is shown red by its test's run before the fix, the run named in the session record; an unavailable backend gets an explicit core-evidence degrade record, never a silent skip; then stage everything, run the reviews on the STAGED tree, and mint the ONE receipt with run-gates --final; the commit is gated by commit-guard --check (the D13 ordering: any edit after the final run re-stales it); read the loop state statelessly with core-evidence summary."]
+      : []),
+  ];
+};
 
 // The grounding pre-step (AD-038, extending the AD-033 verbatim-contract rendering): whenever the
 // resolved dispatch includes agy-review, print the CONCRETE facts-assembly invocation + the
 // --facts form as a copy-paste pre-step — population, not placeholders. Plan-path population rule
 // (the review-state plan-in-flight detector): exactly ONE renderable plan in flight → render it
 // populated; zero, several, or a name a one-line render cannot carry → the explicit placeholder + a
-// one-line discovery caveat; a name the receipt encoder refuses falls back on the receipt-minting
-// or receipt-matching command only (`agy-review plan`, the round table). The
-// suggested --out lives OUTSIDE the repo (/tmp) — grounding.mjs refuses a non-scratch destination.
+// one-line discovery caveat. plan-authoring's agy review reads the spec review file, never the plan
+// file alone. The suggested --out lives OUTSIDE the repo (/tmp) — grounding.mjs refuses a non-scratch destination.
 // Exported for the bridge-tier byte-parity pin (AD-044 Plan 4): the velocity tier seeds the
 // grounding rule in EXACTLY this rendered spelling — `node "${GROUNDING_TOOL}"` — so seeded and
 // rendered forms can never drift apart.
@@ -277,8 +286,8 @@ export const REPO_SEARCH_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'r
 export const FEEDBACK_RECORD_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'feedback-record-cli.mjs');
 const FEEDBACK_TRIAGE = 'feedback-triage';
 const EPIC = 'epic';
+const isEpicLensReview = (activity, slot) => activity === EPIC && slot === 'review';
 const GROUNDING_FACTS_OUT = '/tmp/review-facts.md';
-const MINTS_RECEIPT = Object.freeze({ mintsReceipt: true });
 const FEEDBACK_BRIDGE_LINES = Object.freeze({
   'codex-review': 'codex-review plan <record>',
   'agy-review': 'agy-review plan <record> --facts @<facts>',
@@ -310,35 +319,18 @@ const renderFeedbackTriageAdvice = (activity, slots) => {
   ];
 };
 
-// The round table judges what review-rounds-cli resolves from the config (S27), never this render's
-// override or degradation, so the advisor states that fact beneath the command instead of predicting
-// when the two agree; a bridge-less roster gets the fact that no receipt can exist in the command's place.
-// A requested review recipe renders the command even when every bridge is unavailable here: readiness
-// degradation removes no configured obligation, so the table still has something to say.
+// The feedback-triage round table judges what review-rounds-cli resolves from the config (S27), never
+// this render's override or degradation, so the advisor states that fact beneath the command instead of
+// predicting when the two agree; a bridge-less roster gets the fact that no receipt can exist in the
+// command's place. A requested review recipe renders the command even when every bridge is unavailable
+// here: readiness degradation removes no configured obligation, so the table still has something to say.
 const ROUND_RENDER_FACT_LINE = "  ↳ the table judges the obligation review-rounds-cli resolves from docs/ai/orchestration.json (S27) — the configured recipe, or the computed default for a silent slot — never this run's --override or a degraded recipe; it reads receipts only: a backend that did not run shows as missing (no receipts when none ran), and its degrade record is judged by review-state and core-evidence summary, not here.";
 const ROUND_RENDER_NO_BRIDGE_LINE = "  • Round render: a roster with no bridge mints no receipt, so review-rounds-cli cannot supply this round's verdicts — emit the finding-origin tally plus each lens member's verdict (or silent) directly.";
-const roundRenderAdvice = (slots, plans) => {
-  const review = slots.find((s) => s.slot === 'review');
-  if (review === undefined) return [];
-  const roster = review.roster ?? null;
-  if (!mintsReceipts(review)) return [ROUND_RENDER_NO_BRIDGE_LINE];
-  const lensMembers = (roster ?? []).filter((row) => row.kind === 'lens').map((row) => row.member);
-  const operand = populatedPlan(plans, MINTS_RECEIPT);
-  return [
-    `  • Round render (verdict half of the per-round emission; the finding-origin tally stays the orchestrator's): node ${renderToolPath(REVIEW_ROUNDS_TOOL)} --artifact ${operand ?? '<plan-file>'}`,
-    ...planDiscoveryCaveat(plans, '--artifact', 'populate --artifact with the plan file under review.', operand === null ? ['--artifact'] : []),
-    ROUND_RENDER_FACT_LINE,
-    ...(lensMembers.length > 0 ? [`  ↳ the table carries the bridge verdicts only — add each lens member's verdict (or silent) by hand: ${lensMembers.join(', ')}`] : []),
-  ];
-};
 
 // The ONE plan in flight as a pasteable operand: shell-significant bytes ride shellQuoteArg; a name a
-// one-line render cannot carry is never populated, nor one the receipt encoder refuses (S21) for a
-// command that MINTS or MATCHES a plan receipt: agy-review plan would be refused pre-spend by name, the
-// round table would match no receipt.
-const populatedPlan = (plans, { mintsReceipt = false } = {}) => {
+// one-line render cannot carry is never populated.
+const populatedPlan = (plans) => {
   if (plans.length !== 1 || !isRenderableLine(plans[0])) return null;
-  if (mintsReceipt && !isArtifactPathCarriable(plans[0])) return null;
   return shellQuoteArg(`${PLANS_REL}/${plans[0]}`);
 };
 const planDiscoveryCaveat = (plans, flag, noPlanAction, fellBack = []) => {
@@ -381,36 +373,23 @@ const groundingPreStepAdvice = (activity, slots, plans) => {
   if (activity === FEEDBACK_TRIAGE) return [];
   if (!slots.some((s) => (s.backends ?? []).includes('agy-review'))) return [];
   const operand = populatedPlan(plans);
-  const planArg = activity === EPIC ? '' : operand === null ? ' --plan <path>' : ` --plan ${operand}`;
-  const reviewOperand = populatedPlan(plans, MINTS_RECEIPT);
-  // plan-authoring reviews the plan FILE — a plain name in flight renders the review command populated;
-  // the renderability and receipt-carriability fallbacks are the only placeholders a known path produces.
-  const reviewForm =
-    activity === EPIC
-      ? 'agy-review plan <brief-file>'
-      : activity === 'plan-authoring'
-        ? reviewOperand === null
-          ? 'agy-review plan <plan-file>'
-          : `agy-review plan ${reviewOperand}`
-        : 'agy-review code';
+  // The spec review reads the contracts and the plan's ledger in one review file the orchestrator writes.
+  const reviewForm = activity === 'plan-authoring' ? 'agy-review plan <spec-review-file>' : 'agy-review code';
   // `run:`/`then:` prefixes keep these POPULATED command lines machine-distinguishable from the
   // verbatim contract DESCRIPTORS above (the descriptor drift guard set-equals bare wrapper lines).
   // The TOOL path stays double-quoted (the bridge tier seeds that exact byte-form); the plan operand
   // rides shellQuoteArg — bare when safe, single-quoted otherwise.
-  const lines = [
+  return [
     'Grounding pre-step (agy is dispatched — assemble the verified facts BEFORE the review; grounding.mjs slices verbatim, judgment additions stay yours):',
-    `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy${planArg} --out ${GROUNDING_FACTS_OUT}`,
+    `  run:  node "${GROUNDING_TOOL}" --constraints --autonomy --plan ${operand ?? '<path>'} --out ${GROUNDING_FACTS_OUT}`,
     `  then: ${reviewForm} --facts @${GROUNDING_FACTS_OUT}`,
+    ...planDiscoveryCaveat(
+      plans,
+      '--plan',
+      'substitute the plan file you are reviewing against, or drop --plan for constraints+autonomy facts.',
+      operand === null ? ['--plan'] : [],
+    ),
   ];
-  if (activity === EPIC) return lines;
-  const fellBack = [operand === null ? '--plan' : null, activity === 'plan-authoring' && reviewOperand === null ? 'agy-review plan' : null].filter(Boolean);
-  lines.push(...planDiscoveryCaveat(
-    plans,
-    '--plan',
-    'substitute the plan file you are reviewing against, or drop --plan for constraints+autonomy facts.',
-    fellBack,
-  ));
-  return lines;
 };
 
 // The per-activity autonomy block (AD-044 Plan 4): the resolved level for THIS activity + what it
@@ -534,7 +513,7 @@ const flowHalvesAdvice = (flow, probe) => {
   const chainLine = probe.broken != null
     ? `  chain: store BROKEN — ${probe.broken}; every composed checker fails closed on it`
     : !probe.present
-      ? '  chain: UNARMED — no flow store file yet (plan adoption arms it: flow-writer adoption <plan-file>)'
+      ? '  chain: UNARMED — no flow store file yet'
       : probe.armed
         ? '  chain: ARMED — the flow store carries an adoption record'
         : '  chain: UNARMED — a store file exists but no chain is adopted (semantic arms stay inert, #52)';
@@ -629,12 +608,14 @@ const contractLines = ({ cmd, contract, settings }) => {
   return lines;
 };
 
-const foldLaneAdvice = ({ activity, slots, config, detection, cwd, env, resolveStore, readStore, audit, readHead }) => {
+// The fold lane under a delegated execute slot (this activity's, or task.execute under plan-execution):
+// one line resuming the run's session, its id read from the run's exec receipt — no ledger is read.
+const FOLD_LANE_LINE = `Fold lane (execute = delegated) — a fold of code a bridge wrote resumes that run's session: ${wrapperCmdFor('codex-cli-bridge', 'execute')} --resume <session id> --nonce <n> <prompt file>, the session id read from the sessionId of the run's exec receipt, with a new prompt and a fresh nonce; the orchestrator may make the fold itself.`;
+const foldLaneAdvice = ({ activity, slots, config, detection }) => {
   const own = slots.find((slot) => slot.slot === 'execute')?.recipe;
   const task = activity === 'plan-execution' ? resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: 'task', slot: 'execute' }).recipe : null;
   if (!['plan-execution', 'task'].includes(activity) || ![own, task].includes('delegated')) return [];
-  const ledger = readDelegationLedger(cwd, env, { resolveStore, readStore, audit, readHead });
-  return foldLaneLines(judgeLedger(ledger, { backend: HELD_RECEIPT_BACKEND, degrades: [] }));
+  return [FOLD_LANE_LINE];
 };
 
 const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane }) => {
@@ -649,7 +630,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
     // A switch slot states what the flag DOES under the effective carrier; both keep the source suffix.
     lines.push(isSwitchSlot(s.slotType)
       ? `  ${parallelLine({ value: s.recipe, carrier })} — ${SOURCE_LABEL[s.source]}`
-      : `  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends)}`);
+      : `  ${s.slot}: ${s.recipe} — ${SOURCE_LABEL[s.source]}${arrow}${backendSetLabel(s.backends, isEpicLensReview(activity, s.slot))}`);
     if (s.reason) lines.push(`      ↳ ${s.reason}`);
     if (s.slot === 'review') lines.push(...renderFeedbackTriageAdvice(activity, slots));
     // The form replaces the one-line vehicle mention: a carrier never told how to carry is a name,
@@ -666,7 +647,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   if (readersSweep.length) lines.push('', ...readersSweep);
   const grounding = groundingPreStepAdvice(activity, slots, plans);
   if (grounding.length) lines.push('', ...grounding);
-  const advice = reviewLoopAdvice(slots, activity, flowArmed, plans);
+  const advice = reviewLoopAdvice(slots, activity, flowArmed);
   if (advice.length) lines.push('', ...advice);
   if (foldScope.length) lines.push('', ...foldScope);
   if (specCheck.length) lines.push('', ...specCheck);
@@ -691,7 +672,7 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
       ...(s.roster ? { roster: s.roster } : {}),
     }]),
   ),
-  reviewLoop: reviewLoopAdvice(slots, activity, flowArmed, plans),
+  reviewLoop: reviewLoopAdvice(slots, activity, flowArmed),
   readersSweep,
   // ADDITIVE (AD-038): the populated grounding pre-step, structured (empty when agy is not dispatched).
   groundingPreStep: groundingPreStepAdvice(activity, slots, plans),
@@ -799,18 +780,7 @@ export const main = (argv, ctx = {}) => {
     const foldScope = foldScopeAdvice(activity, config, plans);
     const specCheck = specCheckAdvice(activity);
     const robustnessBrief = robustnessBriefAdvice(activity, plans);
-    const foldLane = foldLaneAdvice({
-      activity,
-      slots,
-      config,
-      detection,
-      cwd,
-      env,
-      resolveStore: ctx.resolveDelegationStorePath,
-      readStore: ctx.readDelegationStore,
-      audit: ctx.auditDelegationStoreSemantics,
-      readHead: ctx.readHeadInstant,
-    });
+    const foldLane = foldLaneAdvice({ activity, slots, config, detection });
     const stdout = json
       ? JSON.stringify(buildJson({ activity, section, slots, configSource, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane }), null, 2)
       : formatHuman({ activity, section, slots, warnings, plans, autonomy, flowHalves, flowArmed: flowState?.armed === true, readersSweep, declaredPractice, foldScope, specCheck, robustnessBrief, foldLane });

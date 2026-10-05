@@ -16,10 +16,13 @@ export const LF = String.fromCharCode(10);
 export const DATE = '2026-09-21';
 export const PLAN = 'docs/plans/greet.md';
 export const MODULE = 'src/greet.mjs';
-export const TEST = 'src/greet.test.mjs';
 export const CONFIG = 'docs/ai/orchestration.json';
 export const QUEUE = 'docs/plans/queue.md';
 export const MODULE_ROW = 'M1 | modify | src/greet.mjs | Greet the reader by name | n/a | src/greet.mjs:1';
+// The row's prompt at its canonical name, docs/plans/EXECUTE-PROMPT-<plan stem>-<row id>.md (tier-guide, guide-stages).
+export const PROMPT = 'docs/plans/EXECUTE-PROMPT-greet-M1.md';
+// The plan's one Verification bullet: the walk's plan governs no spec, so it is the prompt's scenario line.
+export const VERIFICATION = `node --check ${MODULE} exits 0.`;
 const QUEUE_TEXT = ['# Queue', '', '## Now', ''].join(LF);
 
 export const renderLines = (lines) => lines.join(LF) + LF;
@@ -42,16 +45,9 @@ export const renderPlan = ({ story = 'Story: S1 of WALK-EPIC', row = MODULE_ROW,
   '# Plan: Greet the reader', '', '## Goal and boundary', story,
   'Outcome: greet the reader by name. Governing spec: not adopted. Non-goals: unrelated files.', '',
   '## Module ledger', row, 'total: 0 → 0 lines', '', '## Verification',
-  `- node --check ${MODULE} exits 0.`, '', '## Phase: Cleanup',
+  `- ${VERIFICATION}`, '', '## Phase: Cleanup',
   '- Preserve the results and remove the temporary plan.', '', '## Next steps', next,
 ]);
-export const removeSection = (text, heading) => {
-  const lines = text.split(LF);
-  const start = lines.indexOf(heading);
-  const end = lines.findIndex((line, index) => index > start && line.startsWith('## '));
-  if (start < 0 || end < 0) throw new Error(`${heading} is not a closed section`);
-  return [...lines.slice(0, start), ...lines.slice(end)].join(LF);
-};
 export const landStory = (epic) => epic.replace('state: planned', `state: landed ${DATE}`);
 export const addResultLine = (epic) => epic.replace('## Acceptance' + LF, '## Acceptance' + LF + `Result line: ${DATE}` + LF);
 export const listFiles = (tree) => Object.keys(tree).filter((path) => tree[path].kind === 'file').sort();
@@ -177,44 +173,39 @@ export const EPIC_TEMPLATE_TEXT = renderLines([
   '## Queue',
   'Row {{EPIC_ID}} in {{QUEUE_BUCKET}}',
 ]);
+// The task template is the prompt form of The task: the title and plan lines, then Row, Files, Reads (the
+// scenario line and the plan), Run and Do not run, one line each (tier-templates revision 2).
 export const TASK_TEMPLATE_TEXT = renderLines([
   '# Task: {{TASK_NAME}}',
-  'Story: {{STORY_ID}} of {{EPIC_ID}}',
-  '',
-  '## Slice',
   'Plan: {{PLAN_PATH}}',
-  'Row: {{ROW_ID}}',
-  'Grouping: test, impl',
-  'Files:',
-  '- {{TEST_PATH}} :: test',
-  '- {{MODULE_PATH}} :: impl',
+  '',
+  '## Row',
+  '{{ROW_LINE}}',
+  '',
+  '## Files',
+  '- {{FILE_PATH}}',
   '',
   '## Reads',
+  '- {{SCENARIO_LINE}}',
   '- {{PLAN_PATH}}',
   '',
-  '## Acceptance',
-  '- {{ACCEPTANCE_COMMAND}} :: {{EXPECTED_OUTCOME}}',
+  '## Run',
+  '- {{RUN_COMMAND}}',
   '',
-  '## Negative cases',
-  '- {{NEGATIVE_CASE}} :: {{NEGATIVE_OUTCOME}}',
-  '',
-  '## Budget',
-  '- {{TEST_PATH}} :: {{TEST_MAX_LINES}}',
-  '- {{MODULE_PATH}} :: {{MODULE_MAX_LINES}}',
+  '## Do not run',
+  '- {{FORBIDDEN_COMMAND}}',
 ]);
 // The closed key lists, typed from the contract — never derived from the texts above.
 export const EPIC_KEYS = ['DATE', 'EPIC_TITLE', 'INTENT', 'VALUE', 'NON_GOALS', 'ACCEPTANCE', 'SPECS',
   'STORY_NAME', 'OWNED_PATHS', 'EPIC_ID', 'QUEUE_BUCKET'];
-export const TASK_KEYS = ['TASK_NAME', 'STORY_ID', 'EPIC_ID', 'PLAN_PATH', 'ROW_ID', 'TEST_PATH', 'MODULE_PATH',
-  'ACCEPTANCE_COMMAND', 'EXPECTED_OUTCOME', 'NEGATIVE_CASE', 'NEGATIVE_OUTCOME', 'TEST_MAX_LINES', 'MODULE_MAX_LINES'];
+export const TASK_KEYS = ['TASK_NAME', 'PLAN_PATH', 'ROW_LINE', 'FILE_PATH', 'SCENARIO_LINE', 'RUN_COMMAND',
+  'FORBIDDEN_COMMAND'];
 export const EPIC_VALUES = { DATE, EPIC_TITLE: 'Greet the reader', INTENT: 'Greet the reader by name.',
   VALUE: 'The reader receives a personal greeting.', NON_GOALS: 'No other messages.',
   ACCEPTANCE: 'The reader receives the greeting.', SPECS: 'none', STORY_NAME: 'Greet the reader',
   OWNED_PATHS: MODULE, EPIC_ID: 'WALK-EPIC', QUEUE_BUCKET: 'Now' };
-export const TASK_VALUES = { TASK_NAME: 'Greet the reader', STORY_ID: 'S1', EPIC_ID: 'WALK-EPIC', PLAN_PATH: PLAN,
-  ROW_ID: 'M1', TEST_PATH: TEST, MODULE_PATH: MODULE, ACCEPTANCE_COMMAND: `node --test ${TEST}`,
-  EXPECTED_OUTCOME: 'exits 0', NEGATIVE_CASE: 'empty name', NEGATIVE_OUTCOME: 'remains a string',
-  TEST_MAX_LINES: '100', MODULE_MAX_LINES: '100' };
+export const TASK_VALUES = { TASK_NAME: 'Greet the reader', PLAN_PATH: PLAN, ROW_LINE: MODULE_ROW, FILE_PATH: MODULE,
+  SCENARIO_LINE: VERIFICATION, RUN_COMMAND: `node --check ${MODULE}`, FORBIDDEN_COMMAND: 'git commit' };
 export const renderTemplate = (text, values) => text.replace(/\{\{([A-Z][A-Z0-9_]*)\}\}/g,
   (span, key) => (Object.hasOwn(values, key) ? values[key] : span));
 export const findSpans = (text) => [...text.matchAll(/\{\{([\s\S]*?)\}\}/g)].map(([, inner]) => inner);

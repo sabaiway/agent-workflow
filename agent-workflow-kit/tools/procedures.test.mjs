@@ -327,13 +327,13 @@ describe('procedures CLI — grounding pre-step population (AD-038, all three di
     assert.doesNotMatch(solo.stdout, /Grounding pre-step/);
   });
 
-  it('plan-authoring renders the plan-mode --facts form — POPULATED with the unique in-flight plan; --json carries the structured block additively', () => {
+  it('plan-authoring populates --plan with the unique in-flight plan; --json carries the structured block additively', () => {
     writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' } }));
     addPlan('my-feature.md');
     const r = run(['plan-authoring'], { codex: READY, agy: READY });
-    assert.match(r.stdout, /agy-review plan docs\/plans\/my-feature\.md --facts @/, 'a known plan path never renders a placeholder');
+    assert.match(r.stdout, /grounding\.mjs" --constraints --autonomy --plan docs\/plans\/my-feature\.md --out/, 'a known plan path never renders a placeholder');
     const zeroPlans = main(['plan-authoring', '--override', 'review=council'], { cwd: mkdtempSync(join(tmpdir(), 'proc-noplan-')), env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY) });
-    assert.match(zeroPlans.stdout, /agy-review plan <plan-file> --facts @/, 'zero plans → the placeholder stays');
+    assert.match(zeroPlans.stdout, /grounding\.mjs" --constraints --autonomy --plan <path> --out/, 'zero plans → the placeholder stays');
     const j = JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout);
     assert.ok(Array.isArray(j.groundingPreStep) && j.groundingPreStep.length > 0);
     assert.ok(j.groundingPreStep.some((l) => /--plan docs\/plans\/my-feature\.md/.test(l)), 'the populated path rides in --json too');
@@ -498,109 +498,38 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
     assert.deepEqual(solo.reviewLoop, [], 'solo → empty reviewLoop');
   });
 
-  it('plan-authoring populates the round render from its one discovered plan (spec:plan-review-loop/S19)', () => {
-    writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' } }));
-    const readReviewLoop = () => JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).reviewLoop;
-    const placeholder = readReviewLoop();
-    assert.ok(placeholder.some((line) => line.endsWith('--artifact <plan-file>')));
-    assert.ok(placeholder.some((line) => /plan discovery: no plan in flight/.test(line)));
-    addPlan('my-feature.md');
-    const reviewLoop = readReviewLoop();
-    const ROUND_TABLE = join(HERE, 'review-rounds-cli.mjs');
-    assert.equal(isSeedablePathToken(ROUND_TABLE), true, 'this checkout path is seedable — the bare spelling IS the tier byte-form');
-    assert.ok(reviewLoop.includes(`  • Round render (verdict half of the per-round emission; the finding-origin tally stays the orchestrator's): node ${ROUND_TABLE} --artifact docs/plans/my-feature.md`), 'the tool path renders BARE — the byte-form the kit-tools tier seeds');
-    assert.ok(!reviewLoop.some((line) => /plan discovery:/.test(line)), 'a unique plan needs no discovery caveat');
-    addPlan('second-feature.md');
-    const several = readReviewLoop();
-    assert.ok(several.some((line) => line.endsWith('--artifact <plan-file>')));
-    assert.ok(several.some((line) => /plan discovery: 2 plans in flight .*my-feature\.md, second-feature\.md/.test(line)));
-    const execution = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout).reviewLoop;
-    assert.ok(!execution.some((line) => /review-rounds-cli\.mjs/.test(line)), 'the populated round render is plan-authoring-only');
-  });
-
-  it('the round render follows the review slot; the round render states ONE fact for every source (config, override, degraded, silent default, a bridge roster): the table judges what the CLI resolves from the config; a bridge-less roster gets the no-receipt fact instead; a mixed roster adds the lens reminder (the S19 slot rule)', () => {
-    addPlan('my-feature.md');
-    const loopOf = (argv, readiness) => JSON.parse(run([...argv, '--json'], readiness).stdout).reviewLoop;
-    const hasCommand = (lines) => lines.some((line) => /review-rounds-cli\.mjs/.test(line));
-    const FACT = "  ↳ the table judges the obligation review-rounds-cli resolves from docs/ai/orchestration.json (S27) — the configured recipe, or the computed default for a silent slot — never this run's --override or a degraded recipe; it reads receipts only: a backend that did not run shows as missing (no receipts when none ran), and its degrade record is judged by review-state and core-evidence summary, not here.";
-    const commandAndFact = (lines, label) => {
-      assert.ok(hasCommand(lines), `${label}: the command renders`);
-      assert.equal(lines.indexOf(FACT), lines.findIndex(hasCommandLine) + 1, `${label}: the fact line follows the command`);
-    };
-    const hasCommandLine = (line) => /review-rounds-cli\.mjs/.test(line);
-    writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' } }));
-    commandAndFact(loopOf(['plan-authoring'], { codex: READY, agy: READY }), 'config council');
-    commandAndFact(loopOf(['plan-authoring', '--override', 'review=council'], { codex: READY, agy: READY }), 'override');
-    commandAndFact(loopOf(['plan-authoring'], { codex: READY, agy: NEEDS_SKILL }), 'council degraded to reviewed');
-    const fullyDegraded = loopOf(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
-    commandAndFact(fullyDegraded, 'council degraded to solo (every bridge unavailable) still renders the block');
-    assert.ok(fullyDegraded.some((line) => line.includes('Before every fold')), 'the whole loop block renders for a requested review recipe');
-    commandAndFact(loopOf(['plan-authoring', '--override', 'review=council'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL }), 'an override degraded to solo');
-    rmSync(join(cwd, CONFIG_REL), { force: true });
-    commandAndFact(loopOf(['plan-authoring'], { codex: READY, agy: READY }), 'silent computed default');
-    writeConfig(JSON.stringify({ 'plan-authoring': { review: ['codex-review', 'agy-review'] } }));
-    const bridges = loopOf(['plan-authoring'], { codex: READY, agy: READY });
-    commandAndFact(bridges, 'a bridge roster');
-    assert.ok(!bridges.some((line) => line.includes('lens member')), 'a bridge-only roster carries no lens reminder');
-    writeConfig(JSON.stringify({ 'plan-authoring': { review: ['codex-review', 'review-lens'] } }));
-    const mixed = loopOf(['plan-authoring'], { codex: READY, agy: READY });
-    commandAndFact(mixed, 'a mixed roster');
-    assert.ok(mixed.some((line) => line === "  ↳ the table carries the bridge verdicts only — add each lens member's verdict (or silent) by hand: review-lens"), 'the lens reminder names the lens member');
-    assert.ok(run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes("add each lens member's verdict (or silent) by hand: review-lens"), 'the human render carries the same reminder');
-    writeConfig(JSON.stringify({ 'plan-authoring': { review: ['review-lens'] } }));
-    const lensOnly = loopOf(['plan-authoring'], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
-    assert.equal(hasCommand(lensOnly), false, 'a bridge-less roster renders no command');
-    assert.equal(lensOnly.includes(FACT), false, 'and no fact line about receipts it cannot have');
-    assert.ok(lensOnly.some((line) => line.startsWith('  • Round render: a roster with no bridge mints no receipt')), 'the no-bridge fact renders');
-  });
-
-  it('a plan name with shell-significant bytes renders POPULATED through shellQuoteArg in BOTH blocks; a byte the receipt encoder refuses falls back on the receipt-bound commands only; a line-breaking character falls back everywhere; a list escapes it (the S19 operand rule)', () => {
+  it('a plan name with shell-significant bytes populates --plan through shellQuoteArg; a byte the receipt encoder refuses still populates it with no caveat; a line-breaking character falls back to the placeholder; a list escapes it (the S19 operand rule)', () => {
     const onlyPlans = (...names) => {
       rmSync(join(cwd, 'docs', 'plans'), { recursive: true, force: true });
       for (const name of names) addPlan(name);
     };
     writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' }, 'plan-execution': { review: 'council' } }));
-    const render = () => JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout);
+    const render = (activity) => JSON.parse(run([activity, '--json'], { codex: READY, agy: READY }).stdout).groundingPreStep;
+    const ACTIVITIES_WITH_GROUNDING = ['plan-authoring', 'plan-execution'];
     const lineSeparator = String.fromCharCode(0x2028);
     const nextLine = String.fromCharCode(0x85);
-    for (const name of ['a$(x).md', 'a`b.md', 'a b.md', "a'b.md"]) {
-      onlyPlans(name);
-      const j = render();
-      const operand = shellQuoteArg(`docs/plans/${name}`);
-      assert.ok(j.reviewLoop.some((line) => line.endsWith(` --artifact ${operand}`)), `${JSON.stringify(name)} rides the quoted operand`);
-      assert.ok(j.groundingPreStep.some((line) => line.includes(` --plan ${operand} `)), JSON.stringify(name));
-      assert.ok(j.groundingPreStep.some((line) => line.includes(`agy-review plan ${operand} `)), JSON.stringify(name));
-      assert.ok(!j.reviewLoop.some((line) => /plan discovery:/.test(line)), 'a populated plan needs no caveat');
-    }
     const caveats = (lines) => lines.filter((line) => /plan discovery: the plan in flight .* carries a character that either a review receipt or a rendered command cannot carry — .* stays? (?:a )?placeholders?; rename the plan\.$/u.test(line));
     const fellBack = (lines) => caveats(lines).map((line) => /— (.*) stays? (?:a )?placeholders?;/u.exec(line)[1]);
-    for (const name of ['a"b.md', 'a\\b.md']) {
+    for (const name of ['a$(x).md', 'a`b.md', 'a b.md', "a'b.md", 'a"b.md', 'a\\b.md']) {
       onlyPlans(name);
-      const j = render();
       const operand = shellQuoteArg(`docs/plans/${name}`);
-      assert.ok(j.groundingPreStep.some((line) => line.includes(` --plan ${operand} `)), 'the file-reading --plan stays populated');
-      assert.ok(j.groundingPreStep.some((line) => line.includes('agy-review plan <plan-file> ')), 'the receipt-minting form falls back');
-      assert.deepEqual(fellBack(j.groundingPreStep), ['agy-review plan'], JSON.stringify(name));
-      assert.ok(j.reviewLoop.some((line) => line.endsWith('--artifact <plan-file>')), 'the receipt-matching round table falls back');
-      assert.deepEqual(fellBack(j.reviewLoop), ['--artifact'], JSON.stringify(name));
-      const execution = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout);
-      assert.ok(execution.groundingPreStep.some((line) => line.includes(` --plan ${operand} `)), 'plan-execution keeps --plan populated');
-      assert.equal(caveats(execution.groundingPreStep).length, 0, 'plan-execution carries no receipt-bound operand');
+      for (const activity of ACTIVITIES_WITH_GROUNDING) {
+        const steps = render(activity);
+        assert.ok(steps.some((line) => line.includes(` --plan ${operand} `)), `${activity} ${JSON.stringify(name)} rides the quoted --plan operand`);
+        assert.ok(!steps.some((line) => /plan discovery:/.test(line)), `${activity} ${JSON.stringify(name)}: a populated --plan needs no caveat, and no receipt-bound operand is left to fall back`);
+      }
     }
     for (const name of [`a${lineSeparator}b.md`, `a${nextLine}b.md`, 'a\nb.md']) {
       onlyPlans(name);
-      const j = render();
-      const lines = [...j.reviewLoop, ...j.groundingPreStep];
-      assert.ok(j.reviewLoop.some((line) => line.endsWith('--artifact <plan-file>')), JSON.stringify(name));
-      assert.ok(j.groundingPreStep.some((line) => line.includes('--plan <path>')), JSON.stringify(name));
-      assert.deepEqual(fellBack(lines), ['--artifact', '--plan and agy-review plan'], JSON.stringify(name));
-      assert.ok(lines.some((line) => line.endsWith('— --plan and agy-review plan stay placeholders; rename the plan.')), 'two operands, plural');
-      for (const line of lines) assert.doesNotMatch(line, /[\p{Cc}\p{Zl}\p{Zp}]/u, 'no raw control or line-breaking character reaches the render');
-      const execution = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout);
-      assert.deepEqual(fellBack(execution.groundingPreStep), ['--plan'], 'plan-execution has no agy-review plan form to fall back');
+      for (const activity of ACTIVITIES_WITH_GROUNDING) {
+        const steps = render(activity);
+        assert.ok(steps.some((line) => line.includes('--plan <path>')), `${activity} ${JSON.stringify(name)}`);
+        assert.deepEqual(fellBack(steps), ['--plan'], `${activity} ${JSON.stringify(name)}: only --plan falls back`);
+        for (const line of steps) assert.doesNotMatch(line, /[\p{Cc}\p{Zl}\p{Zp}]/u, 'no raw control or line-breaking character reaches the render');
+      }
     }
     onlyPlans(`a${lineSeparator}b.md`, 'c.md');
-    const caveat = render().reviewLoop.find((line) => /plan discovery: 2 plans in flight/u.test(line)) ?? '';
+    const caveat = render('plan-authoring').find((line) => /plan discovery: 2 plans in flight/u.test(line)) ?? '';
     assert.ok(caveat.includes('(a\\u2028b.md, c.md)'), caveat);
     assert.ok(!caveat.includes(lineSeparator));
   });
@@ -609,26 +538,88 @@ describe('procedures CLI — review-loop economics block (§2.2, M1/M6): prints 
     const r = run(['plan-execution', '--override', 'review=council'], { codex: READY, agy: READY });
     assert.match(r.stdout, SENTINEL);
   });
-  it('the consult order renders for both review-backed activities', () => {
+});
+
+describe('spec:story-flow/S16 the review-loop block renders the fold ask, the last-round re-read and the re-check; no round render, cap triage, plan review or red-proof record', () => {
+  const loopOf = (activity, argv = ['--override', 'review=council'], readiness = { codex: READY, agy: READY }) => JSON.parse(run([activity, ...argv, '--json'], readiness).stdout).reviewLoop;
+  it('renders one fold ask per member per round, carrying all of its findings with their proposed folds, before the edit', () => {
     for (const activity of ['plan-authoring', 'plan-execution']) {
-      const reviewLoop = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout).reviewLoop;
-      const consult = reviewLoop.find((line) => line.includes('Before every fold')) ?? '';
-      const payload = ['Does this proposed fold solve the finding and add no new problem?', 'If this finding is the second case against the same check, reply with the replacement invariant, not an added case.', 'Reply accept, or correct with exact replacement text.'];
-      for (const token of ['raised by a review member (a bridge backend or a placed lens)', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'agy-review --continue --decided @f --focus "Finding: <finding>. Proposed fold: <exact fold>.', ...payload, 'codex: fresh codex-review plan <consult-brief> with the same payload', 'a placed lens: re-dispatch the same lens vehicle with the same payload', 'A self-review finding, or any finding when no review member ran, is folded directly']) assert.ok(consult.includes(token), `${activity} consult line names ${token}`);
-      assert.deepEqual(payload.map((token) => consult.indexOf(token)).sort((a, b) => a - b), payload.map((token) => consult.indexOf(token)), `${activity} agy payload order`);
-      assert.ok(consult.indexOf('ASK') < consult.indexOf('WAIT') && consult.indexOf('WAIT') < consult.indexOf('READ') && consult.indexOf('READ') < consult.indexOf('accepted or corrected'), `${activity} consult order`);
+      const ask = loopOf(activity).find((line) => line.includes('Before every fold')) ?? '';
+      for (const [reason, pattern] of [['one ask per member', /\bONE ask\b/i], ['one ask per round', /\bper round\b/i], ["all of the member's findings with their proposed folds", /\ball\b[^;]*\bfindings\b[^;]*\bproposed folds\b/i]]) assert.match(ask, pattern, `S16: ${activity} fold ask lacks ${reason}`);
+      for (const token of ['raised by a review member (a bridge backend or a placed lens)', 'ASK', 'WAIT', 'READ', 'accepted or corrected', 'agy-review --continue --decided @f', 'codex-review plan <consult-brief>', 'a placed lens: re-dispatch the same lens vehicle', 'replacement invariant', 'A self-review finding, or any finding when no review member ran, is folded directly']) assert.ok(ask.includes(token), `S16: ${activity} fold ask names ${token}`);
+      assert.ok(ask.indexOf('ASK') < ask.indexOf('WAIT') && ask.indexOf('WAIT') < ask.indexOf('READ') && ask.indexOf('READ') < ask.indexOf('accepted or corrected'), `S16: ${activity} fold ask order`);
     }
+  });
+  it('renders the last-round re-read for both activities and the re-check, every member and the lens included, for plan-execution alone', () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      assert.ok(loopOf(activity).some((line) => /\blast round\b/i.test(line) && /\bre-read/i.test(line)), `S16: ${activity} renders no last-round re-read`);
+    }
+    const recheck = loopOf('plan-execution').find((line) => /\bre-check/i.test(line)) ?? '';
+    assert.match(recheck, /\bmov(es|ed)\b/, 'S16: plan-execution renders no re-check of a moved staged tree');
+    assert.match(recheck, /\bevery member\b/, 'S16: the re-check is not run by every member');
+    assert.match(recheck, /\blens\b/, 'S16: the re-check leaves the lens out');
+    assert.ok(!loopOf('plan-authoring').some((line) => /\bre-check/i.test(line)), 'S16: plan-authoring renders a re-check');
+  });
+  it("its two-round bullet sends a surviving blocker or major to one fold through the fold ask and its raiser's re-read, or to the maintainer, and names no plan review", () => {
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      const loop = loopOf(activity);
+      const cap = loop.find((line) => line.includes('≤2 rounds')) ?? '';
+      for (const [reason, pattern] of [['a surviving blocker or major', /\bsurviving blocker or major\b/i], ['one fold', /\bone fold\b|\bfolded once\b/i], ['an acceptance invariant', /\bacceptance invariant\b/i], ['the diff', /\bdiff\b/i], ['the fold ask', /\bfold ask\b/i], ["its raiser's re-read", /\braiser's re-read\b/i], ['the maintainer', /\bmaintainer\b/]]) assert.match(cap, pattern, `S16: ${activity} two-round bullet lacks ${reason}`);
+      for (const line of loop) assert.doesNotMatch(line, /\bplan[- ]review\b/i, `S16: ${activity} still names a plan review: ${line.slice(0, 60)}`);
+    }
+  });
+  it('names no round render, cap triage or red-proof record under any source or roster (spec:plan-review-loop/S19)', () => {
+    addPlan('my-feature.md');
+    const RETIRED = /review-rounds-cli|Round render|the table judges|plan discovery|fixable-bug|inherent-layer-residual|classify every surviving|red-proof/;
+    const cases = [];
+    const record = (label, activity, argv, readiness) => cases.push([label, loopOf(activity, argv, readiness)]);
+    writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' }, 'plan-execution': { review: 'council' } }));
+    for (const activity of ['plan-authoring', 'plan-execution']) {
+      record(`${activity} config council`, activity, [], { codex: READY, agy: READY });
+      record(`${activity} override`, activity, ['--override', 'review=council'], { codex: READY, agy: READY });
+      record(`${activity} degraded to reviewed`, activity, [], { codex: READY, agy: NEEDS_SKILL });
+      record(`${activity} degraded to solo`, activity, [], { codex: NEEDS_SKILL, agy: NEEDS_SKILL });
+    }
+    rmSync(join(cwd, CONFIG_REL), { force: true });
+    record('silent computed default', 'plan-authoring', [], { codex: READY, agy: READY });
+    for (const review of [['codex-review', 'agy-review'], ['codex-review', 'review-lens'], ['review-lens']]) {
+      writeConfig(JSON.stringify({ 'plan-authoring': { review }, 'plan-execution': { review } }));
+      for (const activity of ['plan-authoring', 'plan-execution']) record(`${activity} roster ${review.join('+')}`, activity, [], { codex: READY, agy: READY });
+    }
+    for (const [label, lines] of cases) {
+      assert.ok(lines.some((line) => line.includes('Before every fold')), `S16: ${label} renders no review-loop block`);
+      for (const line of lines) assert.doesNotMatch(line, RETIRED, `S16: ${label} still renders a retired instrument: ${line.slice(0, 80)}`);
+    }
+    assert.ok(!run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes('review-rounds-cli'), 'S16: the human render still names the round render');
+  });
+  it('its agy grounding pre-step for plan-authoring reviews the spec review file', () => {
+    writeConfig(JSON.stringify({ 'plan-authoring': { review: 'council' } }));
+    const reviewLine = '  then: agy-review plan <spec-review-file> --facts @/tmp/review-facts.md';
+    const steps = () => JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).groundingPreStep;
+    assert.ok(steps().includes(reviewLine), 'S16: with no plan in flight the agy review is not of the spec review file');
+    addPlan('my-feature.md');
+    assert.ok(steps().includes(reviewLine), 'S16: with a plan in flight the agy review is not of the spec review file');
+    assert.ok(!steps().some((line) => /agy-review plan docs\/plans\//u.test(line)), 'S16: the agy review still reads the plan file');
+  });
+  it('the unarmed chain line names no command that arms the chain', () => {
+    writeConfig(JSON.stringify({ flow: { schema: 1, preset: 'council', councilRounds: 3, kitMinVersion: '5.1.0' } }));
+    const r = main(['plan-execution'], { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY), flowProbe: () => ({ present: false, armed: false, broken: null }) });
+    assert.equal(r.code, 0, r.stderr);
+    const chain = r.stdout.split('\n').find((line) => line.startsWith('  chain: UNARMED')) ?? '';
+    assert.match(chain, /no flow store file yet/, 'S16: the unarmed chain line is gone');
+    assert.doesNotMatch(chain, /flow-writer|adoption <plan-file>|arms it/, 'S16: the unarmed chain line still names the arming command');
   });
 });
 describe('procedures CLI — activity-aware instrument pointer: plan-execution names the D3 loop, plan-authoring never does', () => {
-  it('plan-execution (council) names the D3 instruments (red-proof / --final / commit-guard)', () => {
+  it('plan-execution (council) names the D3 instruments (degrade / --final / commit-guard) and no red-proof record', () => {
     // The structured reviewLoop is the assertion target: the verbatim canon section names the instruments too, so a bare stdout match could stay green with the bullet deleted.
     const j = JSON.parse(run(['plan-execution', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
     const instrumentLine = j.reviewLoop.find((l) => l.includes('run-gates --final'));
     assert.ok(instrumentLine, 'plan-execution reviewLoop carries the computed-instrument line');
-    for (const token of ['red-proof', 'degrade', 'commit-guard --check', 'core-evidence summary']) {
+    for (const token of ['degrade', 'commit-guard --check']) {
       assert.ok(instrumentLine.includes(token), `the instrument line carries "${token}"`);
     }
+    assert.doesNotMatch(instrumentLine, /red-proof/, 'the instrument line still names a red-proof record');
   });
 
   it('plan-authoring (council) does NOT name the plan-execution instruments', () => {
@@ -637,19 +628,10 @@ describe('procedures CLI — activity-aware instrument pointer: plan-execution n
     assert.ok(!r.stdout.includes('run-gates --final'), 'plan-authoring must not point at the plan-execution loop instruments');
   });
 
-  it('BOTH activities carry the triage classification vocabulary (fixable-bug / inherent-layer-residual / escalate)', () => {
-    for (const activity of ['plan-authoring', 'plan-execution']) {
-      const j = JSON.parse(run([activity, '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
-      for (const token of ['fixable-bug', 'inherent-layer-residual', 'escalate']) {
-        assert.ok(j.reviewLoop.some((l) => l.includes(token)), `${activity} reviewLoop carries the classification token "${token}"`);
-      }
-    }
-  });
-
-  it('solo omits the instrument pointer and the classification bullet with the whole block (non-vacuous)', () => {
+  it('solo omits the instrument pointer with the whole block (non-vacuous)', () => {
     // The canon SECTION legitimately names the instruments for plan-execution — the solo invariant lives in the structured ADVICE block, which must be empty.
     const r = JSON.parse(run(['plan-execution', '--override', 'review=solo', '--json'], { codex: READY, agy: READY }).stdout);
-    assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no instrument pointer, no classification bullet)');
+    assert.deepEqual(r.reviewLoop, [], 'solo → empty reviewLoop (no instrument pointer)');
   });
 
   it('--json reviewLoop mirrors the activity split (instrument line present for plan-execution, absent for plan-authoring)', () => {
@@ -657,7 +639,6 @@ describe('procedures CLI — activity-aware instrument pointer: plan-execution n
     assert.ok(exec.reviewLoop.some((l) => /run-gates --final/.test(l)), 'plan-execution reviewLoop carries the instrument line');
     const auth = JSON.parse(run(['plan-authoring', '--override', 'review=council', '--json'], { codex: READY, agy: READY }).stdout);
     assert.ok(!auth.reviewLoop.some((l) => /run-gates --final/.test(l)), 'plan-authoring reviewLoop carries no instrument line');
-    assert.ok(auth.reviewLoop.some((l) => /fixable-bug/.test(l)), 'plan-authoring reviewLoop keeps the classification line');
   });
 });
 
@@ -1111,7 +1092,7 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.stdout.includes(FLOW_ARMED_HALVES_HEADER));
     assert.match(r.stdout, /config: ARMED — preset council · councilRounds 3 · kitMinVersion 5\.1\.0/);
-    assert.match(r.stdout, /chain: UNARMED — no flow store file yet \(plan adoption arms it: flow-writer adoption <plan-file>\)/);
+    assert.match(r.stdout, /chain: UNARMED — no flow store file yet/);
     assert.match(r.stdout, /bookkeeping\.debtQueue: docs\/debt\.md — declared non-excluded \(the tracked-file floor verifies on the set-flow arming path, #37\)/);
     assert.match(r.stdout, /bookkeeping\.convergenceSummary: docs\/convergence\.md — DECLARED-EXCLUDED \(loud, #31\)/);
     assert.deepEqual(r.calls, [cwd], 'the probe runs exactly once, on the config cwd');
@@ -1283,8 +1264,9 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.match(modeDoc, /declaredPractice/, 'the mode doc names the JSON field');
     assert.match(modeDoc, /UNREADABLE/, 'the mode doc states the in-band unreadable lane');
     assert.match(modeDoc, /INCOMPLETE/, 'the mode doc states the four config states');
-    // The execution unit is the ledger ROW (the planning canon): the mode doc must not keep the retired per-Step model alive beside the live canon it points at.
-    assert.match(modeDoc, /commits per ledger row/, 'the mode doc commits per ledger row');
+    // The story commits once, after its diff review (story-flow S13): the mode doc keeps neither the per-row commit nor the retired per-Step model beside the live canon it points at.
+    assert.doesNotMatch(modeDoc, /commits per ledger row/, 'the mode doc still commits per ledger row');
+    assert.match(modeDoc, /`plan-execution` commits[^.]*\bdiff review\b/, 'the mode doc does not commit the story after its diff review');
     assert.doesNotMatch(modeDoc, /per Step/, 'no retired per-Step execution model in the mode doc');
   });
 

@@ -8,7 +8,7 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/tier-guide.mjs --dir <project> --json`.
 
 Render the returned envelope compactly in the user's conversational language. Never paste the JSON. Keep every path and every command verbatim, each command on its own line so it runs as printed; translate only the prose around them.
 
-Keep this order: the tier text (what each level is, the five story sessions, the two templates, the glossary of their keys, the Recommendations pointer); then every rendered state with its reader, file, cause and next command; then per epic its stage, any placeholder left and the accepted check; then each story in hand with its stage, any placeholder left and its ordered actions; then the epic's own ordered actions (for example the check, the close, or the Cleanup a landed story left over). The first action printed is the next step. Several epics or stories each render; never pick one silently.
+Keep this order: the tier text (what each level is, the four story sessions, the two templates, the glossary of their keys, the Recommendations pointer); then every rendered state with its reader, file, cause and next command; then per epic its stage, any placeholder left and the accepted check; then each story in hand with its stage, any placeholder left and its ordered actions; then the epic's own ordered actions (for example the check, the close, or the Cleanup a landed story left over). The first action printed is the next step. Several epics or stories each render; never pick one silently.
 
 Exit codes:
 

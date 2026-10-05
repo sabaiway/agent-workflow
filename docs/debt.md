@@ -77,6 +77,149 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   span byte-identical in all four wrappers) — the wrappers read those keys through `aw_read_posture` (non-empty, no
   control byte). Comment-only, no run-time effect. Narrow fix: scope both sentences to the applied kinds and name
   `aw_read_posture` as the wrapper side of `posture`. Raised by the review lens at the S2 attestation round.
+- **STORY-FLOW-STEP-FIELDS-EQUAL-FLOW-STEPS** — invariant: every field of `planning.md`'s `## The story flow`
+  step list states no less than the contract part `docs/ai/specs/kit/tier/story-flow/flow-steps.md`. Origin:
+  `agent-workflow-engine/references/planning.md:11-51` (records after the review, repair runs, "Bridges"). Narrow
+  fix shipped in the S1 diff review round 1: the three sentences, red first in `story-flow-canon.test.mjs` (S1).
+  Proof: that cell. Residual exposure, not live: a later edit of another field (Epic, Spec, Plan) drifting from
+  flow-steps; the S1 cell checks field labels only. Raised by the review lens and codex (2026-10-04).
+- **STORY-FLOW-S6-EACH-PRIOR-REFRESHES** — `agent-workflow-kit/tools/rules-regions.test.mjs:324-343` pins the
+  story prior count and prior 1's bytes, never that a rules file on each prior refreshes; a reconcile that read
+  only `priors[0]` (`lens-region.mjs:95`) stays green. Narrow fix: for every story prior, `reconcileStoryText`
+  returns `refreshed` with the template body. Raised by codex and the review lens at the S1 diff review (2026-10-04).
+- **STORY-FLOW-S5-DOCS-PATH-SELF-CHECK** — `agent-workflow-kit/test/template-region-parity.test.mjs:180` proves
+  "reads nothing under docs/ai" only by its own source lacking the literal `docs/ai`; a path built from segments
+  passes. Narrow fix: refuse any quoted `docs` path segment in the source. Raised by the review lens (2026-10-04).
+- **PLAN-AUTHORING-STEP2-SUBAGENT-DRAFTS-THE-PLAN** — `agent-workflow-engine/references/procedures.md:31-33`: the
+  Subagent author carrier "drafts the plan and any create / modify spec row", while `planning.md`'s Plan step
+  names the orchestrator as the plan's maker. Narrow fix: the carrier drafts the contracts, the orchestrator the
+  plan beside them; `procedures-canon.test.mjs:393` follows. Raised by the review lens (2026-10-04).
+- **STORY-FLOW-CANON-TOKEN-CHECKS** — `agent-workflow-engine/test/story-flow-canon.test.mjs` checks S1-S3 by
+  tokens: a second `Check:`, an eighth step bullet, "at least two" rounds or a plan review worded outside
+  `/plan[- ]review/` (the lens suite's wider `PLAN_REVIEW_RE`) still pass. Narrow fix: compare normalized step
+  blocks with literals, count the bullets, share the wider regex. Raised by codex and agy (2026-10-04). The same
+  holds in `procedures-canon.test.mjs` S11 (`:433`, only the word maintainer: "a fold not accepted closes the
+  review" passes), S12 (`:440`, "every member, the lens excluded" still matches), S15 (`:459`, a plan-mode bridge
+  worded otherwise passes) and `lens-fragment.test.mjs` S4 (`:120`); invariant: each cell pins its normative
+  clause as a normalized literal (the S5 method), never an added case. Raised by codex and the review lens at the
+  S1-S3 diff review (2026-10-04).
+- **STORY-FLOW-S3-CANON-RESIDUALS** — invariant: `procedures.md` names only steps the flow runs and every
+  disposition the story-flow review-loop part gives. Origins and narrow fixes: (1) `agent-workflow-engine/references/
+  procedures.md:101` step 2 still says "before `flow-writer adoption` on an armed flow" — drop the clause, keep the
+  robustness-brief sentence; (2) `procedures.md:123-125` gives no route for a maintainer ruling that keeps a vetoed
+  change — add the contract's sentence: the change commits only after a fresh grounded code-mode run of each
+  vetoing bridge, the ruling in its decided register, returns ship-class; (3) `procedures.md:78-79` step 6 runs the
+  readers sweep after the last round — the sweep runs over every name a fold changes before that fold's ask, and
+  step 6 only checks the shape. Proof: one `procedures-canon.test.mjs` cell per item. Residual exposure, not live:
+  (1) the conditional names a verb the flow never runs, the contract's stated flow-writer residual; (2)
+  `commit-guard` refuses the veto receipt, so nothing commits unreviewed; (3) a row step 6 adds reaches the
+  maintainer's approval and its code the diff review. Raised by the review lens at the S1-S3 diff review
+  (2026-10-04).
+- **STORY-FLOW-SPLIT-BRIEF-BASE** — invariant: every changed test path is listed, and a red run is owed only by a test
+  whose change adds or tightens an assertion. Origin: `agent-workflow-engine/references/procedures.md:125-128` and
+  the brief sentence of the contract part `review-loop.md` list tests from `git diff --cached --name-only <recorded
+  tree>`, each with its red run, while a split (`planning.md:54-56`) records no tests-session tree. Narrow fix, canon
+  and contract together: "...every test path shown by `git diff --cached --name-only <base>` (the tree the tests
+  session recorded; for a split, the base of the diff) ..., each with its text before and after and its scenario
+  line, and each that adds or tightens an assertion with its red run; ...". Proof: the procedures-canon S12 cell at
+  `:440`, its two C1 patterns replaced by the new base and the red-run-on-an-added-or-tightened-assertion clause.
+  Residual exposure, not live: a split adds no case, so its moved tests have nothing to prove red. Raised by the
+  review lens at the S1-S3 diff review round 2 (2026-10-04).
+- **STORY-FLOW-S2-CANON-TEST-PATTERNS** — `agent-workflow-engine/test/task-wave-canon.test.mjs`: the S11 pattern
+  `/\brestore <oid> --nonce\b/` misses a nonced restore without the `<oid>` literal; `RETIRED_COMMANDS` refuses
+  `dispatch open|return` but not a bare `dispatch` verb; `planning-canon.test.mjs` S7's ordered loop advances by
+  the match start, not its end. Narrow fix: widen to `/\brestore\b.*?--nonce\b/`, add
+  `/\bdispatch\s+(?!contract\b)/i`, advance past the match. Raised by agy at the S2 diff review (2026-10-04).
+- **STORY-FLOW-S8-PROMPT-AND-ACCEPTANCE-CLAUSES** — `agent-workflow-engine/test/task-wave-canon.test.mjs:44-45,65`:
+  the S8 prompt tokens (`prompt`, `one … row`, `file`) match anywhere in The task, so "one prompt file for the rows
+  of a hand-out" passes; the acceptance pin matches "was interrupted or returned no edit" alone, so "is accepted:"
+  passes. Narrow fix: `/The orchestrator writes one prompt file from one ledger row/` replaces the three tokens; pin
+  the whole "A run whose tests answer otherwise, or that was interrupted or returned no edit, is not accepted:".
+  Raised by the review lens and codex at the S2 diff review round 2 (2026-10-04).
+- **SLOTS-NO-STEP-READS-STILL-RENDER-A-BRIDGE** — invariant: no surface renders a bridge run for a slot no flow
+  step reads: `epic.review` (the lens reviews every epic whatever it resolves to, story-flow S15, S17) and
+  `task.author` (the orchestrator writes each row's prompt, task-run). Origin: a silent `epic.review` takes the
+  computed `reviewed` (`agent-workflow-kit/tools/recipes.mjs:246`), so `recipes --active-line` prints
+  `epic.review = reviewed (computed default) → codex-review` (`recipes-shorthand.test.mjs:28`) and `status` prints
+  `epic.review: reviewed (default)` (`family-registry.test.mjs:1114`); `orchestration-readme.mjs:74` and the seed
+  `references/templates/orchestration.json:2` say it "is reviewed as soon as a review backend is ready"; the tier
+  offer previews `epic.review = reviewed` and `task.author = delegated` (`tier-preview.test.mjs:93`); a delegated
+  `task.author` renders `→ codex-exec` in the active line (`recipes-shorthand.test.mjs:47`) and the codex-exec
+  driving contract under `procedures task` (`procedures.mjs:168`, pinned by `procedures-roster.test.mjs:191`).
+  Narrow fix: those surfaces render `epic.review` as the lens review and `task.author` as the orchestrator's prompt,
+  and the README default sentence says so; the slot keys and accepted values stay. Proof: a recipes-shorthand cell,
+  a procedures-roster cell and a tier-preview cell. Residual exposure, not live: display only, no step dispatches
+  either slot. Recorded by the S3 spec review and the release copy pass (2026-10-04).
+- **STORY-FLOW-S5-SPEC-REVIEW-MINORS** — nine minors of the S5 spec review round 2 (2026-10-05), none folded; each
+  checked against the staged code. Live: (1) `agent-workflow-kit/tools/tier-guide-facts.mjs:194-196` carries only
+  the row before the first gap, so prompts written in a batch get the stage line of the last row alone (agy); narrow
+  fix: S4's stage line covers every LEDGER ROW (`git add` is idempotent), or guide-stages states the limit. (2)
+  `tier-guide-facts.mjs:257-259`: an E3 or E4 epic without a leftover renders no action and no story while another
+  epic has one, with no line saying why (lens); narrow fix: a fact naming the epic that holds the leftover. (3)-(5)
+  `docs/ai/specs/kit/tier/tier-guide/index.md:110` (S6): "reaches the close" while the walk goes on to the close
+  commit and the refused second close (agy); "write the file the stage names" while the landing and close-commit
+  steps stage and commit (lens); the walk's own staging of the epic (`agent-workflow-kit/test/tier-walk-e2e.test.mjs:91,99`)
+  is neither a printed tool step nor an authoring step (lens); narrow fix: S6 names the walk's end state, "carry out
+  the write action the stage names", and admits the epic's staging under that write action. (6) `index.md:44` says
+  the guide spawns only two git queries while S7 (`agent-workflow-kit/tools/tier-guide.test.mjs:101`) proves
+  read-only by hashes alone, so a third query passes (lens); narrow fix: an S7 cell counting spawned git calls
+  through a PATH shim, or the bullet drops the count. Not live after the cut (kept for the record): (7) a row on a
+  git-ignored path outside `docs/ai/` (agy) is the stated limit of guide-stages's LEDGER ROWS; (8) the two-epic
+  leftover printing the removal (lens): with the index differing the state carries no action and both entries
+  none (`tier-guide-facts.mjs:218-225`); (9) E4 handing to E5 after the last removal (lens): E4 renders the
+  leftover first, then the close (`tier-guide-facts.mjs:257`). Proof: one cell per live item in its suite.
+  Known live exposure: for (1), a story whose prompts went out in one batch gets the stage line of its last row
+  alone, so its one commit misses the earlier rows' paths unless they are staged by hand or the diff read catches
+  them; the rest is display and contract wording; the walk and every guided line pass. Raised by agy and the review
+  lens at the S5 spec review.
+- **STORY-FLOW-S5-DIFF-REVIEW-TEST-PINS** — invariant: each tier-guide cell pins the exact actions its scenario
+  states; the code is right today. (1) `agent-workflow-kit/tools/tier-guide.test/states.test.mjs:78`: the
+  index-refusal cells exclude only the diff and commit commands, so a removal printed after a refused index read
+  passes; fix: no action at all after a refused read. (2) `agent-workflow-kit/tools/tier-guide-facts.test.mjs:25`:
+  `REMOVAL` never pins which prompts the removal names, so a removal naming "none on disk" beside a prompt on disk
+  passes; fix: the named list per cell. (3) No cell stages a path that needs quoting, so an unquoted `row.path`
+  (`tier-guide-facts.mjs:60-62`) passes; fix: one S4 cell with `src/my greet.mjs` (the stage line `git
+  --literal-pathspecs add -- 'src/my greet.mjs'`). The sweep half landed at the release review: cell `S4-sweep`. Proof: each cell fails on the walk-around it names.
+  Residual exposure, not live: the code quotes, filters and refuses as stated. Raised by codex and the review lens
+  at the S5 diff review (2026-10-05).
+- **STORY-FLOW-ADVISOR-ROUND-2-LABEL** — invariant: the advisor and the bridges state one round two (the canon's,
+  `agent-workflow-engine/references/procedures.md:63-66`: a fresh run over the folded artifact whole) and label
+  `--continue` as the resume lane the fold ask rides. Origin: `agent-workflow-kit/tools/procedures.mjs:588` prints
+  `round-2 delta (resume — never re-send the reviewed artifact):` over each bridge's `continue` descriptors;
+  `agent-workflow-kit/README.md:240` and `agent-workflow-kit/tools/commands.mjs:211` repeat it; the label is the
+  bridges' own too (`antigravity-cli-bridge/capability.json`, `bin/agy-review.sh`). Narrow fix, with a bridge release:
+  the bridges' help and the advisor line read "resume lane (the same session: the fold ask, or a fold of code a bridge
+  wrote; round two of a review is a fresh run over the folded artifact whole):", README and the catalog line "resume
+  lane". Not folded alone: the wrapper's own `--help` heads the same descriptors `Round-2 / resume:` with "a
+  continuation sends a small delta" (`antigravity-cli-bridge/bin/agy-review.sh:109-112`), so an advisor-only edit
+  leaves the kit's bundled bridge naming a second round two. Proof: a procedures cell pinning the label beside a
+  bridge help cell. Residual exposure, live, one run or one weaker round: an orchestrator following the label runs
+  agy's round two as `--continue`; in the diff review its continuation receipt never satisfies `review-state`
+  (`review-state.mjs:47-49`), so nothing commits unreviewed and one run is lost; in the spec review agy judges the
+  delta against the round-one artifact it holds (`agy-review.sh:112`) while the other members read the folded
+  artifact whole. Raised by the review lens at the release review (2026-10-05).
+- **TIER-GUIDE-EPIC-REVIEW-AS-THE-LENS** — invariant: the guide renders the epic's review once per epic, before its
+  first story, as the lens read; the user's own reading is the stated degrade when no lens runs
+  (`agent-workflow-engine/references/planning.md:15-17`, `procedures.md:213-216`, kit `README.md:255`,
+  `references/modes/agents.md:11`). Origin: `agent-workflow-kit/tools/tier-guide-facts.mjs:53`, rendered at `:167`
+  and `:170` for every story without a plan: "read the review brief of the epic <path>; the solo review is the
+  reading of it". Narrow fix, contract and code together (`guide-stages.md:113-115` and `tier-walk.md:69` pin the
+  current wording): `:53` reads "read the review brief of the epic <path>: the review lens reads it, once per epic
+  before its first story; in the solo walk you read it yourself and state that no lens ran", rendered only before
+  the epic's first story. Proof: an S1 cell where a second story of the epic renders no review step. Residual
+  exposure, live, display only: every story's first stage names the epic review a solo review instead of the lens
+  read or its stated degrade, and each later story re-reads the brief; nothing commits on it. Raised by the review
+  lens at the release review (2026-10-05).
+- **TIER-GUIDE-ONE-RELEASE-OF-SEVERAL-STORIES** — invariant: the canon and the tier guide state one rule for stories
+  of one release. Origin: `agent-workflow-kit/tools/tier-guide-facts.mjs:257-259` renders no other story while a
+  landed story's leftover stands and prints its own `git commit` first (`:230-233`), while
+  `agent-workflow-engine/references/procedures.md:115-117` and `:156` (contract `review-loop.md:24-25,90`) let
+  stories of one release stage together and share one commit. Narrow fix, one of: `tier-guide.mjs:52` adds "(a
+  release that stages several stories together is walked by the canon, not this guide)" with tier-guide S1 and its
+  contract; or the canon scopes the several-stories release. Proof: the tier-guide S1 cell pins the sentence.
+  Residual exposure, not live: a per-story commit from HEAD is legal under the canon, so a guided user never commits
+  unreviewed; the guide only cannot walk the one-commit release. Raised by the review lens at the release review
+  (2026-10-05).
 
 ## Closed
 

@@ -26,7 +26,7 @@
       "has": "The kit-owned checker gates are declared." },
     { "id": "session-close-rules",
       "story": "S5",
-      "has": "The rules your project reads state the session-close value section and one task per session." },
+      "has": "The rules your project reads state the session-close value section and the four-session story flow." },
     { "id": "named-queue-row-seed",
       "story": "S5",
       "has": "A new work queue is seeded with the named row." },
