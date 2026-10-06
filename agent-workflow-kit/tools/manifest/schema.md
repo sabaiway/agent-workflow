@@ -99,18 +99,18 @@ drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (hel
 
 `networkHosts` declares the hosts the backend CLI is **observed** to contact (synthetic examples:
 `*.api.backend.example`, `accounts.backend.example`; the real observed lists live in each bridge's
-`capability.json`) — the **single documentation
-source** for a hand-applied sandbox/network allowlist (session sandbox config, or a hand-pasted
-`sandbox.network.allowedDomains` entry). Rules:
+`capability.json`) — the **single source** of the hosts `velocity-profile --bridge-tier` seeds
+into the project's `sandbox.network.allowedDomains` for every placed bridge, and of a hand-applied
+session sandbox allowlist. Rules:
 
 - Each entry is a bare dotted hostname or a `*.family` wildcard — never a scheme/path/port.
   Entries must be unique. A malformed list **fails** `--strict` (the entries are pasted verbatim
   into allowlist lines by the Recommendations advisor).
-- **The kit never seeds these into settings** (bridge council 2026-07-11, both backends concur):
-  a network pre-allow widens egress for **every** sandboxed command, so running the wrappers
-  **outside** the sandbox (`sandbox.excludedCommands`, the `--bridge-tier` wiring) stays the
-  primary lane; the hosts list exists for the **hand-apply** fallback under a sandbox that does
-  not honour the exclusion (harness-managed, or a settings-native harness that drops it).
+- **The `--bridge-tier` seed is the primary lane** (AD-172): beside the wrappers' exclusion it
+  merges the placed bridges' hosts into the project's `sandbox.network.allowedDomains`, so a
+  settings-native harness that drops the exclusion still admits them; that pre-allow widens egress
+  for **every** sandboxed command, which the tier's consent states. The **hand-apply** fallback
+  stays for a harness-managed sandbox that ignores the settings keys.
 - Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
   hand-applied list by hand; the manifest list records what was actually observed.
 
@@ -132,7 +132,7 @@ declared path is only the **default under no override**. Rules:
   relative path. The advisor anchors those to the **target project root** (its pinned `--cwd`),
   matching what a wrapper invoked from the project root resolves — the documented dispatch form
   (the wrapper itself anchors to its invocation `$PWD`); else the `default` applies.
-- Like `networkHosts`, this is a **documentation source**: the kit never seeds
+- Unlike `networkHosts`, this is a **documentation source** only: the kit never seeds
   `sandbox.filesystem.allowWrite` or any other filesystem allowance — the entries feed the
   sandbox-lane discoverability item (session/host sandbox config is hand-applied territory).
 

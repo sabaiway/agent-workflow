@@ -3,16 +3,42 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
-- **JEV-SANDBOXED-WRAPPER-NEEDS-NO-USER-STEP** — invariant: a delegated run reaches Jev with no settings edit by the
-  user. Origin: on 2026-10-06 Claude Code 2.1.291 ran an agent's plain `codex-review` inside its sandbox although the
-  project lists it in `excludedCommands`, so the harness proxy refuses `api.typesafe.ai`/`docs.typesafe.ai` until the
-  user adds them to `allowedDomains`; the kit never writes it and the classifier refused it from the agent (spec jev-every-run S24 states
-  it). Partial work that keeps the row: a wrapper stderr hint naming the missing hosts on a harness-proxy 403, and
-  the same harness clause in `tools/velocity-profile.mjs`'s printed tier notice, `--help` and `--autonomy` detail
-  (:688, :391, :1498, under the pinned `HOST_HONORS_QUALIFIER`). The fix is the no-step route (launch the wrappers
-  outside the Bash sandbox, e.g. through the kit's MCP server), a story, since it routes around a sandbox an admin
-  may mandate. Proof, the only one that closes the row: a sandboxed agent's plain `codex-review` gets a Jev answer
-  with no settings edit.
+- **JEV-SANDBOXED-WRAPPER-NEEDS-NO-USER-STEP** — invariant: a delegated run reaches Jev with no hand settings edit by
+  the user. Origin: on 2026-10-06 Claude Code 2.1.291 ran an agent's plain `codex-review` inside its sandbox although
+  the project lists it in `excludedCommands`. The hosts half closed with AD-172 (kit 14.24.0): `velocity-profile
+  --bridge-tier` seeds the placed bridges' declared hosts into `sandbox.network.allowedDomains` (spec velocity-profile).
+  What stays: the bridges' writable state dirs (`writableDirs`), which no kit writer seeds, so where the harness
+  sandbox keeps them read-only the user still adds them to `sandbox.filesystem.allowWrite` by hand. Partial work that
+  keeps the row: a wrapper stderr hint naming the missing hosts on a harness-proxy 403, and the harness clause in
+  `tools/velocity-profile.mjs`'s printed tier notice, `--help` and `--autonomy` detail (:702, :392, :1548, under the
+  pinned `HOST_HONORS_QUALIFIER`). The fix is the no-step route (launch the wrappers outside the Bash sandbox, e.g.
+  through the kit's MCP server), a story, since it routes around a sandbox an admin may mandate. Proof, the only one
+  that closes the row: a sandboxed agent's plain `codex-review`, after the tier's run, gets a Jev answer with no hand
+  `allowWrite` edit.
+- **BRIDGE-TIER-HOSTS-REMOVED-ON-AUTONOMY-ADVICE-REFIRE** — invariant: a host the user removed on the kit's own advice
+  is not offered back without saying why. Origin: the `--autonomy` preview reports the tier-seeded hosts as a network
+  weakening and says "remove it by hand" (`agent-workflow-kit/tools/velocity-profile.mjs:1620`); after that removal
+  the Recommendations bridge-tier item fires again (`recommendations.mjs:469`, spec velocity-profile). Narrow fix: the
+  degrade detail names `--bridge-tier` as the source of hosts equal to the placed bridges' declared hosts and says a
+  removal re-fires the item. Proof: a preview over tier output prints that note. Residual: an optional item re-offers
+  what the user chose to remove. Raised by the S11 spec review (lens).
+- **BRIDGE-TIER-FLAGLESS-READS-NO-MANIFEST-UNPINNED** — invariant: a flagless or `--kit-tools` velocity run reads no
+  bridge manifest. Origin: spec velocity-profile S4 pins the manifest STOP only on `--bridge-tier`; the advisor's
+  core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:452-455`), so a manifest read on every mode
+  would turn a broken bundle into a crash there. Narrow fix: one cell running the flagless and `--kit-tools` writer
+  over an unreadable bundle root with today's result. Raised by the S11 spec review (lens).
+- **BRIDGE-TIER-ADVISOR-ON-WRONG-TYPED-NETWORK-KEY-UNPINNED** — invariant: a wrong-typed project network key or an
+  unreadable manifest makes the Recommendations bridge-tier item a stated skip, never an offer the apply refuses.
+  Origin: the shared velocity preflight takes no flag (`agent-workflow-kit/tools/velocity-profile.mjs:903`), so where
+  the S11 network check lives decides the advisor's outcome (`recommendations.mjs:445-450,468-474`), and spec
+  velocity-profile does not pin it. Narrow fix: one advisor cell over `allowedDomains: "<string>"` expecting the skip
+  line. Raised by the S11 spec review (lens, round 2).
+- **BRIDGE-TIER-S1-ZERO-HOSTS-COUNT-UNPINNED** — invariant: with no bridge placed a `--bridge-tier` run prints no
+  `allowedDomains` count line. Origin: `agent-workflow-kit/tools/velocity-profile.test.mjs:1114` asserts no match on
+  `entries: [1-9]`, which an `entries: 0` line passes; the code gates the three lines on `hostsToAdd +
+  hostsAlreadyPresent` (`agent-workflow-kit/tools/velocity-profile.mjs:715`). Narrow fix:
+  `assert.equal(listedHosts(r.stdout), undefined)`. Residual: not live, the line is not printed today. Raised by the
+  S11 diff review (lens).
 
 - **JEV-KEY-IN-EVERY-DELEGATED-RUN** — invariant: a delegated run's environment carries no secret its task does not
   use. Origin: the shared key rule `aw_scrub_billing_keys` (every bridge wrapper, spec jev-every-run) passes

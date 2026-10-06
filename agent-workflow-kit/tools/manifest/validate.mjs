@@ -638,10 +638,10 @@ export const validateManifest = (skillDir) => {
   }
 
   // `networkHosts` (AD-044 Plan 4, consult-locked): the backend CLI's OBSERVED egress host
-  // families — a DOCUMENTATION source for hand-applied sandbox/network allowlists. The kit never
-  // seeds these into settings (exclusion stays primary; a network pre-allow widens egress for
-  // EVERY sandboxed command), but a malformed list FAILS --strict like `settings`: the
-  // Recommendations advisor renders it verbatim, so a bad entry would corrupt a pasted line.
+  // families. `velocity-profile --bridge-tier` seeds them into sandbox.network.allowedDomains for
+  // placed bridges (AD-172; the pre-allow widens egress for EVERY sandboxed command, stated at that
+  // consent), and a malformed list FAILS --strict like `settings`: the tier writes it and the
+  // Recommendations advisor renders it verbatim, so a bad entry would corrupt a seeded line.
   const networkHosts = manifest.networkHosts;
   if (networkHosts != null) {
     if (!Array.isArray(networkHosts) || networkHosts.length === 0) {
@@ -661,7 +661,7 @@ export const validateManifest = (skillDir) => {
 
   // `writableDirs` (REC-UX-REWORK, D6): the backend CLI's writable state-dir declarations —
   // {env, default} entries the Recommendations advisor RESOLVES at run time (a NON-EMPTY env
-  // value wins, else the default) and renders into the sandbox-lane recipe. Like `networkHosts`
+  // value wins, else the default) and renders into the sandbox-lane recipe. Unlike `networkHosts`
   // this is a DOCUMENTATION source (the kit never seeds filesystem allowances), and a malformed
   // list FAILS --strict for the same reason: the resolved dir is rendered into a hand-applied line.
   const writableDirs = manifest.writableDirs;

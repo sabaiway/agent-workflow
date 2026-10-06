@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,7 @@ import {
   UNIVERSAL_READONLY_ALLOWLIST,
   VELOCITY_NON_READONLY,
   VELOCITY_INVALID_ARGUMENT,
+  VELOCITY_MALFORMED,
   VELOCITY_OFFCORE,
   WORKFLOW_STAMP,
   deriveBridgeTierAllowlist,
@@ -29,6 +30,7 @@ import {
   parseArgs,
   screenAllowlistEntry,
   validateProfile,
+  writeVelocityProfile,
 } from './velocity-profile.mjs';
 import { GROUNDING_TOOL, REPO_SEARCH_TOOL, REVIEW_ROUNDS_TOOL } from './procedures.mjs';
 import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
@@ -969,15 +971,33 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
   const allPlaced = () => true;
   const nonePlaced = () => false;
   const GROUNDING_RULE = `Bash(node "${GROUNDING_TOOL}":*)`;
-  const runBridgeMain = (argv, cwd, findWrapper) => {
+  const runBridgeMain = (argv, cwd, findWrapper, extra = {}) => {
     const stdout = [];
     const stderr = [];
     const code = main([...argv, '--cwd', cwd], {
       log: (line) => stdout.push(line),
       errlog: (line) => stderr.push(line),
       findWrapper,
+      ...extra,
     });
     return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  };
+  const BUNDLE_ROOT = join(KIT_ROOT, 'bridges');
+  const BUNDLES = ['antigravity-cli-bridge', 'codex-cli-bridge'];
+  const manifestPath = (bundle) => join(BUNDLE_ROOT, bundle, 'capability.json');
+  const AGY_HOSTS = readJson(manifestPath('antigravity-cli-bridge')).networkHosts;
+  const CODEX_HOSTS = readJson(manifestPath('codex-cli-bridge')).networkHosts;
+  const UNION_HOSTS = [...AGY_HOSTS, ...CODEX_HOSTS.filter((host) => !AGY_HOSTS.includes(host))];
+  const bundleDeps = (entries = BUNDLES, readFile = readFileSync) => ({ bundleRoot: BUNDLE_ROOT, readdir: (dir) => (dir === BUNDLE_ROOT ? entries : readdirSync(dir)), readFile });
+  const failWith = (code) => { throw Object.assign(new Error(`${code}: fixture`), { code }); };
+  const HOSTS_HEADER = /^(?:would add|added) sandbox\.network\.allowedDomains entries: (\d+)$/;
+  const listedHosts = (stdout) => {
+    const lines = stdout.split('\n');
+    const at = lines.findIndex((line) => HOSTS_HEADER.test(line));
+    if (at < 0) return undefined;
+    const rest = lines.slice(at + 1);
+    const end = rest.findIndex((line) => !line.startsWith('  - '));
+    return { count: Number(lines[at].match(HOSTS_HEADER)[1]), hosts: rest.slice(0, end).map((line) => line.slice(4)), after: rest[end] };
   };
 
   it('the FROZEN tier constant is exactly the two review wrappers (count sentinel)', () => {
@@ -1080,6 +1100,108 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(second.code, EXIT_OK);
     assert.equal(readText(settingsPath(cwd)), bytes, 'a second tiered apply changes nothing');
     assert.match(first.stdout, /runs UNATTENDED/, 'the notice prints on every tiered run');
+  });
+
+  it('a dry-run would add the declared hosts of each placed set, agy first; none placed adds no network key — spec:velocity-profile/S1', async (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    assert.deepEqual([CODEX_HOSTS.length, AGY_HOSTS.length, UNION_HOSTS.length], [4, 6, 8], 'the manifests the figures are read from');
+    for (const [placed, expected] of [[['codex-review'], CODEX_HOSTS], [['agy-review'], AGY_HOSTS], [['codex-review', 'agy-review'], UNION_HOSTS]]) {
+      const r = runBridgeMain(['--bridge-tier'], cwd, (cmd) => placed.includes(cmd), bundleDeps());
+      assert.equal(r.code, EXIT_OK, r.stderr);
+      assert.deepEqual([listedHosts(r.stdout)?.count, listedHosts(r.stdout)?.hosts], [expected.length, expected], `${placed.join(' + ')}: the allowedDomains lines`);
+    }
+    assert.doesNotMatch(runBridgeMain(['--bridge-tier'], cwd, nonePlaced, bundleDeps()).stdout, /allowedDomains entries: [1-9]/);
+    assert.equal(runBridgeMain(['--apply', '--bridge-tier'], cwd, nonePlaced, bundleDeps()).code, EXIT_OK);
+    assert.equal(readJson(settingsPath(cwd)).sandbox?.network, undefined, 'no placed bridge writes no network key');
+    const { bundledSandboxRecipe } = await import('./bridge-sandbox-recipe.mjs').catch(() => ({}));
+    assert.equal(typeof bundledSandboxRecipe, 'function', 'bridge-sandbox-recipe.mjs exports the shared reader');
+    assert.deepEqual(bundledSandboxRecipe([...BRIDGE_REVIEW_WRAPPERS], bundleDeps()).hosts, UNION_HOSTS, 'the tier reads the one derivation');
+  });
+
+  it('an apply onto the pre-revision tier output keeps a foreign host and sub-key, appends the missing hosts once, idempotent — spec:velocity-profile/S2', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    const tier = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
+    const present = ['internal.example.com', UNION_HOSTS.at(-1)];
+    const network = { allowLocalBinding: true, allowedDomains: present };
+    writeJson(settingsPath(cwd), { permissions: { allow: [...tier.allow] }, sandbox: { excludedCommands: [...tier.excludedCommands], network } });
+    const first = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps());
+    assert.equal(first.code, EXIT_OK, first.stderr);
+    const { sandbox } = readJson(settingsPath(cwd));
+    assert.deepEqual(sandbox.network, { ...network, allowedDomains: [...present, ...UNION_HOSTS.slice(0, -1)] }, 'the missing hosts append in order');
+    assert.deepEqual(sandbox.excludedCommands, [...tier.excludedCommands], 'the exclusions are not repeated');
+    assert.match(first.stdout, /^already present \(allowedDomains\): 1$/m);
+    const bytes = readText(settingsPath(cwd));
+    assert.equal(runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps()).code, EXIT_OK);
+    assert.equal(readText(settingsPath(cwd)), bytes, 'a second apply changes no byte');
+  });
+
+  it('a wrong-typed sandbox.network or allowedDomains STOPs the tier with zero writes; other modes and the local file keep today’s reading — spec:velocity-profile/S3', (t) => {
+    for (const [network, key] of [[['x'], 'sandbox.network'], [{ allowedDomains: 'x' }, 'sandbox.network.allowedDomains']]) {
+      const cwd = makeTempProject(t);
+      seedWorkflowStamp(cwd);
+      writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+      ensureClaudeDir(cwd);
+      writeJson(settingsPath(cwd), { sandbox: { network } });
+      const original = readText(settingsPath(cwd));
+      const dryRun = () => writeVelocityProfile({ cwd, bridgeTier: true }, { findWrapper: allPlaced, ...bundleDeps() });
+      assert.throws(dryRun, (err) => err.code === VELOCITY_MALFORMED && err.message.includes(key), `${key}: the dry-run STOPs`);
+      const apply = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps());
+      assert.equal(apply.code, EXIT_PRECONDITION, `${key}: the apply STOPs`);
+      assert.ok(apply.stderr.includes(key), apply.stderr);
+      assert.equal(readText(settingsPath(cwd)), original, `${key}: zero writes`);
+      for (const argv of [['--dry-run'], ['--kit-tools'], ['--autonomy']]) {
+        assert.equal(runBridgeMain(argv, cwd, allPlaced, bundleDeps()).code, EXIT_OK, `${argv[0]} keeps today's reading of ${key}`);
+      }
+      writeJson(settingsPath(cwd), {});
+      writeJson(localSettingsPath(cwd), { sandbox: { network } });
+      assert.equal(runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps()).code, EXIT_OK, `${key} in settings.local.json alone`);
+    }
+  });
+
+  it('an unreadable or unparsable bundled manifest STOPs the tier with zero writes naming it; a stray entry is skipped — spec:velocity-profile/S4', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { permissions: { allow: [] } });
+    const original = readText(settingsPath(cwd));
+    const broken = manifestPath('codex-cli-bridge');
+    const readers = { unreadable: (path, enc) => (path === broken ? failWith('EACCES') : readFileSync(path, enc)), unparsable: (path, enc) => (path === broken ? '{ not json' : readFileSync(path, enc)) };
+    for (const [label, readFile] of Object.entries(readers)) {
+      for (const argv of [['--dry-run', '--bridge-tier'], ['--apply', '--bridge-tier']]) {
+        const r = runBridgeMain(argv, cwd, allPlaced, bundleDeps(BUNDLES, readFile));
+        assert.equal(r.code, EXIT_PRECONDITION, `${label} ${argv[0]}: the tier STOPs`);
+        assert.ok(r.stderr.includes(join('codex-cli-bridge', 'capability.json')), `${label}: the STOP names the manifest`);
+        assert.equal(readText(settingsPath(cwd)), original, `${label} ${argv[0]}: zero writes`);
+      }
+    }
+    const stray = manifestPath('.DS_Store');
+    const r = runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps(['.DS_Store', ...BUNDLES], (path, enc) => (path === stray ? failWith('ENOTDIR') : readFileSync(path, enc))));
+    assert.equal(r.code, EXIT_OK, r.stderr);
+    assert.deepEqual(listedHosts(r.stdout)?.hosts, UNION_HOSTS, 'the stray entry is skipped, the hosts stay whole');
+  });
+
+  it('a dry-run writes nothing and lists the hosts; the notice and USAGE state the seeded hosts and the widening under the qualifier — spec:velocity-profile/S5', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { sandbox: { network: { allowedDomains: [] } } });
+    const original = readText(settingsPath(cwd));
+    const r = runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps());
+    assert.equal(r.code, EXIT_OK, r.stderr);
+    assert.match(r.stdout, /^would add sandbox\.network\.allowedDomains entries: 8$/m);
+    const listed = listedHosts(r.stdout);
+    assert.deepEqual([listed?.hosts, listed?.after], [UNION_HOSTS, 'already present (allowedDomains): 0']);
+    assert.equal(readText(settingsPath(cwd)), original, 'the dry-run writes nothing');
+    const usage = runMainWithoutCwd(['--help']).stdout;
+    const tierUsage = usage.slice(usage.indexOf('\n--bridge-tier'), usage.indexOf('\n--autonomy')).replace(/\s+/g, ' ');
+    for (const [surface, text] of [['the notice', KIT_BRIDGE_TIER_NOTICE], ['the USAGE', tierUsage]]) {
+      assert.ok(text.includes('sandbox.network.allowedDomains') && text.includes('declared hosts'), `${surface} states the seeded hosts`);
+      assert.ok(text.split(/(?<=\.)\s+/).some((s) => s.includes(HOST_HONORS_QUALIFIER) && s.includes('every sandboxed command')), `${surface} states the widening under the host qualifier`);
+      assert.doesNotMatch(text, /typesafe/, `${surface} names no Jev host literally`);
+    }
   });
 
   it('audit self-consistency: the flagless advisory flags NONE of the tier’s own entries — and DOES flag them for an absent bridge', (t) => {

@@ -4,7 +4,7 @@
 // ANSWERED renders THIS tool's PREVIEW one-liner; the preview prints the exact `--apply` command;
 // the agent runs `--apply` only after the mode doc's §3 informed-consent confirmation. It records a
 // NEUTRAL fingerprint acknowledgement — never a security key; the kit never writes sandbox
-// network/filesystem allowances.
+// filesystem allowances, and allowedDomains only through velocity-profile --bridge-tier.
 //
 // The wording is per-LANE or genuinely neutral, never "recipe": the sandbox lane acknowledges a
 // session-sandbox recipe, but the coverage-domain lane acknowledges a census FACT and the

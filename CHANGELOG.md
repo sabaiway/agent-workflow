@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-06 — AD-172: the bridge tier seeds the placed bridges' declared hosts (kit 14.24.0 MINOR; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
+
+**`velocity-profile --bridge-tier` now also merges the `networkHosts` of every placed bridge into the project
+`.claude/settings.json` `sandbox.network.allowedDomains`, so, where the host honours the settings sandbox keys, a
+review wrapper a harness keeps sandboxed despite its `excludedCommands` entry is no longer refused its hosts.** This reverses the 2026-07-11 bridge council rule for those
+hosts only: the consent states that, where the host honours the settings sandbox keys, every sandboxed command of the
+project can reach them, and `allowWrite` stays hand-apply. Dry-run by default, merge without clobbering, a second
+apply byte-identical; a wrong-typed network key or an unreadable bundled manifest stops the tier with nothing
+written. The Recommendations `bridge-tier` item counts missing hosts, so earlier tier users are offered one re-run.
+The manifest reader moved into `tools/bridge-sandbox-recipe.mjs`. Contract `docs/ai/specs/bridges/velocity-profile.md`,
+live, S1-S6 bound; jev-every-run revision 2.
+
 ## 2026-10-06 — AD-171: a delegated run uses Jev as the user's own run does (codex-cli-bridge 5.0.0 and antigravity-cli-bridge 7.0.0 MAJOR, kit 14.23.0 MINOR; memory 8.1.4 and engine 5.12.0 unchanged)
 
 **Every bridge wrapper passes `TYPESAFE_API_KEY` to its run while every other `*_API_KEY` and `OPENAI_BASE_URL` stay

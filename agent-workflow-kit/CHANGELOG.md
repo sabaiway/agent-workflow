@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.24.0 — the bridge tier also writes the placed bridges' hosts into the project sandbox, so where the host honours the settings sandbox keys a review the harness keeps sandboxed is not refused them (AD-172)
+
+**`velocity-profile --bridge-tier` now merges the declared hosts of every placed bridge (each bundled manifest's
+`networkHosts`) into the project `.claude/settings.json` `sandbox.network.allowedDomains`.** Before, the tier wrote
+only its allow rules (the review wrappers' code mode and, with agy-review placed, the grounding pre-step) and the
+wrappers' `sandbox.excludedCommands` entries, and a harness that kept a wrapper
+sandboxed anyway (Claude Code 2.1.291, observed 2026-10-06) refused its hosts until the user added them by hand.
+
+- **What the consent covers.** Where the host honours the settings sandbox keys, every sandboxed command of the
+  project can then reach those hosts, not only the wrappers. The printed tier notice, `--help`, the velocity and
+  recommendations mode docs and a new `bridge-tier` posture note say so; the `--autonomy` preview keeps reporting the
+  hosts as a network weakening. `sandbox.filesystem.allowWrite` stays unseeded: the bridges' writable state dirs stay
+  hand-apply.
+- **Same writer rules as the other surfaces.** Dry-run by default; foreign hosts and other `sandbox.network` keys
+  kept; a host already present left where it is; a second `--apply` changes no byte. The dry-run prints
+  `would add sandbox.network.allowedDomains entries: N`, the hosts and `already present (allowedDomains): M`.
+- **Stops with nothing written.** A non-object `sandbox.network` or a non-array `allowedDomains` in the project file
+  ends a `--bridge-tier` run as `VELOCITY_MALFORMED` naming the key; an unreadable or unparsable bundled manifest ends
+  it naming the manifest. The flagless, `--kit-tools` and `--autonomy` runs read those keys as before.
+- **The advisor offers the re-run.** The Recommendations `bridge-tier` item now also counts missing declared hosts,
+  so a project that ran the tier before this release is offered the one re-run at its next upgrade:
+  `bridge-wrappers tier incomplete — {n} entr(ies) missing (allow rules, sandbox exclusions or declared hosts of placed bridges)`.
+- **One reader.** The manifest reader moved unchanged into `tools/bridge-sandbox-recipe.mjs`; the tier and the
+  sandbox-lane recipe both read it. The tarball holds 359 files.
+
 ## 14.23.0 — a delegated codex or agy run uses Jev as your own run does; ships codex-cli-bridge 5.0.0 and antigravity-cli-bridge 7.0.0 (AD-171)
 
 **Every bridge wrapper now passes `TYPESAFE_API_KEY` to the run, and on Linux with codex-cli 0.160.0 or newer a

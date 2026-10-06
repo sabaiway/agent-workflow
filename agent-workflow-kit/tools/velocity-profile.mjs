@@ -14,6 +14,7 @@ import { findOnPath } from './detect-backends.mjs';
 import { SHELL_METACHARACTERS, hasShellMetacharacter, isSeedablePathToken } from './repo-lex.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
+import { bundledSandboxRecipe } from './bridge-sandbox-recipe.mjs';
 // The declared-path resolution + segment containment the allowWrite degrade shares with the
 // advisor's worktrees-dir convergence lane — ONE leaf, so the two readings cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -388,9 +389,11 @@ dry-run preview byte-strings. Never touches settings.local.json.
 --bridge-tier (own consent) seeds the bridge REVIEW wrappers' CODE mode for PLACED bridges
 (codex-review code, agy-review code - never the execution/probe wrappers, never plan/diff modes)
 + the quoted grounding pre-step rule, and the wrapper names into sandbox.excludedCommands (they
-need network - ${HOST_HONORS_QUALIFIER} the harness runs them outside the sandbox). Consented
-posture: an auto-allowed review wrapper runs UNATTENDED and sends the assembled repo payload to its
-subscription backend (see the printed tier notice).
+need network - ${HOST_HONORS_QUALIFIER} the harness runs them outside the sandbox). It also
+seeds the placed bridges' declared hosts into sandbox.network.allowedDomains - ${HOST_HONORS_QUALIFIER}
+every sandboxed command of the project can then reach those hosts; the writable state dirs stay
+hand-apply. Consented posture: an auto-allowed review wrapper runs UNATTENDED and sends the
+assembled repo payload to its subscription backend (see the printed tier notice).
 
 --autonomy renders docs/ai/autonomy.json into the settings blocks it OWNS — the sandbox block +
 permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never seeds the allowlist and
@@ -634,7 +637,7 @@ const assertTargetWritable = (absPath, deps = {}) => {
 
 const formatJson = (data, eol) => `${JSON.stringify(data, null, SETTINGS_JSON_INDENT).replace(JSON_NEWLINE_PATTERN, eol)}${eol}`;
 
-const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = []) => {
+const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = [], hostsToAdd = []) => {
   const base = projectData ?? {};
   const permissions = getPermissions(base);
   const allow = getAllowEntries(base);
@@ -644,15 +647,26 @@ const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = [
     allow: mergedAllow,
     ...(acceptEdits === true ? { defaultMode: ACCEPT_EDITS_MODE } : {}),
   };
-  // The bridge tier's second surface: sandbox.excludedCommands (merge-don't-clobber — foreign
-  // entries and sandbox sub-keys preserved; only the tier's wrapper names append, deduped). The
-  // flagless/kit-tools paths pass no entries, so the sandbox block stays untouched for them.
+  // The bridge tier's second and third surfaces: sandbox.excludedCommands and
+  // sandbox.network.allowedDomains (merge-don't-clobber — foreign entries and sandbox sub-keys
+  // preserved; only the tier's entries append, deduped). The flagless/kit-tools paths pass no
+  // entries, so the sandbox block stays untouched for them.
   const existingSandbox = isJsonObject(base.sandbox) ? base.sandbox : {};
   const existingExcluded = Array.isArray(existingSandbox.excludedCommands) ? existingSandbox.excludedCommands : [];
   const newExcluded = excludedToAdd.filter((cmd) => !existingExcluded.includes(cmd));
-  const sandboxBlock = newExcluded.length
-    ? { sandbox: { ...existingSandbox, excludedCommands: [...existingExcluded, ...newExcluded] } }
-    : {};
+  const existingNetwork = isJsonObject(existingSandbox.network) ? existingSandbox.network : {};
+  const existingHosts = Array.isArray(existingNetwork.allowedDomains) ? existingNetwork.allowedDomains : [];
+  const newHosts = hostsToAdd.filter((host) => !existingHosts.includes(host));
+  const sandboxBlock =
+    newExcluded.length || newHosts.length
+      ? {
+          sandbox: {
+            ...existingSandbox,
+            ...(newExcluded.length ? { excludedCommands: [...existingExcluded, ...newExcluded] } : {}),
+            ...(newHosts.length ? { network: { ...existingNetwork, allowedDomains: [...existingHosts, ...newHosts] } } : {}),
+          },
+        }
+      : {};
   return { ...base, permissions: mergedPermissions, ...sandboxBlock };
 };
 
@@ -683,9 +697,11 @@ const formatKitTier = (result) =>
 // resolution states the exfiltration surface, never pretends it away.
 export const KIT_BRIDGE_TIER_NOTICE =
   'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): ' +
-  // The one interpolated seam in this notice: the shared host-conditional qualifier, so the tier's
+  // The interpolated seams in this notice: the shared host-conditional qualifier, so the tier's
   // routing promise and the render's degrade lines can never drift apart.
-  `${HOST_HONORS_QUALIFIER} the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval — whether a host honors them is not knowable from here, and where it does not the wrapper simply starts sandboxed (fail-safe, never a silent widening). INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).`;
+  `${HOST_HONORS_QUALIFIER} the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval — whether a host honors them is not knowable from here, and where it does not the wrapper simply starts sandboxed (fail-safe, never a silent widening). ` +
+  `The placed bridges' declared hosts (each bundled manifest's networkHosts) are seeded into sandbox.network.allowedDomains IN THE PROJECT settings.json: ${HOST_HONORS_QUALIFIER}, a wrapper the harness keeps sandboxed still reaches them, and every sandboxed command of the project can then reach those hosts, not only the wrappers — that widening is part of this consent, and the --autonomy preview reports it as a network weakening; the writable state dirs (writableDirs) stay hand-apply. ` +
+  'INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).';
 
 const formatBridgeTier = (result) =>
   result.bridgeTier
@@ -696,6 +712,13 @@ const formatBridgeTier = (result) =>
         `${result.wrote ? 'added' : 'would add'} sandbox.excludedCommands entries: ${result.excludedToAdd.length}`,
         ...formatEntryList(result.excludedToAdd),
         `already present (excludedCommands): ${result.excludedAlreadyPresent.length}`,
+        ...(result.hostsToAdd.length + result.hostsAlreadyPresent.length
+          ? [
+              `${result.wrote ? 'added' : 'would add'} sandbox.network.allowedDomains entries: ${result.hostsToAdd.length}`,
+              ...formatEntryList(result.hostsToAdd),
+              `already present (allowedDomains): ${result.hostsAlreadyPresent.length}`,
+            ]
+          : []),
         ...result.bridgeSkips.map((s) => `  skipped: ${s.reason}`),
         KIT_BRIDGE_TIER_NOTICE,
       ]
@@ -947,7 +970,19 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
   };
 };
 
-export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTier, findWrapper } = {}) => {
+// The tier merges into the project's sandbox.network.allowedDomains, so a wrong-typed value there
+// STOPs the tier with zero writes; every other mode keeps today's reading of the two keys.
+const assertNetworkMergeable = (sandbox) => {
+  if (sandbox.network !== undefined && !isJsonObject(sandbox.network)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_FILE}: sandbox.network must be a JSON object`);
+  }
+  if (sandbox.network?.allowedDomains !== undefined && !Array.isArray(sandbox.network.allowedDomains)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_FILE}: sandbox.network.allowedDomains must be an array`);
+  }
+  return sandbox.network?.allowedDomains ?? [];
+};
+
+export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTier, findWrapper, bundleRoot, readdir, readFile } = {}) => {
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
   const toAdd = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => !projectAllow.includes(entry));
   const alreadyPresent = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => projectAllow.includes(entry));
@@ -961,6 +996,10 @@ export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTi
   const existingExcluded = Array.isArray(existingSandbox.excludedCommands) ? existingSandbox.excludedCommands : [];
   const excludedToAdd = bridge.excludedCommands.filter((cmd) => !existingExcluded.includes(cmd));
   const excludedAlreadyPresent = bridge.excludedCommands.filter((cmd) => existingExcluded.includes(cmd));
+  const existingHosts = bridgeTier === true ? assertNetworkMergeable(existingSandbox) : [];
+  const hosts = bridgeTier === true ? bundledSandboxRecipe(bridge.placed, { bundleRoot, readdir, readFile }).hosts : [];
+  const hostsToAdd = hosts.filter((host) => !existingHosts.includes(host));
+  const hostsAlreadyPresent = hosts.filter((host) => existingHosts.includes(host));
   return {
     toAdd,
     alreadyPresent,
@@ -973,6 +1012,8 @@ export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTi
     bridgeSkips: bridge.skips,
     excludedToAdd,
     excludedAlreadyPresent,
+    hostsToAdd,
+    hostsAlreadyPresent,
     setsDefaultMode: acceptEdits === true,
   };
 };
@@ -980,7 +1021,15 @@ export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTi
 export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false, bridgeTier = false } = {}, deps = {}) => {
   const projectDir = cwd ?? deps.cwd ?? process.cwd();
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
-  const plan = planVelocityProfile(preflight, { acceptEdits, kitTools, bridgeTier, findWrapper: deps.findWrapper });
+  const plan = planVelocityProfile(preflight, {
+    acceptEdits,
+    kitTools,
+    bridgeTier,
+    findWrapper: deps.findWrapper,
+    bundleRoot: deps.bundleRoot,
+    readdir: deps.readdir,
+    readFile: deps.readFile,
+  });
   // Drift guard runs on BOTH dry-run and apply (so a dry-run faithfully predicts the apply) and
   // validates the FULL audited core, not just the to-add delta — a drifted core entry is caught even
   // when it is already present in the user's allow list (and toAdd is a subset of the core anyway).
@@ -1016,6 +1065,7 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
     [...plan.toAdd, ...plan.tierToAdd, ...plan.bridgeToAdd],
     acceptEdits,
     plan.excludedToAdd,
+    plan.hostsToAdd,
   );
   fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };

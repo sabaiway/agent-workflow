@@ -52,7 +52,7 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
 // consented apply run against the rendered selection — the real writer, never a re-implementation.
 import { applyFill } from './gates-init.mjs';
-import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { EXPECTED_WORKFLOW_VERSION, deriveBridgeTierAllowlist } from './velocity-profile.mjs';
 // The registration fixtures are built from the LEAF's own constants and derived rules — a fixture
 // spelling its own server path or allow rules would drift off the thing the probe actually reads.
 import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
@@ -1646,6 +1646,29 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     const { skips } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'bridge-tier' && /probe exploded/.test(s.reason)));
+  });
+
+  it('a wired project missing a declared host fires the risk-noted bridge-tier item counting the hosts — spec:velocity-profile/S6', () => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    const agyPlaced = (cmd) => cmd === 'agy-review';
+    const tier = deriveBridgeTierAllowlist({ findWrapper: agyPlaced });
+    const bridgeTierItemWith = (allowedDomains) => {
+      const sandbox = { excludedCommands: [...tier.excludedCommands], network: { allowedDomains } };
+      writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [...tier.allow] }, sandbox }));
+      return buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: agyPlaced }) }).items.find((i) => i.key === 'bridge-tier');
+    };
+    const fired = bridgeTierItemWith(['internal.example.com', AGY_HOSTS[0]]);
+    const silent = bridgeTierItemWith([...AGY_HOSTS]);
+    rmSync(root, { recursive: true, force: true });
+    const text = `bridge-wrappers tier incomplete — ${AGY_HOSTS.length - 1} entr(ies) missing (allow rules, sandbox exclusions or declared hosts of placed bridges)`;
+    assert.ok(fired?.what.includes(text), `the missing hosts count and are named: ${fired?.what}`);
+    assert.equal(silent, undefined, 'the rules, the exclusions and the hosts all present: silent');
+    assert.ok(RISK_NOTED_KEYS.includes('bridge-tier'), 'bridge-tier is risk-noted');
+    const doc = readFileSync(join(KIT_ROOT, 'references', 'modes', 'recommendations.md'), 'utf8');
+    const notes = doc.slice(doc.indexOf('**Per-item posture notes'), doc.indexOf('**Sandbox lanes'));
+    const note = notes.split('\n').find((line) => line.startsWith('- `bridge-tier` —'));
+    assert.ok(note?.includes('sandbox.network.allowedDomains'), 'the bridge-tier posture note names sandbox.network.allowedDomains');
   });
 
   it('a MALFORMED autonomy policy skips the autonomy items with the loud parse reason', () => {
