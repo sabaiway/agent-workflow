@@ -865,8 +865,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 347 = 345 + tools/jev-guide.mjs and references/modes/jev.md - the Jev guide; 349 = 347 + tools/jev-facts.mjs and tools/jev-connect.mjs - the connect command (story S8)
     // 352 = 349 + tools/jev-skill.mjs and the vendored pair references/vendor/typesafe-ai/{SKILL.md.pinned,LICENSE} - the skill command (story S9)
     // 354 = 352 + bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs and bridges/antigravity-cli-bridge/bin/agy-model-posture.test.mjs - the model posture suites (story S1 of BRIDGE-MODEL-IS-ONE-USER-SETTING)
-    // 355 = 354 + tools/bridge-catalog.mjs - the model catalog reader (story S2 of BRIDGE-MODEL-IS-ONE-USER-SETTING)
-    assert.equal(packed.length, 355, `tarball file count drifted (${packed.length}\u2260 355)`);
+    // 355 = 354 + tools/bridge-catalog.mjs - the model catalog reader (story S2 of BRIDGE-MODEL-IS-ONE-USER-SETTING); 358 = 355 + bridges/codex-cli-bridge/bin/{codex-exec-jev,codex-review-jev}.test.mjs and bridges/antigravity-cli-bridge/bin/agy-jev.test.mjs - Jev in every bridge wrapper (story S10 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
+    assert.equal(packed.length, 358, `tarball file count drifted (${packed.length}\u2260 358)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

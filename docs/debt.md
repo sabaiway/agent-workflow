@@ -3,6 +3,43 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **JEV-SANDBOXED-WRAPPER-NEEDS-NO-USER-STEP** — invariant: a delegated run reaches Jev with no settings edit by the
+  user. Origin: on 2026-10-06 Claude Code 2.1.291 ran an agent's plain `codex-review` inside its sandbox although the
+  project lists it in `excludedCommands`, so the harness proxy refuses `api.typesafe.ai`/`docs.typesafe.ai` until the
+  user adds them to `allowedDomains`; the kit never writes it and the classifier refused it from the agent (spec jev-every-run S24 states
+  it). Partial work that keeps the row: a wrapper stderr hint naming the missing hosts on a harness-proxy 403, and
+  the same harness clause in `tools/velocity-profile.mjs`'s printed tier notice, `--help` and `--autonomy` detail
+  (:688, :391, :1498, under the pinned `HOST_HONORS_QUALIFIER`). The fix is the no-step route (launch the wrappers
+  outside the Bash sandbox, e.g. through the kit's MCP server), a story, since it routes around a sandbox an admin
+  may mandate. Proof, the only one that closes the row: a sandboxed agent's plain `codex-review` gets a Jev answer
+  with no settings edit.
+
+- **JEV-KEY-IN-EVERY-DELEGATED-RUN** — invariant: a delegated run's environment carries no secret its task does not
+  use. Origin: the shared key rule `aw_scrub_billing_keys` (every bridge wrapper, spec jev-every-run) passes
+  `TYPESAFE_API_KEY` into every codex and agy run, its task needing Jev or not, and codex's server-side `web_search`
+  reaches pages outside the permissions profile `jev` (P9), so the key sits beside a channel the profile does not
+  bound (R2.17). Narrow fix: none today — the maintainer ruled Jev into every run (R1, R2, 2026-10-05), and both
+  SKILL.md paragraphs state the residual. Proof when one lands: a run whose task names no Jev step sees no key, or a
+  `web_search` run that cannot read the environment. Residual exposure, live and stated: a prompt-injected page
+  reached through `web_search` could ask the delegate to send the key elsewhere; the profile refuses every host but
+  `api.typesafe.ai` and `docs.typesafe.ai` for a command, not for the server-side tool. Raised by the S10 spec review.
+- **JEV-S10-S23-TABLE-CELL-BLIND-SPOT** — invariant: no shipped bridge page states codex's network as forced off
+  without naming the fallback. Origin: `agent-workflow-kit/test/jev-every-run.test.mjs:115`, `NETWORK_OFF` needs the
+  word "network" beside OFF, so a Markdown table cell (`| OFF (we force it off) |` under a `Network?` column) never
+  matches; the S10 diff review found such a row in `codex-cli-bridge/references/sandbox-and-flags.md` and fixed the
+  text. Narrow fix: the S23 sweep also reads each table row with its column header. Proof: a cell `OFF` under a
+  `Network?` header fails S23. Residual exposure, not live: no shipped page carries such a cell today. Raised by the
+  review lens at the S10 diff review (2026-10-05).
+- **JEV-S10-PROFILE-SUITES-UNDER-TMP** — invariant: the profile suites pass wherever the checkout lives. Origin:
+  `codex-cli-bridge/bin/codex-exec-jev.test.mjs:16` and `codex-model-posture.test.mjs` build fixture repos under
+  the checkout, so a checkout under `/tmp` takes the correct temp-root fallback and the profile cells fail. Narrow
+  fix: place the profile fixtures by a temp-root-free path the suite chooses, or skip with a stated reason. Proof:
+  the suites pass from a checkout under `/tmp`. Raised by codex at the S10 release review (2026-10-06).
+- **JEV-S10-EXIT-72-DROPS-NESTED-SANDBOX-HINT** — invariant: a nested-sandbox failure always prints its recovery
+  hint. Origin: `codex-cli-bridge/bin/codex-exec.sh:1707`, the exit-72 branch on `bwrap: execvp … Permission
+  denied` returns before `aw_scan_nested_sandbox`, so the earlier diagnosis and its recovery lane are not printed.
+  Narrow fix: run the nested-sandbox scan before the exit-72 return. Proof: a fake trace with that line exits 72
+  and prints the recovery hint. Raised by codex at the S10 release review (2026-10-06).
 - **LINE-SAFETY-TEST-FULL-RANGE** — the `UNSAFE` byte list in
   `agent-workflow-kit/tools/lens-region.test.mjs` samples 11 boundary code points while the
   comment and the composer contract claim the full C0/DEL/C1/U+2028/U+2029 range; generate the
@@ -173,7 +210,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   them; the rest is display and contract wording; the walk and every guided line pass. Raised by agy and the review
   lens at the S5 spec review.
 - **STORY-FLOW-S5-DIFF-REVIEW-TEST-PINS** — invariant: each tier-guide cell pins the exact actions its scenario
-  states; the code is right today. (1) `agent-workflow-kit/tools/tier-guide.test/states.test.mjs:78`: the
+  states; the code is right today. (1) `agent-workflow-kit/tools/tier-guide.test/states.test.mjs:79`: the
   index-refusal cells exclude only the diff and commit commands, so a removal printed after a refused index read
   passes; fix: no action at all after a refused read. (2) `agent-workflow-kit/tools/tier-guide-facts.test.mjs:25`:
   `REMOVAL` never pins which prompts the removal names, so a removal naming "none on disk" beside a prompt on disk
@@ -183,7 +220,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual exposure, not live: the code quotes, filters and refuses as stated. Raised by codex and the review lens
   at the S5 diff review (2026-10-05).
 - **STORY-FLOW-ADVISOR-ROUND-2-LABEL** — invariant: the advisor and the bridges state one round two (the canon's,
-  `agent-workflow-engine/references/procedures.md:63-66`: a fresh run over the folded artifact whole) and label
+  `agent-workflow-engine/references/procedures.md:63-66`: every member gets the folded artifact whole, which a
+  `--continue` delta cannot carry) and label
   `--continue` as the resume lane the fold ask rides. Origin: `agent-workflow-kit/tools/procedures.mjs:588` prints
   `round-2 delta (resume — never re-send the reviewed artifact):` over each bridge's `continue` descriptors;
   `agent-workflow-kit/README.md:240` and `agent-workflow-kit/tools/commands.mjs:211` repeat it; the label is the
@@ -203,7 +241,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (`agent-workflow-engine/references/planning.md:15-17`, `procedures.md:213-216`, kit `README.md:255`,
   `references/modes/agents.md:11`). Origin: `agent-workflow-kit/tools/tier-guide-facts.mjs:53`, rendered at `:167`
   and `:170` for every story without a plan: "read the review brief of the epic <path>; the solo review is the
-  reading of it". Narrow fix, contract and code together (`guide-stages.md:113-115` and `tier-walk.md:69` pin the
+  reading of it". Narrow fix, contract and code together (`guide-stages.md:114-116` and `tier-walk.md:69` pin the
   current wording): `:53` reads "read the review brief of the epic <path>: the review lens reads it, once per epic
   before its first story; in the solo walk you read it yourself and state that no lens ran", rendered only before
   the epic's first story. Proof: an S1 cell where a second story of the epic renders no review step. Residual

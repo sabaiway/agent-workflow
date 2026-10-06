@@ -9,8 +9,9 @@ wrapper commands are `codex-exec` and `codex-review`, backed by `bin/codex-exec.
 
 | Level | Can write? | Network? | Wrapper that uses it |
 |---|---|---|---|
-| `read-only` | no | no | `codex-review` (codex only reads + emits findings) |
-| `workspace-write` | repo (cwd) only | OFF (we force it off) | `codex-exec` (codex edits the repo) |
+| permissions profile `jev` | exec: the repository, `/tmp` and `$TMPDIR`; review: nothing | `api.typesafe.ai` and `docs.typesafe.ai` only | both wrappers on Linux with codex-cli 0.160.0 or newer (conditions below) |
+| `read-only` | no | no | `codex-review`, the fallback (codex only reads + emits findings) |
+| `workspace-write` | repository, `/tmp` and `$TMPDIR` | off (forced off) | `codex-exec`, the fallback (codex edits the repo) |
 | `danger-full-access` | anywhere | yes | never used by this skill |
 
 **A sandbox bounds WRITES, not READS.** Even `read-only` can read any file on disk (it is what kept a
@@ -20,7 +21,7 @@ a **prompt + env** concern, not a sandbox one — see the review read-fence belo
 
 ## Flags the wrappers always pass
 
-`codex-exec`:
+`codex-exec`, on today's flags:
 
 ```bash
 codex exec --ignore-user-config \
@@ -32,10 +33,23 @@ codex exec --ignore-user-config \
   --color never -o "$out" --json -m "$CODEX_MODEL" -
 ```
 
-`codex-review` is the same minus the write/network posture, plus `--sandbox read-only` and (optionally)
-`--output-schema`. In v0.142.3 `read-only` also grants **no network**, so `codex-review` relies on that
-and passes no separate network flag — the `sandbox_workspace_write.*` config (including
-`network_access`) applies **only** to `workspace-write`.
+On Linux with codex-cli 0.160.0 or newer, from a repository outside every temp root and off a codex
+version and profile digest recorded as refused, the first two
+posture flags (`--sandbox workspace-write` and the `network_access=false` override) give way to the
+permissions profile `jev` — four overrides, never beside `--sandbox` or `sandbox_mode` (codex refuses
+both together):
+
+```bash
+  -c default_permissions=jev -c permissions.jev.network.enabled=true \
+  -c 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}' \
+  -c 'permissions.jev.filesystem={":root"="read",":tmpdir"="write",":slash_tmp"="write",":workspace_roots"={"."="write"}}'
+```
+
+`codex-review` is the same minus the write/network posture, plus (optionally) `--output-schema`: on
+today's flags `--sandbox read-only`, which in v0.142.3 also grants **no network** (the
+`sandbox_workspace_write.*` config, `network_access` included, applies **only** to `workspace-write`);
+under the profile `jev` the same four overrides with `permissions.jev.filesystem={":root"="read"}` —
+no write entry at all, so a review still writes nothing. The banner's `jev=` field names the posture.
 
 ### Clean output capture
 
@@ -90,16 +104,30 @@ Note that `--skip-git-repo-check` (tier 2) only relaxes **codex's own** git-repo
 preflight still **requires a git work tree and a root `AGENTS.md`** and STOPs first if either is
 missing — passing it does not let `codex-exec` run outside a repo.
 
-## Network-OFF invariant (exec)
+## Network: two hosts at most
 
-`codex-exec` keeps network access OFF on purpose: **new dependencies and any network step are installed
-by a human**, not by codex. If a task needs a new package, codex must STOP and report it; the
-orchestrator installs it, then re-dispatches.
+A run reaches `api.typesafe.ai` and `docs.typesafe.ai` under the permissions profile `jev` and no other
+host; on today's flags `codex-exec` keeps the network off. Either way **new dependencies and any other
+network step are installed by a human**, not by codex: if a task needs a new package, codex must STOP
+and report it; the orchestrator installs it, then re-dispatches. The profile runs on Linux with
+codex-cli 0.160.0 or newer, off a codex version and profile digest recorded as refused and, for
+`codex-exec`, from a repository whose root and git common dir sit outside `/tmp` and `$TMPDIR` (there
+the profile would leave `.git` writable); every other run keeps today's flags and its banner says
+`jev=unreachable (<reason>)`.
+
+**The loud failure.** A run whose codex refuses the profile — a "Permissions profile `jev` …" or
+"Configured filesystem path … is not recognized …" error item before the turn starts, or `bwrap: execvp`
+in a command item whose failure is proven — exits **72** with the matched message and no success
+receipt (a nonced exec run records `transport-failure`; a review writes no receipt). The error-item case
+appends `<codex version> <sha256 of the profile overrides>` to
+`${XDG_STATE_HOME:-~/.local/state}/agent-workflow/codex-jev-profile-refused`, so the next run on that
+version and digest takes today's flags before any spend; if that file cannot be written the wrapper
+says so on stderr and the next run tries the profile again.
 
 ## Escalation & approvals
 
 There is **no TTY** in `codex exec`, so `approval_policy=never`: codex never pauses for an interactive
-approval. Any action that would need escalation (network, writes outside the repo, an ambiguous
+approval. Any action that would need escalation (network beyond the run's posture, writes outside the repo, an ambiguous
 decision) is **refused and reported**, and the orchestrator handles it by hand.
 
 ## Commit prohibition — enforced by a git-write shim
@@ -142,10 +170,13 @@ non-conforming text); a raw-text retry covers a rare validation/run failure. Def
 ### Review read-fence (best-effort env hygiene)
 
 `codex-review` runs under a throwaway `HOME` + `XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_DATA_HOME` with an
-**absolute `CODEX_HOME`** so auth + history still resolve while codex's default config/cache/skill-scan
-roots point at an empty dir (trims the roaming + skill-scan noise). This is **env hygiene, NOT a security
+**absolute `CODEX_HOME`** so auth + history still resolve while codex's default config/cache roots point
+at an empty dir (trims the roaming noise). When the user's real skill root `$HOME/.agents/skills`
+exists, the throwaway home gets `.agents/skills` as a link to it (read-only on every posture), so a
+review can load a skill, and the fence directives admit reading it. This is **env hygiene, NOT a security
 boundary** — absolute paths anywhere on disk remain readable under `read-only`; the real read-scoping is
-the prompt fence ("do not read outside the working tree, except the precomputed-diff temp file").
+the prompt fence ("do not read outside the working tree, except the precomputed-diff temp file" and a
+linked skill).
 
 ## `resume` — resets posture, restated via `-c`
 
@@ -157,7 +188,8 @@ the sandbox/approval/network posture, and — probed on codex-cli 0.147.0 — ac
 run starts, so the failure is loud and costs no quota; the wrapper's own test pins the accepted set
 (`RESUME_ACCEPTED_FLAGS`) precisely because the hermetic fake CLI accepts any argv and cannot answer
 this question. The `codex-exec --resume`/`--resume-last` entrypoint handles the reset: it restates
-the entire policy via `-c` (`sandbox_mode=workspace-write`, `approval_policy=never`,
+the entire policy via `-c` (`approval_policy=never` and the posture it chooses afresh for this run —
+the profile `jev`'s four overrides, or `sandbox_mode=workspace-write` with
 `sandbox_workspace_write.network_access=false`) plus the host posture's `-m`/effort and
 `--ignore-user-config`, reads the session id from the sidecar (or an argument), and applies the same
 EVIDENCE posture as a fresh run — `-o` for the final message, `--json` into the trace. Only a *raw*
@@ -175,8 +207,9 @@ no-op — while `codex-review` **refuses pre-spend** (the fail-closed hard-timeo
 
 Both wrappers, before invoking codex:
 
-- **unset** `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`, and every other `*_API_KEY`, so a
-  stray key can't switch to paid api-key billing;
+- **unset** `OPENAI_BASE_URL` and every `*_API_KEY` except `TYPESAFE_API_KEY` (`OPENAI_API_KEY` and
+  `CODEX_API_KEY` included), so a stray key can't switch to paid api-key billing; `TYPESAFE_API_KEY`
+  passes as given (empty stays empty, unset stays unset) and changes no flag;
 - pass **`--ignore-user-config`** so a personal `~/.codex/config.toml` cannot change behaviour. Auth
   still works: codex reads the cached login from `CODEX_HOME` (`~/.codex`) regardless of that flag;
 - preflight `codex login status` and refuse unless it contains `Logged in using ChatGPT`;
@@ -203,7 +236,8 @@ exec` over the precomputed diff instead, keeping every invariant intact.
 | `-c key=value` | override a config value (dotted, TOML-parsed) — how policy is set deterministically |
 | `--sandbox <mode>` | `read-only` \| `workspace-write` \| `danger-full-access` (this skill uses the first two) |
 | `-c approval_policy=never` | never pause for interactive approval (required: exec has no TTY) |
-| `-c sandbox_workspace_write.network_access=false` | network OFF under workspace-write (the exec invariant) |
+| `-c sandbox_workspace_write.network_access=false` | network off under workspace-write (exec on today's flags) |
+| `-c default_permissions=jev` + `-c permissions.jev.*` | the permissions profile `jev`: its filesystem part and a network limited to the listed domains (probed on 0.160.0; never beside `--sandbox`/`sandbox_mode`) |
 | `-c hide_agent_reasoning=true` / `-c model_reasoning_summary=none` | drop chain-of-thought from output (reasoning still runs) |
 | `-o, --output-last-message <f>` | write ONLY the final message (clean capture) |
 | `--json` | structured event stream (`thread.started` ⇒ session id) |
@@ -230,5 +264,10 @@ exec` over the precomputed diff instead, keeping every invariant intact.
   from the target project root.
 - **`exceeded the hard cap`** (exit 124/137): the run hit `CODEX_HARD_TIMEOUT` — raise it for a
   known-healthy slow run, or narrow the task, then re-dispatch.
-- **codex wants to install a dependency**: it can't (network OFF in exec) — install it by hand, then
-  re-dispatch.
+- **codex wants to install a dependency**: it can't (exec reaches at most `api.typesafe.ai` and
+  `docs.typesafe.ai`) — install it by hand, then re-dispatch.
+- **exit 72**: codex refused the permissions profile `jev` (the message is on stderr). A refused profile
+  key, codex's error item before the first turn, is recorded for that wrapper's profile digest when the
+  state file can be written (otherwise the wrapper prints one warning naming the file), so that wrapper's
+  next run on that codex version takes today's flags — re-dispatch; a `bwrap: execvp` failure records
+  nothing and recurs on every run until its cause is fixed.

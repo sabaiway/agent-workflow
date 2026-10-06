@@ -28,9 +28,10 @@ codex login status               # expect: Logged in using ChatGPT
 
 This caches credentials under `CODEX_HOME` (`~/.codex`, e.g. `~/.codex/auth.json`). That directory is
 **personal** — never copy, commit, package, print, or share it. This skill needs **no API keys** and
-must not be configured with api-key billing; both wrappers unset every `*_API_KEY` (and
-`OPENAI_BASE_URL`) and pass `--ignore-user-config`, so billing can never silently fall back to
-pay-as-you-go and a personal `~/.codex/config.toml` can never change behaviour.
+must not be configured with api-key billing; both wrappers unset `OPENAI_BASE_URL` and every
+`*_API_KEY` except `TYPESAFE_API_KEY` (the one key a run passes, as given) and pass
+`--ignore-user-config`, so billing can never silently fall back to pay-as-you-go and a personal
+`~/.codex/config.toml` can never change behaviour.
 
 ## 3. Put the wrappers on `PATH`
 
@@ -69,8 +70,10 @@ if it reports a missing git work tree or root `AGENTS.md`, run it from a project
 ## Notes
 
 - The wrappers are **subscription-only** by design and will not use api-key billing.
-- `codex-exec` runs a **workspace-write** sandbox with **network OFF**; `codex-review` runs
-  **read-only**. They also run on the host posture — `CODEX_MODEL` / `CODEX_EFFORT` from the
+- `codex-exec` runs **workspace-write**; `codex-review` runs **read-only**. On Linux with codex-cli
+  0.160.0 or newer, off a codex version and profile digest recorded as refused and, for `codex-exec`, from
+  a repository outside every temp root, both carry the permissions profile `jev`, whose network reaches `api.typesafe.ai`
+  and `docs.typesafe.ai` and no other host; elsewhere the network stays off. They also run on the host posture — `CODEX_MODEL` / `CODEX_EFFORT` from the
   bridge settings file, else `gpt-6.1-sol` / `high` — checked against the installed CLI's catalog,
   and refuse a one-off model or effort unless `CODEX_PROBE=1` (see `../SKILL.md`), enforce a hard
   timeout, capture only codex's final message, and block codex from writing git via a shim — see

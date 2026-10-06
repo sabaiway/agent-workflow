@@ -4,6 +4,55 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.23.0 — a delegated codex or agy run uses Jev as your own run does; ships codex-cli-bridge 5.0.0 and antigravity-cli-bridge 7.0.0 (AD-171)
+
+**Every bridge wrapper now passes `TYPESAFE_API_KEY` to the run, and on Linux with codex-cli 0.160.0 or newer a
+`codex-exec` or `codex-review` run reaches `api.typesafe.ai` and `docs.typesafe.ai` and no other host.** The other
+`*_API_KEY` values and `OPENAI_BASE_URL` stay unset. Where the codex permissions profile is not proven, the run keeps
+the earlier flags with network off and its banner says why. An agy run gets the key and nothing more: no flag, no
+setting.
+
+- **One key rule in every wrapper.** The shared block of `codex-exec.sh`, `codex-review.sh`, `agy.sh` and
+  `agy-review.sh` gains `aw_scrub_billing_keys`, called before the first CLI spawn (login status, version, catalog,
+  run). `test/settings-reader-parity.test.mjs` finds the wrappers from the bridge manifests and
+  `test/jev-every-run.test.mjs` proves that discovery on fixture trees, so a wrapper added later is held to the same
+  block without a test edit.
+- **codex: the permissions profile `jev`.** On Linux (WSL2 included) with codex-cli 0.160.0 or newer, fresh runs,
+  resumes and reviews carry the profile: network to the two Jev hosts only; `codex-exec` writes the repository, `/tmp`
+  and `$TMPDIR`; `codex-review` writes nothing. Not Linux, an older or unreadable codex version, an exec repository
+  or its git common dir under `/tmp` or `$TMPDIR`, or a version and profile recorded as refused: the run takes the
+  earlier flags with network off.
+- **The banner says what the run reaches.** Both codex banners gain `jev=api.typesafe.ai,docs.typesafe.ai` or
+  `jev=unreachable (<reason>)` before `source=`; the exec banner's sandbox field reads `sandbox=jev-profile` or
+  `sandbox=workspace-write`. Receipt schemas are unchanged.
+- **A refused profile stops loudly.** When codex rejects the profile before its first turn, or bwrap fails inside a
+  failed command, the run exits 72 with no success receipt. A rejected profile key records the codex version and
+  profile digest in `${XDG_STATE_HOME:-~/.local/state}/agent-workflow/codex-jev-profile-refused` when that file can
+  be written (otherwise one warning names it), and that wrapper's next run on that pair takes the earlier flags
+  before any spend; a `bwrap: execvp` failure records nothing.
+- **`codex-review` sees the skill.** Its fence home links `.agents/skills` to your real Codex skill root when it
+  exists; the review directives allow reading it and name the two hosts on a profile run only.
+- **Probe passthrough under the profile.** With `CODEX_PROBE=1`, `--add-dir`, `-C`, `--cd`, `--enable` and `--disable`
+  are refused before any spend (exit 2) while the profile is on; under the fallback they stay admitted.
+- **agy.** With the key set, `agy-run` prints one line before dispatch: `jev: TYPESAFE_API_KEY passed; a headless agy
+  runs the Jev request only where your agy permissions allow commands — the first denied command ends the run`.
+  `agy-review` makes no Jev request while its model obeys its prompts, which forbid every tool (an advisory
+  prohibition, not a sandbox).
+- **Manifests.** Both bridges' `networkHosts` gain `api.typesafe.ai` and `docs.typesafe.ai`, so the sandbox
+  Recommendations item shows once more on a project that acknowledged it. Guardrails and banner notes are rewritten,
+  and `tools/detect-backends.mjs`'s role-contract copy follows them.
+- **The sandbox notes no longer promise the tier routes wrappers outside.** On 2026-10-06 Claude Code 2.1.291 ran
+  an agent's plain `codex-review` inside its sandbox although the project excluded it; a sandboxed run's Jev request
+  gets `Tunnel connection failed: 403` from the harness proxy (observed 2026-10-05). `references/modes/recommendations.md`
+  now says the tier routes the wrappers outside only where the harness honours that entry, names the refusal, and
+  points to the hand-apply `allowedDomains` shape with the recipe's hosts, which the kit never writes for you;
+  `references/modes/velocity.md` and the manifest schema's `networkHosts` note say the same.
+- **Stated residuals.** Both bridge `SKILL.md` paragraphs say the key sits in every run's environment; the codex one
+  names codex's server-side `web_search`, which reaches pages outside the profile, the agy one a `web_search` or
+  fetch tool agy is permitted to run. A codex release that stops recognizing a profile key
+  costs one run per version and profile digest before the recorded fallback takes over.
+- The tarball pin rises 355 → 358 (the mirrored bridge suites `codex-exec-jev`, `codex-review-jev`, `agy-jev`).
+
 ## 14.22.0 — a story runs in four sessions, each step with one checked result; the advisor renders the new review loop (AD-170)
 
 **Your project's rules now state the story flow the engine's canon (5.12.0) defines: four sessions — spec and plan,

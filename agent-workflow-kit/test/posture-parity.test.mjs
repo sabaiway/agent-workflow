@@ -62,14 +62,15 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
       assert.match(agy, /^echo "review posture: model=\$\{AGY_MODEL:-<agy settings default>\} source=model:\$AGY_MODEL_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(agy, /posture_json\(\)/, 'the agy receipt posture rides posture_json');
       const codex = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-review.sh'), 'utf8');
-      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
+      // jev= (the posture's reach, spec jev-every-run S14) sits before source= so timeout= stays last.
+      assert.match(codex, /^echo "review posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} jev=\$\{?[A-Za-z_]\w*\}? source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
       assert.match(codex, /posture_json\(\)/, 'the codex receipt posture rides posture_json');
     });
 
     it('codex-exec emits the D5 exec banner from RESOLVED values (source-level pin, AD-061)', () => {
       const exec = readFileSync(join(base, 'codex-cli-bridge', 'bin', 'codex-exec.sh'), 'utf8');
       assert.match(exec,
-        /^echo "exec posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} sandbox=workspace-write session=\$aw_session_label source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
+        /^echo "exec posture: model=\$CODEX_MODEL effort=\$CODEX_EFFORT tier=\$\{CODEX_SERVICE_TIER:-standard\} sandbox=\$\{?[A-Za-z_]\w*\}? session=\$aw_session_label jev=\$\{?[A-Za-z_]\w*\}? source=model:\$CODEX_MODEL_SOURCE,effort:\$CODEX_EFFORT_SOURCE timeout=\$aw_timeout_banner" >&2$/m);
     });
 
     it('timeout is BANNER-ONLY (AD-061): posture blocks gain NO timeout key; both manifests state the clause', () => {

@@ -51,9 +51,10 @@ Environment:
 | `AGY_HARD_TIMEOUT` | `= AGY_TIMEOUT` | hard `timeout(1)` wall-clock cap (a duration string) |
 | `AGY_MAX_PROMPT_BYTES` | `120000` | single-argv byte ceiling. `agy` takes the prompt as ONE `-p` argv; past `MAX_ARG_STRLEN` (~131072) `execve` fails with a cryptic `Argument list too long`. The wrapper measures the resolved `-`/`@file` prompt and fails loud over the ceiling. A huge **literal** `agy-run "<huge>"` fails at the wrapper's own `exec`, so route large prompts via `-`/`@file`. |
 
-Subscription invariant: the wrapper prepends `$HOME/.local/bin` to `PATH` and clears
-`ANTIGRAVITY_API_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` before execution.
-Auth comes from the user's cached OAuth token, never from bundled credentials.
+Subscription invariant: the wrapper prepends `$HOME/.local/bin` to `PATH` and clears `OPENAI_BASE_URL`
+and every `*_API_KEY` except `TYPESAFE_API_KEY` (`ANTIGRAVITY_API_KEY` / `GEMINI_API_KEY` /
+`GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` included) before execution; `TYPESAFE_API_KEY` passes as
+given and widens nothing. Auth comes from the user's cached OAuth token, never from bundled credentials.
 
 ## `agy-review` contract (review role)
 

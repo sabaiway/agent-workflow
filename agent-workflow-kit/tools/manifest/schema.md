@@ -109,8 +109,8 @@ source** for a hand-applied sandbox/network allowlist (session sandbox config, o
 - **The kit never seeds these into settings** (bridge council 2026-07-11, both backends concur):
   a network pre-allow widens egress for **every** sandboxed command, so running the wrappers
   **outside** the sandbox (`sandbox.excludedCommands`, the `--bridge-tier` wiring) stays the
-  primary lane; the hosts list exists for the **hand-apply** fallback under harness-managed
-  sandboxes where settings-level exclusions are inert.
+  primary lane; the hosts list exists for the **hand-apply** fallback under a sandbox that does
+  not honour the exclusion (harness-managed, or a settings-native harness that drops it).
 - Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
   hand-applied list by hand; the manifest list records what was actually observed.
 

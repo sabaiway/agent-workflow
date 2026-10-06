@@ -1,31 +1,34 @@
-// settings-reader-parity.test.mjs — the shared bridge-settings reader block must be byte-identical
-// across all four wrappers (codex-exec, codex-review, agy, agy-review). ALL shared functions
-// (the settings reader chain plus the AD-061 effective-timeout resolver trio) carry the whole
-// host-level settings contract — the allowlist registry, typed validation, env>file>default
-// precedence, the warn-once chain, and the banner-honest timeout resolution — and MUST NOT drift
-// between wrappers: a drift would let one bridge honor a knob another silently rejects, or
-// validate/render the same value two different ways.
-// AW_SETTINGS_APPLIED (the per-wrapper APPLIED subset) is intentionally OUTSIDE the shared span —
-// each wrapper applies only its own keys but recognizes the whole registry. The comparator is
-// proven non-vacuous by an injected one-token divergence.
+// settings-reader-parity.test.mjs — the shared bridge-settings reader block must be byte-identical across every bridge
+// wrapper. ALL shared functions (the settings reader chain, the AD-061 effective-timeout resolver trio and the
+// billing-key scrub) carry the whole host-level settings contract — the allowlist registry, typed validation,
+// env>file>default precedence, the warn-once chain, and the banner-honest timeout resolution — and MUST NOT drift
+// between wrappers: a drift would let one bridge honor a knob another silently rejects, or validate/render the same
+// value two different ways. AW_SETTINGS_APPLIED (the per-wrapper APPLIED subset) is intentionally OUTSIDE the shared
+// span — each wrapper applies only its own keys but recognizes the whole registry. The comparator is proven
+// non-vacuous by an injected one-token divergence.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
 
-// The four wrappers that carry the reader block (source-of-truth; the kit mirrors are pinned
-// byte-identical to these by bridges-mirror.test.mjs).
-const WRAPPERS = [
-  join(REPO_ROOT, 'codex-cli-bridge', 'bin', 'codex-exec.sh'),
-  join(REPO_ROOT, 'codex-cli-bridge', 'bin', 'codex-review.sh'),
-  join(REPO_ROOT, 'antigravity-cli-bridge', 'bin', 'agy.sh'),
-  join(REPO_ROOT, 'antigravity-cli-bridge', 'bin', 'agy-review.sh'),
-];
+// The wrappers are derived, never typed (spec jev-every-run): every role source of every capability.json directly
+// under a top-level *-bridge/ directory whose first line is a bash shebang; a role without a source fails here. The
+// kit mirrors stay sync-mirrors --check's. AW_BRIDGES_ROOT points the discovery at a fixture tree.
+const BRIDGES_ROOT = process.env.AW_BRIDGES_ROOT || REPO_ROOT;
+const roleSources = (root) => readdirSync(root, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name.endsWith('-bridge') && existsSync(join(root, entry.name, 'capability.json')))
+  .flatMap(({ name }) => Object.entries(JSON.parse(readFileSync(join(root, name, 'capability.json'), 'utf8')).roles ?? {})
+    .map(([role, { source }]) => {
+      assert.ok(source, `${name}/capability.json role ${role} has no source`);
+      return { bridge: name, path: join(root, name, source) };
+    }));
+const SOURCES = roleSources(BRIDGES_ROOT).filter(({ path }) => /^#!\s*(\/usr\/bin\/env\s+bash|\/bin\/bash)\b/.test(readFileSync(path, 'utf8').split('\n')[0]));
+const WRAPPERS = SOURCES.map(({ path }) => path);
 
 // The reader functions that carry the shared settings contract, byte-identical across all wrappers.
 // aw_int_in_range is the shared overflow-safe integer bound aw_settings_valid delegates to (Issue-012);
@@ -33,10 +36,11 @@ const WRAPPERS = [
 // aw_effective_timeout + aw_timeout_label + aw_resolve_timeout_bin are the AD-061
 // effective-timeout resolver trio (env-bypass closure, the banner render rule, and the
 // shadow-proof absolute-path binary resolution) — same byte-identical discipline, all wrappers.
-// aw_read_posture is the host-posture reader (spec bridge-model): one model-key read, all wrappers.
+// aw_read_posture is the host-posture reader (spec bridge-model): one model-key read, all wrappers. aw_scrub_billing_keys
+// is the one key rule (spec jev-every-run): every *_API_KEY and OPENAI_BASE_URL unset, TYPESAFE_API_KEY untouched.
 const SHARED_FNS = [
   'aw_settings_file', 'aw_settings_known', 'aw_int_in_range', 'aw_settings_valid', 'aw_apply_settings',
-  'aw_read_posture', 'aw_effective_timeout', 'aw_timeout_label', 'aw_resolve_timeout_bin',
+  'aw_read_posture', 'aw_effective_timeout', 'aw_timeout_label', 'aw_resolve_timeout_bin', 'aw_scrub_billing_keys',
 ];
 
 // Extract a top-level `name() {` … column-0 `}` bash function from a wrapper source, verbatim.
@@ -50,8 +54,7 @@ const extractBashFn = (source, name) => {
 };
 
 // The whole reader block for one wrapper: all its shared functions joined verbatim.
-const readerBlock = (wrapperPath) =>
-  SHARED_FNS.map((n) => extractBashFn(readFileSync(wrapperPath, 'utf8'), n)).join('\n');
+const readerBlock = (wrapperPath) => SHARED_FNS.map((n) => extractBashFn(readFileSync(wrapperPath, 'utf8'), n)).join('\n');
 
 // The per-wrapper APPLIED subset declared above the reader block.
 const appliedSubsetOf = (wrapperPath) => {
@@ -60,8 +63,8 @@ const appliedSubsetOf = (wrapperPath) => {
   return m[1];
 };
 
-describe('bridge-settings reader block — byte-identical across the four wrappers', () => {
-  it('each reader function is byte-identical across all four wrappers', () => {
+describe('bridge-settings reader block — byte-identical across every bridge wrapper', () => {
+  it('each reader function is byte-identical across every wrapper', () => {
     for (const name of SHARED_FNS) {
       const fns = WRAPPERS.map((w) => extractBashFn(readFileSync(w, 'utf8'), name));
       const [first, ...rest] = fns;
@@ -72,12 +75,19 @@ describe('bridge-settings reader block — byte-identical across the four wrappe
     }
   });
 
-  it('the whole reader block (all shared functions) is byte-identical across the four wrappers', () => {
+  it('the whole reader block (all shared functions) is byte-identical across every bridge wrapper', () => {
     const blocks = WRAPPERS.map(readerBlock);
     const [first, ...rest] = blocks;
     rest.forEach((block, i) => {
-      assert.equal(block, first, `reader block drift in ${WRAPPERS[i + 1]} — keep all four functions byte-identical`);
+      assert.equal(block, first, `reader block drift in ${WRAPPERS[i + 1]} — keep every shared function byte-identical`);
     });
+  });
+
+  it('every wrapper calls aw_scrub_billing_keys once, outside its definition', () => {
+    assert.ok(WRAPPERS.length >= 2, `the manifests name the wrappers: ${WRAPPERS.join(', ')}`);
+    for (const wrapper of WRAPPERS) {
+      assert.equal(readFileSync(wrapper, 'utf8').split('\n').filter((line) => /^\s*aw_scrub_billing_keys\b(?!\s*\(\))/.test(line)).length, 1, `${wrapper} calls the key rule once`);
+    }
   });
 
   it('non-vacuous: an injected one-token divergence in the reader block is caught', () => {
@@ -99,9 +109,11 @@ describe('bridge-settings reader block — byte-identical across the four wrappe
   it('AW_SETTINGS_APPLIED is per-wrapper (intentionally outside the shared span) yet subset of the shared registry', () => {
     const applied = WRAPPERS.map(appliedSubsetOf);
     // The APPLIED subset genuinely varies per wrapper — that is exactly why it is excluded from the
-    // byte-identical span (codex-exec ≠ codex-review; agy ≠ agy-review).
-    assert.notEqual(applied[0], applied[1], 'codex-exec and codex-review apply different subsets');
-    assert.notEqual(applied[2], applied[3], 'agy and agy-review apply different subsets');
+    // byte-identical span (codex-exec ≠ codex-review; agy ≠ agy-review): no two wrappers of one bridge share it.
+    for (const bridge of new Set(SOURCES.map((source) => source.bridge))) {
+      const subsets = SOURCES.filter((source) => source.bridge === bridge).map(({ path }) => appliedSubsetOf(path));
+      assert.equal(new Set(subsets).size, subsets.length, `the wrappers of ${bridge} apply different subsets`);
+    }
     // Every applied key must be recognized by the shared aw_settings_known registry.
     const known = extractBashFn(readFileSync(WRAPPERS[0], 'utf8'), 'aw_settings_known');
     for (const subset of applied) {

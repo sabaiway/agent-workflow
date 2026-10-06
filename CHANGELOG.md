@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-06 — AD-171: a delegated run uses Jev as the user's own run does (codex-cli-bridge 5.0.0 and antigravity-cli-bridge 7.0.0 MAJOR, kit 14.23.0 MINOR; memory 8.1.4 and engine 5.12.0 unchanged)
+
+**Every bridge wrapper passes `TYPESAFE_API_KEY` to its run while every other `*_API_KEY` and `OPENAI_BASE_URL` stay
+unset, and on Linux with codex-cli 0.160.0 or newer a `codex-exec` or `codex-review` run carries the permissions
+profile `jev`, which reaches `api.typesafe.ai` and `docs.typesafe.ai` and no other host.** A review still writes
+nothing. Elsewhere, or for an exec repository under a temp root, the run keeps the earlier flags with network off,
+and both codex banners name the posture in a `jev=` field. A codex refusal of the profile exits 72 with no success
+receipt; a refused profile key, codex's error item before the first turn, is recorded per codex version and profile
+digest when the state file can be written, so the next run of that wrapper on that pair falls back before any
+spend, while a `bwrap: execvp` failure records nothing. `codex-review` links the user's Codex skill root into its
+fence home. An agy run gets the key and nothing more; `agy-run` prints one line naming the limit, and `agy-review`
+makes no Jev request while its model obeys its prompts, which forbid every tool (an advisory prohibition, not a
+sandbox). This reverses AD-168's "Jev
+requests are the orchestrator's". The kit's sandbox notes now say the bridge tier routes the wrappers outside the
+harness sandbox only where the harness honours its `excludedCommands` entry (Claude Code 2.1.291 did not, observed
+2026-10-06), name the harness-proxy 403 and point to the hand-apply `allowedDomains` hosts. Contract
+`docs/ai/specs/bridges/jev-every-run.md`, live, S1-S24 bound; jev-guide revision 6; three debt rows (the key in
+every run's environment, `web_search` included; a sandboxed wrapper still needs the user's settings edit; the S23
+sweep's table-cell blind spot).
+
 ## 2026-10-04 — AD-170: a story runs in four sessions, each step with one checked result (engine 5.12.0 MINOR, kit 14.22.0 MINOR, memory 8.1.4 PATCH; both bridges unchanged)
 
 **The engine's planning canon gains `## The story flow`: seven steps, each naming its result, maker, one check and

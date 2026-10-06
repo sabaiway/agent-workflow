@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '6.0.0'
+  version: '7.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -43,9 +43,10 @@ wrapper [`bin/agy.sh`](bin/agy.sh) on `PATH` as `agy-run`.
 ```
 
 Never read, print, copy, commit, or package that token — it is personal and is **never bundled** with
-this skill. The wrapper [`bin/agy.sh`](bin/agy.sh) **unsets every `*_API_KEY`** (`ANTIGRAVITY_API_KEY`,
-`GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`) before invoking `agy`, so a stray key can
-never silently switch you to pay-as-you-go billing.
+this skill. The wrapper [`bin/agy.sh`](bin/agy.sh) **unsets `OPENAI_BASE_URL` and every `*_API_KEY` except
+`TYPESAFE_API_KEY`** (`ANTIGRAVITY_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`
+included; `TYPESAFE_API_KEY` passes as given) before invoking `agy`, so a stray key can never silently
+switch you to pay-as-you-go billing.
 
 **Caveat:** the subscription has a finite quota. Keep probes short (see *How the main agent drives
 agy*); the model every review and kept run uses is the host posture below, never a per-call pick.
@@ -223,11 +224,15 @@ AGY_MODEL="<an offered display string>" agy-run \
 ```
 
 **The Jev skill in a delegated run.** A headless `agy-run` loads the vendor's Jev skill from the user root the kit's
-`jev-skill` command fills, `~/.gemini/config/skills` — measured 2026-10-02 on agy 1.2.14: a probe skill under that
-root was listed, and none under `~/.gemini/antigravity-cli/skills`. The run never inherits `TYPESAFE_API_KEY`: the
-wrapper unsets every `*_API_KEY` before agy starts. Jev requests are the orchestrator's own, made in the user's
-environment, and their answers are passed into a brief as text; whether a headless agy command reaches a network
-host is governed by the user's agy permissions and sandbox settings, not by the bridge.
+`jev-skill` command fills, `~/.gemini/config/skills` (measured 2026-10-02 on agy 1.2.14: a probe skill under that
+root was listed, none under `~/.gemini/antigravity-cli/skills`), and `TYPESAFE_API_KEY` passes the wrappers as given
+while every other `*_API_KEY` is unset; nothing in agy's permissions is widened, no flag is added and no setting is
+written. With the key set, `agy-run` prints one line before dispatch: a headless agy runs the Jev request only where
+the user's agy permissions allow commands, and the first denied command ends the run. `agy-review` makes no Jev
+request while its model obeys its prompts, which forbid every tool; that prohibition is advisory, not a sandbox. The documented opt-in `-- --dangerously-skip-permissions`
+stays admitted, and such a run carries the key into an agy whose network and file tool are unconfined. Two residuals
+stand: the key now sits in every run's environment, and a `web_search` or fetch tool agy is permitted to run may reach
+hosts the bridge never names.
 
 ## How the main agent drives `agy` efficiently
 
@@ -250,7 +255,8 @@ checklist, prompt templates, output handling). Essentials:
   writes (branch/add/commit/stash/reset/rewrite) with the orchestrator, and tell `agy` in the prompt
   to return findings only. Add `-- --sandbox` when delegating anything that could trigger
   terminal/tool work; opt into `-- --add-dir . --dangerously-skip-permissions` only for a flow that
-  genuinely needs writes, then review the diff afterwards.
+  genuinely needs writes, then review the diff afterwards (such a run also carries `TYPESAFE_API_KEY`,
+  when set, into an agy whose network and file tool are unconfined).
 
 ## Complementary skills (optional, standalone-first)
 

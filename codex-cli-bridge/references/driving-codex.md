@@ -34,20 +34,23 @@ the one route to a one-off — never use its output as real work; its review rec
 ## Posture banners — quote them verbatim
 
 Every dispatch states its ACTUAL posture on ONE stderr line: `codex-exec` emits
-`exec posture: model=… effort=… tier=… sandbox=workspace-write session=fresh|resume:<id> source=… timeout=…`
+`exec posture: model=… effort=… tier=… sandbox=jev-profile|workspace-write session=fresh|resume:<id> jev=… source=… timeout=…`
 (fresh and resume alike, only after the resume id is resolved and validated), `codex-review` emits
-`review posture: model=… effort=… tier=… source=… timeout=…`. When you label a dispatch for a user or a
+`review posture: model=… effort=… tier=… jev=… source=… timeout=…`. When you label a dispatch for a user or a
 record, **quote the posture banner verbatim** — the banner is the machine-stated posture; a prose
-re-type drifts. The `source=` field (`model:<s>,effort:<s>`, each `default`, `setting` or
-`environment`) and the `timeout=` field are **banner-only** (`timeout=` is exactly the duration handed
+re-type drifts. The `jev=` field says what the run reaches: `jev=api.typesafe.ai,docs.typesafe.ai` under
+the permissions profile `jev`, else `jev=unreachable (<reason>)` on today's flags (`codex-exec`:
+`sandbox=workspace-write`, network off; `codex-review`: `--sandbox read-only`); a run whose codex refuses
+the profile exits 72. The `jev=`, `source=` (`model:<s>,effort:<s>`, each `default`, `setting` or
+`environment`) and `timeout=` fields are **banner-only** (`timeout=` is exactly the duration handed
 to `timeout(1)`; on exec `uncapped` when no capping binary is on PATH, while `codex-review` fails
 CLOSED pre-spend there) — informational, never part of a receipt or the banner↔receipt parity.
 
 ## Exec vs review
 
 Use **`codex-exec`** when there is a concrete plan or focused instruction to implement, the project
-declares Hard Constraints + gates in `AGENTS.md`, the work fits network-off `workspace-write`, and you
-can review the resulting diff.
+declares Hard Constraints + gates in `AGENTS.md`, the work fits `workspace-write` with no network beyond
+`api.typesafe.ai` and `docs.typesafe.ai`, and you can review the resulting diff.
 
 Use **`codex-review plan`** for a cold second opinion on a plan before executing it (risks, missing or
 mis-ordered steps, scope creep, missing gates).
@@ -94,11 +97,12 @@ codex-exec --resume <session-id> <file|->  # explicit session id
 ```
 
 Resume continues the SAME codex session, so you avoid re-sending the original context. It runs through
-the wrapper, which **re-establishes every invariant** (subscription-only `*_API_KEY` scrub,
-`--ignore-user-config`, the host posture's model/effort) and **restates the full posture via `-c`** —
-because `codex exec resume` resets the sandbox/approval/network posture and rejects `-s`/`--add-dir`/`-C`,
-the wrapper passes `-c sandbox_mode=workspace-write -c approval_policy=never -c
-sandbox_workspace_write.network_access=false` explicitly. A resume takes no passthrough flags and an
+the wrapper, which **re-establishes every invariant** (the subscription-only key rule — every `*_API_KEY`
+but `TYPESAFE_API_KEY` unset — `--ignore-user-config`, the host posture's model/effort) and **restates the
+full posture via `-c`** — because `codex exec resume` resets the sandbox/approval/network posture and
+rejects `-s`/`--add-dir`/`-C`, the wrapper passes `-c approval_policy=never` and the posture it chooses
+afresh for this run: the profile `jev`'s four overrides, or `-c sandbox_mode=workspace-write -c
+sandbox_workspace_write.network_access=false`. A resume takes no passthrough flags and an
 empty resumed instruction is rejected. Prefer resume over re-dispatching a fresh run when you are
 iterating on the same task; start a fresh `codex-exec` when the task changes.
 
@@ -113,8 +117,8 @@ iterating on the same task; start a fresh `codex-exec` when the task changes.
   boundary must be a real executable; the real git path is baked into the shim, not exposed as an env
   var). `git config` is read-only too (blocked on a write flag or a `<name> <value>` set form). The
   orchestrator commits after review.
-- **New dependencies / network installs** are done by hand (exec has network OFF), then codex is
-  re-dispatched.
+- **New dependencies / network installs** are done by hand (exec reaches at most `api.typesafe.ai` and
+  `docs.typesafe.ai`), then codex is re-dispatched.
 - **A hung run** is killed at `CODEX_HARD_TIMEOUT` (exec 3600s / review 1800s) and reported (exit
   124/137); raise it for a known-healthy slow run.
 
@@ -124,7 +128,7 @@ iterating on the same task; start a fresh `codex-exec` when the task changes.
 Implement the change below from the current project root.
 Obey root AGENTS.md (already in your context), especially its Hard Constraints and declared gates.
 Do not run git write commands. Do not commit.
-If a dependency install, network call, missing gate set, or out-of-repo write is needed, STOP and report.
+If a dependency install, a network call to a host the execution contract does not name as reachable, a missing gate set, or an out-of-repo write is needed, STOP and report.
 
 <the focused instruction + relevant paths>
 ```

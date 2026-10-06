@@ -2,7 +2,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync,
-  existsSync, readdirSync, symlinkSync, cpSync,
+  existsSync, readdirSync, symlinkSync, cpSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -22,6 +22,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
+  'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli ${CODEX_FAKE_VERSION:-0.160.0}"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then cat <<EOF',
   '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
   'EOF',
@@ -83,6 +84,7 @@ const FAKE_CODEX = [
   'exit "${CODEX_FAKE_EXIT:-0}"',
   '',
 ].join('\n');
+const FAKE_UNAME = `#!/usr/bin/env bash\nif [[ $# -eq 0 || "$1" == "-s" ]]; then echo Linux; exit 0; fi\nexec "${spawnSync('bash', ['-c', 'type -P uname'], { encoding: 'utf8' }).stdout.trim()}" "$@"\n`; // Linux on any host
 
 // The sandbox base and the PATH farms are READ-ONLY per invocation, so both are built ONCE and
 // shared (a per-test `git init`+commit and a per-call farm rebuild dominate the wall otherwise).
@@ -94,6 +96,7 @@ const TEMPLATE_ROOT = (() => {
   const bin = join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
+  writeFileSync(join(bin, 'uname'), FAKE_UNAME, { mode: 0o755 });
   // A git work tree with a root AGENTS.md — the wrapper preflights both.
   const repo = join(root, 'repo');
   mkdirSync(repo);
@@ -111,9 +114,10 @@ const makeSandbox = () => {
   const root = mkdtempSync(join(tmpdir(), 'codex-exec-test-'));
   cpSync(TEMPLATE_ROOT, root, { recursive: true });
   const bin = join(root, 'bin');
-  chmodSync(join(bin, 'codex'), 0o755);
+  for (const name of ['codex', 'uname']) chmodSync(join(bin, name), 0o755);
   return { root, bin, repo: join(root, 'repo') };
 };
+const tempRootOf = (sb) => (realpathSync(sb.repo).startsWith(`${realpathSync('/tmp')}/`) ? '/tmp' : realpathSync(process.env.TMPDIR ?? '/tmp')); // spec jev-every-run: a sandbox sits under a temp root, so codex-exec takes the fallback naming it
 
 // A PATH dir mirroring the real one MINUS the named binaries, to exercise the
 // missing-binary fallbacks (no-cap when timeout is gone; the codex/git preflight
@@ -669,13 +673,16 @@ describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', {
     assert.equal(sent.includes('--color'), false, 'the regression this list exists to prevent');
   });
 
-  it('--resume <id>: composes `exec resume <id>` with the full restated policy', async () => {
+  // The profile half (spec jev-every-run S2) is codex-exec-jev.test.mjs's: this sandbox sits under a temp root.
+  it('--resume <id> on a fallback run: composes `exec resume <id>` with the full restated policy', async () => {
     const sb = makeSandbox();
+    const root = tempRootOf(sb);
     const r = await run(sb, { args: ['--resume', 'sess-xyz', '-'], input: 'continue please' });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.argv, /(^|\n)sess-xyz(\n|$)/, 'the session id is passed positionally');
     for (const inv of RESUME_INVARIANTS) assert.match(r.argv, inv, `resume argv must include ${inv}`);
+    assert.ok(r.stderr.includes(` jev=unreachable (repository under ${root}) source=`), r.stderr);
     assert.match(r.stdout, /FAKE_FINAL_MESSAGE/, 'resume prints the final message');
   });
 
@@ -1511,15 +1518,15 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
 describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurrency: 2 }, () => {
   const banners = (stderr) => stderr.split('\n').filter((l) => l.startsWith('exec posture: '));
 
-  it('ONE banner line carries the ACTUAL {model, effort, tier, sandbox, session, timeout} on a fresh run', async () => {
+  it('ONE banner line carries the ACTUAL {model, effort, tier, sandbox, session, jev, timeout} on a fresh fallback run', async () => {
     const sb = makeSandbox();
+    const root = tempRootOf(sb);
     const r = await run(sb, {});
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     const lines = banners(r.stderr);
     assert.equal(lines.length, 1, 'EXACTLY ONE banner line per run');
-    assert.equal(lines[0],
-      'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh source=model:default,effort:default timeout=3600s');
+    assert.equal(lines[0], `exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (repository under ${root}) source=model:default,effort:default timeout=3600s`);
   });
 
   it('an ARMED Fast tier rides the banner (tier=priority)', async () => {
@@ -1695,10 +1702,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
       'exec "$@"',
       '',
     ].join('\n'), { mode: 0o755 });
-    const r = await run(sb, {
-      path: `relbin:${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`,
-      env: { TIMEOUT_STUB_CAP: cap },
-    });
+    const r = await run(sb, { path: `relbin:${sb.bin}:${farmFor(['timeout', 'gtimeout'])}`, env: { TIMEOUT_STUB_CAP: cap } });
     const argv0 = existsSync(cap) ? readFileSync(cap, 'utf8').trim() : '';
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
@@ -2181,10 +2185,7 @@ fs.lstatSync = (target, ...rest) => {
   it('a TIMEOUT publishes exitStatus 124 with outcome transport-failure', async () => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'slow');
-    const r = await runAsync(sb, {
-      args: ['--nonce', 'slow', file],
-      env: { CODEX_FAKE_SLEEP: '3', CODEX_HARD_TIMEOUT: '1' },
-    });
+    const r = await runAsync(sb, { args: ['--nonce', 'slow', file], env: { CODEX_FAKE_SLEEP: '3', CODEX_HARD_TIMEOUT: '1' } });
     const receipt = readReceipt(storeDirOf(sb), 'slow');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 124, r.stderr);
@@ -2215,10 +2216,7 @@ fs.lstatSync = (target, ...rest) => {
     const sb = makeSandbox();
     const file = writeContract(sb, 'noreport');
     const dir = storeDirOf(sb);
-    const r = await run(sb, {
-      args: ['--nonce', 'noreport', file],
-      env: { CODEX_FAKE_MKDIR: join(dir, reportName('noreport')) },
-    });
+    const r = await run(sb, { args: ['--nonce', 'noreport', file], env: { CODEX_FAKE_MKDIR: join(dir, reportName('noreport')) } });
     const receipt = readReceipt(dir, 'noreport');
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 71, r.stderr);

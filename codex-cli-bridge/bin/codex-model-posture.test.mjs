@@ -1,7 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, cpSync, readdirSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -17,6 +16,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli ${CODEX_FAKE_VERSION:-0.160.0}"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then',
   '  echo "catalog argv=[$*] home=${CODEX_HOME:-} keys=${OPENAI_API_KEY:-unset},${FOO_API_KEY:-unset},${OPENAI_BASE_URL:-unset}" >>"$CODEX_FAKE_LOG"',
   '  if [[ -n "${CODEX_FAKE_CATALOG_SLEEP:-}" ]]; then sleep "$CODEX_FAKE_CATALOG_SLEEP"; fi',
@@ -35,6 +35,7 @@ const FAKE_CODEX = [
   '',
 ].join('\n');
 
+const FAKE_UNAME = `#!/usr/bin/env bash\nif [[ $# -eq 0 || "$1" == "-s" ]]; then echo Linux; exit 0; fi\nexec "${spawnSync('bash', ['-c', 'type -P uname'], { encoding: 'utf8' }).stdout.trim()}" "$@"\n`;
 const FAKE_TIMEOUT = [
   '#!/usr/bin/env bash',
   'if [[ " $* " == *" debug models "* ]]; then',
@@ -52,7 +53,10 @@ const ALL = ['low', 'medium', 'high', 'xhigh'];
 const STANDARD = { models: [entry('gpt-6.1-sol', 1, ALL, 'low'), entry('gpt-6-astra', 2, ALL), entry('gpt-6-luna', 3, ['low', 'medium', 'high'])] };
 const HOST_SETTING = 'CODEX_MODEL=gpt-6-luna\nCODEX_EFFORT=medium\n';
 
-const SHARED = mkdtempSync(join(tmpdir(), 'codex-posture-'));
+// The repositories sit outside every temp root (spec jev-every-run): under node_modules, TMPDIR their sibling.
+const FIXTURES = join(HERE, '..', 'node_modules', '.aw-fixtures');
+for (const dir of ['repos', 'tmp']) mkdirSync(join(FIXTURES, dir), { recursive: true });
+const SHARED = mkdtempSync(join(FIXTURES, 'repos', 'codex-posture-'));
 after(() => rmSync(SHARED, { recursive: true, force: true }));
 const TEMPLATE = (() => {
   const home = join(SHARED, 'template');
@@ -60,6 +64,7 @@ const TEMPLATE = (() => {
   mkdirSync(join(home, 'bin'), { recursive: true });
   mkdirSync(repo);
   writeFileSync(join(home, 'bin', 'codex'), FAKE_CODEX, { mode: 0o755 });
+  writeFileSync(join(home, 'bin', 'uname'), FAKE_UNAME, { mode: 0o755 });
   const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
   git('init', '-q');
   git('config', 'user.email', 'probe@example.com');
@@ -94,7 +99,7 @@ const drive = (sb, [wrapper, args], env = {}) => {
   const r = spawnSync('bash', [wrapper, ...args], {
     cwd: sb.repo, input: 'do the thing', encoding: 'utf8', timeout: 60000,
     env: {
-      PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: process.env.TMPDIR ?? '/tmp',
+      PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: join(FIXTURES, 'tmp'),
       CODEX_FAKE_LOG: sb.log, CODEX_FAKE_CATALOG: sb.catalog, CODEX_FAKE_USER_CATALOG: sb.userCatalog, ...env,
     },
   });
@@ -136,12 +141,16 @@ describe('a fresh host runs the built-in default — spec:bridge-model/S1', () =
   it('codex-exec and codex-review run gpt-6.1-sol at effort high and the banner names source default', () => {
     const exec = drive(sandbox(), FRESH_EXEC);
     assertRan(exec, 'gpt-6.1-sol', 'high');
-    assert.equal(bannerOf(exec.stderr),
-      'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh source=model:default,effort:default timeout=3600s');
+    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=jev-profile session=fresh '
+      + 'jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=3600s');
     const review = drive(sandbox(), PLAN_REVIEW);
     assertRan(review, 'gpt-6.1-sol', 'high');
-    assert.equal(bannerOf(review.stderr),
-      'review posture: model=gpt-6.1-sol effort=high tier=standard source=model:default,effort:default timeout=1800s');
+    assert.equal(bannerOf(review.stderr), 'review posture: model=gpt-6.1-sol effort=high tier=standard jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=1800s');
+  });
+  it('a codex-exec fallback run keeps the same model fields, sandbox=workspace-write and jev=unreachable before source=', () => {
+    const exec = drive(sandbox(), FRESH_EXEC, { CODEX_FAKE_VERSION: '0.159.0' });
+    assertRan(exec, 'gpt-6.1-sol', 'high');
+    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (codex 0.159.0 below 0.160.0) source=model:default,effort:default timeout=3600s');
   });
 });
 

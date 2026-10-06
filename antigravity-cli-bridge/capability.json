@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "antigravity-cli-bridge",
   "kind": "execution-backend",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "provides": ["review", "probe"],
   "posture": { "model": "Gemini 3.8 Flash (High)" },
   "roles": {
@@ -180,7 +180,7 @@
         { "slot": "<extra agy flags...>", "required": false, "description": "raw agy flags after -- (a --model* or --effort* flag refuses pre-spend: the model is the host posture or the AGY_MODEL environment value)" }
       ],
       "guardrails": [
-        { "value": "subscription-only — every *_API_KEY env var is unset before the run", "enforcement": "enforced", "source": "bin/agy.sh" },
+        { "value": "subscription-only — every *_API_KEY env var except TYPESAFE_API_KEY is unset before the run; TYPESAFE_API_KEY passes as given and nothing in agy's permissions is widened", "enforcement": "enforced", "source": "bin/agy.sh" },
         { "value": "the model is the host posture (AGY_MODEL in the bridge settings file, else Gemini 3.8 Flash (High)); AGY_MODEL in the environment sets it for one run", "enforcement": "enforced", "source": "bin/agy.sh" },
         { "value": "hard wall-clock cap AGY_HARD_TIMEOUT (built-in default 5m)", "enforcement": "enforced", "condition": "only while timeout(1)/gtimeout is on PATH — otherwise the wrapper warns and runs uncapped", "source": "capability.json settings.AGY_HARD_TIMEOUT" },
         { "value": "the prompt rides a single argv — over AGY_MAX_PROMPT_BYTES (120000) the run refuses", "enforcement": "enforced", "source": "bin/agy.sh" },
@@ -240,7 +240,7 @@
       "effect": "agy-review code: the ceiling on the SUM of all outgoing prompt bytes the chunked feed may send (every feed-turn framing block, every body, the final turn). Checked BEFORE the first turn is spent; past it the fed review refuses. An economy guard, not the correctness guard — correctness is the per-part delivery echo."
     }
   ],
-  "networkHosts": ["*.googleapis.com", "accounts.google.com", "antigravity-unleash.goog", "lh3.googleusercontent.com"],
+  "networkHosts": ["*.googleapis.com", "accounts.google.com", "antigravity-unleash.goog", "lh3.googleusercontent.com", "api.typesafe.ai", "docs.typesafe.ai"],
   "writableDirs": [{ "env": null, "default": "~/.gemini/antigravity-cli" }],
   "detect": {
     "installed": {

@@ -19,6 +19,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
+  'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli ${CODEX_FAKE_VERSION:-0.160.0}"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then [[ -z "${CODEX_FAKE_NO_CATALOG:-}" ]] || exit 1; cat <<EOF',
   '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
   'EOF',
@@ -184,14 +185,15 @@ describe('codex-review.sh — clean output + session capture (1.2)', { concurren
     assert.doesNotMatch(r.stdout, /thread\.started/);
   });
 
-  it('passes the clean-capture flags and read-only sandbox to codex', async () => {
+  // The fallback (spec jev-every-run: codex below 0.160.0); the review profile is codex-review-jev.test.mjs's.
+  it('passes the clean-capture flags and, on a fallback run, the read-only sandbox to codex', async () => {
     const sb = makeSandbox();
-    const r = await run(sb);
+    const r = await run(sb, { env: { CODEX_FAKE_VERSION: '0.159.0' } });
     rmSync(sb.root, { recursive: true, force: true });
-    for (const f of [/(^|\n)-o(\n|$)/, /(^|\n)--json(\n|$)/, /hide_agent_reasoning=true/,
-      /(^|\n)read-only(\n|$)/]) {
+    for (const f of [/(^|\n)-o(\n|$)/, /(^|\n)--json(\n|$)/, /hide_agent_reasoning=true/, /(^|\n)--sandbox\nread-only(\n|$)/]) {
       assert.match(r.argv, f, `expected ${f} among codex argv`);
     }
+    assert.match(r.stderr, /^review posture: .* jev=unreachable \(.*\) source=/m);
   });
 
   it('surfaces the session id on STDERR only — never the shared resume sidecar', async () => {
@@ -267,9 +269,7 @@ describe('codex-review.sh — best-effort env read-fence (1.5)', { concurrency: 
 describe('codex-review.sh — subscription / config isolation (invariant)', { concurrency: 2 }, () => {
   it('clears every *_API_KEY + OPENAI_BASE_URL and passes --ignore-user-config', async () => {
     const sb = makeSandbox();
-    const r = await run(sb, { env: {
-      OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar',
-    } });
+    const r = await run(sb, { env: { OPENAI_API_KEY: 'sk-x', OPENAI_BASE_URL: 'http://evil.example', FOO_API_KEY: 'bar' } });
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.capEnv, /^OPENAI_API_KEY=<unset>$/m);
@@ -1634,7 +1634,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=standard source=model:default,effort:default/, 'the banner states the actual run posture');
+    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default/, 'the banner states the actual run posture');
     assert.deepEqual(receipts[0].posture, { model: 'gpt-6.1-sol', effort: 'high', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
@@ -1677,7 +1677,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=gpt-6\.1-sol effort=high tier=standard source=model:default,effort:default timeout=1800s$/m);
+    assert.match(r.stderr, /^review posture: model=gpt-6\.1-sol effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default timeout=1800s$/m);
     assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
   });
 

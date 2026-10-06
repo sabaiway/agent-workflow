@@ -8,9 +8,9 @@
 #
 # Auth: SUBSCRIPTION ONLY. We use the cached OAuth token at
 # ~/.gemini/antigravity-cli/antigravity-oauth-token (Google AI Pro) and the
-# quota that comes with it. To make that guarantee hard, the wrapper unsets any
-# API-key env var so a stray key can never silently switch us to paid
-# pay-as-you-go billing.
+# quota that comes with it. To make that guarantee hard, the wrapper unsets
+# every *_API_KEY except TYPESAFE_API_KEY (which passes as given), so a stray
+# key can never silently switch us to paid pay-as-you-go billing.
 #
 # This is a THIN, FLOW-AGNOSTIC wrapper on purpose: it just runs one headless
 # prompt and prints the text response. It does NOT encode any orchestration
@@ -64,14 +64,6 @@ esac
 
 # 1. Make `agy` findable even when ~/.bashrc was not sourced.
 export PATH="$HOME/.local/bin:$PATH"
-
-# 2. Force the subscription path: never let an API key hijack billing. Unset EVERY *_API_KEY for the
-#    agy subprocess — the explicit Google/Antigravity ones first, then any other *_API_KEY that may
-#    have been added later (`compgen` is a bash builtin; the shebang guarantees bash).
-unset ANTIGRAVITY_API_KEY GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_GENAI_API_KEY 2>/dev/null || true
-while IFS= read -r _api_key_var; do
-  unset "$_api_key_var" 2>/dev/null || true
-done < <(compgen -v 2>/dev/null | grep '_API_KEY$' || true)
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="AGY_HARD_TIMEOUT"
@@ -262,6 +254,23 @@ aw_resolve_timeout_bin() {
   [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
   printf '%s' "$bin"
 }
+aw_scrub_billing_keys() {
+  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
+  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
+  local name
+  unset OPENAI_BASE_URL 2>/dev/null || true
+  for name in $(compgen -v); do
+    case "$name" in
+      TYPESAFE_API_KEY) ;;
+      *_API_KEY) unset "$name" 2>/dev/null || true ;;
+    esac
+  done
+  return 0
+}
+
+# 2. Force the subscription path before the first spawn of agy: the shared key rule (the Google and
+#    Antigravity keys included) — no API key can hijack billing.
+aw_scrub_billing_keys
 
 if ! command -v agy >/dev/null 2>&1; then
   echo "error: 'agy' (Antigravity CLI) not found on PATH. Install it and run 'agy' once to sign in." >&2
@@ -421,6 +430,12 @@ if [[ -n "$AGY_MODEL" ]]; then
 fi
 
 agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]}" -p "$prompt")
+
+# A non-empty TYPESAFE_API_KEY rides into agy and nothing is widened (spec jev-every-run, D5(a)): the limit, once,
+# before dispatch — never in agy-review's child, whose prompts forbid every tool.
+if [[ -n "${TYPESAFE_API_KEY:-}" && "${AW_AGY_REVIEW_CHILD:-}" != "1" ]]; then
+  echo "jev: TYPESAFE_API_KEY passed; a headless agy runs the Jev request only where your agy permissions allow commands — the first denied command ends the run" >&2
+fi
 
 # Hard wall-clock cap via timeout(1) (GNU `timeout` on Linux, `gtimeout` from coreutils on macOS).
 # This is the real guard — a backgrounded, hung agy survives its own --print-timeout otherwise.

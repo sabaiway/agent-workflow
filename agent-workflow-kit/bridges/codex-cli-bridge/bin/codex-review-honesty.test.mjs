@@ -20,6 +20,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
+  'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli 0.160.0"; exit 0; fi',
   'printf invoked > "${CODEX_FAKE_SENTINEL:-/dev/null}"',
   'cat >/dev/null',
   'out=""; prev=""',

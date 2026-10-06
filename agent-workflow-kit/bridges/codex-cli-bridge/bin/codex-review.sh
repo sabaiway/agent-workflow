@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Read-only ADVISORY review BY the OpenAI Codex CLI. Runs under the read-only
-# sandbox, so codex structurally CANNOT edit/create/delete files or write to git
+# Read-only ADVISORY review BY the OpenAI Codex CLI. Runs read-only — on Linux with
+# codex-cli 0.160.0 or newer, off a codex version and profile digest recorded as
+# refused, under the permissions profile `jev` with no write entry
+# (network to api.typesafe.ai and docs.typesafe.ai only), elsewhere under --sandbox
+# read-only — so codex structurally CANNOT edit/create/delete files or write to git
 # — it can only read and emit findings. The orchestrator reads those findings and
 # decides what to act on; codex never applies them itself.
 #
@@ -28,9 +31,10 @@
 #
 # Best-effort read hygiene: the review runs under a temporary HOME / XDG_* with an
 # ABSOLUTE CODEX_HOME so codex auth + history still resolve, but its default config
-# / cache / skill-scan roots point at a throwaway dir instead of the real $HOME.
-# This trims roaming noise; it is NOT a security boundary (absolute paths anywhere
-# on disk remain readable under read-only — read-scoping is a prompt concern).
+# / cache roots point at a throwaway dir instead of the real $HOME; the user's real
+# skill root ($HOME/.agents/skills) is linked into it when it exists, so a review can
+# load a skill. This trims roaming noise; it is NOT a security boundary (absolute paths
+# anywhere on disk remain readable under read-only — read-scoping is a prompt concern).
 set -euo pipefail
 
 # --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
@@ -97,12 +101,16 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
 Notes:
-  the review posture banner appends a banner-only source=model:<s>,effort:<s> field — where each
-  value came from: default, setting or environment — then a banner-only timeout=<duration> field —
-  exactly the duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no
-  timeout/gtimeout binary exists (the wrapper refuses by name before any CLI run, so an uncapped
-  review run can no longer happen), and neither field enters the receipt posture or the D5
-  banner↔receipt parity
+  the review posture banner states what the run reaches in a jev= field:
+  jev=api.typesafe.ai,docs.typesafe.ai when the run carries the read-only permissions profile `jev`
+  (Linux, codex-cli 0.160.0 or newer, a version and profile digest not recorded as refused), else
+  jev=unreachable (<reason>) under --sandbox read-only; a run whose codex refuses the profile exits
+  72 with no receipt; then a banner-only source=model:<s>,effort:<s> field — where each value came
+  from: default, setting or environment — then a banner-only timeout=<duration> field — exactly the
+  duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout
+  binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no
+  longer happen), and none of the three fields enters the receipt posture or the D5 banner↔receipt
+  parity
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
 
@@ -110,8 +118,8 @@ Honesty + posture (D4/D5):
   a run whose final message carries NO recognized 'Verdict: <ship|revise|rethink>' line — empty or
   missing output included — exits 4 with NO receipt: a FAILED review to RE-RUN, never a fatal
   session error. One stderr banner line states the ACTUAL run posture (review posture: model=…
-  effort=… tier=… source=… timeout=…) and the receipt records the same posture {model, effort, tier} (tier
-  null on the standard tier; the timeout field is banner-only — never a receipt field). Quote the
+  effort=… tier=… jev=… source=… timeout=…) and the receipt records the same posture {model, effort, tier} (tier
+  null on the standard tier; the jev= and timeout= fields are banner-only — never a receipt field). Quote the
   posture banner verbatim when labeling this dispatch. A posture value carrying control bytes
   refuses pre-spend in every mode.
 
@@ -126,6 +134,9 @@ esac
 AW_SETTINGS_APPLIED="CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES"
 DEFAULT_CODEX_MODEL="gpt-6.1-sol"
 DEFAULT_CODEX_EFFORT="high"
+# This wrapper's filesystem part of the permissions profile `jev` (the shared block below): the whole disk read
+# and no write entry at all (P14: the tree, .git and /tmp refused writes).
+AW_PROFILE_FILESYSTEM='{":root"="read"}'
 
 # --- Bridge settings file (host-level, kit-independent) — byte-identical across the four wrappers ---
 # ${XDG_CONFIG_HOME:-$HOME/.config}/agent-workflow/bridge-settings.conf holds KEY=VALUE lines,
@@ -314,11 +325,24 @@ aw_resolve_timeout_bin() {
   [[ -f "$bin" && -x "$bin" ]] || { printf ''; return 0; }
   printf '%s' "$bin"
 }
+aw_scrub_billing_keys() {
+  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
+  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
+  local name
+  unset OPENAI_BASE_URL 2>/dev/null || true
+  for name in $(compgen -v); do
+    case "$name" in
+      TYPESAFE_API_KEY) ;;
+      *_API_KEY) unset "$name" 2>/dev/null || true ;;
+    esac
+  done
+  return 0
+}
 
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="4.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.0.0"  # aw-version-anchor
 # Generous hard cap for a slow review at the host posture's effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
@@ -367,6 +391,9 @@ if [[ -n "$CODEX_SERVICE_TIER" ]]; then
 fi
 CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 
+# --- Subscription-only guard (see codex-exec.sh): the shared key rule, before the first spawn of codex ---
+aw_scrub_billing_keys
+
 # --- D5 banner (one line, the ACTUAL run posture) -------------------------------------------
 # The control-byte screen already ran above (BEFORE tier validation); the banner states the
 # EFFECTIVE posture (post tier validation) and the receipt records the same fields — except
@@ -384,8 +411,174 @@ if [[ -z "$timeout_bin" ]]; then
   echo "       on macOS: brew install coreutils for gtimeout), then re-run." >&2
   exit 127
 fi
+
+# --- The permissions profile `jev` (spec jev-every-run) — byte-identical in codex-exec.sh and codex-review.sh ---
+# On Linux with codex-cli 0.160.0 or newer a run carries the profile `jev` by four -c overrides, with neither
+# --sandbox nor sandbox_mode beside them: its filesystem part is this wrapper's AW_PROFILE_FILESYSTEM, and its
+# network reaches api.typesafe.ai and docs.typesafe.ai and no other host (a literal of this bridge, which never
+# imports the kit). Elsewhere, and on a codex version and profile digest recorded as refused, the run keeps
+# today's flags and its banner says jev=unreachable (<reason>). Each run, a resume included, chooses afresh.
+AW_PROFILE_FLOOR="0.160.0"
+AW_PROFILE_HOSTS="api.typesafe.ai,docs.typesafe.ai"
+AW_PROFILE_FLAGS=(-c default_permissions=jev -c permissions.jev.network.enabled=true
+  -c 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}'
+  -c "permissions.jev.filesystem=$AW_PROFILE_FILESYSTEM")
+# The version on the first line of `codex --version` ("codex-cli X.Y.Z[-pre]"); nothing when unreadable.
+aw_codex_version() {   # $1 = the timeout binary or ""
+  local raw="" line="" re='^codex-cli[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)[[:space:]]*$'
+  if [[ -n "$1" ]]; then
+    raw="$("$1" --kill-after=5s 15 codex --version </dev/null 2>/dev/null)" || raw=""
+  else
+    raw="$(codex --version </dev/null 2>/dev/null)" || raw=""
+  fi
+  line="${raw%%$'\n'*}"
+  line="${line%$'\r'}"
+  if [[ "$line" =~ $re ]]; then printf '%s' "${BASH_REMATCH[1]}"; fi
+  return 0
+}
+# 0 when version $1 is at or above $2, compared as major.minor.patch; a prerelease sorts below its release.
+aw_version_at_least() {
+  local core="${1%%-*}" have=() want=() i
+  IFS=. read -r -a have <<<"$core"
+  IFS=. read -r -a want <<<"$2"
+  for i in 0 1 2; do
+    if (( 10#${have[i]} != 10#${want[i]} )); then
+      (( 10#${have[i]} > 10#${want[i]} ))
+      return
+    fi
+  done
+  [[ "$1" == "$core" ]]
+}
+aw_profile_state_file() {
+  printf '%s/agent-workflow/codex-jev-profile-refused' "${XDG_STATE_HOME:-$HOME/.local/state}"
+}
+# sha256 of this run's profile overrides, one per line; nothing without a sha256 tool.
+aw_profile_digest() {
+  local sum=""
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum="$(printf '%s\n' "${AW_PROFILE_FLAGS[@]}" | sha256sum 2>/dev/null)" || sum=""
+  elif command -v shasum >/dev/null 2>&1; then
+    sum="$(printf '%s\n' "${AW_PROFILE_FLAGS[@]}" | shasum -a 256 2>/dev/null)" || sum=""
+  fi
+  printf '%s' "${sum%% *}"
+}
+# 0 when the state file $1 lists "<version $2> <digest $3>"; an unreadable file reads as empty.
+aw_profile_refused() {
+  local line=""
+  [[ -n "$3" && -f "$1" && -r "$1" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "${line%$'\r'}" == "$2 $3" ]]; then return 0; fi
+  done <"$1"
+  return 1
+}
+# Appends "<version $2> <digest $3>" to the state file $1, its directory made 0700; one stderr line when it cannot.
+aw_profile_record() {
+  local dir="${1%/*}"
+  if [[ -n "$3" ]] && { ( umask 077 && mkdir -p -- "$dir" ) && chmod 700 -- "$dir" && printf '%s %s\n' "$2" "$3" >>"$1"; } 2>/dev/null; then
+    return 0
+  fi
+  echo "warning: could not append the refused profile to $1 — until it can be written, every run on this codex version spends one run on the refusal." >&2
+  return 1
+}
+# Chooses this run's posture: profile_on (1 or 0), profile_reason, and the banner's jev= value in profile_label.
+aw_profile_choose() {   # $1 = the timeout binary or "", $2 = the repository's temp root or ""
+  local os=""
+  profile_on=0
+  profile_reason=""
+  profile_version="$(aw_codex_version "$1")"
+  profile_digest="$(aw_profile_digest)"
+  os="$(uname -s 2>/dev/null)" || os=""
+  if [[ "$os" != "Linux" ]]; then
+    profile_reason="not linux (${os:-unreadable})"
+  elif [[ -z "$profile_version" ]]; then
+    profile_reason="codex version unreadable"
+  elif ! aw_version_at_least "$profile_version" "$AW_PROFILE_FLOOR"; then
+    profile_reason="codex $profile_version below $AW_PROFILE_FLOOR"
+  elif [[ -n "$2" ]]; then
+    profile_reason="repository under $2"
+  elif aw_profile_refused "$(aw_profile_state_file)" "$profile_version" "$profile_digest"; then
+    profile_reason="profile not recognized by codex $profile_version, recorded in $(aw_profile_state_file)"
+  else
+    profile_on=1
+  fi
+  if (( profile_on )); then profile_label="$AW_PROFILE_HOSTS"; else profile_label="unreachable ($profile_reason)"; fi
+  profile_label="${profile_label//[$'\x01'-$'\x1f'$'\x7f']/?}"
+  return 0
+}
+# The loud failure, judged on ONE attempt's trace: 0 on a match, its kind in profile_refusal (1 = a P1/P13-shaped
+# error item before the first turn.started, 2 = `bwrap: execvp` in a command item whose failure is proven) and
+# the matched text in profile_refusal_text. The same strings in a successful command or the final message never fire.
+aw_profile_scan() {   # $1 = the trace
+  local line="" started=0
+  local item_re='^\{"type":"item\.completed","item":\{("id":"[^"]*",)?"type":"error","message":"((Permissions profile `jev` |Configured filesystem path `[^`"]*` is not recognized )[^"\\]*)"'
+  profile_refusal=0
+  profile_refusal_text=""
+  [[ -r "$1" ]] || return 1
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == '{"type":"turn.started"'* ]]; then started=1; fi
+    if (( ! started )) && [[ "$line" =~ $item_re ]]; then
+      profile_refusal=1
+      profile_refusal_text="${BASH_REMATCH[2]}"
+      return 0
+    fi
+    if aw_ns_item_evidence "$line" && [[ "$AW_NS_OUTPUT" == *'bwrap: execvp'* ]]; then
+      profile_refusal=2
+      profile_refusal_text="${AW_NS_OUTPUT%%\\n*}"
+      return 0
+    fi
+  done <"$1"
+  return 1
+}
+# Prints the matched refusal (no "update codex" remedy: none is known) and records a refused profile key.
+aw_profile_refusal_report() {
+  local file=""
+  echo "error: codex refused this run's permissions profile \`jev\` (exit 72): $profile_refusal_text" >&2
+  if (( profile_refusal == 1 )); then
+    file="$(aw_profile_state_file)"
+    if aw_profile_record "$file" "$profile_version" "$profile_digest"; then
+      echo "       recorded in $file: the next run on codex $profile_version with this profile runs today's flags (jev=unreachable)." >&2
+    fi
+  fi
+  return 0
+}
+
+# codex-exec.sh's command-item walk, byte-identical (its comments state the shape and the measured slice costs):
+# 0 when a trace line is a command_execution item with a PROVEN failure, its aggregated_output in AW_NS_OUTPUT.
+aw_ns_is_string_content() {
+  if grep -qE '(^|[^\\])(\\\\)*"' <<<"$1"; then return 1; fi
+  return 0
+}
+aw_ns_item_evidence() {
+  local LC_ALL=C
+  local line="$1" d1='","aggregated_output":"' d2='","exit_code":' rest tail cmd agg code after off
+  case "$line" in '{'*) ;; *) return 1 ;; esac
+  rest="${line#*'"type":"command_execution","command":"'}"
+  if [[ "$rest" == "$line" ]]; then return 1; fi
+  tail="${rest#*"$d1"}"
+  if [[ "$tail" == "$rest" ]]; then return 1; fi
+  cmd="${rest:0:$(( ${#rest} - ${#tail} - ${#d1} ))}"
+  aw_ns_is_string_content "$cmd" || return 1
+  while IFS=: read -r off _; do break; done < <(grep -aboF -- "$d2" <<<"$tail")
+  if [[ -z "$off" ]]; then return 1; fi
+  agg="${tail:0:off}"
+  after="${tail:$(( off + ${#d2} ))}"
+  aw_ns_is_string_content "$agg" || return 1
+  code="${after%%,*}"
+  if [[ "$code" =~ ^-?[0-9]+$ && "$code" != "0" ]]; then
+    :
+  elif [[ "${after#"$code",}" == '"status":"failed"'* ]]; then
+    :
+  else
+    return 1
+  fi
+  AW_NS_OUTPUT="$agg"
+  return 0
+}
+
+# A review has no temp-root rule: its profile writes nothing, so a .git under a temp root stays read-only (P14).
+aw_profile_choose "$timeout_bin" ""
 aw_timeout_banner="$(aw_timeout_label "$timeout_bin" "$CODEX_HARD_TIMEOUT")"
-echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} source=model:$CODEX_MODEL_SOURCE,effort:$CODEX_EFFORT_SOURCE timeout=$aw_timeout_banner" >&2
+echo "review posture: model=$CODEX_MODEL effort=$CODEX_EFFORT tier=${CODEX_SERVICE_TIER:-standard} jev=$profile_label source=model:$CODEX_MODEL_SOURCE,effort:$CODEX_EFFORT_SOURCE timeout=$aw_timeout_banner" >&2
 
 # A probe run is RECORDED, not just warned about: the receipt carries probe:true so the kit's
 # review-state gate rejects it — "do NOT use this as a real review" becomes a mechanism, not a plea.
@@ -395,12 +588,6 @@ if [[ "${CODEX_PROBE:-}" == "1" ]]; then
   echo "warning: CODEX_PROBE=1 — THROWAWAY PROBE MODE. Quality guards relaxed; do NOT use this run's" >&2
   echo "         output as a real review (model='$CODEX_MODEL' effort='$CODEX_EFFORT')." >&2
 fi
-
-# --- Subscription-only guard (see codex-exec.sh) -----------------------------
-unset OPENAI_API_KEY CODEX_API_KEY OPENAI_BASE_URL 2>/dev/null || true
-while IFS= read -r _api_key_var; do
-  unset "$_api_key_var" 2>/dev/null || true
-done < <(compgen -v 2>/dev/null | grep '_API_KEY$' || true)
 
 # Resolve the real CODEX_HOME (where the cached ChatGPT login lives) to an ABSOLUTE
 # path BEFORE the env fence repoints HOME — auth must keep resolving.
@@ -999,6 +1186,19 @@ REVIEW_ARTIFACT=""
 REVIEW_FINGERPRINT=""
 REVIEW_ARTIFACT_PATH=""
 
+# The user's real Codex skill root, resolved before the fence home repoints HOME (spec jev-every-run): when it
+# exists, the fence home links .agents/skills to it on a profile and a fallback run alike, read-only in both, and
+# the fence directives admit reading it; on a profile run they also name the two reachable hosts.
+skills_root="$(builtin cd -P -- "$HOME/.agents/skills" 2>/dev/null && builtin pwd -P)" || skills_root=""
+fence_skills=""
+if [[ -n "$skills_root" ]]; then
+  fence_skills=" A skill under ~/.agents/skills (linked into this run's home) may be read when the review needs one."
+fi
+fence_hosts=""
+if (( profile_on )); then
+  fence_hosts=" The hosts api.typesafe.ai and docs.typesafe.ai are reachable; every other host is refused, and still no file may be edited, created or deleted."
+fi
+
 case "$mode" in
   plan)
     target="${1:-}"
@@ -1015,7 +1215,7 @@ case "$mode" in
     # Plan-mode receipt identity: the artifact-file sha256 (informational-only for the tree checker).
     REVIEW_ARTIFACT="plan"
     REVIEW_FINGERPRINT="$(sha256_stdin <"$target" || true)"
-    fence_plan="Do not read files outside this git working tree; the plan above plus the in-repo code it references are your whole surface."
+    fence_plan="Do not read files outside this git working tree; the plan above plus the in-repo code it references are your whole surface.${fence_skills}${fence_hosts}"
     directive="You are REVIEWING an implementation plan — ADVISORY ONLY. You are in a read-only sandbox: do NOT edit, create, or delete any file, and do NOT rewrite the plan. Obey the project's Hard Constraints from its root AGENTS.md (already merged into your context). Read the plan below and the relevant repository code it references. ${fence_plan} ${OUTPUT_FORMAT_PLAN} Cover: correctness risks, missing or mis-ordered steps, ambiguities a cold executor would trip on, violated project Hard Constraints, scope creep, and missing verification/gates."
     prompt="${directive}"$'\n\nPLAN:\n'"$(cat -- "$target")"
     ;;
@@ -1041,12 +1241,12 @@ case "$mode" in
     payload_bytes="$(wc -c <"$review_diff_file")"
     base_directive="You are REVIEWING the uncommitted working-tree changes of a git repository — ADVISORY ONLY. You are in a read-only sandbox: do NOT edit, create, or delete any file and do NOT run any git write command. The COMPLETE change set (repo file map, git status, staged + unstaged diffs, and untracked file contents — binaries noted but skipped, symlinks shown as targets) has been assembled FOR you; you do NOT need to run git yourself, though you MAY read other in-repo files for surrounding context. Obey the project's Hard Constraints from its root AGENTS.md (already merged into your context)."
     if [[ "$payload_bytes" -gt "$CODEX_REVIEW_MAX_TOTAL_BYTES" ]]; then
-      fence_code="Do not read files outside this git working tree, with ONE exception — the precomputed-diff file at ${review_diff_file}; read it IN FULL before reviewing. That file plus the in-repo code are your whole surface."
+      fence_code="Do not read files outside this git working tree, with ONE exception — the precomputed-diff file at ${review_diff_file}; read it IN FULL before reviewing. That file plus the in-repo code are your whole surface.${fence_skills}${fence_hosts}"
       directive="${base_directive} ${fence_code} ${OUTPUT_FORMAT_CODE}"
       if [[ $# -gt 0 ]]; then directive="${directive} Extra focus: $*"; fi
       prompt="$directive"
     else
-      fence_code="Do not read files outside this git working tree; the assembled change set below plus the in-repo code are your whole surface."
+      fence_code="Do not read files outside this git working tree; the assembled change set below plus the in-repo code are your whole surface.${fence_skills}${fence_hosts}"
       directive="${base_directive} ${fence_code} ${OUTPUT_FORMAT_CODE}"
       if [[ $# -gt 0 ]]; then directive="${directive} Extra focus: $*"; fi
       prompt="${directive}"$'\n\nASSEMBLED CHANGE SET:\n'"$(cat -- "$review_diff_file")"
@@ -1066,14 +1266,23 @@ fence_home="$(mktemp -d)"
 out="$(mktemp)"
 trace="$(mktemp)"
 mkdir -p "$fence_home/.config" "$fence_home/.cache" "$fence_home/.local/share"
+if [[ -n "$skills_root" ]]; then
+  mkdir -p "$fence_home/.agents"
+  ln -s "$skills_root" "$fence_home/.agents/skills"
+fi
 
 # --- Optional structured findings (CODEX_REVIEW_SCHEMA=1) ---------------------
 # A FLEXIBLE schema (optional evidence, free-text notes) so codex can almost always
 # conform (a live probe confirmed --output-schema CONSTRAINS the output rather than
 # failing); a raw-text retry covers the rare validation/run failure. Default OFF.
+if (( profile_on )); then
+  posture_flags=("${AW_PROFILE_FLAGS[@]}")
+else
+  posture_flags=(--sandbox read-only)
+fi
 codex_flags=(codex exec
   --ignore-user-config
-  --sandbox read-only
+  "${posture_flags[@]}"
   -c approval_policy="never"
   -c model_reasoning_effort="$CODEX_EFFORT"
   -c hide_agent_reasoning=true
@@ -1126,13 +1335,18 @@ fence_env=(env
 # guaranteed non-empty there (the fail-closed preflight) — the run reuses the exact binary the
 # banner reported.
 
-# Run codex with the current ${codex_cmd[@]}; capture rc, stream → $trace.
+# Run codex with the current ${codex_cmd[@]}; capture rc, stream → $trace. Each attempt's own trace is scanned
+# for the loud failure (spec jev-every-run) before a retry and before any output: a match exits 72, no receipt.
 invoke_codex() {
   set +e
   printf '%s' "$prompt" \
     | "${fence_env[@]}" "$timeout_bin" --kill-after=15s "$CODEX_HARD_TIMEOUT" "${codex_cmd[@]}" >"$trace" 2>&1
   rc=$?
   set -e
+  if (( profile_on )) && aw_profile_scan "$trace"; then
+    aw_profile_refusal_report
+    exit 72
+  fi
 }
 
 codex_cmd=("${codex_flags[@]}" -)

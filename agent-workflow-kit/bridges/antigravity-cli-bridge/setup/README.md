@@ -34,7 +34,8 @@ agy
 This caches an OAuth token under `~/.gemini/antigravity-cli/` (`antigravity-oauth-token`). That token
 is **personal** — never copy, commit, package, print, or share that directory or token. This skill
 needs no API keys and must not be configured with API-key billing; the wrapper unsets every
-`*_API_KEY` so billing can never silently fall back to pay-as-you-go.
+`*_API_KEY` except `TYPESAFE_API_KEY` (the one key a run passes, as given) so billing can never
+silently fall back to pay-as-you-go.
 
 ## 3. Put the wrappers on `PATH` (`agy-run` + `agy-review`)
 

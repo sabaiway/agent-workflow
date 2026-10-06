@@ -1002,7 +1002,7 @@ describe('recommendations — item probes over fixtures', () => {
     assert.ok(item.detail, 'the item carries a rendered recipe: detail line');
     for (const h of AGY_HOSTS) assert.ok(item.detail.includes(h), `the wired bridge's manifest host ${h} rides the recipe line`);
     assert.ok(item.detail.includes(AGY_DIRS[0].default), "the wired bridge's writable state dir rides the recipe line");
-    for (const h of CODEX_HOSTS) assert.ok(!item.detail.includes(h), `un-wired bridge host ${h} must not ride the recipe`);
+    for (const h of CODEX_HOSTS.filter((x) => !AGY_HOSTS.includes(x))) assert.ok(!item.detail.includes(h), `un-wired codex-only host ${h} must not ride the recipe`);
     assert.doesNotMatch(item.apply, /googleapis|\.goog/u, 'the recipe hosts do NOT ride the pure-command apply');
     // The wired-vs-unwired discrimination rides the FINGERPRINT: an un-wired codex host would change it.
     assert.notEqual(expectedFp, recipeFingerprint({ hosts: [...AGY_HOSTS, ...CODEX_HOSTS], dirs: [AGY_DIRS[0].default], home: root }), 'un-wired codex hosts do not ride the fingerprint');

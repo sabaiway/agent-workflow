@@ -238,7 +238,12 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     assert.equal(formatHelp().split(LF).filter((line) => COMMAND.test(line)).length, 1);
   });
 
-  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the two ack lane rows, the two notes and the intro words, the bridge paragraphs, the mode doc and the guide', () => {
+  // Jev in every bridge wrapper (spec jev-every-run): the mirrored bridge tests, the kit's role-contract copy, and the
+  // lines of the bridge mirrors that carry a host, the profile or the key.
+  const bridgeLine = ({ file, text }) => /^kit:bridges\/[^/]+\/bin\/[^/]+\.test\.mjs$/.test(file) || file === 'kit:tools/detect-backends.mjs'
+    || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text));
+
+  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the two ack lane rows, the two notes and the intro words, the bridge paragraphs, the bridge mirrors\' host, profile and key lines, their tests, the role-contract copy, the mode doc and the guide', () => {
     const header = skillLines().findIndex(({ text }) => text === '### Mode: jev');
     assert.ok(header >= 0, 'the jev header');
     const doc = fileLines('kit:references/modes/recommendations.md');
@@ -250,7 +255,11 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
       ...['jev-connect', 'jev-skill'].map((key) => rowIn('kit:tools/ack-store.mjs', 'export const ACK_LANES', key)), ...notes, intro,
       ...paragraphOf('kit:bridges/codex-cli-bridge/SKILL.md'), ...paragraphOf('kit:bridges/antigravity-cli-bridge/SKILL.md')];
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
-    assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line)).map(where), []);
+    for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
+      const manifest = `kit:bridges/${bridge}/capability.json`;
+      assert.ok(hitsOf(WORDS).some((line) => line.file === manifest && line.text.includes('api.typesafe.ai') && bridgeLine(line)), `${manifest}: the admitted host line`);
+    }
+    assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line) && !bridgeLine(line)).map(where), []);
   });
 
   it('gives the Recommendations registries exactly the jev keys jev-connect and jev-skill, the variant beside them, and the reference profile none', () => {
