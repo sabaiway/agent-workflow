@@ -4,6 +4,14 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.1.5 — the gate migration names the `lcovProducer` marker (AD-175)
+
+`references/scripts/migrate-gates.mjs`: the four hints that print the paste-ready suite cmd (the
+customized `unit-tests` recovery, the INERT row of a vendored checker, and the withheld-checker and inert-checker
+warnings) also name the other producer form: `add "lcovProducer": true to that gate in docs/ai/gates.json`, for a suite cmd
+that already writes the lcov in a form the migration cannot recognise. The guarded `coverage-producer canon` and
+`checker-claim canon` regions are unchanged and stay byte-identical to the kit's. PATCH: no migration result changes.
+
 ## 8.1.4 — the templates carry the four-session story flow (AD-170)
 
 `references/templates/agent_rules.md`: §2.6 is the engine 5.12.0 lens render (the Finding scope, Spec-first, Fold

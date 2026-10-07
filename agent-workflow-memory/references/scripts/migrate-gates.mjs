@@ -461,12 +461,14 @@ export const resultingGates = (plan) => {
   return [...kept, ...moved, ...added]; // move/add go LAST — the checker ends up the last declared gate
 };
 
+const MARKER_LANE = 'or, if your suite cmd already writes that lcov in a form this check cannot recognise, add "lcovProducer": true to that gate in docs/ai/gates.json';
+
 // The per-entry customized recovery: a unit-tests-class entry gets the FULL canonical flag set
 // (the intent is known — the cmd shape just cannot be verified); anything else gets the
 // dead-tool recovery.
 const customizedRecovery = (gate) =>
   gate.id === 'unit-tests'
-    ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`
+    ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths> — ${MARKER_LANE}`
     : 'remove the entry, or repoint it at a living check — the review-ledger / fold-completeness tools no longer exist.';
 
 const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, hasProducer = false, checkerWithheld = false, canonicalCheckerInert = false, duplicateCheckers = 0, externalCoreChecks = [], reviewStateCandidate }) => {
@@ -495,7 +497,7 @@ const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable,
     } else if (inert && hasProducer) {
       lines.push('    it is also INERT as declared: a gate DOES produce the lcov, but it runs AFTER this entry, so this checker reads nothing (or stale bytes) and passes while verifying nothing — a checker belongs LAST, after its producer.');
     } else if (inert) {
-      lines.push(`    it is also INERT as declared: no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing — declare the suite gate: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+      lines.push(`    it is also INERT as declared: no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing — declare the suite gate: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths> — ${MARKER_LANE}`);
     }
   }
   if (externalCoreChecks.length) {
@@ -506,12 +508,14 @@ const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable,
   if (checkerWithheld) {
     lines.push('  WARNING: the canonical coverage-check gate was NOT added — no declared gate would PRODUCE the lcov it reads, and a checker with no producer passes while verifying nothing. Declare the suite gate first, then re-run this migration:');
     lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+    lines.push(`    ${MARKER_LANE}, then re-run this migration`);
   }
   // The CANONICAL checker's inertness only. An external row's is said on the row itself above, with
   // the edit that fits that row — this block would otherwise add a second, contradictory one.
   if (canonicalCheckerInert) {
     lines.push('  WARNING: the DECLARED coverage-check gate is INERT — no declared gate PRODUCES the lcov it reads, so it passes while verifying nothing. Nothing is removed for you; declare the suite gate:');
     lines.push(`    node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths>`);
+    lines.push(`    ${MARKER_LANE}`);
   }
   if (duplicateCheckers > 1) {
     lines.push(`  WARNING: ${duplicateCheckers} declared gates are the canonical coverage checker — run-gates --final accepts EXACTLY ONE, so the result is NOT final-run-capable. Nothing is removed for you; keep a single checker and delete the rest by hand.`);

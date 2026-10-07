@@ -122,6 +122,7 @@ describe('migrate-gates — the pure migration plan', () => {
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /CUSTOMIZED \(untouched\): unit-tests/);
     assert.match(preview, /declare the canonical suite gate by hand/, 'the paste-ready recovery rides along');
+    assert.match(preview, /recovery \(apply by hand[^\n]*"lcovProducer": true/, 'the recovery names the marker as the other lane');
   });
 
   it('adds the coverage-check gate LAST with the RESOLVED quoted path; never a second one', () => {
@@ -143,6 +144,7 @@ describe('migrate-gates — the pure migration plan', () => {
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /coverage-check/, 'the withheld checker is named');
     assert.match(preview, /produce/i, 'the preview says WHY — no gate produces the lcov it would read');
+    assert.match(preview, /WARNING: the canonical coverage-check gate was NOT added[^\n]*\n[^\n]*\n[^\n]*"lcovProducer": true/, 'the withheld block names the marker as the other lane');
   });
 
   it('an ALREADY-declared checker over no producer is reported INERT, is never removed, and is not final-run-capable', () => {
@@ -154,6 +156,7 @@ describe('migrate-gates — the pure migration plan', () => {
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /INERT/, 'the inert pair is named');
     assert.match(preview, /--experimental-test-coverage/, 'the paste-ready suite cmd is carried');
+    assert.match(preview, /WARNING: the DECLARED coverage-check gate is INERT[^\n]*\n[^\n]*\n[^\n]*"lcovProducer": true/, 'the inert block names the marker as the other lane');
     assert.doesNotMatch(preview, /already final-run-capable/);
   });
 
@@ -352,6 +355,7 @@ describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit
     const absent = formatPreview(buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT), 'APPLY');
     assert.match(absent, /no declared gate PRODUCES the lcov/, 'with nothing producing, the old sentence still holds');
     assert.match(absent, /declare the suite gate/);
+    assert.match(absent, /no declared gate PRODUCES the lcov[^\n]*"lcovProducer": true/, 'the INERT row names the marker as the other lane');
   });
 
   it('a mixed declaration renders ONE edit, never a removal and a reorder at once', () => {

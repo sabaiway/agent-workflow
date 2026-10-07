@@ -4,6 +4,17 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.25.2 — the gate migration names `"lcovProducer": true` in the four hints that print the paste-ready suite cmd (AD-175)
+
+- **A suite cmd the migration cannot recognise is no longer told only to rewrite itself.** When the upgrade's
+  `gates-migration` step (`references/scripts/migrate-gates.mjs`) finds no gate it recognises as the lcov producer, for
+  example a suite cmd that starts with `shopt -s globstar &&`, it asked only for the canonical `node --test` form. It
+  now also says: `or, if your suite cmd already writes that lcov in a form this check cannot recognise, add
+  "lcovProducer": true to that gate in docs/ai/gates.json`. The marker is the second producer form `gates.md` already
+  documents, and for a suite cmd that keeps a `shopt -s globstar &&` prefix the only one that works. The line rides the customized `unit-tests`
+  recovery, the INERT row of a vendored checker, and both coverage-check warnings; every existing sentence is unchanged
+  and no migration result changes.
+
 ## 14.25.1 — `init` reports what it did: a replaced MCP entry is labelled replaced, and a folder inside a kept folder prints no line of its own (AD-174)
 
 - **The MCP apply report no longer shows the old entry as the current one.** After the `y` that replaces a differing

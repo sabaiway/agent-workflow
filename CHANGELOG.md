@@ -7,6 +7,13 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-07 — AD-175: the gate migration names the `lcovProducer` marker (kit 14.25.2 and memory 8.1.5 PATCH; engine 5.12.0 and both bridges unchanged)
+
+**The four `migrate-gates.mjs` hints that print the paste-ready suite cmd now also name `"lcovProducer": true`,**
+the second producer form `gates.md` documents and the only one for a suite cmd that keeps a `shopt -s globstar &&`
+prefix. The existing sentences and every migration result are unchanged. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-07 — AD-174: `init` reports what it did (kit 14.25.1 PATCH; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
 
 **Two misleading blocks in `init`'s output are fixed.** After the `y` that replaces a differing MCP entry, the report
