@@ -6,7 +6,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, SETTINGS_REL, allowRulesFor, readRegistration } from './mcp-registration.mjs';
@@ -426,6 +426,152 @@ describe('acceptance — the mode end to end, through its own CLI', () => {
       out.length = 0;
       assert.equal(main(['--cwd', root], deps), 0);
       assert.match(out.join('\n'), /already registered/u, 'and the re-run says so instead of offering the write again');
+    });
+  });
+});
+
+describe('spec:init-project/S5 mcp replaces only on apply and keeps existing inodes', () => {
+  it('--replace previews the standing and declared entries without writing and help names the flag', async () => {
+    await withRoot(async (root) => {
+      const entry = { type: 'stdio', command: 'node', args: ['/elsewhere/mcp-server.mjs'] };
+      const other = { type: 'stdio', command: 'node', args: ['other.mjs'] };
+      writeJson(mcpAbs(root), { [SERVERS_KEY]: { [SERVER_NAME]: entry, other }, note: 'mine' });
+      const before = readFileSync(mcpAbs(root));
+      const { main } = await load();
+      const out = [];
+      const deps = { ...io, log: (l) => out.push(l), errlog: (l) => out.push(l) };
+      assert.equal(main(['--replace', '--cwd', root], deps), 0);
+      assert.deepEqual(readFileSync(mcpAbs(root)), before);
+      assert.equal(existsSync(settingsAbs(root)), false);
+      const lines = out.join('\n').split('\n');
+      const expected = [
+        '  - .mcp.json: would replace the "agent-workflow" stdio entry',
+        '  the entry standing in .mcp.json now:',
+        ...JSON.stringify(entry, null, 2).split('\n').map((line) => `    ${line}`),
+        '  the entry this registration declares (re-serialized here; the same structured value goes into the file):',
+        ...JSON.stringify(ENTRY, null, 2).split('\n').map((line) => `    ${line}`),
+      ];
+      let previous = -1;
+      for (const line of expected) {
+        const next = lines.indexOf(line, previous + 1);
+        assert.ok(next > previous, line);
+        previous = next;
+      }
+      out.length = 0;
+      assert.equal(main(['--help'], deps), 0);
+      assert.match(out.join('\n'), /--replace/u);
+    });
+  });
+
+  it('--replace --apply replaces the entry, keeps the foreign server and keeps the inode', async () => {
+    await withRoot(async (root) => {
+      const entry = { type: 'stdio', command: 'node', args: ['/elsewhere/mcp-server.mjs'] };
+      const other = { type: 'stdio', command: 'node', args: ['other.mjs'] };
+      writeJson(mcpAbs(root), { [SERVERS_KEY]: { [SERVER_NAME]: entry, other }, note: 'mine' });
+      const before = statSync(mcpAbs(root)).ino;
+      const { main } = await load();
+      const out = [];
+      const deps = { ...io, log: (l) => out.push(l), errlog: (l) => out.push(l) };
+      assert.equal(main(['--replace', '--apply', '--cwd', root], deps), 0);
+      const mcp = readJson(mcpAbs(root));
+      assert.deepEqual(mcp[SERVERS_KEY][SERVER_NAME], ENTRY);
+      assert.deepEqual(mcp[SERVERS_KEY].other, other);
+      assert.equal(mcp.note, 'mine');
+      assert.ok(out.join('\n').split('\n').includes('  - .mcp.json: replaced the "agent-workflow" stdio entry'));
+      assert.equal(statSync(mcpAbs(root)).ino, before);
+    });
+  });
+
+  it('plain --apply keeps both existing target inodes and creates both absent targets', async () => {
+    await withRoot(async (root) => {
+      const other = { type: 'stdio', command: 'node', args: ['other.mjs'] };
+      writeJson(mcpAbs(root), { [SERVERS_KEY]: { other } });
+      writeJson(settingsAbs(root), {});
+      const mcpIno = statSync(mcpAbs(root)).ino;
+      const settingsIno = statSync(settingsAbs(root)).ino;
+      const { main } = await load();
+      const out = [];
+      const deps = { ...io, log: (l) => out.push(l), errlog: (l) => out.push(l) };
+      assert.equal(main(['--apply', '--cwd', root], deps), 0);
+      assert.equal(readRegistration(root, io).registered, true);
+      assert.equal(statSync(mcpAbs(root)).ino, mcpIno);
+      assert.equal(statSync(settingsAbs(root)).ino, settingsIno);
+    });
+    await withRoot(async (root) => {
+      assert.equal(existsSync(mcpAbs(root)), false);
+      assert.equal(existsSync(settingsAbs(root)), false);
+      const { main } = await load();
+      const out = [];
+      const deps = { ...io, log: (l) => out.push(l), errlog: (l) => out.push(l) };
+      assert.equal(main(['--apply', '--cwd', root], deps), 0);
+      assert.equal(existsSync(mcpAbs(root)), true);
+      assert.equal(existsSync(settingsAbs(root)), true);
+      assert.equal(readRegistration(root, io).registered, true);
+    });
+  });
+
+  it('a target that changes after the preflight is refused and nothing is written through it', async () => {
+    const { writeMcp } = await load();
+    const other = { type: 'stdio', command: 'node', args: ['other.mjs'] };
+    // The seam answers undefined (the real primitive) through the preflight a dry run measured, then the raced value.
+    const race = (root, seam, raced) => {
+      let accesses = 0;
+      let limit = Infinity;
+      const deps = { ...io };
+      Object.defineProperty(deps, seam, { enumerable: true, get: () => (++accesses > limit ? raced : undefined) });
+      writeMcp({ cwd: root }, deps);
+      limit = accesses;
+      accesses = 0;
+      return caught(() => writeMcp({ cwd: root, dryRun: false }, deps));
+    };
+    const swapLstat = (target, swap, beforeStat) => {
+      let swapped = false;
+      return (path, ...rest) => {
+        const due = path === target && !swapped;
+        if (due && beforeStat) swap();
+        const stat = lstatSync(path, ...rest);
+        if (due && !beforeStat) swap();
+        swapped ||= due;
+        return stat;
+      };
+    };
+    const toLink = (t, p) => () => {
+      renameSync(t, `${t}.aside`);
+      symlinkSync(p, t);
+    };
+    const toNewFile = (t) => () => {
+      writeFileSync(`${t}.new`, 'racer\n');
+      renameSync(`${t}.new`, t);
+    };
+    const cases = [
+      ['lstat', (t, p) => swapLstat(t, toLink(t, p), true), /is a symlink — refusing to replace it/u],
+      ['lstat', (t, p) => swapLstat(t, toLink(t, p), false), /refusing to write through a symlink/u],
+      ['lstat', (t) => swapLstat(t, toNewFile(t), false), /changed identity between lstat and open/u],
+      ['fstat', () => maskedStat, /refusing to write through it/u],
+      ['constants', () => ({ ...constants, O_NOFOLLOW: 0 }), /no usable O_NOFOLLOW/u],
+    ];
+    for (const [seam, raced, refusal] of cases) {
+      await withRoot(async (root) => {
+        const target = mcpAbs(root);
+        const outside = join(root, 'outside.json');
+        writeFileSync(outside, 'outside\n');
+        writeJson(target, { [SERVERS_KEY]: { other } });
+        const err = race(root, seam, raced(target, outside));
+        assert.match(String(err?.message), refusal);
+        assert.equal(readFileSync(outside, 'utf8'), 'outside\n');
+        assert.equal(existsSync(settingsAbs(root)), false);
+        assert.equal(readFileSync(target, 'utf8').includes(SERVER_PATH), false);
+      });
+    }
+    await withRoot(async (root) => {
+      const target = mcpAbs(root);
+      const err = race(root, 'writeFile', (path, ...rest) => {
+        writeFileSync(target, 'racer\n');
+        return writeFileSync(path, ...rest);
+      });
+      assert.equal(err?.code, 'EEXIST');
+      assert.equal(readFileSync(target, 'utf8'), 'racer\n');
+      assert.equal(existsSync(settingsAbs(root)), false);
     });
   });
 });

@@ -30,6 +30,13 @@ const BARE_NAMES = /\b(getBuiltinModule|binding|dlopen|eval|Function)\b/;
 const PACKAGES = [['kit', KIT], ['engine', join(REPO, 'agent-workflow-engine')], ['memory', join(REPO, 'agent-workflow-memory')]];
 
 const sourceOf = () => readFileSync(GUIDE, 'utf8');
+const readRequired = (name) => {
+  try {
+    return readFileSync(join(KIT, name), 'utf8');
+  } catch (error) {
+    throw new Error(`${name} is absent or unreadable`, { cause: error });
+  }
+};
 const identityOf = (specifier, from) => {
   if (!specifier.startsWith('.')) return specifier.startsWith('node:') ? specifier : `node:${specifier}`;
   return relative(KIT, resolve(dirname(from), specifier)).split('\\').join('/');
@@ -243,7 +250,12 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
   const bridgeLine = ({ file, text }) => /^kit:bridges\/[^/]+\/bin\/[^/]+\.test\.mjs$/.test(file) || file === 'kit:tools/detect-backends.mjs'
     || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text));
 
-  it('says jev or typesafe only on the discovery lines, the jev header and router line, the catalog entry, the advisor lines, the two ack lane rows, the two notes and the intro words, the bridge paragraphs, the bridge mirrors\' host, profile and key lines, their tests, the role-contract copy, the mode doc and the guide', () => {
+  it('says jev or typesafe only on the admitted surfaces and write-lanes lines naming a jev variant or leaf, with neither word in init-project', () => {
+    const laneSource = readRequired('tools/write-lanes.mjs');
+    const initSource = readRequired('tools/init-project.mjs');
+    const laneLines = laneSource.split(LF).filter((text) => WORDS.test(text));
+    for (const text of laneLines) assert.match(text, /(?:^|[^A-Za-z0-9_.-])(?:jev-connect|jev-skill(?:\.earlier)?|jev-(?:facts|connect|skill)\.mjs)(?![A-Za-z0-9_.-])/, text);
+    assert.doesNotMatch(initSource, WORDS, 'tools/init-project.mjs');
     const header = skillLines().findIndex(({ text }) => text === '### Mode: jev');
     assert.ok(header >= 0, 'the jev header');
     const doc = fileLines('kit:references/modes/recommendations.md');
@@ -254,6 +266,7 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     const allowed = [descriptionOf(), readmeRow(), skillLines()[header], skillLines()[header + 2], ...entryLines(), ...advisorLines(),
       ...['jev-connect', 'jev-skill'].map((key) => rowIn('kit:tools/ack-store.mjs', 'export const ACK_LANES', key)), ...notes, intro,
       ...paragraphOf('kit:bridges/codex-cli-bridge/SKILL.md'), ...paragraphOf('kit:bridges/antigravity-cli-bridge/SKILL.md')];
+    allowed.push(...fileLines('kit:tools/write-lanes.mjs').filter(({ text }) => WORDS.test(text)));
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
       const manifest = `kit:bridges/${bridge}/capability.json`;

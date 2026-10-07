@@ -284,6 +284,28 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual exposure, not live: a per-story commit from HEAD is legal under the canon, so a guided user never commits
   unreviewed; the guide only cannot walk the one-commit release. Raised by the review lens at the release review
   (2026-10-05).
+- **INIT-DOCTOR-VERIFY-VERDICT-AFTER-INSTALL** — invariant: a doctor verify verdict printed after its
+  `install completed` line is shown, never a failed apply (spec kit/install/init-project, "Order and consent").
+  Origin: `agent-workflow-kit/tools/init-project.mjs` apply success test accepts only exit 0, or exit 5 with
+  `install completed`; the verify lane can also end 3 (`renderOffer`, `autonomy-doctor.mjs:306`) or 6 after it.
+  Narrow fix: a valid exit whose stdout carries `install completed` is applied-and-shown, with an S11 cell for exit 3
+  after `install completed`. Proof: that cell. Residual exposure, not live: the install itself completed; only the
+  later variants of that batch are left unapplied and named, and the next `init` previews them again. Raised by the
+  review lens at the S13 diff review, round 1 (2026-10-07).
+- **INIT-RECORD-READDIR-REFUSAL** — invariant: every read `init`'s consent record depends on fails into its named
+  refusal (`not applied: <variant> — <path> could not be read: <code>`), never an uncaught throw. Origin:
+  `agent-workflow-kit/tools/init-project.mjs` readEntries calls readdir with no catch; it runs from collectPaths in the
+  mask scan (outside any try) and in takeRecord before its try, so a recorded directory lstat sees and readdir refuses
+  (`EACCES`) ends `init` with a stack trace before the key line; two more callers, outside any try, read after an apply
+  wrote: refreshWrites (`init-project.mjs:140`) reads a written directory, and runPass's restart check
+  (`init-project.mjs:288`) runs collectPaths again after the batch. Narrow fix: readEntries answers `[]` when readdir
+  throws, so the directory's own record key is named by the refusal before any preview; a batch cell with a mode-000
+  `.claude/hooks`. Proof: that cell. Residual exposure, not live: the mask scan throws before any write; takeRecord
+  can throw after the key line saved the key, or in the second pass after the first pass's applies; on refreshWrites
+  the throw comes after that apply wrote and leaves the later variants unapplied and unnamed; on the restart check it
+  comes after the batch and drops the restart line and the second pass; the read can fail in any repository git
+  accepts, a mode-000 directory of the current user included. Raised by the review lens at the S13 diff review, round
+  2 (2026-10-07).
 
 ## Closed
 

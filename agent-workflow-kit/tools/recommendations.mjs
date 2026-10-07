@@ -48,7 +48,8 @@ import {
   SETTINGS_LOCAL_FILE,
 } from './velocity-profile.mjs';
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
-import { deriveDoctorPlan } from './autonomy-doctor.mjs';
+import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
+import { laneOf, routeLine } from './write-lanes.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
@@ -60,7 +61,6 @@ import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKit
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 // The typed channel's READ-ONLY leaf only — never tools/mcp.mjs, which reaches the write core.
 import {
-  MCP_JSON_REL,
   SERVER_NAME as MCP_SERVER_NAME,
   STATE as MCP_STATE,
   readRegistration,
@@ -103,7 +103,7 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
-import { NO_APPLY_LINE, SKILL_PINS, claudeDirOf, connectLine, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
+import { NO_APPLY_LINE, SKILL_PINS, claudeDirOf, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
@@ -117,7 +117,7 @@ export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
 const q = shellQuoteArg;
-const ENFORCEMENT_ABSENT_CODE = 'ENOENT';
+const ABSENT_CODE = 'ENOENT';
 const ENFORCEMENT_KIT_ROOT = resolve(HERE, '..');
 const ENFORCEMENT_BUNDLE_ROOT = join(ENFORCEMENT_KIT_ROOT, 'references', 'scripts');
 const ENFORCEMENT_WHAT = 'the enforcement scripts are not deployed beside docs/ai (no Node evidence) \u2014 the offer copies them and installs the pre-commit hook';
@@ -155,6 +155,7 @@ export const SEVERITIES = Object.freeze({
   'autonomy-policy': SEVERITY_OPTIONAL,
   'autonomy-render': SEVERITY_ATTENTION,
   'sandbox-provision': SEVERITY_OPTIONAL,
+  'sandbox-provision.installable': SEVERITY_OPTIONAL,
   'review-recipe': SEVERITY_ATTENTION,
   'gates-declaration': SEVERITY_OPTIONAL,
   'gates-inert': SEVERITY_ATTENTION,
@@ -185,12 +186,7 @@ export const SEVERITIES = Object.freeze({
   'read-lane.stale': SEVERITY_ATTENTION,
   'read-lane.missing': SEVERITY_ATTENTION,
   'state-block': SEVERITY_OPTIONAL,
-  // The typed channel. The base arm is an ordinary offer; `.masked` stays an offer too (nothing is
-  // broken — the kit simply cannot write through a device node, so the remedy is handed over);
-  // `.differing` reports a CONFIGURED declaration that would launch something else, which is the
-  // one state here a maintainer must actually look at.
   'mcp-channel': SEVERITY_OPTIONAL,
-  'mcp-channel.masked': SEVERITY_OPTIONAL,
   'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
   // The `agents` row above is an OFFER to place vehicles. This one reports a config that ALREADY
@@ -276,7 +272,6 @@ export const WHATS = Object.freeze({
   'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
-  'mcp-channel.masked': '{rel} is a {className} here (a sandbox device mask is the usual cause), so the entry to merge is printed instead',
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
@@ -507,12 +502,18 @@ const probeSandboxProvision = ({ root, deps, add, skip }) => {
   try {
     const p = probeSandboxAvailability(deps);
     if (p.available) return;
-    const plan = deriveDoctorPlan({ probeResult: p, env: deps.env ?? process.env, isExec: deps.isExecutable ?? isExecutableFile });
-    const variant = plan.tuple ? 'sandbox-provision.installable' : 'sandbox-provision';
-    const reason = truncatedTo(oneLineOf(p.reason), templateBudget(WHATS[variant]) - (plan.tuple ? String(plan.tuple).length : 0));
+    const isExec = deps.isExecutable ?? isExecutableFile;
+    const plan = deriveDoctorPlan({ probeResult: p, env: deps.env ?? process.env, isExec });
+    const installable = plan.tuple !== null && plan.untrusted.length === 0 && !plan.envMissing
+      && ((deps.euid ?? (() => process.geteuid?.()))() === 0 || TRUSTED_DIRS.some((dir) => isExec(join(dir, 'sudo'))));
+    const variant = installable ? 'sandbox-provision.installable' : 'sandbox-provision';
+    const reason = truncatedTo(oneLineOf(p.reason), templateBudget(WHATS[variant]) - (installable ? plan.tuple.length : 0));
     // The doctor reads process.cwd() (deployment-gated) and takes no --cwd flag — the one-liner
     // pins the target project via a cd prefix (Segment B).
-    add('sandbox-provision', fillTemplate(WHATS[variant], { reason, tuple: plan.tuple }), `cd ${q(root)} && node ${q(toolPath('autonomy-doctor.mjs'))}`);
+    add('sandbox-provision', fillTemplate(WHATS[variant], { reason, tuple: plan.tuple }),
+      `cd ${q(root)} && node ${q(toolPath('autonomy-doctor.mjs'))}`, variant,
+      installable ? null : 'on native Windows Claude Code runs no sandbox: this item takes no effect there',
+    );
   } catch (err) {
     skip('sandbox-provision', err);
   }
@@ -884,6 +885,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     if (hooksPath === null) return; // not a git tree — nothing to hook
     const hook = (() => {
       try {
+        if (readsAbsent(deps, join(hooksPath, 'pre-commit'))) return null;
         return String(read(join(hooksPath, 'pre-commit'), 'utf8'));
       } catch {
         return null;
@@ -904,7 +906,7 @@ const readEnforcementNode = (path, lstat) => {
   try {
     return lstat(path);
   } catch (err) {
-    if (err?.code === ENFORCEMENT_ABSENT_CODE) return null;
+    if (err?.code === ABSENT_CODE) return null;
     throw new Error(`${path}: ${err?.code ?? err?.message ?? err}`);
   }
 };
@@ -954,7 +956,7 @@ const probeReadLane = ({ root, deps, add, skip, shared }) => {
     // is silently dark; surface it as attention with a place-first recovery (council R2-M2).
     const placeRecovery = () =>
       add('read-lane', fillTemplate(WHATS['read-lane.missing'], {}), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`, 'read-lane.missing');
-    if (!sg.filePlaced) {
+    if (!sg.filePlaced || readsAbsent(deps, join(root, GATE_HOOK_REL))) {
       placeRecovery();
       return;
     }
@@ -1099,9 +1101,9 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
       }),
       // The writer places a missing vehicle and re-derives a placed executor whose bytes differ from the derived body (an invalid
       // frontmatter or read-only tools included), so those states need no precondition; every precondition above is a refusal the apply would meet.
-      `${preconditions.length ? `HAND-APPLY: ${preconditions.join('; ')}, then run: ` : ''}node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
+      `node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
       'executor-vehicle',
-      `hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
+      `${preconditions.length ? `precondition: ${preconditions.join('; ')}; ` : ''}hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
     );
   } catch (err) {
     skip('executor-vehicle', err);
@@ -1234,7 +1236,17 @@ const isStateBlockGuardWired = (data) => {
 // itself (a hook that is not there belongs to the place offers, never to a refresh arm); a symlink,
 // a directory and an unreadable target all THROW into the probe's stated-skip lane.
 const HOOK_CURRENCY = Object.freeze({ CURRENT: 'current', STALE: 'stale', ABSENT: 'absent' });
+const readsAbsent = (deps, path) => {
+  try {
+    (deps.lstat ?? lstatSync)(path);
+    return false;
+  } catch (err) {
+    return err?.code === ABSENT_CODE;
+  }
+};
+
 const readPlacedHookCurrency = (root, deps) => {
+  if (readsAbsent(deps, join(root, GATE_HOOK_REL))) return HOOK_CURRENCY.ABSENT;
   const read = deps.readRegularFileNoFollow ?? readRegularFileNoFollow;
   const placed = read(join(root, GATE_HOOK_REL));
   if (placed.outcome === 'absent') return HOOK_CURRENCY.ABSENT;
@@ -1521,9 +1533,6 @@ export const probeAdrStore = ({ root, deps, add, skip }) => {
 
 // The typed-channel item. It asks the READ-ONLY registration leaf and nothing else — importing the
 // writer would pull the atomic-write core into the advisor's graph (read-graph-purity.test.mjs).
-// The rendered apply is the mode's FLAGLESS preview on purpose: registering an MCP server means the
-// client will RUN that command, so the entry is read before it is declared and the `--apply` stays
-// the maintainer's separate step.
 const probeMcpChannel = ({ root, deps, add, skip }) => {
   try {
     const registration = readRegistration(root, deps);
@@ -1538,49 +1547,16 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
     // settings half can end the probe. A differing entry is fully observable, and an unreadable
     // settings file says nothing about it — returning on the settings mask first hid it.
     assertReadable(registration.mcpJson);
-    const settingsUsable = registration.settings.state !== MCP_STATE.MASKED
-      && registration.settings.state !== MCP_STATE.FOREIGN
-      && registration.settings.state !== MCP_STATE.UNREADABLE
-      && registration.settings.state !== MCP_STATE.MALFORMED;
     if (registration.mcpJson.differs) {
-      // The remedy is the maintainer's edit either way; the "then run" tail is dropped where that
-      // command could not succeed, so the item never hands over a line that exits 1.
-      const tail = settingsUsable ? `, then run ${preview}` : '';
       add(
         'mcp-channel',
         fillTemplate(WHATS['mcp-channel.differing'], { server: MCP_SERVER_NAME }),
-        `HAND-APPLY: edit ${q(join(root, MCP_JSON_REL))} → remove or rename the "${MCP_SERVER_NAME}" entry${tail}`,
+        preview,
         'mcp-channel.differing',
       );
       return;
     }
     assertReadable(registration.settings);
-    // The HAND-APPLY arm renders the MODE's own preview, so it may fire only where that command can
-    // actually run — and the writer refuses a masked settings.json outright (it can neither write it
-    // nor merge into what it cannot read). A masked settings half is therefore a stated SKIP: the
-    // completeness this item decides on is unknowable, and offering a command that exits 1 is worse
-    // than saying nothing.
-    if (registration.settings.state === MCP_STATE.MASKED) {
-      skip('mcp-channel', new Error(`${registration.settings.rel} is a ${registration.settings.className} here (a sandbox device mask is the usual cause) — the registration cannot be judged or written from in here; verify it outside the sandbox`));
-      return;
-    }
-    if (registration.mcpJson.state === MCP_STATE.MASKED) {
-      // The kit cannot write through the mask either, so the remedy is HAND-APPLY. But when the
-      // settings half is already complete, the registration was almost certainly made from outside
-      // the sandbox: what cannot be observed becomes a stated SKIP (optimality withheld), never the
-      // same offer again on every single upgrade.
-      if (registration.settings.complete) {
-        skip('mcp-channel', new Error(`${registration.mcpJson.rel} is a ${registration.mcpJson.className} here (a sandbox device mask is the usual cause) and the settings half is already complete — verify the entry outside the sandbox`));
-        return;
-      }
-      add(
-        'mcp-channel',
-        fillTemplate(WHATS['mcp-channel.masked'], { rel: registration.mcpJson.rel, className: registration.mcpJson.className }),
-        `HAND-APPLY: ${preview}`,
-        'mcp-channel.masked',
-      );
-      return;
-    }
     if (registration.registered) return;
     add('mcp-channel', fillTemplate(WHATS['mcp-channel'], {}), preview);
   } catch (err) {
@@ -1589,16 +1565,16 @@ const probeMcpChannel = ({ root, deps, add, skip }) => {
 };
 
 // The Jev offer (contract: kit/jev-guide, part jev-offer). The key is judged first, through the facts leaf's one rule over
-// the injected environment; the apply is the connect command the USER runs in a terminal of their own (HAND-APPLY), never a guide.
+// the injected environment.
 export const probeJevConnect = ({ root, deps, add, skip }) => {
   try {
     const env = deps.getenv ?? {};
-    if (keySet(env)) return;
+    if (deps.keySet === true || keySet(env)) return;
     if (readAckValue(root, deps, ACKS_JEV_CONNECT_KEY) === JEV_CONNECT_DECLINE) return;
     const host = deps.jevHost ?? {};
     const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
     const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
-    add('jev-connect', WHATS['jev-connect'], `HAND-APPLY: ${connectLine(HERE, host.platform)}`, 'jev-connect',
+    add('jev-connect', WHATS['jev-connect'], routeLine('jev-connect'), 'jev-connect',
       `${place ? `run the apply in ${place}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
   } catch (err) {
     skip('jev-connect', err);
@@ -1610,7 +1586,7 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
 export const probeJevSkill = ({ root, deps, add, skip }) => {
   try {
     const env = deps.getenv ?? {};
-    if (!keySet(env)) return;
+    if (deps.keySet !== true && !keySet(env)) return;
     const host = deps.jevHost ?? {};
     if (typeof host.home !== 'string' || host.home === '') return;
     const pins = deps.jevPins ?? SKILL_PINS;
@@ -1710,14 +1686,29 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
       skip(key, new Error(`item shape violation — ${problems.join('; ')}`));
       return false;
     }
-    items.push({ key, variant, severity: SEVERITIES[variant], what, benefit: BENEFITS[key], apply, detail });
+    items.push({ key, variant, severity: SEVERITIES[variant], lane: laneOf(variant), what, benefit: BENEFITS[key], apply: routeLine(variant) ?? apply, detail });
     return true;
   };
   // The per-run scratch a probe uses to tell a LATER probe what it actually did. Written by exactly
   // one pair today (the marker-stale ⟷ read-lane.stale precedence) and read in the frozen PROBES
   // order, so the reader can never run first.
   const shared = {};
-  for (const probe of deps.probes ?? PROBES) probe({ root, deps, add, skip, shared });
+  const contentDeps = Object.create(Object.getPrototypeOf(deps), {
+    ...Object.getOwnPropertyDescriptors(deps),
+    lstat: {
+      enumerable: true,
+      value: (path, ...args) => {
+        const stat = (deps.lstat ?? deps.lstatSync ?? lstatSync)(path, ...args);
+        if (stat.isCharacterDevice?.() || stat.isBlockDevice?.()) {
+          throw Object.assign(new Error(`${ABSENT_CODE}: ${path}`), { code: ABSENT_CODE });
+        }
+        return stat;
+      },
+    },
+  });
+  for (const probe of deps.probes ?? PROBES) {
+    probe({ root, deps: probe === probeMasksItem ? deps : contentDeps, add, skip, shared });
+  }
   return { root, items, skips };
 };
 
@@ -1743,6 +1734,7 @@ export const formatRecommendations = ({ items, skips }) => {
     ordered.forEach((item, i) => {
       lines.push(`${i + 1}. ${SEVERITY_LABELS[item.severity] ?? SEVERITY_LABELS[SEVERITY_OPTIONAL]}: ${item.what}`);
       lines.push(`   benefit: ${item.benefit}`);
+      lines.push(`   lane: ${item.lane}`);
       if (item.detail) lines.push(`   recipe: ${item.detail}`);
       lines.push(`   apply: ${item.apply}`);
     });
@@ -1776,7 +1768,7 @@ Read-only: never writes, never commits, never runs a subscription CLI. Exit code
 rendered (items or empty); 1 error; 2 usage.`;
 
 // The host facts of the key and skill offers: the platform, the hostname (a throw reads as none), /.dockerenv a regular file, the home.
-const hostFacts = () => ({ platform: process.platform, hostname: (() => { try { return hostname(); } catch { return ''; } })(),
+export const hostFacts = () => ({ platform: process.platform, hostname: (() => { try { return hostname(); } catch { return ''; } })(),
   container: (() => { try { return statSync('/.dockerenv').isFile(); } catch { return false; } })(),
   home: (() => { try { return homedir(); } catch { return ''; } })() });
 

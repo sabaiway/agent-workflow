@@ -11,6 +11,12 @@ const facts = await import('../jev-facts.mjs').catch(() => ({}));
 const placeOf = facts.placeOf ?? (() => { throw new Error('placeOf is absent'); });
 const connectLine = facts.connectLine ?? (() => { throw new Error('connectLine is absent'); });
 const guideMain = (await import('../jev-guide.mjs').catch(() => ({}))).main ?? (() => { throw new Error('main is absent'); });
+const lanes = await import('../write-lanes.mjs').catch(() => ({}));
+const need = (mod, name) => {
+  if (!(name in mod)) throw new Error(`${name} is absent`);
+  return mod[name];
+};
+const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder; if init reports it not pending, restart the agent from that console";
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GUIDE_TOOLS = '/kit tools/dir';
 const BS = '\\';
@@ -89,13 +95,14 @@ describe('spec:jev-guide/S27 the place by proof: one ordered rule, a line of its
   }
 
   for (const [name, env, platform, host, container, place] of CELLS) {
-    it(`the advisor, ${name}: the detail prefix and a pure apply`, () => {
+    it(`the advisor, ${name}: the detail prefix, the route with restart and unquoted console argv whatever the platform`, () => {
       const { items } = buildRecommendations({ cwd: tmp(), deps: { probes: [probeJevConnect], getenv: env, jevHost: { platform, hostname: host, container } } });
       assert.equal(items.length, 1);
-      assert.equal(items[0].apply, `HAND-APPLY: ${connectLine(TOOLS, platform)}`);
+      assert.equal(need(lanes, 'routeLine')('jev-connect'), ROUTE);
+      assert.equal(items[0].apply, ROUTE);
+      assert.deepEqual(need(lanes, 'consoleArgv')('jev-connect', { toolsDir: TOOLS, platform }).apply,
+        ['node', join(TOOLS, 'jev-connect.mjs')]);
       assert.ok(items[0].detail.startsWith(`${prefixOf(place)}HAND-APPLY alternative`), items[0].detail);
-      assert.doesNotMatch(items[0].apply.slice('HAND-APPLY: '.length), PLACE_WORDS, items[0].apply);
-      if (platform === 'win32') assert.equal(items[0].apply, `HAND-APPLY: node '${TOOLS}${BS}jev-connect.mjs'`);
     });
   }
 

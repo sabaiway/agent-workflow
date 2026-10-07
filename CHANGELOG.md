@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-07 — AD-173: `init` applies a project's harness configuration on one terminal "y" (kit 14.25.0 MINOR; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
+
+**`npx @sabaiway/agent-workflow-kit@latest init`, run in a console from a project's folder, now previews every
+pending Recommendations item whose writer it runs on the harness's own configuration (the API key's connect command
+asks first, on its own line, without a preview) and applies the previewed batch on one terminal `y`;
+`/agent-workflow-kit upgrade` then applies the chat items on a chat "yes".** Every advisor item names its lane
+(`console` or `chat`) from one leaf, `tools/write-lanes.mjs`; a console item whose writer `init` runs, and
+`family-freshness`, carry the `init` route line as their apply slot; the other console items keep their text and
+`init` lists them, not applied. The project step skips without a terminal, writes nothing inside an agent session,
+binds its consent to the state its previews read (a file changed outside the batch stops the rest, named) and writes
+the protected files a sandbox binds one by one (the project settings files, `.mcp.json`) in place; `mcp --replace`
+previews a differing entry and replaces it only with `--apply`. The mode docs say the agent never runs a console
+line. Contract `docs/ai/specs/kit/install/init-project/index.md`, live; jev-guide revision 7; velocity-profile
+revision 2; two debt rows from the diff review.
+
 ## 2026-10-06 — AD-172: the bridge tier seeds the placed bridges' declared hosts (kit 14.24.0 MINOR; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
 
 **`velocity-profile --bridge-tier` now also merges the `networkHosts` of every placed bridge into the project

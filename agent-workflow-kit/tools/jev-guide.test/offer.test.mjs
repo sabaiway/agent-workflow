@@ -15,8 +15,12 @@ const loaded = await import('../recommendations.mjs');
 const probeJevConnect = loaded.probeJevConnect ?? (() => { throw new Error('probeJevConnect is absent'); });
 const probeJevSkill = loaded.probeJevSkill ?? (() => { throw new Error('probeJevSkill is absent'); });
 const facts = await import('../jev-facts.mjs').catch(() => ({}));
-const connectLine = facts.connectLine ?? (() => { throw new Error('connectLine is absent'); });
-const skillLine = facts.skillLine ?? (() => { throw new Error('skillLine is absent'); });
+const lanes = await import('../write-lanes.mjs').catch(() => ({}));
+const need = (mod, name) => {
+  if (!(name in mod)) throw new Error(`${name} is absent`);
+  return mod[name];
+};
+const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder; if init reports it not pending, restart the agent from that console";
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KEY = 'TYPESAFE_API_KEY';
 const LANE = 'jev-connect';
@@ -102,22 +106,24 @@ describe('spec:jev-guide/S17 the state table: key × ack, one conjunction admits
 });
 
 describe('spec:jev-guide/S18 the item and the decline round trip', () => {
-  it('renders one optional jev-connect item: the WHAT and BENEFIT literals, the HAND-APPLY connect apply and the decline recipe line', () => {
+  it('renders one optional jev-connect item: lane console, the WHAT and BENEFIT literals, the route with restart, apply-only argv and the decline recipe line', () => {
     const root = projectOf();
     const { items, skips } = alone(root, { getenv: {} });
+    assert.equal(need(lanes, 'routeLine')(LANE), ROUTE);
+    assert.deepEqual(need(lanes, 'consoleArgv')(LANE, { toolsDir: TOOLS }), { preview: null, apply: ['node', join(TOOLS, 'jev-connect.mjs')] });
     assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, what: WHAT, benefit: BENEFIT,
-      apply: `HAND-APPLY: ${connectLine(TOOLS)}`,
+    assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, lane: 'console', what: WHAT, benefit: BENEFIT,
+      apply: ROUTE,
       detail: `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${LANE} --fingerprint ${DECLINE} --cwd ${q(root)}` }]);
     assert.ok(formatRecommendations({ items, skips }).includes(WHAT));
   });
 
-  it('opens the recipe line with the place under deps.jevHost { container: true }, the apply still the bare connect line', () => {
+  it('opens the recipe line with the place under deps.jevHost { container: true }, the apply exactly the route with restart', () => {
     const root = projectOf();
     const [plain] = alone(root, { getenv: {} }).items;
     const { items, skips } = alone(root, { getenv: {}, jevHost: { container: true } });
     assert.equal(skips.length, 0);
-    assert.deepEqual(items.map(({ apply }) => apply), [`HAND-APPLY: ${connectLine(TOOLS, undefined)}`]);
+    assert.deepEqual(items.map(({ apply }) => apply), [ROUTE]);
     assert.equal(items[0].detail, `run the apply in a terminal inside this container; ${plain.detail}`);
     assert.ok(plain.detail.startsWith('HAND-APPLY alternative'), plain.detail);
   });
@@ -160,18 +166,20 @@ describe('spec:jev-guide/S21 one key rule, one leaf: the facts leaf exports it, 
   const importLine = (source) => source.split('\n').find((item) => /^import \{[^}]*\} from '\.\/jev-facts\.mjs';$/.test(item));
   const namesOf = (line) => line.match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).filter(Boolean).sort();
 
-  it('each probe span calls keySet( and carries no .trim( and no key name; the connect span calls connectLine(, the skill span skillLine(', () => {
+  it('each probe span calls keySet( and carries no .trim( and no key name; the connect span carries no connectLine(, the skill span calls skillLine(', () => {
     const source = readFileSync(join(TOOLS, 'recommendations.mjs'), 'utf8');
-    for (const [name, call] of [['probeJevConnect', 'connectLine('], ['probeJevSkill', 'skillLine(']]) {
+    for (const name of ['probeJevConnect', 'probeJevSkill']) {
       const span = probeSpan(source, name);
-      assert.ok(span.includes('keySet(') && span.includes(call), span);
+      assert.ok(span.includes('keySet('), span);
       assert.ok(!span.includes('.trim(') && !span.includes(KEY), span);
     }
+    assert.ok(!probeSpan(source).includes('connectLine('), probeSpan(source));
+    assert.ok(probeSpan(source, 'probeJevSkill').includes('skillLine('), probeSpan(source, 'probeJevSkill'));
   });
 
   it('the advisor imports exactly its nine names from ./jev-facts.mjs and nothing from the guide', () => {
     const source = readFileSync(join(TOOLS, 'recommendations.mjs'), 'utf8');
-    assert.deepEqual(namesOf(importLine(source)), ['NO_APPLY_LINE', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
+    assert.deepEqual(namesOf(importLine(source)), ['NO_APPLY_LINE', 'SKILL_PINS', 'claudeDirOf', 'keySet', 'placeOf',
       'printable', 'skillLine', 'skillState', 'skillTargets'].sort());
     assert.doesNotMatch(source, /from '\.\/jev-guide\.mjs'/);
   });
@@ -256,22 +264,28 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
     }
   }
 
-  it('renders one optional item: the WHAT and BENEFIT literals, the HAND-APPLY skill line with --claude-dir, and the decline as the recipe tail', () => {
+  it('renders one optional item: lane console, the WHAT and BENEFIT literals, the route with restart, argv with --claude-dir and the decline as the recipe tail', () => {
     const root = projectOf();
     const home = homeOf([null, 'current', 'current']);
-    const { items, skips } = skillAlone(root, { getenv: KEYS.set, jevHost: { home } });
+    const deps = { getenv: KEYS.set, jevHost: { home } };
+    const { items, skips } = skillAlone(root, deps);
+    assert.equal(need(lanes, 'routeLine')(SKILL_LANE), ROUTE);
+    assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: deps.getenv, home, platform: undefined }),
+      { apply: ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', join(home, '.claude')],
+        preview: ['node', join(TOOLS, 'jev-skill.mjs'), '--claude-dir', join(home, '.claude')] });
     assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, what: SKILL_WHAT, benefit: SKILL_BENEFIT,
-      apply: `HAND-APPLY: ${skillLine(TOOLS, undefined, join(home, '.claude'))}`, detail: recordFor(root) }]);
-    assert.ok(items[0].apply.endsWith(` --apply --claude-dir ${q(join(home, '.claude'))}`), items[0].apply);
+    assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, lane: 'console', what: SKILL_WHAT, benefit: SKILL_BENEFIT,
+      apply: ROUTE, detail: recordFor(root) }]);
   });
 
-  it('the earlier variant names the earliest tag found and the judged pins\' first tag', () => {
+  it('the earlier variant names the earliest tag found and the judged pins\' first tag, with the route and restart as its apply', () => {
     const root = projectOf();
     const two = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['current', 'older', 'current']) } }).items;
     assert.deepEqual(two.map(({ variant, what }) => [variant, what]), [['jev-skill.earlier', earlierWhat('v0.5.6')]]);
+    assert.deepEqual(two.map(({ apply }) => apply), [ROUTE]);
     const three = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['older', 'current', 'oldest']) } }).items;
     assert.deepEqual(three.map(({ what }) => what), [earlierWhat('v0.5.5')]);
+    assert.deepEqual(three.map(({ apply }) => apply), [ROUTE]);
   });
 
   it('renders nothing for a deps without jevHost.home and nothing, no skip, for a foreign-only home', () => {
@@ -281,18 +295,22 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
       { root, items: [], skips: [] });
   });
 
-  it('an absolute CLAUDE_CONFIG_DIR moves the judged Claude Code target and the --claude-dir; a relative one keeps <home>/.claude with the note', () => {
+  it('an absolute CLAUDE_CONFIG_DIR moves the judged Claude Code target and console argv; a relative one keeps <home>/.claude with the recipe note, both items apply via the route with restart', () => {
     const root = projectOf();
     const home = homeOf(['current', 'current', 'current']);
     const cc = join(home, 'elsewhere', 'cc');
-    const [moved] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: cc }, jevHost: { home } }).items;
-    assert.equal(moved.apply, `HAND-APPLY: ${skillLine(TOOLS, undefined, cc)}`);
+    const absoluteEnv = { ...KEYS.set, CLAUDE_CONFIG_DIR: cc };
+    const relativeEnv = { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' };
+    const [moved] = skillAlone(root, { getenv: absoluteEnv, jevHost: { home } }).items;
+    assert.equal(moved.apply, ROUTE);
+    assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: absoluteEnv, home }).apply, ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', cc]);
     assert.equal(moved.detail, recordFor(root));
     const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(home, '.claude')}`;
-    assert.deepEqual(skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' }, jevHost: { home } }).items, []);
+    assert.deepEqual(skillAlone(root, { getenv: relativeEnv, jevHost: { home } }).items, []);
     rmSync(homeTargets(home)[1], { recursive: true });
-    const [relative] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' }, jevHost: { home } }).items;
-    assert.equal(relative.apply, `HAND-APPLY: ${skillLine(TOOLS, undefined, join(home, '.claude'))}`);
+    const [relative] = skillAlone(root, { getenv: relativeEnv, jevHost: { home } }).items;
+    assert.equal(relative.apply, ROUTE);
+    assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: relativeEnv, home }).apply, ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', join(home, '.claude')]);
     assert.equal(relative.detail, `${note}; ${recordFor(root)}`);
   });
 

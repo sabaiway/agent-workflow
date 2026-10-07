@@ -19,11 +19,20 @@ import { fileURLToPath } from 'node:url';
 import { OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
 import { ACK_LANES } from '../tools/ack-store.mjs';
 
+const lanes = await import('../tools/write-lanes.mjs').catch(() => ({}));
+const need = (mod, name) => {
+  if (!(name in mod)) {
+    throw new Error(`${name} is absent`);
+  }
+  return mod[name];
+};
+
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => readFileSync(resolve(kitRoot, rel), 'utf8');
 
 const MODE_DOC = read('references/modes/recommendations.md');
 const UPGRADE_DOC = read('references/modes/upgrade.md');
+const BOOTSTRAP_DOC = read('references/modes/bootstrap.md');
 const VELOCITY_DOC = read('references/modes/velocity.md');
 const HOOK_DOC = read('references/modes/hook.md');
 const README = read('README.md');
@@ -394,7 +403,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39239, '1ac8080a8fc8dba5cb8f40f62fa5ed898773cee6b80e396bd405bff5f87d5c0a'], 'the HEAD 6fabf9f bytes');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39663, '04b182b73c6751aa8e797737e04bac987c41c6903c67c8b5947b27fd97dd5073'], 'the S13 bytes (spec init-project S7 adds the lane sentences)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -443,5 +452,80 @@ describe('recommendations contract — the jev-connect and jev-skill offers (spe
     assert.match(TOOL_SOURCE, /^export const probeJevSkill = /m);
     const probes = between(TOOL_SOURCE, 'const PROBES = Object.freeze([', ']);').split('\n').slice(1).map((line) => line.trim().replace(/,$/, ''));
     assert.deepEqual(probes.filter(Boolean), [...PROBE_ORDER.slice(0, -1), 'probeJevConnect', 'probeJevSkill', PROBE_ORDER.at(-1)]);
+  });
+});
+
+const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder";
+const RESTART = '; if init reports it not pending, restart the agent from that console';
+const ROUTED_VARIANTS = Object.freeze([
+  'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render',
+  'gate-hook', 'read-lane.missing', 'mcp-channel', 'mcp-channel.differing',
+  'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
+  'jev-skill.earlier', 'jev-connect', 'family-freshness',
+]);
+const RESTART_VARIANTS = Object.freeze([
+  'bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable',
+]);
+const KEPT_CONSOLE_APPLY_LITERALS = Object.freeze([
+  'HAND-APPLY: add a Stop hook running',
+  'HAND-APPLY: mkdir -p {root}/scripts',
+  'HAND-APPLY: rm ',
+  "cd ${q(root)} && node ${q(toolPath('autonomy-doctor.mjs'))}",
+]);
+const CONSOLE_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-connect', 'jev-skill']);
+const MODE_LANE_SENTENCES = Object.freeze([
+  "never runs a console item's line",
+  'never retries a refused write outside the sandbox',
+  'continues past every console item',
+  'every failure of a chat step is a STOP',
+]);
+const UNMEASURED_HOSTS = Object.freeze(['Codex', 'Devin', 'agy', 'macOS']);
+
+describe('spec:init-project/S6 — console route lines, kept form (c) text and terminal posture notes', () => {
+  it('no form (a) or (b) item and no family-freshness item carries HAND-APPLY or says the agent cannot or must not apply it; other form (c) items keep today\'s text and posture notes name console init on the terminal', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    const routeLine = need(lanes, 'routeLine');
+    for (const variant of ROUTED_VARIANTS) {
+      const line = routeLine(variant);
+      assert.equal(line, RESTART_VARIANTS.includes(variant) ? ROUTE + RESTART : ROUTE, variant);
+      assert.doesNotMatch(line, /HAND-APPLY|\bcannot\b|\bmust not\b/, variant);
+    }
+    for (const literal of KEPT_CONSOLE_APPLY_LITERALS) {
+      assert.ok(TOOL_SOURCE.includes(literal), `the other form (c) items keep: ${literal}`);
+    }
+    for (const key of CONSOLE_POSTURE_KEYS) {
+      const start = `- \`${key}\` —`;
+      assert.ok(notes.includes(start), `the ${key} posture note exists`);
+      const note = notes.slice(notes.indexOf(start)).split(POSTURE_NOTE_BOUNDARY)[0];
+      assert.match(note, /\bconsole\b/, key);
+      assert.match(note, /\binit\b/, key);
+      assert.match(note, /\bterminal\b/, key);
+    }
+  });
+});
+
+describe('spec:init-project/S7 — mode docs keep console items pending and stop on chat failures', () => {
+  it('upgrade.md, bootstrap.md and recommendations.md carry the never-run, never-retry, continue-past and STOP sentences', () => {
+    for (const [name, doc] of [['upgrade.md', UPGRADE_DOC], ['bootstrap.md', BOOTSTRAP_DOC], ['recommendations.md', MODE_DOC]]) {
+      for (const sentence of MODE_LANE_SENTENCES) {
+        assert.ok(doc.includes(sentence), `${name} states: ${sentence}`);
+      }
+    }
+  });
+
+  it('bootstrap closes on the console-pending list and the run-init line, and recommendations.md\'s example of an agent-run mutation is a chat item', () => {
+    const applyLane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
+    assert.ok(BOOTSTRAP_DOC.includes('console-pending'));
+    assert.ok(BOOTSTRAP_DOC.includes('run init from this folder, then restart'));
+    assert.doesNotMatch(applyLane, /family-freshness/);
+  });
+});
+
+describe('spec:init-project/S19 — native Windows, unmeasured hosts and first-session prompt limits', () => {
+  it('the sandbox items say on native Windows that they take no effect there, and the mode doc states the unmeasured hosts and the first-session prompt limit', () => {
+    const lines = MODE_DOC.split('\n');
+    assert.match(MODE_DOC, /native Windows[^\n]*no effect/);
+    assert.ok(lines.some((line) => line.includes('unmeasured') && UNMEASURED_HOSTS.every((host) => line.includes(host))), 'one line names every unmeasured host');
+    assert.match(MODE_DOC, /first session[^\n]*prompt/);
   });
 });

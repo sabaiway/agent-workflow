@@ -16,7 +16,7 @@
 //     would be a client error on every startup;
 //   • merge-don't-clobber — foreign servers, foreign settings keys and existing allow rules are
 //     preserved; re-apply adds nothing twice; the file's EOL is kept;
-//   • a same-name entry that STRUCTURALLY DIFFERS is REFUSED unwritten (key order is ignored, so a
+//   • without `--replace`, a same-name entry that STRUCTURALLY DIFFERS is REFUSED unwritten (key order is ignored, so a
 //     re-serialized identical entry is the SAME registration) — silently changing what an MCP server
 //     launches is exactly what consent must not slide past; the recovery is named;
 //   • the preflight is READ-ONLY: an absent `.claude/` is a NAMED state, and the dir is created on
@@ -32,11 +32,16 @@
 // Exit codes: 0 done / dry-run (incl. the hand-apply masked state); 1 precondition STOP; 2 usage.
 // Dependency-free beyond the kit's own exports, Node >= 22. No side effects on import.
 
-import { lstatSync } from 'node:fs';
+import {
+  lstatSync, openSync, closeSync, fstatSync, writeFileSync, ftruncateSync, fsyncSync,
+  renameSync, constants,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertCreatableDirSafe, writeContainedFileAtomic } from './atomic-write.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import { describeNonRegular } from './fs-read-nofollow.mjs';
+import { assertContainedRealPath } from './fs-safe.mjs';
 import {
   CLAUDE_DIR_REL,
   ENABLED_KEY,
@@ -67,16 +72,16 @@ const LF = '\n';
 const JSON_INDENT = 2;
 
 export const MCP_TOOL = fileURLToPath(import.meta.url);
-export const applyMcpCommand = (root) => `node ${q(MCP_TOOL)} --apply --cwd ${q(root)}`;
+export const applyMcpCommand = (root, replace = false) => `node ${q(MCP_TOOL)}${replace ? ' --replace' : ''} --apply --cwd ${q(root)}`;
 
-const USAGE = `usage: mcp [--dry-run | --apply] [--cwd <dir>] [--help]
+const USAGE = `usage: mcp [--dry-run | --apply] [--replace] [--cwd <dir>] [--help]
 
 Registers this kit's stdio MCP server in ONE project: the "${SERVER_NAME}" entry in
 ${MCP_JSON_REL}, and "${ENABLED_KEY}" + the two tool allow rules in ${SETTINGS_REL}.
 Default is --dry-run (a preview that prints the exact entry and writes nothing).
---apply writes: ${MCP_JSON_REL} first, then ${SETTINGS_REL}; merge-don't-clobber, EOL kept.
+--apply writes: ${MCP_JSON_REL} first, then ${SETTINGS_REL}; merge-don't-clobber, EOL kept. An existing target is written in place; --replace replaces a differing entry only with --apply.
 
-An existing "${SERVER_NAME}" entry that STRUCTURALLY DIFFERS is refused unwritten (key
+Without --replace, an existing "${SERVER_NAME}" entry that STRUCTURALLY DIFFERS is refused unwritten (key
 order is ignored). Where ${MCP_JSON_REL} is a device node, FIFO or socket — an OS sandbox
 mask is the usual cause — the entry to merge is printed and nothing is written.
 Never writes settings.local.json; never commits.`;
@@ -122,7 +127,7 @@ const assertTargetUsable = (target, { maskedAllowed = false } = {}) => {
   }
 };
 
-export const preflightMcp = ({ cwd }, deps = {}) => {
+export const preflightMcp = ({ cwd, replace = false }, deps = {}) => {
   const root = resolve(cwd ?? deps.cwd ?? process.cwd());
   // The ROOT is judged BEFORE the registration is read, not merely before the first write: reading
   // first would follow the very link this refuses, which is exactly what the shipped claim denies.
@@ -152,7 +157,7 @@ export const preflightMcp = ({ cwd }, deps = {}) => {
   }
   assertTargetUsable(registration.mcpJson, { maskedAllowed: true });
   assertTargetUsable(registration.settings);
-  if (registration.mcpJson.differs) {
+  if (registration.mcpJson.differs && !replace) {
     throw makeMcpError(
       MCP_DIFFERS,
       `${MCP_JSON_REL} already carries an "${SERVER_NAME}" server entry that STRUCTURALLY DIFFERS from this kit copy's registration — refusing to change what it launches; review that entry and remove or rename it, then re-run`,
@@ -173,8 +178,53 @@ export const planMcp = (registration) => ({
 
 // ── the writer ─────────────────────────────────────────────────────────────────────────
 
-export const writeMcp = ({ cwd, dryRun = true } = {}, deps = {}) => {
-  const preflight = preflightMcp({ cwd: cwd ?? deps.cwd ?? process.cwd() }, deps);
+const writeTarget = (root, target, body, deps, stop) => {
+  const leaf = lstatNoFollow(target.abs, deps.lstat);
+  if (target.state === STATE.ABSENT) {
+    const assertAbsent = (dst) => {
+      if (lstatNoFollow(dst, deps.lstat) !== null) {
+        throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+      }
+    };
+    assertAbsent(target.abs);
+    const rename = (tmp, dst) => {
+      assertAbsent(dst);
+      (deps.rename ?? renameSync)(tmp, dst);
+    };
+    return writeContainedFileAtomic(root, target.abs, body, { ...deps, rename }, { stop, label: target.rel });
+  }
+  if (leaf?.isSymbolicLink()) {
+    throw stop(`${target.rel} is a symlink — refusing to replace it (a write would clobber the link target)`);
+  }
+  try {
+    assertContainedRealPath(root, target.abs, deps);
+  } catch (err) {
+    throw stop(String(err?.message ?? err).replace(/^\[agent-workflow-kit\] /, ''));
+  }
+  const flags = deps.constants ?? constants;
+  if (!flags.O_NOFOLLOW || !flags.O_NONBLOCK) {
+    throw stop('this platform exposes no usable O_NOFOLLOW|O_NONBLOCK open flags — refusing to open (fail closed)');
+  }
+  const fd = (deps.open ?? openSync)(target.abs, flags.O_WRONLY | flags.O_NOFOLLOW | flags.O_NONBLOCK);
+  try {
+    const stat = (deps.fstat ?? fstatSync)(fd);
+    if (!stat.isFile()) {
+      throw stop(`${target.rel} is a ${describeNonRegular(stat)} — refusing to write through it`);
+    }
+    if (leaf === null || stat.dev !== leaf.dev || stat.ino !== leaf.ino) {
+      throw stop('the leaf changed identity between lstat and open (fail closed)');
+    }
+    const bytes = Buffer.from(body, 'utf8');
+    (deps.writeFile ?? writeFileSync)(fd, bytes);
+    (deps.ftruncate ?? ftruncateSync)(fd, bytes.length);
+    (deps.fsync ?? fsyncSync)(fd);
+  } finally {
+    (deps.close ?? closeSync)(fd);
+  }
+};
+
+export const writeMcp = ({ cwd, dryRun = true, replace = false } = {}, deps = {}) => {
+  const preflight = preflightMcp({ cwd: cwd ?? deps.cwd ?? process.cwd(), replace }, deps);
   const base = { ...preflight, dryRun, wrote: false };
   if (preflight.masked) return { ...base, fragments: renderFragments(preflight.registration) };
   if (dryRun) return base;
@@ -182,7 +232,7 @@ export const writeMcp = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const { root, registration, plan } = preflight;
   const stop = (message) => makeMcpError(MCP_SYMLINK, message);
   if (plan.writeMcpJson) {
-    writeContainedFileAtomic(root, registration.mcpJson.abs, plan.mcpBody, deps, { stop, label: MCP_JSON_REL });
+    writeTarget(root, registration.mcpJson, plan.mcpBody, deps, stop);
   }
   if (plan.writeSettings) {
     // A settings failure AFTER the entry landed leaves a STANDING registration on disk that never
@@ -194,12 +244,12 @@ export const writeMcp = ({ cwd, dryRun = true } = {}, deps = {}) => {
       // The ONE write the preflight deliberately does not do: creating `.claude/` is a mutation, so
       // it belongs on the apply lane only — a preview that made a directory would not be a preview.
       assertCreatableDirSafe(join(root, CLAUDE_DIR_REL), deps, { stop, noun: SETTINGS_REL });
-      writeContainedFileAtomic(root, registration.settings.abs, plan.settingsBody, deps, { stop, label: SETTINGS_REL });
+      writeTarget(root, registration.settings, plan.settingsBody, deps, stop);
     } catch (err) {
       // Reaching here always leaves a STANDING registration on disk — either this run wrote the
       // entry (`writeMcpJson`) or the preflight found it already current (`matches`), and those two
       // are exhaustive, so the note is unconditional rather than guarded by a branch nothing can
-      // take. A differing entry never reaches the writer at all; it STOPs in the preflight.
+      // take. Without --replace, a differing entry STOPs in the preflight.
       throw Object.assign(err, { message: `${err.message}\n${HIDDEN_MODE_LINE}` });
     }
   }
@@ -221,7 +271,9 @@ const indented = (text) => text.trimEnd().split(LF).map((line) => `    ${line}`)
 
 const mcpJsonLine = (result) => {
   if (!result.plan.writeMcpJson) return `  - ${MCP_JSON_REL}: already current`;
-  const verb = result.dryRun ? 'would add' : 'added';
+  const verb = result.registration.mcpJson.differs
+    ? (result.dryRun ? 'would replace' : 'replaced')
+    : (result.dryRun ? 'would add' : 'added');
   return `  - ${MCP_JSON_REL}: ${verb} the "${SERVER_NAME}" stdio entry`;
 };
 
@@ -264,24 +316,29 @@ export const formatResult = (result) => {
       : 'agent-workflow MCP registration — APPLY',
     mcpJsonLine(result),
     settingsLine(result),
+    ...(result.registration.mcpJson.differs ? [
+      '  the entry standing in .mcp.json now:',
+      indented(JSON.stringify(result.registration.mcpJson.existing, null, JSON_INDENT)),
+    ] : []),
     '  the entry this registration declares (re-serialized here; the same structured value goes into the file):',
     indented(JSON.stringify(result.registration.entry, null, JSON_INDENT)),
     POSTURE_LINE,
     HIDDEN_MODE_LINE,
   ];
-  if (result.dryRun) lines.push(`  to apply: ${applyMcpCommand(result.root)}`);
+  if (result.dryRun) lines.push(`  to apply: ${applyMcpCommand(result.root, result.registration.mcpJson.differs)}`);
   return lines.join(LF);
 };
 
 // ── CLI ────────────────────────────────────────────────────────────────────────────────
 
 export const parseArgs = (argv) => {
-  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false };
+  const opts = { dryRunFlag: false, apply: false, replace: false, cwd: undefined, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--dry-run') opts.dryRunFlag = true;
     else if (arg === '--apply') opts.apply = true;
+    else if (arg === '--replace') opts.replace = true;
     else if (arg === '--cwd') {
       i += 1;
       // An EMPTY (or whitespace) value passes both guards above, and `resolve('')` silently means the
@@ -296,7 +353,7 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.dryRunFlag && opts.apply) throw fail(EXIT_USAGE, '--dry-run and --apply cannot be used together');
-  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd };
+  return { help: opts.help, dryRun: !opts.apply, replace: opts.replace, cwd: opts.cwd };
 };
 
 export const main = (argv = process.argv.slice(2), deps = {}) => {
@@ -308,10 +365,11 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(USAGE);
       return EXIT_OK;
     }
-    log(formatResult(writeMcp({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun }, deps)));
+    log(formatResult(writeMcp({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun, replace: args.replace }, deps)));
     return EXIT_OK;
   } catch (err) {
-    errlog(err?.message ?? String(err));
+    const message = err?.message ?? String(err);
+    errlog(err?.code && err.name !== 'McpError' && !message.includes(err.code) ? `${err.code}: ${message}` : message);
     if (err?.exitCode === EXIT_USAGE) errlog(USAGE);
     return err?.exitCode ?? EXIT_PRECONDITION;
   }

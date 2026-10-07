@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.25.0 — `init`, run in a console from a project's folder, applies that project's harness configuration on one "y" (AD-173)
+
+**`npx @sabaiway/agent-workflow-kit@latest init` gains a project step.** Run in your own console from a project's
+folder, it previews every pending Recommendations item whose writer it runs on the harness's own configuration
+(`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/agent-workflow-gates.mjs`, `.mcp.json`, the Jev agent
+skill copies) and applies the previewed batch on one terminal `y`; a console item it has no writer for yet
+(`commit-guard`, `enforcement`, `state-block`, `gate-hook.marker-stale`, `read-lane.stale`, the bare
+`sandbox-provision`) is listed with its text, not applied. The route is now: `init` in a console, then
+`/agent-workflow-kit upgrade` in a session, which applies the chat items on your chat "yes".
+
+- **Every item names its lane.** The Recommendations screen and `--json` carry `lane: console` or `lane: chat` per
+  item, from one new leaf, `tools/write-lanes.mjs`. A console item `init` runs, and `family-freshness`, has the apply
+  slot `applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder`, an
+  env-dependent one with `; if init reports it not pending, restart the agent from that console` appended; the other
+  console items keep their apply text; a chat item's apply text is unchanged.
+- **Where the step runs, and where it does not.** Without a terminal (a piped `init`) it prints `project step
+  skipped: no terminal — run init in a console from the project's folder`. Inside an agent session it writes nothing
+  and says `you are inside an agent; run this in your own terminal`. Outside any project it offers only the API key
+  and its agent skill. A project whose stamp is behind the kit lists no project item and says `run
+  /agent-workflow-kit upgrade, then init again`.
+- **Consent covers what you saw.** The key line comes first (Enter skips). Then each preview prints, with its posture
+  note where its item has one, and one `y` applies them all (a sudo install asks once more). A file changed outside the batch after the
+  previews stops that item and every later one, named; a failed apply stops the batch and `init` exits non-zero. A
+  second pass asks once more only for items the batch unlocked.
+- **Files a sandbox binds stay in place.** An existing `.mcp.json` or `.claude/settings.json` keeps its inode.
+  `/agent-workflow-kit mcp --replace` previews the standing `agent-workflow` entry and the one it would write, and
+  replaces it only with `--apply`; without `--replace` a differing entry still stops unwritten.
+- **The agent never runs a console line.** The upgrade, bootstrap and recommendations mode docs say so; the agent
+  continues past every console item, and a failed chat step stays a stop. The tarball holds 362 files.
+
 ## 14.24.0 — the bridge tier also writes the placed bridges' hosts into the project sandbox, so where the host honours the settings sandbox keys a review the harness keeps sandboxed is not refused them (AD-172)
 
 **`velocity-profile --bridge-tier` now merges the declared hosts of every placed bridge (each bundled manifest's

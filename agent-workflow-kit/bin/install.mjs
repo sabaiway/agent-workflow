@@ -42,17 +42,9 @@ import { assertInstallableHome, prunePayload } from '../tools/payload-prune.mjs'
 // second drifting copy). The null-on-unparseable contract is load-bearing here: legacy installs
 // predate any version stamp, so an unparseable side means "no gate", never a false ordering.
 import { compareSemver } from '../tools/semver-lite.mjs';
-// The ONE registry of family members (npm packages, kinds). The init-refresh cascade derives its
-// membership from this table — no second source of "who gets refreshed" — so it can't drift from the
-// manifests (a drift-guard test pins the derivation). Imported from the DATA LEAF (family-members.mjs),
-// NOT family-registry.mjs. Leanness note: the bridge-refresh driver below does pull in the backend
-// detector + the manifest validator (setup-backends' imports), but still NOT the status/presenter
-// graph (family-registry, renderers, recipes) — the npx cold-start path stays presenter-free.
+// Cascade membership derives from the data leaf; the npx cold-start path stays presenter-free.
 import { FAMILY_MEMBERS } from '../tools/family-members.mjs';
-// The refresh-only bridge driver (shared with `/agent-workflow-kit setup --refresh-placed` and the
-// upgrade reconcile): refreshes ONLY a bridge `setup` already placed — an absent bridge is a stated
-// skip (never a first placement, AD-009/AD-011) and a placed bridge newer than this kit's bundled
-// mirror is a stated skip too (never a downgrade). Every line it returns is tool-composed.
+// Refresh only placed bridges; never place an absent bridge or downgrade a newer one (AD-009/AD-011).
 import { refreshPlacedBridges } from '../tools/setup-backends.mjs';
 import { reconcileSettings } from '../tools/bridge-settings.mjs';
 
@@ -535,17 +527,26 @@ const main = async () => {
           `    ${engineCmd}                                          (install the engine — recommended)\n` +
           `    npx @sabaiway/agent-workflow-kit@latest init --no-engine   (skip it deliberately)`,
       );
+      console.log('[agent-workflow-kit] project step skipped: an earlier step stopped init');
       process.exit(1);
     }
     console.log('[agent-workflow-kit] methodology engine installed.');
   }
 
   // The non-convergence line already took the verb's place.
-  if (!prune.ok) process.exit(1);
+  if (!prune.ok) {
+    console.log('[agent-workflow-kit] project step skipped: an earlier step stopped init');
+    process.exit(1);
+  }
 
-  // This command (de)installed the *kit* globally. Deploying it into a project is a
-  // separate, in-agent step — and which sub-command depends on whether that project
-  // already has the kit. Spell both out so it's unambiguous (see README "Use").
+  const project = spawnSync(process.execPath, [resolve(target, 'tools/init-project.mjs')], {
+    stdio: 'inherit',
+    cwd: process.cwd(),
+  });
+  const projectExited = Number.isInteger(project?.status) && project.status >= 0 && !project.error && !project.signal;
+  if (!projectExited) console.error(project?.error ?? project?.signal ?? project ?? 'empty answer');
+  process.exitCode = projectExited ? project.status : 1;
+
   printRestartHint(); // carrier fallback — a no-op when the verb path already printed it
   console.log(`
 Next — open your agent inside a project and run the skill:
@@ -555,7 +556,6 @@ Next — open your agent inside a project and run the skill:
   • per agent: Claude Code -> /agent-workflow-kit · Devin Local -> /agent-workflow-kit ·
     Codex -> its /skills menu -> agent-workflow-kit (Codex may also auto-trigger it)
 
-This command only installs/updates the kit itself (in ${tildify(target)}).
 To update the kit later, re-run:  npx @sabaiway/agent-workflow-kit@latest init`);
 };
 
