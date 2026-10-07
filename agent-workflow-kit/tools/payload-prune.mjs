@@ -107,7 +107,9 @@ const readTree = (root, entry, reports, directoryOnly = false) => {
   return entries;
 };
 
+// The walk lists a directory before its children, so a kept directory's line covers the directories beneath it.
 const planSubtree = (carried, installed, orphans, reports) => {
+  const keptDirectories = [];
   for (const [path, kind] of installed) {
     if (carried.has(path)) {
       const packageKind = carried.get(path);
@@ -119,7 +121,10 @@ const planSubtree = (carried, installed, orphans, reports) => {
       }
     } else if (kind === 'file') {
       orphans.push(path);
+    } else if (kind === 'directory' && keptDirectories.some((kept) => path.startsWith(`${kept}/`))) {
+      continue;
     } else {
+      if (kind === 'directory') keptDirectories.push(path);
       reports.push({
         ok: true,
         line: `${PREFIX} kept ${path} (a ${kind} the package does not carry — yours to remove by hand)`,

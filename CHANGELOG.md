@@ -7,6 +7,13 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-07 — AD-174: `init` reports what it did (kit 14.25.1 PATCH; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
+
+**Two misleading blocks in `init`'s output are fixed.** After the `y` that replaces a differing MCP entry, the report
+now labels the old entry as the one it replaced, not as the one standing in `.mcp.json` now. A folder inside one of the kit's own
+folders that the package does not carry still prints its `kept` line, but a folder inside it prints none of its own. No project file changes; no
+migration note. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-07 — AD-173: `init` applies a project's harness configuration on one terminal "y" (kit 14.25.0 MINOR; memory 8.1.4, engine 5.12.0 and both bridges unchanged)
 
 **`npx @sabaiway/agent-workflow-kit@latest init`, run in a console from a project's folder, now previews every

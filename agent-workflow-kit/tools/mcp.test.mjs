@@ -477,7 +477,7 @@ describe('spec:init-project/S5 mcp replaces only on apply and keeps existing ino
       assert.deepEqual(mcp[SERVERS_KEY][SERVER_NAME], ENTRY);
       assert.deepEqual(mcp[SERVERS_KEY].other, other);
       assert.equal(mcp.note, 'mine');
-      assert.ok(out.join('\n').split('\n').includes('  - .mcp.json: replaced the "agent-workflow" stdio entry'));
+      assert.deepEqual(['  - .mcp.json: replaced the "agent-workflow" stdio entry', '  the entry this run replaced in .mcp.json:', '  the entry now in .mcp.json (re-serialized here; the file holds the same structured value):', '  the entry standing in .mcp.json now:'].map((line) => out.join('\n').split('\n').includes(line)), [true, true, true, false]);
       assert.equal(statSync(mcpAbs(root)).ino, before);
     });
   });

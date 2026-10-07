@@ -173,13 +173,13 @@ describe('spec:upgrade-delivery/S12 orphan removal at every depth', () => {
 });
 
 describe('spec:upgrade-delivery/S13 preserved objects and payload boundaries', () => {
-  it('keeps and reports an empty uncarried directory', async () => {
+  it('keeps an empty uncarried directory tree and reports it by its top directory alone', async () => {
     const fixture = createFixture();
-    mkdirSync(join(fixture.home, 'tools/userdir'));
+    ['tools/userdir/a/b', 'tools/userdir2'].forEach((path) => mkdirSync(join(fixture.home, path), { recursive: true }));
     const result = await prunePayload(fixture);
     assertResult(result, true);
-    assert.ok(lstatSync(join(fixture.home, 'tools/userdir')).isDirectory());
-    assertReport(result, 'kept', 'tools/userdir');
+    assert.ok(lstatSync(join(fixture.home, 'tools/userdir/a/b')).isDirectory());
+    assert.deepEqual(result.lines, ['tools/userdir', 'tools/userdir2'].map((path) => assertReport(result, 'kept', path)));
   });
   it('keeps a symlink without touching its outside target', async () => {
     const fixture = createFixture();

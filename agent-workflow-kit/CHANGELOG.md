@@ -4,6 +4,18 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.25.1 — `init` reports what it did: a replaced MCP entry is labelled replaced, and a folder inside a kept folder prints no line of its own (AD-174)
+
+- **The MCP apply report no longer shows the old entry as the current one.** After the `y` that replaces a differing
+  `agent-workflow` entry, `init` printed the old entry under `the entry standing in .mcp.json now:` while the file
+  already held the new one. It now prints `the entry this run replaced in .mcp.json:` and `the entry now in
+  .mcp.json`. The preview before the `y` is unchanged.
+- **A folder inside a kept folder prints no line of its own.** A folder inside one of the kit's own folders
+  (`tools/`, `references/` and the like) that the package does not carry is still kept and reported as yours to
+  remove by hand, but the folders inside it no longer print a line each:
+  a home that kept an emptied `tools/manifest/fixtures/` printed 18 lines on every run and now prints one. A stray
+  file inside such a folder is still removed with its own line.
+
 ## 14.25.0 — `init`, run in a console from a project's folder, applies that project's harness configuration on one "y" (AD-173)
 
 **`npx @sabaiway/agent-workflow-kit@latest init` gains a project step.** Run in your own console from a project's

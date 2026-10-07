@@ -317,10 +317,12 @@ export const formatResult = (result) => {
     mcpJsonLine(result),
     settingsLine(result),
     ...(result.registration.mcpJson.differs ? [
-      '  the entry standing in .mcp.json now:',
+      result.dryRun ? '  the entry standing in .mcp.json now:' : '  the entry this run replaced in .mcp.json:',
       indented(JSON.stringify(result.registration.mcpJson.existing, null, JSON_INDENT)),
     ] : []),
-    '  the entry this registration declares (re-serialized here; the same structured value goes into the file):',
+    result.dryRun
+      ? '  the entry this registration declares (re-serialized here; the same structured value goes into the file):'
+      : '  the entry now in .mcp.json (re-serialized here; the file holds the same structured value):',
     indented(JSON.stringify(result.registration.entry, null, JSON_INDENT)),
     POSTURE_LINE,
     HIDDEN_MODE_LINE,
