@@ -8,17 +8,23 @@ import {
   need, ok, pending, policy, put, realFixture,
 } from './harness.test.mjs';
 
+const CHECK_DIGEST = 'a'.repeat(64);
+const HARNESS_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
+  'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier'];
+
 describe('spec:init-project/S11 previews and one terminal y', () => {
-  it('every pending console variant is previewed with its posture text', async (t) => {
+  it('every pending variant with preview argv prints its preview and check lines, bridge-tier with its note and velocity-core without one', async (t) => {
     const f = fixture(t, [item('velocity-core'), item('bridge-tier')], ['n']);
     const note = readFileSync(join(TOOLS, '..', 'references/modes/recommendations.md'), 'utf8').split('\n').find((line) => line.startsWith('- `bridge-tier` — '));
     assert.ok(note);
     f.respond = (argv) => ok(argv.includes('--bridge-tier') ? 'BT-PREVIEW' : 'VC-PREVIEW');
+    f.deps.checkApply = (variant) => ({ lines: [`CHECK: ${variant}`, `digest: ${CHECK_DIGEST}`], digest: CHECK_DIGEST, refused: [] });
     const run = need(init, 'runInitProject');
     assert.deepEqual(await run(f.deps), { code: 0 });
     const start = f.printed.indexOf('preview: velocity-core');
     assert.ok(start >= 0);
-    assert.deepEqual(f.printed.slice(start, start + 5), ['preview: velocity-core', 'VC-PREVIEW', 'preview: bridge-tier', 'BT-PREVIEW', note]);
+    assert.deepEqual(f.printed.slice(start, start + 9), ['preview: velocity-core', 'VC-PREVIEW', 'CHECK: velocity-core', `digest: ${CHECK_DIGEST}`,
+      'preview: bridge-tier', 'BT-PREVIEW', 'CHECK: bridge-tier', `digest: ${CHECK_DIGEST}`, note]);
   });
   it('the run-none line prints before the y and one y applies the batch', async (t) => {
     const queue = [item('velocity-core'), item('bridge-tier')];
@@ -67,31 +73,43 @@ describe('spec:init-project/S11 previews and one terminal y', () => {
     assert.equal(applies(f).length, 1);
     assert.ok(applies(f)[0].argv[1].endsWith('velocity-profile.mjs'));
   });
-  it('an apply failing after a clean preview stops later variants, while doctor exit 5 after install completed succeeds', async (t) => {
+  it('checked clean previews handle every spawn outcome, stop later applies on failure, and accept doctor exit 5 after install completed', async (t) => {
     const outcomes = [
-      ['velocity-core', 4, '', 1],
-      ['sandbox-provision.installable', 5, 'install completed', 0],
-      ['sandbox-provision.installable', 5, '', 1],
+      ['velocity-core', ok('', 4), 1],
+      ['sandbox-provision.installable', ok('install completed', 5), 0],
+      ['sandbox-provision.installable', ok('', 5), 1],
+      ...[null, 0].flatMap((status) => ['ENOENT', 'EACCES', 'EPERM'].map((code) => ['velocity-core', { status, error: new Error(code) }, 1])),
+      ...[null, 0].map((status) => ['velocity-core', { status, signal: 'SIGTERM' }, 1]),
+      ['velocity-core', new Error('synchronous throw'), 1],
+      ['velocity-core', ok('writer refused', 128), 1],
+      ['velocity-core', undefined, 1],
+      ['velocity-core', { status: null, error: new Error('maxBuffer') }, 1],
+      ['velocity-core', ok(), 0],
     ];
-    for (const [variant, status, stdout, code] of outcomes) {
+    for (const [variant, result, code] of outcomes) await t.test(`${variant}: ${result?.error?.message ?? result?.signal ?? result?.message ?? result?.status ?? 'empty answer'} (exit ${result?.status ?? null}, init ${code})`, async (t) => {
       const f = fixture(t, [item(variant), item('gate-hook')], variant === 'velocity-core' ? ['y'] : ['y', 'y']);
+      f.deps.checkApply = (checked) => ({ lines: [`CHECK: ${checked}`], digest: CHECK_DIGEST, refused: [] });
       f.respond = (argv) => {
         if (argv[1].endsWith('gate-hook.mjs')) return ok();
-        if (isApply(argv)) return ok(stdout, status);
+        if (isApply(argv) && result instanceof Error) throw result;
+        if (isApply(argv)) return result;
         if (argv[1].endsWith('autonomy-doctor.mjs')) return ok('status=missing-binaries\n--apply apt-get:bubblewrap', 3);
         return ok();
       };
       const run = need(init, 'runInitProject');
       assert.deepEqual(await run(f.deps), { code });
+      assert.ok(f.printed.includes('CHECK: gate-hook'));
       assert.equal(applies(f).some(({ argv }) => argv[1].endsWith('gate-hook.mjs')), code === 0);
       if (code === 1) {
-        assert.ok(f.printed.includes(`apply failed (exit ${status}): ${variant}`));
+        assert.ok(f.printed.includes(`apply failed (exit ${result?.status ?? null}): ${variant}`));
         assert.ok(f.printed.includes('not applied: gate-hook — an earlier apply failed'));
-      } else {
+        const cause = result?.error?.message ?? result?.signal ?? result?.message ?? result?.stdout ?? 'empty answer';
+        if (cause) assert.ok(f.printed.includes(cause));
+      } else if (variant === 'sandbox-provision.installable') {
         assert.ok(f.printed.includes('install completed'));
         assert.ok(!f.printed.includes('apply failed (exit 5): sandbox-provision.installable'));
       }
-    }
+    });
   });
   it('n applies nothing and leaves the root tree hash unchanged', async (t) => {
     const f = fixture(t, [item('velocity-core'), item('bridge-tier')], ['n']);
@@ -102,6 +120,42 @@ describe('spec:init-project/S11 previews and one terminal y', () => {
     assert.equal(hashTree(f.root), before);
     assert.ok(f.printed.includes('preview: velocity-core'));
     assert.ok(f.printed.includes('preview: bridge-tier'));
+  });
+});
+
+describe('spec:init-project/S24 danger check beside each harness preview', () => {
+  it('selects by argv presence, prints each check after its preview, and removes refused or throwing checks before one y', async (t) => {
+    for (const mode of ['within', 'refused', 'throw']) await t.test(mode, async (t) => {
+      const queue = [...HARNESS_VARIANTS.map((variant) => ({ ...item(variant), lane: 'harness' })), item('sandbox-provision.installable'), item('review-recipe')];
+      const f = fixture(t, queue, ['y', '']);
+      const checked = [];
+      const refused = mode === 'within' ? [] : ['bridge-tier'];
+      const keys = ['sandbox.network.allowedDomains', 'sandbox.excludedCommands'];
+      f.respond = (argv) => ok(argv[1].endsWith('autonomy-doctor.mjs') ? 'status=missing-binaries\n--apply apt-get:bubblewrap' : 'PREVIEW', argv[1].endsWith('autonomy-doctor.mjs') ? 3 : 0);
+      f.deps.checkApply = (variant, previewFacts, deps) => {
+        checked.push(variant);
+        const { toolsDir, root, env, home, platform, tuple } = previewFacts;
+        assert.deepEqual({ toolsDir, root, env, home, platform, tuple }, { ...facts(f), tuple: undefined });
+        assert.deepEqual(deps, {});
+        if (mode === 'throw' && variant === 'bridge-tier') throw new Error('check threw');
+        return { lines: [`CHECK: ${variant}`, `digest: ${CHECK_DIGEST}`], digest: CHECK_DIGEST,
+          refused: mode === 'refused' && variant === 'bridge-tier' ? keys.map((key) => ({ path: '.claude/settings.json', key, reason: `beyond the declared scope of ${variant}` })) : [] };
+      };
+      assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
+      assert.deepEqual(checked, HARNESS_VARIANTS);
+      for (const variant of HARNESS_VARIANTS.filter((variant) => mode !== 'throw' || variant !== 'bridge-tier')) {
+        const start = f.printed.indexOf(`preview: ${variant}`);
+        assert.deepEqual(f.printed.slice(start + 2, start + 4), [`CHECK: ${variant}`, `digest: ${CHECK_DIGEST}`]);
+      }
+      assert.deepEqual(applies(f).map(({ argv }) => argv), HARNESS_VARIANTS.filter((variant) => !refused.includes(variant)).map((variant) => need(lanes, 'consoleArgv')(variant, facts(f)).apply));
+      assert.deepEqual(f.questions, [APPLY, SUDO]);
+      assert.ok(f.printed.includes('listed, not applied here: review-recipe — review-recipe'));
+      if (mode !== 'within') {
+        const line = `not applied: bridge-tier — the danger check refused: ${mode === 'throw' ? 'check threw' : keys.join(', ')}`;
+        const index = f.events.findIndex(([kind, text]) => kind === 'print' && text === line);
+        assert.ok(index >= 0 && index < f.events.findIndex(([kind, text]) => kind === 'ask' && text === APPLY));
+      }
+    });
   });
 });
 
@@ -190,6 +244,7 @@ describe('spec:init-project/S13 consent bound to the previewed state', () => {
   it('a foreign file created beside the written hook during its apply stops the next variant, .claude/hooks absent or present before', async (t) => {
     for (const [present, foreign] of [[false, false], [false, true], [true, false], [true, true]]) {
       const f = fixture(t, [item('gate-hook'), item('velocity-core')]);
+      f.deps.checkApply = () => ({ lines: [], digest: CHECK_DIGEST, refused: [] });
       const hooks = join(f.root, '.claude/hooks');
       if (present) for (const name of ['agent-workflow-gates.mjs', 'zz.mjs']) put(join(hooks, name), 'old\n');
       f.respond = (argv) => {

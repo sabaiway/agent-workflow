@@ -1,14 +1,3 @@
-// Contract guard for the Recommendations PRESENTATION surface (REC-UX-REWORK, D3/D5). The retired
-// contract told the agent to paste the tool section VERBATIM — colliding with the deployment's
-// conversational-language contract (AD-032 resolved this class once: rendered in the user's
-// language, never hardcoded). Doc-parity alone cannot catch a re-introduced paste-verbatim
-// sentence (it binds constant VALUES, not the surrounding contract prose), so this static guard
-// pins BOTH directions across every LIVE contract surface: the presence of the user-language
-// presentation tokens and the ABSENCE of the retired phrases. Historical records (CHANGELOGs,
-// docs/ai archives) are deliberately out of scope. Same pattern as report-contract.test.mjs.
-//
-// Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -18,8 +7,8 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
 import { ACK_LANES } from '../tools/ack-store.mjs';
+import * as lanes from '../tools/write-lanes.mjs';
 
-const lanes = await import('../tools/write-lanes.mjs').catch(() => ({}));
 const need = (mod, name) => {
   if (!(name in mod)) {
     throw new Error(`${name} is absent`);
@@ -33,6 +22,7 @@ const read = (rel) => readFileSync(resolve(kitRoot, rel), 'utf8');
 const MODE_DOC = read('references/modes/recommendations.md');
 const UPGRADE_DOC = read('references/modes/upgrade.md');
 const BOOTSTRAP_DOC = read('references/modes/bootstrap.md');
+const MCP_DOC = read('references/modes/mcp.md');
 const VELOCITY_DOC = read('references/modes/velocity.md');
 const HOOK_DOC = read('references/modes/hook.md');
 const README = read('README.md');
@@ -403,7 +393,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39663, '04b182b73c6751aa8e797737e04bac987c41c6903c67c8b5947b27fd97dd5073'], 'the S13 bytes (spec init-project S7 adds the lane sentences)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39574, '605b2ccfd7fb41646c33b082f0052aac95113303bed9798ae7a6221d41aff36e'], 'the bytes after spec init-project revision 3 (the consent-route pointer)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -412,13 +402,19 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
 
 const JEV_NOTE_START = '- `jev-connect` — ';
 const JEV_SKILL_NOTE_START = '- `jev-skill` — ';
-const JEV_SKILL_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'third-party text', 'pinned', 'verified copy', 'never updated silently', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json']);
-const JEV_NOTE_LITERALS = Object.freeze(['HAND-APPLY', 'never the agent', 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run", 'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json']);
+const JEV_SKILL_NOTE_LITERALS = Object.freeze([
+  'HAND-APPLY', 'chat yes', 'after the check', 'third-party text', 'pinned', 'verified copy',
+  'never updated silently', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json',
+]);
+const JEV_NOTE_LITERALS = Object.freeze([
+  'HAND-APPLY', "user's own step", 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run",
+  'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json',
+]);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
   'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
   'probeMasksItem', 'probeSandboxLane', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
-describe('recommendations contract — the jev-connect and jev-skill offers (spec:jev-guide/S19)', () => {
+describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked apply', () => {
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
   it('the two opt-in rows, the jev.md declarations on lines 3 and 4 and the two RISK_NOTED_KEYS entries', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ mode }) => mode === 'jev'), [{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
@@ -429,14 +425,18 @@ describe('recommendations contract — the jev-connect and jev-skill offers (spe
   it('the jev-connect note occurs once, carries every literal and closes on its risk profile; the intro list names the offer', () => {
     assert.equal(notes.split(JEV_NOTE_START).length - 1, 1, 'exactly one jev-connect bullet');
     const note = notes.slice(notes.indexOf(JEV_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
-    for (const literal of JEV_NOTE_LITERALS) assert.ok(note.includes(literal), `the jev-connect note states: ${literal}`);
+    for (const literal of JEV_NOTE_LITERALS) {
+      assert.ok(note.includes(literal), `the jev-connect note states: ${literal}`);
+    }
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
     assert.match(between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts'), /Jev not connected on this host, the Jev skill not installed for every agent/);
   });
   it('the jev-skill note occurs once, carries every literal and closes on its risk profile', () => {
     assert.equal(notes.split(JEV_SKILL_NOTE_START).length - 1, 1, 'exactly one jev-skill bullet');
     const note = notes.slice(notes.indexOf(JEV_SKILL_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
-    for (const literal of JEV_SKILL_NOTE_LITERALS) assert.ok(note.includes(literal), `the jev-skill note states: ${literal}`);
+    for (const literal of JEV_SKILL_NOTE_LITERALS) {
+      assert.ok(note.includes(literal), `the jev-skill note states: ${literal}`);
+    }
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
   });
   it('ACK_LANES maps jev-connect to jevConnectAck and jev-skill to jevSkillAck, and the writer usage names both lanes', () => {
@@ -455,69 +455,118 @@ describe('recommendations contract — the jev-connect and jev-skill offers (spe
   });
 });
 
-const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder";
-const RESTART = '; if init reports it not pending, restart the agent from that console';
-const ROUTED_VARIANTS = Object.freeze([
+const SLOT_VARIANTS = Object.freeze([
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render',
   'gate-hook', 'read-lane.missing', 'mcp-channel', 'mcp-channel.differing',
   'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
   'jev-skill.earlier', 'jev-connect', 'family-freshness',
 ]);
-const RESTART_VARIANTS = Object.freeze([
-  'bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable',
-]);
-const KEPT_CONSOLE_APPLY_LITERALS = Object.freeze([
+const KEPT_NO_WRITER_APPLY_LITERALS = Object.freeze([
   'HAND-APPLY: add a Stop hook running',
   'HAND-APPLY: mkdir -p {root}/scripts',
   'HAND-APPLY: rm ',
-  "cd ${q(root)} && node ${q(toolPath('autonomy-doctor.mjs'))}",
 ]);
-const CONSOLE_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-connect', 'jev-skill']);
-const MODE_LANE_SENTENCES = Object.freeze([
-  "never runs a console item's line",
-  'never retries a refused write outside the sandbox',
-  'continues past every console item',
-  'every failure of a chat step is a STOP',
+const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill']);
+const RETIRED_LANE_LITERALS = Object.freeze([
+  'applies at your next npx', 'upgrade, then init again', 'written ONLY by', 'never runs a console item',
+  'lane: console', 'HAND-APPLY item is never run', 'never run by you', 'only `init` applies',
+  'agent never runs it', 'never the agent', 'as printed and never run it', 'apply when init runs',
+  'console item', 'console lane', 'lane is console', 'route line', 'preview alone',
+  'run init from this folder', 'chat items only', 'applies only chat', 'consent-gated chat applies',
+  'restart the agent from that console',
+]);
+const INABILITY_TOKEN = /\b(?:the agent|you|the consent flow)\b[^.;\n]*\b(?:cannot|must not|never)\s+(?:run|runs|apply|applies)\b|\bnever (?:you|the agent)\b|\bnever something the consent flow runs\b|\ban item\b[^.;\n]*\bcannot use that lane\b|\b(?:cannot|must not|never)\s+(?:be\s+)?(?:run|applied)\b[^.;\n]*\b(?:you|the agent|the consent flow)\b/iu;
+const CONSENT_ROUTE_LITERALS = Object.freeze([
+  'check:', "user's yes on that result", 'apply:', "that result's digest", 'in the sandbox first',
+  'a check that refuses', 'unapplied and pending', 'a changed digest', 'asks a new yes',
+  'a write the os refuses on a protected file', 'mcp masked report', 'masked:',
+  'once more outside the sandbox', 'point of action', "apply's own environment", 'never another line', 'never unseen',
+  'after a `masked:` check', 'yes is taken on the outside result', 'a no, a harness refusal and any other failure',
+  'leave the item pending with its output shown', 'a chat item is never retried outside the sandbox',
+  'every failure of a chat step is a stop', "user's own step", 'hand-apply', 'whatever its lane', 'handed over as worded',
 ]);
 const UNMEASURED_HOSTS = Object.freeze(['Codex', 'Devin', 'agy', 'macOS']);
 
-describe('spec:init-project/S6 — console route lines, kept form (c) text and terminal posture notes', () => {
-  it('no form (a) or (b) item and no family-freshness item carries HAND-APPLY or says the agent cannot or must not apply it; other form (c) items keep today\'s text and posture notes name console init on the terminal', () => {
-    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
-    const routeLine = need(lanes, 'routeLine');
-    for (const variant of ROUTED_VARIANTS) {
-      const line = routeLine(variant);
-      assert.equal(line, RESTART_VARIANTS.includes(variant) ? ROUTE + RESTART : ROUTE, variant);
-      assert.doesNotMatch(line, /HAND-APPLY|\bcannot\b|\bmust not\b/, variant);
+describe('spec:init-project/S6 — apply slots and posture notes permit the checked consent route', () => {
+  it('harness and user slots carry no HAND-APPLY, inability or retired line; no-writer text stays', () => {
+    const applySlot = need(lanes, 'applySlot');
+    const facts = { toolsDir: resolve(kitRoot, 'tools'), root: '/project', home: '/home/example', env: {}, platform: 'linux' };
+    for (const variant of SLOT_VARIANTS) {
+      const slot = applySlot(variant, facts);
+      assert.ok(slot, `${variant} has a slot`);
+      for (const line of [slot.check, slot.apply].filter((value) => value !== null)) {
+        assert.doesNotMatch(line, /HAND-APPLY|\bcannot\b|\bmust not\b/, variant);
+        assert.doesNotMatch(line, INABILITY_TOKEN, variant);
+        for (const literal of RETIRED_LANE_LITERALS) {
+          assert.ok(!line.includes(literal), `${variant} retires: ${literal}`);
+        }
+      }
     }
-    for (const literal of KEPT_CONSOLE_APPLY_LITERALS) {
+    for (const literal of KEPT_NO_WRITER_APPLY_LITERALS) {
       assert.ok(TOOL_SOURCE.includes(literal), `the other form (c) items keep: ${literal}`);
     }
-    for (const key of CONSOLE_POSTURE_KEYS) {
+  });
+
+  it('the lane paragraph and every posture note drop inability sentences; harness notes name the chat yes after the check and optional init', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes');
+    assert.doesNotMatch(lane, INABILITY_TOKEN, 'the lane paragraph');
+    assert.doesNotMatch(notes, INABILITY_TOKEN, 'all notes, including gates-inert and adr-store-migration');
+    for (const key of HARNESS_POSTURE_KEYS) {
       const start = `- \`${key}\` —`;
       assert.ok(notes.includes(start), `the ${key} posture note exists`);
       const note = notes.slice(notes.indexOf(start)).split(POSTURE_NOTE_BOUNDARY)[0];
-      assert.match(note, /\bconsole\b/, key);
-      assert.match(note, /\binit\b/, key);
-      assert.match(note, /\bterminal\b/, key);
+      assert.match(note, /\bagent\b[^.]*\bapplies\b[^.]*\bchat yes\b/i, key);
+      assert.match(note, /after the check/i, key);
+      assert.match(note, /\binit\b[^.]*\b(?:may take|instead)\b/i, key);
     }
+    const connect = notes.slice(notes.indexOf(JEV_NOTE_START)).split(POSTURE_NOTE_BOUNDARY)[0];
+    assert.ok(connect.includes("user's own step"));
   });
 });
 
-describe('spec:init-project/S7 — mode docs keep console items pending and stop on chat failures', () => {
-  it('upgrade.md, bootstrap.md and recommendations.md carry the never-run, never-retry, continue-past and STOP sentences', () => {
-    for (const [name, doc] of [['upgrade.md', UPGRADE_DOC], ['bootstrap.md', BOOTSTRAP_DOC], ['recommendations.md', MODE_DOC]]) {
-      for (const sentence of MODE_LANE_SENTENCES) {
-        assert.ok(doc.includes(sentence), `${name} states: ${sentence}`);
+describe('spec:init-project/S7 — consent route, doc pointers and optional console init', () => {
+  it('recommendations.md states the checked yes, digest, refusals, one visible retry and user-step handoff', () => {
+    const doc = MODE_DOC.replace(/\s+/gu, ' ').toLowerCase();
+    for (const literal of CONSENT_ROUTE_LITERALS) {
+      assert.ok(doc.includes(literal), `recommendations.md states: ${literal}`);
+    }
+  });
+
+  it('upgrade and bootstrap point to the consent route, bootstrap closes on pending user steps, and the mutation example is chat', () => {
+    for (const [name, doc] of [['upgrade.md', UPGRADE_DOC], ['bootstrap.md', BOOTSTRAP_DOC]]) {
+      assert.match(doc, /consent route/i, name);
+      assert.ok(doc.includes('${CLAUDE_SKILL_DIR}/references/modes/recommendations.md'), name);
+    }
+    const report = between(BOOTSTRAP_DOC, '11. **Report & ask.', 'Fill strategy:');
+    assert.match(report, /user items[^.]*pending|pending user items/i);
+    assert.match(report, /user's own step/i);
+    const applyLane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
+    assert.doesNotMatch(applyLane, /family-freshness/);
+    assert.match(applyLane, /spec-adoption[^.]*ensure-configs --reconcile --only specs/);
+    assert.equal(lanes.laneOf('spec-adoption'), 'chat');
+  });
+
+  it('the mode docs, README and mcp.md retire every never-run, only-init, route and restart sentence', () => {
+    for (const [name, doc] of [['recommendations.md', MODE_DOC], ['upgrade.md', UPGRADE_DOC], ['bootstrap.md', BOOTSTRAP_DOC], ['README.md', README], ['mcp.md', MCP_DOC]]) {
+      for (const literal of RETIRED_LANE_LITERALS) {
+        assert.ok(!doc.toLowerCase().includes(literal.toLowerCase()), `${name} retires: ${literal}`);
       }
     }
   });
 
-  it('bootstrap closes on the console-pending list and the run-init line, and recommendations.md\'s example of an agent-run mutation is a chat item', () => {
-    const applyLane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
-    assert.ok(BOOTSTRAP_DOC.includes('console-pending'));
-    assert.ok(BOOTSTRAP_DOC.includes('run init from this folder, then restart'));
-    assert.doesNotMatch(applyLane, /family-freshness/);
+  it('README install, upgrade lines and composition paragraph and mcp.md name the agent apply after the check with init optional', () => {
+    const surfaces = [
+      between(README, '### 1.', '### 2.'), between(README, 'After `init`,', '> **Optional standalone'),
+      between(README, '> **Two kinds of "upgrade":', '\n---'),
+      between(README, 'The kit is the member you install', '\n```'), MCP_DOC,
+    ];
+    for (const text of surfaces) {
+      assert.match(text, /\bagent\b[^.]*\bappl(?:y|ies)\b/i);
+      assert.match(text, /after the check/i);
+      assert.match(text, /\binit\b[^.]*\b(?:optional|may take|instead)\b|\b(?:optional|may take|instead)\b[^.]*\binit\b/i);
+      if (text !== MCP_DOC) assert.match(text, /a user item, and any item marked HAND-APPLY, stays your own step/);
+    }
   });
 });
 

@@ -19,7 +19,7 @@ const TOOLS_DIR = '/kit tools/dir';
 // The five roots of the part, in its order: [the base, the root under it].
 const ROOTS = [['dir', '.claude/skills'], ['dir', '.agents/skills'], ['home', '.claude/skills'], ['home', '.codex/skills'],
   ['home', '.cursor/skills']];
-const KIT_ROUTE = 'Optional, for your own code and prompts — the vendor skill. The kit installs it pinned, one verified copy per agent skill root (Codex, Claude Code, Antigravity CLI); after your yes in the chat, run this in a terminal of your own:';
+const KIT_ROUTE = 'Optional, for your own code and prompts — the vendor skill. The kit installs it pinned, one verified copy per agent skill root (Codex, Claude Code, Antigravity CLI); if Recommendations offers this item, the agent applies it on your chat yes after its danger check; you can also run this yourself in a terminal of your own:';
 const VENDOR_ROUTES = ['Or the vendor\'s own routes:', 'Claude Code:', 'claude plugin marketplace add typesafe-ai/skills',
   'claude plugin install typesafe@typesafe-ai', 'Other agents:', 'npx skills add typesafe-ai/skills --skill typesafe-ai'];
 const NO_HOME = 'no home directory found: the kit\'s install needs one';
@@ -28,7 +28,7 @@ const MARK = /^(Codex|Claude Code|Antigravity CLI) skill root: (current|earlier|
 const CONFIG_VARIANTS = [{}, { CLAUDE_CONFIG_DIR: 'rel/cc' }, { CLAUDE_CONFIG_DIR: '/abs/cc' }];
 const VENDOR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'references', 'vendor', 'typesafe-ai');
 const AFTER_INSTALL = 'After an install, quit the agent and start it again from a new terminal.';
-const TICKETS = ['"I was charged twice this month."', '"The app crashes when I upload a file."', '"Is there a discount for a yearly plan?"'];
+const PROMPT = 'Then give the agent this prompt: using the TypeSafe skill, route these three tickets to billing, technical or sales, one request each, and print each choice and confidence — "I was charged twice this month.", "The app crashes when I upload a file.", "Is there a discount for a yearly plan?".';
 const SUCCESS = 'Success: three choices, each with a confidence.';
 const HOST_VARIANTS = [{}, { CLAUDECODE: '1', CODEX_HOME: '/opt/codex-home', TERM_PROGRAM: 'vscode' }];
 const CANARIES = ['tsk-A1b2', 'Zq9_longer-canary-value-with-a-suffix.x'];
@@ -36,13 +36,14 @@ const HOST_FILTER = /host setting (that filters|filtering) the environment of th
 const KEY_STEP = 'STEP 1 — the key';
 const SKILL_STEP = 'STEP 2 — the vendor skill';
 const GET_KEY = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
+const CONNECT = 'Connect it from a terminal of your own — the key never reaches the agent or the chat: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
 // The literal jev-steps quotes in STEP 1 item 5, written here, never imported.
 const RESTART_STEP = 'restart the agent so it reads the key: in VS Code or a VS Code fork, quit the editor completely (every window) and open it again; in a terminal, open a new terminal and start the agent there';
 const RESTART = `Then ${RESTART_STEP}. Run /agent-workflow-kit jev again: the key mark should read set.`;
 const NEVER_PASTE = 'Never paste the key into the chat or into a project file.';
 const RUN_AGAIN = 'If it still reads not set after that restart and no such setting applies, run the connect line again and follow its last line.';
 const PLACE_VARIABLES = ['WSL_DISTRO_NAME', 'SSH_CONNECTION', 'REMOTE_CONTAINERS', 'CODESPACES'];
+const SHELLS = [undefined, '/bin/bash', '/bin/zsh', '/bin/fish', '/bin/tcsh'];
 
 const made = [];
 after(() => {
@@ -204,23 +205,36 @@ describe('spec:jev-guide/S2 the skill table by proof', () => {
 });
 
 describe('spec:jev-guide/S3 the key step: the connect line and the presence mark', () => {
-  it('prints the console line, the connect sentence, the place line exactly when there is a place, the connect line, the restart and never-paste lines, then the mark, whatever the SHELL', () => {
-    const HOSTS =[[{}, []], [{ container: true }, ['Run it in a terminal inside this container:']], [{ platform: 'win32' }, ['Run it in a PowerShell terminal:']]];
-    for (const name of ['a zsh SHELL, no key', 'an absent variable', 'two canaries: the first']) {
+  it('prints STEP 1 exactly for every cell regardless of SHELL, reads only admitted env names and keeps canary outputs byte-identical', () => {
+    const HOSTS = [[{}, []], [{ container: true }, ['Run it in a terminal inside this container:']],
+      [{ platform: 'win32' }, ['Run it in a PowerShell terminal:']]];
+    for (const name of CELL_NAMES) {
       for (const [host, place] of HOSTS) {
-        const step = stepOf(envelopeOf(cells[name], undefined, host), KEY_STEP);
-        const connect = connectLine(TOOLS_DIR, host.platform ?? 'linux');
-        assert.deepEqual(step.slice(0, -1), [KEY_STEP, GET_KEY, CONNECT, ...place, connect, RESTART, NEVER_PASTE], `${name} ${JSON.stringify(host)}`);
-        assert.match(step.at(-1), /^key: TYPESAFE_API_KEY (set\.|not set\.)/, name);
-        assert.equal(step.filter((line) => line.includes('read -rs') || line.includes('curl')).length, 0, name);
+        for (const shell of SHELLS) {
+          const reads = new Set();
+          const env = recordingEnv({ ...cells[name].env, SHELL: shell }, reads);
+          const envelope = envelopeOf(cells[name], env, host);
+          const step = stepOf(envelope, KEY_STEP);
+          const connect = connectLine(TOOLS_DIR, host.platform ?? 'linux');
+          assert.deepEqual(step.slice(0, -1), [KEY_STEP, GET_KEY, CONNECT, ...place, connect, RESTART, NEVER_PASTE], `${name} ${JSON.stringify(host)}`);
+          assert.match(step.at(-1), /^key: TYPESAFE_API_KEY (set\.|not set\.)/, name);
+          assert.equal(step.filter((line) => line.includes('read -rs') || line.includes('curl')).length, 0, name);
+          assert.deepEqual(step.filter((line) => /launcher|export/.test(line)), [], name);
+          assert.ok(reads.has(KEY), name);
+          assert.deepEqual([...reads].filter((read) => ![KEY, 'CLAUDE_CONFIG_DIR', ...PLACE_VARIABLES].includes(read)), [], name);
+          const set = typeof cells[name].env[KEY] === 'string' && cells[name].env[KEY].trim() !== '';
+          assert.deepEqual(envelope.key, { set }, name);
+          if (set) assert.equal(step.at(-1), `key: ${KEY} set.`);
+          else {
+            assert.match(step.at(-1), HOST_FILTER, name);
+            assert.ok(step.at(-1).endsWith(RUN_AGAIN), name);
+          }
+        }
       }
     }
     assert.equal(connectLine(TOOLS_DIR, 'linux'), "node '/kit tools/dir/jev-connect.mjs'", 'a path with a space is quoted');
     assert.equal(connectLine('/kit/tools', 'linux'), 'node /kit/tools/jev-connect.mjs', 'a safe path is bare');
     assert.equal(facts.RESTART_STEP, RESTART_STEP, 'the facts leaf holds the literal the part quotes');
-  });
-
-  it('renders every output byte-identical under two canaries differing in length, prefix and suffix, and set', () => {
     const [first, second] = [cells['two canaries: the first'], cells['two canaries: the second']];
     for (const argv of [[], ['--json']]) {
       const [a, b] = [run(first, argv), run({ ...first, env: second.env }, argv)];
@@ -233,67 +247,55 @@ describe('spec:jev-guide/S3 the key step: the connect line and the presence mark
       assert.ok(!stepOf(envelope, KEY_STEP).some((line) => HOST_FILTER.test(line)));
     }
   });
-
-  it('renders not set, with the host-filter and the run-again sentences, for an absent, an empty and a whitespace-only variable; no step line says launcher or export', () => {
-    for (const name of ['an absent variable', 'an empty string', 'a whitespace-only string', 'a zsh SHELL, no key']) {
-      const envelope = envelopeOf(cells[name]);
-      assert.deepEqual(envelope.key, { set: false }, name);
-      const step = stepOf(envelope, KEY_STEP);
-      assert.equal(step.filter((line) => line.startsWith(`key: ${KEY} not set`)).length, 1, name);
-      const text = step.join(LF);
-      assert.match(text, HOST_FILTER, name);
-      assert.ok(step.at(-1).endsWith(RUN_AGAIN), name);
-      assert.deepEqual(step.filter((line) => /launcher|export/.test(line)), [], name);
-    }
-  });
-
-  it('reads io.env for no name outside the key variable, CLAUDE_CONFIG_DIR and the four place variables', () => {
-    for (const name of CELL_NAMES) {
-      const reads = new Set();
-      envelopeOf(cells[name], recordingEnv({ ...cells[name].env }, reads));
-      assert.ok(reads.has(KEY), name);
-      assert.deepEqual([...reads].filter((read) => ![KEY, 'CLAUDE_CONFIG_DIR', ...PLACE_VARIABLES].includes(read)), [], name);
-    }
-  });
 });
 
 describe('spec:jev-guide/S4 STEP 2: the kit route, the vendor routes, the marks and the first use, in every case', () => {
   it('prints the label, the place line, the apply line and the note, the vendor routes, the three target marks, the presence mark and the close', () => {
     for (const name of CELL_NAMES) {
-      for (const variant of [...HOST_VARIANTS, ...CONFIG_VARIANTS]) {
-        for (const host of [{}, { container: true }]) {
-          const cell = cells[name];
-          const env = { ...cell.env, ...variant };
-          const label = `${name} ${JSON.stringify(variant)} ${JSON.stringify(host)}`;
-          const step = stepOf(envelopeOf(cell, env, host), SKILL_STEP);
-          const { dir, note } = facts.claudeDirOf(env, cell.home, 'linux');
-          const line = facts.skillLine(TOOLS_DIR, 'linux', dir);
-          assert.match(line, / --apply --claude-dir /, label);
-          const head = cell.home === '' ? [NO_HOME]
-            : [...(host.container ? ['Run it in a terminal inside this container:'] : []), line, ...(note ? [note] : [])];
-          assert.equal(note !== '' && cell.home !== '', variant.CLAUDE_CONFIG_DIR === 'rel/cc' && cell.home !== '', label);
-          const routes = 2 + head.length;
-          assert.deepEqual(step.slice(0, routes + VENDOR_ROUTES.length), [SKILL_STEP, KIT_ROUTE, ...head, ...VENDOR_ROUTES], label);
-          const marks = step.slice(routes + VENDOR_ROUTES.length).filter((item) => MARK.test(item));
-          assert.equal(marks.length, cell.home === '' ? 0 : 3, label);
-          assert.deepEqual(step.slice(routes + VENDOR_ROUTES.length, routes + VENDOR_ROUTES.length + marks.length), marks, label);
-          assert.match(step[routes + VENDOR_ROUTES.length + marks.length], /^skill: /, label);
-          const tail = step.slice(-3);
-          assert.equal(tail[0], AFTER_INSTALL, label);
-          assert.ok(['using the TypeSafe skill', 'billing, technical or sales', 'one request each', 'choice and confidence', ...TICKETS]
-            .every((part) => tail[1].includes(part)), `${label}: ${tail[1]}`);
-          assert.equal(tail[2], SUCCESS, label);
-          const plain = run(cell, [], env, host).stdout.split(LF);
-          assert.ok(step.every((item) => plain.includes(item)), label);
+      for (const hostEnv of HOST_VARIANTS) {
+        for (const variant of CONFIG_VARIANTS) {
+          for (const host of [{ platform: 'linux' }, { platform: 'linux', container: true }, { platform: 'win32' }]) {
+            for (const shell of SHELLS) {
+              const cell = cells[name];
+              const env = { ...cell.env, ...hostEnv, ...variant, SHELL: shell };
+              const label = `${name} ${JSON.stringify(hostEnv)} ${JSON.stringify(variant)} ${shell} ${JSON.stringify(host)}`;
+              const envelope = envelopeOf(cell, env, host);
+              const step = stepOf(envelope, SKILL_STEP);
+              const { dir, note } = facts.claudeDirOf(env, cell.home, host.platform);
+              const line = facts.skillLine(TOOLS_DIR, host.platform, dir);
+              assert.match(line, / --apply --claude-dir /, label);
+              const head = cell.home === '' ? [NO_HOME]
+                : [...(host.platform === 'win32' ? ['Run it in a PowerShell terminal:']
+                  : host.container ? ['Run it in a terminal inside this container:'] : []), line, ...(note ? [note] : [])];
+              assert.equal(note !== '' && cell.home !== '', variant.CLAUDE_CONFIG_DIR === 'rel/cc' && cell.home !== '', label);
+              const routes = 2 + head.length;
+              assert.deepEqual(step.slice(0, routes + VENDOR_ROUTES.length), [SKILL_STEP, KIT_ROUTE, ...head, ...VENDOR_ROUTES], label);
+              const marks = envelope.skill.targets.map(({ agent, state, path, tag, reason }) =>
+                `${agent} skill root: ${state} at ${path}${tag ? ` (${tag})` : ''}${reason ? ` — ${reason}` : ''}`);
+              assert.equal(marks.length, cell.home === '' ? 0 : 3, label);
+              const markStart = routes + VENDOR_ROUTES.length;
+              assert.deepEqual(step.slice(markStart, markStart + marks.length), marks, label);
+              assert.match(step[markStart + marks.length], /^skill: /, label);
+              assert.deepEqual(envelope.skill.found, cell.expected, label);
+              if (cell.expected.length) {
+                assert.deepEqual(step.slice(markStart + marks.length, -3), cell.expected.map((path) => `skill: found at ${path}`), label);
+              }
+              assert.deepEqual(step.slice(-3), [AFTER_INSTALL, PROMPT, SUCCESS], label);
+              assert.equal(facts.AFTER_INSTALL, AFTER_INSTALL, label);
+              const plain = run(cell, [], env, host).stdout.split(LF);
+              assert.ok(step.every((item) => plain.includes(item)), label);
+            }
+          }
         }
       }
     }
-  });
-
-  it('prints NO_APPLY_LINE in the apply line\'s place for a claude dir holding a control byte', () => {
     const cell = cells['no entry'];
-    const step = stepOf(envelopeOf(cell, { CLAUDE_CONFIG_DIR: `/c${String.fromCharCode(9)}c` }), SKILL_STEP);
-    assert.equal(step[2], NO_APPLY_LINE);
+    for (const host of [{ toolsDir: '/kit\ttools' }, {}]) {
+      const env = host.toolsDir ? {} : { CLAUDE_CONFIG_DIR: '/c\tc' };
+      const step = stepOf(envelopeOf(cell, env, host), SKILL_STEP);
+      assert.equal(step[1], KIT_ROUTE);
+      assert.equal(step[2], NO_APPLY_LINE);
+    }
   });
 });
 

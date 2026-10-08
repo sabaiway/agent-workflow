@@ -144,11 +144,11 @@ any Claude Code / Codex / Devin Desktop it finds. A fresh project is deployed in
 places** the optional bridges — **once placed** (by `/agent-workflow-kit setup`) it **refreshes** them
 from its bundled copies (never a downgrade; skip with `--no-bridges`).
 
-Run `npx @sabaiway/agent-workflow-kit@latest init` in your own console **from the project's folder** to also apply its console items —
-the harness's own configuration (`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, `.mcp.json`).
+The agent applies the chat items on your "yes" and the harness items after the check; a user item, and any item marked HAND-APPLY, stays your own step; `npx @sabaiway/agent-workflow-kit@latest init` is an optional console route for the harness items **from the project's folder** —
+it covers the harness's own configuration (`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, `.mcp.json`).
 A pending API-key line comes first: Enter skips; its `y` runs the key command on that terminal.
-Then `init` previews the pending console items it can apply and applies the previewed batch on one terminal `y` (sudo asks separately).
-Outside any project it prints `no agent-workflow project here — the project items apply when init runs from that project's folder`
+Then `init` previews the pending items it can apply and applies the previewed batch on one terminal `y` (sudo asks separately).
+Outside any project it prints `no agent-workflow project here — run /agent-workflow-kit upgrade in your agent from that project, or deploy it there first: its yes applies the project items`
 and offers only host-scoped items — the API key and the agent skill it pairs with. Piped without a terminal,
 it prints `project step skipped: no terminal — run init in a console from the project's folder` and skips that step.
 
@@ -165,7 +165,7 @@ different sub-commands:
 
 <sub>`/agent-workflow-kit` bootstraps a fresh deployment (and asks your **visibility**, **conversational language**, and whether the agent may **attribute work to itself / AI** — default off); `/agent-workflow-kit upgrade` migrates an existing one to the kit's current version.</sub>
 
-After `init`, run `/agent-workflow-kit upgrade` in an agent session: it applies the chat items on your chat "yes".
+After `init`, run `/agent-workflow-kit upgrade` in an agent session: the agent applies the chat items on your "yes" and the harness items after the check; a user item, and any item marked HAND-APPLY, stays your own step; `init` is an optional console route for the harness items.
 
 > **Optional standalone memory substrate.** The memory layer is also published standalone as
 > [`@sabaiway/agent-workflow-memory`](https://www.npmjs.com/package/@sabaiway/agent-workflow-memory).
@@ -273,7 +273,8 @@ It **never auto-commits** and **never overwrites** an existing `AGENTS.md` witho
 > **Two kinds of "upgrade":** `npx @sabaiway/agent-workflow-kit@latest init` updates the **kit's
 > own files** in `~/.claude/skills/`; `/agent-workflow-kit upgrade` then migrates a **project's**
 > `docs/ai/` deployment to that kit version.
-> When a kit update moves the deployment stamp ahead of the project's, `init` lists no project item and says `run /agent-workflow-kit upgrade, then init again`.
+> When a kit update moves the deployment stamp ahead of the project's, `init` lists no project item and says `run /agent-workflow-kit upgrade in your agent: its yes applies the items`.
+> The agent applies the chat items on your "yes" and the harness items after the check; a user item, and any item marked HAND-APPLY, stays your own step; `init` is an optional console route for the harness items from the project's folder.
 
 ---
 
@@ -292,7 +293,7 @@ The dependency-free **Node** enforcement scripts (`node --test`, no package mana
 ## 🧩 The composition root of the family
 
 The kit is the member you install — the family's **composition root**. `npx … init` installs the kit
-globally and, run in a console from a project's folder, previews that project's pending console items and applies the previewed batch on your y; composition starts when you **deploy it in a repo** (`/agent-workflow-kit`):
+globally; the agent applies the chat items on your "yes" and the harness items after the check; a user item, and any item marked HAND-APPLY, stays your own step; `init` is an optional console route for the harness items from the project's folder; composition starts when you **deploy it in a repo** (`/agent-workflow-kit`):
 
 ```
 agent-workflow-kit  —  the composition root (installed via npx … init)

@@ -125,7 +125,7 @@ describe('spec:init-project/S9 finding the project and offering its console item
       candidates: [{ root: f.root, shape: 'stamped' }],
     });
     await need(project, 'runInitProject')(f.deps);
-    assert.ok(f.terminal.printed.includes('no agent-workflow project here — the project items apply when init runs from that project\'s folder'));
+    assert.ok(f.terminal.printed.includes('no agent-workflow project here — run /agent-workflow-kit upgrade in your agent from that project, or deploy it there first: its yes applies the project items'));
     assert.deepEqual(f.recommended, [{ root: null, facts: { keySet: false } }]);
   });
 
@@ -214,7 +214,7 @@ describe('spec:init-project/S9 finding the project and offering its console item
     const f = fixture(t, { env: { SHELL: '/bin/zsh' }, items: () => [item('jev-connect', 'W')] });
     await need(project, 'runInitProject')(f.deps);
     assert.deepEqual(f.recommended, [{ root: null, facts: { keySet: false } }]);
-    assert.ok(f.terminal.printed.includes('no agent-workflow project here — the project items apply when init runs from that project\'s folder'));
+    assert.ok(f.terminal.printed.includes('no agent-workflow project here — run /agent-workflow-kit upgrade in your agent from that project, or deploy it there first: its yes applies the project items'));
     assert.ok(f.terminal.printed.includes('W'));
     assert.deepEqual(f.terminal.asked, ['y runs its command on this terminal, Enter skips: ']);
     assert.deepEqual(f.spawned, []);
@@ -233,7 +233,8 @@ describe('spec:init-project/S10 the deployment stamp gate', () => {
     const runInitProject = need(project, 'runInitProject');
     for (const f of cases) {
       await runInitProject(f.deps);
-      assert.ok(f.terminal.printed.includes('run /agent-workflow-kit upgrade, then init again'));
+      assert.ok(f.terminal.printed.includes('run /agent-workflow-kit upgrade in your agent: its yes applies the items'));
+      assert.equal(f.terminal.printed.some((line) => line.includes('init again')), false);
       assert.deepEqual(f.recommended, [{ root: null, facts: { keySet: false } }]);
       assert.deepEqual(f.spawned, []);
       assert.equal(f.terminal.printed.some((line) => line.includes('velocity-core')), false);

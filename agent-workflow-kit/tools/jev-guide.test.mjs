@@ -57,7 +57,7 @@ const PROMPT_CHECKS = [
 ];
 const STEP_HEADINGS = ['STEP 1 — the key', 'STEP 2 — the vendor skill'];
 const ORDER_LINE = 'Keep this order: the fixed text (WHAT, WHY HERE, NOT, SOURCES); then the two steps — the key with its connect line and its mark, the vendor skill with its install lines, its mark and its first prompt; then the three prompts where it pays.';
-const INVARIANTS_LINE = "**Invariants:** the guide is read-only and opens no connection · the connect line is run by the user in a terminal of their own, never by the agent · the key's value never printed · compact user-language render with paths, commands and vendor quotes verbatim · process.exitCode, never process.exit().";
+const INVARIANTS_LINE = "**Invariants:** the guide is read-only and opens no connection · the connect line is the user's own step in a terminal of their own: the key never reaches the agent or the chat · the key's value never printed · compact user-language render with paths, commands and vendor quotes verbatim · process.exitCode, never process.exit().";
 const USAGE = [['--bogus'], ['--dir'], ['--dir', '--json'], ['--json', 'extra'], ['--help', '--json'],
   ['-h', '--dir', '.'], ['--help', '--help'], ['-h', '-h']];
 
@@ -236,7 +236,7 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
     assert.ok(skill.includes(`### Mode: jev${LF}${LF}${ROUTER_LINE}${LF}`));
   });
 
-  it('gives the mode doc its run line, the jev-connect and jev-skill declarations on lines 3 and 4, the render sentences, the order and the invariants', () => {
+  it('gives the mode doc its run line, declarations, render sentences, order and revision 8 invariants byte for byte', () => {
     const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
     assert.ok(doc.includes(RUN_LINE));
     assert.deepEqual(doc.split(LF).slice(2, 4), ['<!-- opt-in-capability: jev-connect -->', '<!-- opt-in-capability: jev-skill -->']);
@@ -245,14 +245,16 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
     for (const line of [ORDER_LINE, INVARIANTS_LINE]) assert.equal(doc.split(LF).filter((item) => item === line).length, 1, line);
   });
 
-  it('states the hand-over rule and carries no walk, no curl and no network sentence', () => {
-    const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8');
-    for (const rule of [/The connect line and the skill's apply line are the user's: hand each over as printed and never run it/,
-      /refuses without a terminal, and a terminal is not consent for either/,
+  it('states the revision 8 hand-over rule without an agent-never-runs sentence, walk, curl or network sentence', () => {
+    const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8').replace(/\s+/g, ' ');
+    for (const rule of [/connect line is the user's own step.*hand it over as printed.*key never reaches the agent or the chat/,
+      /connect command refuses without a terminal, and a terminal is not consent/,
+      /agent applies the skill only through the advisor's `jev-skill` item: its check line, and on the user's yes on that result its apply line/,
+      /where the advisor shows no `jev-skill` item \(the key not set\), STEP 2's line is the user's own step/,
+      /guide's line is the user's command for a terminal of their own/,
       /Only when the user asks to see the plan, run the skill command without `--apply` yourself: a read-only dry run/,
-      /install lines are the user's too/,
-      /No command the guide prints is run by the agent\./]) assert.match(doc, rule);
-    assert.doesNotMatch(doc, /Nothing in this mode is run/);
-    assert.doesNotMatch(doc, /curl|STEP 3|walk|--trace|explicit yes|blocked host/i);
+      /vendor's install lines are the user's own step too/]) assert.match(doc, rule);
+    assert.doesNotMatch(doc, /Nothing in this mode is run|No command[^.]*is run by the agent|agent never runs (?:a |any )?command|agent runs no commands?/i);
+    assert.doesNotMatch(doc, /curl|STEP 3|walk|network|--trace|explicit yes|blocked host/i);
   });
 });

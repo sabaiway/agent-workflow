@@ -313,3 +313,77 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   reached outside the phase that raised it, then FOLDED in a later round of the same step: correcting
   the wrapper-link resolution base required touching both call sites anyway, and the check is no
   longer redundant there — it now decides whether the physical parent has to be resolved at all.
+- **INIT-LISTS-ONLY-USER-ITEMS-UNDER-ARGV-SELECTION** — invariant: `init` lists, besides its previewed variants, only
+  the user-lane variants with no argv, never a pending chat item. Origin: under argv-presence selection every chat
+  variant answers no argv (`agent-workflow-kit/tools/write-lanes.mjs:151-152`), so the spec init-project sentence "a
+  pending variant with no argv is listed with its text" would list chat items (`init-project.mjs:185`, `:233-235`).
+  Narrow fix: name the listed set in the root's Order-and-consent bullet. Raised by the S1 spec review (lens 12).
+- **DANGER-CHECK-USAGE-EXITS-INCOMPLETE** — invariant: every malformed invocation of the danger check exits 2 with
+  nothing read. Origin: the part apply-danger-check's exit table names no exit for a missing `--variant`, a missing
+  `--cwd` or a relative `--claude-dir` (jev-skill rejects a relative dir, `agent-workflow-kit/tools/jev-skill.mjs:47-48`).
+  Narrow fix: the three join exit 2 and S23. Raised by the S1 spec review (lens 14; agy round 2, minor 2).
+- **DANGER-CHECK-DIGEST-BINDS-WRITTEN-BYTES-UNPINNED** — invariant: the bytes an apply writes are the bytes whose sha256
+  the user saw. Origin: S22's real-apply cell compares settings diffs and changed paths, not the printed `writes: …
+  sha256:` values with the written bytes (`agent-workflow-kit/tools/gate-hook.mjs:310`, `cheap-agents.mjs:203`), and no
+  cell changes a planned file's content between check and apply. Narrow fix: compare the hashes, and one cell changing
+  the content after the check expects exit 5 with nothing spawned. Raised by the S1 spec review (codex round 2, minor 2).
+- **DANGER-CHECK-EXIT-3-SPAWNS-NOTHING-UNPINNED** — invariant: no exit of the danger check other than an equal digest
+  spawns a writer. Origin: S23 names nothing spawned on 1, 2 and 5, not on 3 (a writer's dry-run refusal or a masked
+  file). Narrow fix: S23 reads "1, 2, 3 or 5". Raised by the S1 spec review (agy round 2, minor 1).
+- **DANGER-CHECK-GROUNDING-RULE-UNBOUND** — invariant: every bridge-tier allow entry is bound to its exact form. Origin:
+  the part apply-danger-check admits "the quoted grounding rule naming KIT_GROUNDING_TOOL" at any path and with
+  codex-review alone placed, while the writer emits exactly `Bash(node "<KIT_ROOT>/tools/grounding.mjs":*)` only with
+  agy-review placed (`agent-workflow-kit/tools/velocity-profile.mjs:251-256`). Narrow fix: bind it to that form, only
+  with agy-review placed, plus a planted S22 cell. Raised by the S1 spec review (lens round 2, minor 4).
+- **DANGER-CHECK-TYPESAFE-PREFIX-LITERAL** — invariant: the danger check keeps the jev word-surface rule. Origin: the
+  part prints `temporary: <parent>/.typesafe-ai.kit-tmp-*`; the prefixes are private to jev-skill.mjs (:20-21) and the
+  surface rule (jev-guide S12, `agent-workflow-kit/tools/jev-guide.test/surface.test.mjs:18`, `:257`) refuses a line
+  carrying the word outside a jev key or leaf. Narrow fix: derive the prefix from the `typesafe-ai` basename of
+  skillTargets' path, or export the prefixes from the facts leaf. Raised by the S1 spec review (lens round 2, minor 5).
+- **APPLY-SLOT-DIGEST-SUFFIX-QUOTING** — invariant: the slot's apply line ends in the literal ` --apply --expect
+  <digest>`. Origin: the part write-lanes says each element after `node` passes through `quoteArg`, which would render
+  `'<digest>'` (`<` and `>` are outside its safe set, `agent-workflow-kit/tools/jev-facts.mjs:16-17`). Narrow fix: quoteArg
+  builds the check line; the suffix is literal. Raised by the S1 spec review (lens round 2, minor 6).
+- **JEV-SKILL-HEADER-SAYS-THE-USER-RUNS-IT** — invariant: no shipped comment states who runs an item contrary to the
+  lanes. Origin: `agent-workflow-kit/tools/jev-skill.mjs:3-5` says the USER runs the apply in a terminal of their own;
+  under revision 8 the agent applies it through the jev-skill item; S1 keeps jev-skill.mjs unchanged. Narrow fix: the
+  comment names the agent's route and the user's terminal as the alternative (the epic's S6 shares the file). Raised by
+  the S1 spec review (lens round 2, minor 7).
+- **DANGER-CHECK-CREATED-DIR-TWO-PRINT-FORMS** — invariant: each path the check prints has exactly one line form. Origin:
+  the part apply-danger-check prints a created directory as `writes: <dir>/ created` (scope bullet) while the result
+  bullet prints "every other file or directory it would create or replace" as `writes: <path> sha256:<hex>`, so
+  cheap-agents creating `.claude/agents` (`agent-workflow-kit/tools/cheap-agents.mjs:197`) matches both. Narrow fix: the
+  result bullet reads "every other file, and each directory it fills whole". Raised by the S1 re-read (lens).
+- **JEV-GUIDE-INDEX-SKILL-COMMAND-THIRD-COPY** — invariant: every restatement of who applies the Jev skill says the agent
+  applies it only through the advisor's jev-skill item. Origin: `docs/ai/specs/kit/jev-guide/index.md:21` still says
+  flatly "the skill command is the agent's — the harness lane, applied on the chat yes after the danger check", while
+  STEP 2's line is the user's own where no item shows (jev-steps.md:136-138). Narrow fix: "the skill command, through the
+  advisor's jev-skill item, is the agent's". Raised by the S1 re-read (lens).
+- **DANGER-CHECK-IN-INIT-READS-PROCESS-ENV** — invariant: `init`'s in-process check judges the environment its spawned
+  writers get. Origin: `findOnPath` reads `process.env` (`agent-workflow-kit/tools/velocity-profile.mjs:241`) while
+  init spawns writers with `deps.env` minus the GIT_* variables (`init-project.mjs:160`, `:337-339`); equal in
+  production, different in every batch cell; outside a project the jev-skill check has no root. Narrow fix: `checkApply`
+  derives `findWrapper` and `env` from `facts.env` and takes root null for jev-skill. Raised by the S1 spec review (lens 16).
+- **JEV-CONNECT-USER-STEP-WIN32-QUOTING** — invariant: a user step printed for the user's own terminal is quoted for
+  that terminal. Origin: the part write-lanes quotes the jev-connect user step with `quoteArg` on every platform, while
+  on win32 the place is a PowerShell terminal and `connectLine` has a PowerShell form
+  (`agent-workflow-kit/tools/jev-facts.mjs:17`, `:22-24`). Narrow fix: on win32 the user step uses `connectLine`'s form.
+  Residual: native Windows is unmeasured. Raised by the S1 spec review (lens 17).
+- **DANGER-CHECK-SCALAR-REMOVAL-CLASS** — invariant: a scalar key removed from the settings is classed by the default
+  it falls back to. Origin: the part apply-danger-check classes list removals only; `classOf` classes every scalar
+  removal as `nothing widened` (`agent-workflow-kit/tools/apply-danger-check.mjs:116`), so removing `sandbox.enabled:
+  true` (the sandbox off by default) prints `nothing widened`, and autonomy-render's scope admits it (its value `true`).
+  No harness writer removes a scalar today. Narrow fix: the table names scalar removals (`sandbox.enabled` and
+  `sandbox.autoAllowBashIfSandboxed` removed: `prompts removed`; `permissions.defaultMode` removed: `nothing widened`)
+  and a scope admits no scalar removal. Raised by the S1 code session's self-review.
+- **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
+  that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
+  (`agent-workflow-kit/tools/recommendations.mjs:1612`), whose apply line needs the check's digest
+  (`agent-workflow-kit/tools/write-lanes.mjs:189`). Narrow fix: "run the check line, then the apply line with its
+  digest, in <place>". Residual: a pasted `--expect <digest>` is a parse error in bash, zsh, fish and PowerShell;
+  nothing runs. Raised by the S1 diff review (lens round 1).
+- **DANGER-CHECK-DIGEST-OMITS-THE-ROOT** — invariant: the consent digest binds where the change lands. Origin:
+  checkApply prints root-relative lines (`agent-workflow-kit/tools/apply-danger-check.mjs:278-287`), so two projects with
+  identical planned lines share a digest. Narrow fix: a first line `root: <abs>` inside the digest (a spec line-format
+  revision). Residual: needs the agent itself to reuse one project's digest on another; the check and apply lines
+  carry the same `--cwd`. Raised by the S1 diff review (lens round 1).

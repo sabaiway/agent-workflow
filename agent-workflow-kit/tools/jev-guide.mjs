@@ -45,11 +45,11 @@ export const JEV_TEXT = Object.freeze([
 ]);
 
 const KEY_GET = 'Get a key at console.typesafe.ai and set it on every host the agent runs on.';
-const KEY_CONNECT = 'Connect it from a terminal of your own, never through the agent: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
+const KEY_CONNECT = 'Connect it from a terminal of your own — the key never reaches the agent or the chat: the command asks for the key with no echo, checks it with one request and saves it for bash, zsh or fish in your shell\'s startup files, or on Windows as a user environment variable.';
 const KEY_RESTART = `Then ${RESTART_STEP}. Run /agent-workflow-kit jev again: the key mark should read set.`;
 const KEY_NEVER = 'Never paste the key into the chat or into a project file.';
 const KEY_NOT_SET = `key: ${KEY_VARIABLE} not set. A host setting that filters the environment of the agent's commands also hides it. If it still reads not set after that restart and no such setting applies, run the connect line again and follow its last line.`;
-const SKILL_OPTIONAL = 'Optional, for your own code and prompts — the vendor skill. The kit installs it pinned, one verified copy per agent skill root (Codex, Claude Code, Antigravity CLI); after your yes in the chat, run this in a terminal of your own:';
+const SKILL_OPTIONAL = 'Optional, for your own code and prompts — the vendor skill. The kit installs it pinned, one verified copy per agent skill root (Codex, Claude Code, Antigravity CLI); if Recommendations offers this item, the agent applies it on your chat yes after its danger check; you can also run this yourself in a terminal of your own:';
 const NO_HOME = 'no home directory found: the kit\'s install needs one';
 const INSTALL = [
   'Or the vendor\'s own routes:',

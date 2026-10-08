@@ -4,15 +4,16 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { checkApply } from './apply-danger-check.mjs';
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { dirCovers } from './declared-paths.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { GIT_MAX_BUFFER } from './git-env.mjs';
+import { GIT_MAX_BUFFER, stripGitLocationEnv } from './git-env.mjs';
 import { preflightInit } from './init-preflight.mjs';
 import { buildRecommendations, hostFacts } from './recommendations.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
-import { LANE_CONSOLE, VARIANT_LANES, consoleArgv, isProtectedPath, laneOf, routeLine, writesOf } from './write-lanes.mjs';
+import { LANE_HARNESS, VARIANT_LANES, consoleArgv, isEnvDependent, isProtectedPath, laneOf, writesOf } from './write-lanes.mjs';
 
 const INSIDE_LINE = 'you are inside an agent; run this in your own terminal';
 const APPLY_PROMPT = 'apply? y/N: ';
@@ -96,29 +97,21 @@ const readState = (path, io) => {
   if (stat.isSymbolicLink()) return `link:${io.readlink(path)}:${followedState(path, io)}`;
   return statState(path, stat, io);
 };
-const stateOf = (path, io) => {
+const readStateOrElse = (path, io, onError) => {
   try {
     return readState(path, io);
   } catch (error) {
-    throw new Error(`${path} could not be read: ${error.code ?? error.message}`);
+    return onError(error);
   }
 };
+const stateOf = (path, io) => readStateOrElse(path, io, (error) => {
+  throw new Error(`${path} could not be read: ${error.code ?? error.message}`);
+});
 const recordPaths = (paths, io) => new Map([...new Set(paths)].map((path) => [path, stateOf(path, io)]));
-const findChanged = (record, io) => [...record].find(([path, state]) => {
-  try {
-    return readState(path, io) !== state;
-  } catch {
-    return true;
-  }
-})?.[0];
+const findChanged = (record, io) => [...record].find(([path, state]) =>
+  readStateOrElse(path, io, () => null) !== state)?.[0];
 // After an apply a path that cannot be read is recorded as such, so the next comparison stops the batch on it.
-const refreshState = (path, io) => {
-  try {
-    return readState(path, io);
-  } catch (error) {
-    return `unreadable:${error.code ?? error.message}`;
-  }
-};
+const refreshState = (path, io) => readStateOrElse(path, io, (error) => `unreadable:${error.code ?? error.message}`);
 const DIRECTORY = 'directory:';
 const entriesOf = (state) => (state === 'absent' ? [] : JSON.parse(state.slice(DIRECTORY.length)));
 // A recorded parent moves only by the written entry, so an entry created or removed beside it still stops the batch.
@@ -179,16 +172,13 @@ const reachesQueue = (variant, facts) => {
 const isMasked = (variant, context) => (writesOf(variant, context.facts) ?? [])
   .some((write) => [...context.masks].some((mask) => dirCovers(write, mask)));
 
-// context.items keeps the console items of the advisor's latest return, before the queue's filters.
 const getQueue = async (context) => {
-  const { items } = await context.recommend(context.facts.root, { keySet: context.keySet });
-  context.items = items.filter(({ variant }) => laneOf(variant) === LANE_CONSOLE);
+  context.items = (await context.recommend(context.facts.root, { keySet: context.keySet })).items;
   return context.items.filter(({ variant }) => reachesQueue(variant, context.facts) && !isMasked(variant, context));
 };
 
 const printNotPending = (context) => {
-  const plain = routeLine('velocity-core');
-  const variants = Object.keys(VARIANT_LANES).filter((variant) => laneOf(variant) === LANE_CONSOLE && routeLine(variant)?.length > plain.length);
+  const variants = Object.keys(VARIANT_LANES).filter(isEnvDependent);
   const keys = new Set();
   for (const variant of variants) {
     const key = variant.split('.')[0];
@@ -227,6 +217,16 @@ const previewQueue = async (context, queue) => {
     context.print(result.stdout);
     const tuple = result.stdout.match(/--apply\s+(\S+)/)?.[1];
     const facts = { ...context.facts, tuple };
+    if (laneOf(item.variant) === LANE_HARNESS) {
+      try {
+        const { lines, refused } = context.checkApply(item.variant, facts, {});
+        for (const line of lines) context.print(line);
+        if (refused.length > 0) throw new Error(refused.map(({ key }) => key).join(', '));
+      } catch (error) {
+        context.print(`not applied: ${item.variant} — the danger check refused: ${error.message}`);
+        continue;
+      }
+    }
     batch.push({ ...item, applyArgv: consoleArgv(item.variant, facts).apply, writes: writesOf(item.variant, facts) });
     printNote(context, item.key);
   }
@@ -295,7 +295,7 @@ const runPass = async (context, queue) => {
 const selectRoot = async (context) => {
   const { candidates } = findProject({ cwd: context.cwd, lstat: context.io.lstat });
   if (candidates.length === 0) {
-    context.print("no agent-workflow project here — the project items apply when init runs from that project's folder");
+    context.print('no agent-workflow project here — run /agent-workflow-kit upgrade in your agent from that project, or deploy it there first: its yes applies the project items');
     return { root: null };
   }
   if (candidates.length === 1) return candidates[0];
@@ -317,7 +317,7 @@ const gateStamp = (candidate, context) => {
   if (compareSemver(stamp, EXPECTED_WORKFLOW_VERSION) === 1) {
     context.print(`this project's stamp ${stamp} is ahead of this kit's lineage ${EXPECTED_WORKFLOW_VERSION} — update the kit, then init again`);
   } else {
-    context.print('run /agent-workflow-kit upgrade, then init again');
+    context.print('run /agent-workflow-kit upgrade in your agent: its yes applies the items');
   }
   return null;
 };
@@ -334,10 +334,8 @@ export const runInitProject = async (deps) => {
     print(INSIDE_LINE);
     return { code: 0 };
   }
-  const spawnEnv = { ...deps.env };
-  delete spawnEnv.GIT_DIR;
-  delete spawnEnv.GIT_WORK_TREE;
-  const context = { ...deps, io, print, spawnEnv, masks: new Set(), keySet: false, restart: false };
+  const spawnEnv = stripGitLocationEnv(deps.env);
+  const context = { ...deps, checkApply: deps.checkApply ?? checkApply, io, print, spawnEnv, masks: new Set(), keySet: false, restart: false };
   const candidate = await selectRoot(context);
   if (candidate === null) return { code: 0 };
   if (!preflightInit({ ...deps, root: candidate.root, io }).ok) {

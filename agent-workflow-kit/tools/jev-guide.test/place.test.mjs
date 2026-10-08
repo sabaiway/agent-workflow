@@ -16,9 +16,9 @@ const need = (mod, name) => {
   if (!(name in mod)) throw new Error(`${name} is absent`);
   return mod[name];
 };
-const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder; if init reports it not pending, restart the agent from that console";
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const GUIDE_TOOLS = '/kit tools/dir';
+const userStep = () => `your own step — it asks for the key in your terminal and the key never goes into the chat — run in a terminal of your own: node ${facts.quoteArg(join(TOOLS, 'jev-connect.mjs'))}`;
 const BS = '\\';
 const CONTAINER = 'a terminal inside this container';
 const SSH = 'a terminal on SSH host build-7';
@@ -95,11 +95,15 @@ describe('spec:jev-guide/S27 the place by proof: one ordered rule, a line of its
   }
 
   for (const [name, env, platform, host, container, place] of CELLS) {
-    it(`the advisor, ${name}: the detail prefix, the route with restart and unquoted console argv whatever the platform`, () => {
+    it(`the advisor, ${name}: the detail prefix, the user step and unquoted console argv whatever the platform`, () => {
       const { items } = buildRecommendations({ cwd: tmp(), deps: { probes: [probeJevConnect], getenv: env, jevHost: { platform, hostname: host, container } } });
       assert.equal(items.length, 1);
-      assert.equal(need(lanes, 'routeLine')('jev-connect'), ROUTE);
-      assert.equal(items[0].apply, ROUTE);
+      const slot = need(lanes, 'applySlot')('jev-connect', { toolsDir: TOOLS, platform });
+      assert.deepEqual(slot, { check: null, apply: userStep() });
+      assert.equal(items[0].lane, 'user');
+      assert.equal(items[0].check, null);
+      assert.equal(items[0].apply, userStep());
+      assert.doesNotMatch(items[0].apply, /applies at your next|restart the agent/);
       assert.deepEqual(need(lanes, 'consoleArgv')('jev-connect', { toolsDir: TOOLS, platform }).apply,
         ['node', join(TOOLS, 'jev-connect.mjs')]);
       assert.ok(items[0].detail.startsWith(`${prefixOf(place)}HAND-APPLY alternative`), items[0].detail);

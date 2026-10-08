@@ -2,13 +2,14 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACKS_FILE, factFingerprint } from '../ack-store.mjs';
 import { buildRecommendations, formatRecommendations, main, SEVERITY_OPTIONAL } from '../recommendations.mjs';
 import { shellQuoteArg as q } from '../review-state.mjs';
+import { hermeticGitEnv } from '../git-env.mjs';
 
 // The probe and the facts leaf are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const loaded = await import('../recommendations.mjs');
@@ -20,8 +21,25 @@ const need = (mod, name) => {
   if (!(name in mod)) throw new Error(`${name} is absent`);
   return mod[name];
 };
-const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder; if init reports it not pending, restart the agent from that console";
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const userStep = () => `your own step — it asks for the key in your terminal and the key never goes into the chat — run in a terminal of your own: node ${facts.quoteArg(join(TOOLS, 'jev-connect.mjs'))}`;
+const skillSlot = (variant, root, dir) => {
+  const check = ['node', ...[join(TOOLS, 'apply-danger-check.mjs'), '--variant', variant, '--cwd', root, '--claude-dir', dir]
+    .map((arg) => facts.quoteArg(arg))].join(' ');
+  return { check, apply: `${check} --apply --expect <digest>` };
+};
+const assertSkillSlot = (item, root, home, env = KEYS.set) => {
+  const dir = facts.claudeDirOf(env, home).dir;
+  const slot = skillSlot(item.variant, root, dir);
+  assert.equal(item.lane, 'harness');
+  assert.deepEqual({ check: item.check, apply: item.apply }, slot);
+  assert.deepEqual(need(lanes, 'applySlot')(item.variant, { toolsDir: TOOLS, root, env, home, claudeDir: dir }), slot);
+  assert.notEqual(item.apply, facts.skillLine(TOOLS, undefined, dir));
+  assert.deepEqual(need(lanes, 'consoleArgv')(item.variant, { toolsDir: TOOLS, root, env, home, claudeDir: dir }), {
+    preview: ['node', join(TOOLS, 'jev-skill.mjs'), '--claude-dir', dir],
+    apply: ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', dir],
+  });
+};
 const KEY = 'TYPESAFE_API_KEY';
 const LANE = 'jev-connect';
 const DECLINE = factFingerprint('jev-connect:declined');
@@ -106,37 +124,44 @@ describe('spec:jev-guide/S17 the state table: key × ack, one conjunction admits
 });
 
 describe('spec:jev-guide/S18 the item and the decline round trip', () => {
-  it('renders one optional jev-connect item: lane console, the WHAT and BENEFIT literals, the route with restart, apply-only argv and the decline recipe line', () => {
+  it('renders the exact optional user item and apply-only argv; only the decline fingerprint hides it after the recipe round trip', () => {
     const root = projectOf();
     const { items, skips } = alone(root, { getenv: {} });
-    assert.equal(need(lanes, 'routeLine')(LANE), ROUTE);
+    assert.deepEqual(need(lanes, 'applySlot')(LANE, { toolsDir: TOOLS }), { check: null, apply: userStep() });
     assert.deepEqual(need(lanes, 'consoleArgv')(LANE, { toolsDir: TOOLS }), { preview: null, apply: ['node', join(TOOLS, 'jev-connect.mjs')] });
     assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, lane: 'console', what: WHAT, benefit: BENEFIT,
-      apply: ROUTE,
+    assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, lane: 'user', what: WHAT, benefit: BENEFIT,
+      check: null, apply: userStep(),
       detail: `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${LANE} --fingerprint ${DECLINE} --cwd ${q(root)}` }]);
     assert.ok(formatRecommendations({ items, skips }).includes(WHAT));
-  });
-
-  it('opens the recipe line with the place under deps.jevHost { container: true }, the apply exactly the route with restart', () => {
-    const root = projectOf();
-    const [plain] = alone(root, { getenv: {} }).items;
-    const { items, skips } = alone(root, { getenv: {}, jevHost: { container: true } });
-    assert.equal(skips.length, 0);
-    assert.deepEqual(items.map(({ apply }) => apply), [ROUTE]);
-    assert.equal(items[0].detail, `run the apply in a terminal inside this container; ${plain.detail}`);
-    assert.ok(plain.detail.startsWith('HAND-APPLY alternative'), plain.detail);
-  });
-
-  it('the recipe line run with --apply records the decline at jevConnectAck and the next run renders no item', () => {
-    const root = projectOf();
-    const [item] = alone(root, { getenv: {} }).items;
-    const command = item.detail.slice(item.detail.indexOf('— ') + '— '.length);
-    const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8' });
+    assert.doesNotMatch(items[0].apply, /applies at your next|restart the agent/);
+    const command = items[0].detail.slice(items[0].detail.indexOf('— ') + '— '.length);
+    const env = hermeticGitEnv({ PATH: process.env.PATH }, root);
+    const wrong = spawnSync('sh', ['-c', `${command.replace(DECLINE, OTHER)} --apply`], { encoding: 'utf8', cwd: root, env });
+    assert.equal(wrong.error, undefined);
+    assert.equal(wrong.signal, null);
+    assert.equal(wrong.status, 0, wrong.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, ACKS_FILE), 'utf8')), { jevConnectAck: OTHER });
+    assert.equal(alone(root, { getenv: {} }).items.length, 1);
+    const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8', cwd: root, env });
+    assert.equal(written.error, undefined);
+    assert.equal(written.signal, null);
     assert.equal(written.status, 0, written.stderr);
     assert.deepEqual(JSON.parse(readFileSync(join(root, ACKS_FILE), 'utf8')), { jevConnectAck: DECLINE });
     assert.deepEqual(alone(root, { getenv: {} }), { root, items: [], skips: [] });
   });
+
+  it('opens the recipe line only with the injected container place and keeps the apply byte-equal to the user slot', () => {
+    const root = projectOf();
+    const [plain] = alone(root, { getenv: {} }).items;
+    const { items, skips } = alone(root, { getenv: {}, jevHost: { container: true } });
+    assert.equal(skips.length, 0);
+    assert.deepEqual(items.map(({ apply }) => apply), [userStep()]);
+    assert.deepEqual(need(lanes, 'applySlot')(LANE, { toolsDir: TOOLS }), { check: null, apply: userStep() });
+    assert.equal(items[0].detail, `run the apply in a terminal inside this container; ${plain.detail}`);
+    assert.ok(plain.detail.startsWith('HAND-APPLY alternative'), plain.detail);
+  });
+
 });
 
 describe('spec:jev-guide/S20 the hermetic seam and the canary', () => {
@@ -264,28 +289,59 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
     }
   }
 
-  it('renders one optional item: lane console, the WHAT and BENEFIT literals, the route with restart, argv with --claude-dir and the decline as the recipe tail', () => {
+  it('renders the exact optional harness slot and argv with --claude-dir; the recipe records the decline and hides the next offer', () => {
     const root = projectOf();
     const home = homeOf([null, 'current', 'current']);
     const deps = { getenv: KEYS.set, jevHost: { home } };
     const { items, skips } = skillAlone(root, deps);
-    assert.equal(need(lanes, 'routeLine')(SKILL_LANE), ROUTE);
-    assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: deps.getenv, home, platform: undefined }),
-      { apply: ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', join(home, '.claude')],
-        preview: ['node', join(TOOLS, 'jev-skill.mjs'), '--claude-dir', join(home, '.claude')] });
+    assertSkillSlot(items[0], root, home);
     assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, lane: 'console', what: SKILL_WHAT, benefit: SKILL_BENEFIT,
-      apply: ROUTE, detail: recordFor(root) }]);
+    assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, lane: 'harness', what: SKILL_WHAT, benefit: SKILL_BENEFIT,
+      ...skillSlot(SKILL_LANE, root, join(home, '.claude')), detail: recordFor(root) }]);
+    const command = items[0].detail.slice(items[0].detail.lastIndexOf('— ') + '— '.length);
+    const env = hermeticGitEnv({ PATH: process.env.PATH }, home);
+    const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8', cwd: root, env });
+    assert.equal(written.error, undefined);
+    assert.equal(written.signal, null);
+    assert.equal(written.status, 0, written.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, ACKS_FILE), 'utf8')), { jevSkillAck: SKILL_DECLINE });
+    assert.deepEqual(skillAlone(root, deps), { root, items: [], skips: [] });
   });
 
-  it('the earlier variant names the earliest tag found and the judged pins\' first tag, with the route and restart as its apply', () => {
+  it('the earlier harness slot names the earliest tag and the injected pins\' first tag through all three filesystem seams', () => {
     const root = projectOf();
-    const two = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['current', 'older', 'current']) } }).items;
+    const home = homeOf(['current', 'older', 'current']);
+    const two = skillAlone(root, { getenv: KEYS.set, jevHost: { home } }).items;
     assert.deepEqual(two.map(({ variant, what }) => [variant, what]), [['jev-skill.earlier', earlierWhat('v0.5.6')]]);
-    assert.deepEqual(two.map(({ apply }) => apply), [ROUTE]);
-    const three = skillAlone(root, { getenv: KEYS.set, jevHost: { home: homeOf(['older', 'current', 'oldest']) } }).items;
-    assert.deepEqual(three.map(({ what }) => what), [earlierWhat('v0.5.5')]);
-    assert.deepEqual(three.map(({ apply }) => apply), [ROUTE]);
+    assertSkillSlot(two[0], root, home);
+    const injected = homeOf(['current', 'current', 'current']);
+    const targets = homeTargets(injected);
+    const pins = [pinOf('v9.0.0', pairs.current), pinOf('v8.0.0', pairs.older), pinOf('v7.0.0', pairs.oldest)];
+    const seen = { lstat: [], readdir: [], readFile: [] };
+    const three = skillAlone(root, { getenv: KEYS.set, jevHost: { home: injected }, jevPins: pins,
+      lstat: (path) => {
+        seen.lstat.push(path);
+        return lstatSync(path);
+      },
+      readdir: (path) => {
+        seen.readdir.push(path);
+        return readdirSync(path);
+      },
+      readFile: (path, ...args) => {
+        seen.readFile.push(path);
+        const at = targets.findIndex((target) => dirname(path) === target);
+        if (at > 0) return pairs[at === 1 ? 'older' : 'oldest'][path.endsWith('LICENSE') ? 'LICENSE' : 'SKILL.md'];
+        return readFileSync(path, ...args);
+      } }).items;
+    assert.equal(three[0].variant, 'jev-skill.earlier');
+    assert.equal(three[0].what, "Jev's vendor skill in the agent skill roots is at v7.0.0, behind the kit's pin v9.0.0; only copies matching a kit pin change");
+    assertSkillSlot(three[0], root, injected);
+    for (const target of targets) {
+      assert.ok(seen.lstat.includes(target), target);
+      assert.ok(seen.readdir.includes(target), target);
+      for (const name of ['SKILL.md', 'LICENSE']) assert.ok(seen.readFile.includes(join(target, name)), target);
+    }
+    assert.ok(three[0].detail.includes(factFingerprint('jev-skill:declined:v9.0.0')));
   });
 
   it('renders nothing for a deps without jevHost.home and nothing, no skip, for a foreign-only home', () => {
@@ -295,21 +351,21 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
       { root, items: [], skips: [] });
   });
 
-  it('an absolute CLAUDE_CONFIG_DIR moves the judged Claude Code target and console argv; a relative one keeps <home>/.claude with the recipe note, both items apply via the route with restart', () => {
+  it('an absolute CLAUDE_CONFIG_DIR moves the judged target and harness slot; a relative one keeps <home>/.claude and the recipe note', () => {
     const root = projectOf();
     const home = homeOf(['current', 'current', 'current']);
     const cc = join(home, 'elsewhere', 'cc');
     const absoluteEnv = { ...KEYS.set, CLAUDE_CONFIG_DIR: cc };
     const relativeEnv = { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' };
     const [moved] = skillAlone(root, { getenv: absoluteEnv, jevHost: { home } }).items;
-    assert.equal(moved.apply, ROUTE);
+    assertSkillSlot(moved, root, home, absoluteEnv);
     assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: absoluteEnv, home }).apply, ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', cc]);
     assert.equal(moved.detail, recordFor(root));
     const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(home, '.claude')}`;
     assert.deepEqual(skillAlone(root, { getenv: relativeEnv, jevHost: { home } }).items, []);
     rmSync(homeTargets(home)[1], { recursive: true });
     const [relative] = skillAlone(root, { getenv: relativeEnv, jevHost: { home } }).items;
-    assert.equal(relative.apply, ROUTE);
+    assertSkillSlot(relative, root, home, relativeEnv);
     assert.deepEqual(need(lanes, 'consoleArgv')(SKILL_LANE, { toolsDir: TOOLS, env: relativeEnv, home }).apply, ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', join(home, '.claude')]);
     assert.equal(relative.detail, `${note}; ${recordFor(root)}`);
   });
@@ -322,29 +378,21 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
     assert.deepEqual(skips, [{ key: SKILL_LANE, reason: facts.NO_APPLY_LINE }]);
   });
 
-  it('the recipe line opens with the place, names each foreign target through printable and the note, and ends with the decline', () => {
+  it('the harness slot keeps the recipe place, every foreign target through printable, the note and the decline tail', () => {
     const root = projectOf();
-    const home = homeOf(['foreign', null, 'current']);
+    const home = homeOf(['foreign', null, 'foreign']);
     const odd = join(home, `odd${String.fromCharCode(7)}`);
     const env = { ...KEYS.set, CLAUDE_CONFIG_DIR: 'rel/cc' };
     const [item] = skillAlone(root, { getenv: env, jevHost: { home, container: true } }).items;
+    assertSkillSlot(item, root, home, env);
     const note = `CLAUDE_CONFIG_DIR is set to rel/cc, not an absolute path: the Claude Code target is ${join(home, '.claude')}`;
-    assert.equal(item.detail, `run the apply in a terminal inside this container; left untouched: ${homeTargets(home)[0]} — holds LICENSE, SKILL.md, notes.txt; ${note}; ${recordFor(root)}`);
+    assert.equal(item.detail, `run the apply in a terminal inside this container; left untouched: ${homeTargets(home)[0]} — holds LICENSE, SKILL.md, notes.txt; left untouched: ${homeTargets(home)[2]} — holds LICENSE, SKILL.md, notes.txt; ${note}; ${recordFor(root)}`);
     fillPair(join(odd, '.agents', 'skills', 'typesafe-ai'), { ...pairs.current, 'notes.txt': 'mine\n' });
     const clean = join(home, 'cc');
     const [shown] = skillAlone(root, { getenv: { ...KEYS.set, CLAUDE_CONFIG_DIR: clean }, jevHost: { home: odd } }).items;
+    assertSkillSlot(shown, root, odd, { ...KEYS.set, CLAUDE_CONFIG_DIR: clean });
     assert.ok(shown.detail.startsWith(`left untouched: ${join(home, 'odd?', '.agents', 'skills', 'typesafe-ai')} — holds `), shown.detail);
     assert.ok(!shown.detail.includes(String.fromCharCode(7)));
   });
 
-  it('the recipe line run with --apply records the decline at jevSkillAck and the next run renders no item', () => {
-    const root = projectOf();
-    const home = homeOf([null, null, null]);
-    const [item] = skillAlone(root, { getenv: KEYS.set, jevHost: { home } }).items;
-    const command = item.detail.slice(item.detail.lastIndexOf('— ') + '— '.length);
-    const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8' });
-    assert.equal(written.status, 0, written.stderr);
-    assert.deepEqual(JSON.parse(readFileSync(join(root, ACKS_FILE), 'utf8')), { jevSkillAck: SKILL_DECLINE });
-    assert.deepEqual(skillAlone(root, { getenv: KEYS.set, jevHost: { home } }), { root, items: [], skips: [] });
-  });
 });

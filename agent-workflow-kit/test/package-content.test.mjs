@@ -52,7 +52,7 @@ const packFull = () => {
 };
 const pack = () => packFull().map((f) => f.path);
 
-describe('kit package content — tarball guard (no own-test/fixture leak; payload retained)', () => {
+describe('spec:init-project/S18 kit package content — tarball guard (no own-test/fixture leak; payload retained)', () => {
   // Packed once in a before() hook (not at describe-body level): a failing `npm pack` is then
   // reported as a graceful hook failure rather than throwing during test collection.
   let packed;
@@ -198,8 +198,9 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
       'tools/jev-guide.mjs', 'tools/jev-facts.mjs', 'tools/jev-connect.mjs', 'tools/jev-skill.mjs',
       'references/modes/jev.md',
       'references/vendor/typesafe-ai/SKILL.md.pinned', 'references/vendor/typesafe-ai/LICENSE',
-      // the lane leaf, the preflight and the project step init runs from the installed copy (spec:init-project/S18) — by NAME: install.mjs spawns tools/init-project.mjs.
+      // the lane leaf, the preflight, the project step and its danger check — by NAME: install.mjs spawns tools/init-project.mjs.
       'tools/write-lanes.mjs', 'tools/init-preflight.mjs', 'tools/init-project.mjs',
+      'tools/apply-danger-check.mjs',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -869,8 +870,8 @@ describe('kit package content — tarball guard (no own-test/fixture leak; paylo
     // 354 = 352 + bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs and bridges/antigravity-cli-bridge/bin/agy-model-posture.test.mjs - the model posture suites (story S1 of BRIDGE-MODEL-IS-ONE-USER-SETTING)
     // 355 = 354 + tools/bridge-catalog.mjs - the model catalog reader (story S2 of BRIDGE-MODEL-IS-ONE-USER-SETTING); 358 = 355 + bridges/codex-cli-bridge/bin/{codex-exec-jev,codex-review-jev}.test.mjs and bridges/antigravity-cli-bridge/bin/agy-jev.test.mjs - Jev in every bridge wrapper (story S10 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
     // 359 = 358 + tools/bridge-sandbox-recipe.mjs - the one reader of the bundled bridges' declared sandbox surfaces (story S11 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
-    // 362 = 359 + tools/write-lanes.mjs, tools/init-preflight.mjs and tools/init-project.mjs - the lane leaf, the preflight and the project step (story S13 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
-    assert.equal(packed.length, 362, `tarball file count drifted (${packed.length}\u2260 362)`);
+    // 363 = 362 + tools/apply-danger-check.mjs - story S1 of BRIDGES-WORK-UNDER-THE-SANDBOX
+    assert.equal(packed.length, 363, `tarball file count drifted (${packed.length}\u2260 363)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

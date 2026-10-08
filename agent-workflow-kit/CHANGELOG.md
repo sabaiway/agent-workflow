@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.26.0 — the agent applies the harness's own configuration on your chat "yes" again, after a danger check of the concrete change (AD-176)
+
+**`/agent-workflow-kit upgrade` applies the harness's own configuration again.** In 14.25.0 an item that writes
+`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, `.mcp.json` or the Jev agent skill copies was a
+`console` item that only `init` applied, and the mode docs told the agent never to run it. Now the agent applies it on
+your chat "yes", after a danger check that shows what the change widens. `npx @sabaiway/agent-workflow-kit@latest
+init` stays a console route you may take instead.
+
+- **Three lanes.** Every item carries `lane: chat`, `lane: harness` or `lane: user` (`lane: console` is gone). A
+  harness item renders a `check:` line and an `apply:` line, the same command plus `--apply --expect <digest>`. A user
+  item is your own step: the Jev key's connect command (the key never reaches the agent or the chat), `init` for
+  `family-freshness`, the sudo install of `sandbox-provision.installable`, and the six items that keep their own apply text (`commit-guard`, `enforcement`, `state-block`,
+  `gate-hook.marker-stale`, `read-lane.stale`, the bare `sandbox-provision`).
+- **The danger check, `tools/apply-danger-check.mjs`.** It runs the item's writer as a dry run and prints every
+  settings entry the change adds, alters or removes with its class: `hosts reachable`, `paths writable`, `commands
+  outside the sandbox`, `prompts removed`, `commands the harness runs` or `nothing widened`; then every other file it would write with its sha256 (a Jev skill copy as one digest over its files), and every
+  directory it would create. An entry
+  outside the item's declared scope, an unknown key, a wrong-typed value or a removed or altered credentials entry
+  refuses the item with nothing written (exit 1). The last line is the result's
+  digest; the apply runs the writer only when the digest is still the same (else exit 5 and a new yes).
+- **The consent route.** The agent runs the check, shows its result, takes your yes and runs the apply line in its
+  sandbox. When the check prints a `masked:` line, or the OS refuses the write on a protected file, the agent runs the
+  same line once more outside the sandbox, so the harness decides (after a `masked:` line your yes is taken on that
+  outside result); a refusal there leaves the item pending, shown, and the agent continues.
+- **`init` runs the same check** after each harness preview: a variant the check refuses is named `not applied` and
+  leaves the batch; the others apply on the one terminal `y` (a sudo install asks once more). Outside a project, and on a stamp behind the kit, `init`
+  now points to `/agent-workflow-kit upgrade` in your agent.
+- The README, the `upgrade`, `bootstrap`, `recommendations`, `mcp` and `jev` mode docs say so; no shipped text says the
+  agent never runs an item or that only `init` writes the harness configuration.
+
 ## 14.25.2 — the gate migration names `"lcovProducer": true` in the four hints that print the paste-ready suite cmd (AD-175)
 
 - **A suite cmd the migration cannot recognise is no longer told only to rewrite itself.** When the upgrade's

@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-07 — AD-176: the agent applies the harness's own configuration on a chat yes, after a danger check (kit 14.26.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
+
+**`/agent-workflow-kit upgrade` applies the harness's own configuration on a chat "yes" again; AD-173's
+console-only lane is reversed.** Every item carries `lane: chat`, `harness` or `user`. A harness item renders a
+`check:` line, run by the new `tools/apply-danger-check.mjs`: it dry-runs the item's writer, prints each settings entry
+the change adds, alters or removes with what it widens, refuses anything beyond the item's declared scope with nothing
+written, and ends on a digest the `apply:` line must match. After a write the OS refuses on a protected file, the same
+apply line runs once more outside the sandbox, so the harness decides. A user item (the Jev key, `init` for
+`family-freshness`, a sudo install, the six items that keep their own apply text) is the user's own step. `init` runs
+the same check beside each harness preview and stays an optional
+console route. Contracts: init-project revision 3, jev-guide revision 8, velocity-profile revision 3. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-07 — AD-175: the gate migration names the `lcovProducer` marker (kit 14.25.2 and memory 8.1.5 PATCH; engine 5.12.0 and both bridges unchanged)
 
 **The four `migrate-gates.mjs` hints that print the paste-ready suite cmd now also name `"lcovProducer": true`,**

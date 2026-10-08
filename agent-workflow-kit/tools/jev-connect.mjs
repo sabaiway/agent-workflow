@@ -4,8 +4,8 @@
 // their own: it reads the key with no echo, verifies it with one request, saves it where the shell
 // reads it (bash, zsh, fish) or in the Windows user environment, and prints the restart step. It never
 // prints the key, never puts it in an argv, and refuses when stdin is not a terminal, so a
-// non-interactive run (the agent's) cannot reach the prompt — the mode doc keeps the rule that the
-// agent never runs it. It claims no connection: the guide's key mark, read after the restart, is the proof.
+// non-interactive run cannot reach the prompt. The key never reaches the agent or the chat.
+// It claims no connection: the guide's key mark, read after the restart, is the proof.
 import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';

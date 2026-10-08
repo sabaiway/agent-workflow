@@ -1,19 +1,20 @@
 import { join, resolve } from 'node:path';
 import { dirCovers } from './declared-paths.mjs';
-import { claudeDirOf, skillTargets } from './jev-facts.mjs';
+import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
 
-export const LANE_CONSOLE = 'console';
 export const LANE_CHAT = 'chat';
+export const LANE_HARNESS = 'harness';
+export const LANE_USER = 'user';
 
 export const VARIANT_LANES = Object.freeze({
-  'velocity-core': LANE_CONSOLE,
-  'kit-tools-tier': LANE_CONSOLE,
-  'bridge-tier': LANE_CONSOLE,
+  'velocity-core': LANE_HARNESS,
+  'kit-tools-tier': LANE_HARNESS,
+  'bridge-tier': LANE_HARNESS,
   'autonomy-policy': LANE_CHAT,
-  'autonomy-render': LANE_CONSOLE,
-  'sandbox-provision': LANE_CONSOLE,
-  'sandbox-provision.installable': LANE_CONSOLE,
+  'autonomy-render': LANE_HARNESS,
+  'sandbox-provision': LANE_USER,
+  'sandbox-provision.installable': LANE_USER,
   'review-recipe': LANE_CHAT,
   'gates-declaration': LANE_CHAT,
   'gates-inert': LANE_CHAT,
@@ -24,19 +25,19 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.unminted': LANE_CHAT,
   'source-size.adopted-elsewhere': LANE_CHAT,
   'source-size.id-squatter': LANE_CHAT,
-  'gate-hook': LANE_CONSOLE,
-  'gate-hook.marker-stale': LANE_CONSOLE,
-  'commit-guard': LANE_CONSOLE,
-  enforcement: LANE_CONSOLE,
+  'gate-hook': LANE_HARNESS,
+  'gate-hook.marker-stale': LANE_USER,
+  'commit-guard': LANE_USER,
+  enforcement: LANE_USER,
   'read-lane': LANE_CHAT,
-  'read-lane.stale': LANE_CONSOLE,
-  'read-lane.missing': LANE_CONSOLE,
-  'state-block': LANE_CONSOLE,
-  'mcp-channel': LANE_CONSOLE,
-  'mcp-channel.differing': LANE_CONSOLE,
-  agents: LANE_CONSOLE,
-  'executor-vehicle': LANE_CONSOLE,
-  'family-freshness': LANE_CONSOLE,
+  'read-lane.stale': LANE_USER,
+  'read-lane.missing': LANE_HARNESS,
+  'state-block': LANE_USER,
+  'mcp-channel': LANE_HARNESS,
+  'mcp-channel.differing': LANE_HARNESS,
+  agents: LANE_HARNESS,
+  'executor-vehicle': LANE_HARNESS,
+  'family-freshness': LANE_USER,
   'adr-store-migration': LANE_CHAT,
   'sandbox-masks': LANE_CHAT,
   'sandbox-masks.unfenced-mount': LANE_CHAT,
@@ -44,9 +45,9 @@ export const VARIANT_LANES = Object.freeze({
   'worktrees-dir': LANE_CHAT,
   'spec-adoption': LANE_CHAT,
   'profile-gap': LANE_CHAT,
-  'jev-connect': LANE_CONSOLE,
-  'jev-skill': LANE_CONSOLE,
-  'jev-skill.earlier': LANE_CONSOLE,
+  'jev-connect': LANE_USER,
+  'jev-skill': LANE_HARNESS,
+  'jev-skill.earlier': LANE_HARNESS,
   'spec-adoption.adopting': LANE_CHAT,
 });
 
@@ -78,8 +79,6 @@ export const isProtectedPath = (abs, { root, home, hooksDir }) => {
     || [...PROTECTED_DIRS.map((dir) => join(project, dir)), hooks].some((dir) => dirCovers(dir, path));
 };
 
-const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder";
-const RESTART = '; if init reports it not pending, restart the agent from that console';
 const SETTINGS_WRITES = [SETTINGS_PATH];
 const HOOK_WRITES = [join('.claude', 'hooks', 'agent-workflow-gates.mjs'), ...SETTINGS_WRITES];
 const MCP_WRITES = ['.mcp.json', ...SETTINGS_WRITES];
@@ -98,12 +97,16 @@ const getStartupPaths = ({ env, home, platform }) => targetsFor({
   platform,
 }).filter(({ path }) => path !== null).map(({ path }) => path);
 
-const createForm = (file, preview, apply, writes, restart = false) => Object.freeze({
+const formatCommand = (argv) => argv.map(quoteArg).join(' ');
+const TERMINAL_STEP = 'run in a terminal of your own: ';
+
+const createForm = (file, preview, apply, writes, envDependent = false, userStep = null) => Object.freeze({
   file,
   preview,
   apply,
   writes,
-  route: restart ? ROUTE + RESTART : ROUTE,
+  envDependent,
+  userStep,
 });
 
 const CORE_FORM = createForm('velocity-profile.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], SETTINGS_WRITES);
@@ -126,11 +129,17 @@ const FORMS = Object.freeze({
     ['--replace', '--cwd', '<root>'], ['--replace', '--apply', '--cwd', '<root>'], MCP_WRITES),
   agents: AGENT_FORM,
   'executor-vehicle': AGENT_FORM,
-  'sandbox-provision.installable': createForm('autonomy-doctor.mjs', [], ['--apply', '<tuple>'], [], true),
+  'sandbox-provision.installable': createForm('autonomy-doctor.mjs', [], ['--apply', '<tuple>'], [], true,
+    (facts, argv) => 'your own step (a sudo install; the doctor prints the --apply line to run next) — '
+      + `${TERMINAL_STEP}cd ${quoteArg(facts.root)} && ${formatCommand(argv.preview)}`),
   'jev-skill': SKILL_FORM,
   'jev-skill.earlier': SKILL_FORM,
-  'jev-connect': createForm('jev-connect.mjs', null, [], getStartupPaths, true),
-  'family-freshness': { route: ROUTE },
+  'jev-connect': createForm('jev-connect.mjs', null, [], getStartupPaths, true,
+    (facts, argv) => 'your own step — it asks for the key in your terminal and the key never goes into the chat — '
+      + `${TERMINAL_STEP}${formatCommand(argv.apply)}`),
+  'family-freshness': Object.freeze({
+    userStep: () => `your own step — ${TERMINAL_STEP}${formatCommand(['npx', '@sabaiway/agent-workflow-kit@latest', 'init'])}`,
+  }),
   'sandbox-provision': null,
   'commit-guard': null,
   'gate-hook.marker-stale': null,
@@ -165,7 +174,22 @@ export const writesOf = (variant, facts) => {
   return form.writes.map((path) => join(facts.root, path));
 };
 
-export const routeLine = (variant) => {
+export const isEnvDependent = (variant) => {
   laneOf(variant);
-  return FORMS[variant]?.route ?? null;
+  return FORMS[variant]?.envDependent === true;
+};
+
+export const applySlot = (variant, facts) => {
+  const lane = laneOf(variant);
+  const form = FORMS[variant];
+  if (lane === LANE_HARNESS) {
+    const args = ['node', join(facts.toolsDir, 'apply-danger-check.mjs'), '--variant', variant, '--cwd', facts.root];
+    const skillArgs = form === SKILL_FORM ? form.preview.map((arg) => resolveArgument(arg, facts)) : [];
+    const check = formatCommand([...args, ...skillArgs]);
+    return { check, apply: `${check} --apply --expect <digest>` };
+  }
+  if (lane === LANE_USER && form?.userStep) {
+    return { check: null, apply: form.userStep(facts, consoleArgv(variant, facts)) };
+  }
+  return null;
 };

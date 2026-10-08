@@ -49,7 +49,7 @@ import {
 } from './velocity-profile.mjs';
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
-import { laneOf, routeLine } from './write-lanes.mjs';
+import { laneOf, applySlot } from './write-lanes.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
@@ -1574,7 +1574,7 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
     const host = deps.jevHost ?? {};
     const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
     const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
-    add('jev-connect', WHATS['jev-connect'], routeLine('jev-connect'), 'jev-connect',
+    add('jev-connect', WHATS['jev-connect'], applySlot('jev-connect', { toolsDir: HERE }).apply, 'jev-connect',
       `${place ? `run the apply in ${place}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
   } catch (err) {
     skip('jev-connect', err);
@@ -1582,7 +1582,7 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
 };
 
 // The Jev skill offer (contract: kit/jev-guide, part jev-offer): only once the key is set, so one jev item shows at a time.
-// Each target is judged by the facts leaf's one state rule; the apply is the skill command the USER runs (HAND-APPLY).
+// Each target is judged by the facts leaf's one state rule; the item's apply comes from the lane leaf's checked slot.
 export const probeJevSkill = ({ root, deps, add, skip }) => {
   try {
     const env = deps.getenv ?? {};
@@ -1608,7 +1608,7 @@ export const probeJevSkill = ({ root, deps, add, skip }) => {
     const untouched = judged.filter(({ state }) => state === 'foreign')
       .map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}; `).join('');
     const record = `node ${q(toolPath('ack-write.mjs'))} --lane jev-skill --fingerprint ${decline} --cwd ${q(root)}`;
-    add('jev-skill', what, `HAND-APPLY: ${line}`, behind.length ? 'jev-skill.earlier' : 'jev-skill',
+    add('jev-skill', what, line, behind.length ? 'jev-skill.earlier' : 'jev-skill',
       `${place ? `run the apply in ${place}; ` : ''}${untouched}${note ? `${note}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${record}`);
   } catch (err) {
     skip('jev-skill', err);
@@ -1686,7 +1686,13 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
       skip(key, new Error(`item shape violation — ${problems.join('; ')}`));
       return false;
     }
-    items.push({ key, variant, severity: SEVERITIES[variant], lane: laneOf(variant), what, benefit: BENEFITS[key], apply: routeLine(variant) ?? apply, detail });
+    const slot = applySlot(variant, {
+      toolsDir: HERE, root, env: deps.getenv ?? {},
+      home: deps.jevHost?.home ?? deps.home ?? '',
+      platform: deps.jevHost?.platform ?? deps.platform,
+    });
+    items.push({ key, variant, severity: SEVERITIES[variant], lane: laneOf(variant), what, benefit: BENEFITS[key],
+      check: slot?.check ?? null, apply: slot?.apply ?? apply, detail });
     return true;
   };
   // The per-run scratch a probe uses to tell a LATER probe what it actually did. Written by exactly
@@ -1736,6 +1742,7 @@ export const formatRecommendations = ({ items, skips }) => {
       lines.push(`   benefit: ${item.benefit}`);
       lines.push(`   lane: ${item.lane}`);
       if (item.detail) lines.push(`   recipe: ${item.detail}`);
+      if (item.check != null) lines.push(`   check: ${item.check}`);
       lines.push(`   apply: ${item.apply}`);
     });
   }
@@ -1752,9 +1759,9 @@ Usage:
 
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
-sub-optimal · the benefit in one plain line · an optional \`recipe:\` line (the sandbox-lane live
+sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (the sandbox-lane live
 recipe, the worktrees-dir hand-apply-first grant advice, or the agents hidden-mode reconcile
-follow-up) · the exact consent-gated apply one-liner}. --cwd is
+follow-up) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;

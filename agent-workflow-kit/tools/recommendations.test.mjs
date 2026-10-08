@@ -36,6 +36,8 @@ import {
   probeAdrStore,
 } from './recommendations.mjs';
 import { shellQuoteArg } from './review-state.mjs';
+import { quoteArg } from './jev-facts.mjs';
+import { GIT_MAX_BUFFER, hermeticGitEnv } from './git-env.mjs';
 // The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
 // item decides through that predicate, so a fixture spelling its own body would drift off it.
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
@@ -75,8 +77,6 @@ const COMMIT_GUARD_REMEDY = 'the hook installer (scripts/install-git-hooks.mjs) 
 const ENFORCEMENT_APPLY_TEMPLATE = 'HAND-APPLY: mkdir -p {root}/scripts && cp {kit}/references/scripts/*.mjs {root}/scripts/ && node {root}/scripts/install-git-hooks.mjs';
 const SPACE_PROJECT_PREFIX = 'recommendations none ';
 const EMPTY_BUNDLE_PREFIX = 'recommendations-empty-bundle-';
-const ROUTE = "applies at your next npx @sabaiway/agent-workflow-kit@latest init, run from this project's folder";
-const RESTART = '; if init reports it not pending, restart the agent from that console';
 const NATIVE_WINDOWS_DETAIL = 'on native Windows Claude Code runs no sandbox: this item takes no effect there';
 
 // Recipe expectations are READ FROM the bundled manifests (the advisor's own single source) —
@@ -96,6 +96,14 @@ const makeProject = () => {
   writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
   writeFileSync(join(root, 'package.json'), FIXTURE_PACKAGE_JSON);
   return root;
+};
+
+const runFixtureGit = (root, args) => {
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', env: hermeticGitEnv(process.env, root), maxBuffer: GIT_MAX_BUFFER });
+  if (result.error) throw result.error;
+  assert.equal(result.signal, null, `git ${args.join(' ')} received ${result.signal}`);
+  assert.equal(result.status, 0, result.stderr);
+  return result;
 };
 
 const removePackageEvidence = (root) => {
@@ -547,12 +555,6 @@ describe('recommendations — the add() runtime backstop (D2)', () => {
     assert.ok(skips.some((s) => /apply is not a single line/u.test(s.reason)));
   });
 
-  it('add replaces a console variant apply with the route line whatever the probe passed', () => {
-    const { items, skips } = run(({ add }) => add('velocity-core', 'a one-line WHAT', 'node /x.mjs'));
-    assert.equal(skips.length, 0);
-    assert.deepEqual(items, [{ key: 'velocity-core', variant: 'velocity-core', severity: SEVERITIES['velocity-core'], lane: 'console', what: 'a one-line WHAT', benefit: BENEFITS['velocity-core'], apply: ROUTE, detail: null }]);
-  });
-
   it('the VARIANT identifier is the machine-readable outcome — a per-site arm reports its own, not the base key', () => {
     // The human render says which ITEM fired; only this field says which ARM did. A consumer asserting
     // an exact outcome (the pre-publish smoke) would else pattern-match prose the registry may reword.
@@ -598,7 +600,7 @@ const buildInventoryFixtures = () => {
   }));
   rmSync(root5, { recursive: true, force: true });
   const root6 = mkdtempSync(join(tmpdir(), 'recommendations-inventory-'));
-  spawnSync('git', ['init', '-q'], { cwd: root6, encoding: 'utf8' });
+  runFixtureGit(root6, ['init', '-q']);
   mkdirSync(join(root6, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
   const fakeChar = {
@@ -670,55 +672,120 @@ describe('recommendations — full item-key coverage over fixtures (D2 inventory
   });
 });
 
-describe('spec:init-project/S4 — item lanes, console routes and masks read as absent', () => {
-  it('every rendered item carries its lane line and JSON field', () => {
+describe('spec:init-project/S4 — item lanes, check and apply slots, and masks read as absent', () => {
+  const buildCheckLine = (variant, root, claudeDir) => ['node', ...[
+    join(HERE, 'apply-danger-check.mjs'), '--variant', variant, '--cwd', root,
+    ...(claudeDir === undefined ? [] : ['--claude-dir', claudeDir]),
+  ].map(quoteArg)].join(' ');
+  const assertHarnessSlot = (item, root, facts = {}) => {
+    const check = buildCheckLine(item.variant, root, facts.claudeDir);
+    const expected = { check, apply: `${check} --apply --expect <digest>` };
+    const applySlot = need(lanes, 'applySlot');
+    assert.deepEqual(applySlot(item.variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux', ...facts }), expected);
+    assert.equal(item.lane, 'harness');
+    assert.deepEqual({ check: item.check, apply: item.apply }, expected);
+    const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
+    const checkAt = lines.indexOf(`   check: ${check}`);
+    assert.ok(checkAt > lines.indexOf(`   lane: harness`));
+    assert.equal(lines[checkAt + 1], `   apply: ${expected.apply}`);
+  };
+
+  it('every rendered item carries lane and check in JSON, preserves chat applies and omits retired lines', () => {
     const items = buildInventoryFixtures().flatMap((r) => r.items);
     const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
     const json = main(['--cwd', root, '--json'], { deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     const laneOf = need(lanes, 'laneOf');
-    for (const item of items) assert.equal(item.lane, laneOf(item.variant));
-    const item = items.find((entry) => entry.variant === 'velocity-core');
-    assert.ok(item);
-    const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
-    assert.equal(lines[lines.indexOf(`   benefit: ${item.benefit}`) + 1], '   lane: console');
     assert.equal(json.code, 0, json.stderr);
     const parsed = JSON.parse(json.stdout);
     assert.ok(parsed.items.length > 0);
-    for (const entry of parsed.items) assert.equal(entry.lane, laneOf(entry.variant));
-  });
-
-  it('a chat apply is byte-equal to today for gates-declaration and review-recipe', () => {
-    const root = makeProject();
-    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
-    rmSync(root, { recursive: true, force: true });
     for (const [key, apply] of [
       ['gates-declaration', `node ${join(HERE, 'gates-init.mjs')} --cwd ${root}`],
       ['review-recipe', '/agent-workflow-kit backends'],
     ]) {
-      const item = items.find((entry) => entry.key === key);
+      const item = parsed.items.find((entry) => entry.key === key);
       assert.ok(item);
       assert.equal(item.lane, 'chat');
       assert.equal(item.apply, apply);
     }
-  });
-
-  it('a form (a) item carries the route line, an env-dependent bridge-tier appends the restart sentence', () => {
-    const root = makeProject();
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review' }) });
-    rmSync(root, { recursive: true, force: true });
-    const routeLine = need(lanes, 'routeLine');
-    for (const [variant, apply] of [['velocity-core', ROUTE], ['bridge-tier', ROUTE + RESTART]]) {
-      const item = items.find((entry) => entry.variant === variant);
-      assert.ok(item);
-      assert.equal(routeLine(variant), apply);
-      assert.equal(item.apply, apply);
-      assert.equal(item.lane, 'console');
+    for (const item of [...items, ...parsed.items]) {
+      const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
+      assert.equal(item.lane, laneOf(item.variant));
+      assert.ok(['chat', 'harness', 'user'].includes(item.lane), item.variant);
+      assert.equal(lines[lines.indexOf(`   benefit: ${item.benefit}`) + 1], `   lane: ${item.lane}`);
+      assert.equal(Object.hasOwn(item, 'check'), true, item.variant);
+      if (item.lane !== 'harness') {
+        assert.equal(item.check, null, item.variant);
+        assert.ok(!lines.some((line) => line.startsWith('   check: ')), item.variant);
+      }
+      assert.doesNotMatch(lines.join('\n'), /applies at your next npx|restart the agent from that console|lane: console/u);
+    }
+    for (const entry of parsed.items) {
+      assert.deepEqual(Object.keys(entry).sort(), ['apply', 'benefit', 'check', 'detail', 'key', 'lane', 'severity', 'variant', 'what']);
     }
   });
 
-  it('a doctor plan renders sandbox-provision.installable with its WHAT and route when euid is 0 or sudo is trusted', () => {
+  it('harness items render applySlot check before apply and carry the same check in --json', () => {
+    const root = makeProject();
+    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review' });
+    const { items } = buildRecommendations({ cwd: root, deps });
+    const json = main(['--cwd', root, '--json'], { deps });
+    const home = mkdtempSync(join(tmpdir(), "rec-slot home's "));
+    const skillDeps = hermeticDeps(root, { getenv: { TYPESAFE_API_KEY: 'test-key' }, jevHost: { home, platform: 'linux' } });
+    const skill = buildRecommendations({ cwd: root, deps: skillDeps }).items.find((item) => item.key === 'jev-skill');
+    const skillJson = main(['--cwd', root, '--json'], { deps: skillDeps });
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+    assert.equal(json.code, 0, json.stderr);
+    assert.equal(skillJson.code, 0, skillJson.stderr);
+    for (const variant of ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'mcp-channel', 'agents']) {
+      const item = items.find((entry) => entry.variant === variant);
+      assert.ok(item);
+      assertHarnessSlot(item, root);
+      assert.deepEqual(JSON.parse(json.stdout).items.find((entry) => entry.variant === variant), item);
+    }
+    assert.ok(skill);
+    assertHarnessSlot(skill, root, { env: skillDeps.getenv, home, claudeDir: join(home, '.claude') });
+    assert.deepEqual(JSON.parse(skillJson.stdout).items.find((entry) => entry.variant === skill.variant), skill);
+  });
+
+  it('user items render applySlot user steps and no-writer items preserve their text without a check line', () => {
+    const root = makeProject();
+    const deps = hermeticDeps(root, { surveyFamily: () => [{ name: 'agent-workflow-engine', version: '1.0.0', freshness: 'behind' }] });
+    const { items } = buildRecommendations({ cwd: root, deps });
+    const noWriters = ['sandbox-provision', 'commit-guard', 'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement'];
+    const originalApply = 'HAND-APPLY: preserve this user step byte for byte';
+    const preserved = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { probes: [({ add }) => {
+      for (const variant of noWriters) add(variant.split('.')[0], 'a no-writer item', originalApply, variant);
+    }] }) });
+    rmSync(root, { recursive: true, force: true });
+    const applySlot = need(lanes, 'applySlot');
+    const facts = { toolsDir: HERE, root, env: deps.getenv, home: root, platform: 'linux' };
+    for (const [variant, apply] of [
+      ['jev-connect', `your own step — it asks for the key in your terminal and the key never goes into the chat — run in a terminal of your own: node ${quoteArg(join(HERE, 'jev-connect.mjs'))}`],
+      ['family-freshness', 'your own step — run in a terminal of your own: npx @sabaiway/agent-workflow-kit@latest init'],
+    ]) {
+      const item = items.find((entry) => entry.variant === variant);
+      assert.ok(item);
+      assert.deepEqual(applySlot(variant, facts), { check: null, apply });
+      assert.deepEqual([item.lane, item.check, item.apply], ['user', null, apply]);
+      const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
+      assert.ok(lines.includes(`   apply: ${apply}`));
+      assert.ok(!lines.some((line) => line.startsWith('   check: ')));
+    }
+    assert.deepEqual(preserved.skips, []);
+    assert.equal(preserved.items.length, noWriters.length);
+    for (const item of preserved.items) {
+      assert.equal(applySlot(item.variant, facts), null);
+      assert.deepEqual([item.lane, item.check, item.apply], ['user', null, originalApply]);
+      const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
+      assert.ok(lines.includes(`   apply: ${originalApply}`));
+      assert.ok(!lines.some((line) => line.startsWith('   check: ')));
+    }
+  });
+
+  it('a doctor plan renders sandbox-provision.installable as a user step when euid is 0 or sudo is trusted', () => {
     const results = [false, true].map((rootUser) => {
       const root = makeProject();
       const deps = hermeticDeps(root, {
@@ -728,15 +795,19 @@ describe('spec:init-project/S4 — item lanes, console routes and masks read as 
       });
       const built = buildRecommendations({ cwd: root, deps });
       rmSync(root, { recursive: true, force: true });
-      return built.items.filter((item) => item.key === 'sandbox-provision');
+      return { root, items: built.items.filter((item) => item.key === 'sandbox-provision') };
     });
-    for (const items of results) {
+    for (const { root, items } of results) {
       assert.equal(items.length, 1);
       assert.equal(items[0].key, 'sandbox-provision');
       assert.equal(items[0].variant, 'sandbox-provision.installable');
       assert.ok(items[0].what.includes('consent tuple apt-get:bubblewrap,socat'));
-      assert.equal(items[0].apply, ROUTE + RESTART);
-      assert.equal(items[0].lane, 'console');
+      const apply = `your own step (a sudo install; the doctor prints the --apply line to run next) — run in a terminal of your own: cd ${quoteArg(root)} && node ${quoteArg(join(HERE, 'autonomy-doctor.mjs'))}`;
+      const applySlot = need(lanes, 'applySlot');
+      assert.deepEqual(applySlot(items[0].variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' }), { check: null, apply });
+      assert.deepEqual([items[0].lane, items[0].check, items[0].apply], ['user', null, apply]);
+      assert.equal(items[0].detail, null);
+      assert.ok(formatRecommendations({ items, skips: [] }).split('\n').includes(`   apply: ${apply}`));
     }
   });
 
@@ -762,7 +833,9 @@ describe('spec:init-project/S4 — item lanes, console routes and masks read as 
       assert.ok(!item.what.includes('consent tuple'));
       assert.ok(item.apply.startsWith(`cd ${root} && node `), item.apply);
       assert.equal(item.detail, NATIVE_WINDOWS_DETAIL);
-      assert.equal(item.lane, 'console');
+      assert.equal(item.lane, 'user');
+      assert.equal(item.check, null);
+      assert.ok(!formatRecommendations({ items, skips: [] }).split('\n').some((line) => line.startsWith('   check: ')));
     }
   });
 
@@ -771,7 +844,7 @@ describe('spec:init-project/S4 — item lanes, console routes and masks read as 
       const root = makeProject();
       mkdirSync(join(root, '.claude'));
       if (kind === 'real-project-settings') writeFileSync(join(root, SETTINGS_REL), '{}');
-      if (kind === 'mcp') spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+      if (kind === 'mcp') runFixtureGit(root, ['init', '-q']);
       if (kind === 'worktrees') {
         mkdirSync(join(root, 'farm'));
         writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: join(root, 'farm') }));
@@ -780,10 +853,9 @@ describe('spec:init-project/S4 — item lanes, console routes and masks read as 
       const deps = { ...maskingDeps(root, [rel]), ...(kind === 'mcp' ? { listUntracked: () => ['.mcp.json'] } : {}) };
       const built = buildRecommendations({ cwd: root, deps });
       rmSync(root, { recursive: true, force: true });
-      return { kind, ...built };
+      return { kind, root, ...built };
     });
-    const routeLine = need(lanes, 'routeLine');
-    for (const { kind, items, skips } of results) {
+    for (const { kind, root, items, skips } of results) {
       const keys = kind === 'worktrees' ? ['worktrees-dir'] : kind === 'mcp' ? ['mcp-channel'] : kind === 'absent-project-settings' ? ['velocity-core', 'kit-tools-tier'] : ['velocity-core'];
       for (const key of keys) {
         const item = items.find((entry) => entry.key === key);
@@ -791,8 +863,7 @@ describe('spec:init-project/S4 — item lanes, console routes and masks read as 
         assert.ok(!skips.some((skip) => skip.key === key), `${kind}: no ${key} skip`);
         if (key !== 'worktrees-dir') {
           assert.equal(item.variant, key);
-          assert.equal(routeLine(item.variant), ROUTE);
-          assert.equal(item.apply, ROUTE);
+          assertHarnessSlot(item, root);
         }
       }
       if (kind === 'mcp') assert.ok(items.find((item) => item.key === 'sandbox-masks')?.what.startsWith('1 sandbox mask(s)'));
@@ -840,19 +911,13 @@ describe('recommendations — skip reasons can never rebuild a prose wall (D2)',
 });
 
 describe('recommendations — cwd-independent apply one-liners (subdir-proof)', () => {
-  it('routed items carry exactly their route line and every other apply keeps its cwd-independent shape', () => {
+  it('chat applies keep their cwd-independent shape', () => {
     const root = makeProject();
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(items.length >= 3, `expected a broad fixture item set, got ${items.map((i) => i.key).join(', ')}`);
-    const routeLine = need(lanes, 'routeLine');
-    assert.ok(items.some((item) => item.apply === ROUTE));
     for (const item of items) {
-      const route = routeLine(item.variant);
-      if (route !== null) {
-        assert.equal(item.apply, route);
-        continue;
-      }
+      if (item.lane !== 'chat') continue;
       const okShape =
         /^node \/[^\s]+\.mjs(?: |$)/.test(item.apply) ||
         /^cd \/[^\s]+ && node \/[^\s]+\.mjs$/.test(item.apply) ||
@@ -874,7 +939,6 @@ describe('recommendations — cwd-independent apply one-liners (subdir-proof)', 
     try {
       const r = main(['--cwd', root], { deps: hermeticDeps(root) });
       assert.equal(r.code, 0, r.stderr);
-      assert.ok(r.stdout.includes(`   apply: ${ROUTE}`));
       const cwdApplies = r.stdout.split('\n').filter((l) => l.trim().startsWith('apply: node ') && l.includes(' --cwd '));
       assert.ok(cwdApplies.length >= 1, 'at least one project-scoped node apply line in the fixture');
       for (const line of cwdApplies) {
@@ -905,14 +969,12 @@ describe('recommendations — honest probe degradation', () => {
 });
 
 describe('recommendations — item probes over fixtures', () => {
-  it('an undeployed allowlist fires velocity-core with the console route line', () => {
+  it('an undeployed allowlist fires velocity-core with its registry benefit', () => {
     const root = makeProject();
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     const core = items.find((i) => i.key === 'velocity-core');
     assert.ok(core, 'velocity-core fires on a project with no seeded allowlist');
-    assert.equal(core.apply, ROUTE);
-    assert.equal(core.lane, 'console');
     assert.equal(core.benefit, BENEFITS['velocity-core']);
   });
 
@@ -935,8 +997,6 @@ describe('recommendations — item probes over fixtures', () => {
     writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), '{ "_README": "note" }');
     const sparse = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!sparse.items.some((i) => ['autonomy-render', 'autonomy-policy'].includes(i.key)), 'the defaults-equivalent seed fires neither autonomy item');
   });
 
@@ -1319,7 +1379,7 @@ describe('recommendations — item probes over fixtures', () => {
     chmodSync(shim, 0o755);
     // HOME=root so the subprocess resolves the ~/.gemini default under the fixture home; PATH carries
     // only the shim dir; env is otherwise minimal so nothing outside the fixture leaks in.
-    const spawn = () => execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8', env: { PATH: bin, HOME: root } });
+    const spawn = () => execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8', env: hermeticGitEnv({ PATH: bin }, root) });
     const withoutAck = spawn(); // control: no ack in ANY store → the item fires (wrapper detected as wired)
     writeAcks(root, agyFingerprint(root));
     const withAck = spawn();
@@ -1341,13 +1401,11 @@ describe('recommendations — item probes over fixtures', () => {
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'gate-hook');
     assert.ok(item, 'fires on declared-but-unwired gates');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
   });
 
   it('sandbox masks visible with no managed block fire the sandbox-masks apply one-liner (git fixture)', () => {
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-'));
-    const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    const g = (...args) => runFixtureGit(root, args);
     g('init', '-q');
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
@@ -1497,8 +1555,6 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     assert.equal(item.severity, SEVERITY_ATTENTION);
     assert.match(item.what, /placed file is missing/, item.what);
     assert.equal(item.variant, 'read-lane.missing');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'read-lane'), 'and a race is answered, not degraded to a probe failure');
   });
 
@@ -1581,8 +1637,6 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     assert.ok(item, 'a wired-but-missing hook fires the item (the lane is silently dark otherwise)');
     assert.equal(item.severity, SEVERITY_ATTENTION);
     assert.equal(item.variant, 'read-lane.missing');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
   });
 
   it('the stale reseed recovery names an ABSOLUTE rm path, never cwd-relative (council R2-M3)', () => {
@@ -1614,14 +1668,12 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     return r;
   };
 
-  it('unregistered → an OPTIONAL console offer whose apply is the route line', () => {
+  it('unregistered → an OPTIONAL registration offer', () => {
     const root = makeProject();
     const { items, skips } = build(root);
     const item = items.find((i) => i.key === 'mcp-channel');
     assert.ok(item, 'a project with no registration gets the offer');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
   });
 
@@ -1640,14 +1692,12 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     assert.ok(build(root).items.some((i) => i.key === 'mcp-channel'), 'a missing rule is still an unfinished registration');
   });
 
-  it('a DIFFERING entry → ATTENTION with the route line and no detail', () => {
+  it('a DIFFERING entry → ATTENTION with no detail', () => {
     const root = mcpProject({ servers: { [SERVER_NAME]: { type: 'stdio', command: 'node', args: ['/elsewhere/mcp-server.mjs'] } } });
     const item = build(root).items.find((i) => i.key === 'mcp-channel');
     assert.ok(item, 'a differing entry is reported');
     assert.equal(item.severity, SEVERITY_ATTENTION);
     assert.equal(item.variant, 'mcp-channel.differing');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.equal(item.detail, null);
   });
 
@@ -1666,14 +1716,12 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     assert.doesNotMatch(item.what, /reach/iu, 'no claim about what the tools reach — nothing here established it');
   });
 
-  it('a MASKED .mcp.json with the settings half INCOMPLETE → the base console item', () => {
+  it('a MASKED .mcp.json with the settings half INCOMPLETE → the base item', () => {
     const root = makeProject();
     const { items, skips } = build(root, maskingDeps(root));
     const item = items.find((i) => i.key === 'mcp-channel');
     assert.ok(item, 'something IS missing regardless of what the masked file says');
     assert.equal(item.variant, 'mcp-channel');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
   });
 
@@ -1683,19 +1731,15 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     const item = items.find((i) => i.key === 'mcp-channel');
     assert.ok(item);
     assert.equal(item.variant, 'mcp-channel');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
   });
 
-  it('a masked settings.json beside a real .mcp.json is judged as absent → the base console item', () => {
+  it('a masked settings.json beside a real .mcp.json is judged as absent → the base item', () => {
     const root = mcpProject({ servers: { [SERVER_NAME]: OUR_ENTRY } });
     const { items, skips } = build(root, maskingDeps(root, [SETTINGS_REL]));
     const item = items.find((i) => i.key === 'mcp-channel');
     assert.ok(item);
     assert.equal(item.variant, 'mcp-channel');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
   });
 
@@ -1705,8 +1749,6 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     assert.ok(item, 'the .mcp.json half is fully observable, so its verdict stands on its own');
     assert.equal(item.severity, SEVERITY_ATTENTION);
     assert.equal(item.variant, 'mcp-channel.differing');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.equal(item.detail, null);
   });
 
@@ -1726,14 +1768,12 @@ describe('recommendations — the typed-channel (mcp) registration offer', () =>
     assert.ok(build(makeProject()).items.some((i) => i.key === 'mcp-channel'), 'the item does exist and does fire when the registration is missing');
   });
 
-  it('BOTH targets masked read as absent → the base console item', () => {
+  it('BOTH targets masked read as absent → the base item', () => {
     const root = makeProject();
     const { items, skips } = build(root, maskingDeps(root, [MCP_JSON_REL, SETTINGS_REL]));
     const item = items.find((i) => i.key === 'mcp-channel');
     assert.ok(item);
     assert.equal(item.variant, 'mcp-channel');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(!skips.some((s) => s.key === 'mcp-channel'));
   });
 
@@ -1888,8 +1928,6 @@ describe('recommendations — the executor-vehicle attention item (spec:carriers
     assert.equal(found.length, 1, `one item, never one per slot: ${JSON.stringify(items.map((i) => i.key))}`);
     assert.equal(found[0].severity, SEVERITY_ATTENTION);
     assert.equal(found[0].what, '2 slot(s) configured subagent but the executor vehicle is missing — every such slot runs solo until it is usable');
-    assert.equal(found[0].apply, ROUTE);
-    assert.equal(found[0].lane, 'console');
     assert.match(found[0].detail, /hidden-mode deployments only:.*--reconcile/u, 'the reconcile rides the detail, never the apply');
     assert.equal(found[0].detail, `hidden-mode deployments only: after the apply, run node ${join(HERE, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`);
   });
@@ -2127,6 +2165,10 @@ describe('recommendations — the inert gate declaration item', () => {
   // not beside its siblings, so the third-outcomes suite's frozen bytes keep their red-proofs.)
   it('cause A over a recognizable producer under a NON-OFFERED script name says what it knows, never that the suite is inexpressible', () => {
     const built = buildForeignFixture({
+      spawn: (command, args, options) => {
+        assert.equal(command, 'git');
+        return runFixtureGit(options.cwd, args);
+      },
       tsFiles: 3,
       testScript: 'vitest run',
       extraFiles: { 'package.json': `${JSON.stringify({ name: 'f', private: true, scripts: { ci: 'node --test' } }, null, 2)}\n` },
@@ -2394,8 +2436,6 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
       }),
     });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.ok(broken.skips.some((s) => s.key === 'family-freshness' && /registry exploded/.test(s.reason)));
   });
 
@@ -2404,7 +2444,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     // block is non-empty — a plain --apply REFUSES there, so the rendered one-liner must carry
     // --clear (Segment B).
     const root = mkdtempSync(join(tmpdir(), 'recommendations-stalereal-'));
-    spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+    runFixtureGit(root, ['init', '-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
@@ -2430,7 +2470,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
 
   it('a throwing untracked walk skips the sandbox-masks item (git fixture)', () => {
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-skip-'));
-    spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+    runFixtureGit(root, ['init', '-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
     const deps = hermeticDeps(root, {
@@ -2543,7 +2583,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const root = makeProject();
     // HOME at a temp dir and CLAUDE_CONFIG_DIR unset: the default route never reads the real skill roots.
     const home = mkdtempSync(join(tmpdir(), 'rec-cli-home-'));
-    const env = { ...process.env, HOME: home };
+    const env = hermeticGitEnv(process.env, home);
     delete env.CLAUDE_CONFIG_DIR;
     const out = execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--cwd', root], { encoding: 'utf8', env });
     rmSync(root, { recursive: true, force: true });
@@ -2891,11 +2931,6 @@ describe('recommendations — worktrees-dir convergence lanes (D7)', () => {
     assert.deepEqual(Object.keys(parsed).sort(), ['items', 'root', 'skips'], 'the top-level shape is unchanged');
     const item = parsed.items.find((i) => i.key === 'worktrees-dir');
     assert.ok(item, 'the item is present in the JSON render');
-    assert.deepEqual(
-      Object.keys(item).sort(),
-      ['apply', 'benefit', 'detail', 'key', 'lane', 'severity', 'variant', 'what'],
-      'no item key renamed — lane joins the public contract additively',
-    );
     assert.equal(item.variant, 'worktrees-dir', 'a base arm reports the item key as its variant');
   });
 });
@@ -2931,27 +2966,23 @@ describe('recommendations — read-only by construction', () => {
 });
 
 describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', () => {
-  it('a project with no placed subagents is OFFERED them with the console route line', () => {
+  it('a project with no placed subagents is OFFERED them', () => {
     const root = makeProject();
     const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'agents');
     assert.ok(item, 'a shipped opt-in capability must never be invisible');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.match(item.what, /\d+ bundled subagent vehicle\(s\) not placed .* \d+ read-only, \d+ the full-tool executor/u, 'the WHAT counts the read-only vehicles and the executor apart');
     assert.match(item.benefit, /no shell on a read-only vehicle/u, 'the benefit scopes the no-shell property to the read-only vehicles');
     assert.ok(!skips.some((s) => s.key === 'agents'));
   });
 
-  it('renders the console route while the WHAT keeps the preview semantics', () => {
+  it('the WHAT keeps the preview semantics', () => {
     const root = makeProject();
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'agents');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.match(item.what, /PREVIEWS/u, 'and the two-step semantics are stated in the WHAT');
   });
 
@@ -2974,9 +3005,7 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.match(item.detail, /hide-footprint\.mjs/u);
     assert.match(item.detail, /--reconcile/u);
     assert.match(item.detail, /hidden-mode/u, 'and it is scoped to the deployments it applies to');
-    assert.doesNotMatch(item.apply, /hide-footprint/u, 'the apply stays the route line alone');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
+    assert.doesNotMatch(item.apply, /hide-footprint/u, 'the follow-up stays off the apply line');
     assert.equal(item.detail, `hidden-mode deployments only: after the --apply the preview prints, run node ${join(HERE, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`);
   });
 
@@ -3017,7 +3046,7 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
   });
 });
 
-describe('the executor-vehicle recipe carries the precondition beside the console route (AD-124 fold)', () => {
+describe('the executor-vehicle recipe carries the precondition (AD-124 fold)', () => {
   const survey = (state, reason = null) => () => ({ state, reason, rel: '.claude/agents/executor.md' });
   const configured = (root) => writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ routine: { carrier: 'subagent' } }));
   const itemOf = (root, extra) => buildRecommendations({ cwd: root, deps: hermeticDeps(root, extra) }).items.find((i) => i.key === 'executor-vehicle');
@@ -3029,8 +3058,6 @@ describe('the executor-vehicle recipe carries the precondition beside the consol
     const item = itemOf(root, {});
     rmSync(root, { recursive: true, force: true });
     assert.ok(item, 'the subagent item is rendered');
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.match(item.detail, /^precondition: docs\/ai\/vehicles\.json: .* — fix that; hidden-mode deployments only:/u);
     assert.match(item.detail, /\bunreadable\b/u);
     assert.ok(formatRecommendations({ items: [item], skips: [] }).split('\n').includes(`   recipe: ${item.detail}`));
@@ -3044,8 +3071,6 @@ describe('the executor-vehicle recipe carries the precondition beside the consol
     const unusable = itemOf(root, { surveyVehicle: survey('unusable', 'tools: Read is read-only') });
     rmSync(root, { recursive: true, force: true });
     for (const item of [missing, unusable]) {
-      assert.equal(item.apply, ROUTE);
-      assert.equal(item.lane, 'console');
       assert.match(item.detail, /^precondition: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 4\.0\.0\); hidden-mode deployments only:/u);
     }
   });
@@ -3057,8 +3082,6 @@ describe('the executor-vehicle recipe carries the precondition beside the consol
     symlinkSync(join(root, 'nowhere'), join(root, '.claude', 'agents', 'mechanical-sweep.md'));
     const item = itemOf(root, {});
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.match(item.detail, /^precondition: \[agent-workflow-kit\] \.claude\/agents\/mechanical-sweep\.md exists but is not a regular file — refusing to touch it — fix that; hidden-mode deployments only:/u);
   });
 
@@ -3069,19 +3092,15 @@ describe('the executor-vehicle recipe carries the precondition beside the consol
     symlinkSync(join(root, 'nowhere'), join(root, '.claude', 'agents', 'executor.md'));
     const item = itemOf(root, {});
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.match(item.detail, /^precondition: /u);
     assert.equal((item.detail.match(/executor\.md/gu) ?? []).length, 1, item.detail);
   });
 
-  it('a current stamp and a missing vehicle → the route line and hidden-mode detail without a precondition', () => {
+  it('a current stamp and a missing vehicle → hidden-mode detail without a precondition', () => {
     const root = makeProject();
     configured(root);
     const item = itemOf(root, { surveyVehicle: survey('missing') });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item.apply, ROUTE);
-    assert.equal(item.lane, 'console');
     assert.equal(item.detail, `hidden-mode deployments only: after the apply, run node ${join(HERE, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`);
   });
 });
@@ -3101,6 +3120,7 @@ const profileProbe = () => probeProfileGaps ?? (() => { throw new Error('probePr
 const screenOf = (root) => (composeProfileGapScreen ?? (() => { throw new Error('composeProfileGapScreen is absent'); }))({ root, deps: {} });
 const aloneDeps = () => ({ probes: [profileProbe()] });
 const expectedItem = ({ what, apply }) => ({ key: PROFILE_GAP, variant: PROFILE_GAP, severity: SEVERITY_OPTIONAL, lane: 'chat', what, benefit: PROFILE_GAP_BENEFIT, apply, detail: null });
+const omitCheckField = (items) => items.map((item) => Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'check')));
 const numberedLines = (text) => text.split('\n').filter((line) => /^\d+\. /.test(line));
 
 describe('recommendations — the profile-gap probe (spec:gap-screen/S7)', () => {
@@ -3121,7 +3141,7 @@ describe('recommendations — the profile-gap probe (spec:gap-screen/S7)', () =>
     const expected = screenOf(root).gaps.map(expectedItem);
     rmSync(root, { recursive: true, force: true });
     assert.deepEqual([items.length, skips], [4, []]);
-    assert.deepEqual(items, expected);
+    assert.deepEqual(omitCheckField(items), expected);
   });
   it('turns a throw inside the probe into one profile-gap skip', () => {
     const throwing = Object.defineProperty(aloneDeps(), 'readFileSync', { enumerable: true, get: () => { throw new Error('injected getter failure'); } });
@@ -3157,7 +3177,7 @@ describe('recommendations — the rendered profile-gap screen (spec:gap-screen/S
     const { items, skips } = JSON.parse(run.stdout);
     const expected = screenOf(root).gaps.map(expectedItem);
     rmSync(root, { recursive: true, force: true });
-    assert.deepEqual([items, skips], [expected, [{ key: PROFILE_GAP, reason: QUEUE_SKIP }]]);
+    assert.deepEqual([omitCheckField(items), skips], [expected, [{ key: PROFILE_GAP, reason: QUEUE_SKIP }]]);
   });
   it('renders the profile gaps after every attention item, last in probe order, in the full chain', () => {
     const { root } = makeProfileProject({ files: { ...PROFILE_FILES.gaps, 'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE] }) } });
