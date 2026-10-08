@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -7,14 +7,16 @@ import { fileURLToPath } from 'node:url';
 // it never imports the policy fs-writer (autonomy-write.mjs) — the render owns the settings file, not
 // the policy file.
 import { AUTONOMY_REL, loadAutonomy, resolveAutonomy, COMMAND_REDLINES } from './autonomy-config.mjs';
-// The bridge-wrappers tier's placement probe (AD-044 Plan 4, Decision 2): a tier entry derives ONLY
-// for a PLACED bridge wrapper — findOnPath is the same read-only PATH scan the backend detector uses.
-import { findOnPath } from './detect-backends.mjs';
+import { detectBackends, findOnPath, wrapperCmdFor } from './detect-backends.mjs';
 // The seedable-path predicate lives in the pure leaf so the renders spell a path exactly as it is seeded.
 import { SHELL_METACHARACTERS, hasShellMetacharacter, isSeedablePathToken } from './repo-lex.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
-import { bundledSandboxRecipe } from './bridge-sandbox-recipe.mjs';
+import { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL, usedBridges, bundledSandboxRecipe, exclusionOf } from './bridge-sandbox-recipe.mjs';
+import { stateDirsOf, missingStateDirs, mergeAllowWrite } from './bridge-state-dirs.mjs';
+import { loadConfig } from './orchestration-config.mjs';
+import { validateManifest } from './manifest/validate.mjs';
+export { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL };
 // The declared-path resolution + segment containment the allowWrite degrade shares with the
 // advisor's worktrees-dir convergence lane — ONE leaf, so the two readings cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -197,27 +199,6 @@ const KIT_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KIT_TOOL_INVOKER = 'node';
 const RUN_GATES_CWD_FLAG = '--cwd';
 
-// ── the opt-in --bridge-tier (AD-044 Plan 4, Decision 2) ────────────────────────────────
-// The FROZEN membership source: review-role wrapper NAMES only, spelled bare — that is how the
-// wrappers are invoked (setup-backends places them as symlinks in ~/.local/bin). Roles come from
-// THIS constant, never from the detector's wrapperCmds (which carries no role labels): codex-exec
-// (execution role) and agy-run (probe role) are deliberately ABSENT. The velocity pain this tier
-// closes is council REVIEW runs; codex-exec's nested-sandbox recovery is handled the canon way —
-// route it outside ON the OBSERVED failure (orchestration.md §5), NOT a preemptive tier seed (AD-054
-// final council: a blanket exclusion at opt-in contradicts «never a preemptive blanket»), guided by
-// codex-exec.sh's own nested-sandbox detection hint.
-export const BRIDGE_REVIEW_WRAPPERS = Object.freeze(['codex-review', 'agy-review']);
-// Only the `code` review mode is auto-allowed (Segment A): a bare `Bash(<wrapper>:*)`
-// prefix would also cover the plan/diff file-argument modes, whose targets can point OUTSIDE the
-// repo — the tier's stated surface is the unattended council CODE review, so the seeded prefix is
-// `<wrapper> code`. Plan/diff invocations keep their prompt.
-export const BRIDGE_REVIEW_MODE = 'code';
-// The grounding pre-step tool (the reviews' facts assembler). Its tier entry is seeded in the
-// EXACT byte-form the procedures advisor renders — a DOUBLE-QUOTED absolute path (deliberate
-// there: a skill dir with a space must stay copy-pasteable) — so seeded↔rendered byte-parity
-// holds; the screen accepts the quoted form ONLY for this one tool (a tier-scoped acceptance,
-// never a general quote allowance).
-export const KIT_GROUNDING_TOOL = 'tools/grounding.mjs';
 const WRAPPER_PLACED = 'present';
 
 // The quoted-grounding token: "<seedable-abs-path>/tools/grounding.mjs" — quotes stripped, the
@@ -227,41 +208,6 @@ const isQuotedGroundingToken = (token) => {
   if (typeof token !== 'string' || token.length < 3 || !token.startsWith('"') || !token.endsWith('"')) return false;
   const inner = token.slice(1, -1);
   return isSeedablePathToken(inner) && inner.endsWith(`/${KIT_GROUNDING_TOOL}`);
-};
-
-/**
- * Derive the opt-in bridge-wrappers tier: one code-mode allow rule per PLACED review wrapper (the
- * frozen constant is the membership source; placement is a probe, never a role source), the SAME
- * wrapper names for sandbox.excludedCommands (the harness runs an excluded command OUTSIDE the
- * sandbox, so a plain allowlisted invocation needs no sandbox-bypass approval — the zero-prompt
- * wiring), and the grounding pre-step rule in its rendered quoted byte-form (derived only when
- * agy-review is placed; an unseedable kit path is a stated skip). An absent bridge is a stated skip.
- */
-export const deriveBridgeTierAllowlist = ({ findWrapper, groundingAbsPath } = {}) => {
-  const probe = findWrapper ?? ((cmd) => findOnPath(cmd).state === WRAPPER_PLACED);
-  const placed = BRIDGE_REVIEW_WRAPPERS.filter((cmd) => probe(cmd));
-  const skips = BRIDGE_REVIEW_WRAPPERS.filter((cmd) => !placed.includes(cmd)).map((cmd) => ({
-    entry: cmd,
-    reason: `bridge wrapper "${cmd}" is not placed on PATH — its allow rule is not seeded (place the bridge with /agent-workflow-kit setup, then re-run)`,
-  }));
-  const allow = placed.map((cmd) => `Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
-  const excludedCommands = [...placed];
-  // The grounding pre-step exists FOR agy (its grounded --facts reviews; codex grounds natively via
-  // the AGENTS.md auto-merge) — a codex-only install must not auto-allow an unused writer.
-  if (placed.includes('agy-review')) {
-    // groundingAbsPath is a TEST seam only (an unseedable kit path — spaces — is not constructible
-    // from a test against the real checkout); production callers never pass it.
-    const groundingAbs = groundingAbsPath ?? join(KIT_ROOT, KIT_GROUNDING_TOOL);
-    if (isSeedablePathToken(groundingAbs)) {
-      allow.push(`Bash(${KIT_TOOL_INVOKER} "${groundingAbs}":*)`);
-    } else {
-      skips.push({
-        entry: groundingAbs,
-        reason: 'the kit path is not a POSIX absolute path free of spaces/metacharacters/quoting — the grounding pre-step rule is not seeded (its prompt stays); add a hand-picked entry if you accept the spelling',
-      });
-    }
-  }
-  return Object.freeze({ allow: Object.freeze(allow), excludedCommands: Object.freeze(excludedCommands), skips: Object.freeze(skips), placed: Object.freeze(placed) });
 };
 
 // Characters that make a pattern NOT a single read-only command, so the screen rejects them.
@@ -386,14 +332,15 @@ absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned by
 (project-exec - it runs YOUR declared gates.json), source-size-check.mjs as ONE exact --check
 byte-string (its read-only mode only - its writers keep prompting), and the writers' exact arg-free
 dry-run preview byte-strings. Never touches settings.local.json.
---bridge-tier (own consent) seeds the bridge REVIEW wrappers' CODE mode for PLACED bridges
-(codex-review code, agy-review code - never the execution/probe wrappers, never plan/diff modes)
-+ the quoted grounding pre-step rule, and the wrapper names into sandbox.excludedCommands (they
-need network - ${HOST_HONORS_QUALIFIER} the harness runs them outside the sandbox). It also
-seeds the placed bridges' declared hosts into sandbox.network.allowedDomains - ${HOST_HONORS_QUALIFIER}
-every sandboxed command of the project can then reach those hosts; the writable state dirs stay
-hand-apply. Consented posture: an auto-allowed review wrapper runs UNATTENDED and sends the
-assembled repo payload to its subscription backend (see the printed tier notice).
+--bridge-tier (own consent) derives each entry for a used bridge from the effective project recipes:
+review wrappers' CODE mode (codex-review code, agy-review code), the quoted grounding pre-step rule,
+and <wrapper> * exclusions in sandbox.excludedCommands. An execute slot delegating to codex adds
+codex-exec * as an exclusion; execution keeps its prompt, as do the review plan/diff modes.
+${HOST_HONORS_QUALIFIER}, an excluded wrapper runs outside the sandbox;
+sandbox.network.allowedDomains means every sandboxed command of the project can reach those hosts;
+sandbox.filesystem.allowWrite means every sandboxed command can write those state dirs.
+Consented posture: an auto-allowed review wrapper runs UNATTENDED and sends the assembled repo
+payload to its subscription backend (see the printed tier notice).
 
 --autonomy renders docs/ai/autonomy.json into the settings blocks it OWNS — the sandbox block +
 permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never seeds the allowlist and
@@ -696,11 +643,9 @@ const formatKitTier = (result) =>
 // The bridge tier's honest posture, printed on EVERY --bridge-tier run: the informed-consent
 // resolution states the exfiltration surface, never pretends it away.
 export const KIT_BRIDGE_TIER_NOTICE =
-  'bridge-wrappers tier: seeds the REVIEW wrappers only, and only their CODE mode (`codex-review code`, `agy-review code` — never codex-exec/agy-run: delegated execution keeps its human prompt; never the plan/diff modes: their file arguments can point outside the repo, so they keep their prompt), each derived ONLY when its bridge is PLACED on PATH, plus the grounding pre-step rule in its rendered quoted byte-form. POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend, and prefix rules cannot inspect arguments, so a code-mode argument that names a readable file (agy\'s --facts/--decided) rides the same consent — the same documented residual class as the autonomy red-line rules; that is the tier\'s PURPOSE (unattended council review runs) and its residual — tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). The wrapper names are ALSO seeded into sandbox.excludedCommands IN THE PROJECT settings.json (an exclusion only in settings.local.json was live-observed NOT to route — the wrapper then runs sandboxed and dies on a read-only HOME): ' +
-  // The interpolated seams in this notice: the shared host-conditional qualifier, so the tier's
-  // routing promise and the render's degrade lines can never drift apart.
-  `${HOST_HONORS_QUALIFIER} the harness runs an excluded command OUTSIDE the sandbox (the wrappers need network), so a plain allowlisted invocation triggers no sandbox-bypass approval — whether a host honors them is not knowable from here, and where it does not the wrapper simply starts sandboxed (fail-safe, never a silent widening). ` +
-  `The placed bridges' declared hosts (each bundled manifest's networkHosts) are seeded into sandbox.network.allowedDomains IN THE PROJECT settings.json: ${HOST_HONORS_QUALIFIER}, a wrapper the harness keeps sandboxed still reaches them, and every sandboxed command of the project can then reach those hosts, not only the wrappers — that widening is part of this consent, and the --autonomy preview reports it as a network weakening; the writable state dirs (writableDirs) stay hand-apply. ` +
+  'bridge-wrappers tier: each entry derives for a used bridge from the effective project recipes and host readiness. Review allows cover only CODE mode (`codex-review code`, `agy-review code`) plus the grounding pre-step rule in its rendered quoted byte-form; the plan/diff modes keep their prompt because their file arguments can point outside the repo. An execute slot delegating to codex adds codex-exec * to sandbox.excludedCommands and keeps its prompt, with no execution allow rule; agy-run is not seeded. ' +
+  'POSTURE (what this consent covers): an auto-allowed review wrapper runs UNATTENDED — it reads any repo file it is pointed at and sends the assembled payload to its subscription backend. Prefix rules cannot inspect arguments, so readable file arguments (agy\'s --facts/--decided) ride the same consent; tier entries get NO PreToolUse-hook coverage. The grounding entry\'s writer surface is bounded by grounding.mjs\'s OWN scratch-destination guard (a tracked or in-repo-not-ignored --out is refused by the tool). ' +
+  `The tier writes the PROJECT settings.json: ${HOST_HONORS_QUALIFIER}, an excluded wrapper runs outside the sandbox (<wrapper> * in sandbox.excludedCommands), every sandboxed command of the project can reach the declared hosts (sandbox.network.allowedDomains), and every sandboxed command can write the declared state dirs (sandbox.filesystem.allowWrite). These surfaces are part of the bridge-wrappers consent. Whether a host honors them is not knowable from here; an exclusion only in settings.local.json was live-observed not to route. ` +
   'INVOCATION SHAPE: a prefix rule matches only a PLAIN invocation starting with the wrapper name — an env-var prefix or a compound chain never matches (redirects are fine).';
 
 const formatBridgeTier = (result) =>
@@ -717,6 +662,13 @@ const formatBridgeTier = (result) =>
               `${result.wrote ? 'added' : 'would add'} sandbox.network.allowedDomains entries: ${result.hostsToAdd.length}`,
               ...formatEntryList(result.hostsToAdd),
               `already present (allowedDomains): ${result.hostsAlreadyPresent.length}`,
+            ]
+          : []),
+        ...(result.dirsToAdd.length + result.dirsAlreadyPresent.length
+          ? [
+              `${result.wrote ? 'added' : 'would add'} sandbox.filesystem.allowWrite entries: ${result.dirsToAdd.length}`,
+              ...formatEntryList(result.dirsToAdd),
+              `already present (allowWrite): ${result.dirsAlreadyPresent.length}`,
             ]
           : []),
         ...result.bridgeSkips.map((s) => `  skipped: ${s.reason}`),
@@ -941,7 +893,8 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
   // bridge-shaped entry — over-flagging is the safe direction for a read-only advisory.
   const derivedBridge = (() => {
     try {
-      return deriveBridgeTierAllowlist({ findWrapper: deps.findWrapper }).allow;
+      const probe = deps.findWrapper ?? ((cmd) => findOnPath(cmd).state === WRAPPER_PLACED);
+      return bundledSandboxRecipe(BRIDGE_REVIEW_WRAPPERS.filter(probe), deps).allow;
     } catch {
       return [];
     }
@@ -982,14 +935,54 @@ const assertNetworkMergeable = (sandbox) => {
   return sandbox.network?.allowedDomains ?? [];
 };
 
-export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTier, findWrapper, bundleRoot, readdir, readFile } = {}) => {
+const assertFilesystemMergeable = (sandbox) => {
+  if (sandbox.filesystem !== undefined && !isJsonObject(sandbox.filesystem)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_FILE}: sandbox.filesystem must be a JSON object`);
+  }
+  const allowWrite = sandbox.filesystem?.allowWrite;
+  if (allowWrite !== undefined && !Array.isArray(allowWrite)) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_FILE}: sandbox.filesystem.allowWrite must be an array`);
+  }
+  if (allowWrite?.some((entry) => !isResolvableDeclaredEntry(entry))) {
+    throw makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_FILE}: sandbox.filesystem.allowWrite entries must be non-blank strings`);
+  }
+  return allowWrite ?? [];
+};
+
+// Readiness as a wrapper started from the project root sees it: every relative path the detector probes
+// (an env override such as CODEX_HOME=state) resolves against the root, never this process's cwd, so the
+// danger check and the writer it spawns with cwd=root derive one used set.
+export const detectAtRoot = (root, { env, home }) => {
+  const at = (path) => resolve(root, path);
+  return detectBackends({
+    getenv: env, home,
+    exists: (path) => existsSync(at(path)), stat: (path) => statSync(at(path)),
+    access: (path) => accessSync(at(path), constants.X_OK), realpath: (path) => realpathSync(at(path)),
+    validate: (dir) => validateManifest(at(dir)),
+  });
+};
+
+const deriveUsedBridgeTier = (root, deps = {}) => {
+  const env = deps.env ?? process.env;
+  const home = deps.home ?? homedir();
+  const config = loadConfig(root).config;
+  const readiness = (deps.detect ?? (() => detectAtRoot(root, { env, home })))();
+  const used = usedBridges(config, readiness);
+  const recipe = bundledSandboxRecipe(used, deps);
+  const dirs = stateDirsOf(recipe.dirEntries, { env, root, home });
+  return { used, recipe, dirs, env, home };
+};
+
+export const planVelocityProfile = (preflight, opts = {}) => {
+  const { acceptEdits, kitTools, bridgeTier } = opts;
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
   const toAdd = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => !projectAllow.includes(entry));
   const alreadyPresent = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => projectAllow.includes(entry));
   const tier = kitTools === true ? deriveKitToolsAllowlist({ projectDir: preflight.cwd }) : [];
   const tierToAdd = tier.filter((entry) => !projectAllow.includes(entry));
   const tierAlreadyPresent = tier.filter((entry) => projectAllow.includes(entry));
-  const bridge = bridgeTier === true ? deriveBridgeTierAllowlist({ findWrapper }) : { allow: [], excludedCommands: [], skips: [], placed: [] };
+  const derived = bridgeTier === true ? deriveUsedBridgeTier(preflight.cwd, opts) : null;
+  const bridge = derived?.recipe ?? { allow: [], excludedCommands: [], hosts: [], skips: [] };
   const bridgeToAdd = bridge.allow.filter((entry) => !projectAllow.includes(entry));
   const bridgeAlreadyPresent = bridge.allow.filter((entry) => projectAllow.includes(entry));
   const existingSandbox = isJsonObject(preflight.projectSettings?.data?.sandbox) ? preflight.projectSettings.data.sandbox : {};
@@ -997,9 +990,12 @@ export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTi
   const excludedToAdd = bridge.excludedCommands.filter((cmd) => !existingExcluded.includes(cmd));
   const excludedAlreadyPresent = bridge.excludedCommands.filter((cmd) => existingExcluded.includes(cmd));
   const existingHosts = bridgeTier === true ? assertNetworkMergeable(existingSandbox) : [];
-  const hosts = bridgeTier === true ? bundledSandboxRecipe(bridge.placed, { bundleRoot, readdir, readFile }).hosts : [];
-  const hostsToAdd = hosts.filter((host) => !existingHosts.includes(host));
-  const hostsAlreadyPresent = hosts.filter((host) => existingHosts.includes(host));
+  const hostsToAdd = bridge.hosts.filter((host) => !existingHosts.includes(host));
+  const hostsAlreadyPresent = bridge.hosts.filter((host) => existingHosts.includes(host));
+  const existingDirs = bridgeTier === true ? assertFilesystemMergeable(existingSandbox) : [];
+  const dirs = derived?.dirs ?? [];
+  const dirsToAdd = derived ? missingStateDirs(dirs, existingDirs, { home: derived.home, root: preflight.cwd }) : [];
+  const dirsAlreadyPresent = dirs.filter((dir) => !dirsToAdd.includes(dir));
   return {
     toAdd,
     alreadyPresent,
@@ -1014,6 +1010,8 @@ export const planVelocityProfile = (preflight, { acceptEdits, kitTools, bridgeTi
     excludedAlreadyPresent,
     hostsToAdd,
     hostsAlreadyPresent,
+    dirsToAdd,
+    dirsAlreadyPresent,
     setsDefaultMode: acceptEdits === true,
   };
 };
@@ -1022,13 +1020,10 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   const projectDir = cwd ?? deps.cwd ?? process.cwd();
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
   const plan = planVelocityProfile(preflight, {
+    ...deps,
     acceptEdits,
     kitTools,
     bridgeTier,
-    findWrapper: deps.findWrapper,
-    bundleRoot: deps.bundleRoot,
-    readdir: deps.readdir,
-    readFile: deps.readFile,
   });
   // Drift guard runs on BOTH dry-run and apply (so a dry-run faithfully predicts the apply) and
   // validates the FULL audited core, not just the to-add delta — a drifted core entry is caught even
@@ -1044,8 +1039,8 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   // (Decision 2): every seeded bridge entry passes the screen AND sits in the audited set, so the
   // flagless advisory can never flag an entry the tier itself seeded.
   if (bridgeTier === true) {
-    const bridge = deriveBridgeTierAllowlist({ findWrapper: deps.findWrapper });
-    validateProfile(bridge.allow, [...UNIVERSAL_READONLY_ALLOWLIST, ...bridge.allow]);
+    const bridgeAllow = [...plan.bridgeToAdd, ...plan.bridgeAlreadyPresent];
+    validateProfile(bridgeAllow, [...UNIVERSAL_READONLY_ALLOWLIST, ...bridgeAllow]);
   }
   const resultBase = { ...preflight, ...plan };
   if (dryRun) return { wrote: false, dryRun: true, ...resultBase };
@@ -1060,13 +1055,13 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
   const fs = fsDeps(deps);
   const settingsPath = join(projectDir, SETTINGS_FILE);
   if (preflight.claudeDirAbsent) fs.mkdir(join(projectDir, CLAUDE_DIR), { recursive: true });
-  const merged = mergeProjectSettings(
+  const merged = mergeAllowWrite(mergeProjectSettings(
     preflight.projectSettings.data,
     [...plan.toAdd, ...plan.tierToAdd, ...plan.bridgeToAdd],
     acceptEdits,
     plan.excludedToAdd,
     plan.hostsToAdd,
-  );
+  ), plan.dirsToAdd);
   fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };
 };
@@ -1489,23 +1484,76 @@ const externalWriteEntries = (entries, { root, home, tmp }) => {
   };
 };
 
-const collectSandboxWeakenings = (sources, { root, home, tmp }) => {
-  // Tier-known PROOF: an excludedCommands entry is downgraded to a note ONLY when it is
-  // demonstrably the consented tier's own output — it lives in the PROJECT settings.json (the file
-  // the tier writes; a local-file exclusion is never tier output) AND the matching derived
-  // code-mode allow rule is present there. A bare name match alone proves nothing.
+const cacheBundleReader = (read) => {
+  const entries = new Map();
+  return (path, ...args) => {
+    if (!entries.has(path)) entries.set(path, read(path, ...args));
+    return entries.get(path);
+  };
+};
+
+// The --autonomy preview's tier-known set (spec velocity-profile): only a used role whose consent
+// proof the PROJECT settings carry — a review role's derived code-mode allow rule, the execute
+// role's `codex-exec *` exclusion — makes its derived surfaces notes; any derivation failure is
+// returned as `error`, and the caller then judges every entry as revision 3 did.
+const deriveBridgeConsent = (data, root, deps) => {
+  try {
+    const bundleDeps = {
+      ...deps,
+      readdir: cacheBundleReader(deps.readdir ?? readdirSync),
+      readFile: cacheBundleReader(deps.readFile ?? readFileSync),
+    };
+    const derived = deriveUsedBridgeTier(root, bundleDeps);
+    const allow = getAllowEntries(data);
+    const excluded = Array.isArray(data?.sandbox?.excludedCommands) ? data.sandbox.excludedCommands : [];
+    const proven = derived.used.map(({ bridge, roles }) => ({
+      bridge,
+      roles: roles.filter((role) => {
+        const wrapper = wrapperCmdFor(bridge, role);
+        const exclusion = exclusionOf(wrapper);
+        if (role === 'execute') return derived.recipe.excludedCommands.includes(exclusion) && excluded.includes(exclusion);
+        const rule = `Bash(${wrapper} ${BRIDGE_REVIEW_MODE}:*)`;
+        return derived.recipe.allow.includes(rule) && allow.includes(rule);
+      }),
+    })).filter(({ roles }) => roles.length);
+    const allProven = JSON.stringify(proven) === JSON.stringify(derived.used);
+    const recipe = allProven
+      ? derived.recipe
+      : bundledSandboxRecipe(proven, bundleDeps);
+    const knownDirs = allProven ? derived.dirs : stateDirsOf(recipe.dirEntries, { env: derived.env, root, home: derived.home });
+    const bareReview = recipe.excludedCommands
+      .map((entry) => entry.slice(0, -2))
+      .filter((cmd) => BRIDGE_REVIEW_WRAPPERS.includes(cmd));
+    return { dirs: derived.dirs, knownDirs, hosts: recipe.hosts, excluded: [...recipe.excludedCommands, ...bareReview] };
+  } catch (err) {
+    return { error: err?.message ?? String(err) };
+  }
+};
+
+const collectSandboxWeakenings = (sources, { root, home, tmp }, tier) => {
   const project = sources.find((s) => s.source === SETTINGS_FILE);
   const projectAllow = getAllowEntries(project?.data);
+  const judged = tier && !tier.error;
+  const isTierKnown = (source, entry, entries) => source === SETTINGS_FILE && judged && entries.includes(entry);
   const isTierKnownExclusion = (source, cmd) =>
-    source === SETTINGS_FILE &&
-    BRIDGE_REVIEW_WRAPPERS.includes(cmd) &&
-    projectAllow.includes(`Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
+    judged
+      ? isTierKnown(source, cmd, tier.excluded)
+      : source === SETTINGS_FILE && BRIDGE_REVIEW_WRAPPERS.includes(cmd) &&
+        projectAllow.includes(`Bash(${cmd} ${BRIDGE_REVIEW_MODE}:*)`);
   return sources.flatMap(({ source, data }) => {
     const sb = isJsonObject(data?.[SANDBOX_KEY]) ? data[SANDBOX_KEY] : {};
     const out = [];
+    const addNotes = (key, entries, detail) => {
+      for (const entry of entries) out.push({ source, key, entry, tierKnown: true, detail });
+    };
     const net = isJsonObject(sb.network) ? sb.network : {};
     if (Array.isArray(net.allowedDomains) && net.allowedDomains.length) {
-      out.push({ source, key: `${SANDBOX_KEY}.network.allowedDomains`, weakens: 'network', detail: `${net.allowedDomains.length} pre-allowed domain(s) — ${HOST_HONORS_QUALIFIER}, egress to them is not gated` });
+      const known = net.allowedDomains.filter((entry) => isTierKnown(source, entry, tier?.hosts));
+      const foreign = net.allowedDomains.filter((entry) => !known.includes(entry));
+      addNotes(`${SANDBOX_KEY}.network.allowedDomains`, known, 'every sandboxed command of the project can reach it');
+      if (foreign.length) {
+        out.push({ source, key: `${SANDBOX_KEY}.network.allowedDomains`, weakens: 'network', detail: `${foreign.length} pre-allowed domain(s) — ${HOST_HONORS_QUALIFIER}, egress to them is not gated` });
+      }
     }
     const fsb = isJsonObject(sb.filesystem) ? sb.filesystem : {};
     // A PRESENT but unreadable declaration is reported, never assumed empty: what it would make
@@ -1516,16 +1564,24 @@ const collectSandboxWeakenings = (sources, { root, home, tmp }) => {
       // instead of asserting an effect it does not know.
       out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', unverifiable: true, detail: `the declared value is not an array (${typeof fsb.allowWrite}) — it cannot be read, so what it would make writable is UNKNOWN` });
     } else if (Array.isArray(fsb.allowWrite) && fsb.allowWrite.length) {
+      const known = fsb.allowWrite.filter((entry) => isTierKnown(source, entry, tier?.knownDirs));
+      const foreign = fsb.allowWrite.filter((entry) => !known.includes(entry));
+      addNotes(`${SANDBOX_KEY}.filesystem.allowWrite`, known, 'every sandboxed command can write it');
       // Only the entries that RESOLVE outside the repo and $TMPDIR are a weakening at all — an entry
       // pointing INSIDE the repo grants nothing the red-line withholds, so reporting it would be an
       // over-report. All-contained ⇒ no line at all.
       // TWO records, never one: a resolved external path IS a weakening, an unresolvable entry is
       // UNVERIFIABLE, and a single line carrying both would assert an effect for entries it could
-      // not read — the contradiction this phase exists to remove. An array of only-unresolvable
-      // entries therefore yields no weakening claim at all.
-      const { external, unresolvable } = externalWriteEntries(fsb.allowWrite, { root, home, tmp });
+      // not read. An array of only-unresolvable entries therefore yields no weakening claim at all.
+      const { external, unresolvable } = externalWriteEntries(foreign, { root, home, tmp });
       if (external.length) {
-        out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', detail: `${HOST_HONORS_QUALIFIER}, ${external.length} declared path(s) resolve OUTSIDE the repo and $TMPDIR and are writable: ${external.map((p) => JSON.stringify(p)).join(', ')}` });
+        const covered = source === SETTINGS_FILE && judged
+          ? tier.dirs.filter((dir) => foreign.some((entry) => isResolvableDeclaredEntry(entry) && entry !== dir &&
+              external.includes(resolveDeclaredDir(entry, { home, root })) &&
+              dirCovers(resolveDeclaredDir(entry, { home, root }), resolveDeclaredDir(dir, { home, root }))))
+          : [];
+        const coveringDetail = covered.map((dir) => `; covers the bridge state dir ${dir}`).join('');
+        out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', detail: `${HOST_HONORS_QUALIFIER}, ${external.length} declared path(s) resolve OUTSIDE the repo and $TMPDIR and are writable: ${external.map((p) => JSON.stringify(p)).join(', ')}${coveringDetail}` });
       }
       if (unresolvable) {
         out.push({ source, key: `${SANDBOX_KEY}.filesystem.allowWrite`, weakens: 'fs_outside_repo', unverifiable: true, detail: `${unresolvable} declared entr(ies) could not be resolved (not a non-empty string) — what they would make writable is UNKNOWN` });
@@ -1535,17 +1591,20 @@ const collectSandboxWeakenings = (sources, { root, home, tmp }) => {
       out.push({ source, key: `${SANDBOX_KEY}.allowUnsandboxedCommands`, weakens: 'every sandbox red-line', detail: `${HOST_HONORS_QUALIFIER}, commands may run unsandboxed` });
     }
     if (Array.isArray(sb.excludedCommands) && sb.excludedCommands.length) {
-      // The bridge tier's OWN wrapper names are tier-known ONLY with the proof above (the
-      // --bridge-tier consent covers exactly this posture — the wrappers need network and
-      // genuinely run unsandboxed); then they are an informational note, never a weakening flag
-      // (the Decision-2 self-consistency bar). Every OTHER excluded command — hand-added names,
-      // local-file exclusions, tier names without their allow rules — stays a loud weakening.
+      // The bridge tier's OWN exclusions are tier-known ONLY with their consent proof; then they are
+      // a note, never a weakening flag. Every OTHER excluded command — hand-added names, local-file
+      // exclusions, tier names without their proof — stays a loud weakening.
       const tierKnown = sb.excludedCommands.filter((c) => isTierKnownExclusion(source, c));
       const foreign = sb.excludedCommands.filter((c) => !tierKnown.includes(c));
+      // A bare name matches only the argument-free command, so its note never claims real calls leave the sandbox.
+      if (judged) {
+        addNotes(`${SANDBOX_KEY}.excludedCommands`, tierKnown.filter((c) => c.endsWith(' *')), 'the wrapper runs outside the sandbox');
+        addNotes(`${SANDBOX_KEY}.excludedCommands`, tierKnown.filter((c) => !c.endsWith(' *')), 'only its argument-free invocation runs outside the sandbox');
+      }
       if (foreign.length) {
-        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${foreign.length} command(s) run UNSANDBOXED ${HOST_HONORS_QUALIFIER} (network/fs confinement not applied to them)${tierKnown.length ? `; ${tierKnown.length} bridge-review wrapper exclusion(s) are tier-known and not flagged` : ''}` });
-      } else if (tierKnown.length) {
-        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: null, tierKnown: true, detail: `${tierKnown.length} bridge-review wrapper exclusion(s) (${tierKnown.join(', ')}) — tier-known: ${HOST_HONORS_QUALIFIER}, the consented bridge-wrappers tier runs them outside the sandbox (network), and its allow rules are present in the project settings` });
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: 'every sandbox red-line', detail: `${foreign.length} command(s) run UNSANDBOXED ${HOST_HONORS_QUALIFIER} (network/fs confinement not applied to them)${!judged && tierKnown.length ? `; ${tierKnown.length} bridge-review wrapper exclusion(s) are tier-known and not flagged` : ''}` });
+      } else if (!judged && tierKnown.length) {
+        out.push({ source, key: `${SANDBOX_KEY}.excludedCommands`, weakens: null, tierKnown: true, detail: `${tierKnown.length} bridge-review wrapper exclusion(s) (${tierKnown.join(', ')}) — tier-known: ${HOST_HONORS_QUALIFIER}, only their argument-free invocations run outside the sandbox, and their allow rules are present in the project settings` });
       }
     }
     return out;
@@ -1614,8 +1673,10 @@ export const formatAutonomyResult = (r) => {
   for (const b of r.redlineBypass ?? []) {
     lines.push(`  ⚠ DEGRADE: ${b.source} has a pre-existing allow entry ${b.entry} that would BYPASS the rendered red-line(s) ${b.redlines.join('/')} (a matching allow rule AUTO-APPROVES the command, defeating ask/deny) — remove it by hand; this render never touches permissions.allow.`);
   }
+  if (r.bridgeTierError) lines.push(`  note: bridge-tier entries not judged — ${r.bridgeTierError}`);
   for (const w of r.sandboxWeakenings ?? []) {
-    if (w.tierKnown) lines.push(`  note: ${w.source} has ${w.key} (${w.detail}).`);
+    if (w.tierKnown && hasOwn(w, 'entry')) lines.push(`  note: ${w.source} has ${w.key} entry ${JSON.stringify(w.entry)} — tier-known: part of the bridge-wrappers tier consent; ${HOST_HONORS_QUALIFIER}, ${w.detail}.`);
+    else if (w.tierKnown) lines.push(`  note: ${w.source} has ${w.key} (${w.detail}).`);
     else if (w.unverifiable) lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}) — the rendered ${w.weakens} red-line CANNOT BE VERIFIED against it (no claim either way); fix the declared value by hand, then re-run this preview.`);
     else lines.push(`  ⚠ DEGRADE: ${w.source} has ${w.key} (${w.detail}), which WEAKENS the rendered ${w.weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`);
   }
@@ -1663,11 +1724,12 @@ export const writeAutonomyProfile = ({ cwd, apply = false } = {}, deps = {}) => 
   const redlineBypass = collectRedlineBypass(settingsSources);
   // The allowWrite degrade resolves its entries before judging them, so it needs the same anchors a
   // host resolving the key would use: the project root, the resolved home, and $TMPDIR.
+  const bridgeConsent = deriveBridgeConsent(preflight.projectSettings?.data, projectDir, deps);
   const sandboxWeakenings = collectSandboxWeakenings(settingsSources, {
     root: projectDir,
     home: deps.home ?? homedir(),
     tmp: (deps.env ?? process.env).TMPDIR ?? tmpdir(),
-  });
+  }, bridgeConsent);
   const resultBase = {
     autonomy: true,
     source,
@@ -1677,6 +1739,7 @@ export const writeAutonomyProfile = ({ cwd, apply = false } = {}, deps = {}) => 
     localMasks,
     redlineBypass,
     sandboxWeakenings,
+    bridgeTierError: bridgeConsent.error,
     stamp: preflight.stamp,
     stampOk: preflight.stampOk,
   };

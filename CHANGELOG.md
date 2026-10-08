@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-08 — AD-177: the bridge tier wires the used bridges (kit 14.27.0 MINOR, codex-cli-bridge 5.0.1 PATCH; memory 8.1.5, engine 5.12.0 and antigravity-cli-bridge 7.0.0 unchanged)
+
+**`velocity-profile --bridge-tier` wires every bridge the project's recipes use: for a review role the wrapper's
+`code`-mode allow rule and `<wrapper> *` in `sandbox.excludedCommands`, for an execute slot delegating to codex
+`codex-exec *` with no allow rule, and for every used bridge its declared hosts in `sandbox.network.allowedDomains`
+and its state dirs in `sandbox.filesystem.allowWrite`, home-relative.** A bare exclusion matches only the command run with no arguments,
+and a bridge that cannot write its state dir cannot run; a placed bridge no recipe uses now gets nothing. The tier,
+the Recommendations `bridge-tier` item, the danger check and the `--autonomy` preview read one derivation, so a
+project wired before is offered the one re-run in the upgrade. codex-cli-bridge 5.0.1: `codex-exec`'s nested-sandbox
+hint names the `codex-exec *` entry and the tier that adds it. Contracts: velocity-profile revision 4, init-project
+revision 4, jev-every-run revision 3. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-07 — AD-176: the agent applies the harness's own configuration on a chat yes, after a danger check (kit 14.26.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
 
 **`/agent-workflow-kit upgrade` applies the harness's own configuration on a chat "yes" again; AD-173's

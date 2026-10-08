@@ -28,7 +28,6 @@ import {
   KIT_READONLY_TOOLS,
   KIT_RUN_GATES_TOOL,
   KIT_WRITER_PREVIEW_TOOLS,
-  deriveBridgeTierAllowlist,
   deriveKitToolsAllowlist,
 } from '../tools/velocity-profile.mjs';
 import { kindOf, READ_ONLY, WRITER, PROJECT_EXEC } from '../tools/commands.mjs';
@@ -223,39 +222,55 @@ describe('dead-rule prevention — velocity.md tier dispatch lines match the see
 });
 
 // ── (c2) dead-rule prevention, bridge tier (AD-044 Plan 4): documented byte-form ⇄ seeded form ──
-// A SEPARATE pin from (c): the bridge subsection lives OUTSIDE the kit-tools extraction range (the
-// quoted grounding form is accepted ONLY here — the kit-tools UNQUOTED invariant above stays
-// untouched). Every seeded bridge byte-form must appear verbatim in the velocity.md bridge
-// subsection — a mismatched documented spelling would teach users a silently-dead rule.
 describe('dead-rule prevention — velocity.md bridge-tier byte-forms match the seeded forms', () => {
-  const sectionStart = VELOCITY_MODE.indexOf('`--bridge-tier`');
+  const sectionStart = VELOCITY_MODE.indexOf('**The `--bridge-tier`');
   assert.notEqual(sectionStart, -1, 'velocity.md must carry the --bridge-tier subsection');
-  const bridgeSection = VELOCITY_MODE.slice(sectionStart);
-  const derived = deriveBridgeTierAllowlist({ findWrapper: () => true });
 
   it('the bridge subsection sits AFTER the kit-tools Invariants (outside the (c) extraction range)', () => {
     assert.ok(sectionStart > VELOCITY_MODE.indexOf('**Invariants:**'), 'the quoted grounding line must never enter the kit-tools UNQUOTED scan');
   });
 
-  it('each seeded code-mode wrapper rule appears verbatim, and each wrapper name is documented for excludedCommands', () => {
+  it('documented bridge byte-forms equal the used bridges seeded forms (spec:velocity-profile/S12)', async () => {
+    const { usedBridges, bundledSandboxRecipe } = await import('./../tools/bridge-sandbox-recipe.mjs');
+    assert.equal(typeof usedBridges, 'function', 'usedBridges is not exported yet (S2-15)');
+    const config = { 'plan-execution': { review: 'council', execute: 'delegated' } };
+    const readiness = ['antigravity-cli-bridge', 'codex-cli-bridge'].map((name) => ({ name, readiness: 'ready' }));
+    const derived = bundledSandboxRecipe(usedBridges(config, readiness));
+    const listStart = VELOCITY_MODE.indexOf('The seeded byte-forms', sectionStart);
+    const listEnd = VELOCITY_MODE.indexOf('\n**Consented posture', listStart);
+    assert.ok(listStart > sectionStart && listEnd > listStart, 'the bridge-tier seeded byte-form list is bounded');
+    const byteFormList = VELOCITY_MODE.slice(listStart, listEnd);
+    const documented = [...byteFormList.matchAll(/`([^`]+)`/gu)].map((match) => match[1]);
+    const exclusionLines = byteFormList.split('\n').filter((line) => /excludedCommands|exclusion/iu.test(line));
+    const expectedExclusions = [...BRIDGE_REVIEW_WRAPPERS, 'codex-exec'].map((wrapper) => `${wrapper} *`).sort();
+    assert.deepEqual([...derived.excludedCommands].sort(), expectedExclusions);
     for (const wrapper of BRIDGE_REVIEW_WRAPPERS) {
-      assert.ok(bridgeSection.includes(`\`Bash(${wrapper} code:*)\``), `documented allow byte-form for ${wrapper}`);
-      assert.ok(bridgeSection.includes(`\`${wrapper}\` in \`sandbox.excludedCommands\``), `documented excludedCommands entry for ${wrapper}`);
       assert.ok(derived.allow.includes(`Bash(${wrapper} code:*)`), `the seeded form matches for ${wrapper}`);
       assert.ok(!derived.allow.includes(`Bash(${wrapper}:*)`), `the BARE prefix (covers plan/diff file args) is never seeded for ${wrapper}`);
+      assert.ok(!documented.includes(`Bash(${wrapper}:*)`), `no documented bare prefix for ${wrapper}`);
+    }
+    assert.ok(derived.allow.includes(`Bash(node "${kitRoot}/tools/grounding.mjs":*)`), 'the seeded grounding rule is present');
+    for (const entry of [...derived.allow, ...derived.excludedCommands]) {
+      assert.ok(documented.includes(entry.replaceAll(kitRoot, SKILL_DIR_VAR)), `documented seeded byte-form: ${entry}`);
+    }
+    for (const wrapper of [...BRIDGE_REVIEW_WRAPPERS, 'codex-exec']) {
+      assert.ok(exclusionLines.every((line) => !line.includes(`\`${wrapper}\``)), `no documented bare exclusion for ${wrapper}`);
+    }
+    for (const entry of derived.allow) {
+      assert.doesNotMatch(entry, /codex-exec|agy-run/);
     }
   });
 
-  it('the documented grounding byte-form (with ${CLAUDE_SKILL_DIR} substituted) equals the seeded rule', () => {
-    const documented = `Bash(node "${SKILL_DIR_VAR}/tools/grounding.mjs":*)`;
-    assert.ok(bridgeSection.includes(`\`${documented}\``), 'velocity.md documents the quoted grounding byte-form');
-    const substituted = documented.replaceAll(SKILL_DIR_VAR, kitRoot);
-    assert.ok(derived.allow.includes(substituted), 'the seeded grounding rule equals the documented spelling');
-  });
-
-  it('the non-review wrappers are documented as excluded and never seeded', () => {
-    assert.match(bridgeSection, /codex-exec/, 'the boundary is stated in the docs');
-    assert.match(bridgeSection, /agy-run/, 'the boundary is stated in the docs');
-    for (const entry of derived.allow) assert.doesNotMatch(entry, /codex-exec|agy-run/);
+  it('both bundled codex-exec runtime hint arms name the wildcard exclusion (spec:velocity-profile/S11)', () => {
+    const source = readFileSync(join(kitRoot, 'bridges/codex-cli-bridge/bin/codex-exec.sh'), 'utf8');
+    const scan = source.match(/^aw_scan_nested_sandbox\(\) \{[\s\S]*?^\}/mu)?.[0];
+    assert.ok(scan, 'the bundled nested-sandbox hint function is present');
+    for (const arm of ['hint', 'warning']) {
+      const block = scan.match(new RegExp(`echo "${arm}:[\\s\\S]*?return 0`, 'u'))?.[0];
+      assert.ok(block, `the ${arm} arm is present`);
+      const message = [...block.matchAll(/echo "(.*)" >&2/gu)].map((match) => match[1].trim()).join(' ');
+      assert.match(message, /codex-exec \*[^.]*excludedCommands|excludedCommands[^.]*codex-exec \*/u, `${arm}: excludedCommands entry must name codex-exec *`);
+      assert.doesNotMatch(message, /add\s+(?:it|[\\"'`]*codex-exec[\\"'`]*)\s+to[^.]*excludedCommands/u, `${arm}: no bare or unnamed excludedCommands entry`);
+    }
   });
 });

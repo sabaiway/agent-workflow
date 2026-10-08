@@ -6,12 +6,14 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BRIDGE_REVIEW_WRAPPERS, CLAUDE_DIR, KIT_GROUNDING_TOOL, RENDER_OWNED_REDLINE_RULES,
+  CLAUDE_DIR, RENDER_OWNED_REDLINE_RULES,
   SAFE_DEFAULT_MODES, SETTINGS_FILE, SETTINGS_LOCAL_FILE, UNIVERSAL_READONLY_ALLOWLIST,
-  deriveBridgeTierAllowlist, deriveKitToolsAllowlist, mergeAutonomySettings,
+  deriveKitToolsAllowlist, detectAtRoot, mergeAutonomySettings,
   writeAutonomyProfile, writeVelocityProfile,
 } from './velocity-profile.mjs';
-import { bundledSandboxRecipe } from './bridge-sandbox-recipe.mjs';
+import { KIT_GROUNDING_TOOL, bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
+import { mergeAllowWrite, stateDirsOf } from './bridge-state-dirs.mjs';
+import { loadConfig } from './orchestration-config.mjs';
 import { HOOK_FILE_REL, HOOKS_DIR, buildHookSettingsEntry, mergeHookEntry, writeGateHook } from './gate-hook.mjs';
 import { writeMcp } from './mcp.mjs';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, allowRulesFor, buildServerEntry } from './mcp-registration.mjs';
@@ -140,11 +142,12 @@ export const judgeChange = ({ variant, files, scope }) => {
 };
 const writerFacts = (facts, deps) => ({
   ...deps, ...facts,
+  detect: deps.detect ?? facts.detect,
   findWrapper: (name) => findOnPath(name, { getenv: facts.env }).state === 'present',
   findOnPath: (name) => findOnPath(name, { getenv: facts.env }),
 });
 
-export const scopeOf = (variant, facts) => {
+export const scopeOf = (variant, facts, deps = {}) => {
   const allowed = {};
   const set = (key, values) => {
     allowed[key] = (value) => values.some((entry) => equal(entry, value));
@@ -153,12 +156,13 @@ export const scopeOf = (variant, facts) => {
     const allow = [...UNIVERSAL_READONLY_ALLOWLIST];
     if (variant === 'kit-tools-tier') allow.push(...deriveKitToolsAllowlist({ projectDir: facts.root }));
     if (variant === 'bridge-tier') {
-      const deps = writerFacts(facts, {});
-      const placed = BRIDGE_REVIEW_WRAPPERS.filter(deps.findWrapper);
-      allow.push(...deriveBridgeTierAllowlist({ findWrapper: deps.findWrapper,
-        groundingAbsPath: join(facts.toolsDir, '..', KIT_GROUNDING_TOOL) }).allow);
-      set('sandbox.excludedCommands', placed);
-      set('sandbox.network.allowedDomains', bundledSandboxRecipe(placed, deps).hosts);
+      const detect = deps.detect ?? facts.detect ?? (() => detectAtRoot(facts.root, { env: facts.env, home: facts.home }));
+      const used = usedBridges(loadConfig(facts.root).config, detect());
+      const recipe = bundledSandboxRecipe(used, { groundingAbsPath: join(facts.toolsDir, '..', KIT_GROUNDING_TOOL) });
+      allow.push(...recipe.allow);
+      set('sandbox.excludedCommands', recipe.excludedCommands);
+      set('sandbox.network.allowedDomains', recipe.hosts);
+      set('sandbox.filesystem.allowWrite', stateDirsOf(recipe.dirEntries, facts));
     }
     set('permissions.allow', allow);
   } else if (variant === 'autonomy-render') {
@@ -189,7 +193,7 @@ export const scopeOf = (variant, facts) => {
   return {
     admits: ({ path, key, change, value }) => {
       const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL : path === SETTINGS_FILE;
-      const gains = key === 'hooks.PreToolUse' || key === ENABLED_KEY || key === CREDENTIALS;
+      const gains = variant === 'bridge-tier' || key === 'hooks.PreToolUse' || key === ENABLED_KEY || key === CREDENTIALS;
       return correctFile && (!gains || change === 'added') && Boolean(allowed[key]?.(value));
     },
     admitsPath: (path, directory = false) => directory ? directories.includes(path)
@@ -220,7 +224,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
       const plan = writeVelocityProfile({ cwd: facts.root, dryRun: true,
         kitTools: variant === 'kit-tools-tier', bridgeTier: variant === 'bridge-tier' }, writerDeps);
       const before = plan.projectSettings.data ?? {};
-      const after = structuredClone(before);
+      let after = structuredClone(before);
       after.permissions = { ...before.permissions,
         allow: [...(before.permissions?.allow ?? []), ...plan.toAdd, ...plan.tierToAdd, ...plan.bridgeToAdd] };
       if (plan.excludedToAdd.length || plan.hostsToAdd.length) {
@@ -229,6 +233,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
         if (plan.hostsToAdd.length) after.sandbox.network = { ...before.sandbox?.network,
           allowedDomains: [...(before.sandbox?.network?.allowedDomains ?? []), ...plan.hostsToAdd] };
       }
+      after = mergeAllowWrite(after, plan.dirsToAdd);
       addFile(SETTINGS_FILE, plan.projectSettings.data, after);
     } else if (variant === 'autonomy-render') {
       const render = writeAutonomyProfile({ cwd: facts.root, apply: false }, writerDeps);
@@ -272,7 +277,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
 
 export const checkApply = (variant, facts, deps = {}) => {
   const plan = plannedChange(variant, facts, deps);
-  const scope = scopeOf(variant, facts);
+  const scope = scopeOf(variant, facts, deps);
   const { entries, refused } = judgeChange({ variant, files: plan.files, scope });
   const lines = [];
   const display = (path) => facts.root && covers(facts.root, path) ? relative(facts.root, path) : path;
@@ -344,7 +349,7 @@ export const main = (argv, io = {}) => {
     platform: resolved.platform, claudeDir: args['claude-dir'] };
   let result;
   try {
-    result = checkApply(args.variant, facts);
+    result = checkApply(args.variant, facts, { detect: resolved.detect });
   } catch (error) {
     for (const line of error.lines ?? [error.message]) resolved.log(line);
     return 3;

@@ -201,6 +201,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // the lane leaf, the preflight, the project step and its danger check — by NAME: install.mjs spawns tools/init-project.mjs.
       'tools/write-lanes.mjs', 'tools/init-preflight.mjs', 'tools/init-project.mjs',
       'tools/apply-danger-check.mjs',
+      'tools/bridge-state-dirs.mjs',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -871,7 +872,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 355 = 354 + tools/bridge-catalog.mjs - the model catalog reader (story S2 of BRIDGE-MODEL-IS-ONE-USER-SETTING); 358 = 355 + bridges/codex-cli-bridge/bin/{codex-exec-jev,codex-review-jev}.test.mjs and bridges/antigravity-cli-bridge/bin/agy-jev.test.mjs - Jev in every bridge wrapper (story S10 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
     // 359 = 358 + tools/bridge-sandbox-recipe.mjs - the one reader of the bundled bridges' declared sandbox surfaces (story S11 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
     // 363 = 362 + tools/apply-danger-check.mjs - story S1 of BRIDGES-WORK-UNDER-THE-SANDBOX
-    assert.equal(packed.length, 363, `tarball file count drifted (${packed.length}\u2260 363)`);
+    // 364 = 363 + tools/bridge-state-dirs.mjs - story S2 of BRIDGES-WORK-UNDER-THE-SANDBOX
+    assert.equal(packed.length, 364, `tarball file count drifted (${packed.length}\u2260 364)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

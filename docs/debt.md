@@ -5,23 +5,14 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 - **JEV-SANDBOXED-WRAPPER-NEEDS-NO-USER-STEP** — invariant: a delegated run reaches Jev with no hand settings edit by
   the user. Origin: on 2026-10-06 Claude Code 2.1.291 ran an agent's plain `codex-review` inside its sandbox although
-  the project lists it in `excludedCommands`. The hosts half closed with AD-172 (kit 14.24.0): `velocity-profile
-  --bridge-tier` seeds the placed bridges' declared hosts into `sandbox.network.allowedDomains` (spec velocity-profile).
-  What stays: the bridges' writable state dirs (`writableDirs`), which no kit writer seeds, so where the harness
-  sandbox keeps them read-only the user still adds them to `sandbox.filesystem.allowWrite` by hand. Partial work that
-  keeps the row: a wrapper stderr hint naming the missing hosts on a harness-proxy 403, and the harness clause in
-  `tools/velocity-profile.mjs`'s printed tier notice, `--help` and `--autonomy` detail (:702, :392, :1548, under the
-  pinned `HOST_HONORS_QUALIFIER`). The fix is the no-step route (launch the wrappers outside the Bash sandbox, e.g.
-  through the kit's MCP server), a story, since it routes around a sandbox an admin may mandate. Proof, the only one
-  that closes the row: a sandboxed agent's plain `codex-review`, after the tier's run, gets a Jev answer with no hand
-  `allowWrite` edit.
-- **BRIDGE-TIER-HOSTS-REMOVED-ON-AUTONOMY-ADVICE-REFIRE** — invariant: a host the user removed on the kit's own advice
-  is not offered back without saying why. Origin: the `--autonomy` preview reports the tier-seeded hosts as a network
-  weakening and says "remove it by hand" (`agent-workflow-kit/tools/velocity-profile.mjs:1620`); after that removal
-  the Recommendations bridge-tier item fires again (`recommendations.mjs:469`, spec velocity-profile). Narrow fix: the
-  degrade detail names `--bridge-tier` as the source of hosts equal to the placed bridges' declared hosts and says a
-  removal re-fires the item. Proof: a preview over tier output prints that note. Residual: an optional item re-offers
-  what the user chose to remove. Raised by the S11 spec review (lens).
+  the project lists it in `excludedCommands`. The hosts closed with AD-172 (kit 14.24.0), the state dirs and the
+  `<wrapper> *` exclusions with story S2 of BRIDGES-WORK-UNDER-THE-SANDBOX: `velocity-profile --bridge-tier` seeds
+  the used bridges' hosts into `sandbox.network.allowedDomains` and their state dirs into
+  `sandbox.filesystem.allowWrite` on the upgrade's chat yes (spec velocity-profile). What stays: the no-step route —
+  a harness that keeps an excluded wrapper sandboxed still needs that consented step. The fix launches the wrappers
+  outside the Bash sandbox (e.g. through the kit's MCP server), a story, since it routes around a sandbox an admin may
+  mandate. Proof, the only one that closes the row: a sandboxed agent's plain `codex-review` gets a Jev answer with no
+  settings step at all.
 - **BRIDGE-TIER-FLAGLESS-READS-NO-MANIFEST-UNPINNED** — invariant: a flagless or `--kit-tools` velocity run reads no
   bridge manifest. Origin: spec velocity-profile S4 pins the manifest STOP only on `--bridge-tier`; the advisor's
   core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:452-455`), so a manifest read on every mode
@@ -307,12 +298,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   accepts, a mode-000 directory of the current user included. Raised by the review lens at the S13 diff review, round
   2 (2026-10-07).
 
-## Closed
-
-- **PARITY-RESOLVE-TERNARY** — queued when the fix (one redundant `isAbsolute` ternary spelled twice)
-  reached outside the phase that raised it, then FOLDED in a later round of the same step: correcting
-  the wrapper-link resolution base required touching both call sites anyway, and the check is no
-  longer redundant there — it now decides whether the physical parent has to be resolved at all.
 - **INIT-LISTS-ONLY-USER-ITEMS-UNDER-ARGV-SELECTION** — invariant: `init` lists, besides its previewed variants, only
   the user-lane variants with no argv, never a pending chat item. Origin: under argv-presence selection every chat
   variant answers no argv (`agent-workflow-kit/tools/write-lanes.mjs:151-152`), so the spec init-project sentence "a
@@ -330,11 +315,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **DANGER-CHECK-EXIT-3-SPAWNS-NOTHING-UNPINNED** — invariant: no exit of the danger check other than an equal digest
   spawns a writer. Origin: S23 names nothing spawned on 1, 2 and 5, not on 3 (a writer's dry-run refusal or a masked
   file). Narrow fix: S23 reads "1, 2, 3 or 5". Raised by the S1 spec review (agy round 2, minor 1).
-- **DANGER-CHECK-GROUNDING-RULE-UNBOUND** — invariant: every bridge-tier allow entry is bound to its exact form. Origin:
-  the part apply-danger-check admits "the quoted grounding rule naming KIT_GROUNDING_TOOL" at any path and with
-  codex-review alone placed, while the writer emits exactly `Bash(node "<KIT_ROOT>/tools/grounding.mjs":*)` only with
-  agy-review placed (`agent-workflow-kit/tools/velocity-profile.mjs:251-256`). Narrow fix: bind it to that form, only
-  with agy-review placed, plus a planted S22 cell. Raised by the S1 spec review (lens round 2, minor 4).
 - **DANGER-CHECK-TYPESAFE-PREFIX-LITERAL** — invariant: the danger check keeps the jev word-surface rule. Origin: the
   part prints `temporary: <parent>/.typesafe-ai.kit-tmp-*`; the prefixes are private to jev-skill.mjs (:20-21) and the
   surface rule (jev-guide S12, `agent-workflow-kit/tools/jev-guide.test/surface.test.mjs:18`, `:257`) refuses a line
@@ -375,7 +355,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   true` (the sandbox off by default) prints `nothing widened`, and autonomy-render's scope admits it (its value `true`).
   No harness writer removes a scalar today. Narrow fix: the table names scalar removals (`sandbox.enabled` and
   `sandbox.autoAllowBashIfSandboxed` removed: `prompts removed`; `permissions.defaultMode` removed: `nothing widened`)
-  and a scope admits no scalar removal. Raised by the S1 code session's self-review.
+  and a scope admits no scalar removal. Same class: an altered credentials entry (`sandbox.credentials.envVars`,
+  `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:59`, `:116`).
+  Raised by the S1 code session's self-review; the credentials case by the S1 release lens.
 - **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
   that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
   (`agent-workflow-kit/tools/recommendations.mjs:1612`), whose apply line needs the check's digest
@@ -387,3 +369,27 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   identical planned lines share a digest. Narrow fix: a first line `root: <abs>` inside the digest (a spec line-format
   revision). Residual: needs the agent itself to reuse one project's digest on another; the check and apply lines
   carry the same `--cwd`. Raised by the S1 diff review (lens round 1).
+- **SANDBOX-COMMENTS-SAY-THE-KIT-NEVER-SEEDS-ALLOWWRITE** — invariant: no shipped comment states a seeding rule the code
+  no longer has. Origin: after the epic's S2, `agent-workflow-kit/tools/manifest/validate.mjs:641-642` ("for placed
+  bridges"), `:664-666` and `agent-workflow-kit/tools/ack-write.mjs:6-7` ("the kit never writes sandbox filesystem
+  allowances") contradict the tier's `allowWrite` seed for the used bridges; S2's ledger sits at its 25-row cap. Narrow
+  fix: the comments name the used bridges and the tier's `allowWrite` seed. Raised by the S2 spec review (lens round 2).
+- **ADVISOR-READINESS-RESOLVES-AGAINST-THE-CALLER-CWD** — invariant: one advisor render reads one readiness. Origin:
+  the bridge tier reads `detectAtRoot` (a relative `CODEX_HOME` resolves against the project root), while the
+  advisor's other readiness reads (`composeReadiness`, `agent-workflow-kit/tools/recommendations.mjs:533`) call
+  `detectBackends` against the process cwd, so run from outside the root with a relative override the `review-recipe`
+  item can disagree with the `bridge-tier` item. Narrow fix: those reads take `detectAtRoot(root, …)`. No write decision
+  rides it. Raised by the S2 diff review (lens round 1).
+- **DETECTOR-KEEPS-A-LITERAL-TILDE-OVERRIDE** — invariant: readiness and the state-dir resolver read one env override
+  the same way. Origin: `resolveDir` returns a non-empty override as given (`agent-workflow-kit/tools/detect-backends.mjs:206-209`),
+  so a literal `CODEX_HOME='~/.codex'` is probed as `<root>/~/.codex/auth.json` (codex reads `needs-credentials` and the
+  tier skips it), while `resolveWritableDir` reads it under the home. Before S2 the same path resolved against the
+  process cwd and failed alike. Narrow fix: expand a literal `~`/`~/…` override against the home before the probe.
+  Raised by the S2 diff review (codex round 2).
+
+## Closed
+
+- **PARITY-RESOLVE-TERNARY** — queued when the fix (one redundant `isAbsolute` ternary spelled twice)
+  reached outside the phase that raised it, then FOLDED in a later round of the same step: correcting
+  the wrapper-link resolution base required touching both call sites anyway, and the check is no
+  longer redundant there — it now decides whether the physical parent has to be resolved at all.

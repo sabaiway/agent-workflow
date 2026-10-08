@@ -342,7 +342,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="5.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.0.1"  # aw-version-anchor
 # Generous hard cap for a slow review at the host posture's effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp

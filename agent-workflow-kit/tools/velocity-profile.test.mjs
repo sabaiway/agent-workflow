@@ -22,7 +22,6 @@ import {
   VELOCITY_MALFORMED,
   VELOCITY_OFFCORE,
   WORKFLOW_STAMP,
-  deriveBridgeTierAllowlist,
   deriveKitToolsAllowlist,
   discoverGateCandidates,
   isExecutableFile,
@@ -34,6 +33,7 @@ import {
 } from './velocity-profile.mjs';
 import { GROUNDING_TOOL, REPO_SEARCH_TOOL, REVIEW_ROUNDS_TOOL } from './procedures.mjs';
 import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
+import { buildRecommendations } from './recommendations.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -963,21 +963,20 @@ describe('velocity profile CLI — the opt-in --kit-tools tier', () => {
   });
 });
 
-// ── the --bridge-tier (AD-044 Plan 4, Decision 2) ────────────────────────────────────
-// Placement is injected (deps.findWrapper) — a hermetic test never depends on what the HOST has
-// on PATH. The frozen constant is the membership source; the derivation only ever consults the
-// probe for placement.
 describe('bridge-wrappers tier — frozen membership, derivation, screen, audit self-consistency', () => {
   const allPlaced = () => true;
   const nonePlaced = () => false;
   const GROUNDING_RULE = `Bash(node "${GROUNDING_TOOL}":*)`;
-  const runBridgeMain = (argv, cwd, findWrapper, extra = {}) => {
+  const runBridgeMain = (argv, cwd, findWrapper = nonePlaced, extra = {}) => {
     const stdout = [];
     const stderr = [];
     const code = main([...argv, '--cwd', cwd], {
       log: (line) => stdout.push(line),
       errlog: (line) => stderr.push(line),
       findWrapper,
+      detect: () => [],
+      home: join(cwd, 'synthetic-home'),
+      env: { PATH: '/nonexistent-path-for-tests', HOME: join(cwd, 'synthetic-home') },
       ...extra,
     });
     return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
@@ -988,16 +987,61 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
   const AGY_HOSTS = readJson(manifestPath('antigravity-cli-bridge')).networkHosts;
   const CODEX_HOSTS = readJson(manifestPath('codex-cli-bridge')).networkHosts;
   const UNION_HOSTS = [...AGY_HOSTS, ...CODEX_HOSTS.filter((host) => !AGY_HOSTS.includes(host))];
+  const READY = BUNDLES.map((name) => ({ name, readiness: 'ready' }));
+  const signedOut = (name) => READY.map((row) => ({ ...row, readiness: row.name === name ? 'needs-credentials' : 'ready' }));
+  const reviewConfig = (review) => Object.fromEntries(
+    ['plan-authoring', 'plan-execution', 'feedback-triage', 'epic'].map((activity) => [activity, { review }]),
+  );
+  const bridgeProject = (t, config = reviewConfig('council'), readiness = READY) => {
+    const fixture = makeTempProject(t);
+    const cwd = join(fixture, 'project');
+    const home = join(fixture, 'home');
+    mkdirSync(home);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    if (config !== null) writeJson(join(cwd, 'docs/ai/orchestration.json'), config);
+    const env = { PATH: '/nonexistent-path-for-tests', HOME: home, TMPDIR: join(fixture, 'scratch') };
+    const writes = [];
+    const writeFile = (path, ...args) => {
+      writes.push(path);
+      writeFileSync(path, ...args);
+    };
+    return { cwd, home, env, writes, writeFile, detect: () => readiness, findWrapper: nonePlaced, ...bundleDeps() };
+  };
   const bundleDeps = (entries = BUNDLES, readFile = readFileSync) => ({ bundleRoot: BUNDLE_ROOT, readdir: (dir) => (dir === BUNDLE_ROOT ? entries : readdirSync(dir)), readFile });
   const failWith = (code) => { throw Object.assign(new Error(`${code}: fixture`), { code }); };
   const HOSTS_HEADER = /^(?:would add|added) sandbox\.network\.allowedDomains entries: (\d+)$/;
-  const listedHosts = (stdout) => {
+  const listedEntries = (stdout, header) => {
     const lines = stdout.split('\n');
-    const at = lines.findIndex((line) => HOSTS_HEADER.test(line));
+    const at = lines.findIndex((line) => header.test(line));
     if (at < 0) return undefined;
     const rest = lines.slice(at + 1);
     const end = rest.findIndex((line) => !line.startsWith('  - '));
-    return { count: Number(lines[at].match(HOSTS_HEADER)[1]), hosts: rest.slice(0, end).map((line) => line.slice(4)), after: rest[end] };
+    const entries = rest.slice(0, end).map((line) => line.slice(4));
+    const count = Number(lines[at].match(header)[1]);
+    return { count, entries: count === 0 && entries.length === 1 && entries[0] === '(none)' ? [] : entries, after: rest[end] };
+  };
+  const listedHosts = (stdout) => {
+    const block = listedEntries(stdout, HOSTS_HEADER);
+    return block && { ...block, hosts: block.entries };
+  };
+  const listedDirs = (stdout) => listedEntries(stdout, /^(?:would add|added) sandbox\.filesystem\.allowWrite entries: (\d+)$/);
+  const listedAllow = (stdout) => listedEntries(stdout, /^(?:would add|added) bridge-wrappers tier allow entries: (\d+)$/);
+  const listedExcluded = (stdout) => listedEntries(stdout, /^(?:would add|added) sandbox\.excludedCommands entries: (\d+)$/);
+  const assertLists = (stdout, expected, label) => {
+    for (const [key, parse, present] of [
+      ['allow', listedAllow, 'bridge tier'],
+      ['excluded', listedExcluded, 'excludedCommands'],
+      ['hosts', listedHosts, 'allowedDomains'],
+      ['dirs', listedDirs, 'allowWrite'],
+    ]) {
+      const block = parse(stdout);
+      assert.deepEqual(block?.entries ?? [], expected[key], `${label}: exact ${key} list`);
+      if (block || expected[key].length || key === 'allow' || key === 'excluded') {
+        assert.equal(block?.count, expected[key].length, `${label}: ${key} count`);
+        assert.match(block?.after ?? '', new RegExp(`^already present \\(${present}\\): \\d+$`), `${label}: ${key} present line`);
+      }
+    }
   };
 
   it('the FROZEN tier constant is exactly the two review wrappers (count sentinel)', () => {
@@ -1005,33 +1049,32 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(BRIDGE_REVIEW_WRAPPERS.length, 2, 'growing the tier is a reviewed decision, never a drive-by');
   });
 
-  it('derivation (all placed): code-mode wildcards + the quoted grounding rule + excludedCommands; NEVER codex-exec/agy-run', () => {
-    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
-    assert.deepEqual([...bridge.allow], ['Bash(codex-review code:*)', 'Bash(agy-review code:*)', GROUNDING_RULE]);
-    assert.deepEqual([...bridge.excludedCommands], ['codex-review', 'agy-review']);
+  it('derivation uses review and execute roles: code-mode allows, grounding and * exclusions without execution allows', async () => {
+    const { usedBridges, bundledSandboxRecipe } = await import('./bridge-sandbox-recipe.mjs').catch(() => ({}));
+    assert.equal(typeof usedBridges, 'function', 'usedBridges is not exported yet (S2-15)');
+    assert.equal(typeof bundledSandboxRecipe, 'function', 'bundledSandboxRecipe is not exported yet (S2-15)');
+    const config = reviewConfig('council');
+    config['plan-execution'].execute = 'delegated';
+    const used = usedBridges(config, READY);
+    assert.deepEqual(used, [
+      { bridge: 'antigravity-cli-bridge', roles: ['review'] },
+      { bridge: 'codex-cli-bridge', roles: ['review', 'execute'] },
+    ]);
+    const bridge = bundledSandboxRecipe(used, bundleDeps());
+    assert.deepEqual(bridge.allow, ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)']);
+    assert.deepEqual(bridge.excludedCommands, ['agy-review *', 'codex-review *', 'codex-exec *']);
     assert.deepEqual(bridge.skips, []);
-    for (const entry of [...bridge.allow, ...bridge.excludedCommands]) {
-      assert.doesNotMatch(entry, /codex-exec|agy-run/, 'non-review wrappers are NEVER seeded (delegated execution keeps its human prompt)');
+    for (const entry of bridge.allow) {
+      assert.doesNotMatch(entry, /codex-exec|agy-run/, 'execution and probe wrappers keep their permission prompt');
     }
   });
 
-  it('the grounding rule byte-equals the procedures-rendered spelling (seeded↔rendered parity)', () => {
-    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
+  it('the grounding rule byte-equals the procedures-rendered spelling (seeded↔rendered parity)', async () => {
+    const { bundledSandboxRecipe } = await import('./bridge-sandbox-recipe.mjs').catch(() => ({}));
+    assert.equal(typeof bundledSandboxRecipe, 'function', 'bundledSandboxRecipe is not exported yet (S2-15)');
+    const bridge = bundledSandboxRecipe(['agy-review'], bundleDeps());
+    assert.ok(Array.isArray(bridge.allow), 'bundledSandboxRecipe has no allow form yet (S2-15)');
     assert.equal(bridge.allow.includes(`Bash(node "${GROUNDING_TOOL}":*)`), true, 'the seeded rule wraps exactly the rendered `node "${GROUNDING_TOOL}"` prefix');
-  });
-
-  it('an absent bridge is a STATED skip with zero entries for it; grounding derives ONLY with agy (review-velocity-profile-r09-major-01)', () => {
-    const onlyCodex = deriveBridgeTierAllowlist({ findWrapper: (cmd) => cmd === 'codex-review' });
-    assert.deepEqual([...onlyCodex.allow], ['Bash(codex-review code:*)'], 'a codex-only install never auto-allows the agy facts pre-step writer');
-    assert.deepEqual([...onlyCodex.excludedCommands], ['codex-review']);
-    assert.equal(onlyCodex.skips.length, 1);
-    assert.match(onlyCodex.skips[0].reason, /agy-review.*not placed/);
-    const onlyAgy = deriveBridgeTierAllowlist({ findWrapper: (cmd) => cmd === 'agy-review' });
-    assert.deepEqual([...onlyAgy.allow], ['Bash(agy-review code:*)', GROUNDING_RULE], 'the grounding rule rides the agy placement');
-    const none = deriveBridgeTierAllowlist({ findWrapper: nonePlaced });
-    assert.deepEqual([...none.allow], [], 'no placed bridge → no allow entries (grounding included)');
-    assert.deepEqual([...none.excludedCommands], []);
-    assert.equal(none.skips.length, 2);
   });
 
   it('the screen accepts EXACTLY the seeded code-mode forms and rejects every near-miss spelling', () => {
@@ -1071,143 +1114,220 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.throws(() => validateProfile([GROUNDING_RULE]), (err) => err.code === VELOCITY_OFFCORE);
   });
 
-  it('the tier notice states the informed-consent posture EXPLICITLY (review-velocity-profile-r02-major-01, pinned)', () => {
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /runs UNATTENDED/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /reads any repo file it is pointed at and sends the assembled payload to its subscription backend/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /never codex-exec\/agy-run/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /never the plan\/diff modes/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /--facts\/--decided\) rides the same consent/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /scratch-destination guard/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /sandbox\.excludedCommands/);
-    assert.match(KIT_BRIDGE_TIER_NOTICE, /PLAIN invocation starting with the wrapper name/);
-  });
-
-  it('a tiered apply seeds BOTH surfaces; a second apply is idempotent (merge-don’t-clobber)', (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    ensureClaudeDir(cwd);
-    writeJson(settingsPath(cwd), { sandbox: { enabled: true, excludedCommands: ['user-tool'] }, permissions: { allow: [] } });
-    const first = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
-    assert.equal(first.code, EXIT_OK, first.stderr);
-    const settings = readJson(settingsPath(cwd));
-    for (const rule of ['Bash(codex-review code:*)', 'Bash(agy-review code:*)', GROUNDING_RULE]) {
-      assert.equal(settings.permissions.allow.includes(rule), true, rule);
-    }
-    assert.deepEqual(settings.sandbox.excludedCommands, ['user-tool', 'codex-review', 'agy-review'], 'foreign exclusions preserved, tier names appended');
-    assert.equal(settings.sandbox.enabled, true, 'foreign sandbox sub-keys preserved');
-    const bytes = readText(settingsPath(cwd));
-    const second = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
-    assert.equal(second.code, EXIT_OK);
-    assert.equal(readText(settingsPath(cwd)), bytes, 'a second tiered apply changes nothing');
-    assert.match(first.stdout, /runs UNATTENDED/, 'the notice prints on every tiered run');
-  });
-
-  it('a dry-run would add the declared hosts of each placed set, agy first; none placed adds no network key — spec:velocity-profile/S1', async (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    assert.deepEqual([CODEX_HOSTS.length, AGY_HOSTS.length, UNION_HOSTS.length], [4, 6, 8], 'the manifests the figures are read from');
-    for (const [placed, expected] of [[['codex-review'], CODEX_HOSTS], [['agy-review'], AGY_HOSTS], [['codex-review', 'agy-review'], UNION_HOSTS]]) {
-      const r = runBridgeMain(['--bridge-tier'], cwd, (cmd) => placed.includes(cmd), bundleDeps());
+  it('dry-run derives exact surfaces from used roles, readiness, rosters, degradation and defaults — spec:velocity-profile/S1', (t) => {
+    const codex = { allow: ['Bash(codex-review code:*)'], excluded: ['codex-review *'], hosts: CODEX_HOSTS, dirs: ['~/.codex'] };
+    const council = {
+      allow: ['Bash(agy-review code:*)', GROUNDING_RULE, ...codex.allow],
+      excluded: ['agy-review *', 'codex-review *'],
+      hosts: UNION_HOSTS,
+      dirs: ['~/.gemini/antigravity-cli', '~/.codex'],
+    };
+    const execute = { allow: [], excluded: ['codex-exec *'], hosts: CODEX_HOSTS, dirs: ['~/.codex'] };
+    const empty = { allow: [], excluded: [], hosts: [], dirs: [] };
+    const delegated = reviewConfig('solo');
+    delegated['plan-execution'].execute = 'delegated';
+    const cases = [
+      ['every review slot reviewed', reviewConfig('reviewed'), READY, codex],
+      ['council union', reviewConfig('council'), READY, council],
+      ['roster with signed-out agy', reviewConfig(['codex-review', 'agy-review', 'review-lens']), signedOut('antigravity-cli-bridge'), codex],
+      ['council degraded to reviewed', reviewConfig('council'), signedOut('antigravity-cli-bridge'), codex],
+      ['delegated execution only', delegated, READY, execute],
+      ['delegated codex signed out', delegated, signedOut('codex-cli-bridge'), empty],
+      ['absent config computed default', null, READY, codex],
+      ['placed ready agy unused by any slot', reviewConfig('reviewed'), READY, codex],
+      ['all slots solo with both bridges ready', reviewConfig('solo'), READY, empty],
+    ];
+    assert.deepEqual([CODEX_HOSTS.length, AGY_HOSTS.length, UNION_HOSTS.length], [4, 6, 8]);
+    for (const [label, config, readiness, expected] of cases) {
+      const deps = bridgeProject(t, config, readiness);
+      const r = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, deps);
       assert.equal(r.code, EXIT_OK, r.stderr);
-      assert.deepEqual([listedHosts(r.stdout)?.count, listedHosts(r.stdout)?.hosts], [expected.length, expected], `${placed.join(' + ')}: the allowedDomains lines`);
-    }
-    assert.doesNotMatch(runBridgeMain(['--bridge-tier'], cwd, nonePlaced, bundleDeps()).stdout, /allowedDomains entries: [1-9]/);
-    assert.equal(runBridgeMain(['--apply', '--bridge-tier'], cwd, nonePlaced, bundleDeps()).code, EXIT_OK);
-    assert.equal(readJson(settingsPath(cwd)).sandbox?.network, undefined, 'no placed bridge writes no network key');
-    const { bundledSandboxRecipe } = await import('./bridge-sandbox-recipe.mjs').catch(() => ({}));
-    assert.equal(typeof bundledSandboxRecipe, 'function', 'bridge-sandbox-recipe.mjs exports the shared reader');
-    assert.deepEqual(bundledSandboxRecipe([...BRIDGE_REVIEW_WRAPPERS], bundleDeps()).hosts, UNION_HOSTS, 'the tier reads the one derivation');
-  });
-
-  it('an apply onto the pre-revision tier output keeps a foreign host and sub-key, appends the missing hosts once, idempotent — spec:velocity-profile/S2', (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    ensureClaudeDir(cwd);
-    const tier = deriveBridgeTierAllowlist({ findWrapper: allPlaced });
-    const present = ['internal.example.com', UNION_HOSTS.at(-1)];
-    const network = { allowLocalBinding: true, allowedDomains: present };
-    writeJson(settingsPath(cwd), { permissions: { allow: [...tier.allow] }, sandbox: { excludedCommands: [...tier.excludedCommands], network } });
-    const first = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps());
-    assert.equal(first.code, EXIT_OK, first.stderr);
-    const { sandbox } = readJson(settingsPath(cwd));
-    assert.deepEqual(sandbox.network, { ...network, allowedDomains: [...present, ...UNION_HOSTS.slice(0, -1)] }, 'the missing hosts append in order');
-    assert.deepEqual(sandbox.excludedCommands, [...tier.excludedCommands], 'the exclusions are not repeated');
-    assert.match(first.stdout, /^already present \(allowedDomains\): 1$/m);
-    const bytes = readText(settingsPath(cwd));
-    assert.equal(runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps()).code, EXIT_OK);
-    assert.equal(readText(settingsPath(cwd)), bytes, 'a second apply changes no byte');
-  });
-
-  it('a wrong-typed sandbox.network or allowedDomains STOPs the tier with zero writes; other modes and the local file keep today’s reading — spec:velocity-profile/S3', (t) => {
-    for (const [network, key] of [[['x'], 'sandbox.network'], [{ allowedDomains: 'x' }, 'sandbox.network.allowedDomains']]) {
-      const cwd = makeTempProject(t);
-      seedWorkflowStamp(cwd);
-      writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
-      ensureClaudeDir(cwd);
-      writeJson(settingsPath(cwd), { sandbox: { network } });
-      const original = readText(settingsPath(cwd));
-      const dryRun = () => writeVelocityProfile({ cwd, bridgeTier: true }, { findWrapper: allPlaced, ...bundleDeps() });
-      assert.throws(dryRun, (err) => err.code === VELOCITY_MALFORMED && err.message.includes(key), `${key}: the dry-run STOPs`);
-      const apply = runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, bundleDeps());
-      assert.equal(apply.code, EXIT_PRECONDITION, `${key}: the apply STOPs`);
-      assert.ok(apply.stderr.includes(key), apply.stderr);
-      assert.equal(readText(settingsPath(cwd)), original, `${key}: zero writes`);
-      for (const argv of [['--dry-run'], ['--kit-tools'], ['--autonomy']]) {
-        assert.equal(runBridgeMain(argv, cwd, allPlaced, bundleDeps()).code, EXIT_OK, `${argv[0]} keeps today's reading of ${key}`);
+      assertLists(r.stdout, expected, label);
+      assert.equal(existsSync(settingsPath(deps.cwd)), false, `${label}: dry-run creates no settings`);
+      if (expected.excluded.length === 0) {
+        const applied = runBridgeMain(['--apply', '--bridge-tier'], deps.cwd, nonePlaced, deps);
+        assert.equal(applied.code, EXIT_OK, applied.stderr);
+        assert.equal(readJson(settingsPath(deps.cwd)).sandbox, undefined, `${label}: no used bridge writes no sandbox key`);
       }
-      writeJson(settingsPath(cwd), {});
-      writeJson(localSettingsPath(cwd), { sandbox: { network } });
-      assert.equal(runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps()).code, EXIT_OK, `${key} in settings.local.json alone`);
     }
   });
 
-  it('an unreadable or unparsable bundled manifest STOPs the tier with zero writes naming it; a stray entry is skipped — spec:velocity-profile/S4', (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    ensureClaudeDir(cwd);
-    writeJson(settingsPath(cwd), { permissions: { allow: [] } });
-    const original = readText(settingsPath(cwd));
+  it('pre-revision wiring merges * forms and missing dirs once, preserves siblings, and matches Recommendations delta — spec:velocity-profile/S2', (t) => {
+    for (const covering of [[], ['~/.gemini']]) {
+      const config = reviewConfig('council');
+      config['plan-execution'].execute = 'delegated';
+      const deps = bridgeProject(t, config);
+      const allow = ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)', 'Bash(foreign read:*)'];
+      const excludedCommands = ['codex-review', 'agy-review', 'foreign-tool'];
+      const network = { allowedDomains: ['internal.example.com', ...UNION_HOSTS], allowLocalBinding: true };
+      const filesystem = { allowWrite: ['/foreign/state', ...covering], denyWrite: ['/private/state'] };
+      const sandbox = { enabled: true, excludedCommands, network, filesystem };
+      writeJson(settingsPath(deps.cwd), { permissions: { allow }, sandbox });
+      const original = readText(settingsPath(deps.cwd));
+      const expected = {
+        allow: [],
+        excluded: ['agy-review *', 'codex-review *', 'codex-exec *'],
+        hosts: [],
+        dirs: covering.length ? ['~/.codex'] : ['~/.gemini/antigravity-cli', '~/.codex'],
+      };
+      const recommendationDeps = {
+        findWrapper: nonePlaced,
+        env: deps.env,
+        getenv: deps.env,
+        home: deps.home,
+        detect: deps.detect,
+        takeCensus: () => ({
+          counts: { assessable: 3, unsupported: 0, 'out-of-domain': 1, 'excluded-test': 0 },
+          unsupportedExtensions: [],
+          verdict: 'within-domain',
+          total: 4,
+        }),
+      };
+      const before = buildRecommendations({ cwd: deps.cwd, deps: recommendationDeps });
+      const dry = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, deps);
+      assert.equal(dry.code, EXIT_OK, dry.stderr);
+      assertLists(dry.stdout, expected, 'pre-revision dry-run');
+      assert.equal(readText(settingsPath(deps.cwd)), original);
+      const applied = runBridgeMain(['--apply', '--bridge-tier'], deps.cwd, nonePlaced, deps);
+      assert.equal(applied.code, EXIT_OK, applied.stderr);
+      assertLists(applied.stdout, expected, 'pre-revision apply');
+      for (const parse of [listedAllow, listedExcluded, listedHosts, listedDirs]) {
+        assert.deepEqual(parse(dry.stdout), parse(applied.stdout), 'dry-run lists equal apply additions');
+      }
+      const delta = Object.values(expected).reduce((sum, entries) => sum + entries.length, 0);
+      assert.equal(before.items.find((item) => item.key === 'bridge-tier')?.what,
+        `bridge-wrappers tier incomplete — ${delta} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)`);
+      assert.equal(before.skips.some((skip) => skip.key === 'bridge-tier'), false);
+      const settings = readJson(settingsPath(deps.cwd));
+      assert.deepEqual(settings.permissions.allow, [...allow, ...UNIVERSAL_READONLY_ALLOWLIST]);
+      assert.deepEqual(settings.sandbox, {
+        ...sandbox,
+        excludedCommands: [...excludedCommands, ...expected.excluded],
+        filesystem: { ...filesystem, allowWrite: [...filesystem.allowWrite, ...expected.dirs] },
+      });
+      assert.match(applied.stdout, new RegExp(`^already present \\(allowWrite\\): ${covering.length}$`, 'm'));
+      const bytes = readText(settingsPath(deps.cwd));
+      assert.equal(runBridgeMain(['--apply', '--bridge-tier'], deps.cwd, nonePlaced, deps).code, EXIT_OK);
+      assert.equal(readText(settingsPath(deps.cwd)), bytes, 'second apply leaves every byte unchanged');
+      const after = buildRecommendations({ cwd: deps.cwd, deps: recommendationDeps });
+      assert.equal(after.items.some((item) => item.key === 'bridge-tier'), false);
+      assert.equal(after.skips.some((skip) => skip.key === 'bridge-tier'), false);
+    }
+  });
+
+  it('malformed tier network/filesystem keys STOP dry-run and apply with zero writes; other modes and local keys keep their result — spec:velocity-profile/S3', (t) => {
+    const malformed = [
+      [{ network: ['x'] }, 'sandbox.network'],
+      [{ network: { allowedDomains: 'x' } }, 'sandbox.network.allowedDomains'],
+      [{ filesystem: ['x'] }, 'sandbox.filesystem'],
+      [{ filesystem: { allowWrite: 'x' } }, 'sandbox.filesystem.allowWrite'],
+      ...[42, '', '   '].map((entry) => [{ filesystem: { allowWrite: [entry] } }, 'sandbox.filesystem.allowWrite']),
+    ];
+    for (const [sandbox, key] of malformed) {
+      const deps = bridgeProject(t);
+      writeJson(join(deps.cwd, 'docs/ai/autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+      writeJson(settingsPath(deps.cwd), { sandbox });
+      const original = readText(settingsPath(deps.cwd));
+      for (const argv of [['--bridge-tier'], ['--apply', '--bridge-tier']]) {
+        const r = runBridgeMain(argv, deps.cwd, nonePlaced, deps);
+        assert.equal(r.code, EXIT_PRECONDITION, `${key}: ${argv.join(' ')} STOPs`);
+        assert.ok(r.stderr.includes(key), r.stderr);
+        assert.throws(() => writeVelocityProfile({ cwd: deps.cwd, bridgeTier: true, dryRun: !argv.includes('--apply') }, deps),
+          (err) => err.code === VELOCITY_MALFORMED && err.message.includes(key));
+        assert.equal(readText(settingsPath(deps.cwd)), original, `${key}: zero writes`);
+        assert.deepEqual(deps.writes, [], `${key}: no writer called`);
+      }
+      for (const argv of [[], ['--kit-tools'], ['--autonomy']]) {
+        const r = runBridgeMain(argv, deps.cwd, nonePlaced, deps);
+        assert.equal(r.code, EXIT_OK, `${argv.join(' ') || 'flagless'}: ${r.stderr}`);
+        assert.match(r.stdout, argv.includes('--autonomy') ? /^agent-workflow autonomy render - DRY RUN/ : /^agent-workflow velocity profile - DRY RUN/);
+        assert.equal(readText(settingsPath(deps.cwd)), original);
+      }
+      writeJson(settingsPath(deps.cwd), {});
+      writeJson(localSettingsPath(deps.cwd), { sandbox });
+      const localBytes = readText(localSettingsPath(deps.cwd));
+      for (const argv of [['--bridge-tier'], ['--apply', '--bridge-tier']]) {
+        const r = runBridgeMain(argv, deps.cwd, nonePlaced, deps);
+        assert.equal(r.code, EXIT_OK, `${key} in local settings alone: ${r.stderr}`);
+        assert.equal(readText(localSettingsPath(deps.cwd)), localBytes);
+      }
+    }
+  });
+
+  it('manifest, rejected config and dangerous CODEX_HOME STOP with zero writes; stray bundle entries are skipped — spec:velocity-profile/S4', (t) => {
+    const deps = bridgeProject(t);
+    writeJson(settingsPath(deps.cwd), { permissions: { allow: [] } });
+    const original = readText(settingsPath(deps.cwd));
     const broken = manifestPath('codex-cli-bridge');
-    const readers = { unreadable: (path, enc) => (path === broken ? failWith('EACCES') : readFileSync(path, enc)), unparsable: (path, enc) => (path === broken ? '{ not json' : readFileSync(path, enc)) };
-    for (const [label, readFile] of Object.entries(readers)) {
-      for (const argv of [['--dry-run', '--bridge-tier'], ['--apply', '--bridge-tier']]) {
-        const r = runBridgeMain(argv, cwd, allPlaced, bundleDeps(BUNDLES, readFile));
-        assert.equal(r.code, EXIT_PRECONDITION, `${label} ${argv[0]}: the tier STOPs`);
-        assert.ok(r.stderr.includes(join('codex-cli-bridge', 'capability.json')), `${label}: the STOP names the manifest`);
-        assert.equal(readText(settingsPath(cwd)), original, `${label} ${argv[0]}: zero writes`);
+    const readers = [
+      (path, enc) => path === broken ? failWith('EACCES') : readFileSync(path, enc),
+      (path, enc) => path === broken ? '{ not json' : readFileSync(path, enc),
+    ];
+    const stops = readers.map((readFile) => ({ deps: { ...deps, ...bundleDeps(BUNDLES, readFile) }, key: 'capability.json' }));
+    for (const config of ['{ not json', JSON.stringify({ 'plan-execution': { review: 'unknown-recipe' } })]) {
+      stops.push({ deps, key: 'docs/ai/orchestration.json', config });
+    }
+    for (const codexHome of [deps.home, `${deps.home}/`, dirname(deps.cwd)]) {
+      writeJson(join(codexHome, 'auth.json'), {});
+      stops.push({ deps: { ...deps, env: { ...deps.env, CODEX_HOME: codexHome } }, key: 'CODEX_HOME' });
+    }
+    for (const scenario of stops) {
+      writeText(join(deps.cwd, 'docs/ai/orchestration.json'), scenario.config ?? JSON.stringify(reviewConfig('council')));
+      for (const argv of [['--bridge-tier'], ['--apply', '--bridge-tier']]) {
+        const r = runBridgeMain(argv, deps.cwd, nonePlaced, scenario.deps);
+        assert.equal(r.code, EXIT_PRECONDITION, `${scenario.key}: ${argv.join(' ')} STOPs`);
+        assert.ok(r.stderr.includes(scenario.key), r.stderr);
+        assert.equal(readText(settingsPath(deps.cwd)), original, `${scenario.key}: zero writes`);
+        assert.deepEqual(deps.writes, [], `${scenario.key}: no writer called`);
       }
     }
+    writeJson(join(deps.cwd, 'docs/ai/orchestration.json'), reviewConfig('council'));
     const stray = manifestPath('.DS_Store');
-    const r = runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps(['.DS_Store', ...BUNDLES], (path, enc) => (path === stray ? failWith('ENOTDIR') : readFileSync(path, enc))));
+    const readFile = (path, enc) => path === stray ? failWith('ENOTDIR') : readFileSync(path, enc);
+    const r = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, { ...deps, ...bundleDeps(['.DS_Store', ...BUNDLES], readFile) });
     assert.equal(r.code, EXIT_OK, r.stderr);
-    assert.deepEqual(listedHosts(r.stdout)?.hosts, UNION_HOSTS, 'the stray entry is skipped, the hosts stay whole');
+    assert.deepEqual(listedHosts(r.stdout)?.hosts, UNION_HOSTS);
+    assert.deepEqual(listedDirs(r.stdout)?.entries, ['~/.gemini/antigravity-cli', '~/.codex']);
+    assert.equal(readText(settingsPath(deps.cwd)), original);
   });
 
-  it('a dry-run writes nothing and lists the hosts; the notice and USAGE state the seeded hosts and the widening under the qualifier — spec:velocity-profile/S5', (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    ensureClaudeDir(cwd);
-    writeJson(settingsPath(cwd), { sandbox: { network: { allowedDomains: [] } } });
-    const original = readText(settingsPath(cwd));
-    const r = runBridgeMain(['--bridge-tier'], cwd, allPlaced, bundleDeps());
+  it('dry-run lists allowWrite beside other surfaces without writes; notice and USAGE name every conditional widening — spec:velocity-profile/S5', (t) => {
+    const config = reviewConfig('council');
+    config['plan-execution'].execute = 'delegated';
+    const deps = bridgeProject(t, config);
+    writeJson(settingsPath(deps.cwd), {});
+    const original = readText(settingsPath(deps.cwd));
+    const r = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, deps);
     assert.equal(r.code, EXIT_OK, r.stderr);
-    assert.match(r.stdout, /^would add sandbox\.network\.allowedDomains entries: 8$/m);
-    const listed = listedHosts(r.stdout);
-    assert.deepEqual([listed?.hosts, listed?.after], [UNION_HOSTS, 'already present (allowedDomains): 0']);
-    assert.equal(readText(settingsPath(cwd)), original, 'the dry-run writes nothing');
-    const usage = runMainWithoutCwd(['--help']).stdout;
-    const tierUsage = usage.slice(usage.indexOf('\n--bridge-tier'), usage.indexOf('\n--autonomy')).replace(/\s+/g, ' ');
-    for (const [surface, text] of [['the notice', KIT_BRIDGE_TIER_NOTICE], ['the USAGE', tierUsage]]) {
-      assert.ok(text.includes('sandbox.network.allowedDomains') && text.includes('declared hosts'), `${surface} states the seeded hosts`);
-      assert.ok(text.split(/(?<=\.)\s+/).some((s) => s.includes(HOST_HONORS_QUALIFIER) && s.includes('every sandboxed command')), `${surface} states the widening under the host qualifier`);
-      assert.doesNotMatch(text, /typesafe/, `${surface} names no Jev host literally`);
+    assertLists(r.stdout, {
+      allow: ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)'],
+      excluded: ['agy-review *', 'codex-review *', 'codex-exec *'],
+      hosts: UNION_HOSTS,
+      dirs: ['~/.gemini/antigravity-cli', '~/.codex'],
+    }, 'dry-run blocks');
+    assert.equal(listedDirs(r.stdout)?.after, 'already present (allowWrite): 0');
+    assert.ok(r.stdout.indexOf('sandbox.filesystem.allowWrite entries:') > r.stdout.indexOf('already present (allowedDomains):'));
+    assert.equal(readText(settingsPath(deps.cwd)), original, 'dry-run writes nothing');
+    assert.deepEqual(deps.writes, []);
+    const help = runBridgeMain(['--help'], deps.cwd, nonePlaced, deps);
+    assert.equal(help.code, EXIT_OK);
+    const usage = help.stdout.slice(help.stdout.indexOf('\n--bridge-tier'), help.stdout.indexOf('\n--autonomy')).replace(/\s+/g, ' ');
+    for (const [label, text] of [['notice', KIT_BRIDGE_TIER_NOTICE], ['USAGE', usage]]) {
+      for (const literal of [
+        HOST_HONORS_QUALIFIER, 'runs outside the sandbox', 'every sandboxed command of the project can reach',
+        'every sandboxed command can write', 'codex-exec *', 'keeps its prompt', 'used bridge',
+        'sandbox.excludedCommands', 'sandbox.network.allowedDomains', 'allowWrite',
+      ]) {
+        assert.ok(text.includes(literal), `${label} contains ${literal}`);
+      }
+      assert.doesNotMatch(text, /hand-apply|unseeded|never seeds|placed bridges|weakening|credential/i, label);
     }
   });
 
   it('audit self-consistency: the flagless advisory flags NONE of the tier’s own entries — and DOES flag them for an absent bridge', (t) => {
     const cwd = makeTempProject(t);
     seedWorkflowStamp(cwd);
-    runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
+    runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced, { detect: () => READY });
     const samehost = runBridgeMain(['--dry-run'], cwd, allPlaced);
     assert.equal(samehost.code, EXIT_OK);
     assert.doesNotMatch(samehost.stdout, /pre-existing non-read-only Bash allow entries/, 'no self-contradiction: seeded tier entries are tier-known to the audit');
@@ -1243,9 +1363,12 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.equal(runMainWithoutCwd(['--autonomy', '--bridge-tier']).code, EXIT_USAGE);
   });
 
-  it('an UNSEEDABLE grounding path is a STATED skip, never a broken rule (the spaces class)', () => {
-    const bridge = deriveBridgeTierAllowlist({ findWrapper: allPlaced, groundingAbsPath: '/kit with spaces/tools/grounding.mjs' });
-    assert.deepEqual([...bridge.allow], ['Bash(codex-review code:*)', 'Bash(agy-review code:*)'], 'no grounding rule seeds');
+  it('an UNSEEDABLE grounding path is a STATED skip, never a broken rule (the spaces class)', async () => {
+    const { bundledSandboxRecipe } = await import('./bridge-sandbox-recipe.mjs').catch(() => ({}));
+    assert.equal(typeof bundledSandboxRecipe, 'function', 'bundledSandboxRecipe is not exported yet (S2-15)');
+    const bridge = bundledSandboxRecipe([...BRIDGE_REVIEW_WRAPPERS], { ...bundleDeps(), groundingAbsPath: '/kit with spaces/tools/grounding.mjs' });
+    assert.ok(Array.isArray(bridge.allow), 'bundledSandboxRecipe has no allow form yet (S2-15)');
+    assert.deepEqual(bridge.allow, ['Bash(agy-review code:*)', 'Bash(codex-review code:*)'], 'no grounding rule seeds');
     assert.equal(bridge.skips.some((s) => /grounding pre-step rule is not seeded/.test(s.reason)), true, 'the skip is stated');
   });
 
@@ -1259,29 +1382,103 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assert.match(r.stdout, /pre-existing non-read-only Bash allow entries/, 'over-flagging is the safe direction when the probe fails');
   });
 
-  it('tier-known excludedCommands suppression demands PROOF — project file + the derived allow rules (review-velocity-profile-r04-major-01)', (t) => {
-    const cwd = makeTempProject(t);
-    seedWorkflowStamp(cwd);
-    mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-    writeJson(join(cwd, 'docs', 'ai', 'autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
-    ensureClaudeDir(cwd);
-    // (a) hand-added exclusion WITHOUT the tier allow rules → stays a loud weakening.
-    writeJson(settingsPath(cwd), { sandbox: { excludedCommands: ['codex-review'] } });
-    const bare = runBridgeMain(['--autonomy'], cwd, allPlaced);
-    assert.match(bare.stdout, /⚠ DEGRADE: .*excludedCommands/, 'a name-only match proves nothing');
-    // (b) the tier's own output (allow rules + exclusion, project file) → an informational note.
-    runBridgeMain(['--apply', '--bridge-tier'], cwd, allPlaced);
-    const tiered = runBridgeMain(['--autonomy'], cwd, allPlaced);
-    assert.doesNotMatch(tiered.stdout, /⚠ DEGRADE: .*excludedCommands/, 'the proven tier output is never flagged');
-    assert.match(tiered.stdout, /note: .*tier-known/, 'it is surfaced as a note instead');
-    // The CLASSIFICATION (a proven tier exclusion is a note, not a weakening) is a property of the
-    // declaration and stays flat — but the EFFECT it states ("runs them outside the sandbox") is a
-    // claim about what a host does with a settings key, so the note carries the qualifier.
-    assert.ok(tiered.stdout.includes(`tier-known: ${HOST_HONORS_QUALIFIER}`), `the tier-known note conditions its runtime claim: ${tiered.stdout}`);
-    // (c) the same exclusion in settings.LOCAL.json → a loud weakening (never tier output).
-    writeJson(localSettingsPath(cwd), { sandbox: { excludedCommands: ['agy-review'] } });
-    const local = runBridgeMain(['--autonomy'], cwd, allPlaced);
-    assert.match(local.stdout, /⚠ DEGRADE: settings\.local.*excludedCommands|⚠ DEGRADE: \.claude\/settings\.local\.json.*excludedCommands/, 'a local-file exclusion is never tier-known');
+  it('autonomy preview proves each tier entry, preserves foreign/local DEGRADE, and falls back on rejected config — spec:velocity-profile/S9', (t) => {
+    const config = reviewConfig('council');
+    config['plan-execution'].execute = 'delegated';
+    const deps = bridgeProject(t, config);
+    writeJson(join(deps.cwd, 'docs/ai/autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    const allow = ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)'];
+    const surfaces = {
+      excludedCommands: ['agy-review', 'agy-review *', 'codex-review', 'codex-review *', 'codex-exec *'],
+      network: { allowedDomains: UNION_HOSTS },
+      filesystem: { allowWrite: ['~/.gemini/antigravity-cli', '~/.codex'] },
+    };
+    const note = (key, entry, widening) =>
+      `  note: ${SETTINGS_FILE} has ${key} entry ${JSON.stringify(entry)} — tier-known: part of the bridge-wrappers tier consent; ${HOST_HONORS_QUALIFIER}, ${widening}.`;
+    const expectedNotes = (sandbox) => [
+      ...sandbox.excludedCommands.map((entry) => note('sandbox.excludedCommands', entry, entry.endsWith(' *')
+        ? 'the wrapper runs outside the sandbox' : 'only its argument-free invocation runs outside the sandbox')),
+      ...sandbox.network.allowedDomains.map((entry) => note('sandbox.network.allowedDomains', entry, 'every sandboxed command of the project can reach it')),
+      ...sandbox.filesystem.allowWrite.map((entry) => note('sandbox.filesystem.allowWrite', entry, 'every sandboxed command can write it')),
+    ];
+    const render = () => runBridgeMain(['--autonomy'], deps.cwd, nonePlaced, deps);
+    const degrade = (r, scope, key) => r.stdout.split('\n').filter((line) => line.includes('⚠ DEGRADE') && line.includes(`${scope} has ${key}`));
+    const executeOnly = {
+      excludedCommands: ['codex-exec *'],
+      network: { allowedDomains: CODEX_HOSTS },
+      filesystem: { allowWrite: ['~/.codex'] },
+    };
+    for (const [proof, sandbox] of [[allow, surfaces], [[], executeOnly]]) {
+      writeJson(settingsPath(deps.cwd), { permissions: { allow: proof }, sandbox });
+      const bytes = readText(settingsPath(deps.cwd));
+      const r = render();
+      assert.equal(r.code, EXIT_OK, r.stderr);
+      const notes = r.stdout.split('\n').filter((line) => line.startsWith(`  note: ${SETTINGS_FILE} has sandbox.`));
+      assert.deepEqual([...notes].sort(), expectedNotes(sandbox).sort(), 'exactly one consent note per proven entry');
+      assert.doesNotMatch(notes.join('\n'), /remove.*by hand/i);
+      assert.equal(degrade(r, SETTINGS_FILE, 'sandbox.').length, 0);
+      assert.equal(readText(settingsPath(deps.cwd)), bytes, 'preview writes nothing');
+    }
+    const negatives = [
+      [[], { excludedCommands: ['codex-review'] }, 'sandbox.excludedCommands'],
+      [allow, { excludedCommands: ['codex-exec'] }, 'sandbox.excludedCommands'],
+      [allow, { filesystem: { allowWrite: ['~/.gemini'] } }, 'sandbox.filesystem.allowWrite'],
+      [allow, { excludedCommands: ['foreign-tool'] }, 'sandbox.excludedCommands'],
+      [allow, { network: { allowedDomains: ['foreign.example.com'] } }, 'sandbox.network.allowedDomains'],
+      [allow, { filesystem: { allowWrite: ['/foreign/state'] } }, 'sandbox.filesystem.allowWrite'],
+    ];
+    for (const [proof, sandbox, key] of negatives) {
+      writeJson(settingsPath(deps.cwd), { permissions: { allow: proof }, sandbox });
+      const r = render();
+      assert.equal(r.code, EXIT_OK, r.stderr);
+      const lines = degrade(r, SETTINGS_FILE, key);
+      assert.equal(lines.length, 1, `${key} without exact tier proof keeps DEGRADE`);
+      if (sandbox.filesystem?.allowWrite[0] === '~/.gemini') {
+        assert.ok(lines[0].includes('covers the bridge state dir ~/.gemini/antigravity-cli'), lines[0]);
+      }
+    }
+    writeJson(settingsPath(deps.cwd), { permissions: { allow }, sandbox: surfaces });
+    writeJson(localSettingsPath(deps.cwd), { permissions: { allow }, sandbox: surfaces });
+    const local = render();
+    for (const key of ['sandbox.excludedCommands', 'sandbox.network.allowedDomains', 'sandbox.filesystem.allowWrite']) {
+      assert.equal(degrade(local, SETTINGS_LOCAL_FILE, key).length, 1, `local ${key} is never tier-known`);
+    }
+    assert.doesNotMatch(local.stdout, /note: \.claude\/settings\.local\.json has sandbox\./);
+    rmSync(localSettingsPath(deps.cwd));
+    const jevHost = CODEX_HOSTS.find((host) => AGY_HOSTS.includes(host));
+    const agyHost = AGY_HOSTS.find((host) => !CODEX_HOSTS.includes(host));
+    writeJson(settingsPath(deps.cwd), {
+      permissions: { allow: ['Bash(codex-review code:*)'] },
+      sandbox: { network: { allowedDomains: [jevHost, agyHost] } },
+    });
+    const shared = render();
+    assert.ok(shared.stdout.split('\n').includes(note('sandbox.network.allowedDomains', jevHost, 'every sandboxed command of the project can reach it')));
+    assert.equal(degrade(shared, SETTINGS_FILE, 'sandbox.network.allowedDomains').length, 1);
+    assert.match(degrade(shared, SETTINGS_FILE, 'sandbox.network.allowedDomains')[0], /1 pre-allowed domain\(s\)/);
+    assert.equal(shared.stdout.split('\n').includes(note('sandbox.network.allowedDomains', agyHost, 'every sandboxed command of the project can reach it')), false);
+    writeJson(settingsPath(deps.cwd), {
+      permissions: { allow: ['Bash(codex-review code:*)'] },
+      sandbox: { excludedCommands: ['codex-review', 'codex-review *'], network: { allowedDomains: [jevHost] }, filesystem: { allowWrite: ['~/.codex'] } },
+    });
+    const valid = render();
+    assert.equal(valid.code, EXIT_OK, valid.stderr);
+    writeJson(join(deps.cwd, 'docs/ai/orchestration.json'), { 'plan-execution': { review: 'unknown-recipe' } });
+    const rejected = render();
+    assert.equal(rejected.code, valid.code, rejected.stderr);
+    assert.equal(rejected.stdout.split('\n').find((line) => line.startsWith('sandbox: ')), valid.stdout.split('\n').find((line) => line.startsWith('sandbox: ')));
+    assert.match(rejected.stdout, /^  note: bridge-tier entries not judged — .*docs\/ai\/orchestration\.json/m);
+    const legacy = [
+      ['sandbox.excludedCommands', `1 command(s) run UNSANDBOXED ${HOST_HONORS_QUALIFIER} (network/fs confinement not applied to them); 1 bridge-review wrapper exclusion(s) are tier-known and not flagged`, 'every sandbox red-line'],
+      ['sandbox.network.allowedDomains', `1 pre-allowed domain(s) — ${HOST_HONORS_QUALIFIER}, egress to them is not gated`, 'network'],
+      ['sandbox.filesystem.allowWrite', `${HOST_HONORS_QUALIFIER}, 1 declared path(s) resolve OUTSIDE the repo and $TMPDIR and are writable: ${JSON.stringify(join(deps.home, '.codex'))}`, 'fs_outside_repo'],
+    ];
+    for (const [key, detail, weakens] of legacy) {
+      const line = `  ⚠ DEGRADE: ${SETTINGS_FILE} has ${key} (${detail}), which WEAKENS the rendered ${weakens} red-line — the render preserves your sandbox tuning (never clobbers it), so remove it by hand if you want the red-line fully enforced.`;
+      assert.deepEqual(degrade(rejected, SETTINGS_FILE, key), [line], `revision 3 fallback: ${key}`);
+    }
+    writeJson(settingsPath(deps.cwd), { permissions: { allow: ['Bash(codex-review code:*)'] }, sandbox: { excludedCommands: ['codex-review'] } });
+    const bareOnly = render().stdout.split('\n').filter((line) => line.startsWith(`  note: ${SETTINGS_FILE} has sandbox.excludedCommands`));
+    assert.deepEqual(bareOnly, [`  note: ${SETTINGS_FILE} has sandbox.excludedCommands (1 bridge-review wrapper exclusion(s) (codex-review) — tier-known: ${HOST_HONORS_QUALIFIER}, only their argument-free invocations run outside the sandbox, and their allow rules are present in the project settings).`], 'a bare name never claims its real calls run outside the sandbox');
   });
 });
 

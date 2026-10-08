@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as velocity from './velocity-profile.mjs';
 import * as hook from './gate-hook.mjs';
@@ -13,7 +13,8 @@ import { buildServerEntry } from './mcp-registration.mjs';
 import { writeCheapAgents } from './cheap-agents.mjs';
 import { planFor } from './jev-skill.mjs';
 import { SKILL_FILES, SKILL_PINS, skillTargets } from './jev-facts.mjs';
-import { findOnPath } from './detect-backends.mjs';
+import { detectBackends, findOnPath } from './detect-backends.mjs';
+import { ACTIVITIES } from './carriers.mjs';
 import * as lanes from './write-lanes.mjs';
 
 const danger = await import('./apply-danger-check.mjs').catch((cause) => new Proxy({}, {
@@ -57,7 +58,8 @@ const tree = (root) => {
   walk(root);
   return entries;
 };
-const hashes = (f) => [sha(JSON.stringify(tree(f.root))), sha(JSON.stringify(tree(f.home)))];
+const hashes = (f) => [f.root, f.home, ...(f.env.CODEX_HOME ? [resolve(f.root, f.env.CODEX_HOME)] : [])]
+  .map((path) => sha(JSON.stringify(tree(path))));
 const unchanged = (f, run) => {
   const before = hashes(f);
   try {
@@ -76,16 +78,20 @@ const fixture = (t) => {
   fs.mkdirSync(home);
   put(join(root, 'docs/ai/.workflow-version'), `${velocity.EXPECTED_WORKFLOW_VERSION}\n`);
   put(join(root, 'docs/ai/autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
-  for (const name of [...velocity.BRIDGE_REVIEW_WRAPPERS, 'bwrap', 'socat', 'claude']) {
+  for (const name of [...velocity.BRIDGE_REVIEW_WRAPPERS, 'codex', 'agy', 'codex-exec', 'agy-run', 'bwrap', 'socat', 'claude']) {
     put(join(bin, name), '#!/bin/sh\nexit 0\n');
     fs.chmodSync(join(bin, name), 0o755);
   }
+  put(join(home, '.codex/auth.json'), '{}');
+  put(join(home, '.gemini/antigravity-cli/antigravity-oauth-token'), '{}');
   put(join(bin, 'package.json'), JSON.stringify({ name: '@anthropic-ai/claude-code', version: '2.1.291' }));
   t.mock.method(process, 'exit', () => {
     throw new Error('main must return without exiting');
   });
   return { toolsDir: TOOLS, root, home, bin, platform: process.platform,
-    env: { HOME: home, PATH: `${bin}:${dirname(process.execPath)}` } };
+    env: { HOME: home, PATH: `${bin}:${dirname(process.execPath)}`,
+      CODEX_CLI_BRIDGE_DIR: join(TOOLS, '../bridges/codex-cli-bridge'),
+      ANTIGRAVITY_CLI_BRIDGE_DIR: join(TOOLS, '../bridges/antigravity-cli-bridge') } };
 };
 const capture = (f, spawn) => {
   const lines = [];
@@ -120,6 +126,9 @@ const expectedPlan = (variant, f, deps = {}) => {
       ...before.sandbox, excludedCommands: [...(before.sandbox?.excludedCommands ?? []), ...p.excludedToAdd],
       network: { ...before.sandbox?.network,
         allowedDomains: [...(before.sandbox?.network?.allowedDomains ?? []), ...p.hostsToAdd] } };
+    if ((p.dirsToAdd ?? []).length) after.sandbox = { ...after.sandbox,
+      filesystem: { ...before.sandbox?.filesystem,
+        allowWrite: [...(before.sandbox?.filesystem?.allowWrite ?? []), ...(p.dirsToAdd ?? [])] } };
     addFile(SETTINGS, after);
   } else if (variant === 'autonomy-render') {
     const render = velocity.writeAutonomyProfile({ cwd: f.root, apply: false }, writerDeps(f));
@@ -382,7 +391,7 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
     });
   });
   const plants = [
-    ['unplaced bridge host', 'bridge-tier', 'sandbox.network.allowedDomains', () => {
+    ['a host of a bridge no slot uses', 'bridge-tier', 'sandbox.network.allowedDomains', () => {
       const agy = json(join(TOOLS, '../bridges/antigravity-cli-bridge/capability.json')).networkHosts;
       const codex = json(join(TOOLS, '../bridges/codex-cli-bridge/capability.json')).networkHosts;
       return agy.find((host) => !codex.includes(host));
@@ -514,6 +523,119 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
         mocked.mock.restore();
         syncBuiltinESMExports();
       }
+    });
+  });
+});
+
+describe('spec:velocity-profile/S8 used bridge scope, additions only and state-dir refusals', () => {
+  const codexHosts = json(join(TOOLS, '../bridges/codex-cli-bridge/capability.json')).networkHosts;
+  const agyHost = json(join(TOOLS, '../bridges/antigravity-cli-bridge/capability.json')).networkHosts
+    .find((host) => !codexHosts.includes(host));
+  const grounding = `Bash(node "${join(TOOLS, 'grounding.mjs')}":*)`;
+  const setReviews = (f, review = 'reviewed') => put(join(f.root, 'docs/ai/orchestration.json'),
+    JSON.stringify(Object.fromEntries(Object.entries(ACTIVITIES)
+      .filter(([, activity]) => Object.values(activity.slots).includes('review'))
+      .map(([name]) => [name, { review }]))));
+  const judge = (f, key, value, change = 'added') => danger.judgeChange({ variant: 'bridge-tier',
+    files: [{ path: SETTINGS, before: change === 'removed' ? atKey(key, [value]) : null,
+      after: change === 'removed' ? {} : atKey(key, [value]) }], scope: danger.scopeOf('bridge-tier', f) });
+  for (const external of [false, true]) it(`real reviewed preview: ${external ? 'outside-home CODEX_HOME' : '~/.codex'} with exact classes`, (t) => {
+    const f = fixture(t);
+    setReviews(f);
+    const dir = external ? join(dirname(f.root), 'codex-state') : '~/.codex';
+    if (external) {
+      f.env.CODEX_HOME = dir;
+      put(join(dir, 'auth.json'), '{}');
+    }
+    unchanged(f, () => {
+      assert.deepEqual(detectBackends({ getenv: f.env, home: f.home }).map(({ readiness }) => readiness), ['ready', 'ready']);
+      const result = danger.checkApply('bridge-tier', f);
+      assertPreview('bridge-tier', f, result, expectedPlan('bridge-tier', f));
+      for (const [key, value, kind] of [
+        ['sandbox.excludedCommands', 'codex-review *', CLASSES[2]],
+        ...codexHosts.map((host) => ['sandbox.network.allowedDomains', host, CLASSES[0]]),
+        ['sandbox.filesystem.allowWrite', dir, CLASSES[1]],
+      ]) assert.ok(result.lines.includes(lineOf({ key, value, change: 'added', class: kind })), `${key}: ${value} — ${kind}`);
+      assert.deepEqual(judge(f, 'sandbox.filesystem.allowWrite', dir).refused, []);
+      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts[0]).refused, []);
+      const cli = capture(f, () => { throw new Error('preview spawned'); });
+      assert.equal(danger.main(argvFor('bridge-tier', f), cli.io), 0);
+      assert.deepEqual(cli.lines, result.lines);
+    });
+  });
+  const plants = [
+    ['unused agy host', 'sandbox.network.allowedDomains', agyHost],
+    ['unused agy dir', 'sandbox.filesystem.allowWrite', '~/.gemini/antigravity-cli'],
+    ['unused agy allow', 'permissions.allow', 'Bash(agy-review code:*)'],
+    ['bare codex-review exclusion', 'sandbox.excludedCommands', 'codex-review'],
+    ['outside derived dirs', 'sandbox.filesystem.allowWrite', '/scratch'],
+    ['foreign grounding with agy used', 'permissions.allow', 'Bash(node "/other-kit/tools/grounding.mjs":*)', 'added', 'council'],
+    ['installed grounding with agy unused', 'permissions.allow', grounding],
+    ['removed codex allow', 'permissions.allow', 'Bash(codex-review code:*)', 'removed'],
+    ['removed codex exclusion', 'sandbox.excludedCommands', 'codex-review *', 'removed'],
+    ['removed codex host', 'sandbox.network.allowedDomains', codexHosts[0], 'removed'],
+    ['removed codex dir', 'sandbox.filesystem.allowWrite', '~/.codex', 'removed'],
+  ];
+  for (const [title, key, value, change, review] of plants) it(`refuses ${title} naming ${key}; admits used codex dir`, (t) => {
+    const f = fixture(t);
+    setReviews(f, review);
+    unchanged(f, () => {
+      assert.notEqual(value, undefined, 'fixture has a bridge-specific host');
+      const result = judge(f, key, value, change);
+      assert.deepEqual(result.refused, [{ path: SETTINGS, key, reason: 'beyond the declared scope of bridge-tier' }], title);
+      if (review === 'council') assert.deepEqual(judge(f, 'permissions.allow', grounding).refused, []);
+      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts[0]).refused, []);
+      assert.deepEqual(judge(f, 'sandbox.filesystem.allowWrite', '~/.codex').refused, [], 'used codex dir admitted');
+    });
+  });
+  it('main refuses the real grounding rule at another installed kit path, exit 1 without spawning', (t) => {
+    const f = fixture(t);
+    setReviews(f, 'council');
+    const otherKit = { ...f, toolsDir: join(f.root, 'other-kit/tools') };
+    unchanged(f, () => {
+      const result = danger.checkApply('bridge-tier', otherKit);
+      assert.deepEqual(result.refused, [{ path: SETTINGS, key: 'permissions.allow', reason: 'beyond the declared scope of bridge-tier' }]);
+      assert.ok(result.lines.includes(lineOf({ key: 'permissions.allow', value: grounding, change: 'added', class: CLASSES[3] })));
+      assert.ok(result.lines.includes('nothing written'));
+      const cli = capture(otherKit, () => { throw new Error('refused apply spawned'); });
+      assert.equal(danger.main([...argvFor('bridge-tier', f), '--apply', '--expect', result.digest], cli.io), 1);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(judge(f, 'sandbox.filesystem.allowWrite', '~/.codex').refused, [], 'used codex dir admitted');
+    });
+  });
+  for (const parent of [false, true]) it(`CODEX_HOME at ${parent ? 'root and home parent' : 'synthetic home'}: writer message, exit 3`, (t) => {
+    const f = fixture(t);
+    setReviews(f);
+    f.env.CODEX_HOME = parent ? dirname(f.root) : f.home;
+    put(join(f.env.CODEX_HOME, 'auth.json'), '{}');
+    unchanged(f, () => {
+      const messages = [];
+      assert.throws(() => velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, bridgeTier: true }, writerDeps(f)), (error) => {
+        assert.match(error.message, /CODEX_HOME/);
+        messages.push(error.message);
+        return true;
+      }, 'real writer refuses unsafe CODEX_HOME');
+      assert.throws(() => danger.checkApply('bridge-tier', f), (error) =>
+        error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify(messages));
+      const cli = capture(f, () => { throw new Error('writer refusal spawned'); });
+      assert.equal(danger.main(argvFor('bridge-tier', f), cli.io), 3);
+      assert.deepEqual(cli.lines, messages);
+      assert.deepEqual(cli.errors, []);
+    });
+  });
+  it('a relative CODEX_HOME resolves against the project root, never the caller cwd', (t) => {
+    const f = fixture(t);
+    setReviews(f);
+    f.env.CODEX_HOME = 'codex-state';
+    put(join(f.root, 'codex-state/auth.json'), '{}');
+    const dir = join(f.root, 'codex-state');
+    unchanged(f, () => {
+      assert.notEqual(process.cwd(), f.root, 'the caller runs outside the project root');
+      const result = danger.checkApply('bridge-tier', f);
+      assert.ok(result.lines.includes(lineOf({ key: 'sandbox.excludedCommands', value: 'codex-review *', change: 'added', class: CLASSES[2] })));
+      assert.ok(result.lines.includes(lineOf({ key: 'sandbox.filesystem.allowWrite', value: dir, change: 'added', class: CLASSES[1] })));
+      const plan = velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, bridgeTier: true }, writerDeps(f));
+      assert.deepEqual([plan.excludedToAdd, plan.dirsToAdd], [['codex-review *'], [dir]]);
     });
   });
 });

@@ -44,7 +44,7 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
 // consented apply run against the rendered selection — the real writer, never a re-implementation.
 import { applyFill } from './gates-init.mjs';
-import { EXPECTED_WORKFLOW_VERSION, deriveBridgeTierAllowlist } from './velocity-profile.mjs';
+import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 // The registration fixtures are built from the LEAF's own constants and derived rules — a fixture
 // spelling its own server path or allow rules would drift off the thing the probe actually reads.
 import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
@@ -88,6 +88,9 @@ const AGY_HOSTS = manifestField('antigravity-cli-bridge', 'networkHosts');
 const CODEX_HOSTS = manifestField('codex-cli-bridge', 'networkHosts');
 const AGY_DIRS = manifestField('antigravity-cli-bridge', 'writableDirs');
 const CODEX_DIRS = manifestField('codex-cli-bridge', 'writableDirs');
+const codexReady = () => [{ name: 'codex-cli-bridge', readiness: 'ready' }];
+const agyReady = () => [{ name: 'antigravity-cli-bridge', readiness: 'ready' }];
+const bothBridgesReady = () => [...codexReady(), ...agyReady()];
 
 // A minimal deployed project: the stamp velocity's preflight reads; no .claude yet.
 const makeProject = () => {
@@ -580,12 +583,12 @@ const buildInventoryFixtures = () => {
   }) }));
   rmSync(root1, { recursive: true, force: true });
   const root2 = makeProject();
-  results.push(buildRecommendations({ cwd: root2, deps: hermeticDeps(root2, { findWrapper: (c) => c === 'agy-review' || c === 'codex-review' }) }));
+  results.push(buildRecommendations({ cwd: root2, deps: hermeticDeps(root2, { detect: bothBridgesReady, findWrapper: (c) => c === 'agy-review' || c === 'codex-review' }) }));
   rmSync(root2, { recursive: true, force: true });
   const root3 = makeProject();
   mkdirSync(join(root3, '.claude'), { recursive: true });
   writeFileSync(join(root3, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] }, permissions: { allow: ['Bash(agy-review code:*)'] } }));
-  results.push(buildRecommendations({ cwd: root3, deps: hermeticDeps(root3, { findWrapper: (c) => c === 'agy-review' }) }));
+  results.push(buildRecommendations({ cwd: root3, deps: hermeticDeps(root3, { detect: agyReady, findWrapper: (c) => c === 'agy-review' }) }));
   rmSync(root3, { recursive: true, force: true });
   const root4 = makeProject();
   writeFileSync(join(root4, 'docs', 'ai', 'autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
@@ -728,7 +731,7 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
 
   it('harness items render applySlot check before apply and carry the same check in --json', () => {
     const root = makeProject();
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review' });
+    const deps = hermeticDeps(root, { detect: codexReady, findWrapper: (cmd) => cmd === 'codex-review' });
     const { items } = buildRecommendations({ cwd: root, deps });
     const json = main(['--cwd', root, '--json'], { deps });
     const home = mkdtempSync(join(tmpdir(), "rec-slot home's "));
@@ -1009,10 +1012,10 @@ describe('recommendations — item probes over fixtures', () => {
     const root = makeProject();
     mkdirSync(join(root, '.config', 'agent-workflow'), { recursive: true });
     const configurations = [
-      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }),
-      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'yes' } }),
-      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '' } }),
-      hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } }),
+      hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }),
+      hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: 'yes' } }),
+      hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review', getenv: { AGY_REVIEW_ALLOW_ADDDIR: '' } }),
+      hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review', getenv: { XDG_CONFIG_HOME: join(root, '.config') } }),
     ];
     writeFileSync(join(root, '.config', 'agent-workflow', 'bridge-settings.conf'), 'AGY_REVIEW_ALLOW_ADDDIR=2\n');
     const results = configurations.map((deps) => buildRecommendations({ cwd: root, deps }));
@@ -1057,7 +1060,7 @@ describe('recommendations — item probes over fixtures', () => {
         [SANDBOX_LANE_ACK_PARENT]: { [SANDBOX_LANE_ACK_KEY]: fp },
       }),
     );
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
+    const deps = hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' });
     const { items } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'the acknowledged recipe silences the item');
@@ -1070,7 +1073,7 @@ describe('recommendations — item probes over fixtures', () => {
     writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] }, permissions: { allow: ['Bash(agy-review code:*)'] } }));
     const fp = recipeFingerprint({ hosts: AGY_HOSTS, dirs: [AGY_DIRS[0].default], home: root });
     writeFileSync(join(root, '.claude', 'settings.local.json'), JSON.stringify({ [SANDBOX_LANE_ACK_PARENT]: { [SANDBOX_LANE_ACK_KEY]: fp } }));
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
+    const deps = hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' });
     const { items } = buildRecommendations({ cwd: root, deps });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a local-scope ack converges the item');
     // (b) fully-populated security keys WITHOUT the ack keep the item firing — an inert-intent
@@ -1100,7 +1103,7 @@ describe('recommendations — item probes over fixtures', () => {
         [SANDBOX_LANE_ACK_PARENT]: { [SANDBOX_LANE_ACK_KEY]: staleFp },
       }),
     );
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review', getenv: { CODEX_HOME: '/opt/codex-home' } });
+    const deps = hermeticDeps(root, { detect: codexReady, findWrapper: (cmd) => cmd === 'codex-review', getenv: { CODEX_HOME: '/opt/codex-home' } });
     const { items } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'sandbox-lane');
@@ -1117,7 +1120,7 @@ describe('recommendations — item probes over fixtures', () => {
     // The apply is now the pure ack-write one-liner (Decisions 4); dir resolution is verified via the
     // FINGERPRINT it carries (the convergence-relevant value), not a literal dir in the command.
     const laneFingerprint = (getenv) => {
-      const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review', getenv: { PATH: '/nonexistent-path-for-tests', ...getenv } });
+      const deps = hermeticDeps(root, { detect: codexReady, findWrapper: (cmd) => cmd === 'codex-review', getenv: { PATH: '/nonexistent-path-for-tests', ...getenv } });
       const { items } = buildRecommendations({ cwd: root, deps });
       const item = items.find((i) => i.key === 'sandbox-lane');
       assert.ok(item, 'the wired fixture fires the item');
@@ -1175,7 +1178,7 @@ describe('recommendations — item probes over fixtures', () => {
       }),
     );
     const absolute = join(root, CODEX_DIRS[0].default.slice(2));
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'codex-review', getenv: { CODEX_HOME: absolute } });
+    const deps = hermeticDeps(root, { detect: codexReady, findWrapper: (cmd) => cmd === 'codex-review', getenv: { CODEX_HOME: absolute } });
     const { items } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'the absolute expansion of the acked tilde recipe stays converged');
@@ -1187,7 +1190,7 @@ describe('recommendations — item probes over fixtures', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude'), { recursive: true });
     writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] } }));
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
+    const deps = hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' });
     const { items, skips } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'half-wired = the bridge-tier item covers first');
@@ -1198,7 +1201,7 @@ describe('recommendations — item probes over fixtures', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude'), { recursive: true });
     writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ sandbox: { excludedCommands: ['agy-review'] }, permissions: { allow: ['Bash(agy-review code:*)'] } }));
-    const deps = hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' });
+    const deps = hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' });
     const { items } = buildRecommendations({ cwd: root, deps });
     const item = items.find((i) => i.key === 'sandbox-lane');
     const expectedFp = recipeFingerprint({ hosts: AGY_HOSTS, dirs: [AGY_DIRS[0].default], home: root });
@@ -1244,7 +1247,7 @@ describe('recommendations — item probes over fixtures', () => {
   it('acks.json-only convergence: the family-owned store silences the item with NO legacy key', () => {
     const root = wiredAgyProject();
     writeAcks(root, agyFingerprint(root));
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'the acks.json ack converges the item');
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a present, valid acks.json is not a skip');
@@ -1262,7 +1265,7 @@ describe('recommendations — item probes over fixtures', () => {
       }),
     );
     writeAcks(root, agyFingerprint(root));
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a fresh acks.json ack converges even beside a stale legacy key');
   });
@@ -1278,17 +1281,17 @@ describe('recommendations — item probes over fixtures', () => {
       }),
     );
     writeAcks(root, 'deadbeefdeadbeef');
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a live legacy key converges despite a stale acks.json');
   });
 
   it('an ABSENT acks.json (the normal not-yet-acked state) fires the item with ZERO skip lines', () => {
     const root = wiredAgyProject(); // makeProject creates docs/ai but no acks.json
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     // Also exercise the absent-PARENT-dir path — same ENOENT branch, no skip either.
     rmSync(join(root, 'docs', 'ai'), { recursive: true, force: true });
-    const noDir = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const noDir = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'no ack anywhere → the item fires');
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'an absent acks.json is the normal state, never a skip');
@@ -1298,7 +1301,7 @@ describe('recommendations — item probes over fixtures', () => {
   it('a parse-error on an EXISTING acks.json is a stated skip — never a crash, never a silent converge', () => {
     const root = wiredAgyProject();
     writeFileSync(join(root, ACKS_FILE), '{ not valid json');
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a malformed acks.json never fabricates an item');
     assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a malformed EXISTING acks.json states a skip');
@@ -1309,7 +1312,7 @@ describe('recommendations — item probes over fixtures', () => {
     // the guard would flip a `[]` root from SKIP to a silent FIRE via undefined→null).
     const root = wiredAgyProject();
     writeFileSync(join(root, ACKS_FILE), '[]');
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'sandbox-lane'), 'a non-object root never fabricates an item');
     assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a non-object acks.json root is a stated skip (fail-closed)');
@@ -1320,7 +1323,7 @@ describe('recommendations — item probes over fixtures', () => {
     // (a regression throwing on non-string would silently flip re-fire→skip).
     const root = wiredAgyProject();
     writeFileSync(join(root, ACKS_FILE), JSON.stringify({ sandboxLaneAck: 123 }));
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'a non-string ack value is not a match → the item re-fires');
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a non-string value is tolerated, never a skip');
@@ -1331,12 +1334,12 @@ describe('recommendations — item probes over fixtures', () => {
     // stated skip, never a not-yet-acked FIRE and never a blocking read.
     const root = wiredAgyProject();
     symlinkSync(join(root, 'nonexistent-ack-target'), join(root, ACKS_FILE)); // a DANGLING symlink
-    const a = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const a = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     assert.ok(!a.items.some((i) => i.key === 'sandbox-lane'), 'a symlinked acks.json never fires the item');
     assert.ok(a.skips.some((s) => s.key === 'sandbox-lane'), 'a symlinked acks.json is a stated skip');
     rmSync(join(root, ACKS_FILE));
     mkdirSync(join(root, ACKS_FILE)); // a NON-REGULAR target (a dir where the file should be; a FIFO hits the same guard)
-    const b = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const b = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!b.items.some((i) => i.key === 'sandbox-lane'), 'a non-regular acks.json never fires the item');
     assert.ok(b.skips.some((s) => s.key === 'sandbox-lane'), 'a non-regular acks.json is a stated skip');
@@ -1351,7 +1354,7 @@ describe('recommendations — item probes over fixtures', () => {
     writeFileSync(join(outside, 'acks.json'), JSON.stringify({ sandboxLaneAck: agyFingerprint(root) }));
     rmSync(join(root, 'docs', 'ai'), { recursive: true, force: true });
     symlinkSync(outside, join(root, 'docs', 'ai'));
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'sandbox-lane'), 'a symlinked docs/ai ancestor is a stated skip, never a silent out-of-project converge');
@@ -1363,7 +1366,7 @@ describe('recommendations — item probes over fixtures', () => {
     // primary ack by itself does not converge (present, valid read → item fires, zero skip).
     const root = wiredAgyProject(); // settings.json carries NO legacy ack
     writeAcks(root, 'deadbeefdeadbeef');
-    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: (cmd) => cmd === 'agy-review' }) });
+    const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { detect: agyReady, findWrapper: (cmd) => cmd === 'agy-review' }) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(items.some((i) => i.key === 'sandbox-lane'), 'a stale primary ack alone does not converge → the item re-fires');
     assert.ok(!skips.some((s) => s.key === 'sandbox-lane'), 'a present-but-stale acks.json is a valid read, never a skip');
@@ -1822,39 +1825,64 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     assert.ok(items.some((i) => i.key === 'velocity-core'), 'the core item still fires (its apply line shell-quotes the root)');
   });
 
-  it('a throwing wrapper probe skips the bridge-tier item', () => {
+  it('a throwing detector skips the bridge-tier item with the detector error', () => {
     const root = makeProject();
     const deps = hermeticDeps(root, {
-      findWrapper: () => {
-        throw new Error('probe exploded');
+      detect: () => {
+        throw new Error('detector exploded');
       },
     });
-    const { skips } = buildRecommendations({ cwd: root, deps });
+    const { items, skips } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
-    assert.ok(skips.some((s) => s.key === 'bridge-tier' && /probe exploded/.test(s.reason)));
+    assert.equal(items.find((item) => item.key === 'bridge-tier'), undefined);
+    assert.ok(skips.some((s) => s.key === 'bridge-tier' && /detector exploded/.test(s.reason)), 'bridge-tier skip must carry the detector error: detector exploded');
   });
 
-  it('a wired project missing a declared host fires the risk-noted bridge-tier item counting the hosts — spec:velocity-profile/S6', () => {
+  it('the bridge-tier item counts used bridges\' missing surfaces and sandbox-lane reads either exclusion form — spec:velocity-profile/S6', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude'), { recursive: true });
-    const agyPlaced = (cmd) => cmd === 'agy-review';
-    const tier = deriveBridgeTierAllowlist({ findWrapper: agyPlaced });
-    const bridgeTierItemWith = (allowedDomains) => {
-      const sandbox = { excludedCommands: [...tier.excludedCommands], network: { allowedDomains } };
-      writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [...tier.allow] }, sandbox }));
-      return buildRecommendations({ cwd: root, deps: hermeticDeps(root, { findWrapper: agyPlaced }) }).items.find((i) => i.key === 'bridge-tier');
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'reviewed' } }));
+    const deps = hermeticDeps(root, { detect: codexReady, findWrapper: (cmd) => cmd === 'codex-review' });
+    const recommendationsWith = (excludedCommands, allowedDomains, allowWrite, extra = {}) => {
+      const sandbox = { excludedCommands, network: { allowedDomains } };
+      if (allowWrite !== undefined) sandbox.filesystem = { allowWrite };
+      writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(codex-review code:*)'] }, sandbox }));
+      return buildRecommendations({ cwd: root, deps: hermeticDeps(root, { ...deps, ...extra }) });
     };
-    const fired = bridgeTierItemWith(['internal.example.com', AGY_HOSTS[0]]);
-    const silent = bridgeTierItemWith([...AGY_HOSTS]);
+    const beforeRevision4 = recommendationsWith(['codex-review'], CODEX_HOSTS);
+    const missingHost = recommendationsWith(['codex-review *'], CODEX_HOSTS.slice(1), ['~/.codex']);
+    const complete = recommendationsWith(['codex-review *'], CODEX_HOSTS, ['~/.codex']);
+    const unusedAgy = {
+      detect: bothBridgesReady,
+      findWrapper: (cmd) => cmd === 'codex-review' || cmd === 'agy-review',
+    };
+    const incompleteWithUnusedAgy = recommendationsWith(['codex-review'], CODEX_HOSTS, undefined, unusedAgy);
+    const completeWithUnusedAgy = recommendationsWith(['codex-review *'], CODEX_HOSTS, ['~/.codex'], unusedAgy);
     rmSync(root, { recursive: true, force: true });
-    const text = `bridge-wrappers tier incomplete — ${AGY_HOSTS.length - 1} entr(ies) missing (allow rules, sandbox exclusions or declared hosts of placed bridges)`;
-    assert.ok(fired?.what.includes(text), `the missing hosts count and are named: ${fired?.what}`);
-    assert.equal(silent, undefined, 'the rules, the exclusions and the hosts all present: silent');
+    for (const [result, n, reason] of [
+      [beforeRevision4, 2, 'the missing codex-review * and ~/.codex count'],
+      [missingHost, 1, 'one missing declared host counts'],
+      [incompleteWithUnusedAgy, 2, 'a ready, placed agy no slot uses adds nothing to the count'],
+    ]) {
+      const item = result.items.find((entry) => entry.key === 'bridge-tier');
+      assert.equal(item?.what, `bridge-wrappers tier incomplete — ${n} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)`, reason);
+      assert.ok(item.what.length <= ITEM_LINE_CAP, 'the exact text fits the item cap');
+      assert.ok(!result.skips.some((entry) => entry.key === 'bridge-tier'), 'a successful derivation never skips bridge-tier');
+    }
+    for (const result of [complete, completeWithUnusedAgy]) {
+      assert.equal(result.items.find((entry) => entry.key === 'bridge-tier'), undefined, 'every used surface is present: silent even with unused agy placed');
+      assert.ok(!result.skips.some((entry) => entry.key === 'bridge-tier'), 'complete is not a failed probe');
+    }
+    for (const [result, exclusion] of [[beforeRevision4, 'codex-review'], [complete, 'codex-review *']]) {
+      assert.ok(result.items.some((entry) => entry.key === 'sandbox-lane'), `sandbox-lane reads the wired ${exclusion} exclusion`);
+      assert.ok(!result.skips.some((entry) => entry.key === 'sandbox-lane'), 'a wired exclusion never skips sandbox-lane');
+    }
     assert.ok(RISK_NOTED_KEYS.includes('bridge-tier'), 'bridge-tier is risk-noted');
     const doc = readFileSync(join(KIT_ROOT, 'references', 'modes', 'recommendations.md'), 'utf8');
     const notes = doc.slice(doc.indexOf('**Per-item posture notes'), doc.indexOf('**Sandbox lanes'));
     const note = notes.split('\n').find((line) => line.startsWith('- `bridge-tier` —'));
     assert.ok(note?.includes('sandbox.network.allowedDomains'), 'the bridge-tier posture note names sandbox.network.allowedDomains');
+    assert.ok(note?.includes('allowWrite'), 'the bridge-tier posture note names allowWrite');
   });
 
   it('a MALFORMED autonomy policy skips the autonomy items with the loud parse reason', () => {

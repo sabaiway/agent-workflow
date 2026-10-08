@@ -430,7 +430,7 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="5.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="5.0.1"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.
@@ -1495,9 +1495,9 @@ aw_scan_nested_sandbox() {   # $1 = rc, $2 = trace path
   if [[ "$1" -ne 0 ]]; then
     if grep -qiE "$AW_NS_MECHANISM" "$2" 2>/dev/null && grep -qiE "$AW_NS_FAILURE" "$2" 2>/dev/null; then
       echo "hint: this looks like a NESTED-SANDBOX failure — codex-exec ships its own OS sandbox (bwrap)," >&2
-      echo "      which cannot run nested inside a harness sandbox (the FS is read-only). Route codex-exec" >&2
-      echo "      OUTSIDE the harness sandbox: add it to the harness sandbox excludedCommands, or dispatch" >&2
-      echo "      this one run via a per-run consented bypass. Do NOT blanket-disable the sandbox." >&2
+      echo "      which cannot run nested inside a harness sandbox (the FS is read-only). Route codex-exec OUTSIDE it:" >&2
+      echo "      the sandbox excludedCommands entry 'codex-exec *' (velocity-profile --bridge-tier adds it where an execute" >&2
+      echo "      slot delegates to codex), or a per-run consented bypass for this one run. Do NOT blanket-disable the sandbox." >&2
     fi
     return 0
   fi
@@ -1508,9 +1508,9 @@ aw_scan_nested_sandbox() {   # $1 = rc, $2 = trace path
       echo "         signature. codex-exec ships its own OS sandbox (bwrap), which cannot run nested inside a" >&2
       echo "         harness sandbox (the FS turns read-only), so the backend most likely could not read what" >&2
       echo "         it was asked to check: the answer above may be UNGROUNDED — treat it as such rather than" >&2
-      echo "         banking it. Re-dispatch OUTSIDE the harness sandbox: add codex-exec to the harness" >&2
-      echo "         sandbox excludedCommands, or use a per-run consented bypass. Do NOT blanket-disable the" >&2
-      echo "         sandbox. The exit status stays 0 on purpose — this is a warning, never a gate." >&2
+      echo "         banking it. Re-dispatch OUTSIDE the harness sandbox: the sandbox excludedCommands entry 'codex-exec *'" >&2
+      echo "         (velocity-profile --bridge-tier adds it where an execute slot delegates to codex), or a per-run consented" >&2
+      echo "         bypass. Do NOT blanket-disable the sandbox. The exit status stays 0 on purpose — this is a warning, never a gate." >&2
       return 0
     fi
   done <"$2"

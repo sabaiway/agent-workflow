@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
+import { BENEFITS, OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
 import { ACK_LANES } from '../tools/ack-store.mjs';
 import * as lanes from '../tools/write-lanes.mjs';
 
@@ -245,9 +245,8 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
   });
 
   it('the harness-managed lane is a NARROWEST-SCOPE ladder — a session-wide allowance is an informed widening, never the default advice', () => {
-    // Advising a blanket session allowance would reproduce the exact blast-radius class the
-    // settings security keys were rejected for — the ladder states scoped-first,
-    // widening-informed, bypass-as-fallback.
+    // A blanket session allowance carries the same blast-radius class as the bridge tier's
+    // settings keys — the ladder states scoped-first, widening-informed, bypass-as-fallback.
     const lanes = between(MODE_DOC, '**Sandbox lanes', '**Invariants');
     assert.match(lanes, /NARROWEST-SCOPE ladder/i, 'the ladder framing is present');
     assert.match(lanes, /wrapper\/command-SCOPED/i, 'scoped rules come first');
@@ -577,4 +576,46 @@ describe('spec:init-project/S19 — native Windows, unmeasured hosts and first-s
     assert.ok(lines.some((line) => line.includes('unmeasured') && UNMEASURED_HOSTS.every((host) => line.includes(host))), 'one line names every unmeasured host');
     assert.match(MODE_DOC, /first session[^\n]*prompt/);
   });
+});
+
+it('spec:velocity-profile/S10 — every bridge-tier passage names used bridges and seeded sandbox surfaces', () => {
+  const usage = spawnSync(process.execPath, [resolve(kitRoot, 'tools/recommendations.mjs'), '--help'], { encoding: 'utf8' });
+  assert.deepEqual([usage.error, usage.status], [undefined, 0], usage.stderr);
+  assert.ok(readmeRow, 'the README recommendations row exists');
+  const surfaces = [
+    ['velocity.md bridge tier', between(VELOCITY_DOC, '**The `--bridge-tier`', '**Consented posture')],
+    ['recommendations.md posture note', between(MODE_DOC, '- `bridge-tier` —', '\n- ')],
+    ['recommendations.md settings-native lane', between(MODE_DOC, '- **Settings-native sandbox**', '\n- ')],
+    ['README advisor row', between(readmeRow, '`/agent-workflow-kit recommendations`', '`--cwd` is required')],
+    ['schema.md networkHosts and writableDirs', between(read('tools/manifest/schema.md'), '## Network hosts', '## Mode catalog')],
+    ['recommendations --help bridge tier', between(usage.stdout, 'Apply lines are cwd-independent', '\n\nRead-only:')],
+    ['BENEFITS[bridge-tier]', BENEFITS['bridge-tier']],
+  ];
+  const forbidden = [
+    'stays hand-apply',
+    'stay hand-apply',
+    'unseeded',
+    'never seeds',
+    'never writes',
+    'placed bridges',
+    'as a network weakening',
+    'credential dirs',
+  ];
+  for (const [label, passage] of surfaces) {
+    const text = passage.replace(/[`*]/gu, '').replace(/\s+/gu, ' ').toLowerCase();
+    assert.ok(text.includes('used bridge'), `${label} names the used bridges`);
+    if (label !== 'BENEFITS[bridge-tier]') {
+      assert.ok(passage.includes('codex-exec *'), `${label} names the execution wrapper's * exclusion`);
+      assert.ok(passage.includes('allowWrite'), `${label} names the seeded state-dir allowance`);
+    }
+    for (const literal of forbidden) {
+      assert.ok(!text.includes(literal), `${label} retires: ${literal}`);
+    }
+  }
+  const harnessLane = between(MODE_DOC, '- **Harness-managed sandbox**', '\n- ').toLowerCase();
+  for (const literal of ['credential dirs', 'were rejected for']) {
+    assert.ok(!harnessLane.includes(literal), `recommendations.md harness-managed lane retires: ${literal}`);
+  }
+  assert.match(BENEFITS['bridge-tier'], /^velocity — /);
+  assert.doesNotMatch(BENEFITS['bridge-tier'], /safer|security|blast radius/iu);
 });

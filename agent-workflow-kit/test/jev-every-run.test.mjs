@@ -150,7 +150,7 @@ describe('the shipped text follows — spec:jev-every-run/S23', () => {
 });
 
 describe('the settings-native lane states the sandboxed wrapper — spec:jev-every-run/S24', () => {
-  it('the lane conditions the tier route, names the harness-proxy 403, routes the hosts to the tier re-run and keeps the allowWrite step', () => {
+  it('the lane conditions the tier route, names the harness-proxy 403, routes hosts and state dirs to the tier re-run and carries no hand-apply allowWrite step', () => {
     const doc = flat(read('agent-workflow-kit/references/modes/recommendations.md'));
     const lane = doc.slice(doc.indexOf('**Settings-native sandbox**'), doc.indexOf('**Harness-managed sandbox**'));
     const outside = lane.match(/\boutside the (?:harness )?sandbox\b/gi) ?? [];
@@ -159,6 +159,7 @@ describe('the settings-native lane states the sandboxed wrapper — spec:jev-eve
     assert.match(lane, /Tunnel connection failed: 403/, 'the harness-proxy refusal is named');
     const sentences = lane.split(/(?<=\.)\s+/);
     assert.ok(sentences.some((s) => s.includes('--bridge-tier') && /\bre-?run\b/i.test(s) && /\bhosts\b/.test(s)), 'the tier re-run is the lane for the hosts');
-    assert.ok(sentences.some((s) => /hand-apply/i.test(s) && s.includes('allowWrite') && /state dir/i.test(s)), 'the hand-apply allowWrite state-dir step stays');
+    assert.ok(!sentences.some((s) => /hand-apply/i.test(s) && s.includes('allowWrite')), 'the lane carries no hand-apply allowWrite step');
+    assert.match(lane, /--bridge-tier.*\bre-?run\b.*(?:\ballowWrite\b|\bstate dirs?\b)/i, 'the tier re-run is the lane for the state dirs too');
   });
 });

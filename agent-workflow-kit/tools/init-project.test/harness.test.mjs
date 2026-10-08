@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildRecommendations } from '../recommendations.mjs';
+import { detectBackends } from '../detect-backends.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from '../velocity-profile.mjs';
 
 export const init = await import('../init-project.mjs').catch(() => ({}));
@@ -98,6 +99,15 @@ export const fixture = (t, queue = [], answers = ['y']) => {
 };
 export const realFixture = (t, wanted = WANTED) => {
   const f = fixture(t);
+  f.env.CODEX_CLI_BRIDGE_DIR = join(TOOLS, '..', 'bridges', 'codex-cli-bridge');
+  const bin = join(dirname(f.root), 'bin');
+  for (const name of ['codex', 'codex-exec']) {
+    put(join(bin, name), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, name), 0o755);
+  }
+  put(join(f.home, '.codex/auth.json'), '{}');
+  const codex = detectBackends({ getenv: f.env, home: f.home }).find(({ name }) => name === 'codex-cli-bridge');
+  assert.equal(codex?.readiness, 'ready', 'realFixture must make codex-cli-bridge ready');
   f.respond = (argv, opts) => {
     assert.equal(argv[0], 'node');
     assert.ok(['velocity-profile.mjs', 'gate-hook.mjs', 'mcp.mjs'].some((name) => argv[1] === join(TOOLS, name)));

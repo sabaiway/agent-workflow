@@ -19,9 +19,10 @@
 // below) and VERDICT-FIRST (D1): every non-optimal state opens with ONE composed verdict line.
 // Registry strings are frozen tool DATA, fact-true, one line under the shape cap (D2); posture/
 // risk prose lives in the mode doc at the consent moment (D3). A probe failure is a stated
-// skipped-item line — never a crash, never a fabricated item. sandbox.filesystem.allowWrite stays
-// HAND-APPLY territory; sandbox.network.allowedDomains is seeded only by the consented
-// `velocity-profile --bridge-tier` (AD-172); the sandbox-lane item's convergence is a NEUTRAL
+// skipped-item line — never a crash, never a fabricated item. The consented
+// `velocity-profile --bridge-tier` seeds used bridges' allow rules, <wrapper> * exclusions
+// (codex-exec * where an execute slot delegates), hosts in sandbox.network.allowedDomains and
+// state dirs in sandbox.filesystem.allowWrite; the sandbox-lane item's convergence is a NEUTRAL
 // fingerprint-bound acknowledgement recorded by the consent-gated ack writer into the family-owned
 // docs/ai/acks.json (AD-055 relocated it off the host settings schema), never a security key (D4).
 //
@@ -80,6 +81,7 @@ import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './decl
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { bundledSandboxRecipe } from './bridge-sandbox-recipe.mjs';
+import { homeRelative, resolveWritableDir } from './bridge-state-dirs.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
@@ -248,7 +250,7 @@ export const composeVerdict = ({ attention, optional, skipped }) => {
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
   'kit-tools-tier': "the kit's own read-only tools still prompt — {n} kit-tools tier entr(ies) not seeded",
-  'bridge-tier': 'bridge-wrappers tier incomplete — {n} entr(ies) missing (allow rules, sandbox exclusions or declared hosts of placed bridges)',
+  'bridge-tier': 'bridge-wrappers tier incomplete — {n} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)',
   'autonomy-policy': 'no {path} — the computed defaults apply implicitly (red-lines ask/deny; every activity floors at prompt)',
   'autonomy-render': 'the declared autonomy policy is not rendered into .claude/settings.json — drift: {drift}',
   'sandbox-provision': 'the OS sandbox is unavailable: {reason}',
@@ -324,7 +326,7 @@ export const BENEFITS = Object.freeze({
   'velocity-core': 'velocity — routine read-only commands stop prompting while the maintainer is away',
   'kit-tools-tier': "velocity — the kit's own read-only tools run promptless (audited, resolved-absolute tier)",
   'bridge-tier':
-    'velocity — placed review wrappers run code-mode council reviews promptless (plan/diff modes and delegated execution keep their prompt)',
+    'velocity — used bridges get <wrapper> * exclusions (codex-exec * if delegated), hosts, state dirs (allowWrite); reviews: code-mode allows',
   'autonomy-policy': 'clarity — the per-activity autonomy policy becomes an explicit, versioned declaration instead of implicit computed defaults',
   'autonomy-render': `velocity — confined commands auto-allow per your declared policy; ${DUAL_SECURITY_BENEFIT}`,
   'sandbox-provision': `velocity — confined ad-hoc commands stop prompting; ${DUAL_SECURITY_BENEFIT}`,
@@ -409,9 +411,9 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // state that makes a configured subagent carrier run solo.
   { id: 'executor-vehicle', mode: 'agents', advisorKey: 'executor-vehicle' },
   // Exempt, not un-audited. `acceptEdits` auto-applies Edit/Write and auto-runs mkdir/touch/mv/cp:
-  // a TRUST-POSTURE change. The kit never nudges a user toward weakening their approval posture (the
-  // same doctrine that keeps sandbox filesystem allowances HAND-APPLY); velocity presents the
-  // full honest posture at its own consent moment, where the user is already deciding.
+  // a TRUST-POSTURE change. Velocity presents its full posture at its own consent moment;
+  // the bridge tier separately seeds used bridges' allow rules, <wrapper> * exclusions
+  // (codex-exec * where delegated), hosts and state dirs (allowWrite).
   {
     id: 'accept-edits',
     mode: 'velocity',
@@ -460,8 +462,12 @@ const probeVelocityItems = ({ root, deps, add, skip }) => {
     skip('kit-tools-tier', err);
   }
   try {
-    const bt = planVelocityProfile(preflight, { bridgeTier: true, findWrapper: deps.findWrapper, bundleRoot: deps.bundleRoot, readdir: deps.readdir, readFile: deps.readFile });
-    const delta = bt.bridgeToAdd.length + bt.excludedToAdd.length + bt.hostsToAdd.length;
+    const bt = planVelocityProfile(preflight, {
+      bridgeTier: true, findWrapper: deps.findWrapper,
+      bundleRoot: deps.bundleRoot, readdir: deps.readdir, readFile: deps.readFile,
+      detect: deps.detect, env: deps.getenv ?? deps.env, home: deps.home,
+    });
+    const delta = bt.bridgeToAdd.length + bt.excludedToAdd.length + bt.hostsToAdd.length + bt.dirsToAdd.length;
     if (delta > 0) {
       add('bridge-tier', fillTemplate(WHATS['bridge-tier'], { n: delta }), applyLine(' --bridge-tier'));
     }
@@ -1159,18 +1165,6 @@ const probeMasksItem = ({ root, deps, add, skip }) => {
 // knob is retired in the wrappers (recognized, arms nothing) and an oversized code review is now a
 // chunked feed with a per-part delivery proof, so there is nothing left to offer.
 
-// D6 resolution, mirroring the wrappers' byte-semantics (`${VAR:-default}` + the exact case-arms:
-// `~` / `~/…` / `/…` ride as-given; EVERY other form — including `~user/…`, which the wrappers
-// never resolve as a home path — anchors like a relative path). The advisor anchors to the TARGET
-// PROJECT ROOT (the pinned --cwd), matching what a wrapper invoked from the project root resolves
-// (the documented dispatch form; the wrapper itself anchors to its invocation $PWD).
-const resolveWritableDir = (entry, { env, root }) => {
-  const value = entry.env == null ? '' : (env[entry.env] ?? '');
-  if (value === '') return entry.default;
-  if (value === '~' || value.startsWith('~/') || value.startsWith('/')) return value;
-  return resolve(root, value);
-};
-
 // The NEUTRAL recipe fingerprint (D4): a hash over the resolved hosts ∪ dirs data — an
 // acknowledgement token, never a security key. Canonical form is HOME-SYMBOLIC: an
 // absolute dir under the resolved home canonicalizes BACK to its `~/…` form and tilde forms stay
@@ -1179,14 +1173,7 @@ const resolveWritableDir = (entry, { env, root }) => {
 // churns between them); only a genuinely-outside-home absolute override stays absolute
 // (machine-specific by nature). Any change to the recipe re-fires the item.
 export const recipeFingerprint = ({ hosts, dirs, home }) => {
-  const homeAbs = resolve(home);
-  const norm = (d) => {
-    if (d === '~') return '~';
-    if (d.startsWith('~/')) return `~/${d.slice(2)}`;
-    const abs = resolve(d);
-    if (abs === homeAbs) return '~';
-    return abs.startsWith(`${homeAbs}/`) ? `~/${abs.slice(homeAbs.length + 1)}` : abs;
-  };
+  const norm = (dir) => homeRelative(dir, home);
   return factFingerprint(JSON.stringify({ hosts: [...hosts].sort(), dirs: [...new Set(dirs.map(norm))].sort() }));
 };
 
@@ -1346,14 +1333,14 @@ const probeSandboxLane = ({ root, deps, add, skip }) => {
     // Wired = the two-surface proof the tier wrote before AD-172 (the wrapper in the PROJECT
     // excludedCommands + its code-mode allow rule, either scope) — surfacing the recipe before those
     // exist would front-run the bridge-tier item (codex terminal). The hosts surface (AD-172) is
-    // deliberately not required: the recipe also carries the writable dirs no tier seeds, so it may
-    // render beside a bridge-tier item offering the hosts re-run. Byte-form from the tier's own constants.
+    // deliberately not required: hosts and state dirs may still be missing, so the recipe may
+    // render beside a bridge-tier item offering the re-run. Byte-form from the tier's own constants.
     const allowRules = [
       ...(Array.isArray(settings.data?.permissions?.allow) ? settings.data.permissions.allow : []),
       ...(Array.isArray(localSettings.data?.permissions?.allow) ? localSettings.data.permissions.allow : []),
     ];
     const wired = BRIDGE_REVIEW_WRAPPERS.filter(
-      (w) => excluded.includes(w) && probePlaced(w) && allowRules.includes(`Bash(${w} ${BRIDGE_REVIEW_MODE}:*)`),
+      (w) => (excluded.includes(w) || excluded.includes(`${w} *`)) && probePlaced(w) && allowRules.includes(`Bash(${w} ${BRIDGE_REVIEW_MODE}:*)`),
     );
     if (wired.length === 0) return; // the tier's rules and exclusions are not wired — the bridge-tier item covers first
     const { hosts, dirEntries } = bundledSandboxRecipe(wired, deps);
@@ -1767,8 +1754,13 @@ section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a pro
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
 the doctor item pins via a cd prefix; the ONE exception is the set-autonomy item — a
 conversational skill invocation labeled "run IN the target project") and preserve each writer's
-own consent semantics; sandbox filesystem allowances stay HAND-APPLY territory, the placed bridges' declared hosts reach sandbox.network.allowedDomains only through the
-consented velocity-profile --bridge-tier, and the sandbox-lane convergence is a neutral fingerprint acknowledgement recorded by
+own consent semantics. The consented velocity-profile --bridge-tier seeds used bridges' code-mode
+allow rules, <wrapper> * exclusions (codex-exec * where an execute slot delegates), hosts in
+sandbox.network.allowedDomains and state dirs in sandbox.filesystem.allowWrite. Where the host
+honors the settings sandbox keys, an excluded wrapper runs outside the sandbox, every sandboxed
+command of the project can reach each host, and every sandboxed command can write each state dir;
+plan/diff review modes and delegated execution keep their prompt. Items marked HAND-APPLY stay
+the user's own step. The sandbox-lane convergence is a neutral fingerprint acknowledgement recorded by
 the consent-gated ack writer into docs/ai/acks.json (never a security key).
 
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report

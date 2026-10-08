@@ -4,6 +4,40 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.27.0 — the bridge tier wires the bridges your recipes use: `<wrapper> *` exclusions, their hosts and their state dirs (AD-177)
+
+**`velocity-profile --bridge-tier` now wires every used bridge's exclusions, hosts and state dirs.** Before, it
+seeded each bridge whose review wrapper was placed on PATH, wrote the bare review wrapper name into
+`sandbox.excludedCommands`, gave `codex-exec` no entry, and left the bridges' state dirs for you to add by hand. A bare
+name matches only the command run with no arguments, so a real `codex-review code` call did not match it; and a bridge
+that cannot write its state dir cannot run.
+
+- **The used bridges.** The tier reads `docs/ai/orchestration.json` and the host's readiness and takes every bridge a
+  review or execute slot resolves to (the computed default when the file is absent). A placed bridge no slot uses gets
+  nothing.
+- **Per used bridge:** for a review role, the wrapper's `code`-mode allow rule (and the quoted grounding rule with
+  `agy-review`) and `<wrapper> *` in `sandbox.excludedCommands`; for every used bridge, the manifest's `networkHosts`
+  in `sandbox.network.allowedDomains` and its `writableDirs` in `sandbox.filesystem.allowWrite`, home-relative
+  (`~/.codex`, `~/.gemini/antigravity-cli`), an env override honoured. Where an execute slot delegates to codex,
+  `codex-exec *` is excluded, with no allow rule: a delegated run keeps its prompt, as the review `plan` and `diff`
+  modes keep theirs.
+- **Safe by construction.** Foreign entries and sibling keys stay, a second apply writes the same bytes, an entry an
+  earlier version wrote stays, and an entry already covering a dir (`~/.gemini` covers `~/.gemini/antigravity-cli`)
+  counts as present. A malformed `sandbox.filesystem` or `allowWrite` stops the run with nothing written, as does a
+  state dir that resolves to `/`, your home or an ancestor of your home or the project (the message names the env
+  variable, or the declared default, to fix).
+- **One derivation everywhere.** The new `tools/bridge-state-dirs.mjs` resolves and spells the dirs; the tier, the
+  Recommendations `bridge-tier` item, the danger check and the `--autonomy` preview read the same list. The item now
+  counts missing `*` exclusions and state dirs, so a project wired before 14.27.0 is offered the one re-run in
+  `/agent-workflow-kit upgrade`. The danger check admits only this list, additions only. The `--autonomy` preview
+  names each entry the tier derives for a used bridge's role whose consent rule is in the project file (a review role's
+  `code`-mode allow rule, or `codex-exec *` for a delegated codex) as part of your bridge consent and what it widens, instead of asking
+  you to remove it.
+- The `velocity` and `recommendations` mode docs, the README advisor row and the manifest schema page say so, and
+  none of them says the state dirs stay hand-apply or that the kit withholds the grant for safety; two tool comments
+  (`tools/manifest/validate.mjs`, `tools/ack-write.mjs`) still say the kit never seeds filesystem allowances and are
+  queued as debt.
+
 ## 14.26.0 — the agent applies the harness's own configuration on your chat "yes" again, after a danger check of the concrete change (AD-176)
 
 **`/agent-workflow-kit upgrade` applies the harness's own configuration again.** In 14.25.0 an item that writes

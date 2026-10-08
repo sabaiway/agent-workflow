@@ -100,15 +100,16 @@ drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (hel
 `networkHosts` declares the hosts the backend CLI is **observed** to contact (synthetic examples:
 `*.api.backend.example`, `accounts.backend.example`; the real observed lists live in each bridge's
 `capability.json`) — the **single source** of the hosts `velocity-profile --bridge-tier` seeds
-into the project's `sandbox.network.allowedDomains` for every placed bridge, and of a hand-applied
+into the project's `sandbox.network.allowedDomains` for every used bridge, and of a hand-applied
 session sandbox allowlist. Rules:
 
 - Each entry is a bare dotted hostname or a `*.family` wildcard — never a scheme/path/port.
   Entries must be unique. A malformed list **fails** `--strict` (the entries are pasted verbatim
   into allowlist lines by the Recommendations advisor).
-- **The `--bridge-tier` seed is the primary lane** (AD-172): beside the wrappers' exclusion it
-  merges the placed bridges' hosts into the project's `sandbox.network.allowedDomains`, so a
-  settings-native harness that drops the exclusion still admits them; that pre-allow widens egress
+- **The `--bridge-tier` seed is the primary lane** (AD-172): for every used bridge it merges
+  hosts into the project's `sandbox.network.allowedDomains` beside the wrapper's `<wrapper> *`
+  exclusion (`codex-exec *` for the execution wrapper). A settings-native harness that drops the
+  exclusion still admits them; that pre-allow widens egress
   for **every** sandboxed command, which the tier's consent states. The **hand-apply** fallback
   stays for a harness-managed sandbox that ignores the settings keys.
 - Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
@@ -132,8 +133,9 @@ declared path is only the **default under no override**. Rules:
   relative path. The advisor anchors those to the **target project root** (its pinned `--cwd`),
   matching what a wrapper invoked from the project root resolves — the documented dispatch form
   (the wrapper itself anchors to its invocation `$PWD`); else the `default` applies.
-- Unlike `networkHosts`, this is a **documentation source** only: the kit never seeds
-  `sandbox.filesystem.allowWrite` or any other filesystem allowance — the entries feed the
+- **The `--bridge-tier` seeds every used bridge's state dirs**, home-relative under the home
+  (absolute outside it), into `sandbox.filesystem.allowWrite` beside the wrapper's `<wrapper> *`
+  exclusion (`codex-exec *` for the execution wrapper) — the entries feed the
   sandbox-lane discoverability item (session/host sandbox config is hand-applied territory).
 
 ## Mode catalog (BRIDGE-MODES-CATALOG)
