@@ -62,7 +62,7 @@ export const usedBridges = (config, readiness) => {
   }));
 };
 
-// An array of review-wrapper NAMES (the sandbox-lane call) reads as review-role entries.
+// An array of review-wrapper NAMES (the flagless advisory's call in velocity-profile.mjs) reads as review-role entries.
 const rolesFor = (used, manifest) => {
   if (used.every((entry) => typeof entry === 'string')) {
     return used.includes(manifest?.roles?.review?.cmd) ? ['review'] : [];

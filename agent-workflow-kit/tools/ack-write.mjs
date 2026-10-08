@@ -3,13 +3,13 @@
 // (docs/ai/acks.json, AD-055 Part I). An upgrade Recommendations item whose state can only be
 // ANSWERED renders THIS tool's PREVIEW one-liner; the preview prints the exact `--apply` command;
 // the agent runs `--apply` only after the mode doc's §3 informed-consent confirmation. It records a
-// NEUTRAL fingerprint acknowledgement — never a security key; the kit never writes sandbox
-// filesystem allowances, and allowedDomains only through velocity-profile --bridge-tier.
+// NEUTRAL fingerprint acknowledgement — never a security key; the bridge sandbox keys are written
+// by velocity-profile --bridge-tier alone.
 //
-// The wording is per-LANE or genuinely neutral, never "recipe": the sandbox lane acknowledges a
-// session-sandbox recipe, but the coverage-domain lane acknowledges a census FACT and the
-// source-size-copy lane a set of declared tool claims. One lane's noun stated over all of them was
-// simply false about the others.
+// The wording is per-LANE or neutral, never "recipe": each lane's fingerprint stands for a different
+// thing — the coverage-domain lane a census FACT, the source-size-copy lane declared tool claims.
+// The default lane's advisor item is retired; the lane is kept so a value already on disk keeps its
+// meaning (seen).
 //
 // Family writer discipline (velocity / orchestration-write / gate-hook), verbatim:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
@@ -45,8 +45,8 @@ const JSON_INDENT = 2;
 // minted over a recipe or over a canonical fact string) — a fail-closed guard so the store never
 // records a malformed or injected value.
 export const FINGERPRINT_PATTERN = /^[0-9a-f]{16}$/u;
-// The lane this writer records when none is named — the original single-lane contract, so every
-// pre-existing sandbox-lane invocation and its rendered one-liner stay byte-identical.
+// The default lane is the original single-lane contract: without --lane, an invocation records what
+// it always did. Its advisor item is retired; the lane is kept.
 export const DEFAULT_ACK_LANE = 'sandbox-lane';
 
 export const ACK_WRITE_STOP = 'ACK_WRITE_STOP';
@@ -155,9 +155,9 @@ const USAGE = `usage: ack-write --fingerprint <16-hex> [--lane <${Object.keys(AC
 
 Records a NEUTRAL acknowledgement into ${ACKS_FILE} (the family-owned ack store — no host settings
 validator guards it). --lane names which advisor item is being acknowledged (default
-"${DEFAULT_ACK_LANE}") and what the fingerprint stands for — a session-sandbox recipe, a worktrees
-probe dir, a tracked-tree census fact, a set of declared tool claims; each lane owns one top-level
-key. Default is --dry-run (a preview; writes
+"${DEFAULT_ACK_LANE}") and what the fingerprint stands for — a worktrees probe dir, a tracked-tree
+census fact, a set of declared tool claims; each lane owns one top-level key. The default lane's
+advisor item is retired (a recorded value keeps its meaning). Default is --dry-run (a preview; writes
 nothing) and prints the exact --apply command. --apply merges that ONE key into ${ACKS_FILE},
 preserving every existing key. Refuses an absent docs/ai deployment; never a security key; never
 commits.`;

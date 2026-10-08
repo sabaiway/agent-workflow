@@ -15,19 +15,19 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   settings step at all.
 - **BRIDGE-TIER-FLAGLESS-READS-NO-MANIFEST-UNPINNED** — invariant: a flagless or `--kit-tools` velocity run reads no
   bridge manifest. Origin: spec velocity-profile S4 pins the manifest STOP only on `--bridge-tier`; the advisor's
-  core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:452-455`), so a manifest read on every mode
+  core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:444-447`), so a manifest read on every mode
   would turn a broken bundle into a crash there. Narrow fix: one cell running the flagless and `--kit-tools` writer
   over an unreadable bundle root with today's result. Raised by the S11 spec review (lens).
 - **BRIDGE-TIER-ADVISOR-ON-WRONG-TYPED-NETWORK-KEY-UNPINNED** — invariant: a wrong-typed project network key or an
   unreadable manifest makes the Recommendations bridge-tier item a stated skip, never an offer the apply refuses.
   Origin: the shared velocity preflight takes no flag (`agent-workflow-kit/tools/velocity-profile.mjs:903`), so where
-  the S11 network check lives decides the advisor's outcome (`recommendations.mjs:445-450,468-474`), and spec
+  the S11 network check lives decides the advisor's outcome (`recommendations.mjs:433-440,456-463`), and spec
   velocity-profile does not pin it. Narrow fix: one advisor cell over `allowedDomains: "<string>"` expecting the skip
   line. Raised by the S11 spec review (lens, round 2).
 - **BRIDGE-TIER-S1-ZERO-HOSTS-COUNT-UNPINNED** — invariant: with no bridge placed a `--bridge-tier` run prints no
   `allowedDomains` count line. Origin: `agent-workflow-kit/tools/velocity-profile.test.mjs:1114` asserts no match on
   `entries: [1-9]`, which an `entries: 0` line passes; the code gates the three lines on `hostsToAdd +
-  hostsAlreadyPresent` (`agent-workflow-kit/tools/velocity-profile.mjs:715`). Narrow fix:
+  hostsAlreadyPresent` (`agent-workflow-kit/tools/velocity-profile.mjs:663`). Narrow fix:
   `assert.equal(listedHosts(r.stdout), undefined)`. Residual: not live, the line is not printed today. Raised by the
   S11 diff review (lens).
 
@@ -193,7 +193,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **SLOTS-NO-STEP-READS-STILL-RENDER-A-BRIDGE** — invariant: no surface renders a bridge run for a slot no flow
   step reads: `epic.review` (the lens reviews every epic whatever it resolves to, story-flow S15, S17) and
   `task.author` (the orchestrator writes each row's prompt, task-run). Origin: a silent `epic.review` takes the
-  computed `reviewed` (`agent-workflow-kit/tools/recipes.mjs:246`), so `recipes --active-line` prints
+  computed `reviewed` (`agent-workflow-kit/tools/recipes.mjs:265-266`), so `recipes --active-line` prints
   `epic.review = reviewed (computed default) → codex-review` (`recipes-shorthand.test.mjs:28`) and `status` prints
   `epic.review: reviewed (default)` (`family-registry.test.mjs:1114`); `orchestration-readme.mjs:74` and the seed
   `references/templates/orchestration.json:2` say it "is reviewed as soon as a review backend is ready"; the tier
@@ -360,8 +360,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Raised by the S1 code session's self-review; the credentials case by the S1 release lens.
 - **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
   that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
-  (`agent-workflow-kit/tools/recommendations.mjs:1612`), whose apply line needs the check's digest
-  (`agent-workflow-kit/tools/write-lanes.mjs:189`). Narrow fix: "run the check line, then the apply line with its
+  (`agent-workflow-kit/tools/recommendations.mjs:1555`), whose apply line needs the check's digest
+  (`agent-workflow-kit/tools/write-lanes.mjs:188`). Narrow fix: "run the check line, then the apply line with its
   digest, in <place>". Residual: a pasted `--expect <digest>` is a parse error in bash, zsh, fish and PowerShell;
   nothing runs. Raised by the S1 diff review (lens round 1).
 - **DANGER-CHECK-DIGEST-OMITS-THE-ROOT** — invariant: the consent digest binds where the change lands. Origin:
@@ -369,14 +369,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   identical planned lines share a digest. Narrow fix: a first line `root: <abs>` inside the digest (a spec line-format
   revision). Residual: needs the agent itself to reuse one project's digest on another; the check and apply lines
   carry the same `--cwd`. Raised by the S1 diff review (lens round 1).
-- **SANDBOX-COMMENTS-SAY-THE-KIT-NEVER-SEEDS-ALLOWWRITE** — invariant: no shipped comment states a seeding rule the code
-  no longer has. Origin: after the epic's S2, `agent-workflow-kit/tools/manifest/validate.mjs:641-642` ("for placed
-  bridges"), `:664-666` and `agent-workflow-kit/tools/ack-write.mjs:6-7` ("the kit never writes sandbox filesystem
-  allowances") contradict the tier's `allowWrite` seed for the used bridges; S2's ledger sits at its 25-row cap. Narrow
-  fix: the comments name the used bridges and the tier's `allowWrite` seed. Raised by the S2 spec review (lens round 2).
 - **ADVISOR-READINESS-RESOLVES-AGAINST-THE-CALLER-CWD** — invariant: one advisor render reads one readiness. Origin:
   the bridge tier reads `detectAtRoot` (a relative `CODEX_HOME` resolves against the project root), while the
-  advisor's other readiness reads (`composeReadiness`, `agent-workflow-kit/tools/recommendations.mjs:533`) call
+  advisor's other readiness reads (`composeReadiness`, `agent-workflow-kit/tools/recommendations.mjs:552`) call
   `detectBackends` against the process cwd, so run from outside the root with a relative override the `review-recipe`
   item can disagree with the `bridge-tier` item. Narrow fix: those reads take `detectAtRoot(root, …)`. No write decision
   rides it. Raised by the S2 diff review (lens round 1).

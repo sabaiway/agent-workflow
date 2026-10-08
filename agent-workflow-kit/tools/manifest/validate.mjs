@@ -638,10 +638,10 @@ export const validateManifest = (skillDir) => {
   }
 
   // `networkHosts` (AD-044 Plan 4, consult-locked): the backend CLI's OBSERVED egress host
-  // families. `velocity-profile --bridge-tier` seeds them into sandbox.network.allowedDomains for
-  // placed bridges (AD-172; the pre-allow widens egress for EVERY sandboxed command, stated at that
-  // consent), and a malformed list FAILS --strict like `settings`: the tier writes it and the
-  // Recommendations advisor renders it verbatim, so a bad entry would corrupt a seeded line.
+  // families. `velocity-profile --bridge-tier` seeds them into sandbox.network.allowedDomains
+  // for USED bridges (a recipe slot uses them, revision 4; AD-172); the pre-allow widens egress for EVERY
+  // sandboxed command, stated at that consent. A malformed list FAILS --strict like `settings`:
+  // the tier writes it and the Recommendations advisor renders it verbatim, so a bad entry would corrupt a seeded line.
   const networkHosts = manifest.networkHosts;
   if (networkHosts != null) {
     if (!Array.isArray(networkHosts) || networkHosts.length === 0) {
@@ -659,11 +659,11 @@ export const validateManifest = (skillDir) => {
     }
   }
 
-  // `writableDirs` (REC-UX-REWORK, D6): the backend CLI's writable state-dir declarations —
-  // {env, default} entries the Recommendations advisor RESOLVES at run time (a NON-EMPTY env
-  // value wins, else the default) and renders into the sandbox-lane recipe. Unlike `networkHosts`
-  // this is a DOCUMENTATION source (the kit never seeds filesystem allowances), and a malformed
-  // list FAILS --strict for the same reason: the resolved dir is rendered into a hand-applied line.
+  // `writableDirs` (REC-UX-REWORK, D6): {env, default} entries the tier RESOLVES (a NON-EMPTY
+  // env value wins, else the default) and seeds home-relative into sandbox.filesystem.allowWrite
+  // for USED bridges via `bridge-state-dirs.mjs`; the advisor's `bridge-tier` item counts and names them.
+  // A malformed list FAILS --strict: the resolved dir is written into the settings and rendered
+  // on the Recommendations advisor's ONE-LINE `recipe:` line.
   const writableDirs = manifest.writableDirs;
   if (writableDirs != null) {
     if (!Array.isArray(writableDirs) || writableDirs.length === 0) {
@@ -685,8 +685,8 @@ export const validateManifest = (skillDir) => {
           return;
         }
         if (/[*?[\]]/.test(dir)) errors.push(`${at}.default must not carry glob characters ("${dir}")`);
-        // The resolved dir is rendered into a ONE-LINE hand-applied recipe — a control character
-        // (newline, CR, NUL, …) would break the line or the shell paste.
+        // The resolved dir is written into `allowWrite` and rendered on a ONE-LINE advisor line —
+        // a control character (newline, CR, NUL, …) would break that line or the settings entry.
         // eslint-disable-next-line no-control-regex
         if (/[\x00-\x1f\x7f]/.test(dir)) errors.push(`${at}.default must not carry control characters (${JSON.stringify(dir)})`);
         if (dir.endsWith('/')) errors.push(`${at}.default must not end with a trailing slash ("${dir}")`);

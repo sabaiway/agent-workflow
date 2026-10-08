@@ -41,7 +41,6 @@ export const VARIANT_LANES = Object.freeze({
   'adr-store-migration': LANE_CHAT,
   'sandbox-masks': LANE_CHAT,
   'sandbox-masks.unfenced-mount': LANE_CHAT,
-  'sandbox-lane': LANE_CHAT,
   'worktrees-dir': LANE_CHAT,
   'spec-adoption': LANE_CHAT,
   'profile-gap': LANE_CHAT,

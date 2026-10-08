@@ -13,10 +13,12 @@ import { SHELL_METACHARACTERS, hasShellMetacharacter, isSeedablePathToken } from
 import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL, usedBridges, bundledSandboxRecipe, exclusionOf } from './bridge-sandbox-recipe.mjs';
-import { stateDirsOf, missingStateDirs, mergeAllowWrite } from './bridge-state-dirs.mjs';
+import { stateDirsOf, mergeAllowWrite } from './bridge-state-dirs.mjs';
+import { HOST_HONORS_QUALIFIER, sandboxSurfaceDelta } from './bridge-wiring.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { validateManifest } from './manifest/validate.mjs';
 export { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL };
+export { HOST_HONORS_QUALIFIER };
 // The declared-path resolution + segment containment the allowWrite degrade shares with the
 // advisor's worktrees-dir convergence lane — ONE leaf, so the two readings cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -303,18 +305,19 @@ const DO_NOT_ADD_WARNING = 'do not add';
 const ADD_BY_HAND = true;
 const MUTATING_SCRIPT_NAME_PATTERN = /(release|publish|deploy|push|version|commit|tag)/iu;
 const MUTATING_SCRIPT_HOOK_PATTERN = /^(pre|post)/iu;
+const CODEX_BRIDGE = 'codex-cli-bridge';
+const EXECUTE_ROLE = 'execute';
 // The one thing velocity must never seed — an explicit, greppable expression of the load-bearing
 // invariant (kept deliberately even though the read-only screen already rejects these, so the
 // refusal is named, tested, and produces a clear message).
 const MUTATING_ALLOW_COMMAND_PATTERN = /^(?:git\s+(?:commit|push)|npm\s+publish)(?:\s|$)/iu;
 // Whether a host APPLIES a `sandbox.*` settings key is not knowable from here: a settings-native
-// host honors it, while an IDE/session-imposed sandbox was observed ignoring the hand-applied
-// security keys in BOTH scopes (the advisor records the same limit in
+// host honors it, while an IDE/session-imposed sandbox was observed ignoring the security keys
+// in BOTH scopes (the advisor records the same limit in
 // references/modes/recommendations.md). So every claim about the RUNTIME EFFECT of a settings key —
 // the tier's exclusion routing and every weakening detail alike — carries this qualifier. The
 // CLASSIFICATION is untouched: which red-line a key would weaken, and that a proven tier exclusion
 // is a note rather than a weakening, are properties of the DECLARATION, not of a host.
-export const HOST_HONORS_QUALIFIER = 'where the host honors the settings sandbox keys';
 export const HOST_HONORS_NOTICE =
   `host-conditional: whether a host applies the sandbox.* settings keys is not knowable from here — a settings-native host honors them, a harness-managed session sandbox may ignore them in BOTH scopes, so each runtime effect above is stated "${HOST_HONORS_QUALIFIER}" rather than promised; what a key would weaken is a property of the declaration and is stated flat.`;
 
@@ -986,16 +989,25 @@ export const planVelocityProfile = (preflight, opts = {}) => {
   const bridgeToAdd = bridge.allow.filter((entry) => !projectAllow.includes(entry));
   const bridgeAlreadyPresent = bridge.allow.filter((entry) => projectAllow.includes(entry));
   const existingSandbox = isJsonObject(preflight.projectSettings?.data?.sandbox) ? preflight.projectSettings.data.sandbox : {};
-  const existingExcluded = Array.isArray(existingSandbox.excludedCommands) ? existingSandbox.excludedCommands : [];
-  const excludedToAdd = bridge.excludedCommands.filter((cmd) => !existingExcluded.includes(cmd));
-  const excludedAlreadyPresent = bridge.excludedCommands.filter((cmd) => existingExcluded.includes(cmd));
-  const existingHosts = bridgeTier === true ? assertNetworkMergeable(existingSandbox) : [];
-  const hostsToAdd = bridge.hosts.filter((host) => !existingHosts.includes(host));
-  const hostsAlreadyPresent = bridge.hosts.filter((host) => existingHosts.includes(host));
-  const existingDirs = bridgeTier === true ? assertFilesystemMergeable(existingSandbox) : [];
+  if (bridgeTier === true) {
+    assertNetworkMergeable(existingSandbox);
+    assertFilesystemMergeable(existingSandbox);
+  }
   const dirs = derived?.dirs ?? [];
-  const dirsToAdd = derived ? missingStateDirs(dirs, existingDirs, { home: derived.home, root: preflight.cwd }) : [];
+  const delta = derived
+    ? sandboxSurfaceDelta({ excludedCommands: bridge.excludedCommands, hosts: bridge.hosts, dirs }, existingSandbox, { home: derived.home, root: preflight.cwd })
+    : { excludedCommands: [], hosts: [], dirs: [] };
+  const { excludedCommands: excludedToAdd, hosts: hostsToAdd, dirs: dirsToAdd } = delta;
+  const excludedAlreadyPresent = bridge.excludedCommands.filter((cmd) => !excludedToAdd.includes(cmd));
+  const hostsAlreadyPresent = bridge.hosts.filter((host) => !hostsToAdd.includes(host));
   const dirsAlreadyPresent = dirs.filter((dir) => !dirsToAdd.includes(dir));
+  const executeRecipe = derived?.used.some((entry) => entry.bridge === CODEX_BRIDGE && entry.roles.includes(EXECUTE_ROLE))
+    ? bundledSandboxRecipe([{ bridge: CODEX_BRIDGE, roles: [EXECUTE_ROLE] }], opts)
+    : null;
+  const executeDirs = executeRecipe ? stateDirsOf(executeRecipe.dirEntries, { env: derived.env, root: preflight.cwd, home: derived.home }) : [];
+  const executeToAdd = executeRecipe
+    ? sandboxSurfaceDelta({ excludedCommands: executeRecipe.excludedCommands, hosts: executeRecipe.hosts, dirs: executeDirs }, existingSandbox, { home: derived.home, root: preflight.cwd })
+    : { excludedCommands: [], hosts: [], dirs: [] };
   return {
     toAdd,
     alreadyPresent,
@@ -1012,6 +1024,7 @@ export const planVelocityProfile = (preflight, opts = {}) => {
     hostsAlreadyPresent,
     dirsToAdd,
     dirsAlreadyPresent,
+    executeToAdd,
     setsDefaultMode: acceptEdits === true,
   };
 };
@@ -1568,7 +1581,7 @@ const collectSandboxWeakenings = (sources, { root, home, tmp }, tier) => {
       const foreign = fsb.allowWrite.filter((entry) => !known.includes(entry));
       addNotes(`${SANDBOX_KEY}.filesystem.allowWrite`, known, 'every sandboxed command can write it');
       // Only the entries that RESOLVE outside the repo and $TMPDIR are a weakening at all — an entry
-      // pointing INSIDE the repo grants nothing the red-line withholds, so reporting it would be an
+      // pointing INSIDE the repo grants nothing beyond the red-line's own bound, so reporting it would be an
       // over-report. All-contained ⇒ no line at all.
       // TWO records, never one: a resolved external path IS a weakening, an unresolvable entry is
       // UNVERIFIABLE, and a single line carrying both would assert an effect for entries it could

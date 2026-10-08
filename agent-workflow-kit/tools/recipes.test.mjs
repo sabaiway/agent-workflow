@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, cpSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -24,7 +24,14 @@ import {
   bridgeEntries,
   requiredBackendsForConfiguredRecipe,
 } from './recipes.mjs';
-import { READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
+import { detectBackends, READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
+import { usedBridges } from './bridge-sandbox-recipe.mjs';
+
+const recipesModule = await import('./recipes.mjs');
+const getRecommendWiredRecipe = () => {
+  if (!recipesModule.recommendWiredRecipe) throw new Error('recommendWiredRecipe is absent');
+  return recipesModule.recommendWiredRecipe;
+};
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'recipes.mjs');
@@ -36,6 +43,29 @@ const EXECUTOR = 'executor';
 const CARRY = 'carry';
 const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated', 'subagent'];
 const RECIPE_TITLES = ['Solo', 'Reviewed', 'Council', 'Delegated', 'Subagent'];
+const WIRING_ROUTE = 'wire it on the chat yes of /agent-workflow-kit upgrade';
+const WIRING_ROUTE_UNUSED = 'no slot uses it for review — once one does, the chat yes of /agent-workflow-kit upgrade wires it';
+const SANDBOX_ENABLED_CONDITION = 'enabled in the project settings — ready means wired where the host honors the settings sandbox keys';
+const SANDBOX_NOT_ENABLED_CONDITION = 'not enabled in the project settings — ready means installed';
+const UNWIRED = 'not wired';
+const UNCHECKED = 'unchecked';
+const NOT_COVERED = 'not covered';
+const BOOM = 'boom';
+const UNCHECKED_CONDITION = `${UNCHECKED} — ${BOOM}`;
+const CODEX_REVIEW_EXCLUSION = 'codex-review *';
+const CODEX_STATE_DIR = '~/.codex';
+const RECIPES_POINTER = ' — see /agent-workflow-kit recipes';
+const REVIEW_CONFIG = Object.fromEntries(['plan-authoring', 'plan-execution', 'feedback-triage', 'epic'].map((activity) => [activity, { review: 'reviewed' }]));
+const entry = (bridge, fields = {}) => ({
+  bridge, roles: ['review'], used: true, state: 'wired', review: 'covered',
+  missing: { excludedCommands: [], hosts: [], dirs: [] }, count: 0, reason: null, route: null, reviewRoute: null,
+  ...fields,
+});
+const wiringOf = (condition, ...bridges) => ({
+  enabled: condition === SANDBOX_ENABLED_CONDITION ? true : condition === SANDBOX_NOT_ENABLED_CONDITION ? false : null,
+  reason: condition.startsWith(`${UNCHECKED} — `) ? condition.slice(`${UNCHECKED} — `.length) : null,
+  condition, bridges,
+});
 
 // A synthetic detector fixture, built from the REAL readiness vocabulary (no `missing` — that is the
 // vehicle's probe axis, not a bridge readiness).
@@ -52,6 +82,29 @@ const readinessWith = (state, codexReadiness = READY, agyReadiness = READY) =>
   });
 
 const readManifest = (name) => JSON.parse(readFileSync(join(REPO_ROOT, name, 'capability.json'), 'utf8'));
+
+const makeWiringCliFixture = (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'recipes-wiring-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'root');
+  const home = join(base, 'home');
+  const bin = join(base, 'bin');
+  const codexBridge = join(base, 'codex-bridge');
+  const emptyBridge = join(base, 'empty-bridge');
+  for (const dir of [join(root, '.git'), join(root, '.claude'), join(root, 'docs', 'ai'), join(home, '.codex'), bin, emptyBridge]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(home, '.codex', 'auth.json'), '{}');
+  cpSync(join(HERE, '..', 'bridges', CODEX), codexBridge, { recursive: true, filter: (src) => basename(src) !== 'node_modules' });
+  for (const cmd of ['codex', 'codex-review', 'codex-exec']) writeFileSync(join(bin, cmd), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const env = { ...process.env, PATH: bin, HOME: home, CODEX_CLI_BRIDGE_DIR: codexBridge, ANTIGRAVITY_CLI_BRIDGE_DIR: emptyBridge, XDG_CONFIG_HOME: join(base, 'missing-xdg') };
+  for (const key of ['CODEX_HOME', 'CODEX_SERVICE_TIER', 'CODEX_HARD_TIMEOUT', 'CODEX_REVIEW_MAX_TOTAL_BYTES', 'AGY_HARD_TIMEOUT', 'AGY_REVIEW_ALLOW_ADDDIR']) delete env[key];
+  assert.equal(detectBackends({ getenv: env, home }).find((backend) => backend.name === CODEX).readiness, READY, 'detector precondition');
+  writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(REVIEW_CONFIG));
+  const sandbox = { enabled: true, excludedCommands: [CODEX_REVIEW_EXCLUSION], network: { allowedDomains: readManifest(join('agent-workflow-kit', 'bridges', CODEX)).networkHosts } };
+  const settingsPath = join(root, '.claude', 'settings.json');
+  writeFileSync(settingsPath, JSON.stringify({ sandbox }));
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: root, env, encoding: 'utf8' });
+  return { root, sandbox, settingsPath, run };
+};
 
 // ── RECIPES shape ────────────────────────────────────────────────────────────────
 
@@ -672,6 +725,155 @@ describe('composeStatusLine — the tool speaks, the agent pastes', () => {
   });
 });
 
+describe('spec:velocity-profile/S17 — wiring cells, recommendation clauses and report parity', () => {
+  const det = detect(READY, READY);
+  const rec = recommendRecipe(det);
+  const enabled = (...entries) => wiringOf(SANDBOX_ENABLED_CONDITION, ...entries);
+  const unchecked = wiringOf(UNCHECKED_CONDITION, ...[CODEX, AGY].map((bridge) => entry(bridge, { state: UNCHECKED, review: UNCHECKED, reason: BOOM })));
+  it('renders used, unused and unchecked cells and keeps every non-ready cell unchanged', () => {
+    const used = enabled(entry(CODEX, { state: UNWIRED, count: 3, route: WIRING_ROUTE }), entry(AGY));
+    assert.ok(composeStatusLine(det, rec, null, null, null, used).includes('codex ✗ not wired — 3 sandbox entr(ies) missing · agy ✓ ready'));
+    const unused = enabled(entry(CODEX), entry(AGY, { state: UNWIRED, used: false, count: 2, route: WIRING_ROUTE_UNUSED }));
+    assert.ok(composeStatusLine(det, rec, null, null, null, unused).includes('agy ✗ not wired (unused) — 2 sandbox entr(ies) missing'));
+    const line = composeStatusLine(det, rec, null, null, null, unchecked);
+    assert.ok(line.includes(`codex ✗ unchecked — ${BOOM} · agy ✗ unchecked — ${BOOM}`));
+    assert.ok(line.includes(` · sandbox: ${UNCHECKED_CONDITION}`));
+    for (const state of [NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED]) {
+      const partial = detect(READY, state);
+      assert.ok(composeStatusLine(partial, recommendRecipe(partial), null, null, null, enabled(entry(CODEX))).includes(`agy ✗ ${state}`));
+    }
+  });
+  it('puts enabled and not-enabled conditions before settings, autonomy and posture', () => {
+    const settings = { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority' }] };
+    const autonomy = { source: 'docs/ai/autonomy.json', activities: { 'plan-authoring': { autonomy: 'prompt' }, 'plan-execution': { autonomy: 'sandbox' } }, renderState: 'in sync' };
+    const posture = 'fixture posture';
+    for (const condition of [SANDBOX_ENABLED_CONDITION, SANDBOX_NOT_ENABLED_CONDITION]) {
+      const line = composeStatusLine(det, rec, settings, autonomy, posture, wiringOf(condition, entry(CODEX), entry(AGY)));
+      assert.ok(line.includes(`${RECIPES_POINTER} · sandbox: ${condition} · settings: CODEX_SERVICE_TIER=priority · autonomy: `));
+      assert.ok(line.endsWith(` · posture: ${posture}`));
+    }
+  });
+  it('uses the wired clause whatever recommendation is passed', () => {
+    const wiring = enabled(entry(CODEX, { review: NOT_COVERED, reviewRoute: WIRING_ROUTE }), entry(AGY));
+    const clause = getRecommendWiredRecipe()(det, wiring).clause;
+    const line = composeStatusLine(det, { clause: 'x' }, null, null, null, wiring);
+    assert.ok(line.includes(`recipes: ${clause} — see`));
+    assert.ok(!line.includes('recipes: x —'));
+  });
+  it('keeps the readiness recipe and appends only uncovered review routes and unchecked aliases', () => {
+    const codexOnly = detect(READY, NEEDS_SKILL);
+    const uncoveredCodex = entry(CODEX, { review: NOT_COVERED, reviewRoute: WIRING_ROUTE });
+    const uncoveredAgy = entry(AGY, { review: NOT_COVERED, reviewRoute: WIRING_ROUTE_UNUSED });
+    const uncheckedAgy = entry(AGY, { state: UNCHECKED, review: UNCHECKED, reason: BOOM });
+    const cases = [
+      [det, enabled(entry(CODEX), entry(AGY)), ''],
+      [codexOnly, enabled(entry(CODEX, { state: UNWIRED, missing: { excludedCommands: ['codex-exec *'], hosts: [], dirs: [] }, count: 1, route: WIRING_ROUTE })), ''],
+      [codexOnly, enabled(entry(CODEX, { used: false, review: NOT_COVERED, reviewRoute: WIRING_ROUTE_UNUSED })), ` · not wired: codex (review) — ${WIRING_ROUTE_UNUSED}`],
+      [det, enabled(uncoveredCodex, entry(AGY)), ` · not wired: codex (review) — ${WIRING_ROUTE}`],
+      [det, enabled(uncoveredCodex, uncoveredAgy), ` · not wired: codex (review) — ${WIRING_ROUTE}; agy (review) — ${WIRING_ROUTE_UNUSED}`],
+      [det, unchecked, ' · unchecked: codex, agy'],
+      [det, enabled(uncoveredCodex, uncheckedAgy), ` · not wired: codex (review) — ${WIRING_ROUTE} · unchecked: agy`],
+    ];
+    for (const [readiness, wiring, tail] of cases) {
+      const base = recommendRecipe(readiness);
+      const actual = getRecommendWiredRecipe()(readiness, wiring);
+      assert.equal(actual.recipe, base.recipe);
+      assert.deepEqual(actual, tail ? { recipe: base.recipe, clause: base.clause + tail } : base);
+    }
+  });
+  it('carries wiring in the report and keeps omitted or null wiring byte-identical', () => {
+    assert.equal(composeStatusLine(det, rec), composeStatusLine(det, rec, null, null, null, null));
+    assert.equal(JSON.stringify(buildReport(det)), JSON.stringify(buildReport(det, null, null, null, null)));
+    assert.ok(!JSON.stringify(buildReport(det)).includes('"wiring"'));
+    const wiring = enabled(entry(CODEX, { state: UNWIRED, count: 1, route: WIRING_ROUTE }), entry(AGY));
+    const report = buildReport(det, null, null, null, wiring);
+    assert.equal(report.statusLine, composeStatusLine(det, report.recommendation, null, null, null, wiring));
+    assert.ok(report.statusLine.includes(' · sandbox: '));
+    assert.deepEqual(report.wiring, wiring);
+    assert.deepEqual(report.recommendation, rec);
+  });
+});
+
+describe('spec:velocity-profile/S18 — recipes name wiring without changing readiness or dispatch', () => {
+  it('renders missing keys and routes in priority order while every readiness consumer still names codex', () => {
+    const det = detect(READY, READY);
+    const snapshot = structuredClone(det);
+    const codex = entry(CODEX, { state: UNWIRED, review: NOT_COVERED, reviewRoute: WIRING_ROUTE, route: WIRING_ROUTE, missing: { excludedCommands: [CODEX_REVIEW_EXCLUSION], hosts: ['chatgpt.com'], dirs: [CODEX_STATE_DIR] }, count: 3 });
+    const wiring = wiringOf(SANDBOX_ENABLED_CONDITION, codex, entry(AGY));
+    const text = formatRecipes(det, wiring);
+    assert.deepEqual(det, snapshot);
+    assert.deepEqual(recommendRecipe(det), recommendRecipe(snapshot));
+    assert.equal(recommendRecipe(det).recipe, 'council');
+    assert.equal(planRecipe('reviewed', det).dispatch[0].backend, CODEX);
+    assert.equal(planRecipe('council', det).dispatch[0].backend, CODEX);
+    assert.equal(resolveActivityRecipe({ config: REVIEW_CONFIG, readiness: det, activity: 'plan-execution', slot: 'review' }).recipe, 'reviewed');
+    assert.ok(composeActiveRecipeLine({ config: REVIEW_CONFIG, source: 'fixture' }, det).includes('codex-review'));
+    assert.ok(requiredBackendsForConfiguredRecipe({ config: REVIEW_CONFIG, readiness: det }).backends.includes('codex'));
+    assert.deepEqual(usedBridges(REVIEW_CONFIG, det), [{ bridge: CODEX, roles: ['review'] }]);
+    const vocabulary = [READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED];
+    assert.deepEqual(vocabulary, ['ready', 'needs-skill', 'needs-cli', 'needs-credentials', 'degraded']);
+    for (const state of ['wired', UNWIRED, UNCHECKED]) assert.ok(!vocabulary.includes(state));
+    const recommended = `recommended here: council — Council available, Reviewed the everyday default · not wired: codex (review) — ${WIRING_ROUTE}`;
+    const missing = `  not wired: codex — missing excludedCommands [${CODEX_REVIEW_EXCLUSION}]; allowedDomains [chatgpt.com]; allowWrite [${CODEX_STATE_DIR}]; ${SANDBOX_ENABLED_CONDITION}; ${WIRING_ROUTE}`;
+    assert.ok(text.split('\n').includes(recommended));
+    assert.ok(text.split('\n').includes(missing));
+    assert.ok(text.indexOf(recommended) < text.indexOf(missing) && text.indexOf(missing) < text.indexOf('plan for the current environment:'));
+    assert.ok(text.split('\n').includes('  Council: codex review, agy review'));
+    const dirsOnly = wiringOf(SANDBOX_ENABLED_CONDITION, entry(CODEX, { ...codex, missing: { excludedCommands: [], hosts: [], dirs: [CODEX_STATE_DIR] }, count: 1 }), entry(AGY));
+    assert.ok(formatRecipes(det, dirsOnly).split('\n').includes(`  not wired: codex — missing allowWrite [${CODEX_STATE_DIR}]; ${SANDBOX_ENABLED_CONDITION}; ${WIRING_ROUTE}`));
+    const unchecked = wiringOf(UNCHECKED_CONDITION, ...[CODEX, AGY].map((bridge) => entry(bridge, { state: UNCHECKED, review: UNCHECKED, reason: BOOM })));
+    const uncheckedText = formatRecipes(det, unchecked);
+    for (const alias of ['codex', 'agy']) assert.ok(uncheckedText.split('\n').includes(`  unchecked: ${alias} — ${BOOM}`));
+    assert.doesNotMatch(formatRecipes(det, wiringOf(SANDBOX_ENABLED_CONDITION, entry(CODEX), entry(AGY))), /not wired:|unchecked:/);
+    assert.equal(formatRecipes(det), formatRecipes(det, null));
+  });
+});
+
+describe('spec:velocity-profile/S19 — CLI wiring over an installed ready codex fixture', () => {
+  it('enabled sandbox shares the not-wired status across status-line, JSON and recipes output', (t) => {
+    const { run } = makeWiringCliFixture(t);
+    const status = run('--status-line');
+    assert.equal(status.status, 0, status.stderr);
+    assert.equal(status.stdout.split('\n').length, 2, 'exactly one line and its trailing newline');
+    const line = status.stdout.slice(0, -1);
+    assert.ok(line.includes('codex ✗ not wired — 1 sandbox entr(ies) missing'));
+    assert.ok(line.includes(`Reviewed available (via codex) · not wired: codex (review) — ${WIRING_ROUTE}`));
+    assert.ok(line.includes(`${RECIPES_POINTER} · sandbox: ${SANDBOX_ENABLED_CONDITION} · autonomy: `));
+    const json = run('--json');
+    assert.equal(json.status, 0, json.stderr);
+    const report = JSON.parse(json.stdout);
+    assert.equal(report.statusLine, line);
+    assert.equal(report.wiring.bridges[0].bridge, CODEX);
+    assert.equal(report.wiring.bridges[0].state, UNWIRED);
+    assert.equal(report.wiring.bridges[0].count, 1);
+    const recipes = run();
+    assert.equal(recipes.status, 0, recipes.stderr);
+    assert.ok(recipes.stdout.split('\n').includes(`  not wired: codex — missing allowWrite [${CODEX_STATE_DIR}]; ${SANDBOX_ENABLED_CONDITION}; ${WIRING_ROUTE}`));
+  });
+  it('sandbox without enabled keeps ready and says ready means installed', (t) => {
+    const { sandbox, settingsPath, run } = makeWiringCliFixture(t);
+    writeFileSync(settingsPath, JSON.stringify({ sandbox: { excludedCommands: sandbox.excludedCommands, network: sandbox.network } }));
+    const status = run('--status-line');
+    assert.equal(status.status, 0, status.stderr);
+    assert.ok(status.stdout.includes('codex ✓ ready'));
+    assert.ok(status.stdout.includes(` · sandbox: ${SANDBOX_NOT_ENABLED_CONDITION}`));
+  });
+  it('enabled sandbox with local bypassPermissions renders unchecked and names the mode', (t) => {
+    const { root, run } = makeWiringCliFixture(t);
+    writeFileSync(join(root, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+    const status = run('--status-line');
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /codex ✗ unchecked — [^·]*bypassPermissions/);
+  });
+  it('malformed settings render unchecked with exit 0', (t) => {
+    const { settingsPath, run } = makeWiringCliFixture(t);
+    writeFileSync(settingsPath, '{ not json');
+    const status = run('--status-line');
+    assert.equal(status.status, 0, status.stderr);
+    assert.match(status.stdout, /codex ✗ unchecked — /);
+  });
+});
+
 describe('the autonomy segment rides EVERY machine-composed surface (review-recipes-r01-major-01, Segment B)', () => {
   it('buildReport statusLine carries the SAME autonomy segment when the facts are supplied', () => {
     const det = detect(READY, READY);
@@ -841,7 +1043,7 @@ describe('recipes.mjs CLI — --status-line + strict args (no silent fallthrough
     assert.ok(!line.includes('\n'), 'exactly one line');
     assert.match(line, /^backends: /);
     assert.match(line, / — run \/agent-workflow-kit backends · recipes: /);
-    assert.match(line, / — see \/agent-workflow-kit recipes · autonomy: /);
+    assert.ok(line.includes(`${RECIPES_POINTER} · sandbox: ${SANDBOX_NOT_ENABLED_CONDITION} · autonomy: `));
     assert.match(line, /autonomy: plan-authoring=prompt, plan-execution=prompt \(computed defaults — no policy file; declare with \/agent-workflow-kit set-autonomy\)/);
     // The D5 posture tail: composed from the bundled manifests' pins; cleanEnv strips the tier
     // knob, so the codex tier renders the pinned standard default.

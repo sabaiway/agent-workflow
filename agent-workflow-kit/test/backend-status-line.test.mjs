@@ -58,6 +58,10 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 const shared = flat(between(FOOTER_FILE, '### The one-line backend-status line', '### The version block + welcome mat'));
 const bootstrap = flat(readFileSync(resolve(kitRoot, 'references', 'modes', 'bootstrap.md'), 'utf8'));
 const upgrade = flat(readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8'));
+const NOT_WIRED_FORM = '✗ not wired — ';
+const UNUSED_FORM = '✗ not wired (unused) — ';
+const UNCHECKED_FORM = '✗ unchecked — ';
+const RECIPES_COMMAND = '/agent-workflow-kit recipes';
 
 describe('backend-status line — machine-composed, paste-verbatim (deterministic-first)', () => {
   it('names the composer invocation and the paste-verbatim instruction once, in the shared region', () => {
@@ -71,7 +75,13 @@ describe('backend-status line — machine-composed, paste-verbatim (deterministi
     assert.match(shared, /· autonomy: <per-activity levels> \(<policy state>\)/, 'the autonomy segment is part of the documented line shape');
   });
 
-  it('carries a placeholder-only template, exactly once across the whole split corpus (router + modes + shared)', () => {
+  it('spec:velocity-profile/S22 — the footer documents wiring forms and conditions, keeps its template and routes the welcome mat', () => {
+    for (const fragment of [
+      NOT_WIRED_FORM, UNUSED_FORM, UNCHECKED_FORM, ' · sandbox: ',
+      'ready means wired', 'ready means installed', 'unchecked — <reason>', 'recommendWiredRecipe',
+    ]) {
+      assert.ok(shared.includes(fragment), `the status-line region must name "${fragment}"`);
+    }
     assert.match(shared, /never copy this example/i, 'the template is explicitly a placeholder');
     const TEMPLATE = /backends: <alias>/g;
     const occurrences = (flat(CORPUS).match(TEMPLATE) ?? []).length;
@@ -79,14 +89,27 @@ describe('backend-status line — machine-composed, paste-verbatim (deterministi
     // Non-vacuous: the template line is made of <placeholder> tokens, not real values.
     const placeholders = (shared.match(/<[^>]+>/g) ?? []).length;
     assert.ok(placeholders >= 4, `expected >=4 <placeholder> tokens in the region, found ${placeholders}`);
-  });
-
-  it('the region contains NO realistic alias+readiness example to contaminate a session (the closed defect class)', () => {
     for (const alias of Object.values(DISPLAY_ALIASES)) {
       assert.ok(!new RegExp(`${alias} [✓✗]`).test(shared), `realistic example leaks: "${alias} ✓/✗ …"`);
     }
     assert.ok(!/antigravity [✓✗]/.test(shared), 'the old canonical example ("antigravity ✗ …") must stay gone');
     assert.ok(!/[✓✗] (ready|needs-|degraded)/.test(shared), 'no glyph+readiness pair outside a placeholder');
+    assert.doesNotMatch(shared, /✓ ready/);
+
+    const ladder = flat(between(FOOTER_FILE, '**Welcome mat', 'Keep it compact'));
+    const [, , readinessRung, wiringRung, soloRung] = ladder.split(/ \d+\. /);
+    assert.match(readinessRung, /readiness/, 'rung 2 reads the detector readiness');
+    assert.ok(wiringRung.includes(NOT_WIRED_FORM.trimEnd()), 'the next rung names a used not-wired cell');
+    assert.match(wiringRung, /✗ unchecked/, 'the next rung names an unchecked cell');
+    assert.ok(wiringRung.includes(RECIPES_COMMAND), 'the next rung routes to recipes');
+    assert.doesNotMatch(wiringRung, /\bhead\b/);
+    if (wiringRung.includes('(unused)')) {
+      assert.match(wiringRung, /never[^.]*not wired \(unused\)/);
+      assert.doesNotMatch(wiringRung.replace(/never[^.]*not wired \(unused\)/g, ''), /\(unused\)/);
+    }
+    assert.match(soloRung, /all-Solo/, 'the following rung keeps the all-Solo recommendation');
+    const commands = [...new Set([...ladder.matchAll(/\/agent-workflow-kit (\w+)/g)].map((match) => match[1]))].sort();
+    assert.deepEqual(commands, ['help', 'tier', 'setup', 'recipes', 'velocity', 'agents', 'hook'].sort());
   });
 
   it('composer⟷SKILL: every fixed skeleton fragment of composeStatusLine appears in the template (AD-033 deep-equal shape)', () => {
@@ -117,7 +140,7 @@ describe('backend-status line — machine-composed, paste-verbatim (deterministi
     assert.match(shared, /never blank/i);
     assert.match(shared, /Solo/, 'the none-installed recommendation names Solo');
     assert.match(shared, /\/agent-workflow-kit setup/, 'the none-installed recommendation points at setup');
-    assert.match(shared, /recommendRecipe/, 'the clause source is the tool, named');
+    assert.match(shared, /recommendWiredRecipe/, 'the clause source is the tool, named');
   });
 
   it('pins the read-only / non-blocking invariants', () => {

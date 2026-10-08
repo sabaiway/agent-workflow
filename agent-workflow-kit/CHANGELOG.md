@@ -4,6 +4,41 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.28.0 — `ready` means wired: the status line and `/agent-workflow-kit recipes` say when the project sandbox settings lack a bridge's entries (AD-178)
+
+**A bridge reads `ready` on the status line only when the project settings cover its sandbox entries, where they
+enable the sandbox.** Before, `ready` meant only that the bridge was installed and signed in, so a bridge whose
+`<wrapper> *` exclusion, host or state dir was missing from `.claude/settings.json` read `ready` and then failed or
+prompted under the sandbox; and the Recommendations `sandbox-lane` item settled once you acknowledged it, whether or
+not any entry was written.
+
+- **The status line.** A ready bridge whose entries are missing reads `✗ not wired — <n> sandbox entr(ies) missing`
+  (`✗ not wired (unused) — …` when no slot uses it); one that cannot be judged (an unreadable settings file or config,
+  a missing bridge manifest, a settings state the bridge tier refuses) reads `✗ unchecked — <reason>`. A new
+  ` · sandbox: <condition>` segment says whether `ready` means wired (the sandbox enabled, where the host honors the
+  settings sandbox keys) or installed (not enabled), or reads `unchecked — <reason>` when it cannot be judged. A
+  failed load of the kit's own wiring module fails the `recipes` run with its error. The recommended recipe is unchanged; its clause adds each ready
+  bridge whose review entries are missing, with the route, or cannot be judged. Readiness, dispatch and every roster
+  read as before.
+- **`/agent-workflow-kit recipes`** lists, per bridge that is not wired, the missing `excludedCommands`,
+  `allowedDomains` and `allowWrite` entries, the condition and the route: the chat yes of
+  `/agent-workflow-kit upgrade` (for a bridge no slot uses, once a slot uses it for review). The welcome mat of the
+  upgrade and bootstrap reports points a `✗ not wired —` or `✗ unchecked` cell there, never a `✗ not wired (unused)`
+  one.
+- **The Recommendations `bridge-tier` item** keeps its text and count and gains a `recipe:` line naming each missing
+  entry (allow rules, exclusions, hosts, state dirs), what `codex-exec` needs where an execute slot delegates to it,
+  and, where the project settings enable the sandbox, that the bridge is wired once they are added.
+- **The `sandbox-lane` item is retired**: `bridge-tier` already offers the writer for the same entries. An
+  acknowledgement already in `docs/ai/acks.json` or a settings file stays where it is and is no longer read.
+- **One comparison.** The new `tools/bridge-wiring.mjs` compares the bridge surfaces against the project `.claude/settings.json`
+  (entries only in `settings.local.json` do not count);
+  `velocity-profile --bridge-tier` takes what it adds from the same function, so the tier and the status line agree.
+- No shipped text tells you to add a bridge's sandbox keys by hand or says the kit never writes them: the
+  `recommendations`, `velocity` and `set-recipe` mode docs, the README advisor row, the manifest schema page and the
+  comments of `tools/manifest/validate.mjs` and `tools/ack-write.mjs` were corrected.
+  `/agent-workflow-kit set-recipe`'s advisory after a reviewed, council or delegated write says the upgrade's
+  `bridge-tier` item wires the used bridges on its chat yes.
+
 ## 14.27.0 — the bridge tier wires the bridges your recipes use: `<wrapper> *` exclusions, their hosts and their state dirs (AD-177)
 
 **`velocity-profile --bridge-tier` now wires every used bridge's exclusions, hosts and state dirs.** Before, it

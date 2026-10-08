@@ -22,9 +22,7 @@
 // skipped-item line — never a crash, never a fabricated item. The consented
 // `velocity-profile --bridge-tier` seeds used bridges' allow rules, <wrapper> * exclusions
 // (codex-exec * where an execute slot delegates), hosts in sandbox.network.allowedDomains and
-// state dirs in sandbox.filesystem.allowWrite; the sandbox-lane item's convergence is a NEUTRAL
-// fingerprint-bound acknowledgement recorded by the consent-gated ack writer into the family-owned
-// docs/ai/acks.json (AD-055 relocated it off the host settings schema), never a security key (D4).
+// state dirs in sandbox.filesystem.allowWrite; its recipe: line names the missing entries.
 //
 // Read-only: never writes, never commits, never runs a subscription CLI. The reused probes are all
 // exported read-only surfaces of their owning tools (velocity/autonomy/doctor/backends/recipes/
@@ -43,15 +41,13 @@ import {
   probeSandboxAvailability,
   isExecutableFile,
   readSettingsFile,
-  BRIDGE_REVIEW_WRAPPERS,
-  BRIDGE_REVIEW_MODE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
 } from './velocity-profile.mjs';
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import { laneOf, applySlot } from './write-lanes.mjs';
-import { detectBackends, findOnPath } from './detect-backends.mjs';
+import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
@@ -80,8 +76,8 @@ import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySo
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { loadConfig } from './orchestration-config.mjs';
-import { bundledSandboxRecipe } from './bridge-sandbox-recipe.mjs';
-import { homeRelative, resolveWritableDir } from './bridge-state-dirs.mjs';
+import { homeRelative } from './bridge-state-dirs.mjs';
+import { sandboxEnabled, HOST_HONORS_QUALIFIER } from './bridge-wiring.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
@@ -199,7 +195,6 @@ export const SEVERITIES = Object.freeze({
   'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'sandbox-masks.unfenced-mount': SEVERITY_ATTENTION,
-  'sandbox-lane': SEVERITY_OPTIONAL,
   'worktrees-dir': SEVERITY_OPTIONAL,
   // The layer is opt-in, so both arms are OFFERS under the frozen registry (attention is a CONFIGURED
   // declaration that is broken): an absent store offers the seed, a store with no live contract offers
@@ -281,7 +276,6 @@ export const WHATS = Object.freeze({
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
-  'sandbox-lane': 'the wired review wrappers declare a session-sandbox recipe (egress hosts + writable state dirs) not yet acknowledged for this project',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
@@ -345,7 +339,6 @@ export const BENEFITS = Object.freeze({
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — a mask git ignores through the block leaves git status; a mount-only one leaves git add -A and the review fingerprint too',
-  'sandbox-lane': 'discoverability — the manifest-declared observed sandbox recipe for bridge runs surfaces itself instead of waiting to be asked',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
   'profile-gap': 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step',
@@ -373,7 +366,6 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'kit-tools-tier', mode: 'velocity', advisorKey: 'kit-tools-tier' },
   { id: 'bridge-tier', mode: 'velocity', advisorKey: 'bridge-tier' },
   { id: 'autonomy-render', mode: 'velocity', advisorKey: 'autonomy-render' },
-  { id: 'sandbox-lane', mode: 'velocity', advisorKey: 'sandbox-lane' },
   { id: 'autonomy-policy', mode: 'set-autonomy', advisorKey: 'autonomy-policy' },
   { id: 'sandbox-provision', mode: 'autonomy-doctor', advisorKey: 'sandbox-provision' },
   { id: 'gates-declaration', mode: 'gates', advisorKey: 'gates-declaration' },
@@ -469,7 +461,34 @@ const probeVelocityItems = ({ root, deps, add, skip }) => {
     });
     const delta = bt.bridgeToAdd.length + bt.excludedToAdd.length + bt.hostsToAdd.length + bt.dirsToAdd.length;
     if (delta > 0) {
-      add('bridge-tier', fillTemplate(WHATS['bridge-tier'], { n: delta }), applyLine(' --bridge-tier'));
+      const entrySeparator = ', ';
+      const missing = [
+        ['allow rules', bt.bridgeToAdd],
+        ['exclusions', bt.excludedToAdd],
+        ['hosts', bt.hostsToAdd],
+        ['state dirs', bt.dirsToAdd],
+      ].filter(([, entries]) => entries.length > 0)
+        .map(([kind, entries]) => `${kind}: ${entries.join(entrySeparator)}`).join('; ');
+      const executeMissing = [...bt.executeToAdd.excludedCommands, ...bt.executeToAdd.hosts, ...bt.executeToAdd.dirs];
+      const executeDetail = executeMissing.length > 0
+        ? `; the execution wrapper codex-exec needs: ${executeMissing.join(entrySeparator)}`
+        : '';
+      const hostCondition = (() => {
+        try {
+          return sandboxEnabled(preflight.projectSettings.data, preflight.localSettings.data)
+            ? ` — once added, wired ${HOST_HONORS_QUALIFIER}`
+            : '';
+        } catch (err) {
+          return ` — host condition unchecked: ${oneLineOf(err?.message ?? String(err))}`;
+        }
+      })();
+      add(
+        'bridge-tier',
+        fillTemplate(WHATS['bridge-tier'], { n: delta }),
+        applyLine(' --bridge-tier'),
+        'bridge-tier',
+        `missing — ${missing}${executeDetail}${hostCondition}`,
+      );
     }
   } catch (err) {
     skip('bridge-tier', err);
@@ -1177,10 +1196,9 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
   return factFingerprint(JSON.stringify({ hosts: [...hosts].sort(), dirs: [...new Set(dirs.map(norm))].sort() }));
 };
 
-// The ack store (D4; AD-055 Part I) is the kit-owned PRIMARY ack channel; the legacy settings-scope
-// keys below are read for one deprecation window. An ack lane exists for a state the maintainer can
-// only ANSWER, never converge — a dead checker/producer pair is fixed, not acknowledged, so no lane
-// names it. The store's path, keys, lane registry and reader are ack-store.mjs (re-exported above).
+// The ack store (D4; AD-055 Part I) is the kit-owned ack channel. An ack lane exists for a state the
+// maintainer can only ANSWER, never converge — a dead checker/producer pair is fixed, not acknowledged,
+// so no lane names it. The store's path, keys, lane registry and reader are ack-store.mjs.
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
 // placed hook reads live. The read-lane item offers to enable it once the hook is placed+wired.
@@ -1255,11 +1273,6 @@ const declarationCarriesMarker = (root, deps) => {
   return declaration.outcome === 'loaded' && declaration.gates.some((gate) => Object.hasOwn(gate, LCOV_PRODUCER_KEY));
 };
 
-// The LEGACY neutral ack namespace (pre-AD-055): read from BOTH settings scopes until the next kit
-// MAJOR (2.0.0) so a never-migrated host stays converged across the deprecation window (Decisions 3).
-export const SANDBOX_LANE_ACK_PARENT = 'agentWorkflow';
-export const SANDBOX_LANE_ACK_KEY = 'sandboxLaneAck';
-
 // Read the opt-in read-lane toggle for the read-lane item. An ABSENT file (or absent docs/ai) →
 // false (the lane is off — offer it). `readLane === true` → enabled (converged). A parse/IO error on
 // an EXISTING file, a symlinked ancestor/leaf, an escape, or a non-object root THROWS — the probe
@@ -1290,7 +1303,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'sandbox-lane', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill']);
+export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1320,63 +1333,6 @@ export const probeSpecAdoption = ({ root, deps, add, skip }) => {
     add('spec-adoption', fillTemplate(WHATS['spec-adoption.adopting'], { n: survey.draft }), decline, 'spec-adoption.adopting');
   } catch (err) {
     skip('spec-adoption', err);
-  }
-};
-
-const probeSandboxLane = ({ root, deps, add, skip }) => {
-  try {
-    const settings = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
-    const localSettings = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
-    const sandbox = settings.data?.sandbox;
-    const excluded = Array.isArray(sandbox?.excludedCommands) ? sandbox.excludedCommands : [];
-    const probePlaced = deps.findWrapper ?? ((cmd) => findOnPath(cmd, deps).state === 'present');
-    // Wired = the two-surface proof the tier wrote before AD-172 (the wrapper in the PROJECT
-    // excludedCommands + its code-mode allow rule, either scope) — surfacing the recipe before those
-    // exist would front-run the bridge-tier item (codex terminal). The hosts surface (AD-172) is
-    // deliberately not required: hosts and state dirs may still be missing, so the recipe may
-    // render beside a bridge-tier item offering the re-run. Byte-form from the tier's own constants.
-    const allowRules = [
-      ...(Array.isArray(settings.data?.permissions?.allow) ? settings.data.permissions.allow : []),
-      ...(Array.isArray(localSettings.data?.permissions?.allow) ? localSettings.data.permissions.allow : []),
-    ];
-    const wired = BRIDGE_REVIEW_WRAPPERS.filter(
-      (w) => (excluded.includes(w) || excluded.includes(`${w} *`)) && probePlaced(w) && allowRules.includes(`Bash(${w} ${BRIDGE_REVIEW_MODE}:*)`),
-    );
-    if (wired.length === 0) return; // the tier's rules and exclusions are not wired — the bridge-tier item covers first
-    const { hosts, dirEntries } = bundledSandboxRecipe(wired, deps);
-    const env = deps.getenv ?? process.env;
-    const home = deps.home ?? homedir();
-    const dirs = [];
-    for (const entry of dirEntries) {
-      const resolved = resolveWritableDir(entry, { env, root });
-      if (!dirs.includes(resolved)) dirs.push(resolved);
-    }
-    const fingerprint = recipeFingerprint({ hosts, dirs, home });
-    // Convergence is the NEUTRAL fingerprint-bound acknowledgement: the item converges iff the
-    // CURRENT fingerprint equals the ack in ANY consulted store — the family-owned acks.json FIRST,
-    // then the legacy settings scopes; a stale value in one store is ignored when another matches
-    // (Decisions 2). A changed recipe (hosts, dirs, or an env override) re-fires the item (D4).
-    const acks = [
-      readAckValue(root, deps, ACKS_LANE_KEY),
-      settings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
-      localSettings.data?.[SANDBOX_LANE_ACK_PARENT]?.[SANDBOX_LANE_ACK_KEY],
-    ];
-    if (acks.includes(fingerprint)) return; // the acknowledged recipe — the item converged
-    // The item joins the CONSENT-GATED WRITER class (Decisions 4): the apply is the ack writer's
-    // PREVIEW one-liner (pure executable, cwd-independent), carrying the neutral fingerprint — never
-    // a security key. The LIVE recipe (egress hosts + resolved writable dirs) rides a separate
-    // rendered `recipe:` line (the fill source for the mode doc's lane-(2) hand-apply block); the
-    // fingerprint encodes it, so a changed recipe re-fires with a fresh command.
-    const recipe = `egress hosts [${hosts.join(', ')}]; writable state dirs [${dirs.join(', ')}] (observed-minimal; a blocked host names itself at run time)`;
-    add(
-      'sandbox-lane',
-      fillTemplate(WHATS['sandbox-lane'], {}),
-      `node ${q(toolPath('ack-write.mjs'))} --fingerprint ${fingerprint} --cwd ${q(root)}`,
-      'sandbox-lane',
-      recipe,
-    );
-  } catch (err) {
-    skip('sandbox-lane', err);
   }
 };
 
@@ -1433,8 +1389,8 @@ const declaresWritableDir = (root, probeDir, deps) => {
 };
 
 // D7 lane 2 — the ack fallback for a host that ignores the settings key, bound to the PROBED DIR
-// through the shared neutral fingerprint (the same home-symbolic canonicalization the sandbox-lane
-// ack uses, so a home-anchored dir acks portably). The binding is to the RESOLVED probe dir, so the
+// through the worktrees-dir fingerprint's home-symbolic canonicalization, so a home-anchored dir
+// acks portably. The binding is to the RESOLVED probe dir, so the
 // item re-fires only when that resolved dir changes — two ABSENT parentDir values sharing an
 // existing ancestor resolve to the same dir and keep the same ack.
 export const worktreesDirFingerprint = (probeDir, home) => recipeFingerprint({ hosts: [], dirs: [probeDir], home });
@@ -1630,7 +1586,6 @@ const PROBES = Object.freeze([
   probeFamilyFreshness,
   probeAdrStore,
   probeMasksItem,
-  probeSandboxLane,
   probeWorktreesDir,
   probeMcpChannel,
   probeSpecAdoption,
@@ -1654,8 +1609,8 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // smoke asserting a specific false-green never returns) can assert the exact outcome instead of
   // pattern-matching prose that is free to be reworded.
   // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
-  // the capped WHAT and does NOT belong in the pure-command apply (the sandbox-lane live recipe:
-  // egress hosts + resolved writable dirs; the worktrees-dir hand-apply-first grant advice; the
+  // the capped WHAT and does NOT belong in the pure-command apply (the bridge-tier missing-entries
+  // line; the worktrees-dir hand-apply-first grant advice; the
   // agents hidden-mode reconcile follow-up). Single-line like apply; absent for every other item.
   // Returns whether the item really RENDERED. One probe's disposition depends on another's having
   // spoken (the marker-stale ⟷ read-lane.stale precedence), and "the conditions still look right"
@@ -1746,8 +1701,8 @@ Usage:
 
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
-sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (the sandbox-lane live
-recipe, the worktrees-dir hand-apply-first grant advice, or the agents hidden-mode reconcile
+sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (the bridge-tier
+missing-entries line, the worktrees-dir hand-apply-first grant advice, or the agents hidden-mode reconcile
 follow-up) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
@@ -1760,8 +1715,7 @@ sandbox.network.allowedDomains and state dirs in sandbox.filesystem.allowWrite. 
 honors the settings sandbox keys, an excluded wrapper runs outside the sandbox, every sandboxed
 command of the project can reach each host, and every sandboxed command can write each state dir;
 plan/diff review modes and delegated execution keep their prompt. Items marked HAND-APPLY stay
-the user's own step. The sandbox-lane convergence is a neutral fingerprint acknowledgement recorded by
-the consent-gated ack writer into docs/ai/acks.json (never a security key).
+the user's own step.
 
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report
 rendered (items or empty); 1 error; 2 usage.`;

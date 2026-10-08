@@ -40,6 +40,12 @@ export { ACTIVITIES, POLICY_ACTIVITIES, SLOT_RECIPES, isSwitchSlot, EXECUTOR_APP
 
 const [CODEX, AGY] = BACKEND_PRIORITY;
 
+// Mirror bridge-wiring.mjs states: a static import would cycle through bridge-sandbox-recipe.mjs.
+const WIRED = 'wired';
+const UNWIRED = 'not wired';
+const UNCHECKED = 'unchecked';
+const NOT_COVERED = 'not covered';
+
 // Keyed by readiness-array provider name; executor is the only `carry` provider.
 export const BACKEND_ROLES = {
   [CODEX]: ['execute', 'review'],
@@ -237,6 +243,20 @@ export const recommendRecipe = (detection) => {
   return { recipe: 'solo', clause: `Solo — ${DISPLAY_ALIASES[best.name] ?? best.name}: ${remedy} to unlock Reviewed` };
 };
 
+const orderedWiringEntries = (wiring) => [...(wiring?.bridges ?? [])]
+  .sort((a, b) => priorityIndex(a.bridge) - priorityIndex(b.bridge));
+
+export const recommendWiredRecipe = (detection, wiring) => {
+  const base = recommendRecipe(detection);
+  const entries = orderedWiringEntries(wiring);
+  const uncovered = entries.filter((entry) => entry.review === NOT_COVERED)
+    .map((entry) => `${DISPLAY_ALIASES[entry.bridge] ?? entry.bridge} (review) — ${entry.reviewRoute}`).join('; ');
+  const unchecked = entries.filter((entry) => entry.review === UNCHECKED)
+    .map((entry) => DISPLAY_ALIASES[entry.bridge] ?? entry.bridge).join(', ');
+  const tail = (uncovered ? ` · ${UNWIRED}: ${uncovered}` : '') + (unchecked ? ` · ${UNCHECKED}: ${unchecked}` : '');
+  return tail ? { recipe: base.recipe, clause: base.clause + tail } : base;
+};
+
 // ── activity procedures: per-slot recipe resolution ────────────────────────────────
 // The computed default for a silent slot. NEVER Council (opt-in: it spends two backends' quota) and
 // deliberately not recommendRecipe, which drives the status line rather than a per-slot default.
@@ -317,14 +337,26 @@ export const composeConfiguredPosture = (ctx = {}) => {
 // mode, and only the recipe lattice sees it.
 export const bridgeEntries = (readiness) => readiness.filter((b) => b.name !== EXECUTOR_PROVIDER);
 
-export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null, posture = null) => {
-  const backends = bridgeEntries(detection)
-    .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
-    .map((b) => `${DISPLAY_ALIASES[b.name] ?? b.name} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`)
-    .join(' · ');
-  const base = `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${recommendation.clause} — see /agent-workflow-kit recipes`;
+export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null, posture = null, wiring = null) => {
   // A raw env value may carry newlines/control chars — collapse them so the one-line contract holds.
   const oneLine = (s) => String(s).replace(/[\s]+/g, ' ').trim();
+  const backends = bridgeEntries(detection)
+    .sort((a, b) => priorityIndex(a.name) - priorityIndex(b.name))
+    .map((b) => {
+      const alias = DISPLAY_ALIASES[b.name] ?? b.name;
+      const entry = b.readiness === READY ? wiring?.bridges.find((row) => row.bridge === b.name) : null;
+      if (entry && entry.state !== WIRED) {
+        if (entry.state === UNWIRED) {
+          return `${alias} ✗ ${UNWIRED}${entry.used ? '' : ' (unused)'} — ${entry.count} sandbox entr(ies) missing`;
+        }
+        if (entry.state === UNCHECKED) return `${alias} ✗ ${UNCHECKED} — ${oneLine(entry.reason)}`;
+      }
+      return `${alias} ${b.readiness === READY ? '✓' : '✗'} ${b.readiness}`;
+    })
+    .join(' · ');
+  const clause = wiring == null ? recommendation.clause : recommendWiredRecipe(detection, wiring).clause;
+  const base = `backends: ${backends} — run /agent-workflow-kit backends · recipes: ${clause} — see /agent-workflow-kit recipes`;
+  const sandboxSegment = wiring == null ? '' : ` · sandbox: ${oneLine(wiring.condition)}`;
   const active = settings?.active ?? [];
   // A RETIRED knob renders as retired: hiding the user's line would be a silent deletion, reading it
   // as active would claim a capability the wrapper no longer has.
@@ -332,7 +364,7 @@ export const composeStatusLine = (detection, recommendation, settings = null, au
   // Each optional segment renders ONLY when its facts are supplied; an omitted param changes nothing.
   const autonomySegment = autonomy == null ? '' : ` · autonomy: ${oneLine(formatAutonomySegment(autonomy))}`;
   const postureSegment = posture == null ? '' : ` · posture: ${oneLine(posture)}`;
-  return base + suffix + autonomySegment + postureSegment;
+  return base + sandboxSegment + suffix + autonomySegment + postureSegment;
 };
 
 const formatAutonomySegment = (a) => {
@@ -432,7 +464,7 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection, auto
 // ── report + CLI ─────────────────────────────────────────────────────────────────
 
 // The structured report behind `--json`, incl. the same one-line status the --status-line mode emits.
-export const buildReport = (detection, settings = null, autonomy = null, posture = null) => {
+export const buildReport = (detection, settings = null, autonomy = null, posture = null, wiring = null) => {
   const recommendation = recommendRecipe(detection);
   return {
     recipes: RECIPES.map(({ id, title, role, minBackends, degradesTo, summary }) => ({
@@ -446,19 +478,31 @@ export const buildReport = (detection, settings = null, autonomy = null, posture
     recommendation,
     plans: RECIPES.map((r) => planRecipe(r.id, detection)),
     // The --json envelope must never expose a status line staler than the --status-line surface.
-    statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture),
+    statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture, wiring),
+    ...(wiring == null ? {} : { wiring }),
   };
 };
 
 // Deterministic human advisor text: the recipes, the recommendation, and the per-recipe plan here.
-export const formatRecipes = (detection) => {
+export const formatRecipes = (detection, wiring = null) => {
   const lines = [
     'agent-workflow orchestration recipes (read-only — the orchestrator executes via the bridge skills or the executor vehicle and always commits)',
     '',
   ];
   for (const r of RECIPES) lines.push(`  ${r.title} (${r.id}) — ${r.summary}`);
-  const rec = recommendRecipe(detection);
-  lines.push('', `recommended here: ${rec.recipe} — ${rec.clause}`, '', 'plan for the current environment:');
+  const rec = wiring == null ? recommendRecipe(detection) : recommendWiredRecipe(detection, wiring);
+  lines.push('', `recommended here: ${rec.recipe} — ${rec.clause}`);
+  for (const entry of orderedWiringEntries(wiring)) {
+    const alias = DISPLAY_ALIASES[entry.bridge] ?? entry.bridge;
+    if (entry.state === UNWIRED) {
+      const missing = [['excludedCommands', entry.missing.excludedCommands], ['allowedDomains', entry.missing.hosts], ['allowWrite', entry.missing.dirs]]
+        .filter(([, entries]) => entries.length)
+        .map(([key, entries]) => `${key} [${entries.join(', ')}]`).join('; ');
+      lines.push(`  ${UNWIRED}: ${alias} — missing ${missing}; ${wiring.condition}; ${entry.route}`);
+    }
+    if (entry.state === UNCHECKED) lines.push(`  ${UNCHECKED}: ${alias} — ${entry.reason}`);
+  }
+  lines.push('', 'plan for the current environment:');
   for (const r of RECIPES) {
     const p = planRecipe(r.id, detection);
     const arrow = p.degraded ? ` → ${p.effective}` : '';
@@ -493,6 +537,15 @@ export const composeReadiness = (cwd, deps = {}) => {
   return withVehicle(detection, survey);
 };
 
+// The wiring the status line, --json and the default output render. Lazy imports: the leaf reaches
+// this module through bridge-sandbox-recipe.mjs. A failed import fails the run loudly.
+const composeWiring = async (cwd, readiness) => {
+  const { composeBridgeWiring } = await import('./bridge-wiring.mjs');
+  const { preflightVelocityProfile } = await import('./velocity-profile.mjs');
+  const root = projectTopOf(cwd);
+  return composeBridgeWiring({ root, readiness }, { preflight: () => preflightVelocityProfile({ cwd: root }) });
+};
+
 const main = async (argv, deps = {}) => {
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log(`recipes — read-only orchestration-recipe advisor for the agent-workflow family.
@@ -510,7 +563,13 @@ CONFIGURED recipe per activity/slot, resolved from the per-project docs/ai/orche
 from the current directory) + live readiness, with degradation stated and each activity's autonomy
 level beside its cells; paste it verbatim at session start / into the handover "Active recipes:" slot.
 --json emits the structured report (incl. the same line as \`statusLine\`); the three are mutually
-exclusive. Detection only — never writes, never commits, never runs a subscription CLI.`);
+exclusive. Detection only — never writes, never commits, never runs a subscription CLI.
+
+Where the project settings enable the sandbox, a ready bridge whose sandbox entries they lack
+reads "<alias> ✗ not wired — <n> sandbox entr(ies) missing" ("not wired (unused)" when no slot
+uses it), one that cannot be judged "<alias> ✗ unchecked — <reason>"; the status line carries
+" · sandbox: <condition>" after the recipes pointer, and the default output lists the missing
+entries and the route per bridge.`);
     return;
   }
   const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
@@ -525,6 +584,7 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
   }
   const cwd = process.cwd();
   const readiness = composeReadiness(cwd, deps);
+  const wiring = argv.includes('--active-line') ? null : await composeWiring(cwd, readiness);
   if (argv.includes('--active-line')) {
     // Lazy: orchestration-config.mjs statically imports this module — no static cycle.
     const { loadConfig } = await import('./orchestration-config.mjs');
@@ -541,12 +601,12 @@ exclusive. Detection only — never writes, never commits, never runs a subscrip
     }
   } else if (argv.includes('--status-line')) {
     const snapshot = settingsSnapshot();
-    console.log(composeStatusLine(readiness, recommendRecipe(readiness), snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot })));
+    console.log(composeStatusLine(readiness, recommendRecipe(readiness), snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot }), wiring));
   } else if (argv.includes('--json')) {
     const snapshot = settingsSnapshot();
-    console.log(JSON.stringify(buildReport(readiness, snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot })), null, 2));
+    console.log(JSON.stringify(buildReport(readiness, snapshot, await composeAutonomyFacts(cwd), composeConfiguredPosture({ settings: snapshot }), wiring), null, 2));
   }
-  else console.log(formatRecipes(readiness));
+  else console.log(formatRecipes(readiness, wiring));
   return 0;
 };
 

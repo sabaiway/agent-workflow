@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-08 — AD-178: `ready` on the status line means wired (kit 14.28.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
+
+**A ready bridge reads `ready` on the status line only when the project settings cover its sandbox entries, where
+they enable the sandbox; otherwise its cell reads `✗ not wired — <n> sandbox entr(ies) missing` (`✗ not wired
+(unused) — …` when no slot uses it) or `✗ unchecked — <reason>`, and a ` · sandbox: <condition>` segment says which
+meaning `ready` has.** `/agent-workflow-kit recipes` lists each bridge's missing entries and the route, the chat yes of
+`/agent-workflow-kit upgrade` (for a bridge no slot uses, once a slot uses it for review), whose `bridge-tier` item now names every missing entry on its `recipe:` line. The
+`sandbox-lane` item, which settled on an acknowledgement alone, is retired. The new `tools/bridge-wiring.mjs` is the
+one comparison the tier writer and the status line share. Readiness and dispatch are unchanged. Contracts:
+velocity-profile revision 5, init-project revision 5. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-08 — AD-177: the bridge tier wires the used bridges (kit 14.27.0 MINOR, codex-cli-bridge 5.0.1 PATCH; memory 8.1.5, engine 5.12.0 and antigravity-cli-bridge 7.0.0 unchanged)
 
 **`velocity-profile --bridge-tier` wires every bridge the project's recipes use: for a review role the wrapper's

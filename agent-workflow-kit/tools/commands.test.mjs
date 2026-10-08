@@ -93,14 +93,16 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     assert.match(section, /docs\/ai presence gate/, 'the deployment gate is stated alongside the exemption');
   });
 
-  // F08a (AD-040): the standing-consent advisory at the --write success moment — wording-only in
-  // the mode file, the set-recipe.mjs tool echo untouched. Pin its stable tokens.
-  it('the set-recipe mode file carries the standing-consent advisory (hand-adds, quota honesty, solo-silent)', () => {
+  // The bridge-tier chat-yes advisory lives in the mode file; the set-recipe.mjs success echo stays unchanged.
+  it('the set-recipe mode file carries the standing-consent advisory naming the bridge-tier item, its chat yes and no hand-add', () => {
     const section = readFileSync(join(MODES_DIR, 'set-recipe.md'), 'utf8');
-    assert.match(section, /settings\.local\.json/, 'the advisory names the hand-edited local settings file');
+    for (const token of [/bridge-tier/, /chat yes/, /codex-exec \*/, /delegated/]) {
+      assert.match(section, token);
+    }
     assert.match(section, /spends subscription quota without a per-run prompt/, 'the advisory states the quota honesty plainly');
-    assert.match(section, /INCLUDING quoting/, 'the advisory pins the byte-form/quoting rule');
     assert.match(section, /solo recipe gets NO advisory/i, 'solo recipes stay advisory-free');
+    assert.doesNotMatch(section, /hand-add/i);
+    assert.doesNotMatch(section, /Bash\((?:codex|agy)-review:\*\)/);
   });
 });
 

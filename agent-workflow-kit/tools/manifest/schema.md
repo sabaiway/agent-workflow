@@ -100,20 +100,21 @@ drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (hel
 `networkHosts` declares the hosts the backend CLI is **observed** to contact (synthetic examples:
 `*.api.backend.example`, `accounts.backend.example`; the real observed lists live in each bridge's
 `capability.json`) — the **single source** of the hosts `velocity-profile --bridge-tier` seeds
-into the project's `sandbox.network.allowedDomains` for every used bridge, and of a hand-applied
-session sandbox allowlist. Rules:
+into the project's `sandbox.network.allowedDomains` for every used bridge. Rules:
 
 - Each entry is a bare dotted hostname or a `*.family` wildcard — never a scheme/path/port.
-  Entries must be unique. A malformed list **fails** `--strict` (the entries are pasted verbatim
-  into allowlist lines by the Recommendations advisor).
+  Entries must be unique. A malformed list **fails** `--strict` (the tier writes the entries into
+  `sandbox.network.allowedDomains` and the Recommendations advisor renders them on its
+  `bridge-tier` item's `recipe:` line).
 - **The `--bridge-tier` seed is the primary lane** (AD-172): for every used bridge it merges
   hosts into the project's `sandbox.network.allowedDomains` beside the wrapper's `<wrapper> *`
   exclusion (`codex-exec *` for the execution wrapper). A settings-native harness that drops the
   exclusion still admits them; that pre-allow widens egress
-  for **every** sandboxed command, which the tier's consent states. The **hand-apply** fallback
-  stays for a harness-managed sandbox that ignores the settings keys.
+  for **every** sandboxed command, which the tier's consent states. A harness-managed sandbox
+  that ignores the settings keys keeps the harness's own controls — its scoped rules, a session
+  allowance, its consent at the point of action — and the kit writes no shape for it.
 - Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
-  hand-applied list by hand; the manifest list records what was actually observed.
+  manifest list where it was observed; the list records what was actually observed.
 
 ## Writable dirs (REC-UX-REWORK, D6)
 
@@ -124,8 +125,8 @@ declared path is only the **default under no override**. Rules:
 
 - Each entry: `env` is `null` or an **UPPER_SNAKE_CASE env-var name**; `default` is a
   **`~/`-anchored or absolute POSIX path** — no globs, no trailing slash, no `..` traversal.
-  Defaults must be unique. A malformed list **fails** `--strict` (the resolved dir is rendered
-  into a hand-applied recipe line by the Recommendations advisor).
+  Defaults must be unique. A malformed list **fails** `--strict` (the resolved dir is written into
+  `sandbox.filesystem.allowWrite` and rendered on the Recommendations advisor's one-line `recipe:` line).
 - **Resolution is the advisor's, at run time, mirroring the wrapper's byte-semantics:** a
   NON-EMPTY env value wins (an EMPTY env value ≡ unset — the `${VAR:-default}` form); the
   wrapper's exact case-arms apply — `~`, `~/…` and absolute forms ride as-given, EVERY other
@@ -135,8 +136,8 @@ declared path is only the **default under no override**. Rules:
   (the wrapper itself anchors to its invocation `$PWD`); else the `default` applies.
 - **The `--bridge-tier` seeds every used bridge's state dirs**, home-relative under the home
   (absolute outside it), into `sandbox.filesystem.allowWrite` beside the wrapper's `<wrapper> *`
-  exclusion (`codex-exec *` for the execution wrapper) — the entries feed the
-  sandbox-lane discoverability item (session/host sandbox config is hand-applied territory).
+  exclusion (`codex-exec *` for the execution wrapper) — the advisor's `bridge-tier` item counts
+  and names each missing dir.
 
 ## Mode catalog (BRIDGE-MODES-CATALOG)
 

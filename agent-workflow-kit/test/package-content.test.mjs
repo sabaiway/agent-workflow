@@ -202,6 +202,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/write-lanes.mjs', 'tools/init-preflight.mjs', 'tools/init-project.mjs',
       'tools/apply-danger-check.mjs',
       'tools/bridge-state-dirs.mjs',
+      'tools/bridge-wiring.mjs',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -289,7 +290,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // the shared atomic-write core the consented writers run on (AD-042)
       'tools/atomic-write.mjs',
       // the AD-055 Part I consent-gated ack-store writer (docs/ai/acks.json — the family-owned
-      // neutral sandbox-lane fingerprint ack, relocated off the host settings schema)
+      // neutral fingerprint store, relocated off the host settings schema)
       'tools/ack-write.mjs',
       // the strip-the-kit core-evidence writer (D3(b)/(c) + D6/D6a/D7): the git-dir evidence store
       // (red-proof / degrade / summary) the hardened self-control core rides on
@@ -873,7 +874,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 359 = 358 + tools/bridge-sandbox-recipe.mjs - the one reader of the bundled bridges' declared sandbox surfaces (story S11 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE)
     // 363 = 362 + tools/apply-danger-check.mjs - story S1 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 364 = 363 + tools/bridge-state-dirs.mjs - story S2 of BRIDGES-WORK-UNDER-THE-SANDBOX
-    assert.equal(packed.length, 364, `tarball file count drifted (${packed.length}\u2260 364)`);
+    // 365 = 364 + tools/bridge-wiring.mjs - story S3 of BRIDGES-WORK-UNDER-THE-SANDBOX
+    assert.equal(packed.length, 365, `tarball file count drifted (${packed.length}\u2260 365)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

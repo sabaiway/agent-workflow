@@ -1,8 +1,7 @@
 ### The one-line backend-status line (shared by bootstrap + upgrade)
 
-Bootstrap (step 11) and **every** successful `upgrade` exit (steps 4 + 8) print the **same**
-read-only, one-line summary of the optional execution-backends. The line is **machine-composed** —
-run the status-line composer and **paste its single emitted line verbatim**:
+Bootstrap (step 11) and **every** successful `upgrade` exit (steps 4 + 8) share a read-only,
+**machine-composed** backend summary — **paste its single emitted line verbatim**:
 `node ${CLAUDE_SKILL_DIR}/tools/recipes.mjs --status-line`
 The tool runs the backend detector and appends the recipe recommendation itself
 (`composeStatusLine`); the agent **composes nothing factual** — no readiness token, no glyph, no
@@ -10,6 +9,11 @@ recipe clause of its own, ever.
 
 - **Placeholder template (structure only — never copy this example; paste the tool's line):**
   `backends: <alias> <✓|✗> <readiness> · <alias> <✓|✗> <readiness> — run /agent-workflow-kit backends · recipes: <recommendation clause> — see /agent-workflow-kit recipes · autonomy: <per-activity levels> (<policy state>)`
+- **Ready bridge wiring cells (placeholders only):** `<alias> ✗ not wired — <n> sandbox entr(ies) missing`,
+  `<alias> ✗ not wired (unused) — <n> sandbox entr(ies) missing`, `<alias> ✗ unchecked — <reason>`.
+  The ` · sandbox: <condition>` segment follows `— see /agent-workflow-kit recipes`: enabled in the project
+  settings — `ready means wired` where the host honors the settings sandbox keys; not enabled in the project
+  settings — `ready means installed`; `unchecked — <reason>`.
 - The **`autonomy:` segment is appended by the composer itself** (`composeAutonomyFacts`, AD-044) —
   per-activity levels + the policy state (computed defaults / declared / MALFORMED, loud) — the
   agent never types it; the composer resolves the policy from the project root, so the line is
@@ -19,18 +23,15 @@ recipe clause of its own, ever.
   **never blank**: both backends ready → *"Council available, Reviewed the everyday default"*; one
   ready → *"Reviewed available (via …)"*; **none installed → *"Solo — run /agent-workflow-kit setup to
   add a backend"***; a backend present-but-not-ready → Solo with that backend's specific remedy.
-  (Composed by `recommendRecipe` inside the same tool run — never by the agent.)
+  (`recommendWiredRecipe` appends ` · not wired: <alias> (review) — <route>` and
+  ` · unchecked: <aliases>` to the readiness clause in the same tool run.)
 - **Invariants:** **read-only · never blocks the commit gate · never runs a subscription CLI · the
   pointer is the in-agent `backends` mode, never a network fetch · the appended `recipes:` clause
   routes to the in-agent `recipes` mode the same way · `init`/npx never *places* bridges (it
   refreshes only what `setup` already placed, AD-011 §5).**
-- **Composer unavailable → skip with a stated reason, never silently.** The composer is a Node script
-  the **agent host** runs (not the target project), so the only skip condition is "**the agent host
-  can't run it**" — `node` is not on the agent's PATH, or the tool itself errors — **not** "the
-  project has no Node runtime". On that condition, skip the line and say so **with the concrete
-  reason**, e.g. *"Couldn't run the backend status-line composer here (node is not on the agent host
-  PATH), so I'm skipping the backend-status line."* — never a silent skip (Hard Constraint — no
-  silent failures).
+- **Composer unavailable → skip with a stated reason, never silently.** This Node script runs on the
+  **agent host**: skip only when the host lacks `node` on PATH or the tool errors — **not** "the
+  project has no Node runtime". Skip the line and state the concrete reason — never a silent skip.
 
 ### The version block + welcome mat (shared by bootstrap + upgrade)
 
@@ -46,13 +47,11 @@ line), not a fresh helper call. **Beside the backend-status line**, when the tar
 documents it; same agent-host skip-with-reason contract as the status line). Present everything in the
 user's conversational language; never paste the JSON or any internal field name.
 
-**Success state — the happy path never leads with a structure number.** No happy-path report surfaces
-the project's internal `docs/ai` structure version, the stamp filename, or the internal versioning
-vocabulary — that number is inert here and only confuses; it belongs to *Version disclosure* (below).
+**Success state — the happy path never leads with a structure number.** Omit the internal `docs/ai`
+structure version, stamp filename and versioning vocabulary; see *Version disclosure* below.
 Frame the success itself plainly, in the **user's conversational language** (never hardcode a phrase):
 - a **zero-diff no-op `upgrade`** (step 4) → **settings already current — no update is required**
-  (that is the MEANING to convey, not a literal string to embed — say it in the user's conversational
-  language, in your own words);
+  (convey this meaning in the user's conversational language, in your own words);
 - a **fresh `bootstrap`** → its normal "deployed and ready" success, minus the number.
 
 **Version block — the installed package versions, fed from `--json`** (the `docs/ai` structure version
@@ -69,12 +68,9 @@ that skill slot" · `placeholder` → "a placeholder, not a working install" · 
 but its manifest didn't validate" · `unsupported` → "installed but its manifest schema is too new for
 this kit" · `uncheckable` → "couldn't be checked (a permission error)".
 
-**Helper-failure contract (mirror the backend-status line).** The version block needs the
-family-registry helper, which the **agent host** runs. If the host can't run it (`node` not on the
-agent's PATH, or the helper errors), **skip the version block and say so with the concrete reason** —
-e.g. *"Couldn't run the family-registry helper here (node is not on the agent host PATH), so I'm
-skipping the installed-versions block."* — never a silent skip (Hard Constraint). It is non-essential:
-the rest of the report — and the commit gate — proceeds.
+**Helper-failure contract (mirror the backend-status line).** The **agent host** runs family-registry.
+If it lacks `node` on PATH or the helper errors, **skip the version block and say so with the concrete
+reason** — never a silent skip. The rest of the report — and the commit gate — proceeds.
 
 **Welcome mat — the last line(s) of the footer.** After the version block and the backend-status
 line, print *"Run `/agent-workflow-kit help` to see every command."* and *"New to the epic, story and task tier? Run `/agent-workflow-kit tier`."* then **one** recommended next
@@ -87,17 +83,20 @@ priority order:
    note carries `/agent-workflow-kit setup`). An **uncheckable** member ("couldn't be checked" — an
    unknown-freshness note) is **never** a refresh trigger: only a behind note fires this step — the
    uncheckable note already appears in the version block, add nothing more;
-2. else **no backend is ready** (the backend-status line shows none ready) → *set one up with
+2. else **no bridge is ready by the detector's readiness** (not the cell word) → *set one up with
    `/agent-workflow-kit setup`*;
-3. else **a backend is ready but the orchestration config is still all-Solo** (no `reviewed` /
+3. else **a ready bridge's cell reads `✗ not wired —` or `✗ unchecked`** → *see what is missing with
+   `/agent-workflow-kit recipes`* (its lines name each bridge's missing entries and route, or its reason);
+   never on a `✗ not wired (unused)` cell;
+4. else **a backend is ready but the orchestration config is still all-Solo** (no `reviewed` /
    `council` / `delegated` slot anywhere — inspect `docs/ai/orchestration.json`, or read the
    procedures advisor's resolved recipes) → *put it to work with `/agent-workflow-kit recipes`*;
-4. else **the velocity allowlist is not yet seeded** (the envelope's velocity settings show zero
+5. else **the velocity allowlist is not yet seeded** (the envelope's velocity settings show zero
    allow entries) → the optional *`/agent-workflow-kit velocity`* opt-in (never run it without a
    yes);
-5. else **the cheap-lane agent vehicles are not placed** (the envelope's agents settings show zero
+6. else **the cheap-lane agent vehicles are not placed** (the envelope's agents settings show zero
    placed) → the optional *`/agent-workflow-kit agents`* opt-in (never run it without a yes);
-6. else **gates are declared but the approval hook is not wired** (the envelope's hook settings:
+7. else **gates are declared but the approval hook is not wired** (the envelope's hook settings:
    at least one declared gate, wired = no) → the optional *`/agent-workflow-kit hook`* opt-in
    (never run it without a yes). If no rung applies, the two lines above stand alone.
 
@@ -105,11 +104,9 @@ Keep it compact — a few short lines, plain language, no kit-internal terms.
 
 ### Version disclosure — the `docs/ai` structure version, on demand only
 
-The deployment carries an internal **`docs/ai` structure version** (the envelope's `deploymentHead`) —
-the number `upgrade` compares the project's stamp against to decide whether a migration is due. The
-happy path deliberately **hides** it: a user cannot act on it, and because it advances far more slowly
-than the published package version, it reads as *"why is this smaller than what GitHub shows?"* Surface
-it in exactly **three** places, and nowhere else:
+The internal **`docs/ai` structure version** (`deploymentHead`) is what `upgrade` compares the stamp
+against to decide whether a migration is due. Hide it on the happy path; surface it in exactly
+**three** places:
 1. the **never-downgrade STOP** (`${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 2) — the stamp is ahead of what this kit knows,
    so the number IS the message;
 2. the **explicit version-status view** (`${CLAUDE_SKILL_DIR}/references/modes/status.md`) the user deliberately opens;

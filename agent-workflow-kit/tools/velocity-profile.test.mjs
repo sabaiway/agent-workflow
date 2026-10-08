@@ -27,6 +27,8 @@ import {
   isExecutableFile,
   main,
   parseArgs,
+  planVelocityProfile,
+  preflightVelocityProfile,
   screenAllowlistEntry,
   validateProfile,
   writeVelocityProfile,
@@ -34,6 +36,8 @@ import {
 import { GROUNDING_TOOL, REPO_SEARCH_TOOL, REVIEW_ROUNDS_TOOL } from './procedures.mjs';
 import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
 import { buildRecommendations } from './recommendations.mjs';
+import { bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
+import { stateDirsOf } from './bridge-state-dirs.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -1213,6 +1217,42 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
       assert.equal(after.items.some((item) => item.key === 'bridge-tier'), false);
       assert.equal(after.skips.some((skip) => skip.key === 'bridge-tier'), false);
     }
+  });
+
+  it('writer to-add lists come from the leaf on bare-name, covering-dir and complete trees — spec:velocity-profile/S16', async (t) => {
+    const { sandboxSurfaceDelta } = await import('./bridge-wiring.mjs').catch(() => ({}));
+    const computeDelta = sandboxSurfaceDelta ?? (() => { throw new Error('bridge-wiring.mjs absent'); });
+    const config = reviewConfig('council');
+    config['plan-execution'].execute = 'delegated';
+    const excludedCommands = ['agy-review *', 'codex-review *', 'codex-exec *'];
+    const trees = [
+      { excludedCommands: ['codex-review', 'agy-review'], network: { allowedDomains: UNION_HOSTS } },
+      { excludedCommands, network: { allowedDomains: UNION_HOSTS.slice(1) }, filesystem: { allowWrite: ['~/.gemini'] } },
+      { excludedCommands, network: { allowedDomains: UNION_HOSTS }, filesystem: { allowWrite: ['~/.gemini/antigravity-cli', '~/.codex'] } },
+    ];
+    for (const sandbox of trees) {
+      const deps = bridgeProject(t, config, READY);
+      const { cwd, env, home } = deps;
+      const settings = { sandbox };
+      writeJson(settingsPath(cwd), settings);
+      const preflight = preflightVelocityProfile({ cwd }, deps);
+      const plan = planVelocityProfile(preflight, { bridgeTier: true, ...deps });
+      const recipe = bundledSandboxRecipe(usedBridges(config, READY), deps);
+      const dirs = stateDirsOf(recipe.dirEntries, { env, root: cwd, home });
+      const delta = computeDelta({ excludedCommands: recipe.excludedCommands, hosts: recipe.hosts, dirs }, settings.sandbox, { home, root: cwd });
+      assert.deepEqual(
+        [plan.excludedToAdd, plan.hostsToAdd, plan.dirsToAdd],
+        [delta.excludedCommands, delta.hosts, delta.dirs],
+      );
+      if (sandbox === trees.at(-1)) assert.deepEqual([plan.excludedToAdd, plan.hostsToAdd, plan.dirsToAdd], [[], [], []]);
+    }
+    const source = readText(join(KIT_ROOT, 'tools/velocity-profile.mjs'));
+    assert.match(source,
+      /import\s*\{(?=[^}]*\bsandboxSurfaceDelta\b)(?=[^}]*\bHOST_HONORS_QUALIFIER\b)[^}]*\}\s*from\s*['"]\.\/bridge-wiring\.mjs['"]/);
+    const body = source.split('export const planVelocityProfile')[1]?.split('\nexport const ')[0] ?? '';
+    assert.match(body, /\bsandboxSurfaceDelta\(/);
+    assert.doesNotMatch(body, /\bmissingStateDirs\(/);
+    assert.doesNotMatch(body, /\bexisting\w*\.includes\(/);
   });
 
   it('malformed tier network/filesystem keys STOP dry-run and apply with zero writes; other modes and local keys keep their result — spec:velocity-profile/S3', (t) => {

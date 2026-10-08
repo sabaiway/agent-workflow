@@ -164,10 +164,7 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     // nothing runs before confirmation, and no command is ever declared safe-to-run pre-consent.
     assert.doesNotMatch(MODE_DOC, /FIRST run that rendered preview/i, 'the rejected run-preview-before-confirm wording never returns');
     assert.doesNotMatch(MODE_DOC, /safe to run before confirmation/i, 'no command is declared safe to run before confirmation');
-    // The sandbox-lane guidance must be DELIVERED at the consent moment, not left behind a
-    // pointer the user never follows: the ladder rides the note inline.
-    assert.match(MODE_DOC, /the note INCLUDES the sandbox-lanes ladder/i);
-    assert.match(MODE_DOC, /present the whole ladder inline/i);
+    assert.doesNotMatch(MODE_DOC, /the note INCLUDES the sandbox-lanes ladder/i);
   });
 
   it('the item-shape contract documents the optional `recipe:` line (mode doc + README; the tool --help is pinned in recommendations.test.mjs)', () => {
@@ -244,15 +241,12 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     assert.match(lanes, /harness-managed/i);
   });
 
-  it('the harness-managed lane is a NARROWEST-SCOPE ladder — a session-wide allowance is an informed widening, never the default advice', () => {
-    // A blanket session allowance carries the same blast-radius class as the bridge tier's
-    // settings keys — the ladder states scoped-first, widening-informed, bypass-as-fallback.
+  it('the harness-managed lane keeps the harness controls without a kit shape or ack step', () => {
     const lanes = between(MODE_DOC, '**Sandbox lanes', '**Invariants');
-    assert.match(lanes, /NARROWEST-SCOPE ladder/i, 'the ladder framing is present');
-    assert.match(lanes, /wrapper\/command-SCOPED/i, 'scoped rules come first');
-    assert.match(lanes, /INFORMED WIDENING/i, 'a session-scoped allowance is named a widening');
-    assert.match(lanes, /same blast-radius class/i, 'the widening names its risk class plainly');
-    assert.match(lanes, /per-run consented bypass/i, 'the bypass fallback stays on the ladder');
+    const harnessLane = between(lanes, '- **Harness-managed sandbox**', '\n- ');
+    assert.match(harnessLane, /scoped/i);
+    assert.match(harnessLane, /session/i);
+    assert.doesNotMatch(harnessLane, /paste-ready|Record the ack|ack-write/i);
   });
 });
 
@@ -306,8 +300,10 @@ describe('recommendations contract — the retired item key is gone from LIVE su
     }
   });
 
-  it('velocity.md routes the recipe through the sandbox-lane item', () => {
-    assert.match(VELOCITY_DOC, /sandbox-lane/);
+  it('velocity.md routes the bridge surfaces through the bridge-tier item', () => {
+    assert.match(VELOCITY_DOC, /bridge-tier/);
+    assert.doesNotMatch(VELOCITY_DOC, /sandbox-lane/);
+    assert.match(VELOCITY_DOC, /docs\/ai\/acks\.json/);
   });
 
   it('the read-lane canon is documented (velocity.md mechanism + node -e ban; README lane mention) — AD-055 Part II', () => {
@@ -411,7 +407,7 @@ const JEV_NOTE_LITERALS = Object.freeze([
 ]);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
   'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
-  'probeMasksItem', 'probeSandboxLane', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
+  'probeMasksItem', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
 describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked apply', () => {
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
@@ -618,4 +614,84 @@ it('spec:velocity-profile/S10 — every bridge-tier passage names used bridges a
   }
   assert.match(BENEFITS['bridge-tier'], /^velocity — /);
   assert.doesNotMatch(BENEFITS['bridge-tier'], /safer|security|blast radius/iu);
+});
+
+const S21_PATHS = Object.freeze([
+  'README.md', 'references/modes/recommendations.md', 'references/modes/velocity.md',
+  'references/modes/recipes.md', 'references/modes/set-recipe.md', 'references/shared/report-footer.md',
+  'tools/manifest/schema.md', 'tools/recipes.mjs', 'tools/write-lanes.mjs',
+  'tools/manifest/validate.mjs', 'tools/ack-write.mjs', 'tools/velocity-profile.mjs',
+]);
+const S21_PHRASES = Object.freeze([
+  'hand-apply', 'hand-applied', 'hand-add', 'paste-ready', 'by hand',
+  'withhold', 'never writes', 'kit never', 'for safety',
+]);
+const S21_KEYS = Object.freeze([
+  'excludedCommands', 'allowedDomains', 'allowWrite', 'networkHosts', 'writableDirs',
+  'state dir', 'Bash(codex-review', 'Bash(agy-review',
+]);
+const S21_LINE_TOKEN = /sandbox-lane|sandboxLaneAck|not yet acknowledged|unacknowledged sandbox|Record the ack/iu;
+const S21_ACK_PATH = 'tools/ack-write.mjs';
+
+const splitSentences = (text, markdown) => {
+  const paragraphs = text.split('\n').reduce((groups, raw, index) => {
+    const comment = raw.match(/^\s*\/\/\s?(.*)$/u);
+    const content = comment ? comment[1].trim() : raw.trim();
+    const kind = comment ? 'comment' : markdown ? 'markdown' : 'source';
+    const prior = groups.at(-1);
+    if (!content) groups.push([]);
+    else if (!prior?.length || prior[0].kind !== kind || kind === 'source' || /^\s*(?:[-*+] |\d+[.)] |#|\|)/u.test(raw)) {
+      groups.push([{ content, kind, line: index + 1 }]);
+    } else prior.push({ content, kind, line: index + 1 });
+    return groups;
+  }, []);
+  return paragraphs.filter((paragraph) => paragraph.length).flatMap((paragraph) => {
+    const spans = paragraph.map((line, index) => ({
+      ...line, start: paragraph.slice(0, index).reduce((total, entry) => total + entry.content.length + 1, 0),
+    }));
+    const parts = paragraph.map(({ content }) => content).join(' ').split(/[.;] /u);
+    return parts.map((sentence, index) => {
+      const start = parts.slice(0, index).reduce((total, part) => total + part.length + 2, 0);
+      const lines = spans.filter((span) => span.start < start + sentence.length && span.start + span.content.length > start);
+      return { text: sentence, first: lines[0]?.line, last: lines.at(-1)?.line };
+    }).filter(({ text: sentence }) => sentence.trim());
+  });
+};
+
+describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply advice', () => {
+  it('sweeps retired lines and bridge sentences while preserving unrelated hand steps', () => {
+    const usage = spawnSync(process.execPath, [resolve(kitRoot, 'tools/recommendations.mjs'), '--help'], { encoding: 'utf8' });
+    assert.deepEqual([usage.error, usage.status], [undefined, 0], usage.stderr);
+    const surfaces = [
+      ...S21_PATHS.map((path) => [path, read(path)]),
+      ['tools/recommendations.mjs', TOOL_SOURCE.match(/^#![^\n]*\n(?:\/\/[^\n]*\n)+/u)[0]],
+      ['tools/recommendations.mjs --help', usage.stdout],
+    ];
+    const hits = surfaces.flatMap(([path, text]) => [
+      ...text.split('\n').flatMap((line, index) => {
+        const match = line.match(S21_LINE_TOKEN);
+        const defaultLane = path === S21_ACK_PATH && /^export const DEFAULT_ACK_LANE = 'sandbox-lane';$/u.test(line);
+        return match && !defaultLane ? [`${path}:${index + 1}-${index + 1}: ${match[0]}`] : [];
+      }),
+      ...splitSentences(text, path.endsWith('.md') || path.endsWith('--help')).flatMap(({ text: sentence, first, last }) => {
+        const normalized = sentence.toLowerCase();
+        if (/worktrees/iu.test(sentence) && !/codex|agy|antigravity|bridge/iu.test(sentence)) return [];
+        const phrases = S21_PHRASES.filter((phrase) => normalized.includes(phrase));
+        const keys = S21_KEYS.filter((key) => normalized.includes(key.toLowerCase()));
+        return phrases.flatMap((phrase) => keys.map((key) => `${path}:${first}-${last}: ${phrase} + ${key}`));
+      }),
+    ]);
+    for (const path of ['gates', 'state-block-guard', 'core-evidence', 'upgrade']) {
+      assert.match(read(`references/modes/${path}.md`), /paste-ready/iu, path);
+    }
+    for (const command of ['mcp', 'state-block-guard']) {
+      const row = README.split('\n').find((line) => line.includes(`\`/agent-workflow-kit ${command}\``));
+      assert.ok(row, `README row: ${command}`);
+      assert.match(row, /paste-ready/iu, command);
+    }
+    assert.match(MODE_DOC, /HAND-APPLY/u);
+    assert.match(MODE_DOC, /--lane worktrees-dir/u);
+    assert.deepEqual(hits, [], `shipped bridge advice hits:\n${hits.join('\n')}`);
+    assert.doesNotMatch(VELOCITY_DOC, /opt-in-capability: sandbox-lane/iu);
+  });
 });
