@@ -35,6 +35,11 @@ import {
 
 export const START_MARKER = '# >>> agent-workflow-kit hidden mode (managed; do not edit between markers) >>>';
 export const END_MARKER = '# <<< agent-workflow-kit hidden mode <<<';
+// Any other line opening or closing with these prefixes (a damaged hidden-mode marker aside: it
+// refuses) marks ANOTHER kit lane's block (the sandbox-masks lane's): this writer never absorbs,
+// moves or re-encodes a byte of it, a byte that is not UTF-8 aside (the file is read as UTF-8).
+const FOREIGN_OPEN = '# >>> agent-workflow';
+const FOREIGN_CLOSE = '# <<< agent-workflow';
 
 // Recognized legacy forms we ABSORB (local) or MIGRATE (global). Matched by prefix so a minor wording
 // drift can't strand a line (D7/D8).
@@ -101,11 +106,18 @@ const detectEol = (content) => {
 };
 // Split into logical lines; `lines.join(eol)` reproduces the structure (CRLF normalized to `eol`).
 const splitLines = (content) => (content === '' ? [] : content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n'));
-// Re-join, dropping trailing blank lines and ending with exactly one EOL (canonical, idempotent).
+// Each logical line's own ending ('' on an unterminated last line), index-aligned with splitLines.
+const lineEnds = (content) => {
+  if (content === '') return [];
+  const parts = content.split(/(\r\n|\n|\r)/);
+  return parts.filter((_, i) => i % 2 === 0).map((_, i) => parts[2 * i + 1] ?? '');
+};
+// Re-join, dropping trailing blank lines (canonical, idempotent): a plain line takes `eol`; a line
+// given as { text, end } (a foreign block's) keeps its own ending, an absent one on the last line included.
 const joinLines = (lines, eol) => {
   const out = [...lines];
   while (out.length && out[out.length - 1] === '') out.pop();
-  return out.length ? `${out.join(eol)}${eol}` : '';
+  return out.map((l, i) => (typeof l === 'string' ? `${l}${eol}` : `${l.text}${l.end || (i < out.length - 1 ? eol : '')}`)).join('');
 };
 
 // A raw exclude line → an anchored pattern (leading "/"), or null when blank/comment.
@@ -261,15 +273,44 @@ const assembleCandidates = (deps, dir, fsx, forcedPreserve) => {
 
 export const buildBlock = (patterns) => [...new Set(patterns)].sort();
 
-// Find the managed fence in a line array. { state:'none' } | { state:'ok', startIdx, endIdx } |
-// { state:'malformed', reason }. Malformed → caller STOPs with the file byte-for-byte unchanged.
+// Scan every kit marker line (judged trimmed, as the masks lane reads its own): our fence and each
+// foreign block. { state:'none'|'ok', startIdx, endIdx, foreign:Set<lineIdx>, blockStart:Map<closer
+// idx, opener idx> } | { state:'malformed', reason }. A closer `# <<< <lane> <<<` closes only an
+// opener whose lane (its name up to ' — ' or ' >>>') is <lane>; malformed → caller STOPs, file unchanged.
+const DAMAGED_OWN = ['# >>> agent-workflow-kit hidden mode', '# <<< agent-workflow-kit hidden mode'];
 const findFence = (lines) => {
-  const starts = lines.map((l, i) => (l === START_MARKER ? i : -1)).filter((i) => i >= 0);
-  const ends = lines.map((l, i) => (l === END_MARKER ? i : -1)).filter((i) => i >= 0);
-  if (starts.length === 0 && ends.length === 0) return { state: 'none' };
-  if (starts.length !== 1 || ends.length !== 1) return { state: 'malformed', reason: `expected exactly one managed marker pair, found ${starts.length} start / ${ends.length} end` };
-  if (ends[0] < starts[0]) return { state: 'malformed', reason: 'end marker precedes start marker' };
-  return { state: 'ok', startIdx: starts[0], endIdx: ends[0] };
+  const bad = (reason) => ({ state: 'malformed', reason });
+  const foreign = new Set();
+  const blockStart = new Map();
+  const seen = new Set();
+  let open = null;
+  let own = null;
+  for (const [i, raw] of lines.entries()) {
+    const t = raw.trim();
+    const opens = t.startsWith(FOREIGN_OPEN);
+    if (!opens && !t.startsWith(FOREIGN_CLOSE)) continue;
+    const mine = t === START_MARKER || t === END_MARKER;
+    if (!mine && DAMAGED_OWN.some((p) => t.startsWith(p))) return bad(`line ${i + 1} is a damaged hidden-mode marker`);
+    if (opens) {
+      if (open) return bad(`line ${i + 1} opens a block inside the one opened at line ${open.i + 1}`);
+      open = { i, mine, name: t.slice(6) };
+    } else {
+      if (!open) return bad(`line ${i + 1} closes a block that was never opened`);
+      const lane = t.endsWith(' <<<') ? t.slice(6, -4) : null;
+      const closes = mine ? open.mine : !open.mine && lane !== null && open.name.split(/ — | >>>/)[0] === lane;
+      if (!closes) return bad(`line ${i + 1} closes another block than the one opened at line ${open.i + 1}`);
+    }
+    if (seen.has(t)) return bad(`line ${i + 1} repeats the marker of an earlier block`);
+    seen.add(t);
+    if (!opens) {
+      if (mine) own = { startIdx: open.i, endIdx: i };
+      else for (let j = open.i; j <= i; j += 1) foreign.add(j);
+      if (!mine) blockStart.set(i, open.i);
+      open = null;
+    }
+  }
+  if (open) return bad(`the block opened at line ${open.i + 1} is never closed`);
+  return { state: own ? 'ok' : 'none', ...own, foreign, blockStart };
 };
 
 // ── absorb (local pre-existing recognized lines → folded into the fence) ──────────
@@ -280,21 +321,24 @@ const findFence = (lines) => {
 // block. Low-risk rules fold regardless of presence (D8 preserve). A HIGH-RISK rule folds as consent
 // only while its file is still PRESENT; if its file is absent it is left exactly as-is (a deliberate
 // pre-emptive user hide is never silently removed, and there is no present-file report mismatch).
+// A foreign block's line arrives as { text, end } and is kept whole; `removed` lists, in file order,
+// every line taken out (the report names each one).
 const absorbOutside = (outsideLines, isPresent) => {
   const kept = [];
   const absorbed = [];
+  const removed = [];
   for (const raw of outsideLines) {
+    if (typeof raw !== 'string') { kept.push(raw); continue; }
     const t = raw.trim();
-    if (isAd013Comment(t) || isLegacyGlobalHeader(t)) continue; // orphan header for an absorbed rule
     const pat = lineToPattern(raw);
     const canon = pat ? recognizeHideRule(pat) : null;
-    if (canon && (LOWRISK_SET.has(canon) || isPresent(canon))) {
+    if (isAd013Comment(t) || isLegacyGlobalHeader(t)) removed.push(raw); // orphan header for an absorbed rule
+    else if (canon && (LOWRISK_SET.has(canon) || isPresent(canon))) {
       absorbed.push(canon);
-      continue;
-    }
-    kept.push(raw); // unrecognized, or a high-risk recognized rule whose file is absent → leave it
+      removed.push(raw);
+    } else kept.push(raw); // unrecognized, or a high-risk recognized rule whose file is absent → leave it
   }
-  return { kept, absorbed };
+  return { kept, absorbed, removed };
 };
 
 // ── verify (D5 — over the WROTE set; "hidden" ≡ untracked ∧ ignored-by-OUR-source) ─
@@ -396,9 +440,13 @@ export const hideFootprint = (opts = {}, deps = {}) => {
     }
   })();
   const eol = detectEol(content);
-  const lines = splitLines(content);
-  const fence = findFence(lines);
+  const ends = lineEnds(content);
+  const texts = splitLines(content);
+  const fence = findFence(texts);
   if (fence.state === 'malformed') throw stop(`refusing to edit a malformed managed block in ${excludeFile}: ${fence.reason} (file left unchanged)`);
+  const lines = texts.map((l, i) => (fence.foreign.has(i) ? { text: l, end: ends[i] } : l));
+  // A created fence goes before a foreign block that ends the file unterminated, so no byte of it moves.
+  const tailBlock = ends.at(-1) === '' ? lines[fence.blockStart.get(texts.length - 1)] : undefined;
 
   const before = fence.state === 'ok' ? lines.slice(0, fence.startIdx) : lines;
   const fenceBodyLines = fence.state === 'ok' ? lines.slice(fence.startIdx + 1, fence.endIdx) : [];
@@ -416,8 +464,8 @@ export const hideFootprint = (opts = {}, deps = {}) => {
 
   // ── absorb pre-existing recognized lines, assemble + classify candidates ───────
   const isPresentCanon = (canon) => presentOnDisk(canon, fsx, dir);
-  const { kept: cleanBefore, absorbed: absorbedBefore } = absorbOutside(before, isPresentCanon);
-  const { kept: cleanAfter, absorbed: absorbedAfter } = absorbOutside(after, isPresentCanon);
+  const { kept: cleanBefore, absorbed: absorbedBefore, removed: removedBefore } = absorbOutside(before, isPresentCanon);
+  const { kept: cleanAfter, absorbed: absorbedAfter, removed: removedAfter } = absorbOutside(after, isPresentCanon);
   const fenceBodyPatterns = fenceBodyLines.map((l) => recognizeHideRule(lineToPattern(l) ?? '')).filter(Boolean);
   // Every pre-existing recognized hide rule (current fence body + absorbed loose lines, glob children
   // included) is prior consent. LOW-RISK rules are force-preserved as candidates regardless of presence
@@ -455,8 +503,9 @@ export const hideFootprint = (opts = {}, deps = {}) => {
 
   // ── build the new file (splice the fence; preserve outside lines) ──────────────
   const fenceLines = writtenPatterns.length ? [START_MARKER, ...writtenPatterns, END_MARKER] : [];
+  const at = fence.state === 'none' && tailBlock ? cleanBefore.indexOf(tailBlock) : cleanBefore.length;
   const newLines = writtenPatterns.length
-    ? [...cleanBefore, ...fenceLines, ...cleanAfter]
+    ? [...cleanBefore.slice(0, at), ...fenceLines, ...cleanBefore.slice(at), ...cleanAfter]
     : [...cleanBefore, ...cleanAfter];
   const newContent = joinLines(newLines, eol);
   const changed = newContent !== content;
@@ -482,6 +531,7 @@ export const hideFootprint = (opts = {}, deps = {}) => {
     wrote: writtenPatterns,
     added,
     removed,
+    removedOutside: [...removedBefore, ...removedAfter],
     asks: asks.filter((a) => !includedAsks.some((i) => i.pattern === a.pattern)).map((a) => ({ path: a.pattern, reason: a.reason, owner: a.owner })),
     needsUntrack: needsUntrack.map((a) => {
       const target = patternToProbe(a.pattern).replace(/\/$/, '');
@@ -558,6 +608,8 @@ export const formatReport = (r, dryRun) => {
     if (r.removed.length) lines.push(`  • −${r.removed.length} removed: ${r.removed.join(', ')}`);
     if (!r.added.length && !r.removed.length) lines.push('  • +0/−0 — the hidden set is unchanged');
   }
+  // Each line taken out outside the fence, verbatim, on the whole-line machine channel (exempt by grammar).
+  for (const l of r.removedOutside ?? []) lines.push(`  [hide-footprint] ${dryRun ? 'would-remove' : 'removed'}=${l}`);
   for (const a of r.asks) lines.push(`  • ASK ${a.path} — ${a.reason}`);
   for (const n of r.needsUntrack) lines.push(`  • tracked, NOT hidden: ${n.path} — run \`${n.command}\` to un-track (kept on disk)`);
   if (r.dropped.length) lines.push(`  • skipped ${r.dropped.length} already-ignored (tracked .gitignore)`);

@@ -95,6 +95,13 @@ fx('hide-footprint', 'global-removed', true, formatReport(hfResult({
   wrote: ['/AGENTS.md'],
   global: { action: 'removed', source: '/home/u/.gitignore_global', removedLines: ['/AGENTS.md'] },
 }), false).split('\n'));
+const HF_REMOVED_OUTSIDE = ['docs/ai/', '# standalone local-dev agent skills (hide-footprint)'];
+const getRemovedOutsideReport = (dry) => formatReport(hfResult({ action: 'updated', wrote: ['/docs/ai/'], added: [], removed: [], removedOutside: HF_REMOVED_OUTSIDE }), dry).split('\n');
+fx('hide-footprint', 'removed-outside-apply', false, getRemovedOutsideReport(false));
+fx('hide-footprint', 'removed-outside-dry-run', false, getRemovedOutsideReport(true));
+describe('hide-footprint — removed outside report lines (spec:hide-footprint/S5)', () => {
+  it('prints every removed line in order in both tenses', () => { for (const dry of [false, true]) assert.deepEqual(getRemovedOutsideReport(dry).map((line) => line.trimStart()).filter((line) => line.startsWith('[hide-footprint] ')), HF_REMOVED_OUTSIDE.map((line) => '[hide-footprint] ' + (dry ? 'would-remove=' : 'removed=') + line)); });
+});
 
 // ── ensure outcome lines (every token, every cause, through the real ops) ────────
 const witnessedTokens = new Set();

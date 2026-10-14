@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.29.1 — an upgrade keeps the sandbox-masks block byte for byte and names every non-blank line it takes out (AD-181)
+
+**On a hidden deployment, the footprint step of `/agent-workflow-kit upgrade` (`hide-footprint --reconcile`) now leaves
+the sandbox-masks block in `.git/info/exclude` byte-identical.** Before, the step read every line outside its own
+managed block as its own: it could take `/.claude/skills` out of the masks block and re-encode the block's line
+endings while it reported `+0/−0 — the hidden set is unchanged`, and the masks lane then read its block as drifted.
+
+- **Another kit lane's block is kept whole.** A block opened by a `# >>> agent-workflow…` line and closed by its own
+  lane's `# <<< agent-workflow… <<<` line keeps every line, its order and its own line endings, a last line with no
+  line ending included; none of its lines is folded into the hidden-mode block. A hidden-mode block the run creates
+  goes at the end of the file, or right before such a block when that block ends the file with no line ending.
+- **A malformed marker stops the step with nothing written.** A damaged hidden-mode marker, a block opened inside
+  another, a closer with no open block, a closer of another block, a block never closed or a repeated marker refuse
+  with exit 1 and `refusing to edit a malformed managed block in <file>: …`, naming the line at fault; the exclude
+  file is unchanged, on a dry run and under `--unhide` alike.
+- **Every non-blank line taken out is named.** The report lists each non-blank line the run takes out outside the hidden-mode block,
+  verbatim and in file order, one per line: `[hide-footprint] removed=<line>` after an apply,
+  `[hide-footprint] would-remove=<line>` on a dry run. A run that takes out nothing prints none.
+- **The apply ask rule is named by its purpose.** The velocity help, `references/modes/velocity.md`, the README
+  velocity row and the advisor's `velocity-core` texts now say why the rule exists: so all work can stay in auto mode.
+  Without it auto mode refuses a harness apply and you must leave auto mode for it; with it the harness shows its
+  usual dialog. The rule and what it seeds are unchanged.
+- Known limits: the file is read and written as UTF-8, so a byte that is not UTF-8 is not kept, as before; a stop
+  after the file has changed can leave a removed line unreported.
+
 ## 14.29.0 — in auto mode the chat yes applies a harness item through the harness's own dialog: one seeded ask rule (AD-179)
 
 **In a session the harness runs in its auto mode, once the apply ask rule is seeded (every velocity-core, kit-tools-tier or bridge-tier apply seeds it), the

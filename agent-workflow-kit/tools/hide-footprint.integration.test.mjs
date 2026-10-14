@@ -11,7 +11,8 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { hideFootprint, excludePath, START_MARKER } from './hide-footprint.mjs';
+import { hideFootprint, excludePath, main, START_MARKER, START_MARKER as S, END_MARKER as E } from './hide-footprint.mjs';
+import { MASKS_FENCE_START as MS, MASKS_FENCE_END as ME } from './sandbox-masks.mjs';
 
 let gitOk = true;
 before(() => {
@@ -208,5 +209,148 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
       assert.equal(r.visibility, 'ambiguous');
       assert.equal(readExclude(dir), before, 'ambiguous → no write, agent ASKs');
     });
+  });
+
+  describe('mixed-ending reconcile reproduction (spec:hide-footprint/S1)', () => {
+    it('dry-run and applied reconcile answer noop and preserve every byte', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      hideFootprint({ dir }, deps);
+      const before = readExclude(dir).replaceAll('\n', '\r\n') + `${MS}\n/.claude/skills\n${ME}\n`;
+      writeFileSync(join(dir, '.git/info/exclude'), before);
+      for (const dryRun of [true, false]) {
+        const result = hideFootprint({ dir, reconcile: true, dryRun }, deps);
+        assert.equal(result.action, 'noop');
+        assert.equal(readExclude(dir), before);
+      }
+    });
+  });
+
+  describe('foreign block preservation and fence placement (spec:hide-footprint/S2)', () => {
+    it('hide, reconcile and unhide keep the indented LF block and grant no high-risk consent', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      writeFileSync(join(dir, 'GEMINI.md'), '# foreign\n');
+      const BLOCK = `  ${MS}\n/CLAUDE.md\n/GEMINI.md\n  ${ME}\n`;
+      writeFileSync(join(dir, '.git/info/exclude'), `# mine\r\n${BLOCK}# tail\r\n`);
+      for (const options of [{}, { reconcile: true }, { unhide: true }]) {
+        const result = hideFootprint({ dir, ...options }, deps);
+        const content = readExclude(dir);
+        assert.ok(content.indexOf(BLOCK) >= 0);
+        assert.equal(count(content, BLOCK), 1);
+        assert.equal(count(content, '/GEMINI.md'), 1);
+        if (!options.unhide) {
+          assert.deepEqual(result.removedOutside, []);
+          assert.ok(!result.wrote.includes('/GEMINI.md'));
+          assert.ok(result.asks.some((ask) => ask.path === '/GEMINI.md'));
+        }
+      }
+    });
+
+    it('creates the fence after a terminated foreign block', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      const block = `${MS}\n/x\n${ME}\n`;
+      writeFileSync(join(dir, '.git/info/exclude'), `# mine\r\n${block}`);
+      assert.equal(hideFootprint({ dir }, deps).action, 'created');
+      const content = readExclude(dir);
+      assert.ok(content.includes(block));
+      assert.ok(content.indexOf(S) > content.indexOf(ME));
+    });
+
+    it('creates the fence immediately before a foreign block with no final line ending', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      const block = `${MS}\n/x\n${ME}`;
+      writeFileSync(join(dir, '.git/info/exclude'), `# mine\r\n${block}`);
+      assert.equal(hideFootprint({ dir }, deps).action, 'created');
+      assert.ok(readExclude(dir).endsWith(`${E}\r\n${block}`));
+    });
+  });
+
+  describe('verbatim removed lines in file order (spec:hide-footprint/S3)', () => {
+    const OUT = ['docs/ai/', '# standalone local-dev agent skills (AD-013)'];
+    const captureReport = (argv, deps) => {
+      const lines = [];
+      const errors = [];
+      const log = (text) => lines.push(...text.split('\n'));
+      const errlog = (text) => errors.push(text);
+      assert.equal(main(argv, { ...deps, log, errlog }), 0);
+      assert.deepEqual(errors, []);
+      return lines;
+    };
+
+    it('dry-run and apply list each removed line after all deltas and fold the rule into the fence', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      const before = OUT.join('\n') + '\n';
+      writeFileSync(join(dir, '.git/info/exclude'), before);
+      assert.deepEqual(hideFootprint({ dir, dryRun: true }, deps).removedOutside, OUT);
+      assert.equal(readExclude(dir), before);
+      for (const [flags, verb] of [[['--dry-run'], 'would-remove'], [[], 'removed']]) {
+        const lines = captureReport(['--dir', dir, ...flags], deps);
+        const machineLines = lines.map((line) => line.trimStart()).filter((line) => line.startsWith('[hide-footprint] '));
+        assert.deepEqual(machineLines, OUT.map((line) => `[hide-footprint] ${verb}=${line}`));
+        const deltaIndexes = lines.flatMap((line, index) => /^• [+−]/u.test(line.trim()) ? [index] : []);
+        assert.ok(deltaIndexes.length > 0);
+        for (const [index, line] of lines.entries()) {
+          if (line.trimStart().startsWith('[hide-footprint] ')) assert.ok(deltaIndexes.every((delta) => delta < index));
+        }
+        if (verb === 'would-remove') assert.equal(readExclude(dir), before);
+      }
+      const content = readExclude(dir);
+      const ruleIndex = content.indexOf('/docs/ai/\n');
+      assert.ok(ruleIndex > content.indexOf(S) && ruleIndex < content.indexOf(E));
+      for (const line of OUT) assert.ok(!content.split('\n').includes(line));
+    });
+
+    it('subsequent apply and dry-run print no removal lines and return an empty removedOutside', () => {
+      const { dir, deps } = env;
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      writeFileSync(join(dir, '.git/info/exclude'), OUT.join('\n') + '\n');
+      hideFootprint({ dir }, deps);
+      for (const flags of [[], ['--dry-run']]) {
+        const lines = captureReport(['--dir', dir, ...flags], deps);
+        assert.ok(!lines.some((line) => /^\[hide-footprint\] (?:removed|would-remove)=/u.test(line.trim())));
+        assert.deepEqual(hideFootprint({ dir, dryRun: flags.length > 0 }, deps).removedOutside, []);
+      }
+    });
+  });
+
+  describe('malformed blocks refuse without writing (spec:hide-footprint/S4)', () => {
+    const shapes = [
+      ['damaged-fence-pair', ['# >>> agent-workflow-kit hidden mode v2 >>>', '/AGENTS.md', '# <<< agent-workflow-kit hidden mode v2 <<<'], 2],
+      ['fence-start-in-masks', [MS, S, '/AGENTS.md', E, ME], 3],
+      ['masks-opener-in-fence', [S, MS, '/x', ME, E], 3],
+      ['closer-without-opener', [ME], 2],
+      ['fence-end-after-masks-opener', [MS, '/x', E], 4],
+      ['masks-closer-after-fence-start', [S, '/AGENTS.md', ME], 4],
+      ['masks-closer-without-trailing', [MS, '/x', '# <<< agent-workflow sandbox-masks'], 4],
+      ['v2-opener-masks-closer', ['# >>> agent-workflow sandbox-masks-v2 — managed block >>>', '/x', ME], 4],
+      ['masks-shorter-closer', [MS, '/x', '# <<< agent-workflow <<<'], 4],
+      ['never-closed', [MS, '/x'], 2],
+      ['repeated-same-wording', [MS, '/x', ME, MS, '/y', ME], 5],
+      ['repeated-other-wording', [MS, '/x', ME, '# >>> agent-workflow sandbox-masks — other words >>>', '/y', ME], 7],
+    ];
+    const modes = [['apply', []], ['dry-run', ['--dry-run']], ['unhide', ['--unhide']]];
+    for (const [id, lines, faultLine] of shapes) {
+      for (const [mode, flags] of modes) {
+        it(`${id}: ${mode} refuses at line ${faultLine} and preserves every byte`, () => {
+          const { dir, deps } = env;
+          writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+          const before = ['# mine', ...lines].join('\n') + '\n';
+          writeFileSync(join(dir, '.git/info/exclude'), before);
+          const output = [];
+          const errors = [];
+          const log = (text) => output.push(...text.split('\n'));
+          const errlog = (text) => errors.push(text);
+          assert.equal(main(['--dir', dir, ...flags], { ...deps, log, errlog }), 1);
+          const message = errors.join('\n');
+          assert.ok(message.startsWith(`[agent-workflow-kit] refusing to edit a malformed managed block in ${excludePath(deps, dir)}`));
+          assert.match(message, new RegExp(`\\bline ${faultLine}\\b`, 'u'));
+          assert.equal(readExclude(dir), before);
+        });
+      }
+    }
   });
 });

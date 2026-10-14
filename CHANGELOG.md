@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-14 — AD-181: an upgrade keeps the sandbox-masks block byte for byte (kit 14.29.1 PATCH; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
+
+**On a hidden deployment, the upgrade's footprint step now leaves another kit lane's block in `.git/info/exclude` — today
+the sandbox-masks block — byte-identical, and names every non-blank line it takes out outside its own block, one
+`[hide-footprint] removed=<line>` line each (`would-remove=` on a dry run).** Before, it could take
+`/.claude/skills` out of the masks block and re-encode its line endings while reporting `+0/−0 — the hidden set is unchanged`. A damaged, nested,
+stray, crossing, unclosed or repeated marker now stops the step with exit 1 and the file unchanged. The release also
+names the apply ask rule by its purpose: it lets all work stay in auto mode. Contract: hide-footprint revision 1 (new).
+Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-14 — AD-179, AD-180: in auto mode the chat yes applies a harness item through the harness's own dialog (kit 14.29.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
 
 **Every `velocity-profile` allowlist apply (flagless, `--kit-tools`, `--bridge-tier`) now seeds one ask rule, `Bash(node *apply-danger-check.mjs*--apply*)`, into the
