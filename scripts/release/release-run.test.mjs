@@ -210,14 +210,15 @@ test('the run preserves secret paths and finishes with accounting', async () => 
   const live = world.calls.exec.find(({ stage }) => stage === 'live');
   assert.equal(live.argv[live.argv.indexOf('--token-file') + 1], TOKEN_FILE);
   assert.deepEqual(world.calls.exec.find(({ stage }) => stage === 'push').argv, ['push', 'origin', `${NEW_HEAD}:refs/heads/main`]);
-  const hostileKeys = [...mod.GIT_LOCATION_VARS, 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'];
+  const hostileKeys = [...mod.GIT_LOCATION_VARS, 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'];
   assert.equal(mod.GIT_LOCATION_VARS.length, 8);
   const hostile = makeWorld();
   hostile.deps.env = { PATH: '/bin', GIT_AUTHOR_DATE: 'kept', ...Object.fromEntries(hostileKeys.map((key) => [key, '/elsewhere'])) };
   assert.equal(await runRelease(hostile.args(), hostile.deps), EXIT.ok);
   const clean = (env) => hostileKeys.every((key) => env[key] === undefined) && env.PATH === '/bin' && env.GIT_AUTHOR_DATE === 'kept';
   assert.equal(hostile.calls.exec.every(({ options }) => clean(options.env)), true);
-  assert.equal(hostile.calls.gitEnvs.every(clean), true);
+  assert.equal(hostile.calls.gitEnvs.every((env, index) =>
+    (hostile.calls.git[index][0] === '--no-pager' && hostile.calls.git[index][1] === 'config') || clean(env)), true);
   assert.equal(world.calls.reads.includes(TOKEN_FILE), false);
   assert.match(world.logs.at(-1), /^release-run: 8\/8 stages passed · \d+s · 1 invocation[(]s[)]$/u);
 
@@ -245,6 +246,16 @@ test('the run preserves secret paths and finishes with accounting', async () => 
     new Promise((resolve) => setTimeout(() => resolve('unsettled'), SETTLE_MS)),
   ]);
   assert.equal(emittedExit, EXIT.failed);
+  const transportEnvs = hostile.calls.git.flatMap((argv, index) =>
+    argv[0] === '--no-pager' && argv[1] === 'config' ? [hostile.calls.gitEnvs[index]] : []);
+  assert.equal(transportEnvs.length, 1, 'the inherited transport config must be read exactly once');
+  const [transportEnv] = transportEnvs;
+  const channelKeys = ['GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
+  for (const key of channelKeys) assert.equal(transportEnv[key], hostile.deps.env[key]);
+  assert.equal(transportEnv.GIT_CONFIG_GLOBAL, '/dev/null');
+  assert.equal(transportEnv.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(Object.hasOwn(transportEnv, 'GIT_CONFIG'), false);
+  assert.equal(mod.GIT_LOCATION_VARS.every((key) => !Object.hasOwn(transportEnv, key)), true);
 });
 
 // spec:release-run/S16

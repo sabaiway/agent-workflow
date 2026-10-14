@@ -38,6 +38,8 @@ import { SCANNED_TOOL_LANES } from '../references/hooks/gate-approve.mjs';
 import { buildRecommendations } from './recommendations.mjs';
 import { bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
 import { stateDirsOf } from './bridge-state-dirs.mjs';
+import * as velocityModule from './velocity-profile.mjs';
+import { VARIANT_LANES, applySlot } from './write-lanes.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -1793,5 +1795,86 @@ describe('velocity — the allowWrite degrade resolves before it judges, and nam
     assert.ok(line.includes(String.raw`"/etc/two\nlines"`), `a newline is escaped, never a second rendered line: ${line}`);
     assert.ok(line.includes(`"${resolve('/etc/we$(id)ird; rm -rf /')}"`), `the metacharacters are shown as data, quoted: ${line}`);
     assert.equal(out.split('\n').filter((l) => l.includes('allowWrite')).length, 1, 'ONE line, whatever the entry carries');
+  });
+});
+
+const askRule = () => {
+  if (!('APPLY_ASK_RULE' in velocityModule)) throw new Error('APPLY_ASK_RULE is absent');
+  return velocityModule.APPLY_ASK_RULE;
+};
+const globMatches = (rule, command) => new RegExp(`^${rule.slice(5, -1).split('*').map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's').test(command);
+describe('spec:velocity-profile/S23 — the apply ask rule: one byte-form, glob match, seeding by every apply', () => {
+  it('one byte-form, no kit path, in no allow list', () => {
+    const rule = askRule();
+    assert.equal(rule, 'Bash(node *apply-danger-check.mjs*--apply*)');
+    assert.equal(rule.includes(KIT_ROOT), false);
+    assert.equal(UNIVERSAL_READONLY_ALLOWLIST.includes(rule), false);
+    assert.equal(tierEntries().includes(rule), false);
+  });
+  it('every harness apply line matches; no plain check line does', (t) => {
+    const toolsDir = join(makeTempProject(t), "kit dir's", 'tools');
+    const variants = Object.keys(VARIANT_LANES).filter((v) => VARIANT_LANES[v] === 'harness');
+    assert.equal(variants.length, 12);
+    const rule = askRule();
+    for (const platform of ['linux', 'win32']) for (const variant of variants) {
+      const slot = applySlot(variant, { toolsDir, root: '/project', home: '/home/example', env: {}, platform });
+      assert.equal(globMatches(rule, slot.apply), true, `${variant} ${platform}: apply`);
+      assert.equal(globMatches(rule, slot.check), false, `${variant} ${platform}: check`);
+    }
+  });
+  for (const [variant, extra, label] of [
+    ['velocity-core', { toolsDir: '/x/apply-danger-check.mjs/--apply/tools' }, 'toolsDir'],
+    ['velocity-core', { root: '/p/--apply' }, '--cwd root'],
+    ['jev-skill', { env: { CLAUDE_CONFIG_DIR: '/h/--apply/.claude' } }, '--claude-dir'],
+  ]) it(`a check line carrying --apply after apply-danger-check.mjs meets the question too: ${label}`, () => {
+    const slot = applySlot(variant, { toolsDir: '/kit/tools', root: '/project', home: '/home/example', env: {}, platform: 'linux', ...extra });
+    assert.equal(globMatches(askRule(), slot.check), true);
+  });
+  for (const argv of [[], ['--kit-tools']]) it(`${argv.join(' ') || 'flagless'} apply appends it once beside a foreign ask entry; dry run lists it; second apply writes the same bytes`, (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { custom: 1, permissions: { allow: [READ_ALLOW], ask: ['Bash(git push:*)'] } });
+    const before = readText(settingsPath(cwd));
+    const dry = runMain([...argv], cwd);
+    assert.equal(dry.code, EXIT_OK, dry.stderr);
+    assert.equal(readText(settingsPath(cwd)), before);
+    const applied = runMain([...argv, '--apply'], cwd);
+    assert.equal(applied.code, EXIT_OK, applied.stderr);
+    const rule = askRule();
+    assert.ok(dry.stdout.includes(`would add permissions.ask entries: 1\n  - ${rule}\nalready present (ask): 0`), dry.stdout);
+    assert.ok(applied.stdout.includes('added permissions.ask entries: 1'), applied.stdout);
+    const [firstBytes, settings] = [readText(settingsPath(cwd)), readJson(settingsPath(cwd))];
+    assert.deepEqual(settings.permissions.ask, ['Bash(git push:*)', rule]);
+    assert.equal(settings.permissions.allow.includes(rule), false);
+    assert.equal(settings.custom, 1);
+    const second = runMain([...argv, '--apply'], cwd);
+    assert.equal(second.code, EXIT_OK, second.stderr);
+    assert.equal(readText(settingsPath(cwd)), firstBytes);
+    assert.ok(second.stdout.includes('added permissions.ask entries: 0\n  - (none)\nalready present (ask): 1'), second.stdout);
+  });
+  it('--bridge-tier apply seeds it once and a later flagless apply removes nothing', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    ensureClaudeDir(cwd);
+    const home = join(cwd, 'synthetic-home');
+    const code = main(['--apply', '--bridge-tier', '--cwd', cwd], { log: () => {}, errlog: () => {}, findWrapper: () => false, detect: () => [], home, env: { PATH: '/nonexistent-path-for-tests', HOME: home } });
+    assert.equal(code, EXIT_OK);
+    const rule = askRule();
+    assert.deepEqual(readJson(settingsPath(cwd)).permissions.ask, [rule]);
+    assert.equal(runMain(['--apply'], cwd).code, EXIT_OK);
+    assert.deepEqual(readJson(settingsPath(cwd)).permissions.ask, [rule]);
+  });
+  it('--autonomy apply and --autonomy --check keep it and report no drift for it', (t) => {
+    const cwd = makeTempProject(t);
+    seedWorkflowStamp(cwd);
+    writeJson(join(cwd, 'docs/ai/autonomy.json'), { 'plan-execution': { autonomy: 'sandbox' } });
+    ensureClaudeDir(cwd);
+    writeJson(settingsPath(cwd), { permissions: { ask: ['Bash(node *apply-danger-check.mjs*--apply*)'] } });
+    const [applied, checked] = [runMain(['--autonomy', '--apply'], cwd), runMain(['--autonomy', '--check'], cwd)];
+    assert.equal(applied.code, EXIT_OK, applied.stderr);
+    const rule = askRule();
+    assert.equal(readJson(settingsPath(cwd)).permissions.ask.filter((entry) => entry === rule).length, 1);
+    assert.equal(checked.stdout.includes(rule), false, checked.stdout);
   });
 });

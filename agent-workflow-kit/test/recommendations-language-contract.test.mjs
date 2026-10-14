@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { BENEFITS, OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
 import { ACK_LANES } from '../tools/ack-store.mjs';
 import * as lanes from '../tools/write-lanes.mjs';
+import * as velocityModule from '../tools/velocity-profile.mjs';
 
 const need = (mod, name) => {
   if (!(name in mod)) {
@@ -472,13 +473,19 @@ const RETIRED_LANE_LITERALS = Object.freeze([
 ]);
 const INABILITY_TOKEN = /\b(?:the agent|you|the consent flow)\b[^.;\n]*\b(?:cannot|must not|never)\s+(?:run|runs|apply|applies)\b|\bnever (?:you|the agent)\b|\bnever something the consent flow runs\b|\ban item\b[^.;\n]*\bcannot use that lane\b|\b(?:cannot|must not|never)\s+(?:be\s+)?(?:run|applied)\b[^.;\n]*\b(?:you|the agent|the consent flow)\b/iu;
 const CONSENT_ROUTE_LITERALS = Object.freeze([
-  'check:', "user's yes on that result", 'apply:', "that result's digest", 'in the sandbox first',
+  'check:', 'in the sandbox and show its result', 'masked:', 'once more outside the sandbox',
+  'yes is taken on the outside result', "user's yes on that result", 'apply:', "that result's digest",
+  'once, outside the sandbox at once', 'point of action', 'never another line', 'never unseen',
+  'velocity-core preferred', "before any other pick's check runs", "no other pick's check until the user answers",
+  'one plain step', 'leave auto mode for this one action', 'shift+tab', 'the mode indicator in an editor',
+  'in a terminal of your own', 'the same line once more', 'run the advisor again', 'only what is still pending',
   'a check that refuses', 'unapplied and pending', 'a changed digest', 'asks a new yes',
-  'a write the os refuses on a protected file', 'mcp masked report', 'masked:',
-  'once more outside the sandbox', 'point of action', "apply's own environment", 'never another line', 'never unseen',
-  'after a `masked:` check', 'yes is taken on the outside result', 'a no, a harness refusal and any other failure',
-  'leave the item pending with its output shown', 'a chat item is never retried outside the sandbox',
-  'every failure of a chat step is a stop', "user's own step", 'hand-apply', 'whatever its lane', 'handed over as worded',
+  'a no, a harness refusal and any other failure', 'leave the item pending with its output shown',
+  'a chat item is never retried outside the sandbox', 'every failure of a chat step is a stop',
+  "user's own step", 'hand-apply', 'whatever its lane', 'handed over as worded',
+]);
+const RETIRED_ROUTE_LITERALS = Object.freeze([
+  'in the sandbox first', 'a write the os refuses on a protected file', 'mcp masked report',
 ]);
 const UNMEASURED_HOSTS = Object.freeze(['Codex', 'Devin', 'agy', 'macOS']);
 
@@ -521,10 +528,13 @@ describe('spec:init-project/S6 — apply slots and posture notes permit the chec
 });
 
 describe('spec:init-project/S7 — consent route, doc pointers and optional console init', () => {
-  it('recommendations.md states the checked yes, digest, refusals, one visible retry and user-step handoff', () => {
+  it('recommendations.md states the revised route: apply once outside at once, a velocity pick first, the one plain step, no retired arm', () => {
     const doc = MODE_DOC.replace(/\s+/gu, ' ').toLowerCase();
     for (const literal of CONSENT_ROUTE_LITERALS) {
       assert.ok(doc.includes(literal), `recommendations.md states: ${literal}`);
+    }
+    for (const literal of RETIRED_ROUTE_LITERALS) {
+      assert.ok(!doc.includes(literal), `recommendations.md retires: ${literal}`);
     }
   });
 
@@ -561,6 +571,28 @@ describe('spec:init-project/S7 — consent route, doc pointers and optional cons
       assert.match(text, /after the check/i);
       assert.match(text, /\binit\b[^.]*\b(?:optional|may take|instead)\b|\b(?:optional|may take|instead)\b[^.]*\binit\b/i);
       if (text !== MCP_DOC) assert.match(text, /a user item, and any item marked HAND-APPLY, stays your own step/);
+    }
+  });
+});
+
+describe('spec:velocity-profile/S24 — the ask rule is named as a question, never a prompt removed', () => {
+  it('velocity.md and the README velocity row name the seeded rule as a question', () => {
+    const rule = need(velocityModule, 'APPLY_ASK_RULE');
+    assert.ok(VELOCITY_DOC.includes(rule));
+    const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`'));
+    for (const [name, text] of [['velocity.md', VELOCITY_DOC], ['README velocity row', row]]) {
+      const doc = text.replace(/\s+/gu, ' ').toLowerCase();
+      assert.ok(doc.includes('asks before every harness apply'), name);
+      assert.ok(doc.includes('removes no prompt'), name);
+      assert.doesNotMatch(doc, /ask rule[^.|]*\b(?:removes|silences|stops)\b[^.|]*\bprompt/, name);
+    }
+  });
+  it('no line says the check line is allow-listed or names an argv-order rule', () => {
+    need(velocityModule, 'APPLY_ASK_RULE');
+    for (const [name, doc] of [['velocity.md', VELOCITY_DOC], ['recommendations.md', MODE_DOC], ['README.md', README]]) {
+      for (const line of doc.split('\n')) {
+        assert.doesNotMatch(line, /check line[^.]*allow-?list|allow-?list(?:ed)?[^.]*check line|argv[- ]order/i, `${name}: ${line}`);
+      }
     }
   });
 });

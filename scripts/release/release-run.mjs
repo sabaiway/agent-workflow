@@ -4,6 +4,7 @@ import { closeSync, fsyncSync, openSync, readFileSync, renameSync, unlinkSync, w
 import { basename, join, resolve } from 'node:path';
 import { fail, shellQuote } from './dispatch-publish.mjs';
 import { runGitProcess } from './git-process.mjs';
+import { carryTransportConfig, GIT_LOCATION_VARS } from './git-transport-config.mjs';
 import { parseFileExpectation } from './smoke-init.mjs';
 import {
   buildReceipt, commitProofViolation, fingerprint, hasValidRef, lockPath, readReceipt, receiptPath, resumeViolation,
@@ -23,7 +24,7 @@ const SEMVER = /^\d+\.\d+\.\d+$/u;
 const STATUS_ARGS = Object.freeze(['status', '--porcelain', '--untracked-files=all']);
 const CACHED_DIFF_ARGS = Object.freeze(['diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none']);
 const SEQUENCER_REFS = Object.freeze(['MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'REBASE_HEAD']);
-export const GIT_LOCATION_VARS = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_CEILING_DIRECTORIES']);
+export { GIT_LOCATION_VARS };
 const GIT_CONFIG_PREFIX = 'GIT_CONFIG';
 export const isGitRedirectingKey = (key) => GIT_LOCATION_VARS.includes(key) || key.startsWith(GIT_CONFIG_PREFIX);
 const START_COMMIT = 'commit';
@@ -149,13 +150,15 @@ export const runRelease = async (argv, overrides = {}) => {
     ...overrides,
   };
   deps.exec ??= (command, args, options) => runChild(command, args, { ...options, spawnImpl: deps.spawnImpl });
-  deps.env = Object.fromEntries(Object.entries(deps.env).filter(([key]) => !isGitRedirectingKey(key)));
+  const inherited = deps.env;
   deps.git ??= (args, options) => runGitProcess(args, options);
+  deps.env = Object.fromEntries(Object.entries(deps.env).filter(([key]) => !isGitRedirectingKey(key)));
   const parsed = (() => { try { return parseArgs(argv); } catch (error) { return error; } })();
   if (parsed instanceof Error) {
     deps.logError(parsed.message);
     return parsed.exitCode ?? EXIT.usage;
   }
+  deps.env = { ...deps.env, ...await carryTransportConfig(inherited, { git: deps.git, cwd: deps.root, warn: deps.logError }) };
   const state = {
     receipt: null, record: null, invocationCount: 1, commitDuration: 0,
     ownedLock: false, activeLockPath: null, commonDir: null, messageBytes: null, expectedTree: null,

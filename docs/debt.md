@@ -30,6 +30,15 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   hostsAlreadyPresent` (`agent-workflow-kit/tools/velocity-profile.mjs:663`). Narrow fix:
   `assert.equal(listedHosts(r.stdout), undefined)`. Residual: not live, the line is not printed today. Raised by the
   S11 diff review (lens).
+- **VELOCITY-PREFLIGHT-REFUSES-A-SETTINGS-AUTO-MODE** — invariant: a project whose settings run the harness in auto mode
+  gets the apply ask rule like any other. Origin: the velocity preflight stops on any `permissions.defaultMode` outside
+  `SAFE_DEFAULT_MODES` in either project settings file (`agent-workflow-kit/tools/velocity-profile.mjs:853`,
+  `isUnsafeMode`), and the gate-hook preflight reads the same judgement through `resolveEffectiveMode`
+  (`agent-workflow-kit/tools/gate-hook.mjs:258`), so admitting `auto` reaches beyond this writer. Narrow fix: none in
+  story S7 of BRIDGES-WORK-UNDER-THE-SANDBOX (a non-goal of its plan); such a project's user takes the one plain step on
+  each auto-mode refusal. Proof when one lands: a velocity apply on a project with `defaultMode: "auto"` seeds the rule
+  and the gate-hook preflight's verdict on it is unchanged. Residual exposure, live and stated: that project never gets
+  the rule; an `auto` in the user scope stops nothing.
 
 - **JEV-KEY-IN-EVERY-DELEGATED-RUN** — invariant: a delegated run's environment carries no secret its task does not
   use. Origin: the shared key rule `aw_scrub_billing_keys` (every bridge wrapper, spec jev-every-run) passes

@@ -40,7 +40,7 @@ import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
 // consented apply run against the rendered selection — the real writer, never a re-implementation.
 import { applyFill } from './gates-init.mjs';
-import { EXPECTED_WORKFLOW_VERSION, planVelocityProfile, preflightVelocityProfile } from './velocity-profile.mjs';
+import { EXPECTED_WORKFLOW_VERSION, UNIVERSAL_READONLY_ALLOWLIST, planVelocityProfile, preflightVelocityProfile } from './velocity-profile.mjs';
 // The registration fixtures are built from the LEAF's own constants and derived rules — a fixture
 // spelling its own server path or allow rules would drift off the thing the probe actually reads.
 import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, allowRulesFor } from './mcp-registration.mjs';
@@ -49,6 +49,7 @@ import { DEFAULT_SERVER_PATH, ENABLED_KEY, MCP_JSON_REL, SERVER_NAME, SETTINGS_R
 // the suite must LOAD against the pre-fix tree (no leaf, no probe export) so the red proof observes it.
 const { declineFingerprint } = await import('./spec-adoption.mjs').catch(() => ({}));
 const recommendations = await import('./recommendations.mjs');
+const velocityModule = await import('./velocity-profile.mjs');
 const { probeSpecAdoption, probeEnforcement, probeProfileGaps } = recommendations;
 const { composeProfileGapScreen } = await import('./profile-gap-screen.mjs').catch(() => ({}));
 const lanes = await import('./write-lanes.mjs').catch(() => ({}));
@@ -1091,6 +1092,47 @@ describe('recommendations — item probes over fixtures', () => {
     const item = items.find((i) => i.key === 'sandbox-masks');
     assert.ok(item, 'fires when the derivation diverges from the (absent) managed block');
     assert.match(item.apply, /sandbox-masks\.mjs.*--apply/u, 'the apply one-liner is the lane the tool itself renders');
+  });
+});
+
+describe('spec:init-project/S25 — velocity-core names the apply ask rule while it is missing', () => {
+  const velocityCoreOn = (core, rule) => {
+    const root = makeProject();
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: {
+      allow: core ? [...UNIVERSAL_READONLY_ALLOWLIST] : [],
+      ask: rule ? [need(velocityModule, 'APPLY_ASK_RULE')] : [],
+    } }));
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    rmSync(root, { recursive: true, force: true });
+    return items.find((item) => item.key === 'velocity-core');
+  };
+  const rows = [
+    ['core seeded, rule absent', true, false, 'in auto mode a harness apply is judged instead of asked — the apply ask rule is not seeded'],
+    ['neither', false, false, `routine read-only commands still prompt, and in auto mode a harness apply is judged instead of asked — ${UNIVERSAL_READONLY_ALLOWLIST.length + 1} entr(ies) not seeded`],
+    ['rule present, no core', false, true, `routine read-only commands still prompt — ${UNIVERSAL_READONLY_ALLOWLIST.length} audited read-only allowlist entr(ies) not seeded`],
+  ];
+  for (const [state, core, rule, what] of rows) {
+    it(`fires with the text of its state, within ITEM_LINE_CAP: ${state}`, () => {
+      need(velocityModule, 'APPLY_ASK_RULE');
+      const item = velocityCoreOn(core, rule);
+      assert.ok(item);
+      assert.equal(item.variant, 'velocity-core');
+      assert.equal(item.what, what);
+      assert.ok(item.what.length <= ITEM_LINE_CAP);
+    });
+  }
+  it('silent with both present', () => {
+    need(velocityModule, 'APPLY_ASK_RULE');
+    assert.equal(velocityCoreOn(true, true), undefined);
+  });
+  it('one benefit naming the question; no text claims the rule removes a prompt; still twelve harness variants', () => {
+    need(velocityModule, 'APPLY_ASK_RULE');
+    assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; the harness asks before each harness apply');
+    for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
+      if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
+    }
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 12);
   });
 });
 

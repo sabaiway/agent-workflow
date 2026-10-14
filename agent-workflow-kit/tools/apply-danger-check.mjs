@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  CLAUDE_DIR, RENDER_OWNED_REDLINE_RULES,
+  APPLY_ASK_RULE, CLAUDE_DIR, RENDER_OWNED_REDLINE_RULES,
   SAFE_DEFAULT_MODES, SETTINGS_FILE, SETTINGS_LOCAL_FILE, UNIVERSAL_READONLY_ALLOWLIST,
   deriveKitToolsAllowlist, detectAtRoot, mergeAutonomySettings,
   writeAutonomyProfile, writeVelocityProfile,
@@ -165,6 +165,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
       set('sandbox.filesystem.allowWrite', stateDirsOf(recipe.dirEntries, facts));
     }
     set('permissions.allow', allow);
+    set('permissions.ask', [APPLY_ASK_RULE]);
   } else if (variant === 'autonomy-render') {
     set('permissions.defaultMode', SAFE_DEFAULT_MODES);
     set('sandbox.enabled', [true]);
@@ -193,7 +194,8 @@ export const scopeOf = (variant, facts, deps = {}) => {
   return {
     admits: ({ path, key, change, value }) => {
       const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL : path === SETTINGS_FILE;
-      const gains = variant === 'bridge-tier' || key === 'hooks.PreToolUse' || key === ENABLED_KEY || key === CREDENTIALS;
+      const gains = variant === 'bridge-tier' || key === 'hooks.PreToolUse' || key === ENABLED_KEY || key === CREDENTIALS
+        || (VELOCITY_VARIANTS.includes(variant) && key === 'permissions.ask');
       return correctFile && (!gains || change === 'added') && Boolean(allowed[key]?.(value));
     },
     admitsPath: (path, directory = false) => directory ? directories.includes(path)
@@ -227,6 +229,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
       let after = structuredClone(before);
       after.permissions = { ...before.permissions,
         allow: [...(before.permissions?.allow ?? []), ...plan.toAdd, ...plan.tierToAdd, ...plan.bridgeToAdd] };
+      if (plan.askToAdd.length) after.permissions.ask = [...(before.permissions?.ask ?? []), ...plan.askToAdd];
       if (plan.excludedToAdd.length || plan.hostsToAdd.length) {
         after.sandbox = { ...before.sandbox };
         if (plan.excludedToAdd.length) after.sandbox.excludedCommands = [...(before.sandbox?.excludedCommands ?? []), ...plan.excludedToAdd];

@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.29.0 — in auto mode the chat yes applies a harness item through the harness's own dialog: one seeded ask rule (AD-179)
+
+**In a session the harness runs in its auto mode, once the apply ask rule is seeded (every velocity-core, kit-tools-tier or bridge-tier apply seeds it), the
+chat yes of `/agent-workflow-kit upgrade` reaches a harness item's apply through the harness's own permission dialog
+instead of a classifier refusal.** Before, auto mode's classifier judged the
+outside-sandbox apply of a harness item and could refuse it, so the item stayed pending with no way forward in the chat.
+
+- **One ask rule.** Every `velocity-profile` apply (flagless, `--kit-tools`, `--bridge-tier`) appends
+  `Bash(node *apply-danger-check.mjs*--apply*)` to `permissions.ask` in `.claude/settings.json` once, beside any ask
+  entries already there. The harness then asks before every harness apply (the `apply:` line of each harness item the
+  advisor renders). The rule is a
+  question added: it allows nothing and removes no prompt. `--autonomy` leaves it in place. The dry run lists it after
+  the read-only core: `would add permissions.ask entries: N`, the entry, `already present (ask): M`.
+- **The advisor names it.** The `velocity-core` item now fires while the read-only core or the rule is missing, with a
+  text for each case: `in auto mode a harness apply is judged instead of asked — the apply ask rule is not seeded` when
+  only the rule is missing, both clauses when both are.
+- **The danger check admits exactly it.** For `velocity-core`, `kit-tools-tier` and `bridge-tier` the check's planned
+  change carries the rule under `permissions.ask` and admits that one added entry as `nothing widened`; any other added,
+  removed or altered `permissions.ask` entry from those items refuses, naming the key.
+- **The route** (`references/modes/recommendations.md`): the apply line runs once, outside the sandbox at once, so the
+  harness asks at the point of action; a velocity pick is checked and applied before any other, so it seeds the rule
+  first; when auto mode still refuses the check or the apply, the agent gives one plain step — leave auto mode for that
+  one action (Shift+Tab in the terminal, the mode indicator in an editor), or run
+  `npx @sabaiway/agent-workflow-kit@latest init` in a terminal of your own — then runs the same line once more, or the
+  advisor again after `init`.
+- This release seeds no new allow entry anywhere (none for the check line); console `init` is unchanged except that its
+  velocity preview lists the rule, and its one `y` seeds it. Known limit: a project whose settings carry `permissions.defaultMode: "auto"` still stops the velocity
+  preflight, so it gets no rule and takes the plain step (recorded debt).
+
 ## 14.28.0 — `ready` means wired: the status line and `/agent-workflow-kit recipes` say when the project sandbox settings lack a bridge's entries (AD-178)
 
 **A bridge reads `ready` on the status line only when the project settings cover its sandbox entries, where they

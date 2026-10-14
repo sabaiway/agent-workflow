@@ -244,6 +244,8 @@ export const composeVerdict = ({ attention, optional, skipped }) => {
 // WHAT is never truncated: the leaf's suite pins every composed WHAT under the cap.
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
+  'velocity-core.rule': 'in auto mode a harness apply is judged instead of asked — the apply ask rule is not seeded',
+  'velocity-core.both': 'routine read-only commands still prompt, and in auto mode a harness apply is judged instead of asked — {n} entr(ies) not seeded',
   'kit-tools-tier': "the kit's own read-only tools still prompt — {n} kit-tools tier entr(ies) not seeded",
   'bridge-tier': 'bridge-wrappers tier incomplete — {n} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)',
   'autonomy-policy': 'no {path} — the computed defaults apply implicitly (red-lines ask/deny; every activity floors at prompt)',
@@ -317,7 +319,7 @@ const templateBudget = (template) => ITEM_LINE_CAP - template.replace(/\{[A-Za-z
 
 // ── the frozen benefit registry (fact-true; pinned by tests) ────────────────────────────────────
 export const BENEFITS = Object.freeze({
-  'velocity-core': 'velocity — routine read-only commands stop prompting while the maintainer is away',
+  'velocity-core': 'velocity — routine read-only commands stop prompting while the maintainer is away; the harness asks before each harness apply',
   'kit-tools-tier': "velocity — the kit's own read-only tools run promptless (audited, resolved-absolute tier)",
   'bridge-tier':
     'velocity — used bridges get <wrapper> * exclusions (codex-exec * if delegated), hosts, state dirs (allowWrite); reviews: code-mode allows',
@@ -442,8 +444,10 @@ const probeVelocityItems = ({ root, deps, add, skip }) => {
   // deliberately carries NO defensive catch (a dead branch is not honesty; the preflight catch
   // above owns the real failure modes).
   const core = planVelocityProfile(preflight, {});
-  if (core.toAdd.length > 0) {
-    add('velocity-core', fillTemplate(WHATS['velocity-core'], { n: core.toAdd.length }), applyLine(''));
+  if (core.toAdd.length > 0 || core.askToAdd.length > 0) {
+    const template = core.toAdd.length === 0 ? WHATS['velocity-core.rule']
+      : core.askToAdd.length === 0 ? WHATS['velocity-core'] : WHATS['velocity-core.both'];
+    add('velocity-core', fillTemplate(template, { n: core.toAdd.length + core.askToAdd.length }), applyLine(''));
   }
   try {
     const kt = planVelocityProfile(preflight, { kitTools: true });

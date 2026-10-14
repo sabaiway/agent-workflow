@@ -39,6 +39,8 @@ export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
 export const SAFE_DEFAULT_MODES = Object.freeze(['default', 'acceptEdits', 'plan']);
 export const UNSAFE_BYPASS_MODE = 'bypassPermissions';
 export const ACCEPT_EDITS_MODE = 'acceptEdits';
+// The harness asks before every harness apply; an ask rule allows nothing.
+export const APPLY_ASK_RULE = 'Bash(node *apply-danger-check.mjs*--apply*)';
 
 // The audited read-only core. Every entry is a Claude Code Bash allow pattern whose command runs NO
 // mutating operation and NO inline arbitrary code execution through its OWN flags (verified
@@ -335,6 +337,8 @@ absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned by
 (project-exec - it runs YOUR declared gates.json), source-size-check.mjs as ONE exact --check
 byte-string (its read-only mode only - its writers keep prompting), and the writers' exact arg-free
 dry-run preview byte-strings. Never touches settings.local.json.
+Every apply also appends the apply ask rule ${APPLY_ASK_RULE} to permissions.ask
+once, so the harness asks before every harness apply; it allows nothing.
 --bridge-tier (own consent) derives each entry for a used bridge from the effective project recipes:
 review wrappers' CODE mode (codex-review code, agy-review code), the quoted grounding pre-step rule,
 and <wrapper> * exclusions in sandbox.excludedCommands. An execute slot delegating to codex adds
@@ -408,8 +412,8 @@ const validateSettingsShape = (data, relPath) => {
   }
   // The --autonomy render merges into permissions.ask / permissions.deny (arrays) and the top-level
   // `sandbox` object — a malformed one of these is a STOP with ZERO writes, never a merge-through-clobber
-  // (the same precondition posture as permissions.allow above). The allowlist mode never touches these,
-  // so this only tightens the autonomy path.
+  // (the same precondition posture as permissions.allow above). The allowlist mode also appends the
+  // apply ask rule to permissions.ask, so its shape is a precondition for both paths.
   if (data.permissions?.ask !== undefined && !Array.isArray(data.permissions.ask)) {
     throw makeVelocityProfileError(VELOCITY_MALFORMED, `${relPath}: permissions.ask must be an array`);
   }
@@ -587,14 +591,17 @@ const assertTargetWritable = (absPath, deps = {}) => {
 
 const formatJson = (data, eol) => `${JSON.stringify(data, null, SETTINGS_JSON_INDENT).replace(JSON_NEWLINE_PATTERN, eol)}${eol}`;
 
-const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = [], hostsToAdd = []) => {
+const mergeProjectSettings = (projectData, toAdd, acceptEdits, excludedToAdd = [], hostsToAdd = [], askToAdd = []) => {
   const base = projectData ?? {};
   const permissions = getPermissions(base);
   const allow = getAllowEntries(base);
   const mergedAllow = [...allow, ...toAdd.filter((entry) => !allow.includes(entry))];
+  const ask = permissions.ask ?? [];
+  const newAsk = askToAdd.filter((entry) => !ask.includes(entry));
   const mergedPermissions = {
     ...permissions,
     allow: mergedAllow,
+    ...(newAsk.length ? { ask: [...ask, ...newAsk] } : {}),
     ...(acceptEdits === true ? { defaultMode: ACCEPT_EDITS_MODE } : {}),
   };
   // The bridge tier's second and third surfaces: sandbox.excludedCommands and
@@ -626,6 +633,9 @@ const formatAllowlist = (result) => [
   `${result.wrote ? 'added' : 'would add'} read-only core entries: ${result.toAdd.length}`,
   ...formatEntryList(result.toAdd),
   `already present: ${result.alreadyPresent.length}`,
+  `${result.wrote ? 'added' : 'would add'} permissions.ask entries: ${result.askToAdd.length}`,
+  ...formatEntryList(result.askToAdd),
+  `already present (ask): ${result.askAlreadyPresent.length}`,
 ];
 
 // The tier's honest posture, printed on every --kit-tools run: run-gates is project-exec (never
@@ -979,6 +989,9 @@ const deriveUsedBridgeTier = (root, deps = {}) => {
 export const planVelocityProfile = (preflight, opts = {}) => {
   const { acceptEdits, kitTools, bridgeTier } = opts;
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
+  const projectAsk = getPermissions(preflight.projectSettings?.data).ask ?? [];
+  const askToAdd = projectAsk.includes(APPLY_ASK_RULE) ? [] : [APPLY_ASK_RULE];
+  const askAlreadyPresent = projectAsk.includes(APPLY_ASK_RULE) ? [APPLY_ASK_RULE] : [];
   const toAdd = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => !projectAllow.includes(entry));
   const alreadyPresent = UNIVERSAL_READONLY_ALLOWLIST.filter((entry) => projectAllow.includes(entry));
   const tier = kitTools === true ? deriveKitToolsAllowlist({ projectDir: preflight.cwd }) : [];
@@ -1011,6 +1024,8 @@ export const planVelocityProfile = (preflight, opts = {}) => {
   return {
     toAdd,
     alreadyPresent,
+    askToAdd,
+    askAlreadyPresent,
     tierToAdd,
     tierAlreadyPresent,
     kitTools: kitTools === true,
@@ -1074,6 +1089,7 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
     acceptEdits,
     plan.excludedToAdd,
     plan.hostsToAdd,
+    plan.askToAdd,
   ), plan.dirsToAdd);
   fs.writeFile(settingsPath, formatJson(merged, preflight.projectSettings.eol ?? LF), UTF8);
   return { wrote: true, dryRun: false, settingsPath, ...resultBase };

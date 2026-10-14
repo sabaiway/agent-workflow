@@ -46,6 +46,10 @@ export const makeWorld = (options = {}) => {
     calls.gitEnvs.push(callOptions?.env ?? {});
     const key = argv.join(' ');
     calls.order.push(`git:${key}`);
+    if (argv[0] === '--no-pager' && argv[1] === 'config') {
+      return typeof options.transport === 'function' ? options.transport(callOptions)
+        : options.transport ?? { status: 1, stdout: Buffer.alloc(0), stderr: '', error: null, signal: null };
+    }
     if (state.gitFails && key === 'rev-parse HEAD') return { status: 1, stdout: '', stderr: 'read failed', error: null, signal: null };
     if (key.startsWith('rev-parse -q --verify ')) return { status: options.probeFails ? 128 : key.endsWith(` ${options.sequencerRef}`) ? 0 : 1, stdout: '', stderr: options.probeFails ? 'fatal: broken' : '', error: null, signal: null };
     const stdout = key === 'rev-parse HEAD' ? readHead()

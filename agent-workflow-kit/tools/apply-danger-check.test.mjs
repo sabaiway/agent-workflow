@@ -33,6 +33,10 @@ const VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-re
 const CLASSES = ['hosts reachable', 'paths writable', 'commands outside the sandbox', 'prompts removed',
   'commands the harness runs', 'nothing widened'];
 const NOTHING = CLASSES[5];
+const askRule = () => {
+  if (!('APPLY_ASK_RULE' in velocity)) throw new Error('APPLY_ASK_RULE is absent');
+  return velocity.APPLY_ASK_RULE;
+};
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const sorted = (entries) => entries.map((entry) => JSON.stringify(entry)).sort();
 const textValue = (value) => typeof value === 'string' ? value : JSON.stringify(value);
@@ -122,6 +126,7 @@ const expectedPlan = (variant, f, deps = {}) => {
     const after = structuredClone(before);
     after.permissions = { ...before.permissions, allow: [...(before.permissions?.allow ?? []),
       ...p.toAdd, ...p.tierToAdd, ...p.bridgeToAdd] };
+    if ((p.askToAdd ?? []).length) after.permissions.ask = [...(before.permissions?.ask ?? []), ...p.askToAdd];
     if (p.excludedToAdd.length || p.hostsToAdd.length) after.sandbox = {
       ...before.sandbox, excludedCommands: [...(before.sandbox?.excludedCommands ?? []), ...p.excludedToAdd],
       network: { ...before.sandbox?.network,
@@ -524,6 +529,48 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
         syncBuiltinESMExports();
       }
     });
+  });
+});
+
+describe('spec:init-project/S26 — the velocity variants admit exactly the apply ask rule', () => {
+  for (const variant of ['velocity-core', 'kit-tools-tier', 'bridge-tier']) it(`${variant}: lacking the rule prints it added, nothing widened, within scope; carrying it prints no ask entry`, (t) => {
+    const f = fixture(t);
+    const result = unchanged(f, () => danger.checkApply(variant, f));
+    const rule = askRule();
+    assert.ok(result.lines.includes(`  permissions.ask: added ${rule} — nothing widened`));
+    assert.ok(result.lines.includes(`scope: within the declared scope of ${variant}`));
+    assert.deepEqual(result.refused, []);
+    put(join(f.root, SETTINGS), JSON.stringify({ permissions: { ask: [rule] } }));
+    assert.equal(unchanged(f, () => danger.checkApply(variant, f)).lines.some((line) => line.startsWith('  permissions.ask:')), false);
+  });
+  for (const variant of ['velocity-core', 'kit-tools-tier', 'bridge-tier']) it(`${variant}: planted other ask entry and removal of the rule are refused naming permissions.ask; the rule alone is admitted`, (t) => {
+    const f = fixture(t);
+    const rule = askRule();
+    for (const [before, after, refused] of [
+      [null, atKey('permissions.ask', ['Bash(git push:*)']), [{ path: SETTINGS, key: 'permissions.ask', reason: `beyond the declared scope of ${variant}` }]],
+      [atKey('permissions.ask', [rule]), atKey('permissions.ask', []), [{ path: SETTINGS, key: 'permissions.ask', reason: `beyond the declared scope of ${variant}` }]],
+      [null, atKey('permissions.ask', [rule]), []],
+    ]) assert.deepEqual(unchanged(f, () => danger.judgeChange({ variant, files: [{ path: SETTINGS, before, after }],
+      scope: danger.scopeOf(variant, f) })).refused, refused);
+  });
+  it('the autonomy-render scope is unchanged', (t) => {
+    const scope = danger.scopeOf('autonomy-render', fixture(t));
+    const rule = askRule();
+    assert.equal(scope.admits({ path: SETTINGS, key: 'permissions.ask', change: 'added', value: rule }), false);
+    assert.equal(scope.admits({ path: SETTINGS, key: 'permissions.ask', change: 'added', value: velocity.RENDER_OWNED_REDLINE_RULES[0] }), true);
+  });
+  it('real velocity-core apply on a copy: diffFiles(before, written) equals the printed entries, the ask entry included', (t) => {
+    const f = fixture(t);
+    const copy = copyFixture(t, f);
+    const before = json(join(copy.root, SETTINGS));
+    const result = unchanged(copy, () => danger.checkApply('velocity-core', copy));
+    assert.equal(danger.main([...argvFor('velocity-core', copy), '--apply', '--expect', result.digest], capture(copy).io), 0);
+    const judgedEntries = danger.judgeChange({ variant: 'velocity-core',
+      files: [{ path: SETTINGS, before, after: json(join(copy.root, SETTINGS)) }], scope: danger.scopeOf('velocity-core', copy) });
+    assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')),
+      danger.diffFiles(before, json(join(copy.root, SETTINGS))).map((entry, i) => lineOf({ ...entry, class: judgedEntries.entries[i].class })));
+    const rule = askRule();
+    assert.ok(result.lines.includes(`  permissions.ask: added ${rule} — nothing widened`));
   });
 });
 

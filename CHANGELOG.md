@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-14 — AD-179, AD-180: in auto mode the chat yes applies a harness item through the harness's own dialog (kit 14.29.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
+
+**Every `velocity-profile` allowlist apply (flagless, `--kit-tools`, `--bridge-tier`) now seeds one ask rule, `Bash(node *apply-danger-check.mjs*--apply*)`, into the
+project `permissions.ask`, so in the harness's auto mode a harness item's apply shows the harness's own dialog instead
+of being judged and refused.** The rule allows nothing and removes no prompt. The Recommendations `velocity-core` item
+names the rule while it is missing; the danger check admits exactly that one added entry; the consent route runs the
+apply once, outside the sandbox at once, applies a velocity pick first, and gives one plain step when auto mode still
+refuses (leave auto mode for that one action, or run `init` in a console). Contracts: velocity-profile revision 6,
+init-project revision 6. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
+Release tooling (AD-180, in no package): `scripts/release/release-run.mjs` keeps the harness sandbox's git proxy
+transport records — the `http[.<url>].proxyAuthMethod` values and the empty credential-helper resets for the proxy's
+own address — through one confined read of the inherited `-c` channel (the new `scripts/release/git-transport-config.mjs`),
+so the plain command the project allow rule matches runs a release inside the sandbox; every other inherited git config
+and location variable is still stripped. Contract: release-run revision 4.
+
 ## 2026-10-08 — AD-178: `ready` on the status line means wired (kit 14.28.0 MINOR; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
 
 **A ready bridge reads `ready` on the status line only when the project settings cover its sandbox entries, where
