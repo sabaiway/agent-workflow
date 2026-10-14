@@ -575,15 +575,14 @@ describe('spec:init-project/S7 — consent route, doc pointers and optional cons
   });
 });
 
-describe('spec:velocity-profile/S24 — the ask rule is named as a question, never a prompt removed', () => {
-  it('velocity.md and the README velocity row name the seeded rule as a question', () => {
+describe('spec:velocity-profile/S24 — the ask rule is named by its purpose: all work stays in auto mode', () => {
+  it('velocity.md and the README velocity row name the seeded rule by its purpose', () => {
     const rule = need(velocityModule, 'APPLY_ASK_RULE');
     assert.ok(VELOCITY_DOC.includes(rule));
     const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`'));
     for (const [name, text] of [['velocity.md', VELOCITY_DOC], ['README velocity row', row]]) {
       const doc = text.replace(/\s+/gu, ' ').toLowerCase();
-      assert.ok(doc.includes('asks before every harness apply'), name);
-      assert.ok(doc.includes('removes no prompt'), name);
+      for (const phrase of ['so all work can stay in auto mode', 'auto mode refuses a harness apply', 'the rule allows nothing']) assert.ok(doc.includes(phrase), name);
       assert.doesNotMatch(doc, /ask rule[^.|]*\b(?:removes|silences|stops)\b[^.|]*\bprompt/, name);
     }
   });

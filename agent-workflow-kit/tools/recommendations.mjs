@@ -244,8 +244,8 @@ export const composeVerdict = ({ attention, optional, skipped }) => {
 // WHAT is never truncated: the leaf's suite pins every composed WHAT under the cap.
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
-  'velocity-core.rule': 'in auto mode a harness apply is judged instead of asked — the apply ask rule is not seeded',
-  'velocity-core.both': 'routine read-only commands still prompt, and in auto mode a harness apply is judged instead of asked — {n} entr(ies) not seeded',
+  'velocity-core.rule': 'auto mode refuses a harness apply, so work cannot stay in auto mode — the apply ask rule is not seeded',
+  'velocity-core.both': 'routine read-only commands still prompt, and auto mode refuses a harness apply — {n} entr(ies) not seeded',
   'kit-tools-tier': "the kit's own read-only tools still prompt — {n} kit-tools tier entr(ies) not seeded",
   'bridge-tier': 'bridge-wrappers tier incomplete — {n} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)',
   'autonomy-policy': 'no {path} — the computed defaults apply implicitly (red-lines ask/deny; every activity floors at prompt)',
@@ -319,7 +319,7 @@ const templateBudget = (template) => ITEM_LINE_CAP - template.replace(/\{[A-Za-z
 
 // ── the frozen benefit registry (fact-true; pinned by tests) ────────────────────────────────────
 export const BENEFITS = Object.freeze({
-  'velocity-core': 'velocity — routine read-only commands stop prompting while the maintainer is away; the harness asks before each harness apply',
+  'velocity-core': 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode',
   'kit-tools-tier': "velocity — the kit's own read-only tools run promptless (audited, resolved-absolute tier)",
   'bridge-tier':
     'velocity — used bridges get <wrapper> * exclusions (codex-exec * if delegated), hosts, state dirs (allowWrite); reviews: code-mode allows',

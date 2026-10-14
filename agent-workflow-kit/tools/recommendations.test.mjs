@@ -1108,8 +1108,8 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     return items.find((item) => item.key === 'velocity-core');
   };
   const rows = [
-    ['core seeded, rule absent', true, false, 'in auto mode a harness apply is judged instead of asked — the apply ask rule is not seeded'],
-    ['neither', false, false, `routine read-only commands still prompt, and in auto mode a harness apply is judged instead of asked — ${UNIVERSAL_READONLY_ALLOWLIST.length + 1} entr(ies) not seeded`],
+    ['core seeded, rule absent', true, false, 'auto mode refuses a harness apply, so work cannot stay in auto mode — the apply ask rule is not seeded'],
+    ['neither', false, false, `routine read-only commands still prompt, and auto mode refuses a harness apply — ${UNIVERSAL_READONLY_ALLOWLIST.length + 1} entr(ies) not seeded`],
     ['rule present, no core', false, true, `routine read-only commands still prompt — ${UNIVERSAL_READONLY_ALLOWLIST.length} audited read-only allowlist entr(ies) not seeded`],
   ];
   for (const [state, core, rule, what] of rows) {
@@ -1128,7 +1128,7 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
   });
   it('one benefit naming the question; no text claims the rule removes a prompt; still twelve harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
-    assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; the harness asks before each harness apply');
+    assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }

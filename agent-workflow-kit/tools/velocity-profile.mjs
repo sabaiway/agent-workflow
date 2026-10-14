@@ -39,7 +39,7 @@ export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
 export const SAFE_DEFAULT_MODES = Object.freeze(['default', 'acceptEdits', 'plan']);
 export const UNSAFE_BYPASS_MODE = 'bypassPermissions';
 export const ACCEPT_EDITS_MODE = 'acceptEdits';
-// The harness asks before every harness apply; an ask rule allows nothing.
+// Lets all work stay in auto mode: a harness apply meets the harness dialog, not a refusal; an ask rule allows nothing.
 export const APPLY_ASK_RULE = 'Bash(node *apply-danger-check.mjs*--apply*)';
 
 // The audited read-only core. Every entry is a Claude Code Bash allow pattern whose command runs NO
@@ -337,8 +337,8 @@ absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned by
 (project-exec - it runs YOUR declared gates.json), source-size-check.mjs as ONE exact --check
 byte-string (its read-only mode only - its writers keep prompting), and the writers' exact arg-free
 dry-run preview byte-strings. Never touches settings.local.json.
-Every apply also appends the apply ask rule ${APPLY_ASK_RULE} to permissions.ask
-once, so the harness asks before every harness apply; it allows nothing.
+Every apply also appends the apply ask rule ${APPLY_ASK_RULE} to permissions.ask once, so all work
+can stay in auto mode: without it auto mode refuses a harness apply and you must leave auto mode for it; with it the harness shows its usual dialog. It allows nothing.
 --bridge-tier (own consent) derives each entry for a used bridge from the effective project recipes:
 review wrappers' CODE mode (codex-review code, agy-review code), the quoted grounding pre-step rule,
 and <wrapper> * exclusions in sandbox.excludedCommands. An execute slot delegating to codex adds
