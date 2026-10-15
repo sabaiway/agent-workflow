@@ -4,6 +4,52 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.30.0 — the upgrade brings the docs navigator back to green past 80 lines: one yes replaces every edited spec-layer script, and a navigator write the project's own checker rejects is put back (AD-182)
+
+**`/agent-workflow-kit upgrade` now leaves a project with more docs than the navigator's old cap on a navigator its
+own docs check accepts — behind an edited spec-layer file, once the user says yes to replacing it.** Before, the bundled checker stamped `maxLines: 80` into `docs/ai/index.md` whatever its
+length, the navigator step wrote it whatever checker the project's hook runs, and the spec-layer step told the user to
+copy the scripts by hand when one was edited.
+
+- **The bundled checker stamps a cap it honours.** `references/scripts/check-docs-size.mjs` is byte-identical to memory
+  8.2.0's: `maxLines: 80` while the navigator fits, its own line count past that.
+- **An unedited older checker refreshes.** The prior catalog gains the memory 7.0.0–8.1.5 checker body, so the
+  spec-layer step refreshes a deployed checker still on it (`refreshed`, or `seeded` when the run also seeds), unless
+  an edited file of either pair holds it back until the replace run.
+- **One yes replaces every edited file.** While a file of the reader or checker pair carries a body this kit did not
+  ship, the spec-layer step names each such file, the store-root line names them as the reason it waits, and ONE line
+  states its condition and prints the command: `node <kit>/tools/ensure-configs.mjs --reconcile --replace-custom
+  <digest> --cwd <project>`, both paths shell-quoted. The digest binds the set of edited files and their bytes. The
+  upgrade asks one yes naming those files and saying their edits are overwritten, even on a non-zero exit.
+- **The replace run overwrites no edited file the yes did not name.** `--replace-custom <digest>` re-surveys first:
+  while an edited file remains, another set or other bytes is `failed` / `race-unresolved` with nothing written and a
+  fresh replace line; with no edited file left it runs the ordinary step, so a second run of the same line changes
+  nothing. On a match it rewrites each
+  edited file to the bundled body (`carried an edited body — replaced by the bundled one on the user's yes`), refreshes
+  and seeds as the step always does, then runs the navigator step, only after a spec-layer step that did not fail;
+  otherwise its line ends `the navigator step did not run: …`. It is a usage error (exit 2, nothing run) with `--only`,
+  with `--dry-run`, with an empty value or passed twice. No backup copy is written.
+- **The project's own checker judges the navigator.** Where the project deploys `scripts/check-docs-size.mjs` and it,
+  or the `scripts/spec-schema.mjs` it imports, is not the bundled body, the navigator step runs that checker's
+  `--check-index` (30 s, then killed): accepted means exit 0 and a navigator within the `maxLines` it stamps. A
+  navigator accepted as found is `already-current` with nothing written. Otherwise the bundled generator writes and the
+  checker judges again: accepted is `regenerated`; rejected puts the navigator back byte for byte (removed again if it
+  was absent) and reports `customized-preserved`, the run still exiting 0, its line naming the checker's exit and
+  output and the route. A later failure puts back first and keeps its own cause; a put-back that fails is `failed` /
+  `write-refused`, saying a navigator the project's checker rejects may stand; a checker that cannot start or does not
+  answer in time is `failed` / `index-probe-failed`. The dry run runs no project code and says that, unless the
+  spec-layer step first refreshes every such module, the real run judges by the project's checker. With no
+  `scripts/check-docs-size.mjs`, or both modules on the bundled body, the step is unchanged; where it exists, a hook
+  module that is not a regular file is `failed` / `wrong-node-kind` and one that cannot be read `failed` /
+  `unexpected-error`, nothing written.
+- **No shipped instruction says to copy an edited spec-layer script over by hand; past CHANGELOG entries are history.**
+  `upgrade.md` row 3 carries the consent sentence and the `configs` block's STOP waits for that ask; the navigator
+  token list gains `customized-preserved`; the `spec-adoption` example names the replace line's own yes, and its risk
+  text the prior refresh and that yes; the help and header of `ensure-configs.mjs` and
+  the comments of the ensure modules say the same. No outcome token or failure cause is added.
+- Known limits: rules a custom checker's default run adds beyond the cap are outside the judgement; after the yes the
+  upgrade report still relays the first spec-layer line (queued as `UPGRADE-REPORT-RELAYS-THE-PRE-REPLACE-SPECS-LINE`).
+
 ## 14.29.1 — an upgrade keeps the sandbox-masks block byte for byte and names every non-blank line it takes out (AD-181)
 
 **On a hidden deployment, the footprint step of `/agent-workflow-kit upgrade` (`hide-footprint --reconcile`) now leaves

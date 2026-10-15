@@ -11,6 +11,9 @@ import { runCli } from './check-docs-size.mjs';
 const DOC = (title) =>
   `---\ntype: state\nlastUpdated: 2026-08-15\nscope: session\nstaleAfter: never\nowner: none\nmaxLines: 10\n---\n\n# ${title}\n`;
 
+const NAVIGATOR_LINE_FLOOR = 80;
+const EXTRA_DOC_COUNT = 85;
+
 const makeTree = (prefix) => {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
@@ -325,6 +328,31 @@ describe('check-docs-size --ensure-index', () => {
       assert.match(stdout, /ensure-index: regenerated/);
       const { code: checkCode } = await runCli(['--check-index', `--root=${root}`]);
       assert.equal(checkCode, 0);
+    } finally {
+      drop(root);
+    }
+  });
+});
+
+describe('spec:docs-navigator/S2 --ensure-index past the 80-line floor', () => {
+  it('writes a navigator past 80 lines that the default run and --check-index accept', async () => {
+    const root = makeTree('cds-ensure-past-floor-');
+    try {
+      for (const number of Array.from({ length: EXTRA_DOC_COUNT }, (_, index) => index)) {
+        writeFileSync(join(root, 'docs', 'ai', `z-extra-${number}.md`), DOC(`extra ${number}`));
+      }
+      const { code, stdout } = await runCli(['--ensure-index', `--root=${root}`]);
+      assert.equal(code, 0);
+      assert.match(stdout, /ensure-index: regenerated/);
+      const navigator = readFileSync(join(root, 'docs', 'ai', 'index.md'), 'utf8');
+      const lineCount = navigator.split('\n').length - (navigator.endsWith('\n') ? 1 : 0);
+      const maxLines = Number(navigator.match(/^maxLines: (\d+)$/m)?.[1]);
+      assert.ok(lineCount > NAVIGATOR_LINE_FLOOR);
+      const defaultRun = await runCli([`--root=${root}`]);
+      const indexCheck = await runCli(['--check-index', `--root=${root}`]);
+      assert.equal(defaultRun.code, 0, defaultRun.stdout);
+      assert.equal(maxLines, lineCount);
+      assert.equal(indexCheck.code, 0, indexCheck.stdout);
     } finally {
       drop(root);
     }

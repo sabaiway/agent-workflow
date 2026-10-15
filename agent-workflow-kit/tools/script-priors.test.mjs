@@ -32,6 +32,7 @@ const FROZEN_PRIORS = [
   ['check-docs-size.mjs', '4.6.0', '6.0.0', '22d020c3668cdbfb4cbc1f67a8a85b2baa2d0c4956808a50626d37409e81ab38'],
   ['spec-schema.mjs', '5.0.0', '7.2.1', '6a7d1e836c158baab5a412a1ad76d34891934dc28c88486c264a4b5d46f5892a'],
   ['spec-schema.test.mjs', '5.0.0', '7.2.1', '698564d7283281be1826019d214df475bb876687915de086818d8f5ece0e0336'],
+  ['check-docs-size.mjs', '7.0.0', '8.1.5', '0cf90ae2cbfc809847574a8c71a6b1322c783359740b08e0ff179f0d9d04dffc'],
 ];
 const CATALOG_ROWS = FROZEN_PRIORS.length;
 
@@ -108,5 +109,23 @@ describe('classifyDeployedScript — current | prior | custom over real bytes', 
 
   it('digestOf is the sha256 hex of the bytes', () => {
     assert.equal(digestOf(Buffer.from('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  });
+});
+
+describe('spec:docs-navigator/S3 the outgoing checker body is a prior, the deployed test is not', () => {
+  const [file, firstShipped, lastShipped, digest] = FROZEN_PRIORS[11];
+  const row = { file, firstShipped, lastShipped, digest };
+  const readFixture = () => readFileSync(fixturePath(row));
+  it("the 7.0.0 to 8.1.5 row is the twelfth and its digest is the fixture's sha256", () => {
+    assert.equal(SCRIPT_PRIORS.length, 12);
+    assert.deepEqual({ ...SCRIPT_PRIORS[11] }, row);
+    assert.equal(sha256(readFixture()), digest);
+  });
+  it('the fixture classifies prior against the bundled checker', () => {
+    assert.equal(classifyDeployedScript(readFixture(), file, bundleBytes(file)), 'prior');
+  });
+  it('the bundled check-docs-size.test.mjs classifies current', () => {
+    const testFile = 'check-docs-size.test.mjs';
+    assert.equal(classifyDeployedScript(bundleBytes(testFile), testFile, bundleBytes(testFile)), 'current');
   });
 });

@@ -50,6 +50,19 @@ const tokensOf = (stdout) =>
     .filter(Boolean)
     .map(([, op, token]) => ({ op, token }));
 
+const BUNDLE = fileURLToPath(new URL('../references/scripts/', import.meta.url));
+const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after the spec layer succeeds';
+const withCustomChecker = (fn) => withProject((dir) => {
+  mkdirSync(join(dir, 'scripts'));
+  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs']) {
+    writeFileSync(join(dir, 'scripts', name), readFileSync(join(BUNDLE, name)));
+  }
+  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// my own checker\n');
+  const preview = main(['--reconcile', '--only', 'specs', '--cwd', dir]);
+  const digest = preview.stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
+  return fn(dir, digest);
+});
+
 describe('usage — nothing writes without --reconcile', () => {
   it('a bare invocation is a usage error and leaves the tree alone', () => {
     withProject((dir) => {
@@ -242,6 +255,58 @@ describe('--only <op> narrows the run to exactly one operation', () => {
       });
     });
   }
+});
+
+describe('spec:docs-navigator/S6 the replace run and its usage refusals', () => {
+  it('--replace-custom is refused with --only specs, --only index, --dry-run and an empty value, nothing run', () => {
+    withCustomChecker((dir, digest) => {
+      const before = snapshot(dir);
+      for (const [argv, message] of [
+        [['--replace-custom', digest, '--only', 'specs'], /cannot be combined/],
+        [['--replace-custom', digest, '--only', 'index'], /cannot be combined/],
+        [['--replace-custom', digest, '--dry-run'], /cannot be combined/],
+        [['--replace-custom', ''], /needs the digest/],
+        [['--replace-custom='], /needs the digest/],
+      ]) {
+        const result = main(['--reconcile', ...argv, '--cwd', dir]);
+        assert.equal(result.code, 2, result.stderr);
+        assert.equal(result.stdout, '');
+        assert.match(result.stderr, /^ensure-configs: /);
+        assert.match(result.stderr, /--replace-custom/);
+        assert.deepEqual(snapshot(dir), before);
+        assert.match(result.stderr, message);
+      }
+    });
+  });
+  it('the matching digest runs specs with it and then index, and no other op', () => {
+    withCustomChecker((dir, digest) => {
+      const result = main(['--reconcile', '--replace-custom', digest, '--cwd', dir]);
+      assert.equal(result.code, 0, result.stderr);
+      assert.match(digest, /^[0-9a-f]{64}$/);
+      assert.deepEqual(tokensOf(result.stdout), [
+        { op: 'specs', token: 'seeded' },
+        { op: 'index', token: 'regenerated' },
+      ]);
+      assert.equal(result.stdout.split('\n')[0], 'ensure-configs (--reconcile, --replace-custom)');
+      assert.deepEqual(readFileSync(join(dir, 'scripts', 'check-docs-size.mjs')), readFileSync(join(BUNDLE, 'check-docs-size.mjs')));
+      assert.equal(existsSync(join(dir, CONFIG_REL)), false, 'the other ops never ran');
+    });
+  });
+  it('a refused digest leaves the whole tree byte-identical and runs no index op', () => {
+    withCustomChecker((dir) => {
+      const before = snapshot(dir);
+      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false);
+      const result = main(['--reconcile', '--replace-custom', 'f'.repeat(64), '--cwd', dir]);
+      assert.equal(result.code, 1, result.stderr);
+      assert.deepEqual(snapshot(dir), before);
+      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false);
+      assert.match(result.stdout, /^ {2}specs: failed$/m);
+      assert.doesNotMatch(result.stdout, /^ {2}index:/m);
+      const specsBlock = result.stdout.split('\n\n')[0];
+      const details = specsBlock.split('\n').filter((line) => line.startsWith('      '));
+      assert.equal(details.at(-1), `      ${INDEX_NOT_RUN}`);
+    });
+  });
 });
 
 // The CLI entry itself: everything above calls main() in-process, so the guarded entry block — the

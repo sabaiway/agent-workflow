@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '8.1.5'
+  version: '8.2.0'
 ---
 
 # agent-workflow-memory
@@ -251,7 +251,8 @@ Fill strategy:
    is what the pre-commit hook runs, and an older or edited one renders the store row by row and
    reds its own index check. Otherwise seed NO store root and report which file differs: a
    file of either pair still on a body a release shipped is refreshed by the composition root's own upgrade
-   (it carries the catalog of shipped bodies), an edited one is the user's to refresh by hand — this
+   (it carries the catalog of shipped bodies), and an edited one is named by that upgrade and replaced
+   only on the user's yes — this
    substrate carries no such catalog and never overwrites a deployed script. **Same gate, also
    stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry
    point declares always-loaded, so a deployment that never had one must gain it even at head — run

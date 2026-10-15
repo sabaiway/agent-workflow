@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-15 — AD-182: the docs navigator stamps a cap it honours past 80 lines, and the upgrade brings existing installs to it (kit 14.30.0 MINOR, memory 8.2.0 MINOR; engine 5.12.0 and both bridges unchanged)
+
+**The docs checker now stamps `maxLines: 80` into `docs/ai/index.md` while the navigator fits and its own line count
+past that, so a project with many docs no longer gets a navigator its own pre-commit hook refuses.** The upgrade
+refreshes an unedited older checker; behind an edited spec-layer script it names every edited file under one yes and
+replaces them only on it (`ensure-configs.mjs --reconcile --replace-custom <digest>`), then reindexes; and where the
+project's deployed checker, or the reader it imports, is not the bundled one, that checker judges the navigator and a write it rejects is put back byte for
+byte. Contract: docs-navigator revision 1 (new). Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-14 — AD-181: an upgrade keeps the sandbox-masks block byte for byte (kit 14.29.1 PATCH; memory 8.1.5, engine 5.12.0 and both bridges unchanged)
 
 **On a hidden deployment, the upgrade's footprint step now leaves another kit lane's block in `.git/info/exclude` — today

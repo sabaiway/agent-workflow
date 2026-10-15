@@ -7,7 +7,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +53,254 @@ const withDocs = (fn, { packageJson = true } = {}) => {
   }
 };
 const runIndex = (dir, extra = {}) => ensureOps.ensureIndex({ cwd: dir, kitRoot: KIT_ROOT, ...extra });
+
+const GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'check-docs-size.mjs');
+const KJ = "the project's own checker (scripts/check-docs-size.mjs --check-index)";
+const FOUND_BYTES = 'found bytes\n';
+const REJECTING_CHECKER = '// rejects every navigator\nprocess.exit(1);\n';
+const ACCEPTING_CHECKER = '// accepts every navigator\n';
+const TRAPPING_CHECKER = "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 20000);\n";
+const COUNTING_CHECKER = "import { existsSync, writeFileSync } from 'node:fs';\nif (!existsSync('first-ran')) { writeFileSync('first-ran', ''); process.exit(1); }\n" + TRAPPING_CHECKER;
+const withKept = (setup, fn) => withDocs((dir) => {
+  mkdirSync(join(dir, 'scripts'));
+  for (const name of ['check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs']) {
+    writeFileSync(join(dir, 'scripts', name), readFileSync(join(KIT_ROOT, 'references', 'scripts', name)));
+  }
+  writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
+  setup(dir);
+  return fn(dir);
+});
+const spySpawn = (answer = () => undefined) => {
+  const calls = [];
+  return {
+    calls,
+    spawnSync: (cmd, args, options) => {
+      calls.push(args);
+      return answer(args) ?? spawnSync(cmd, args, options);
+    },
+  };
+};
+const snapshotFiles = (dir, rel = '') => new Map(
+  readdirSync(join(dir, rel), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => {
+    const path = join(rel, entry.name);
+    return entry.isDirectory() ? [...snapshotFiles(dir, path)] : [[path, readFileSync(join(dir, path))]];
+  }),
+);
+const writeChecker = (dir, body) => writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), body);
+const readPriorChecker = () => readFileSync(join(KIT_ROOT, 'test', 'fixtures', 'script-priors', '7.0.0', 'check-docs-size.mjs.txt'));
+const setRejected = (dir, found = true) => {
+  writeChecker(dir, REJECTING_CHECKER);
+  if (found) writeFileSync(join(dir, INDEX_REL), FOUND_BYTES);
+};
+const spyBrokenGenerator = (dir) => spySpawn((args) => {
+  if (args[0] !== GENERATOR) return undefined;
+  writeFileSync(join(dir, INDEX_REL), 'garbage\n');
+  return { status: 3, stdout: '', stderr: 'boom\n' };
+});
+const refusePutBack = (op) => () => {
+  throw Object.assign(new Error(`EACCES: permission denied, ${op}`), { code: 'EACCES' });
+};
+const assertPutBackFailure = (r) => {
+  assert.equal(r.token, 'failed');
+  assert.equal(r.failed, true);
+  assert.match(r.lines[0], /^write-refused — docs\/ai\/index\.md: putting the navigator back failed \(/);
+  assert.match(r.lines[0], /may stand/);
+  assert.doesNotMatch(r.lines[0], /was put back/);
+};
+
+describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts the navigator under the project\'s checker', () => {
+  it('a navigator the kept probe accepts is already-current, with no write and no bundled launch', () => {
+    for (const variant of ['reader', 'prior', 'accepting', 'tab']) {
+      withKept((dir) => {
+        assert.equal(runIndex(dir).token, 'regenerated');
+        if (variant === 'reader') {
+          const path = join(dir, 'scripts', 'spec-schema.mjs');
+          writeFileSync(path, readFileSync(path, 'utf8') + '// mine\n');
+        } else writeChecker(dir, variant === 'prior' ? readPriorChecker() : ACCEPTING_CHECKER);
+        if (variant === 'tab') writeFileSync(join(dir, INDEX_REL), readFileSync(join(dir, INDEX_REL), 'utf8').replace(/^maxLines: /m, `maxLines:${String.fromCharCode(9)}`));
+      }, (dir) => {
+        const before = readFileSync(join(dir, INDEX_REL));
+        const spy = spySpawn();
+        const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+        assert.equal(r.token, 'already-current', variant);
+        assert.equal(r.lines[0], `docs/ai/index.md: in sync under ${KJ} and within the maxLines it stamps — nothing written`, variant);
+        assert.equal(spy.calls.some((args) => args[0] === GENERATOR), false, variant);
+        assert.deepEqual(readFileSync(join(dir, INDEX_REL)), before, variant);
+      });
+    }
+  });
+  it('exit 0 over a navigator past its own stamp is rejected, written by the bundled generator and regenerated once accepted', () => {
+    withKept((dir) => {
+      writeChecker(dir, ACCEPTING_CHECKER);
+      writeFileSync(join(dir, INDEX_REL), '---\nmaxLines: 2\n---\nx\ny\n');
+    }, (dir) => {
+      const spy = spySpawn();
+      const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+      assert.ok(spy.calls.some((args) => args[0] === GENERATOR && args[1] === '--ensure-index'));
+      assert.equal(r.token, 'regenerated');
+      assert.equal(r.lines[0], `docs/ai/index.md: written by the bundled generator — in sync under ${KJ} and within the maxLines it stamps`);
+    });
+  });
+  it('a rejected write is put back byte for byte as customized-preserved, the run not failed', () => {
+    withKept(setRejected, (dir) => {
+      const r = runIndex(dir);
+      assert.equal(r.token, 'customized-preserved');
+      assert.equal(r.failed, false);
+      assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), FOUND_BYTES);
+      assert.equal(r.lines[0], `docs/ai/index.md: ${KJ} rejected the bundled render on its index check (it exited with code 1), and the navigator as found did not pass it either (its index check) — the navigator was put back byte for byte. The route: the replace line printed for the spec layer (scripts/check-docs-size.mjs), run on the user's yes`);
+    });
+  });
+  it('an absent navigator is removed again; a prior checker\'s route is the refresh, or the replace behind an edited file', () => {
+    for (const edited of [false, true]) {
+      withKept((dir) => {
+        writeChecker(dir, readPriorChecker());
+        if (edited) writeFileSync(join(dir, 'scripts', 'check-docs-size.test.mjs'), '// mine\n');
+        for (let n = 0; n < 85; n += 1) writeFileSync(join(dir, 'docs', 'ai', `extra-${n}.md`), DOC_BODY);
+      }, (dir) => {
+        const r = runIndex(dir);
+        assert.equal(r.token, 'customized-preserved');
+        assert.equal(existsSync(join(dir, INDEX_REL)), false);
+        assert.match(r.lines[0], /found absent, it was removed again/);
+        assert.ok(r.lines[0].endsWith(edited ? "The route: the replace line printed for the spec layer (scripts/check-docs-size.test.mjs), run on the user's yes" : "The route: the spec layer's refresh of the modules the project's hook loads, then this step again"), edited);
+      });
+    }
+  });
+  it('a generator failure after the launch puts back and keeps its cause', () => {
+    withKept(setRejected, (dir) => {
+      const spy = spyBrokenGenerator(dir);
+      const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+      assert.equal(r.token, 'failed');
+      assert.equal(r.lines[0], 'generator-failed — docs/ai/index.md: the bundled generator exited with code 3: boom — the navigator was put back byte for byte');
+      assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), FOUND_BYTES);
+    });
+  });
+  it('a put-back that fails is write-refused and never says it put back', () => {
+    for (const found of [true, false]) {
+      withKept((dir) => setRejected(dir, found), (dir) => {
+        const op = found ? 'rename' : 'unlink';
+        assertPutBackFailure(runIndex(dir, { deps: { [op]: refusePutBack(op) } }));
+      });
+    }
+  });
+  it('a put-back that fails after a generator failure or a timed-out second probe names that failure first', () => {
+    for (const timeout of [false, true]) {
+      withKept((dir) => {
+        setRejected(dir);
+        if (timeout) writeChecker(dir, COUNTING_CHECKER);
+      }, (dir) => {
+        const spy = timeout ? spySpawn() : spyBrokenGenerator(dir);
+        const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync, rename: refusePutBack('rename'), keptProbeTimeoutMs: 500 } });
+        assertPutBackFailure(r);
+        assert.ok(r.lines[0].includes(timeout ? `after ${KJ} could not answer (` : 'after the bundled generator exited with code 3: boom'));
+      });
+    }
+  });
+  it('a kept probe that cannot launch is index-probe-failed with nothing written and no bundled launch', () => {
+    withKept(setRejected, (dir) => {
+      const before = snapshotFiles(dir);
+      const spy = spySpawn((args) => args[0].startsWith(join(dir, 'scripts'))
+        ? { error: new Error('spawn EACCES'), status: null, stdout: '', stderr: '' } : undefined);
+      const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+      assert.equal(r.token, 'failed');
+      assert.equal(r.lines[0], `index-probe-failed — docs/ai/index.md: ${KJ} could not be launched or did not answer in time (spawn EACCES) — nothing was written`);
+      assert.equal(spy.calls.some((args) => args[0] === GENERATOR), false);
+      assert.deepEqual(snapshotFiles(dir), before);
+    });
+  });
+  it('a checker that traps SIGTERM and outlasts the timeout is killed and index-probe-failed', () => {
+    withKept((dir) => writeChecker(dir, TRAPPING_CHECKER), (dir) => {
+      const before = snapshotFiles(dir);
+      const start = Date.now();
+      const r = runIndex(dir, { deps: { keptProbeTimeoutMs: 500 } });
+      assert.ok(Date.now() - start < 10000);
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+      assert.match(r.lines[0], /ETIMEDOUT/);
+      assert.match(r.lines[0], /killed on signal SIGKILL/);
+      assert.ok(r.lines[0].endsWith('— nothing was written'));
+      assert.deepEqual(snapshotFiles(dir), before);
+    });
+  });
+  it('a second probe that times out is index-probe-failed after the put-back', () => {
+    withKept((dir) => {
+      setRejected(dir);
+      writeChecker(dir, COUNTING_CHECKER);
+    }, (dir) => {
+      const r = runIndex(dir, { deps: { keptProbeTimeoutMs: 500 } });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^index-probe-failed — /);
+      assert.match(r.lines[0], /ETIMEDOUT/);
+      assert.ok(r.lines[0].endsWith('— the navigator was put back byte for byte'));
+      assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), FOUND_BYTES);
+    });
+  });
+  it('a navigator that cannot be read back after the bundled write is put back as unexpected-error', () => {
+    withKept((dir) => {
+      setRejected(dir);
+      writeChecker(dir, "import { existsSync, writeFileSync } from 'node:fs';\nif (!existsSync('first-ran')) { writeFileSync('first-ran', ''); process.exit(1); }\n");
+    }, (dir) => {
+      let launched = false;
+      const spy = spySpawn((args) => { launched ||= args[0] === GENERATOR; });
+      const readFile = (path, ...rest) => (launched && path === join(dir, INDEX_REL) ? refusePutBack('open')() : readFileSync(path, ...rest));
+      const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync, readFile } });
+      assert.equal(r.token, 'failed');
+      assert.match(r.lines[0], /^unexpected-error — docs\/ai\/index\.md: the navigator could not be read back after the bundled write \(EACCES/);
+      assert.ok(r.lines[0].endsWith('— the navigator was put back byte for byte'));
+      assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), FOUND_BYTES);
+    });
+  });
+  it('the dry run launches no project code and says the real run judges by the project\'s checker', () => {
+    withKept((dir) => writeChecker(dir, "import { writeFileSync } from 'node:fs';\nwriteFileSync('stub-ran', '');\nprocess.exit(1);\n"), (dir) => {
+      const r = runIndex(dir, { dryRun: true });
+      assert.equal(existsSync(join(dir, 'stub-ran')), false);
+      assert.equal(r.lines.at(-1), `a module the project's hook loads (scripts/check-docs-size.mjs) is not the bundled one: unless the spec-layer step of this run first refreshes every such module, the real run judges the navigator by ${KJ} and puts back a write it rejects`);
+    });
+  });
+  it('a custom test file alone, and an absent checker beside any reader or a root scripts file, keep today\'s path', () => {
+    for (const variant of ['test', 'absent', 'reader-dir', 'scripts-file']) {
+      withKept((dir) => {
+        const path = join(dir, 'scripts', variant === 'test' ? 'check-docs-size.test.mjs' : 'check-docs-size.mjs');
+        if (variant === 'test') writeFileSync(path, readFileSync(path, 'utf8') + '// mine\n');
+        else rmSync(path);
+        if (variant === 'reader-dir') {
+          rmSync(join(dir, 'scripts', 'spec-schema.mjs'));
+          mkdirSync(join(dir, 'scripts', 'spec-schema.mjs'));
+        }
+        if (variant === 'scripts-file') {
+          rmSync(join(dir, 'scripts'), { recursive: true, force: true });
+          writeFileSync(join(dir, 'scripts'), '');
+        }
+      }, (dir) => {
+        const spy = spySpawn();
+        const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+        assert.equal(spy.calls.some((args) => args[0].startsWith(join(dir, 'scripts'))), false, variant);
+        assert.equal(r.token, 'regenerated', variant);
+        assert.equal(r.lines[0], 'docs/ai/index.md: written from the source frontmatter — the navigator is in sync again', variant);
+      });
+    }
+  });
+  it('an unreadable bundled module is bundle-unreadable with nothing written', () => withKept((dir) => writeChecker(dir, REJECTING_CHECKER), (dir) => {
+    const before = snapshotFiles(dir);
+    const r = runIndex(dir, { deps: { readFile: (path, ...rest) => (path === GENERATOR ? refusePutBack('open')() : readFileSync(path, ...rest)) } });
+    assert.equal(r.token, 'failed');
+    assert.match(r.lines[0], /^bundle-unreadable — scripts\/check-docs-size\.mjs: the bundled module could not be read, so nothing was written — reinstall the kit\. EACCES/);
+    assert.deepEqual(snapshotFiles(dir), before);
+  }));
+  it('a hook module that is a directory is wrong-node-kind with nothing written, whatever the reader beside it', () => {
+    for (const name of ['spec-schema.mjs', 'check-docs-size.mjs']) {
+      withKept((dir) => {
+        rmSync(join(dir, 'scripts', name));
+        mkdirSync(join(dir, 'scripts', name));
+      }, (dir) => {
+        const before = snapshotFiles(dir);
+        const r = runIndex(dir, { deps: { readFile: (path, ...rest) => (path === join(dir, 'scripts', 'spec-schema.mjs') ? refusePutBack('open')() : readFileSync(path, ...rest)) } });
+        assert.equal(r.token, 'failed', name);
+        assert.equal(r.lines[0], `wrong-node-kind — scripts/${name}: exists but is a directory — the project's hook loads it, so nothing was read or written; resolve it by hand and re-run`);
+        assert.deepEqual(snapshotFiles(dir), before, name);
+      });
+    }
+  });
+});
 
 // The vocabulary is closed at RUNTIME, not by convention. If that door ever stopped refusing, an op
 // could print a word the mode doc never taught — the exact defect both review backends raised.

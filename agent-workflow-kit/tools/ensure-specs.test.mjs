@@ -5,6 +5,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -12,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
 import { PRIOR_FILES } from './script-priors.mjs';
+import { main } from './ensure-configs.mjs';
 
 const { ensureSpecs, decideWrites, READER_PAIR, CHECKER_PAIR } = await import('./ensure-specs.mjs').catch(() => ({}));
 
@@ -44,8 +46,8 @@ const place = (dir, name, state) => {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
   writeFileSync(path, state === 'current' ? bundle(name) : state === 'prior' ? prior(name) : CUSTOM);
 };
-const withProject = (table, fn, { node = true } = {}) => {
-  const dir = mkdtempSync(join(tmpdir(), 'ensure-specs-'));
+const withProject = (table, fn, { node = true, prefix = 'ensure-specs-' } = {}) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   try {
     mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
     if (node) writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}\n');
@@ -85,6 +87,98 @@ const storeSeeded = (dir) => {
   assert.equal(body.includes('{{'), false, 'every placeholder rendered');
   assert.match(body, new RegExp(`^lastUpdated: ${TODAY}$`, 'm'));
 };
+
+const digestOf = (files) => createHash('sha256').update([...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+  .map(([rel, bytes]) => `${rel} ${createHash('sha256').update(bytes).digest('hex')}`).join('\n')).digest('hex');
+const replaceLineOf = (lines) => lines.find((line) => line.startsWith('to replace the edited files named above'));
+const digestFrom = (lines) => replaceLineOf(lines)?.match(/--replace-custom ([a-f0-9]{64}) /)?.[1];
+const readCustomFiles = (dir, names) => names.map((name) => [`scripts/${name}`, readFileSync(join(dir, 'scripts', name))]);
+const CUSTOM_CHECKER = { reader: ['current', 'current'], checker: ['custom', 'current'] };
+const assertPreview = (dir, result, name) => {
+  const rel = `scripts/${name}`;
+  assert.equal(result.token, 'customized-preserved');
+  assert.ok(result.lines.includes(`${rel}: carries a body this kit did not ship as current — preserved verbatim; the writes that depend on it wait until it is replaced on the user's yes (the replace line below)`));
+  assert.ok(result.lines.includes(`${STORE}: not seeded — it waits on the edited ${rel} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`));
+  assert.equal(result.lines.filter((line) => line.startsWith('to replace the edited files named above')).length, 1);
+  assert.equal(result.lines.at(-1), `to replace the edited files named above, run this only on the user's yes — the bundled bodies overwrite their edits: node ${KIT_ROOT}/tools/ensure-configs.mjs --reconcile --replace-custom ${digestOf(readCustomFiles(dir, [name]))} --cwd ${dir}`);
+  assert.doesNotMatch(result.lines.join('\n'), /by hand|copy them/);
+};
+const replaceArgv = (dir, digest) => ['--reconcile', '--replace-custom', digest, '--cwd', dir];
+const withReplaceRun = (fn) => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'custom'] }, (dir) => {
+  const before = snapshot(dir);
+  const preview = run(dir);
+  const expected = digestOf(readCustomFiles(dir, CHECKER));
+  const argv = replaceArgv(dir, digestFrom(preview.lines) ?? expected);
+  place(dir, READER[0], 'prior');
+  rmSync(join(dir, 'scripts', READER[1]), { force: true });
+  const result = main(argv, { kitRoot: KIT_ROOT });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(digestFrom(preview.lines), expected);
+  return fn(dir, result, before, argv);
+});
+describe('spec:docs-navigator/S4 an edited spec-layer file is named under one replace line', () => {
+  for (const [title, checker, name] of [
+    ['one custom checker: its line, the store-withheld line naming it, and exactly one replace line', ['custom', 'current'], CHECKER[0]],
+    ['a custom test file alone gets its line, the withheld line and the replace line', ['current', 'custom'], CHECKER[1]],
+  ]) {
+    it(title, () => withProject({ ...CUSTOM_CHECKER, checker }, (dir) => assertPreview(dir, run(dir), name)));
+  }
+  it('the replace line shell-quotes a project path that needs it', () => withProject(CUSTOM_CHECKER, (dir) => {
+    assert.ok(replaceLineOf(run(dir).lines)?.endsWith(`--cwd '${dir}'`));
+  }, { prefix: 'ensure specs ' }));
+  it('the dry run prints the same lines and writes nothing', () => {
+    withProject(CUSTOM_CHECKER, (dir) => withProject(CUSTOM_CHECKER, (other) => {
+      const before = snapshot(dir);
+      const dry = run(dir, { dryRun: true });
+      const real = run(other);
+      assert.deepEqual(snapshot(dir), before);
+      assert.deepEqual(dry.lines.map((line) => line.replaceAll(dir, '<P>')), real.lines.map((line) => line.replaceAll(other, '<P>')));
+      assert.ok(replaceLineOf(dry.lines));
+      assertPreview(dir, dry, CHECKER[0]);
+      assertPreview(other, real, CHECKER[0]);
+    }));
+  });
+});
+describe('spec:docs-navigator/S5 the replace run writes what the yes named, then reindexes', () => {
+  it('the matching digest replaces every custom file, refreshes a prior, seeds an absent file and the store root, then runs the index op', () => withReplaceRun((dir, result, before) => {
+    const lines = result.stdout.split('\n');
+    const ops = lines.filter((line) => /^  \w+: /.test(line));
+    assert.equal(result.stderr, '');
+    assert.equal(ops.length, 2);
+    assert.equal(ops[0], '  specs: seeded');
+    assert.match(ops[1], /^  index: \S+$/);
+    for (const name of CHECKER) assert.ok(lines.map((line) => line.trim()).includes(`scripts/${name}: carried an edited body — replaced by the bundled one on the user's yes`));
+    allCurrent(dir);
+    assert.ok(existsSync(join(dir, STORE)));
+    assert.deepEqual(readdirSync(join(dir, 'scripts')).sort(), [...READER, ...CHECKER].sort());
+    assert.deepEqual([...snapshot(dir).keys()].filter((rel) => !before.has(rel)).sort(), ['docs/ai/index.md', STORE, 'scripts/spec-schema.test.mjs']);
+    assert.equal(replaceLineOf(lines.map((line) => line.trim())), undefined);
+  }));
+  it('with nothing to seed the replace run reports refreshed', () => withProject({ ...CUSTOM_CHECKER, store: 'present' }, (dir) => {
+    const result = main(replaceArgv(dir, digestOf(readCustomFiles(dir, [CHECKER[0]]))), { kitRoot: KIT_ROOT });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^  specs: refreshed$/m);
+  }));
+  it('a second run of the same line changes nothing', () => withReplaceRun((dir, first, initial, argv) => {
+    const before = snapshot(dir);
+    const result = main(argv, { kitRoot: KIT_ROOT });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^  specs: already-present$/m);
+    assert.deepEqual(snapshot(dir), before);
+  }));
+  it('a file edited after the preview is race-unresolved with nothing written and a fresh replace line', () => withProject(CUSTOM_CHECKER, (dir) => {
+    const digest = digestFrom(run(dir).lines) ?? digestOf(readCustomFiles(dir, [CHECKER[0]]));
+    writeFileSync(join(dir, 'scripts', CHECKER[0]), '// edited again\n');
+    const before = snapshot(dir);
+    const result = run(dir, { replaceCustom: digest });
+    assert.equal(result.failed, true);
+    assert.equal(result.token, 'failed');
+    assert.match(result.lines[0], /^race-unresolved — the edited files changed since the replace line was printed/);
+    assert.deepEqual(snapshot(dir), before);
+    assert.notEqual(digestFrom(result.lines), digest);
+    assert.equal(digestFrom(result.lines), digestOf(readCustomFiles(dir, [CHECKER[0]])));
+  }));
+});
 
 // ── the table: one row per cell class, the token and the tree after ───────────────────────────────
 const ROWS = [

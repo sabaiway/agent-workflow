@@ -16,7 +16,8 @@ export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', '
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
 // ensure's pair refresh (reader or checker) — a deployed script on a body a release shipped,
-// rewritten to the bundled one (a custom body is never refreshed).
+// rewritten to the bundled one; a custom body is rewritten only by the replace run the user's yes
+// starts (--replace-custom), never by a plain run.
 // `re-derived` is the executor ensure rewriting a placed executor whose bytes differ from the body derived from docs/ai/vehicles.json.
 export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated', 're-derived']);
 export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate', 'would-re-derive']);

@@ -17,7 +17,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +33,8 @@ const UPGRADE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md
 // without this test noticing — the ids are the future reconcile driver's item tokens.
 const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'tier', 'bridge-settings'];
 const SKILL_VAR = '${CLAUDE_SKILL_DIR}';
+const CONSENT = 'a specs replace line → ONE yes naming every file the custom lines name and saying their edits are overwritten, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.';
+const REPLACE_COMMAND = `node ${SKILL_VAR}/tools/ensure-configs.mjs --reconcile --replace-custom <digest> --cwd <project>`;
 
 // ── extraction helpers (anchored, non-vacuous: a missing anchor is red) ─────────────────────────
 const between = (text, from, to, where) => {
@@ -76,6 +78,19 @@ const anchorsOf = (section) => {
   return anchors;
 };
 
+const blockOf = (id) => {
+  const section = step3();
+  const anchors = anchorsOf(section);
+  const at = anchors.findIndex((a) => a.id === id);
+  assert.notEqual(at, -1, `step 3 anchors a \`${id}\` rationale block`);
+  return section.slice(anchors[at].index, anchors[at + 1]?.index ?? section.length);
+};
+
+const listRegularFiles = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const path = resolve(dir, entry.name);
+  return entry.isDirectory() ? listRegularFiles(path) : entry.isFile() ? [path] : [];
+});
+
 // ── the registry's own shape ────────────────────────────────────────────────────────────────────
 describe('upgrade-runlist registry — the L1 eight, in order', () => {
   it('carries exactly the eight L1 ids, in the L1 order', () => {
@@ -113,11 +128,13 @@ describe('upgrade-runlist registry — the L1 eight, in order', () => {
     }
   });
 
-  it('consent marks exactly the three L1 operations: footprint, gates-migration and tier', () => {
+  it('consent marks exactly the four L1 operations: footprint, configs, gates-migration and tier', () => {
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'footprint') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--dry-run'),
           'footprint consent gates the non-dry-run re-run');
+      } else if (e.id === 'configs') {
+        assert.equal(e.consent, `${CONSENT} The printed line: ${REPLACE_COMMAND}`);
       } else if (e.id === 'gates-migration') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--apply'),
           'gates-migration consent gates the --apply re-run');
@@ -218,14 +235,6 @@ describe('upgrade.md step 3 — a normative run-list rendered from the registry'
 
 // ── the tier item: its registry entry and its one ask (spec kit/tier/tier-offer, part lineage-step) ──
 describe('spec:tier-offer/S14 the tier item runs the offer and puts its one ask', () => {
-  const blockOf = (id) => {
-    const section = step3();
-    const anchors = anchorsOf(section);
-    const at = anchors.findIndex((a) => a.id === id);
-    assert.notEqual(at, -1, `step 3 anchors a \`${id}\` rationale block`);
-    return section.slice(anchors[at].index, anchors[at + 1]?.index ?? section.length);
-  };
-
   it('the tier entry follows lens with the preview command, the two re-runs and the offer words', () => {
     const ids = UPGRADE_RUNLIST.map((e) => e.id);
     assert.equal(ids.indexOf('tier'), ids.indexOf('lens') + 1);
@@ -243,6 +252,45 @@ describe('spec:tier-offer/S14 the tier item runs the offer and puts its one ask'
 
   it('the lens block hands its explicit-yes ask to the tier item', () => {
     assert.ok(blockOf('lens').includes('`tier`'), 'the lens block names the `tier` ask');
+  });
+});
+
+describe('spec:docs-navigator/S8 the upgrade asks the replace yes once and no line says copy by hand', () => {
+  it('the configs entry carries the one-yes sentence and the exact replace command', () => {
+    const { consent } = UPGRADE_RUNLIST.find((e) => e.id === 'configs');
+    assert.ok(typeof consent === 'string' && consent.startsWith(CONSENT), 'configs consent starts with the one-yes sentence');
+    assert.ok(consent.endsWith(REPLACE_COMMAND), 'configs consent ends with the exact replace command');
+  });
+  it('the upgrade.md configs row carries the sentence and no replace command', () => {
+    const row = rowsOf(step3()).find((r) => r.id === 'configs');
+    assert.ok(row, 'step 3 carries the configs checklist row');
+    assert.ok(row.line.includes(CONSENT), 'the configs row carries the one-yes sentence verbatim');
+    assert.ok(!row.line.includes('--replace-custom'), 'the exact replace command belongs to the registry alone');
+  });
+  it('the configs block has exactly one STOP sentence and it defers to the row 3 ask', () => {
+    const block = blockOf('configs').replaceAll('**', '');
+    assert.equal((block.match(/STOP/g) ?? []).length, 1);
+    assert.ok(block.includes("A non-zero exit STOPs this upgrade — once row 3's replace ask is answered when a specs replace line printed, then as that ask says"));
+  });
+  it('the index token list names customized-preserved', () => {
+    assert.ok(blockOf('configs').includes('index → `regenerated` / `already-current` / `customized-preserved`'));
+  });
+  it('the spec-adoption example and risk text name the replace yes', () => {
+    const lines = readFileSync(resolve(kitRoot, 'references', 'modes', 'recommendations.md'), 'utf8').split('\n');
+    const rule = lines.find((line) => line.startsWith('3. '));
+    const posture = lines.find((line) => line.startsWith('- `spec-adoption` — '));
+    const replaceWords = 'prints a replace line that takes its own yes';
+    assert.ok(rule?.includes("`spec-adoption`'s `ensure-configs --reconcile --only specs`"), 'rule 3 carries the spec-adoption example');
+    assert.ok(rule.includes(replaceWords), 'rule 3 names the replace yes');
+    assert.ok(posture?.includes(replaceWords), 'the spec-adoption posture names the replace yes');
+    assert.ok(posture.split('Risk profile:')[1]?.includes('refreshes a script body a release shipped'), 'the risk profile names the prior refresh');
+  });
+  it('no shipped line says to copy or refresh a script by hand', () => {
+    const roots = [resolve(kitRoot, 'tools'), resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')];
+    const files = [...roots.flatMap(listRegularFiles), resolve(kitRoot, '..', 'agent-workflow-memory', 'SKILL.md')];
+    const matches = files.flatMap((file) => readFileSync(file, 'utf8').split('\n').flatMap((line, index) =>
+      /by hand, re-run|copy them by hand|refresh by hand/.test(line) ? [`${file}:${index + 1}: ${line}`] : []));
+    assert.deepEqual(matches, [], matches.join('\n'));
   });
 });
 

@@ -1,8 +1,8 @@
 // script-priors.mjs — the APPEND-ONLY catalog of every enforcement-script body this family has shipped
 // into a project's `scripts/`, as sha256 digests, and the ONE classifier the spec-layer ensure asks
 // before it refreshes a deployed script: `current` (byte-equal to the bundled copy) · `prior` (a body
-// a release shipped, never edited since) · `custom` (anything else — preserved verbatim, never
-// overwritten). The lens-region idiom (AD-041) over whole script bodies.
+// a release shipped, never edited since) · `custom` (anything else — preserved verbatim, replaced only by
+// the replace run the user's yes starts). The lens-region idiom (AD-041) over whole script bodies.
 //
 // Append discipline: when a release changes one of PRIOR_FILES, append the OUTGOING body's row here
 // in the same release and copy its bytes to test/fixtures/script-priors/<firstShipped>/<file>.txt —
@@ -36,6 +36,7 @@ export const SCRIPT_PRIORS = Object.freeze([
   prior('check-docs-size.mjs', '4.6.0', '6.0.0', '22d020c3668cdbfb4cbc1f67a8a85b2baa2d0c4956808a50626d37409e81ab38'),
   prior('spec-schema.mjs', '5.0.0', '7.2.1', '6a7d1e836c158baab5a412a1ad76d34891934dc28c88486c264a4b5d46f5892a'),
   prior('spec-schema.test.mjs', '5.0.0', '7.2.1', '698564d7283281be1826019d214df475bb876687915de086818d8f5ece0e0336'),
+  prior('check-docs-size.mjs', '7.0.0', '8.1.5', '0cf90ae2cbfc809847574a8c71a6b1322c783359740b08e0ff179f0d9d04dffc'),
 ]);
 
 export const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');

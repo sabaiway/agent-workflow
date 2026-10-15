@@ -4,6 +4,21 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.2.0 — the docs navigator stamps a cap it honours past 80 lines (AD-182)
+
+**`references/scripts/check-docs-size.mjs` now writes a `docs/ai/index.md` that its own default run and `--check-index`
+accept, however many docs the project has.** Before, the navigator always stamped `maxLines: 80` while it renders one
+row per document outside the collapsed ADR and spec stores, so a project with enough docs (measured: 67 docs, an 87-line navigator) got a navigator its own
+pre-commit hook refused.
+
+- The stamp is `maxLines: 80` while the rendered navigator has 80 lines or fewer, and its own line count past that,
+  counted as the gate counts (a trailing newline closes the last line and opens none). A navigator that fits is
+  byte-identical to before. There is no ceiling, as for the ADR navigator (AD-167).
+- A hand-edited cap line still reads as stale under `--check-index`, as before.
+- `SKILL.md`: a deployed spec-layer script with an edited body is named by the composition root's upgrade and replaced
+  only on the user's yes; this substrate still never overwrites a deployed script.
+- MINOR: the navigator's stamped cap changes past 80 lines. The deployed `check-docs-size.test.mjs` body is unchanged.
+
 ## 8.1.5 — the gate migration names the `lcovProducer` marker (AD-175)
 
 `references/scripts/migrate-gates.mjs`: the four hints that print the paste-ready suite cmd (the

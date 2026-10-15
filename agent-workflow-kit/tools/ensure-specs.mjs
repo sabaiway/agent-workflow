@@ -3,8 +3,8 @@
 // a FIXED order the measured coupling dictates:
 //   1. the reader pair   scripts/spec-schema.mjs + .test.mjs      — created when absent; since 2a
 //      also REFRESHED when the deployed bytes are a body a release shipped (script-priors.mjs), a
-//      custom body preserved verbatim (brief D1 shipped it create-only; the 4.6.x bodies joining the
-//      catalog is what keeps those deployments out of the stranded-custom cell);
+//      custom body preserved verbatim until the user's yes runs the printed replace line
+//      (--replace-custom <digest>, spec docs-navigator);
 //   2. the checker pair  scripts/check-docs-size.mjs + .test.mjs  — the same prior-refresh lane, and
 //      only behind a reader pair this run leaves byte-current;
 //   3. the store root    docs/ai/specs/index.md                   — seeded (placeholders rendered)
@@ -17,16 +17,18 @@
 // The state table (enumerate by PROOF, never by exclusion): every file is classified into exactly one
 // of current | prior | custom | absent | wrong-kind before anything is written, each write admits
 // through ONE conjunction of those facts (decideWrites), and every other cell is a stated refusal —
-// a custom file of either pair preserves itself AND withholds every write that depends on it. Writes
-// run in order and each is idempotent, so a run that stopped partway converges on the next run.
+// a custom file of either pair preserves itself AND withholds every write that depends on it, and the
+// ONE replace line names every custom file; on the yes, a replace run whose digest still matches
+// rewrites them. Writes run in order and each is idempotent, so a stopped run converges on the next.
 //
 // Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { classifyDeployedScript } from './script-priors.mjs';
+import { classifyDeployedScript, digestOf } from './script-priors.mjs';
 import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
+import { shellQuoteArg } from './repo-lex.mjs';
 
 const OP = 'specs';
 const SCRIPTS_DIR = 'scripts';
@@ -59,8 +61,13 @@ const surveyScript = ({ cwd, kitRoot, name, read, lstat }) => {
   const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat);
   if (probe.wrongKind) return { rel, name, state: 'wrong-kind', wrongKind: probe.wrongKind, bundle };
   if (!probe.present) return { rel, name, state: 'absent', bundle };
-  return { rel, name, state: classifyDeployedScript(read(join(cwd, SCRIPTS_DIR, name)), name, bundle), bundle };
+  const bytes = read(join(cwd, SCRIPTS_DIR, name));
+  return { rel, name, state: classifyDeployedScript(bytes, name, bundle), bundle, bytes };
 };
+
+// The custom set's digest binds the set AND the bytes: the rel-sorted `<rel> <sha256>` lines, LF-joined.
+export const customSetDigest = (files) =>
+  digestOf([...files].sort((a, b) => (a.rel < b.rel ? -1 : 1)).map((f) => `${f.rel} ${digestOf(f.bytes)}`).join('\n'));
 
 const surveyStoreRoot = (cwd, lstat) => {
   const probe = probeSeedTarget(join(cwd, STORE_ROOT_REL), lstat);
@@ -73,21 +80,25 @@ const surveyStoreRoot = (cwd, lstat) => {
 // Reader seeds are create-only and always admitted. A REFRESH overwrites bytes, so it runs only
 // inside a pair whose every file is proven refreshable (current | prior | absent) — one custom file
 // withholds its whole pair; the checker lane (its seeds included) and the store additionally wait
-// for a reader pair this run leaves byte-current (seeded + refreshed = current).
+// for a reader pair this run leaves byte-current (seeded + refreshed = current). Under the user's
+// replace yes a custom file is refreshable too: it is rewritten to the bundled body.
 const PAIR_ELIGIBLE = new Set(['current', 'prior', 'absent']);
+const REPLACE_ELIGIBLE = new Set([...PAIR_ELIGIBLE, 'custom']);
 
-export const decideWrites = ({ reader, checker, store }) => {
-  const readerEligible = reader.every((f) => PAIR_ELIGIBLE.has(f.state));
-  const checkerEligible = readerEligible && checker.every((f) => PAIR_ELIGIBLE.has(f.state));
+export const decideWrites = ({ reader, checker, store }, replace = false) => {
+  const eligible = replace ? REPLACE_ELIGIBLE : PAIR_ELIGIBLE;
+  const refreshable = replace ? ['prior', 'custom'] : ['prior'];
+  const readerEligible = reader.every((f) => eligible.has(f.state));
+  const checkerEligible = readerEligible && checker.every((f) => eligible.has(f.state));
   const writes = [];
   for (const f of reader) {
     if (f.state === 'absent') writes.push({ kind: 'seed', file: f });
-    if (readerEligible && f.state === 'prior') writes.push({ kind: 'refresh', file: f });
+    if (readerEligible && refreshable.includes(f.state)) writes.push({ kind: 'refresh', file: f });
   }
   if (checkerEligible) {
     for (const f of checker) {
       if (f.state === 'absent') writes.push({ kind: 'seed', file: f });
-      if (f.state === 'prior') writes.push({ kind: 'refresh', file: f });
+      if (refreshable.includes(f.state)) writes.push({ kind: 'refresh', file: f });
     }
   }
   if (checkerEligible && store.state === 'absent') writes.push({ kind: 'store' });
@@ -103,7 +114,10 @@ export const decideWrites = ({ reader, checker, store }) => {
 const LEFT_FOR = { withheld: 'it waits on the pair named above', stopped: 'the run stopped before it' };
 const SCRIPT_LINES = {
   current: () => 'already the bundled body — nothing written',
-  custom: () => "carries a body this kit did not ship as current — preserved verbatim; the writes that depend on it wait until the pair matches the bundled scripts (copy them by hand from the kit's references/scripts/ when convenient, then re-run the upgrade)",
+  custom: (fate) => ({
+    written: "carried an edited body — replaced by the bundled one on the user's yes",
+    stopped: 'carries an edited body — not replaced; the run stopped before it',
+  })[fate] ?? "carries a body this kit did not ship as current — preserved verbatim; the writes that depend on it wait until it is replaced on the user's yes (the replace line below)",
   absent: (fate) => ({
     written: 'copied from the bundled scripts',
     stood: 'appeared while this run was seeding it — the bundled body stands',
@@ -120,10 +134,13 @@ const STORE_LINES = {
   written: "created from the bundled template (today's date rendered)",
   stood: 'appeared while this run was seeding it — the existing file stands',
   would: 'absent — would be created from the bundled template',
-  withheld: "not seeded — an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair",
+  withheld: (custom) => `not seeded — it waits on the edited ${custom.join(', ')} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`,
   stopped: 'absent — not created; the run stopped before it',
 };
-const storeLine = (store, fate) => `${STORE_ROOT_REL}: ${STORE_LINES[store.state === 'present' ? 'present' : fate]}`;
+const storeLine = (store, fate, custom) => {
+  const line = STORE_LINES[store.state === 'present' ? 'present' : fate];
+  return `${STORE_ROOT_REL}: ${typeof line === 'function' ? line(custom) : line}`;
+};
 const relOf = (write) => (write.kind === 'store' ? STORE_ROOT_REL : write.file.rel);
 
 // The fate of every path for the lines: a write that ran carries its result, an admitted write the
@@ -138,9 +155,16 @@ const composeLines = ({ reader, checker, store, writes, fates, withheld, stopped
   const fate = (rel) => fateOf(rel, { writes, fates, withheld, stopped });
   const lines = [...reader, ...checker].map((f) => scriptLine(f, fate(f.rel)));
   const storeFate = fate(STORE_ROOT_REL);
-  if (store.state === 'present' || storeFate !== 'none') lines.push(storeLine(store, storeFate));
+  const custom = [...reader, ...checker].filter((f) => f.state === 'custom').map((f) => f.rel);
+  if (store.state === 'present' || storeFate !== 'none') lines.push(storeLine(store, storeFate, custom));
   return lines;
 };
+
+// The ONE replace line: the exact command, its condition first, both paths shell-quoted.
+const replaceLineFor = (custom, kitRoot, cwd) => (custom.length === 0 ? [] : [
+  `to replace the edited files named above, run this only on the user's yes — the bundled bodies overwrite their edits: node ${shellQuoteArg(join(kitRoot, 'tools', 'ensure-configs.mjs'))} --reconcile --replace-custom ${customSetDigest(custom)} --cwd ${shellQuoteArg(cwd)}`,
+]);
+const RACE_LINE = 'the edited files changed since the replace line was printed (another set or other bytes), so nothing was written — ask the user again with the fresh replace line below';
 
 // A per-file loop can stop partway; the run says which files already landed — never "nothing happened".
 const partialNote = (count) =>
@@ -156,7 +180,7 @@ const renderStoreRoot = (kitRoot, read, today) => {
   return body;
 };
 
-export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
+export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {}, replaceCustom }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
   const refusal = nodeEvidenceRefusal(OP, cwd, lstat);
@@ -172,7 +196,15 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     if (f.state === 'wrong-kind') return loud('wrong-node-kind', `${f.rel}: exists but is ${f.wrongKind} — nothing was read or written; resolve it by hand, then re-run`);
   }
 
-  const { writes, withheld } = decideWrites({ reader, checker, store });
+  const custom = [...reader, ...checker].filter((f) => f.state === 'custom');
+  const replace = replaceCustom !== undefined && custom.length > 0;
+  const replaceLine = replaceLineFor(custom, kitRoot, cwd);
+  if (replace && replaceCustom !== customSetDigest(custom)) {
+    const asFound = decideWrites({ reader, checker, store });
+    return loud('race-unresolved', RACE_LINE, ...composeLines({ reader, checker, store, ...asFound, fates: new Map(), stopped: true }), ...replaceLine);
+  }
+  const { writes, withheld } = decideWrites({ reader, checker, store }, replace);
+  const tail = replace ? [] : replaceLine;
   const kinds = new Set(writes.map((w) => w.kind));
   // ONE token by precedence — a write that happened (or, dry, would happen) always outranks the
   // preserved-custom report, which names a run that wrote nothing behind an edited pair.
@@ -184,14 +216,14 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const fates = new Map();
   const linesNow = (stopped) => composeLines({ reader, checker, store, writes, fates, withheld, stopped });
   const writtenCount = () => [...fates.values()].filter((fate) => fate === 'written').length;
-  if (dryRun) return ok(tokenFor(kinds.has('seed') || kinds.has('store'), kinds.has('refresh')), linesNow(false));
+  if (dryRun) return ok(tokenFor(kinds.has('seed') || kinds.has('store'), kinds.has('refresh')), [...linesNow(false), ...tail]);
 
   let storeBody = null;
   if (kinds.has('store')) {
     try {
       storeBody = renderStoreRoot(kitRoot, read, deps.today ?? todayIso());
     } catch (err) {
-      return loud('template-unreadable', `${STORE_ROOT_REL}: ${causeOf(err)}`, ...linesNow(true));
+      return loud('template-unreadable', `${STORE_ROOT_REL}: ${causeOf(err)}`, ...linesNow(true), ...tail);
     }
   }
   const writeOne = ({ kind, file }) => {
@@ -209,14 +241,14 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     try {
       result = writeOne(write);
     } catch (err) {
-      return loud('write-refused', `${rel}: ${causeOf(err)}`, ...linesNow(true), ...notes, ...partialNote(writtenCount()));
+      return loud('write-refused', `${rel}: ${causeOf(err)}`, ...linesNow(true), ...notes, ...partialNote(writtenCount()), ...tail);
     }
     if (write.kind !== 'refresh' && !result.created && !stoodCurrent(write)) {
-      return loud('race-unresolved', `${rel}: appeared while this run was seeding it and does not carry the bundled body — something is writing there underneath this run; nothing further written, re-run when the tree is settled`, ...linesNow(true), ...notes, ...partialNote(writtenCount()));
+      return loud('race-unresolved', `${rel}: appeared while this run was seeding it and does not carry the bundled body — something is writing there underneath this run; nothing further written, re-run when the tree is settled`, ...linesNow(true), ...notes, ...partialNote(writtenCount()), ...tail);
     }
     fates.set(rel, write.kind !== 'refresh' && !result.created ? 'stood' : 'written');
     notes.push(...tmpNote(rel, result.tmpLeftBehind));
   }
   const landed = (kind) => writes.some((w) => w.kind === kind && fates.get(relOf(w)) === 'written');
-  return ok(tokenFor(landed('seed') || landed('store'), landed('refresh')), [...linesNow(false), ...notes]);
+  return ok(tokenFor(landed('seed') || landed('store'), landed('refresh')), [...linesNow(false), ...notes, ...tail]);
 };

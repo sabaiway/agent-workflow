@@ -45,6 +45,8 @@ const pathsFor = (root) => {
 };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const NAVIGATOR_CAP_FLOOR = 80;
+const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 
 // The one token every `--ensure-index` outcome line opens with — deploy/upgrade prose relays it
 // verbatim and the kit's ensure op reads it, so it is a contract, not a message.
@@ -263,7 +265,7 @@ export const inspectFile = async (found, today, root = ROOT) => {
     return { path: rel, lineCount: 0, frontmatter: null, spec: null, refused: true, errors: [refusal], warnings: [] };
   }
   const text = await readFile(filePath, 'utf8');
-  const lineCount = text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+  const lineCount = countLines(text);
   const fm = parseFrontmatter(text);
   const spec = readSpecVerdict(rel, text);
 
@@ -332,7 +334,7 @@ lastUpdated: __TODAY__
 scope: permanent
 staleAfter: 30d
 owner: none
-maxLines: 80
+maxLines: __CAP__
 ---
 
 # Memory Map — __PROJECT__ \`docs/ai/\`
@@ -398,7 +400,6 @@ export const buildIndex = (rows, todayStr, meta = {}) => {
   const projectName = meta.projectName ?? DEFAULT_PROJECT_NAME;
   const onDemandLinks = meta.onDemandLinks ?? [];
   const hierarchicalLinks = meta.hierarchicalLinks ?? [];
-  const header = INDEX_HEADER.replace('__TODAY__', todayStr).replace('__PROJECT__', projectName);
   const tableHeader = `| File | Type | Lines/Max | Updated | Stale after |\n|------|------|-----------|---------|-------------|`;
   const singles = [];
   const grouped = COLLAPSE_GROUPS.map(() => []);
@@ -421,7 +422,8 @@ export const buildIndex = (rows, todayStr, meta = {}) => {
     hierarchicalLinks.length > 0
       ? `\n\n## Subdirectory \`AGENTS.md\` (hierarchical)\n\n${hierarchicalLinks.map((link) => `- ${link}`).join('\n')}`
       : '';
-  return `${header}${tableHeader}\n${tableRows}${onDemandSection}${hierarchicalSection}\n`;
+  const render = (cap) => `${INDEX_HEADER.replace('__CAP__', cap).replace('__TODAY__', todayStr).replace('__PROJECT__', projectName)}${tableHeader}\n${tableRows}${onDemandSection}${hierarchicalSection}\n`;
+  return render(Math.max(NAVIGATOR_CAP_FLOOR, countLines(render(NAVIGATOR_CAP_FLOOR))));
 };
 
 // Freshness regenerates the index with the on-disk header's OWN `lastUpdated`, so a mere day-rollover

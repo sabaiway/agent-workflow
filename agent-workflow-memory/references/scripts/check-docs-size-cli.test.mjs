@@ -58,6 +58,51 @@ maxLines: 80
 | [\`a.md\`](./a.md) | state | 10/10 | 2026-07-18 | never |
 `;
 
+describe('spec:docs-navigator/S1 the navigator stamps a cap it honours', () => {
+  const createNames = (count) => Array.from({ length: count }, (_, index) => `n${String(index + 1).padStart(2, '0')}`);
+  const buildDocs = (names) => ({ docs }) => {
+    for (const name of names) writeFileSync(join(docs, `${name}.md`), DOC(name));
+  };
+  const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
+
+  it("a tree whose navigator renders exactly 80 lines stamps maxLines 80, byte-identical to today's render", async () => {
+    const names = createNames(57);
+    await withRoot(buildDocs(names), async ({ root }) => {
+      assert.equal((await cli(['--write-index', `--root=${root}`, '--today=2026-07-18'])).code, 0);
+      const index = indexOf(root);
+      const rows = names.map((name) => `| [\`${name}.md\`](./${name}.md) | state | 10/10 | 2026-07-18 | never |\n`);
+      assert.equal(countLines(index), 80);
+      assert.equal(index, EXPECTED_INDEX + rows.join(''));
+    });
+  });
+
+  it('a tree of 81 lines stamps maxLines 81 and both checker runs exit 0', async () => {
+    await withRoot(buildDocs(createNames(58)), async ({ root }) => {
+      assert.equal((await cli(['--write-index', `--root=${root}`, '--today=2026-07-18'])).code, 0);
+      const index = indexOf(root);
+      const checked = await runCli([`--root=${root}`]);
+      const fresh = await runCli(['--check-index', `--root=${root}`]);
+      assert.equal(countLines(index), 81);
+      assert.equal(index.match(/^maxLines: \d+$/m)?.[0], 'maxLines: 81', `default: ${checked.code}, --check-index: ${fresh.code}`);
+      assert.equal(checked.code, 0, checked.stdout + checked.stderr);
+      assert.equal(fresh.code, 0, fresh.stdout + fresh.stderr);
+    });
+  });
+
+  it('a hand-edited cap line is stale under --check-index', async () => {
+    await withRoot(buildDocs(createNames(58)), async ({ root, docs }) => {
+      assert.equal((await cli(['--write-index', `--root=${root}`, '--today=2026-07-18'])).code, 0);
+      const index = indexOf(root);
+      const edited = index.replace(/^maxLines: \d+$/m, 'maxLines: 90');
+      assert.notEqual(edited, index);
+      writeFileSync(join(docs, 'index.md'), edited);
+      const { code, stdout, stderr } = await runCli(['--check-index', `--root=${root}`]);
+      assert.equal(code, 1);
+      assert.match(stdout + stderr, /is stale/);
+    });
+  });
+});
+
 describe('check-docs-size runCli — refusal branches', () => {
   it('an unknown argument exits 2 naming it', async () => {
     const { code, stderr } = await cli(['--bogus']);

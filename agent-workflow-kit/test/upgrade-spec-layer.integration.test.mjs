@@ -38,11 +38,14 @@ const PRIOR_DIR = {
 };
 const prior = (name) => readFileSync(join(PRIORS, PRIOR_DIR[name], `${name}.txt`), 'utf8');
 const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', stdio: 'pipe' });
+const readPriorChecker = () => readFileSync(join(PRIORS, '7.0.0', 'check-docs-size.mjs.txt'), 'utf8');
+const writeDoc = (project, name) => writeFileSync(join(project, 'docs', 'ai', `${name}.md`),
+  `---\ntype: state\nlastUpdated: 2026-08-23\nscope: session\nstaleAfter: never\nowner: none\nmaxLines: 10\n---\n\n# ${name}\n`);
 
 // A deployment the way memory 4.5.x left it: the current docs/ai templates minus the spec store,
 // every enforcement script minus the reader pair, the checker pair on the 4.5.1..4.5.4 bytes, a real
 // git checkout with the deployed hook installed and the base committed.
-const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false } = {}) => {
+const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false, checkerBody, checkerTestBody, extraDocs = 0 } = {}) => {
   const project = mkdtempSync(join(tmpdir(), 'upgrade-spec-layer-'));
   cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
   writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
@@ -50,6 +53,9 @@ const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false } = {}
   mkdirSync(docsAi, { recursive: true });
   for (const entry of readdirSync(TEMPLATES)) {
     if (!SKILL_HOME_ONLY.has(entry)) cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
+  }
+  for (const name of Array.from({ length: extraDocs }, (_, index) => `d${String(index).padStart(2, '0')}`)) {
+    writeDoc(project, name);
   }
   if (legacyAdr) {
     mkdirSync(join(docsAi, 'history'), { recursive: true });
@@ -60,9 +66,11 @@ const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false } = {}
   for (const name of readdirSync(BUNDLE)) {
     if (READER.includes(name)) {
       if (reader === 'prior') writeFileSync(join(scripts, name), prior(name));
+      if (reader === 'current') writeFileSync(join(scripts, name), bundle(name));
       continue;
     }
-    writeFileSync(join(scripts, name), CHECKER.includes(name) ? (checker === 'prior' ? prior(name) : checker === 'current' ? bundle(name) : '// my own checker\n') : bundle(name));
+    const body = name === CHECKER[0] ? checkerBody : name === CHECKER[1] ? checkerTestBody : undefined;
+    writeFileSync(join(scripts, name), body ?? (CHECKER.includes(name) ? (checker === 'prior' ? prior(name) : checker === 'current' ? bundle(name) : '// my own checker\n') : bundle(name)));
   }
   git(project, 'init', '-q');
   execFileSync(process.execPath, [join(scripts, 'install-git-hooks.mjs')], { cwd: project, stdio: 'pipe' });
@@ -78,6 +86,15 @@ const withDeployment = (opts, fn) => {
 };
 const tokensOf = (stdout) => Object.fromEntries(stdout.split('\n').map((l) => l.match(/^ {2}([a-z]+): ([a-z-]+)$/)).filter(Boolean).map(([, op, token]) => [op, token]));
 const reconcile = (project) => main(['--reconcile', '--cwd', project], { kitRoot: KIT_ROOT });
+const checkDeployedDocs = (project, ...args) => {
+  const result = spawnSync(process.execPath, ['scripts/check-docs-size.mjs', ...args], { cwd: project, encoding: 'utf8' });
+  assert.equal(result.status, 0, `the deployed checker ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`);
+};
+const commitDeployment = (project) => {
+  git(project, 'add', '-A');
+  const commit = spawnSync('git', ['-c', 'user.name=probe', '-c', 'user.email=probe@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'upgrade'], { cwd: project, encoding: 'utf8' });
+  assert.equal(commit.status, 0, `the deployed pre-commit hook refused the upgraded tree:\n${commit.stdout}\n${commit.stderr}`);
+};
 
 describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.x and 4.6.x lines end to end)', () => {
   it('seeds the reader pair, refreshes the prior checker pair, renders the store root; the real hook commits a seeded spec; ONE specs/ row', () => {
@@ -153,10 +170,54 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
       for (const name of READER) assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), bundle(name), `${name} seeded (create-only, nothing depends on it)`);
       assert.equal(existsSync(join(project, 'docs', 'ai', 'specs')), false, 'no store root, no store dir');
       assert.match(r.stdout, /preserved verbatim/);
-      assert.match(r.stdout, /references\/scripts\/ when convenient/);
+      assert.match(r.stdout, /--replace-custom [0-9a-f]{64} --cwd /);
+      assert.doesNotMatch(r.stdout, /by hand/);
       assert.match(r.stdout, /index\.md: not seeded/);
       // The second run writes nothing behind the custom pair: now the token says so.
       assert.equal(tokensOf(reconcile(project).stdout).specs, 'customized-preserved');
+    });
+  });
+});
+
+describe('spec:docs-navigator/S10 the hook commits after the route', () => {
+  it('a project past 80 lines on a checker whose render differs is named, replaced on the yes and commits', () => {
+    withDeployment({
+      checkerBody: `${readPriorChecker()}// edited\n`,
+      checkerTestBody: bundle(CHECKER[1]),
+      extraDocs: 90,
+    }, (project) => {
+      const r = reconcile(project);
+      assert.equal(r.code, 0, r.stdout);
+      assert.match(r.stdout, /^.*scripts\/check-docs-size\.mjs: carries a body this kit did not ship.*$/m);
+      const replaceLines = r.stdout.split('\n').filter((line) => line.includes('--replace-custom'));
+      assert.equal(replaceLines.length, 1, r.stdout);
+      const digest = replaceLines[0].match(/--replace-custom ([0-9a-f]{64}) --cwd /);
+      assert.ok(digest, replaceLines[0]);
+      assert.equal(tokensOf(r.stdout).index, 'customized-preserved', r.stdout);
+
+      const yes = main(['--reconcile', '--replace-custom', digest[1], '--cwd', project], { kitRoot: KIT_ROOT });
+      assert.equal(yes.code, 0, yes.stdout);
+      assert.ok(['refreshed', 'seeded'].includes(tokensOf(yes.stdout).specs), yes.stdout);
+      assert.equal(tokensOf(yes.stdout).index, 'regenerated', yes.stdout);
+      assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), bundle(CHECKER[0]));
+      const navigator = readFileSync(join(project, 'docs', 'ai', 'index.md'), 'utf8');
+      assert.ok(navigator.trimEnd().split('\n').length > 80, 'the navigator exercises the cap past 80 lines');
+      checkDeployedDocs(project);
+      checkDeployedDocs(project, '--check-index');
+      commitDeployment(project);
+    });
+  });
+
+  it('a prior checker behind a custom test file whose docs change in the upgrade commits on a no', () => {
+    const checkerBody = readPriorChecker();
+    withDeployment({ reader: 'current', checkerBody, checkerTestBody: `${bundle(CHECKER[1])}// mine\n` }, (project) => {
+      checkDeployedDocs(project, '--write-index');
+      writeDoc(project, 'added');
+      const r = reconcile(project);
+      assert.equal(r.code, 0, r.stdout);
+      assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), checkerBody);
+      checkDeployedDocs(project, '--check-index');
+      commitDeployment(project);
     });
   });
 });

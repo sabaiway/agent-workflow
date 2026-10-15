@@ -34,7 +34,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
   entry(
     'configs',
     'node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --cwd <project>',
-    null,
+    'a specs replace line → ONE yes naming every file the custom lines name and saying their edits are overwritten, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op. The printed line: node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --replace-custom <digest> --cwd <project>',
     [
       'seeded',
       'note-refreshed',

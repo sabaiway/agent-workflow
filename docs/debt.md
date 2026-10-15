@@ -390,6 +390,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   tier skips it), while `resolveWritableDir` reads it under the home. Before S2 the same path resolved against the
   process cwd and failed alike. Narrow fix: expand a literal `~`/`~/…` override against the home before the probe.
   Raised by the S2 diff review (codex round 2).
+- **UPGRADE-REPORT-RELAYS-THE-PRE-REPLACE-SPECS-LINE** — invariant: the upgrade report relays the last outcome of each
+  ensure. Origin: steps 4 and 8 relay "the eight … lines exactly as the one ensure run composed them"
+  (`agent-workflow-kit/references/modes/upgrade.md:114`, `:124`); after the yes to the specs replace (story S5 of
+  BRIDGES-WORK-UNDER-THE-SANDBOX) that is the step-3 specs line, which says the edited files were left as written,
+  over files the replace run overwrote. Narrow fix: as for the late `--only index` line, the report relays the replace
+  run's specs line when it ran. Raised by the S5 spec review (lens, final check).
 
 ## Closed
 

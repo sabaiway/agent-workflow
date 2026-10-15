@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import { ENSURE_OPS, ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
 import {
@@ -68,6 +69,22 @@ const project = ({ node = true } = {}) => {
   const dir = tmp('clux-');
   mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
   if (node) writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}\n');
+  return dir;
+};
+const REPLACE_DIGEST = 'f'.repeat(64);
+const projectWithScripts = (customName, customBody) => {
+  const dir = project();
+  mkdirSync(join(dir, 'scripts'));
+  for (const name of ['check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs']) {
+    const body = readFileSync(join(KIT, 'references', 'scripts', name), 'utf8');
+    writeFileSync(join(dir, 'scripts', name), name === customName ? customBody ?? `${body}// mine\n` : body);
+  }
+  writeFileSync(join(dir, 'docs', 'ai', 'a.md'), '---\ntype: reference\nmaxLines: 20\n---\n\n# Fixture\n');
+  return dir;
+};
+const projectWithRejectingChecker = () => {
+  const dir = projectWithScripts('check-docs-size.mjs', '// rejects every navigator\nprocess.exit(1);\n');
+  writeFileSync(join(dir, 'docs', 'ai', 'index.md'), 'found bytes\n');
   return dir;
 };
 
@@ -218,6 +235,24 @@ ensureFx('scripts-node-evidence-unverifiable', ensureScripts({ cwd: project({ no
       : { status: 1, stdout: '', stderr: '[check-docs-size] FAIL: docs/ai/index.md is stale (out of sync with source frontmatter).\n' }),
   });
 }
+{
+  const dir = projectWithScripts('spec-schema.mjs');
+  const keptIndexFx = (id, cwd = projectWithRejectingChecker(), extra = {}) => ensureFx(`index-kept-${id}`, ensureIndex({ cwd, kitRoot: KIT, deps: {}, ...extra }));
+  keptIndexFx('regenerated', dir);
+  keptIndexFx('already-current', dir);
+  keptIndexFx('customized-preserved');
+  keptIndexFx('put-back', projectWithRejectingChecker(), { deps: {
+    spawnSync: (cmd, args, options) => args[0] === join(KIT, 'references', 'scripts', 'check-docs-size.mjs')
+      ? { status: 3, stdout: '', stderr: 'the generator said nothing\n' } : spawnSync(cmd, args, options),
+  } });
+  keptIndexFx('write-refused', projectWithRejectingChecker(), { deps: { rename: () => { throw eacces('EACCES: permission denied, rename'); } } });
+  const probeDir = projectWithRejectingChecker();
+  keptIndexFx('probe-failed', probeDir, { deps: {
+    spawnSync: (cmd, args, options) => args[0] === join(probeDir, 'scripts', 'check-docs-size.mjs')
+      ? { error: enoent(), status: null, stdout: '', stderr: '' } : spawnSync(cmd, args, options),
+  } });
+  keptIndexFx('dry-note', projectWithRejectingChecker(), { dryRun: true });
+}
 
 if (ensureSpecs) {
   // The spec-layer ensure: every token through the real op — seed, prior refresh, custom preserved,
@@ -233,6 +268,9 @@ if (ensureSpecs) {
   specsFx('specs-refreshed', dir);
   writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// mine\n');
   specsFx('specs-customized-preserved', dir);
+  const customDir = projectWithRejectingChecker();
+  specsFx('specs-custom-replace-line', customDir);
+  specsFx('specs-replace-race', customDir, { replaceCustom: REPLACE_DIGEST });
   specsFx('specs-skipped-no-node-evidence', project({ node: false }));
   const wrongKind = project();
   mkdirSync(join(wrongKind, 'scripts', 'spec-schema.mjs'), { recursive: true });
@@ -262,8 +300,8 @@ if (ensureSpecs) {
 // The real ensure CLI, BOTH exits: the `  op: token` slots are the characterized exception; every
 // OTHER stdout line — the banner, the details, the failure footer — joins the scanned surface, a
 // failure's closed cause opening stripped after characterization.
-const cliFx = (id, dir, abnormal) => {
-  const r = ensureConfigsMain(['--reconcile', '--cwd', dir], { kitRoot: KIT });
+const cliFx = (id, dir, abnormal, args = []) => {
+  const r = ensureConfigsMain(['--reconcile', ...args, '--cwd', dir], { kitRoot: KIT });
   const slots = [];
   const lines = [];
   for (const line of r.stdout.split('\n')) {
@@ -281,6 +319,23 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
   symlinkSync(join(dir, 'package.json'), join(dir, 'docs', 'ai', 'gates.json'));
   CLI_RUNS.failure = cliFx('failure-run', dir, true);
 }
+
+cliFx('cli-replace-index-not-run', projectWithRejectingChecker(), true, ['--replace-custom', REPLACE_DIGEST]);
+
+describe('spec:docs-navigator/S9 the replace and kept-checker lines are user-grade', () => {
+  it('each S5 fixture carries the line it witnesses', () => {
+    const witnesses = {
+      '--replace-custom': ['specs-custom-replace-line', 'specs-replace-race'],
+      "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'],
+      'the navigator was put back byte for byte': ['index-kept-put-back'],
+      'the navigator step did not run: a replace run runs it only after the spec layer succeeds': ['cli-replace-index-not-run'],
+    };
+    const missingWitnesses = Object.entries(witnesses).flatMap(([phrase, ids]) => ids
+      .filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase)))
+      .map((id) => `${id}: a line carries "${phrase}"`));
+    assert.deepEqual(missingWitnesses, [], 'each S5 fixture carries its witness');
+  });
+});
 
 // ── the placed-bridge refresh lines (every REFRESH_LINES key + every parity verdict) ─
 const witnessedRefresh = new Set();
