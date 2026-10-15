@@ -4,8 +4,9 @@
 
 The opt-in **closing-state-block detector**, wired as a Claude Code `Stop` hook. It ships as a
 **self-contained** runtime at `references/hooks/state-block-guard.mjs` (no kit imports — a placed
-copy keeps working if the kit is uninstalled) and it **writes nothing**: this mode is read-only, and
-the wiring is yours to paste (see *No writer yet*, below).
+copy keeps working if the kit is uninstalled) and the runtime itself **writes nothing**. Its writer is
+`tools/state-block-hook.mjs`: it places the runtime and wires the `Stop` entry running
+`node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"` (see *The writer*, below).
 
 **Read this first — what it is and is not.** A `Stop` hook runs when a turn has already ENDED, so it
 **cannot un-send the message it judges**. This is **DETECTION, not prevention**. What it buys is
@@ -83,78 +84,58 @@ self-contained, so that edit is local and survives an uninstalled kit. Until it 
 deployment gets **no detection**, silently. That is a real limit, stated rather than hidden, and it is
 not a configuration you can set today.
 
-**No writer yet — and why, plainly.** Every other placed thing in this kit arrives through a
-consent-gated writer. This one does not, deliberately:
+**The writer — `tools/state-block-hook.mjs`.** The `state-block` advisor item is a harness item:
+the agent applies it on the chat yes after the danger check, and `init`, run in a console from the
+project's folder, applies it on the terminal y as the route the user may take instead. Without
+`--apply` the writer is a preview that writes nothing; `--apply` writes. It imports the gate-approval
+writer's symlink, target and settings-shape checks from `tools/gate-hook.mjs`; its unsafe-mode and
+stamp refusals use that writer's error codes:
 
-- extending the gate-approval writer (`tools/gate-hook.mjs`) would grow a second placement path
-  through the family's **highest-blast-radius** component — the one that wires command
-  auto-approval — for the benefit of a detector;
-- a second dedicated writer would duplicate that writer's hardened placement discipline (symlink
-  refusal, malformed-settings refusal, unknown-script refusal, merge-don't-clobber), which this
-  project's own DRY rule forbids.
+- the runtime goes to `.claude/hooks/state-block-guard.mjs` — created when absent, kept when
+  byte-equal, replaced in place when it differs (the preview says so, and the check's result names
+  the replaced bytes' digest beside the new one);
+- the `Stop` entry is merged into `.claude/settings.json` by the three cases — no `hooks` key: the
+  whole object below is added; a `hooks` key without `Stop`: the `Stop` key is added beside it; a
+  `hooks.Stop` array: one element is appended, every foreign entry kept. A `hooks.Stop` that is
+  present and not an array is a refusal with nothing written;
+- the entry is merged only while no `Stop` entry of either settings file runs the runtime, so a
+  wiring you made yourself (another path, `--require-block`) counts and is never duplicated;
+- a symlinked `.claude`, `.claude/hooks`, target or settings file, malformed settings and an unsafe
+  permission mode each refuse with nothing written; a deployment stamp behind the kit refuses
+  `--apply` (the preview still answers and notes it); the runtime is written through gate-hook's
+  `writeHookFile` (an exclusive create, a no-follow replace), so a runtime file swapped for a symlink
+  before the write refuses with nothing written through it, and where Node exposes no no-follow open flag
+  (native Windows) a replace refuses; the placed file is re-read, no-follow, before the settings write.
 
-The wiring is eight lines of JSON, and hand-editing `settings.json` from a paste-ready block is the
-form this family already sanctions. When the detector has earned a writer in real use, it gets one.
+The entry it writes:
 
-**Wiring it (paste-ready, two steps).**
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
 
-1. Copy the runtime into your project (it is self-contained; the copy keeps working without the kit).
-   **Check before you copy** — this is a plain copy, not a guarded writer, so the safety is yours:
-
-   ```
-   ls -ld .claude .claude/hooks
-   ls -l .claude/hooks/state-block-guard.mjs
-   ```
-
-   Stop if `.claude` or `.claude/hooks` is a **symlink** (a copy would write through it to somewhere
-   you did not choose), and stop if the target already exists — including a dangling symlink. Only
-   then:
-
-   ```
-   mkdir -p .claude/hooks
-   cp "${CLAUDE_SKILL_DIR}/references/hooks/state-block-guard.mjs" .claude/hooks/state-block-guard.mjs
-   ```
-
-   To UPDATE an existing copy, `diff` it against the bundled file first and replace it deliberately.
-   No `cp` flag makes this safe for you: `-n` is not portable in the same way everywhere, and none of
-   them refuse a symlinked parent directory.
-
-2. Merge this into `.claude/settings.json` — **merge, do not clobber.** Three cases, and getting the
-   third wrong silently disables someone else's hook:
-   - no `hooks` key → add the whole object below;
-   - a `hooks` key WITHOUT `Stop` (for example only the gate-approval `PreToolUse` entry) → add the
-     `Stop` key beside it;
-   - a `hooks.Stop` array that ALREADY EXISTS → **append one element to that array**, never replace
-     it and never write a second `Stop` key. If `hooks.Stop` is present but is not an array, stop and
-     fix that by hand first — pasting into it would destroy whatever is there.
-
-   ```json
-   {
-     "hooks": {
-       "Stop": [
-         {
-           "hooks": [
-             {
-               "type": "command",
-               "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs\"",
-               "timeout": 10
-             }
-           ]
-         }
-       ]
-     }
-   }
-   ```
-
-**Add `--require-block` to that command IF your project requires the three-part block on every
-message** — then a turn that drops the block entirely is reported too. It is left OFF above on
-purpose: this kit does not mandate the block, so switching it on for a project that never adopted it
+**The writer offers that command without `--require-block`; add it to the command in your
+`.claude/settings.json` IF your project requires the three-part block on every message** — then a
+turn that drops the block entirely is reported too. It is left OFF on purpose: this kit does not mandate the block, so switching it on for a project that never adopted it
 would warn after nearly every turn. `--require-block` is the **only** argument accepted: an
 unrecognised one makes the guard refuse to judge the turn and say so, rather than quietly running in
 the weaker mode you did not choose.
 
-A `Stop` hook is read at session start, so it becomes live in the **next** session, not the current
-one.
+Claude Code reloads its settings files when they change, so a wired `Stop` hook runs from the next
+turn end — no session restart needed.
 
 **Trust posture (state it plainly when asking consent):** the guard reads the closing assistant
 message of each turn and writes one warning line. It runs a Node process on every turn end, it does

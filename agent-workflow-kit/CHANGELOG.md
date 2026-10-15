@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.31.0 — the upgrade's Claude Code hook items get writers: a stale gate hook is reseeded in place and the state-block Stop hook is placed and wired, each on the chat yes (AD-183)
+
+**Three `/agent-workflow-kit upgrade` items that used to hand the user a hook to fix by hand are now harness items the
+agent applies on the chat yes, after the danger check: `gate-hook.marker-stale`, `read-lane.stale` and `state-block`.**
+Before, the two stale-hook arms printed `HAND-APPLY: rm <hook>, then gate-hook --apply` (the writer never overwrote a
+placed hook), and `state-block` pointed at a JSON block to paste into `.claude/settings.json` by three merge cases.
+
+- **`gate-hook --reseed`.** `node <kit>/tools/gate-hook.mjs --reseed --cwd <root>` previews; `--apply --reseed --cwd
+  <root>` writes the bundled hook over a placed hook whose bytes differ, in place, and wires the `PreToolUse` entry only
+  while neither settings file has it. A current hook wired in either file prints `nothing to change: the placed hook is
+  current` (exit 0); a current unwired one is only wired. It refuses an absent hook (`--apply` places it) and a
+  symlinked or non-regular one, and `--reseed` with `--read-lane` is a usage error (exit 2). The read-lane currency
+  refusal, the diverged-and-unwired refusal, the report's diverged line, `--help`, `hook.md`, `gates.md` and the README's
+  hook row now name this route; none of these recoveries says `rm` any more.
+- **`tools/state-block-hook.mjs`, the Stop-hook writer.** A preview by default, `--apply` writes: it places
+  `.claude/hooks/state-block-guard.mjs` from the bundle (created when absent, kept when byte-equal, replaced in place
+  when it differs) and merges one `Stop` entry running `node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"`
+  (timeout 10, no `--require-block`) into `.claude/settings.json`: a new `hooks` key, a `Stop` key beside other hooks,
+  or one element appended to an existing `hooks.Stop` array, every foreign entry kept. The entry is merged only while no
+  `Stop` entry of either settings file runs the runtime, so a wiring you made yourself is never duplicated. A
+  `hooks.Stop` that is not an array refuses with nothing written; the writer's symlink, target and settings-shape checks
+  are `gate-hook.mjs`'s own, imported, and its unsafe-mode and stamp refusals use gate-hook's error codes.
+  `state-block-guard.md`'s "No writer yet" section and its two hand steps
+  are gone; the catalog lists the mode as a writer.
+- **A hook file swapped for a symlink is never written through.** Both writers create the hook file exclusively and
+  replace it with a no-follow open, so a hook file itself swapped for a symlink after the preview refuses with nothing
+  written through it. Where Node
+  exposes no no-follow open flag (native Windows), replacing a placed hook refuses instead (`fail closed`); placing an
+  absent one still works.
+- **The danger check covers the three.** `hooks.Stop` joins the keys it judges; each variant's scope admits only its
+  hook file, its one settings entry and the `.claude/` and `.claude/hooks/` directories. A hook file the apply replaces
+  prints `writes: <path> sha256:<new> — replaces sha256:<old>`, so the yes is bound to the bytes it overwrites. `init`
+  previews and applies the three by its existing rule.
+- **The bare `sandbox-provision` item is the user's own step,** worded as such: the doctor has no install it can run
+  for you there, so you run `cd <root> && node <kit>/tools/autonomy-doctor.mjs` in a terminal of your own.
+
+The git hooks (`enforcement`, `commit-guard`) keep their current apply texts; their writers come in a later release.
+
 ## 14.30.0 — the upgrade brings the docs navigator back to green past 80 lines: one yes replaces every edited spec-layer script, and a navigator write the project's own checker rejects is put back (AD-182)
 
 **`/agent-workflow-kit upgrade` now leaves a project with more docs than the navigator's old cap on a navigator its

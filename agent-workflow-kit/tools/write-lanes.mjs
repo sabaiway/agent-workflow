@@ -26,13 +26,13 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.adopted-elsewhere': LANE_CHAT,
   'source-size.id-squatter': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
-  'gate-hook.marker-stale': LANE_USER,
+  'gate-hook.marker-stale': LANE_HARNESS,
   'commit-guard': LANE_USER,
   enforcement: LANE_USER,
   'read-lane': LANE_CHAT,
-  'read-lane.stale': LANE_USER,
+  'read-lane.stale': LANE_HARNESS,
   'read-lane.missing': LANE_HARNESS,
-  'state-block': LANE_USER,
+  'state-block': LANE_HARNESS,
   'mcp-channel': LANE_HARNESS,
   'mcp-channel.differing': LANE_HARNESS,
   agents: LANE_HARNESS,
@@ -80,6 +80,7 @@ export const isProtectedPath = (abs, { root, home, hooksDir }) => {
 
 const SETTINGS_WRITES = [SETTINGS_PATH];
 const HOOK_WRITES = [join('.claude', 'hooks', 'agent-workflow-gates.mjs'), ...SETTINGS_WRITES];
+const STOP_HOOK_WRITES = [join('.claude', 'hooks', 'state-block-guard.mjs'), ...SETTINGS_WRITES];
 const MCP_WRITES = ['.mcp.json', ...SETTINGS_WRITES];
 const AGENT_WRITES = [join('.claude', 'agents')];
 
@@ -110,6 +111,7 @@ const createForm = (file, preview, apply, writes, envDependent = false, userStep
 
 const CORE_FORM = createForm('velocity-profile.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], SETTINGS_WRITES);
 const HOOK_FORM = createForm('gate-hook.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], HOOK_WRITES);
+const RESEED_FORM = createForm('gate-hook.mjs', ['--reseed', '--cwd', '<root>'], ['--apply', '--reseed', '--cwd', '<root>'], HOOK_WRITES);
 const AGENT_FORM = createForm('cheap-agents.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], AGENT_WRITES);
 const SKILL_FORM = createForm('jev-skill.mjs', ['--claude-dir', '<dir>'], ['--apply', '--claude-dir', '<dir>'], getSkillPaths, true);
 
@@ -123,6 +125,9 @@ const FORMS = Object.freeze({
     ['--autonomy', '--cwd', '<root>'], ['--autonomy', '--apply', '--cwd', '<root>'], SETTINGS_WRITES),
   'gate-hook': HOOK_FORM,
   'read-lane.missing': HOOK_FORM,
+  'gate-hook.marker-stale': RESEED_FORM,
+  'read-lane.stale': RESEED_FORM,
+  'state-block': createForm('state-block-hook.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], STOP_HOOK_WRITES),
   'mcp-channel': createForm('mcp.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], MCP_WRITES),
   'mcp-channel.differing': createForm('mcp.mjs',
     ['--replace', '--cwd', '<root>'], ['--replace', '--apply', '--cwd', '<root>'], MCP_WRITES),
@@ -139,11 +144,11 @@ const FORMS = Object.freeze({
   'family-freshness': Object.freeze({
     userStep: () => `your own step — ${TERMINAL_STEP}${formatCommand(['npx', '@sabaiway/agent-workflow-kit@latest', 'init'])}`,
   }),
-  'sandbox-provision': null,
+  'sandbox-provision': Object.freeze({
+    userStep: (facts) => 'your own step — the doctor has no install it can run for you here (the reason is this item\'s text) — '
+      + `${TERMINAL_STEP}cd ${quoteArg(facts.root)} && ${formatCommand(['node', join(facts.toolsDir, 'autonomy-doctor.mjs')])}`,
+  }),
   'commit-guard': null,
-  'gate-hook.marker-stale': null,
-  'read-lane.stale': null,
-  'state-block': null,
   enforcement: null,
 });
 

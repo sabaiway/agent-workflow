@@ -20,18 +20,19 @@ const FORM_A = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'sandbox-provision.installable',
   'jev-skill', 'jev-skill.earlier',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block',
 ];
 const FORM_B = ['jev-connect'];
 const FORM_C = [
-  'family-freshness', 'sandbox-provision', 'commit-guard', 'gate-hook.marker-stale', 'read-lane.stale',
-  'state-block', 'enforcement',
+  'family-freshness', 'sandbox-provision', 'commit-guard', 'enforcement',
 ];
 const HARNESS = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block',
 ];
-const NO_WRITER = ['sandbox-provision', 'commit-guard', 'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement'];
-const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', ...NO_WRITER];
+const NO_WRITER = ['commit-guard', 'enforcement'];
+const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', ...NO_WRITER];
 const ENV_DEPENDENT = ['bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable'];
 const WITH_FORMS = [...FORM_A, ...FORM_B, ...FORM_C];
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -52,6 +53,9 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['autonomy-render', 'velocity-profile.mjs', ['--autonomy', '--cwd', ROOT], ['--autonomy', '--apply', '--cwd', ROOT]],
     ['gate-hook', 'gate-hook.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['read-lane.missing', 'gate-hook.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
+    ['gate-hook.marker-stale', 'gate-hook.mjs', ['--reseed', '--cwd', ROOT], ['--apply', '--reseed', '--cwd', ROOT]],
+    ['read-lane.stale', 'gate-hook.mjs', ['--reseed', '--cwd', ROOT], ['--apply', '--reseed', '--cwd', ROOT]],
+    ['state-block', 'state-block-hook.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['mcp-channel', 'mcp.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['mcp-channel.differing', 'mcp.mjs', ['--replace', '--cwd', ROOT], ['--replace', '--apply', '--cwd', ROOT]],
     ['agents', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
@@ -244,6 +248,9 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'autonomy-render': settings,
       'gate-hook': hook,
       'read-lane.missing': hook,
+      'gate-hook.marker-stale': hook,
+      'read-lane.stale': hook,
+      'state-block': [join(ROOT, '.claude', 'hooks', 'state-block-guard.mjs'), ...settings],
       'mcp-channel': mcp,
       'mcp-channel.differing': mcp,
       agents,
@@ -309,6 +316,8 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
         + `node ${quoteArg(join(facts.toolsDir, 'jev-connect.mjs'))}`,
       'family-freshness': 'your own step — run in a terminal of your own: npx @sabaiway/agent-workflow-kit@latest init',
       'sandbox-provision.installable': 'your own step (a sudo install; the doctor prints the --apply line to run next) — run in a terminal of your own: '
+        + `cd ${quoteArg(facts.root)} && node ${quoteArg(join(facts.toolsDir, 'autonomy-doctor.mjs'))}`,
+      'sandbox-provision': "your own step — the doctor has no install it can run for you here (the reason is this item's text) — run in a terminal of your own: "
         + `cd ${quoteArg(facts.root)} && node ${quoteArg(join(facts.toolsDir, 'autonomy-doctor.mjs'))}`,
     };
     const applySlot = need(lanes, 'applySlot');

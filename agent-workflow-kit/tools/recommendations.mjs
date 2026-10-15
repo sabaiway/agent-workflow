@@ -47,6 +47,7 @@ import {
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import { laneOf, applySlot } from './write-lanes.mjs';
+import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired } from './state-block-hook.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
@@ -599,16 +600,15 @@ const probeGates = ({ root, deps, add, skip, shared }) => {
     // ABSENT is not this arm either: a hook that is not placed belongs to the place offers above and
     // in the read-lane item, whose recovery actually places one.
     if (readPlacedHookCurrency(root, deps) !== HOOK_CURRENCY.STALE) return;
-    // The writer's OWN stale recovery, in its exact shape: `gate-hook --apply` never overwrites a
-    // placed diverged hook (it places only an ABSENT target), so remove-then-reseed is the only lane
-    // that converges — and it is maintainer territory, hence HAND-APPLY.
+    // The writer's OWN stale recovery: `gate-hook --apply --reseed` replaces the placed hook with
+    // the bundle in place — the one consented replacement; the slot renders it behind the check.
     // The RESULT is what the read-lane item defers to — not these conditions re-derived there. Both
     // probes read the placed hook independently, so a hook that changes between the two reads would
     // otherwise let each conclude the other owns it and leave a dark lane reported by nobody.
     shared.markerStaleRendered = add(
       'gate-hook',
       fillTemplate(WHATS['gate-hook.marker-stale'], {}),
-      `HAND-APPLY: rm ${q(join(root, GATE_HOOK_REL))}, then node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`,
+      `node ${q(toolPath('gate-hook.mjs'))} --apply --reseed --cwd ${q(root)}`,
       'gate-hook.marker-stale',
     );
   } catch (err) {
@@ -992,20 +992,20 @@ const probeReadLane = ({ root, deps, add, skip, shared }) => {
     if (readReadLaneToggle(root, deps)) {
       // The lane is ON: converged IFF the placed hook is byte-current — a stale (pre-1.48) hook never
       // reads lanes.json, so the enabled lane is a silent no-op the user must reseed (council B7). The
-      // rm target is ABSOLUTE (council R2-M3) so running the recovery from any cwd can only delete this
-      // repo's hook.
+      // reseed route pins the ABSOLUTE root (council R2-M3), so running it from any cwd can only
+      // replace this repo's hook.
       const currency = readPlacedHookCurrency(root, deps);
       if (currency === HOOK_CURRENCY.CURRENT) return; // converged
       if (currency === HOOK_CURRENCY.ABSENT) {
         // The survey saw it placed and it is gone by the time we read it. The missing arm is the
-        // honest report of that; a reseed recovery whose `rm` targets nothing is not.
+        // honest report of that; a reseed recovery, which refuses an absent hook, is not.
         placeRecovery();
         return;
       }
       // ONE render per condition — and the item that renders is the one whose CAUSE is true. A hook
       // that postdates the read-lane but predates the marker key reads lanes.json perfectly well, so
       // this arm's "an old hook never reads lanes.json" would be a false diagnosis over it, while the
-      // marker arm's is exact. Both carry the same remove-then-reseed recovery, so deferring costs
+      // marker arm's is exact. Both carry the same reseed recovery, so deferring costs
       // the reader nothing and buys a true sentence. The condition is that the marker arm REALLY
       // rendered — never the conditions it would have used, re-derived here: each probe reads the
       // placed hook itself, so a hook changing between the two reads could otherwise have both defer
@@ -1014,7 +1014,7 @@ const probeReadLane = ({ root, deps, add, skip, shared }) => {
       add(
         'read-lane',
         fillTemplate(WHATS['read-lane.stale'], {}),
-        `HAND-APPLY: rm ${q(join(root, GATE_HOOK_REL))}, then node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`,
+        `node ${q(toolPath('gate-hook.mjs'))} --apply --reseed --cwd ${q(root)}`,
         'read-lane.stale',
       );
       return;
@@ -1027,18 +1027,17 @@ const probeReadLane = ({ root, deps, add, skip, shared }) => {
 
 // The state-block-guard offer (AD-075 · OPT-IN-SHIPS-INVISIBLE). This item exists because its absence
 // fired: 3.14.0 shipped the detector with a mode doc, a catalog row and a README row — and no advisor
-// entry — so `upgrade` reported «nothing is broken» to a user who did not have it. There is no writer
-// for this hook, so the apply is a HAND-APPLY pointer at the mode doc, which carries the exact block
-// and the three merge cases.
+// entry — so `upgrade` reported «nothing is broken» to a user who did not have it. Its writer is
+// state-block-hook.mjs; convergence is that leaf's own isStopHookWired over both settings files.
 const probeStateBlockHook = ({ root, deps, add, skip }) => {
   try {
     const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
     const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
-    if (isStateBlockGuardWired(project.data) || isStateBlockGuardWired(local.data)) return; // converged
+    if (isStopHookWired(project.data) || isStopHookWired(local.data)) return; // converged
     add(
       'state-block',
       fillTemplate(WHATS['state-block'], {}),
-      `HAND-APPLY: add a Stop hook running ${STATE_BLOCK_HOOK_COMMAND} to ${SETTINGS_FILE} — the exact block and the three merge cases are in references/modes/state-block-guard.md`,
+      `node ${q(toolPath('state-block-hook.mjs'))} --apply --cwd ${q(root)}`,
     );
   } catch (err) {
     skip('state-block', err);
@@ -1215,28 +1214,9 @@ export const READ_LANE_KEY = 'readLane';
 const GATE_HOOK_REL = '.claude/hooks/agent-workflow-gates.mjs';
 const BUNDLED_HOOK_ABS = join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
 
-// The state-block-guard wiring the advisor looks for. Matched on the RUNTIME FILE NAME inside the
-// command, not on an exact string: the hook has no writer, so every user pastes their own path —
-// a copy under `.claude/hooks/`, a kit-source path, `--require-block` or not. Any Stop entry that
-// runs this runtime counts as wired, which is the honest question ("is it watching?").
-export const STATE_BLOCK_HOOK_RUNTIME = 'state-block-guard.mjs';
-// NO `--require-block` in the offered command. That flag turns on the absent-block report, and this
-// kit does not mandate the three-part closing block — recommending it to every project would hand
-// them a hook that warns after nearly every turn. The mode doc explains when to add it. (Offering the
-// strict flag by default would also contradict the very reason the report was made opt-in.)
-export const STATE_BLOCK_HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${STATE_BLOCK_HOOK_RUNTIME}"`;
-const runsStateBlockGuard = (hook) => typeof hook?.command === 'string' && hook.command.includes(STATE_BLOCK_HOOK_RUNTIME);
-// Both entry shapes count. The matcher-group form (an object carrying its own `hooks` array) is what
-// this family ships and what was observed firing; a flat entry is accepted too, because the question
-// this probe answers is "is anything watching?" — and guessing NO for a wiring that works would nag
-// someone who already did the work.
-const isStateBlockGuardWired = (data) => {
-  const entries = data?.hooks?.Stop;
-  if (!Array.isArray(entries)) return false;
-  return entries.some((entry) => (Array.isArray(entry?.hooks)
-    ? entry.hooks.some(runsStateBlockGuard)
-    : runsStateBlockGuard(entry)));
-};
+// The state-block-guard wiring the advisor looks for is the writer leaf's own rule (any Stop entry of
+// either settings file running the runtime); the two constants are re-exported for their readers.
+export { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME };
 
 // The placed gate hook's currency, as the states a caller must tell APART (D8). Read through the
 // writer-class fail-closed no-follow primitive, never a bare readFile: a byte-compare that FOLLOWS a

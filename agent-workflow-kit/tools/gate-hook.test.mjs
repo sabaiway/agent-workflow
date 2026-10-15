@@ -11,9 +11,11 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
+import { statSync } from 'node:fs';
+import * as gateHook from './gate-hook.mjs';
 
 import {
   GATE_HOOK_DIVERGED,
@@ -100,6 +102,353 @@ const deployedFs = (extra = {}) =>
 
 const wiredSettings = (extra = {}) =>
   JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] }, ...extra });
+
+const need = (mod, name) => {
+  if (!(name in mod)) throw new Error(`${name} is absent`);
+  return mod[name];
+};
+
+describe('spec:init-project/S27 gate-hook --reseed by proof', () => {
+  const DIVERGED = '// an older placed hook, longer than the bundled runtime it is replaced by\n';
+  const CURRENT_LINE = 'nothing to change: the placed hook is current';
+  const capture = () => {
+    const lines = [];
+    return {
+      log: (line) => lines.push(String(line)),
+      errlog: (line) => lines.push(String(line)),
+      out: () => lines.join('\n'),
+    };
+  };
+
+  it('a diverged wired dry run plans replacement alone and prints the reseed preview without writes', () => {
+    const fs = deployedFs({ files: { [HOOK_ABS]: DIVERGED, [SETTINGS_ABS]: wiredSettings() } });
+    const before = new Map(fs.store);
+    const result = writeGateHook({ cwd: PROJ, dryRun: true, reseed: true }, fs);
+    const cap = capture();
+    const code = main(['--reseed', '--cwd', PROJ], { ...fs, ...cap });
+    assert.equal(result.reseedPlanned, true);
+    assert.equal(result.wirePlanned, false);
+    assert.equal(result.placePlanned, false);
+    assert.equal(result.wrote, false);
+    assert.equal(code, 0, cap.out());
+    assert.equal(cap.out().split('\n')[0], 'agent-workflow gate hook — DRY RUN (no changes; re-run with --apply --reseed)');
+    assert.ok(cap.out().split('\n').includes(`  - ${HOOK_FILE_REL}: would replace with the bundle (it differed from the bundled runtime)`));
+    assert.deepEqual(fs.writes, []);
+    assert.deepEqual(fs.store, before);
+  });
+
+  it('a diverged unwired dry run plans replacement and wiring instead of GATE_HOOK_DIVERGED', () => {
+    const fs = deployedFs({ files: { [HOOK_ABS]: DIVERGED } });
+    const before = new Map(fs.store);
+    const result = writeGateHook({ cwd: PROJ, dryRun: true, reseed: true }, fs);
+    assert.equal(result.reseedPlanned, true);
+    assert.equal(result.wirePlanned, true);
+    assert.equal(result.placePlanned, false);
+    assert.equal(result.wrote, false);
+    assert.deepEqual(fs.writes, []);
+    assert.deepEqual(fs.store, before);
+  });
+
+  it('reseed refuses absent, symlinked and non-regular targets in both modes with no writes and exit 1', () => {
+    const states = [
+      { name: 'absent', fixture: {}, code: GATE_HOOK_STALE, message: /is not placed/u },
+      { name: 'symlinked', fixture: { symlinks: [HOOK_ABS] }, code: GATE_HOOK_SYMLINK, message: /not a regular file/u },
+      { name: 'directory', fixture: { dirs: [HOOK_ABS] }, code: GATE_HOOK_SYMLINK, message: /not a regular file/u },
+    ];
+    for (const state of states) {
+      for (const dryRun of [true, false]) {
+        const fs = deployedFs(state.fixture);
+        const before = new Map(fs.store);
+        assert.throws(
+          () => writeGateHook({ cwd: PROJ, dryRun, reseed: true }, fs),
+          (err) => {
+            assert.equal(err.code, state.code, state.name);
+            assert.equal(err.exitCode, 1);
+            assert.ok(err.message.includes(HOOK_FILE_REL));
+            assert.match(err.message, state.message);
+            return true;
+          },
+        );
+        const cap = capture();
+        const argv = [...(dryRun ? [] : ['--apply']), '--reseed', '--cwd', PROJ];
+        assert.equal(main(argv, { ...fs, ...cap }), 1, cap.out());
+        assert.match(cap.out(), state.message);
+        assert.deepEqual(fs.writes, []);
+        assert.deepEqual(fs.store, before);
+      }
+    }
+  });
+
+  it('a current hook wired in project or local only prints exactly one no-change line in both modes', () => {
+    for (const settingsPath of [SETTINGS_ABS, LOCAL_ABS]) {
+      for (const dryRun of [true, false]) {
+        const fs = deployedFs({ files: { [HOOK_ABS]: BUNDLE_CONTENT, [settingsPath]: wiredSettings() } });
+        const before = new Map(fs.store);
+        const cap = capture();
+        const argv = [...(dryRun ? [] : ['--apply']), '--reseed', '--cwd', PROJ];
+        const code = main(argv, { ...fs, ...cap });
+        assert.equal(code, 0, cap.out());
+        assert.equal(cap.out(), CURRENT_LINE);
+        assert.deepEqual(fs.writes, []);
+        assert.deepEqual(fs.store, before);
+      }
+    }
+  });
+
+  it('a current unwired hook plans wiring alone and applies only the exact settings fixture', () => {
+    const fs = deployedFs({ files: { [HOOK_ABS]: BUNDLE_CONTENT } });
+    const before = new Map(fs.store);
+    const result = writeGateHook({ cwd: PROJ, dryRun: true, reseed: true }, fs);
+    assert.equal(result.reseedPlanned, false);
+    assert.equal(result.wirePlanned, true);
+    assert.equal(result.placePlanned, false);
+    assert.equal(result.wrote, false);
+    assert.deepEqual(fs.writes, []);
+    assert.deepEqual(fs.store, before);
+    const cap = capture();
+    assert.equal(main(['--reseed', '--cwd', PROJ], { ...fs, ...cap }), 0, cap.out());
+    assert.match(cap.out(), /settings\.json: would wire/u);
+    assert.deepEqual(fs.writes, []);
+    const applied = writeGateHook({ cwd: PROJ, dryRun: false, reseed: true }, fs);
+    assert.equal(applied.wrote, true);
+    assert.deepEqual(fs.writes.map((write) => write.path), [SETTINGS_ABS]);
+    assert.deepEqual(JSON.parse(fs.store.get(SETTINGS_ABS)), SETTINGS_FIXTURE);
+    assert.equal(fs.store.get(HOOK_ABS), BUNDLE_CONTENT);
+  });
+
+  it('reseed with read-lane exits 2 and parseArgs names the incompatible flags', () => {
+    const fs = deployedFs();
+    const cap = capture();
+    const message = '--reseed and --read-lane cannot be used together';
+    const code = main(['--reseed', '--read-lane', '--cwd', PROJ], { ...fs, ...cap });
+    assert.equal(code, 2);
+    assert.equal(cap.out().split('\n')[0], message);
+    assert.throws(
+      () => parseArgs(['--reseed', '--read-lane']),
+      (err) => {
+        assert.equal(err.exitCode, 2);
+        assert.equal(err.message, message);
+        return true;
+      },
+    );
+    assert.deepEqual(fs.writes, []);
+  });
+
+  it('apply reseeds in place, preserves wired settings, wires once when unwired and repeats without byte changes', () => {
+    for (const wired of [true, false]) {
+      const root = mkdtempSync(join(tmpdir(), 'gate-hook-reseed-'));
+      try {
+        mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+        mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+        const stampPath = join(root, 'docs', 'ai', '.workflow-version');
+        const bundlePath = join(root, 'bundle-gate-approve.mjs');
+        const hookPath = join(root, HOOK_FILE_REL);
+        const settingsPath = join(root, '.claude', 'settings.json');
+        const localPath = join(root, '.claude', 'settings.local.json');
+        const localBytes = '{"otherLocal":"kept"}\n';
+        const settingsBytes = wired ? `${wiredSettings()}\n` : '{"otherProject":"kept"}\n';
+        writeFileSync(stampPath, '4.0.0\n');
+        writeFileSync(bundlePath, BUNDLE_CONTENT);
+        writeFileSync(hookPath, DIVERGED);
+        writeFileSync(settingsPath, settingsBytes);
+        writeFileSync(localPath, localBytes);
+        const inodeBefore = statSync(hookPath).ino;
+        const writes = [];
+        const deps = {
+          bundlePath,
+          writeFile: (path, content, encoding) => {
+            writes.push(path);
+            writeFileSync(path, content, encoding);
+          },
+        };
+        const cap = capture();
+        const argv = ['--apply', '--reseed', '--cwd', root];
+        assert.equal(main(argv, { ...deps, ...cap }), 0, cap.out());
+        assert.equal(readFileSync(hookPath, 'utf8'), BUNDLE_CONTENT);
+        assert.equal(statSync(hookPath).ino, inodeBefore);
+        assert.deepEqual(writes, wired ? [hookPath] : [hookPath, settingsPath]);
+        assert.equal(cap.out().split('\n')[0], 'agent-workflow gate hook — APPLY');
+        assert.ok(cap.out().includes(`  - ${HOOK_FILE_REL}: replaced with the bundle (it differed from the bundled runtime)`));
+        const settingsAfter = readFileSync(settingsPath, 'utf8');
+        if (wired) assert.equal(settingsAfter, settingsBytes);
+        else assert.deepEqual(JSON.parse(settingsAfter), {
+          otherProject: 'kept',
+          hooks: { PreToolUse: [buildHookSettingsEntry()] },
+        });
+        assert.equal(readFileSync(localPath, 'utf8'), localBytes);
+        const second = capture();
+        const writeCount = writes.length;
+        assert.equal(main(argv, { ...deps, ...second }), 0, second.out());
+        assert.equal(second.out(), CURRENT_LINE);
+        assert.equal(writes.length, writeCount);
+        assert.equal(readFileSync(hookPath, 'utf8'), BUNDLE_CONTENT);
+        assert.equal(statSync(hookPath).ino, inodeBefore);
+        assert.equal(readFileSync(settingsPath, 'utf8'), settingsAfter);
+        assert.equal(readFileSync(localPath, 'utf8'), localBytes);
+        assert.equal(readFileSync(stampPath, 'utf8'), '4.0.0\n');
+        assert.equal(readFileSync(bundlePath, 'utf8'), BUNDLE_CONTENT);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('apply reseed refuses a hook swapped for a link before the write, and a platform without no-follow', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gate-hook-late-link-'));
+    try {
+      mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+      mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+      const bundlePath = join(root, 'bundle-gate-approve.mjs');
+      const hookPath = join(root, HOOK_FILE_REL);
+      const settingsPath = join(root, '.claude', 'settings.json');
+      const foreignPath = join(root, 'foreign.mjs');
+      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+      writeFileSync(bundlePath, BUNDLE_CONTENT);
+      writeFileSync(settingsPath, `${wiredSettings()}\n`);
+      writeFileSync(foreignPath, 'foreign bytes\n');
+      writeFileSync(hookPath, DIVERGED);
+      const swap = (path, ...args) => {
+        if (path === hookPath) {
+          unlinkSync(hookPath);
+          symlinkSync(foreignPath, hookPath);
+        }
+        writeFileSync(path, ...args);
+      };
+      const linked = capture();
+      assert.equal(main(['--apply', '--reseed', '--cwd', root], { bundlePath, writeFile: swap, ...linked }), 1, linked.out());
+      assert.match(linked.out(), /changed before the write — refusing to write through it/u);
+      assert.equal(readFileSync(foreignPath, 'utf8'), 'foreign bytes\n');
+      assert.equal(readFileSync(settingsPath, 'utf8'), `${wiredSettings()}\n`);
+      unlinkSync(hookPath);
+      writeFileSync(hookPath, DIVERGED);
+      const bare = capture();
+      assert.equal(main(['--apply', '--reseed', '--cwd', root], { bundlePath, noFollow: null, ...bare }), 1, bare.out());
+      assert.match(bare.out(), /no O_NOFOLLOW open flag — refusing to replace/u);
+      assert.equal(readFileSync(hookPath, 'utf8'), DIVERGED);
+      unlinkSync(hookPath);
+      const plant = (path, ...args) => {
+        if (path === hookPath) symlinkSync(foreignPath, hookPath);
+        writeFileSync(path, ...args);
+      };
+      const created = capture();
+      assert.equal(main(['--apply', '--cwd', root], { bundlePath, writeFile: plant, ...created }), 1, created.out());
+      assert.match(created.out(), /changed before the write — refusing to write through it/u);
+      assert.equal(readFileSync(foreignPath, 'utf8'), 'foreign bytes\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('a relative --cwd prints the reseed route with the absolute root', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gate-hook-relative-'));
+    try {
+      mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
+      mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+      const bundlePath = join(root, 'bundle-gate-approve.mjs');
+      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+      writeFileSync(bundlePath, BUNDLE_CONTENT);
+      writeFileSync(join(root, HOOK_FILE_REL), DIVERGED);
+      const rel = relative(process.cwd(), root);
+      assert.notEqual(rel, root);
+      const cap = capture();
+      assert.equal(main(['--apply', '--cwd', rel], { bundlePath, ...cap }), 1, cap.out());
+      assert.ok(cap.out().includes(`--apply --reseed --cwd ${root}`), cap.out());
+      assert.ok(!cap.out().includes(`--cwd ${rel}`), cap.out());
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('apply reseed keeps stamp, bypassPermissions and malformed hooks refusals with zero writes', () => {
+    const states = [
+      { files: { [STAMP_ABS]: '1.0.0\n' }, code: GATE_HOOK_STAMP, message: /lineage/u },
+      { files: { [SETTINGS_ABS]: wiredSettings({ permissions: { defaultMode: 'bypassPermissions' } }) }, code: GATE_HOOK_UNSAFE_MODE, message: /bypassPermissions/u },
+      { files: { [SETTINGS_ABS]: JSON.stringify({ hooks: { PreToolUse: {} } }) }, code: GATE_HOOK_MALFORMED, message: /"hooks.PreToolUse" must be an array/u },
+    ];
+    for (const state of states) {
+      const fs = deployedFs({ files: { [HOOK_ABS]: DIVERGED, [SETTINGS_ABS]: wiredSettings(), ...state.files } });
+      const before = new Map(fs.store);
+      if (state.code === GATE_HOOK_STAMP) {
+        const dry = writeGateHook({ cwd: PROJ, dryRun: true, reseed: true }, fs);
+        assert.equal(dry.stampOk, false);
+        assert.match(formatResult(dry), /--apply will refuse/u);
+        const cap = capture();
+        assert.equal(main(['--reseed', '--cwd', PROJ], { ...fs, ...cap }), 0, cap.out());
+      }
+      assert.throws(
+        () => writeGateHook({ cwd: PROJ, dryRun: false, reseed: true }, fs),
+        (err) => {
+          assert.equal(err.code, state.code);
+          assert.equal(err.exitCode, 1);
+          assert.match(err.message, state.message);
+          return true;
+        },
+      );
+      const cap = capture();
+      assert.equal(main(['--apply', '--reseed', '--cwd', PROJ], { ...fs, ...cap }), 1, cap.out());
+      assert.match(cap.out(), state.message);
+      assert.deepEqual(fs.writes, []);
+      assert.deepEqual(fs.store, before);
+    }
+  });
+
+  it('every stale recovery names the reseed route with the absolute root and help carries no rm or delete', () => {
+    const root = PROJ;
+    const unwired = deployedFs({ files: { [HOOK_ABS]: DIVERGED } });
+    const wired = deployedFs({
+      dirs: [join(root, 'docs'), join(root, 'docs', 'ai')],
+      files: { [HOOK_ABS]: DIVERGED, [SETTINGS_ABS]: wiredSettings() },
+    });
+    const refused = capture();
+    assert.equal(main(['--apply', '--cwd', root], { ...unwired, ...refused }), 1);
+    const lane = capture();
+    assert.equal(main(['--apply', '--read-lane', '--cwd', root], { ...wired, ...lane }), 1);
+    assert.match(lane.out(), /NOT the current bundle/u);
+    const report = capture();
+    assert.equal(main(['--cwd', root], { ...wired, ...report }), 0);
+    const help = capture();
+    assert.equal(main(['--help'], help), 0);
+    assert.ok(root.startsWith('/'));
+    for (const text of [refused.out(), lane.out(), report.out()]) {
+      assert.ok(text.includes(`--apply --reseed --cwd ${root}`), text);
+    }
+    assert.ok(help.out().split('\n').includes('       gate-hook --reseed [--dry-run | --apply] [--cwd <dir>]      (replace a placed hook with the bundle)'));
+    assert.ok(help.out().includes('(gate-hook --apply --reseed --cwd <dir>)'));
+    assert.ok(help.out().replace(/\s+/gu, ' ').includes('a current hook wired in either settings file is nothing to change, and a current unwired one is only wired.'));
+    for (const text of [refused.out(), lane.out(), report.out(), help.out()]) {
+      assert.doesNotMatch(text, /rm |delete/u);
+    }
+    assert.deepEqual(unwired.writes, []);
+    assert.deepEqual(wired.writes, []);
+  });
+
+  it('exports the shared functions, planTarget names its rel and assertHooksShape validates Stop', () => {
+    const rel = '.claude/hooks/state-block-guard.mjs';
+    const target = join(PROJ, rel);
+    const fs = deployedFs({ symlinks: [target] });
+    const data = { hooks: { Stop: {} } };
+    const names = ['fsDeps', 'lstatNoFollow', 'assertDirSafe', 'assertSettingsWritable', 'planTarget', 'assertHooksShape', 'readStamp', 'formatJson'];
+    for (const name of names) assert.equal(typeof need(gateHook, name), 'function', name);
+    assert.throws(
+      () => need(gateHook, 'planTarget')(target, rel, BUNDLE_CONTENT, fs),
+      (err) => {
+        assert.equal(err.code, GATE_HOOK_SYMLINK);
+        assert.ok(err.message.includes(rel));
+        assert.doesNotMatch(err.message, /agent-workflow-gates\.mjs/u);
+        return true;
+      },
+    );
+    assert.throws(
+      () => need(gateHook, 'assertHooksShape')(data, '.claude/settings.json', 'Stop'),
+      (err) => {
+        assert.equal(err.code, GATE_HOOK_MALFORMED);
+        assert.match(err.message, /"hooks\.Stop" must be an array/u);
+        return true;
+      },
+    );
+    assert.deepEqual(fs.writes, []);
+  });
+});
 
 describe('gate-hook writer — preview-then-mutate and the exact fixture', () => {
   it('dry-run is the default and writes NOTHING', () => {
@@ -297,12 +646,13 @@ describe('gate-hook CLI — usage and report', () => {
     assert.match(text, /hide-footprint reconcile/u);
   });
 
-  it('a STOP surfaces on stderr and exits 1', () => {
+  it('a STOP surfaces on stderr, names the reseed route and exits 1', () => {
     const fs = deployedFs({ files: { [HOOK_ABS]: 'diverged' } });
     const err = [];
     const code = main(['--apply'], { ...fs, cwd: PROJ, log: () => {}, errlog: (line) => err.push(line) });
     assert.equal(code, 1);
-    assert.match(err.join('\n'), /delete the file to reseed/u);
+    assert.match(err.join('\n'), /--apply --reseed --cwd \/proj/u);
+    assert.doesNotMatch(err.join('\n'), /delete/u);
   });
 
   it('HOOK_COMMAND references the placed path (the fixture and the placement can never drift)', () => {
@@ -449,7 +799,7 @@ describe('gate-hook --read-lane — the opt-in read-only compound lane writer', 
     assert.deepEqual(parsed, { _README: 'hi', otherLane: false, readLane: true });
   });
 
-  it('--apply REFUSES a STALE placed hook — names the delete-to-reseed recovery, writes nothing', () => {
+  it('--apply REFUSES a STALE placed hook — names the reseed route, writes nothing', () => {
     const { root, bundlePath } = makeDeployed({ hook: STALE });
     const cap = capture();
     const code = main(['--read-lane', '--apply', '--cwd', root], { ...cap, bundlePath });
@@ -457,8 +807,8 @@ describe('gate-hook --read-lane — the opt-in read-only compound lane writer', 
     cleanup(root);
     assert.equal(code, 1);
     assert.match(cap.out(), /NOT the current bundle/);
-    assert.match(cap.out(), /rm \S*agent-workflow-gates\.mjs/); // path-agnostic; R2-M3 pins the absolute form
-    assert.match(cap.out(), /--apply --cwd/);
+    assert.match(cap.out(), /--apply --reseed --cwd/); // path-agnostic; R2-M3 pins the absolute form
+    assert.doesNotMatch(cap.out(), /rm /u);
     assert.equal(created, false, 'the toggle is never written when the hook is stale');
   });
 
@@ -646,14 +996,15 @@ describe('gate-hook --read-lane — the opt-in read-only compound lane writer', 
     assert.match(cap2.out(), /deployment stamp: 1\.0\.0 . lineage head/);
   });
 
-  it('the stale recovery names an ABSOLUTE hook path, never a cwd-relative rm (council R2-M3)', () => {
+  it('the stale recovery names the reseed route with an ABSOLUTE root and no rm (council R2-M3)', () => {
     const { root, bundlePath } = makeDeployed({ hook: STALE });
     const cap = capture();
     main(['--read-lane', '--apply', '--cwd', root], { ...cap, bundlePath });
     cleanup(root);
-    // the rm target is the absolute path under the pinned root — the recovery run from ANY cwd can
-    // only delete THIS repo's hook, never a sibling project's.
-    assert.match(cap.out(), /rm \/[^\s]*\.claude\/hooks\/agent-workflow-gates\.mjs/);
-    assert.doesNotMatch(cap.out(), /rm \.claude\/hooks/);
+    // the reseed route pins the absolute root — the recovery run from ANY cwd can only replace THIS
+    // repo's hook, never a sibling project's.
+    assert.ok(root.startsWith('/'));
+    assert.ok(cap.out().includes(`--apply --reseed --cwd ${root}`), cap.out());
+    assert.doesNotMatch(cap.out(), /rm /u);
   });
 });

@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-15 — AD-183: the upgrade's Claude Code hook items get writers the agent runs on the chat yes (kit 14.31.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**`gate-hook.marker-stale`, `read-lane.stale` and `state-block` are now harness items the agent applies on the chat yes
+after the danger check, where they used to hand the user a hand step.** A stale gate hook is replaced with the bundled
+bytes in place by `gate-hook --apply --reseed` (no more `rm`); the new `tools/state-block-hook.mjs` places the
+closing-state-block detector and merges its `Stop` entry into `.claude/settings.json` without duplicating a wiring of
+either settings file. A replaced hook file shows the digest of the bytes it replaces in the check's result. The bare
+`sandbox-provision` item is worded as the user's own step. Contract: init-project revision 7. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-15 — AD-182: the docs navigator stamps a cap it honours past 80 lines, and the upgrade brings existing installs to it (kit 14.30.0 MINOR, memory 8.2.0 MINOR; engine 5.12.0 and both bridges unchanged)
 
 **The docs checker now stamps `maxLines: 80` into `docs/ai/index.md` while the navigator fits and its own line count

@@ -165,8 +165,8 @@ const CATALOG = [
     key: 'state-block-guard',
     invocation: invocationOf('state-block-guard'),
     group: 'Configure',
-    kind: READ_ONLY,
-    oneLine: 'Warn when a turn ends on a defective closing state block — a "nothing needed from you" answer or a promise of work that never started (Claude Code Stop hook; detection, never prevention; you paste the wiring).',
+    kind: WRITER,
+    oneLine: 'Warn when a turn ends on a defective closing state block — a "nothing needed from you" answer or a promise of work that never started (Claude Code Stop hook; detection, never prevention; its writer places and wires it on your chat yes).',
   },
   {
     key: 'bridge-settings',

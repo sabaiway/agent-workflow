@@ -333,7 +333,7 @@ describe('advisor third outcomes — an UNAVAILABLE census never buys an optimal
   });
 });
 
-describe('advisor third outcomes — the marker refresh path (D8)', () => {
+describe('spec:init-project/S32 advisor third outcomes — the marker refresh path (D8)', () => {
   // The placed hook validates the declaration through its OWN baked copy and goes dark on any key it
   // does not know. So a marker-carrying declaration under a pre-marker hook silently switches
   // auto-approval off: everything still works, and every gate prompts again, with no error anywhere.
@@ -346,23 +346,30 @@ describe('advisor third outcomes — the marker refresh path (D8)', () => {
     return fixture({ tsFiles: 1, gates, extraFiles }).root;
   };
 
-  it('a marker declaration under a STALE placed hook fires the reseed arm, and RUNNING that recovery converges it', () => {
+  it('a marker declaration under a STALE placed hook fires the reseed arm, and RUNNING that recovery converges it', async () => {
     const root = hookProject();
     const { hook } = report(root);
     assert.ok(hook, 'a configured capability silently switched off is attention, not silence');
     assert.equal(hook.variant, 'gate-hook.marker-stale');
     assert.equal(hook.severity, SEVERITY_ATTENTION);
     assert.match(hook.what, /lcovProducer/, hook.what);
-    // `gate-hook --apply` places only an ABSENT target, so remove-then-reseed is the ONLY lane that
-    // converges — and the rm is absolute, so running it from any cwd can only delete this hook.
-    assert.ok(hook.apply.startsWith(`HAND-APPLY: rm ${join(root, PLACED_HOOK_REL)}, then node `), hook.apply);
+    const checkLine = `node ${join(TOOLS, 'apply-danger-check.mjs')} --variant gate-hook.marker-stale --cwd ${root}`;
+    assert.equal(hook.check, checkLine);
+    assert.equal(hook.apply, `${checkLine} --apply --expect <digest>`);
+    const { applySlot } = await import('../tools/write-lanes.mjs');
+    assert.deepEqual({ check: hook.check, apply: hook.apply }, applySlot(hook.variant, { root, toolsDir: TOOLS }));
     // EXECUTED, not matched. A rendered recovery that does not converge the item it was rendered for
     // is this repo's standing defect, and a test that only reads the string would stay green through
     // exactly that — including if the writer ever stopped placing the hook at all.
-    const applied = hook.apply.match(/^HAND-APPLY: rm (\S+), then node (\S+) --apply --cwd (\S+)$/);
-    assert.ok(applied, `the recovery parses as the two steps it claims to be: ${hook.apply}`);
-    rmSync(applied[1]);
-    const reseed = spawnSync('node', [applied[2], '--apply', '--cwd', applied[3]], { encoding: 'utf8' });
+    const checkArgv = hook.check.split(' ');
+    assert.ok(checkArgv.every((arg) => /^[A-Za-z0-9_./-]+$/.test(arg)), 'every check argument is bare');
+    const checked = spawnSync(checkArgv[0], checkArgv.slice(1), { encoding: 'utf8' });
+    assert.equal(checked.status, 0, `${checked.stdout}${checked.stderr}`);
+    const digest = checked.stdout.trim().split('\n').at(-1).match(/^digest: ([a-f0-9]{64})$/);
+    assert.ok(digest, `the check's last line carries its digest: ${checked.stdout}`);
+    const applyArgv = hook.apply.replace('<digest>', digest[1]).split(' ');
+    assert.ok(applyArgv.every((arg) => /^[A-Za-z0-9_./-]+$/.test(arg)), 'every apply argument is bare');
+    const reseed = spawnSync(applyArgv[0], applyArgv.slice(1), { encoding: 'utf8' });
     assert.equal(reseed.status, 0, `${reseed.stdout}${reseed.stderr}`);
     assert.equal(readFileSync(join(root, PLACED_HOOK_REL), 'utf8'), REAL_BUNDLE, 'the reseeded hook IS the current bundle');
     assert.equal(report(root).hook, undefined, 'and the item it was rendered for is gone');
@@ -424,7 +431,7 @@ describe('advisor third outcomes — the marker refresh path (D8)', () => {
   });
 
   it('ONE render per condition: marker + an ENABLED read-lane + a stale hook is ONE item, and it is the one whose CAUSE is true', () => {
-    // Both arms carry the same remove-then-reseed recovery, so which one renders is decided by which
+    // Both arms carry the same reseed recovery, so which one renders is decided by which
     // sentence is TRUE. `read-lane.stale` says "an old hook never reads lanes.json" — false for a
     // hook that postdates the read-lane and merely predates the marker key, which is exactly the
     // deployment this arm exists for. The marker arm's cause holds in every such case.
@@ -433,7 +440,7 @@ describe('advisor third outcomes — the marker refresh path (D8)', () => {
     assert.ok(built.hook, 'the marker arm owns it');
     assert.equal(built.hook.variant, 'gate-hook.marker-stale');
     assert.equal(built.readLane, undefined, 'and the read-lane item does not repeat it under a false cause');
-    const staleItems = built.items.filter((i) => /rm .*agent-workflow-gates\.mjs/.test(i.apply));
+    const staleItems = built.items.filter((i) => i.variant === 'gate-hook.marker-stale' || i.variant === 'read-lane.stale');
     assert.equal(staleItems.length, 1, `exactly one reseed recovery renders: ${staleItems.map((i) => i.key).join(', ')}`);
   });
 
@@ -456,7 +463,7 @@ describe('advisor third outcomes — the marker refresh path (D8)', () => {
       },
     });
     assert.ok(reads >= 2, 'both probes really read the hook independently');
-    const recoveries = built.items.filter((i) => /agent-workflow-gates\.mjs/.test(i.apply));
+    const recoveries = built.items.filter((i) => i.variant === 'gate-hook.marker-stale' || i.variant === 'read-lane.stale');
     assert.equal(recoveries.length, 1, `the dark lane is reported exactly once: ${built.items.map((i) => i.variant).join(', ')}`);
     assert.equal(recoveries[0].variant, 'read-lane.stale', 'by the probe that actually saw it stale');
   });

@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { BUNDLED_HOOK_PATH, HOOK_FILE_REL, LANES_REL, buildHookSettingsEntry } from '../gate-hook.mjs';
 import { skillTargets } from '../jev-facts.mjs';
 import {
   APPLY, FIVE, RESTART, RUN_NONE, SUDO, TOOLS, applies, changed, facts, fixture, hashTree, init, isApply, item, lanes,
@@ -156,6 +158,83 @@ describe('spec:init-project/S24 danger check beside each harness preview', () =>
         assert.ok(index >= 0 && index < f.events.findIndex(([kind, text]) => kind === 'ask' && text === APPLY));
       }
     });
+  });
+});
+
+describe('spec:init-project/S30 init over the three writers with real writers', () => {
+  const placeStaleHook = (f) => {
+    put(join(f.root, HOOK_FILE_REL), 'process.exit(0);\n');
+    put(join(f.root, '.claude/settings.json'), JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] } }));
+  };
+
+  it('gate-hook.marker-stale and state-block apply on one y, print each check after its preview, and leave no pending item', async (t) => {
+    const variants = ['gate-hook.marker-stale', 'state-block'];
+    const f = realFixture(t, new Set(variants));
+    placeStaleHook(f);
+    put(join(f.root, 'docs/ai/gates.json'), JSON.stringify({
+      gates: [{ id: 'test', title: 'Tests', cmd: 'node --test', lcovProducer: true }],
+    }));
+    assert.equal(JSON.parse(readFileSync(join(f.root, '.claude/settings.json'), 'utf8')).hooks.Stop, undefined);
+    assert.deepEqual(pending(f), variants);
+    const respond = f.respond;
+    f.respond = (argv, opts) => {
+      if (argv[1] !== join(TOOLS, 'state-block-hook.mjs')) return respond(argv, opts);
+      assert.equal(argv[0], 'node');
+      const result = spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: opts.env, encoding: 'utf8' });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [
+      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--reseed', '--cwd', f.root],
+      ['node', join(TOOLS, 'state-block-hook.mjs'), '--apply', '--cwd', f.root],
+    ]);
+    for (const [index, variant] of variants.entries()) {
+      const preview = f.printed.indexOf(`preview: ${variant}`);
+      const scope = f.printed.indexOf(`scope: within the declared scope of ${variant}`);
+      const end = f.printed.indexOf(index === 0 ? `preview: ${variants[1]}` : RUN_NONE);
+      assert.ok(preview >= 0 && scope > preview + 1 && end > scope, `${variant}: check lines follow its preview`);
+    }
+    assert.ok(f.printed.includes(RESTART));
+    assert.deepEqual(pending(f), []);
+    assert.equal(readFileSync(join(f.root, HOOK_FILE_REL), 'utf8'), readFileSync(BUNDLED_HOOK_PATH, 'utf8'));
+    assert.equal(readFileSync(join(f.root, '.claude/hooks/state-block-guard.mjs'), 'utf8'),
+      readFileSync(join(TOOLS, '../references/hooks/state-block-guard.mjs'), 'utf8'));
+    const settings = JSON.parse(readFileSync(join(f.root, '.claude/settings.json'), 'utf8'));
+    const leaf = await import('../state-block-hook.mjs').catch(() => ({}));
+    assert.equal(need(leaf, 'isStopHookWired')(settings), true);
+    assert.deepEqual(settings.hooks.Stop, [need(leaf, 'buildStopHookEntry')()]);
+  });
+
+  it('read-lane.stale applies on one y with its check after the preview and is no longer pending', async (t) => {
+    const f = realFixture(t, new Set(['read-lane.stale']));
+    placeStaleHook(f);
+    put(join(f.root, LANES_REL), JSON.stringify({ readLane: true }));
+    const declaration = JSON.parse(readFileSync(join(f.root, 'docs/ai/gates.json'), 'utf8'));
+    assert.ok(declaration.gates.every((gate) => !Object.hasOwn(gate, 'lcovProducer')));
+    assert.deepEqual(pending(f), ['read-lane.stale']);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [
+      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--reseed', '--cwd', f.root],
+    ]);
+    const preview = f.printed.indexOf('preview: read-lane.stale');
+    const scope = f.printed.indexOf('scope: within the declared scope of read-lane.stale');
+    assert.ok(preview >= 0 && scope > preview + 1 && f.printed.indexOf(RUN_NONE) > scope);
+    assert.deepEqual(pending(f), []);
+    assert.equal(readFileSync(join(f.root, HOOK_FILE_REL), 'utf8'), readFileSync(BUNDLED_HOOK_PATH, 'utf8'));
+    assert.equal(JSON.parse(readFileSync(join(f.root, LANES_REL), 'utf8')).readLane, true);
+  });
+
+  it('a pending enforcement item is listed, not applied here, and spawns nothing', async (t) => {
+    const f = fixture(t, [item('enforcement', 'ENFORCEMENT-WHAT')]);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.ok(f.printed.includes('listed, not applied here: enforcement — ENFORCEMENT-WHAT'));
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.questions, []);
   });
 });
 

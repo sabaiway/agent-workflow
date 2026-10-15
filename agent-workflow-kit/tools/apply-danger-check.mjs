@@ -15,6 +15,7 @@ import { KIT_GROUNDING_TOOL, bundledSandboxRecipe, usedBridges } from './bridge-
 import { mergeAllowWrite, stateDirsOf } from './bridge-state-dirs.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { HOOK_FILE_REL, HOOKS_DIR, buildHookSettingsEntry, mergeHookEntry, writeGateHook } from './gate-hook.mjs';
+import { STATE_BLOCK_HOOK_FILE_REL, buildStopHookEntry, mergeStopEntry, writeStateBlockHook } from './state-block-hook.mjs';
 import { writeMcp } from './mcp.mjs';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, allowRulesFor, buildServerEntry } from './mcp-registration.mjs';
 import { AGENTS_DIR, writeCheapAgents } from './cheap-agents.mjs';
@@ -28,10 +29,14 @@ import { dirCovers as covers } from './declared-paths.mjs';
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SKILL_VARIANTS = ['jev-skill', 'jev-skill.earlier'];
 const VELOCITY_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier'];
-const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing'];
+const RESEED_VARIANTS = ['gate-hook.marker-stale', 'read-lane.stale'];
+const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing', ...RESEED_VARIANTS];
+const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
 const AGENT_VARIANTS = ['agents', 'executor-vehicle'];
-const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, ...MCP_VARIANTS, ...AGENT_VARIANTS, ...SKILL_VARIANTS];
+const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS,
+  ...SKILL_VARIANTS];
+const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const stable = (value) => object(value)
@@ -56,6 +61,7 @@ export const KEY_TABLE = Object.freeze({
   'permissions.deny': 3,
   'sandbox.enabled': 3,
   'hooks.PreToolUse': 4,
+  'hooks.Stop': 4,
   [ENABLED_KEY]: 4,
   [SERVERS_KEY]: 4,
   [CREDENTIALS]: 5,
@@ -67,7 +73,7 @@ const valid = (key, value, element = false) => {
   if (SCALARS.includes(key)) return typeof value === 'boolean';
   if (!element) return Array.isArray(value) && value.every((entry) => valid(key, entry, true));
   if (key === CREDENTIALS) return object(value) && typeof value.name === 'string' && typeof value.mode === 'string';
-  return key === 'hooks.PreToolUse' ? object(value) : typeof value === 'string';
+  return HOOK_KEYS.includes(key) ? object(value) : typeof value === 'string';
 };
 const keyOf = (key) => key.startsWith(`${SERVERS_KEY}.`) ? SERVERS_KEY : key;
 
@@ -174,6 +180,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
     set('permissions.deny', RENDER_OWNED_REDLINE_RULES);
     allowed[CREDENTIALS] = (value) => value.mode === 'deny';
   } else if (HOOK_VARIANTS.includes(variant)) set('hooks.PreToolUse', [buildHookSettingsEntry()]);
+  else if (variant === STOP) set('hooks.Stop', [buildStopHookEntry()]);
   else if (MCP_VARIANTS.includes(variant)) {
     set(`${SERVERS_KEY}.${SERVER_NAME}`, [buildServerEntry(join(facts.toolsDir, 'mcp-server.mjs'))]);
     set(ENABLED_KEY, [SERVER_NAME]);
@@ -181,11 +188,10 @@ export const scopeOf = (variant, facts, deps = {}) => {
   }
   const targets = SKILL_VARIANTS.includes(variant) ? skillTargets({ home: facts.home,
     claudeDir: facts.claudeDir ?? claudeDirOf(facts.env, facts.home, facts.platform).dir }) : [];
-  const filePaths = HOOK_VARIANTS.includes(variant) ? [join(facts.root, HOOK_FILE_REL)] : [];
-  const directories = VELOCITY_VARIANTS.includes(variant) || variant === 'autonomy-render'
-    || HOOK_VARIANTS.includes(variant) || MCP_VARIANTS.includes(variant) || AGENT_VARIANTS.includes(variant)
-    ? [join(facts.root, CLAUDE_DIR)] : [];
-  if (HOOK_VARIANTS.includes(variant)) directories.push(join(facts.root, HOOKS_DIR));
+  const filePaths = HOOK_VARIANTS.includes(variant) ? [join(facts.root, HOOK_FILE_REL)]
+    : variant === STOP ? [join(facts.root, STATE_BLOCK_HOOK_FILE_REL)] : [];
+  const directories = SKILL_VARIANTS.includes(variant) ? [] : [join(facts.root, CLAUDE_DIR)];
+  if (HOOK_VARIANTS.includes(variant) || variant === STOP) directories.push(join(facts.root, HOOKS_DIR));
   if (AGENT_VARIANTS.includes(variant)) directories.push(join(facts.root, AGENTS_DIR));
   for (const target of targets) {
     for (let at = target.root; at !== target.base && covers(target.base, at); at = dirname(at)) directories.push(at);
@@ -194,7 +200,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
   return {
     admits: ({ path, key, change, value }) => {
       const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL : path === SETTINGS_FILE;
-      const gains = variant === 'bridge-tier' || key === 'hooks.PreToolUse' || key === ENABLED_KEY || key === CREDENTIALS
+      const gains = variant === 'bridge-tier' || HOOK_KEYS.includes(key) || key === ENABLED_KEY || key === CREDENTIALS
         || (VELOCITY_VARIANTS.includes(variant) && key === 'permissions.ask');
       return correctFile && (!gains || change === 'added') && Boolean(allowed[key]?.(value));
     },
@@ -207,7 +213,7 @@ const jsonAt = (path) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8'
 const halted = (lines) => Object.assign(new Error(lines.join('\n')), { code: 'CHECK_HALTED', lines });
 const maskedFiles = (variant, facts) => {
   const paths = VELOCITY_VARIANTS.includes(variant) || variant === 'autonomy-render' || HOOK_VARIANTS.includes(variant)
-    ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
+    || variant === STOP ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
   return paths.flatMap((path) => lstatSync(join(facts.root, path), { throwIfNoEntry: false })?.isCharacterDevice()
     ? [`masked: ${path}`] : []);
 };
@@ -243,9 +249,17 @@ export const plannedChange = (variant, facts, deps = {}) => {
       const before = jsonAt(join(facts.root, SETTINGS_FILE));
       addFile(SETTINGS_FILE, before, mergeAutonomySettings(before, render));
     } else if (HOOK_VARIANTS.includes(variant)) {
-      const plan = writeGateHook({ cwd: facts.root, dryRun: true }, writerDeps);
+      const plan = writeGateHook({ cwd: facts.root, dryRun: true, reseed: RESEED_VARIANTS.includes(variant) }, writerDeps);
       if (plan.wirePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeHookEntry(plan.projectSettings.data));
-      if (plan.placePlanned) writes.push({ path: join(facts.root, HOOK_FILE_REL), bytes: plan.bundleContent });
+      const path = join(facts.root, HOOK_FILE_REL);
+      if (plan.placePlanned) writes.push({ path, bytes: plan.bundleContent });
+      if (plan.reseedPlanned) writes.push({ path, bytes: plan.bundleContent, replaces: readFileSync(path) });
+    } else if (variant === STOP) {
+      const plan = writeStateBlockHook({ cwd: facts.root, dryRun: true }, writerDeps);
+      if (plan.mergePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeStopEntry(plan.projectSettings.data));
+      const path = join(facts.root, STATE_BLOCK_HOOK_FILE_REL);
+      if (plan.placement === 'create') writes.push({ path, bytes: plan.bundleContent });
+      if (plan.placement === 'replace') writes.push({ path, bytes: plan.bundleContent, replaces: readFileSync(path) });
     } else if (MCP_VARIANTS.includes(variant)) {
       const result = writeMcp({ cwd: facts.root, dryRun: true, replace: variant === 'mcp-channel.differing' }, writerDeps);
       const { plan, registration } = result;
@@ -298,7 +312,10 @@ export const checkApply = (variant, facts, deps = {}) => {
     if (!scope.admitsPath(path, directory)) refused.push({ path: display(path), key: display(path),
       reason: `beyond the declared scope of ${variant}` });
   };
-  for (const write of plan.writes) pathLine(write.path, false, `writes: ${display(write.path)} sha256:${sha(write.bytes)}`);
+  for (const write of plan.writes) {
+    const replaces = write.replaces === undefined ? '' : ` — replaces sha256:${sha(write.replaces)}`;
+    pathLine(write.path, false, `writes: ${display(write.path)} sha256:${sha(write.bytes)}${replaces}`);
+  }
   for (const path of plan.directories) pathLine(path, true, `writes: ${display(path)}/ created`);
   lines.push(...plan.temporaries);
   if (refused.length) {

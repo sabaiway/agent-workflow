@@ -24,11 +24,12 @@
 //   • place-then-wire ORDER — the hook file is placed BEFORE settings are wired (a
 //     wired-but-missing hook would error on every Bash call);
 //   • a target hook file with DIFFERENT content while our entry is NOT wired is a precondition
-//     STOP (no file write, no settings mutation — wiring an unknown script as a PreToolUse hook
-//     is exactly what consent must not slide past); the recovery is named: delete the file to
-//     reseed from the bundle. An identical file is `already current`; an already-wired entry
-//     pointing at a diverged file is REPORTED, never unwired or clobbered (the cheap-agents
-//     preserved-customization discipline — no refresh-in-place, no marker/checksum machinery);
+//     STOP for `--apply` (no file write, no settings mutation — wiring an unknown script as a
+//     PreToolUse hook is exactly what consent must not slide past); the recovery is named: the
+//     reseed route. An identical file is `already current`; an already-wired entry pointing at a
+//     diverged file is REPORTED, never unwired by `--apply`. A diverged hook is never clobbered
+//     except by `--apply --reseed`, the one consented replacement: it writes the bundled bytes in
+//     place over a placed hook and wires the entry only while it is wired in neither file;
 //   • never writes settings.local.json; never commits.
 //
 // The `--read-lane` flag is a SEPARATE operation (AD-055 Part II): it enables the opt-in read-only
@@ -39,7 +40,7 @@
 // STOP; 2 usage. Dependency-free beyond the kit's own internal exports, Node >= 22. No side
 // effects on import.
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -99,6 +100,7 @@ const TARGET_CURRENT = 'already-current';
 const TARGET_DIVERGED = 'diverged';
 
 const USAGE = `usage: gate-hook [--dry-run | --apply] [--cwd <dir>] [--help]
+       gate-hook --reseed [--dry-run | --apply] [--cwd <dir>]      (replace a placed hook with the bundle)
        gate-hook --read-lane [--dry-run | --apply] [--cwd <dir>]   (enable the opt-in read-only compound lane)
 
 Places the bundled PreToolUse gate-approval hook to ${HOOK_FILE_REL} and wires ONE
@@ -107,11 +109,16 @@ nothing). --apply writes. The hook auto-approves byte-exact declared gate cmds
 (docs/ai/gates.json, project root) and asks on seeded-read-only commands carrying the
 documented runtime residual.
 
+--reseed replaces a PLACED hook whose bytes differ from the bundle with the bundled bytes, in
+place, and wires the entry only while it is wired in neither settings file; a current hook wired
+in either settings file is nothing to change, and a current unwired one is only wired. It refuses
+an absent hook (--apply places it) and a symlinked or non-regular one.
+
 --read-lane enables the opt-in read-only COMPOUND lane in ${LANES_REL} ("${READ_LANE_KEY}": true) — the
 hook then auto-approves compounds of the seeded read-only core carrying zero shell metaprogramming.
 --apply --read-lane verifies the PLACED hook is the CURRENT bundle first (a pre-1.48 hook never reads
-${LANES_REL}) and refuses with the delete-to-reseed recovery otherwise. Never touches ${SETTINGS_FILE}
-or docs/ai/gates.json.
+${LANES_REL}) and refuses otherwise, naming the reseed route (gate-hook --apply --reseed --cwd <dir>).
+Never touches ${SETTINGS_FILE} or docs/ai/gates.json.
 
 Never writes ${SETTINGS_LOCAL_FILE}; never commits.`;
 
@@ -120,15 +127,33 @@ export const fail = (exitCode, message) => Object.assign(new Error(message), { e
 export const makeGateHookError = (code, message) =>
   Object.assign(new Error(`${ERROR_PREFIX} ${message}`), { name: 'GateHookError', code, exitCode: EXIT_PRECONDITION });
 
-const fsDeps = (deps = {}) => ({
+export const fsDeps = (deps = {}) => ({
   exists: deps.exists ?? deps.existsSync ?? existsSync,
   lstat: deps.lstat ?? deps.lstatSync ?? lstatSync,
   mkdir: deps.mkdir ?? deps.mkdirSync ?? mkdirSync,
   readFile: deps.readFile ?? deps.readFileSync ?? readFileSync,
   writeFile: deps.writeFile ?? deps.writeFileSync ?? writeFileSync,
+  noFollow: 'noFollow' in deps ? deps.noFollow : fsConstants.O_NOFOLLOW,
 });
 
-const lstatNoFollow = (absPath, fs) => {
+// A hook file is written through open flags that refuse a symlink planted at the hook path after the
+// preflight: a create is exclusive (O_EXCL fails on any existing entry), a replace opens no-follow and
+// truncates in place (the inode stays). Without a no-follow flag a replace refuses before truncating.
+const LATE_CHANGE_CODES = new Set(['EEXIST', 'ELOOP', 'EMLINK', 'ENOENT', 'EISDIR']);
+export const writeHookFile = (absPath, rel, bytes, create, fs) => {
+  if (!create && !fs.noFollow) {
+    throw makeGateHookError(GATE_HOOK_SYMLINK, `this platform exposes no O_NOFOLLOW open flag — refusing to replace ${rel} in place (fail closed)`);
+  }
+  const flag = create ? 'wx' : fsConstants.O_WRONLY | fs.noFollow | fsConstants.O_TRUNC;
+  try {
+    fs.writeFile(absPath, bytes, { encoding: UTF8, flag });
+  } catch (err) {
+    if (!LATE_CHANGE_CODES.has(err?.code)) throw err;
+    throw makeGateHookError(GATE_HOOK_SYMLINK, `${rel} changed before the write — refusing to write through it (no settings change made); re-run`);
+  }
+};
+
+export const lstatNoFollow = (absPath, fs) => {
   try {
     return fs.lstat(absPath);
   } catch (err) {
@@ -153,7 +178,7 @@ export const readBundledHook = (deps = {}) => {
 
 // ── preflight (read-only; velocity discipline) ────────────────────────────────────────
 
-const readStamp = (absPath, fs) => {
+export const readStamp = (absPath, fs) => {
   try {
     if (!fs.exists(absPath)) return null;
     const stamp = String(fs.readFile(absPath, UTF8)).trim();
@@ -163,14 +188,14 @@ const readStamp = (absPath, fs) => {
   }
 };
 
-const assertDirSafe = (absPath, relPath, fs) => {
+export const assertDirSafe = (absPath, relPath, fs) => {
   const stat = lstatNoFollow(absPath, fs);
   if (stat === null) return;
   if (stat.isSymbolicLink()) throw makeGateHookError(GATE_HOOK_SYMLINK, `${relPath} is a symlink — refusing to write through it`);
   if (!stat.isDirectory()) throw makeGateHookError(GATE_HOOK_SYMLINK, `${relPath} exists but is not a directory — refusing to write through it`);
 };
 
-const assertSettingsWritable = (absPath, fs) => {
+export const assertSettingsWritable = (absPath, fs) => {
   const stat = lstatNoFollow(absPath, fs);
   if (stat !== null && !stat.isFile()) {
     throw makeGateHookError(GATE_HOOK_SYMLINK, `${SETTINGS_FILE} exists but is not a regular file — refusing to clobber it`);
@@ -178,12 +203,12 @@ const assertSettingsWritable = (absPath, fs) => {
 };
 
 // Target plan: place | already-current | diverged. A symlinked / non-regular target is a STOP —
-// never a write-through, never a comparison pretending it is a file.
-const planTarget = (absPath, bundleContent, fs) => {
+// never a write-through, never a comparison pretending it is a file. `rel` names the judged file.
+export const planTarget = (absPath, rel, bundleContent, fs) => {
   const stat = lstatNoFollow(absPath, fs);
   if (stat === null) return { action: TARGET_PLACE };
   if (stat.isSymbolicLink() || !stat.isFile()) {
-    throw makeGateHookError(GATE_HOOK_SYMLINK, `${HOOK_FILE_REL} exists but is not a regular file — refusing to touch it`);
+    throw makeGateHookError(GATE_HOOK_SYMLINK, `${rel} exists but is not a regular file — refusing to touch it`);
   }
   return fs.readFile(absPath, UTF8) === bundleContent ? { action: TARGET_CURRENT } : { action: TARGET_DIVERGED };
 };
@@ -191,22 +216,22 @@ const planTarget = (absPath, bundleContent, fs) => {
 // The reused readSettingsFile validates permissions.* ONLY — this writer scans and appends
 // inside `hooks`, so any existing `hooks` key must be shape-valid BEFORE a write is planned:
 // a malformed shape is a STOP with zero writes, never a merge-through-clobber.
-const assertHooksShape = (data, relPath) => {
+export const assertHooksShape = (data, relPath, event = PRE_TOOL_USE_EVENT) => {
   if (data === undefined || data.hooks === undefined) return;
   if (!isJsonObject(data.hooks)) {
     throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: "hooks" must be a JSON object`);
   }
-  const entries = data.hooks[PRE_TOOL_USE_EVENT];
+  const entries = data.hooks[event];
   if (entries === undefined) return;
   if (!Array.isArray(entries)) {
-    throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: "hooks.${PRE_TOOL_USE_EVENT}" must be an array`);
+    throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: "hooks.${event}" must be an array`);
   }
   for (const entry of entries) {
     if (!isJsonObject(entry)) {
-      throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: every "hooks.${PRE_TOOL_USE_EVENT}[]" entry must be a JSON object`);
+      throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: every "hooks.${event}[]" entry must be a JSON object`);
     }
     if (entry.hooks !== undefined && (!Array.isArray(entry.hooks) || entry.hooks.some((hook) => !isJsonObject(hook)))) {
-      throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: "hooks.${PRE_TOOL_USE_EVENT}[].hooks" must be an array of objects`);
+      throw makeGateHookError(GATE_HOOK_MALFORMED, `${relPath}: "hooks.${event}[].hooks" must be an array of objects`);
     }
   }
 };
@@ -243,15 +268,21 @@ export const mergeHookEntry = (base) => {
   return { ...root, hooks: { ...hooks, [PRE_TOOL_USE_EVENT]: [...entries, buildHookSettingsEntry()] } };
 };
 
-export const preflightGateHook = ({ cwd }, deps = {}) => {
+export const preflightGateHook = ({ cwd, reseed = false }, deps = {}) => {
   const fs = fsDeps(deps);
-  const projectDir = cwd ?? deps.cwd ?? process.cwd();
+  const projectDir = resolve(cwd ?? deps.cwd ?? process.cwd());
   const bundleContent = readBundledHook(deps);
   const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
   const stampOk = stamp === EXPECTED_WORKFLOW_VERSION;
   assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
   assertDirSafe(join(projectDir, HOOKS_DIR), HOOKS_DIR, fs);
-  const target = planTarget(join(projectDir, HOOK_FILE_REL), bundleContent, fs);
+  const target = planTarget(join(projectDir, HOOK_FILE_REL), HOOK_FILE_REL, bundleContent, fs);
+  if (reseed && target.action === TARGET_PLACE) {
+    throw makeGateHookError(
+      GATE_HOOK_STALE,
+      `${HOOK_FILE_REL} is not placed — --reseed replaces a placed hook; place it with: ${applyGateHookCommand(projectDir)}`,
+    );
+  }
   assertSettingsWritable(join(projectDir, SETTINGS_FILE), fs);
   const projectSettings = readSettingsFile(join(projectDir, SETTINGS_FILE), { ...deps, cwd: projectDir });
   const localSettings = readSettingsFile(join(projectDir, SETTINGS_LOCAL_FILE), { ...deps, cwd: projectDir });
@@ -272,11 +303,12 @@ export const preflightGateHook = ({ cwd }, deps = {}) => {
   const wiredInLocal = isHookWired(localSettings.data);
   // Diverged target + our entry NOT wired anywhere = STOP on BOTH dry-run and apply: applying
   // would wire an unknown script as a PreToolUse hook — exactly what consent must not slide
-  // past. (Diverged + already wired is the user's own standing state: report-only, below.)
-  if (target.action === TARGET_DIVERGED && !wiredInProject && !wiredInLocal) {
+  // past. (Diverged + already wired is the user's own standing state: report-only, below.) Under
+  // --reseed this is exactly the state the reseed replaces before it wires.
+  if (!reseed && target.action === TARGET_DIVERGED && !wiredInProject && !wiredInLocal) {
     throw makeGateHookError(
       GATE_HOOK_DIVERGED,
-      `${HOOK_FILE_REL} exists with DIFFERENT content and is not wired — refusing to wire an unknown script as a PreToolUse hook; delete the file to reseed from the bundle, then re-run`,
+      `${HOOK_FILE_REL} exists with DIFFERENT content and is not wired — refusing to wire an unknown script as a PreToolUse hook; reseed it from the bundle: ${applyReseedCommand(projectDir)}`,
     );
   }
 
@@ -285,15 +317,16 @@ export const preflightGateHook = ({ cwd }, deps = {}) => {
 
 // ── the writer ────────────────────────────────────────────────────────────────────────
 
-const formatJson = (data, eol) =>
+export const formatJson = (data, eol) =>
   `${JSON.stringify(data, null, SETTINGS_JSON_INDENT).replace(JSON_NEWLINE_PATTERN, eol)}${eol}`;
 
-export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
+export const writeGateHook = ({ cwd, dryRun = true, reseed = false } = {}, deps = {}) => {
   const fs = fsDeps(deps);
-  const preflight = preflightGateHook({ cwd: cwd ?? deps.cwd ?? process.cwd() }, deps);
+  const preflight = preflightGateHook({ cwd: cwd ?? deps.cwd ?? process.cwd(), reseed }, deps);
   const placePlanned = preflight.target.action === TARGET_PLACE;
+  const reseedPlanned = reseed && preflight.target.action === TARGET_DIVERGED;
   const wirePlanned = !preflight.wiredInProject && !preflight.wiredInLocal;
-  const base = { placePlanned, wirePlanned, ...preflight };
+  const base = { placePlanned, reseedPlanned, wirePlanned, reseed, ...preflight };
   if (dryRun) return { wrote: false, dryRun: true, ...base };
 
   if (!preflight.stampOk) {
@@ -307,8 +340,9 @@ export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const hookAbs = join(preflight.projectDir, HOOK_FILE_REL);
   if (placePlanned) {
     fs.mkdir(join(preflight.projectDir, HOOKS_DIR), { recursive: true });
-    fs.writeFile(hookAbs, preflight.bundleContent, UTF8);
+    writeHookFile(hookAbs, HOOK_FILE_REL, preflight.bundleContent, true, fs);
   }
+  if (reseedPlanned) writeHookFile(hookAbs, HOOK_FILE_REL, preflight.bundleContent, false, fs); // in place: the inode stays
   if (wirePlanned) {
     // Re-verify the target no-follow immediately BEFORE wiring: preflight read it earlier, and an
     // external process could have swapped it (or slipped a symlink in) between preflight and now.
@@ -328,7 +362,7 @@ export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
       UTF8,
     );
   }
-  return { wrote: placePlanned || wirePlanned, dryRun: false, ...base };
+  return { wrote: placePlanned || reseedPlanned || wirePlanned, dryRun: false, ...base };
 };
 
 // ── the read-lane writer (--read-lane; AD-055 Part II, Decisions 5/9) ──────────────────
@@ -338,7 +372,7 @@ export const writeGateHook = ({ cwd, dryRun = true } = {}, deps = {}) => {
 // merge-preserve, symlink/non-regular refusal, malformed-JSON fail-closed, atomic), PLUS a CURRENCY
 // CHECK (Decisions 9): --apply refuses unless the PLACED hook is byte-identical to the current
 // bundle — enabling a lane a pre-1.48 hook can never read would be a silent no-op the user paid
-// consent for. The refusal names the delete-to-reseed recovery.
+// consent for. The refusal names the reseed route.
 
 const laneStop = (message) => makeGateHookError(GATE_HOOK_LANE, message);
 
@@ -377,6 +411,7 @@ const preflightLaneTarget = (absPath, deps) => {
 };
 
 export const applyGateHookCommand = (root) => `node ${q(GATE_HOOK_TOOL)} --apply --cwd ${q(root)}`;
+export const applyReseedCommand = (root) => `node ${q(GATE_HOOK_TOOL)} --apply --reseed --cwd ${q(root)}`;
 export const applyReadLaneCommand = (root) => `node ${q(GATE_HOOK_TOOL)} --read-lane --cwd ${q(root)} --apply`;
 
 // The currency check (Decisions 9): the PLACED hook must be byte-identical to the current bundle,
@@ -399,7 +434,7 @@ const checkHookCurrency = (root, bundleContent, fs) => {
     return {
       current: false,
       reason: `${HOOK_FILE_REL} is not the current bundle`,
-      refusal: `${HOOK_FILE_REL} is NOT the current bundle — enabling the read-lane now would be a silent no-op (a pre-1.48 hook never reads ${LANES_REL}). Reseed it, then re-run with --read-lane:\n  rm ${q(join(root, HOOK_FILE_REL))}\n  ${applyGateHookCommand(root)}`,
+      refusal: `${HOOK_FILE_REL} is NOT the current bundle — enabling the read-lane now would be a silent no-op (a pre-1.48 hook never reads ${LANES_REL}). Reseed it, then re-run with --read-lane:\n  ${applyReseedCommand(root)}`,
     };
   }
   return { current: true, reason: 'the placed hook is the current bundle' };
@@ -499,7 +534,8 @@ const TRUST_POSTURE_LINE =
 const formatTargetLine = (result) => {
   if (result.target.action === TARGET_PLACE) return `  - ${HOOK_FILE_REL}: ${result.dryRun ? 'would place' : 'placed'}`;
   if (result.target.action === TARGET_CURRENT) return `  - ${HOOK_FILE_REL}: already current`;
-  return `  - ${HOOK_FILE_REL}: diverged from the bundle — preserved, never clobbered (already wired; delete the file to reseed from the bundle)`;
+  if (result.reseed) return `  - ${HOOK_FILE_REL}: ${result.dryRun ? 'would replace' : 'replaced'} with the bundle (it differed from the bundled runtime)`;
+  return `  - ${HOOK_FILE_REL}: diverged from the bundle — preserved, never clobbered (already wired; reseed it from the bundle: ${applyReseedCommand(result.projectDir)})`;
 };
 
 const formatSettingsLine = (result) => {
@@ -508,10 +544,13 @@ const formatSettingsLine = (result) => {
   return `  - ${SETTINGS_FILE}: ${result.dryRun ? 'would wire' : 'wired'} the ${PRE_TOOL_USE_EVENT} "${HOOK_MATCHER}" entry`;
 };
 
+const RESEED_CURRENT_LINE = 'nothing to change: the placed hook is current';
+
 export const formatResult = (result) => {
+  if (result.reseed && !result.reseedPlanned && !result.wirePlanned) return RESEED_CURRENT_LINE;
   const lines = [
     result.dryRun
-      ? 'agent-workflow gate hook — DRY RUN (no changes; re-run with --apply)'
+      ? `agent-workflow gate hook — DRY RUN (no changes; re-run with --apply${result.reseed ? ' --reseed' : ''})`
       : 'agent-workflow gate hook — APPLY',
     formatTargetLine(result),
     formatSettingsLine(result),
@@ -530,13 +569,14 @@ export const formatResult = (result) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 export const parseArgs = (argv) => {
-  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false, readLane: false };
+  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false, readLane: false, reseed: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--dry-run') opts.dryRunFlag = true;
     else if (arg === '--apply') opts.apply = true;
     else if (arg === '--read-lane') opts.readLane = true;
+    else if (arg === '--reseed') opts.reseed = true;
     else if (arg === '--cwd') {
       i += 1;
       if (argv[i] === undefined || argv[i].startsWith('-')) throw fail(EXIT_USAGE, '--cwd needs a directory argument');
@@ -546,7 +586,8 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.dryRunFlag && opts.apply) throw fail(EXIT_USAGE, '--dry-run and --apply cannot be used together');
-  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd, readLane: opts.readLane };
+  if (opts.reseed && opts.readLane) throw fail(EXIT_USAGE, '--reseed and --read-lane cannot be used together');
+  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd, readLane: opts.readLane, reseed: opts.reseed };
 };
 
 export const main = (argv = process.argv.slice(2), deps = {}) => {
@@ -563,7 +604,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(formatReadLaneResult(laneResult));
       return EXIT_OK;
     }
-    const result = writeGateHook({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun }, deps);
+    const result = writeGateHook({ cwd: args.cwd ?? deps.cwd ?? process.cwd(), dryRun: args.dryRun, reseed: args.reseed }, deps);
     log(formatResult(result));
     return EXIT_OK;
   } catch (err) {

@@ -34,7 +34,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   gets the apply ask rule like any other. Origin: the velocity preflight stops on any `permissions.defaultMode` outside
   `SAFE_DEFAULT_MODES` in either project settings file (`agent-workflow-kit/tools/velocity-profile.mjs:853`,
   `isUnsafeMode`), and the gate-hook preflight reads the same judgement through `resolveEffectiveMode`
-  (`agent-workflow-kit/tools/gate-hook.mjs:258`), so admitting `auto` reaches beyond this writer. Narrow fix: none in
+  (`agent-workflow-kit/tools/gate-hook.mjs:289`), so admitting `auto` reaches beyond this writer. Narrow fix: none in
   story S7 of BRIDGES-WORK-UNDER-THE-SANDBOX (a non-goal of its plan); such a project's user takes the one plain step on
   each auto-mode refusal. Proof when one lands: a velocity apply on a project with `defaultMode: "auto"` seeds the rule
   and the gate-hook preflight's verdict on it is unchanged. Residual exposure, live and stated: that project never gets
@@ -318,7 +318,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Narrow fix: the three join exit 2 and S23. Raised by the S1 spec review (lens 14; agy round 2, minor 2).
 - **DANGER-CHECK-DIGEST-BINDS-WRITTEN-BYTES-UNPINNED** — invariant: the bytes an apply writes are the bytes whose sha256
   the user saw. Origin: S22's real-apply cell compares settings diffs and changed paths, not the printed `writes: …
-  sha256:` values with the written bytes (`agent-workflow-kit/tools/gate-hook.mjs:310`, `cheap-agents.mjs:203`), and no
+  sha256:` values with the written bytes (`agent-workflow-kit/tools/gate-hook.mjs:343`, `cheap-agents.mjs:203`), and no
   cell changes a planned file's content between check and apply. Narrow fix: compare the hashes, and one cell changing
   the content after the check expects exit 5 with nothing spawned. Raised by the S1 spec review (codex round 2, minor 2).
 - **DANGER-CHECK-EXIT-3-SPAWNS-NOTHING-UNPINNED** — invariant: no exit of the danger check other than an equal digest
@@ -360,12 +360,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual: native Windows is unmeasured. Raised by the S1 spec review (lens 17).
 - **DANGER-CHECK-SCALAR-REMOVAL-CLASS** — invariant: a scalar key removed from the settings is classed by the default
   it falls back to. Origin: the part apply-danger-check classes list removals only; `classOf` classes every scalar
-  removal as `nothing widened` (`agent-workflow-kit/tools/apply-danger-check.mjs:116`), so removing `sandbox.enabled:
+  removal as `nothing widened` (`agent-workflow-kit/tools/apply-danger-check.mjs:124`), so removing `sandbox.enabled:
   true` (the sandbox off by default) prints `nothing widened`, and autonomy-render's scope admits it (its value `true`).
   No harness writer removes a scalar today. Narrow fix: the table names scalar removals (`sandbox.enabled` and
   `sandbox.autoAllowBashIfSandboxed` removed: `prompts removed`; `permissions.defaultMode` removed: `nothing widened`)
   and a scope admits no scalar removal. Same class: an altered credentials entry (`sandbox.credentials.envVars`,
-  `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:59`, `:116`).
+  `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:142`, `:124`).
   Raised by the S1 code session's self-review; the credentials case by the S1 release lens.
 - **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
   that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
@@ -374,7 +374,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   digest, in <place>". Residual: a pasted `--expect <digest>` is a parse error in bash, zsh, fish and PowerShell;
   nothing runs. Raised by the S1 diff review (lens round 1).
 - **DANGER-CHECK-DIGEST-OMITS-THE-ROOT** — invariant: the consent digest binds where the change lands. Origin:
-  checkApply prints root-relative lines (`agent-workflow-kit/tools/apply-danger-check.mjs:278-287`), so two projects with
+  checkApply prints root-relative lines (`agent-workflow-kit/tools/apply-danger-check.mjs:299-319`), so two projects with
   identical planned lines share a digest. Narrow fix: a first line `root: <abs>` inside the digest (a spec line-format
   revision). Residual: needs the agent itself to reuse one project's digest on another; the check and apply lines
   carry the same `--cwd`. Raised by the S1 diff review (lens round 1).
@@ -396,6 +396,69 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   BRIDGES-WORK-UNDER-THE-SANDBOX) that is the step-3 specs line, which says the edited files were left as written,
   over files the replace run overwrote. Narrow fix: as for the late `--only index` line, the report relays the replace
   run's specs line when it ran. Raised by the S5 spec review (lens, final check).
+- **RESEED-PRINTS-NO-CLASS-FOR-RE-ARMED-APPROVAL** — invariant: a check result names what a write turns back on. Origin:
+  the S6 reseed of a wired gate hook prints only a `writes:` line, no class, though the replaced hook turns gate
+  auto-approval (marker-stale) or the read-lane compounds (read-lane.stale) back on; the same form as revision 6's
+  `read-lane.missing` placement over a wired entry (`agent-workflow-kit/tools/apply-danger-check.mjs:251-256`, `:315-317`).
+  Narrow fix: a class suffix on a hook-file `writes:` line naming what the hook approves. Raised by the S6 spec review
+  (lens round 1, m4).
+- **GATE-HOOK-DIVERGED-UNWIRED-RECOVERY-SKIPS-THE-CHECK** — invariant: every recovery the kit prints for a harness
+  write is a check line. Origin: spec init-project revision 7 (part hook-writers) makes the base `gate-hook` item's
+  diverged-and-unwired refusal name the raw reseed line `gate-hook.mjs --apply --reseed`, which wires a PreToolUse entry
+  with no danger check; no advisor arm routes that state through the check. Narrow fix: the refusal names the
+  `gate-hook.marker-stale` check line (or a new arm). Raised by the S6 spec review (lens round 1, m5).
+- **S6-LIVE-ACCEPTANCE-RUNS-NO-STOP-HOOK** — invariant: a live acceptance proves the placed hook runs, not only that the
+  item leaves the list. Origin: the S6 plan's live bullet (story S6 of BRIDGES-WORK-UNDER-THE-SANDBOX) checks that the
+  next advisor run no longer lists `state-block`, never that the wired Stop hook fires. Narrow fix: start a new session in
+  the scratch project and see the guard's warning on a control message that drops the closing block. Raised by the S6
+  re-read (codex, minor 2).
+- **STATE-BLOCK-POSTURE-NOT-IN-THE-CONSENT-ROUTE** — invariant: the user hears a placed hook's trust posture before the
+  yes. Origin: `state-block-guard.md` asks to state the posture when asking consent, while the advisor shows only the
+  closed set of posture notes (`RISK_NOTED_KEYS`, pinned at
+  `agent-workflow-kit/test/recommendations-language-contract.test.mjs:126`) and `state-block` is not in it; story S6
+  of BRIDGES-WORK-UNDER-THE-SANDBOX gives the item a chat-yes writer. Narrow fix: a one-line `state-block` posture note
+  in `references/modes/recommendations.md` and its `RISK_NOTED_KEYS` entry. Raised by the S6 re-read (lens, m5).
+- **COMMIT-GUARD-INSTALLER-ABSENT-REMEDY-NAMES-BOOTSTRAP** — invariant: no advisor skip line names a hand step. Origin:
+  `COMMIT_GUARD_INSTALLER_REMEDY` (`agent-workflow-kit/tools/recommendations.mjs:124`) tells the user to deploy the
+  enforcement scripts by bootstrap steps 8-9; story S8 of BRIDGES-WORK-UNDER-THE-SANDBOX routes those steps. Narrow fix:
+  the remedy names the `enforcement` item. Raised by the S6 spec review (lens round 1, m2, second half).
+- **STATE-BLOCK-HOOK-RESTATES-TWO-GATE-HOOK-REFUSALS** — invariant: one writer discipline, written once. Origin:
+  `agent-workflow-kit/tools/state-block-hook.mjs:141-149` restates gate-hook's unsafe-mode refusal (`gate-hook.mjs:291-299`)
+  and `:173-178` its stamp refusal (`gate-hook.mjs:332-337`), with gate-hook's error codes. Narrow fix: gate-hook exports
+  the two refusals as helpers both writers call, and the S28 import cell names them. Raised by the S6 release copy pass
+  (lens, F2).
+- **SETTINGS-WRITE-FOLLOWS-A-LATE-LINK** — invariant: a writer's file write never follows a link planted after its
+  preflight. Origin: the in-place `.claude/settings.json` write (`agent-workflow-kit/tools/gate-hook.mjs:359`,
+  `agent-workflow-kit/tools/state-block-hook.mjs:193`) opens with a plain flag after an lstat-only preflight
+  (`assertSettingsWritable`); story S6 closed the same window for the hook file (`writeHookFile`). Narrow fix: the
+  settings write through `writeHookFile`'s replace flags (create `wx` when absent). Proof: a cell swapping the settings
+  file for a link before the write, refused, the link target unchanged. Residual declared not live: the window is
+  between two calls of one run, and only a process already able to write the project's `.claude/` can use it, so it
+  widens nothing that process lacks; the same residual covers a hard link at the hook path and the same window over a
+  parent directory (`.claude` or `.claude/hooks` swapped for a link between the preflight and the write, which the
+  recursive `mkdir`, `wx` and `O_NOFOLLOW` do not see). Raised by the S6 diff review (codex round 1, M1, the
+  generalization; lens round 2, M1, the parent directory and the hard link).
+- **HOOK-REPLACE-OPEN-BLOCKS-ON-A-FIFO** — invariant: a writer refuses a non-regular entry, never blocks on it. Origin:
+  `writeHookFile`'s replace flags (`agent-workflow-kit/tools/gate-hook.mjs:147`, `O_WRONLY | O_NOFOLLOW | O_TRUNC`) block
+  on a FIFO swapped in at the hook path after the preflight until a reader opens it, and the danger check's apply spawn
+  has no timeout. Narrow fix: `O_NONBLOCK` on the replace flags and `ENXIO` in `LATE_CHANGE_CODES`, as the kit's
+  no-follow reader does (`agent-workflow-kit/tools/fs-read-nofollow.mjs`). Raised by the S6 diff review (lens round 2, m1).
+- **HOOK-REPLACE-REFUSES-WITHOUT-NOFOLLOW** — invariant: a harness item the advisor offers can be applied on every
+  platform the kit supports. Origin: `writeHookFile` (`agent-workflow-kit/tools/gate-hook.mjs`) refuses an in-place
+  replace where `fs.constants.O_NOFOLLOW` is absent (native Windows), so `gate-hook.marker-stale`, `read-lane.stale` and
+  a differing unwired state-block runtime stay offered there and never converge. Narrow fix: without `O_NOFOLLOW`,
+  unlink the entry (which removes a link, never its target) and create the file exclusively (`wx`). Proof: the
+  no-follow-absent cell applies and leaves a planted link's target unchanged. Raised by the S6 diff review (codex fold
+  ask, C-M1 correction).
+- **STATE-BLOCK-HOOK-PRINTS-NO-HIDDEN-MODE-NOTE** — invariant: every `.claude/` placing writer names the hide-footprint
+  reconcile. Origin: `agent-workflow-kit/tools/state-block-hook.mjs` prints only the hot-reload line after a write, while
+  `gate-hook.mjs` adds the hidden-mode note; on a hidden deployment with no gate hook the placed `.claude/hooks/` shows in
+  `git status` until the next upgrade. Narrow fix: the same note line after a state-block write and one sentence in
+  `state-block-guard.md`'s writer list. Raised by the S6 diff review (lens round 1, m1).
+- **STATE-BLOCK-HOOK-TAKES-NO-DRY-RUN-FLAG** — invariant: the hook writers share one flag grammar. Origin:
+  `state-block-hook.mjs` `parseArgs` refuses `--dry-run` (`unknown argument`), which `gate-hook.mjs` accepts; the preview
+  is already the default. Narrow fix: accept `--dry-run` and refuse it beside `--apply`, as gate-hook does. Raised by the
+  S6 diff review (agy round 1, n1).
 
 ## Closed
 

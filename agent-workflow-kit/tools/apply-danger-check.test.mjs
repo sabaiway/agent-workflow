@@ -17,6 +17,11 @@ import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { ACTIVITIES } from './carriers.mjs';
 import * as lanes from './write-lanes.mjs';
 
+const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
+const need = (name) => {
+  if (!(name in leaf)) throw new Error(name + ' is absent');
+  return leaf[name];
+};
 const danger = await import('./apply-danger-check.mjs').catch((cause) => new Proxy({}, {
   get: (_, name) => {
     if (name === 'then') return undefined;
@@ -142,6 +147,17 @@ const expectedPlan = (variant, f, deps = {}) => {
     const p = hook.writeGateHook({ cwd: f.root, dryRun: true });
     if (p.wirePlanned) addFile(SETTINGS, hook.mergeHookEntry(p.projectSettings.data));
     if (p.placePlanned) writes.push({ path: join(f.root, hook.HOOK_FILE_REL), bytes: p.bundleContent });
+  } else if (['gate-hook.marker-stale', 'read-lane.stale'].includes(variant)) {
+    const p = hook.writeGateHook({ cwd: f.root, dryRun: true, reseed: true });
+    if (p.wirePlanned) addFile(SETTINGS, hook.mergeHookEntry(p.projectSettings.data));
+    const path = join(f.root, hook.HOOK_FILE_REL);
+    if (p.reseedPlanned) writes.push({ path, bytes: p.bundleContent, replaces: fs.readFileSync(path) });
+  } else if (variant === 'state-block') {
+    const p = need('writeStateBlockHook')({ cwd: f.root, dryRun: true });
+    if (p.mergePlanned) addFile(SETTINGS, need('mergeStopEntry')(p.projectSettings.data));
+    const path = join(f.root, '.claude/hooks/state-block-guard.mjs');
+    if (p.placement === 'create') writes.push({ path, bytes: p.bundleContent });
+    if (p.placement === 'replace') writes.push({ path, bytes: p.bundleContent, replaces: fs.readFileSync(path) });
   } else if (variant.startsWith('mcp-channel')) {
     const p = writeMcp({ cwd: f.root, dryRun: true, replace: variant.endsWith('.differing') }).plan;
     if (p.writeMcpJson) addFile('.mcp.json', JSON.parse(p.mcpBody));
@@ -179,8 +195,11 @@ const assertPreview = (variant, f, result, plan) => {
     const prefix = `writes: ${printablePath(f, write.path)} sha256:`;
     const line = result.lines.find((item) => item.startsWith(prefix));
     assert.ok(line, prefix);
-    assert.match(line.slice(prefix.length), /^[0-9a-f]{64}$/);
-    if (!write.directory) assert.equal(line, prefix + sha(write.bytes));
+    if (write.directory) assert.match(line.slice(prefix.length), /^[0-9a-f]{64}$/);
+    else {
+      const replaces = write.replaces === undefined ? '' : ` — replaces sha256:${sha(write.replaces)}`;
+      assert.equal(line, prefix + sha(write.bytes) + replaces);
+    }
   }
   for (const path of plan.directories) assert.ok(result.lines.includes(`writes: ${printablePath(f, path)}/ created`));
   assert.deepEqual(result.lines.filter((line) => line.startsWith('temporary: ')).sort(), plan.temporaries.sort());
@@ -200,7 +219,7 @@ const assertAppliedPaths = (f, before, result, files) => {
   const changed = Object.keys(after).filter((path) => JSON.stringify(after[path]) !== JSON.stringify(before[path]));
   assert.deepEqual(Object.keys(before).filter((path) => !(path in after)), [], 'apply removes no standing path');
   const paths = result.lines.filter((line) => line.startsWith('writes: ')).map((line) =>
-    line.slice(8).replace(/ sha256:[0-9a-f]{64}$/, '').replace(/\/ created$/, ''));
+    line.slice(8).replace(/ — replaces sha256:[0-9a-f]{64}$/, '').replace(/ sha256:[0-9a-f]{64}$/, '').replace(/\/ created$/, ''));
   const rest = changed.filter((path) => !files.includes(path));
   for (const path of rest) assert.ok(paths.some((p) => path === p || path.startsWith(`${p}/`)), `unprinted write: ${path}`);
   for (const path of paths) assert.ok(rest.some((p) => p === path || p.startsWith(`${path}/`)), `unchanged printed path: ${path}`);
@@ -216,6 +235,7 @@ const LIST_ROWS = [
   ['sandbox.filesystem.allowWrite', '/scratch', CLASSES[1], NOTHING],
   ['sandbox.excludedCommands', 'codex-review', CLASSES[2], NOTHING],
   ['hooks.PreToolUse', hook.buildHookSettingsEntry(), CLASSES[4], NOTHING],
+  ['hooks.Stop', { hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"', timeout: 10 }] }, CLASSES[4], NOTHING],
   ['enabledMcpjsonServers', 'agent-workflow', CLASSES[4], NOTHING],
 ];
 const SCALAR_ROWS = [
@@ -386,6 +406,7 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
       assert.equal(plan.temporaries.length, 6);
       const result = danger.checkApply('jev-skill.earlier', f, { pins });
       assertPreview('jev-skill.earlier', f, result, plan);
+      assert.equal(result.lines.some((line) => line.startsWith('writes: ') && line.includes(' — replaces')), false);
     });
     const current = fixture(t);
     unchanged(current, () => {
@@ -528,6 +549,196 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
         mocked.mock.restore();
         syncBuiltinESMExports();
       }
+    });
+  });
+});
+
+describe('spec:init-project/S29 the danger check over the three writers by proof', () => {
+  const stopPath = '.claude/hooks/state-block-guard.mjs';
+  const stopEntry = LIST_ROWS.find(([key]) => key === 'hooks.Stop')[1];
+  const oldBytes = '// earlier placed runtime\n';
+  const exerciseWriter = (t, variant, f, inspect) => {
+    const originalHashes = hashes(f);
+    unchanged(f, () => {
+      const result = danger.checkApply(variant, f);
+      assertPreview(variant, f, result, expectedPlan(variant, f));
+      inspect(result);
+      assert.deepEqual(danger.checkApply(variant, f), result, 'stable digest');
+      const cli = capture(f, () => { throw new Error('preview spawned'); });
+      assert.equal(danger.main(argvFor(variant, f), cli.io), 0);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(cli.errors, []);
+    });
+    const copy = copyFixture(t, f);
+    const before = snapshot(copy);
+    const settingsBefore = json(join(copy.root, SETTINGS));
+    const result = unchanged(copy, () => danger.checkApply(variant, copy));
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor(variant, copy), '--apply', '--expect', result.digest], cli.io), 0);
+    assert.deepEqual(cli.lines, result.lines);
+    assert.deepEqual(cli.errors, []);
+    const entries = danger.diffFiles(settingsBefore, json(join(copy.root, SETTINGS)));
+    assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')),
+      entries.map((entry) => lineOf({ ...entry, class: CLASSES[4] })));
+    assertAppliedPaths(copy, before, result, [SETTINGS]);
+    unchanged(copy, () => {
+      const applied = danger.checkApply(variant, copy);
+      digestResult(applied);
+      assert.deepEqual(applied.refused, []);
+      assert.deepEqual(applied.lines.slice(0, -1), [`nothing to change: ${variant} is already applied`]);
+      const preview = capture(copy, () => { throw new Error('already-applied preview spawned'); });
+      assert.equal(danger.main(argvFor(variant, copy), preview.io), 0);
+      assert.deepEqual(preview.lines, applied.lines);
+      assert.deepEqual(preview.errors, []);
+    });
+    assert.deepEqual(hashes(f), originalHashes, 'original retained while copy applied');
+  };
+  for (const variant of ['gate-hook.marker-stale', 'read-lane.stale']) {
+    for (const wired of [true, false]) it(`${variant}: diverged ${wired ? 'wired' : 'unwired'} hook, replaces preview, copy apply and already applied`, (t) => {
+      const f = fixture(t);
+      put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
+      put(join(f.root, SETTINGS), JSON.stringify(wired ? hook.mergeHookEntry({}) : {}));
+      const bundle = fs.readFileSync(join(TOOLS, '../references/hooks/gate-approve.mjs'));
+      exerciseWriter(t, variant, f, (result) => {
+        assert.ok(result.lines.includes(`writes: ${hook.HOOK_FILE_REL} sha256:${sha(bundle)} — replaces sha256:${sha(oldBytes)}`));
+        assert.equal(result.lines.includes(`${SETTINGS}:`), !wired);
+        assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), wired ? [] : [
+          lineOf({ key: 'hooks.PreToolUse', change: 'added', value: hook.buildHookSettingsEntry(), class: CLASSES[4] }),
+        ]);
+      });
+    });
+  }
+  for (const placement of ['fresh', 'append', 'replace']) it(`state-block: ${placement}, real preview, copy apply and already applied`, (t) => {
+    const f = fixture(t);
+    if (placement === 'append') put(join(f.root, SETTINGS), JSON.stringify({
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node foreign-stop.mjs' }] }] },
+    }));
+    if (placement === 'replace') {
+      put(join(f.root, stopPath), oldBytes);
+      put(join(f.root, SETTINGS), JSON.stringify(atKey('hooks.Stop', [stopEntry])));
+    }
+    const bundle = fs.readFileSync(join(TOOLS, '../references/hooks/state-block-guard.mjs'));
+    exerciseWriter(t, 'state-block', f, (result) => {
+      const entry = need('buildStopHookEntry')();
+      assert.deepEqual(entry, stopEntry);
+      const replaces = placement === 'replace' ? ` — replaces sha256:${sha(oldBytes)}` : '';
+      assert.ok(result.lines.includes(`writes: ${stopPath} sha256:${sha(bundle)}${replaces}`));
+      assert.equal(result.lines.includes(`${SETTINGS}:`), placement !== 'replace');
+      assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), placement === 'replace' ? [] : [
+        lineOf({ key: 'hooks.Stop', change: 'added', value: entry, class: CLASSES[4] }),
+      ]);
+      if (placement === 'fresh') assert.ok(result.lines.includes('writes: .claude/ created'));
+      if (placement !== 'replace') assert.ok(result.lines.includes('writes: .claude/hooks/ created'));
+    });
+  });
+  const plants = [
+    ['another Stop command', 'node foreign-stop.mjs'],
+    ['bundled Stop command with --require-block', `${stopEntry.hooks[0].command} --require-block`],
+  ];
+  for (const [title, command] of plants) it(`state-block: refuses ${title} naming hooks.Stop`, (t) => {
+    const f = fixture(t);
+    const value = { hooks: [{ ...stopEntry.hooks[0], command }] };
+    unchanged(f, () => {
+      const result = danger.judgeChange({ variant: 'state-block',
+        files: [{ path: SETTINGS, before: null, after: atKey('hooks.Stop', [value]) }],
+        scope: danger.scopeOf('state-block', f) });
+      assert.deepEqual(result.refused, [{ path: SETTINGS, key: 'hooks.Stop',
+        reason: 'beyond the declared scope of state-block' }]);
+    });
+  });
+  it('state-block: non-array hooks.Stop preserves the writer refusal at exit 3, never spawning', (t) => {
+    const f = fixture(t);
+    put(join(f.root, SETTINGS), JSON.stringify(atKey('hooks.Stop', {})));
+    unchanged(f, () => {
+      const spawn = t.mock.fn(() => { throw new Error('malformed Stop spawned'); });
+      const cli = capture(f, spawn);
+      const code = danger.main(argvFor('state-block', f), cli.io);
+      assert.equal(spawn.mock.callCount(), 0);
+      assert.equal(code, 3);
+      const message = `${SETTINGS}: "hooks.Stop" must be an array`;
+      assert.ok(cli.lines.some((line) => line.includes(message)));
+      let writerMessage;
+      assert.throws(() => need('writeStateBlockHook')({ cwd: f.root, dryRun: true }), (error) => {
+        writerMessage = error.message;
+        return error.code === 'GATE_HOOK_MALFORMED' && error.message.includes(message);
+      });
+      assert.deepEqual(cli.lines, [writerMessage]);
+      assert.deepEqual(cli.errors, []);
+      assert.throws(() => danger.checkApply('state-block', f), (error) =>
+        error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([writerMessage]));
+    });
+  });
+  for (const variant of ['state-block', 'gate-hook.marker-stale']) it(`${variant}: character-device settings mask exits 3 before judgement, never spawning`, (t) => {
+    const f = fixture(t);
+    put(join(f.root, SETTINGS), '{}');
+    if (variant === 'gate-hook.marker-stale') put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
+    unchanged(f, () => {
+      const original = fs.lstatSync;
+      const mocked = t.mock.method(fs, 'lstatSync', (path, ...args) => path === join(f.root, SETTINGS)
+        ? Object.assign(Object.create(original(path)), { isCharacterDevice: () => true, isFile: () => false })
+        : original(path, ...args));
+      syncBuiltinESMExports();
+      try {
+        const spawn = t.mock.fn(() => { throw new Error('masked settings spawned'); });
+        const cli = capture(f, spawn);
+        const code = danger.main(argvFor(variant, f), cli.io);
+        assert.equal(spawn.mock.callCount(), 0);
+        assert.equal(code, 3);
+        assert.deepEqual(cli.lines, [`masked: ${SETTINGS}`]);
+        assert.deepEqual(cli.errors, []);
+        assert.throws(() => danger.checkApply(variant, f), (error) =>
+          error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([`masked: ${SETTINGS}`]));
+      } finally {
+        mocked.mock.restore();
+        syncBuiltinESMExports();
+      }
+    });
+  });
+  it('read-lane.stale: an absent gate hook prints the writer refusal at exit 3, never spawning', (t) => {
+    const f = fixture(t);
+    unchanged(f, () => {
+      const spawn = t.mock.fn(() => { throw new Error('absent hook spawned'); });
+      const cli = capture(f, spawn);
+      const code = danger.main(argvFor('read-lane.stale', f), cli.io);
+      assert.equal(spawn.mock.callCount(), 0);
+      assert.equal(code, 3);
+      assert.match(cli.lines.join('\n'), /is not placed/);
+      assert.deepEqual(cli.errors, []);
+      let writerMessage;
+      assert.throws(() => hook.writeGateHook({ cwd: f.root, dryRun: true, reseed: true }), (error) => {
+        writerMessage = error.message;
+        return error.code === 'GATE_HOOK_STALE' && error.message.includes('is not placed');
+      });
+      assert.deepEqual(cli.lines, [writerMessage]);
+      assert.throws(() => danger.checkApply('read-lane.stale', f), (error) =>
+        error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([writerMessage]));
+    });
+  });
+  for (const variant of ['gate-hook.marker-stale', 'state-block']) it(`${variant}: hook bytes changed after the check print the new result at exit 5, never spawning`, (t) => {
+    const f = fixture(t);
+    const path = variant === 'state-block' ? stopPath : hook.HOOK_FILE_REL;
+    put(join(f.root, path), oldBytes);
+    put(join(f.root, SETTINGS), JSON.stringify(variant === 'state-block'
+      ? atKey('hooks.Stop', [stopEntry]) : hook.mergeHookEntry({})));
+    const first = unchanged(f, () => danger.checkApply(variant, f));
+    digestResult(first);
+    assertPreview(variant, f, first, expectedPlan(variant, f));
+    const editedBytes = '// edited after the check\n';
+    put(join(f.root, path), editedBytes);
+    unchanged(f, () => {
+      const current = danger.checkApply(variant, f);
+      assertPreview(variant, f, current, expectedPlan(variant, f));
+      assert.notEqual(current.digest, first.digest);
+      assert.deepEqual(first.lines.filter((line) => !line.startsWith('digest: ')).map((line) =>
+        line.replace(` — replaces sha256:${sha(oldBytes)}`, ` — replaces sha256:${sha(editedBytes)}`)),
+      current.lines.filter((line) => !line.startsWith('digest: ')));
+      const spawn = t.mock.fn(() => { throw new Error('changed hook spawned'); });
+      const cli = capture(f, spawn);
+      const code = danger.main([...argvFor(variant, f), '--apply', '--expect', first.digest], cli.io);
+      assert.equal(spawn.mock.callCount(), 0);
+      assert.equal(code, 5);
+      assert.deepEqual(cli.lines, current.lines);
+      assert.deepEqual(cli.errors, []);
     });
   });
 });
