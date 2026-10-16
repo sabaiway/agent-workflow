@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-16 — AD-184: the upgrade's git-hook items get a writer the agent runs on the chat yes (kit 14.32.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**`enforcement` and `commit-guard` are now harness items the agent applies on the chat yes after the danger check,
+where they used to hand the user a shell line.** The new `tools/git-hooks.mjs` copies the bundled enforcement scripts
+into `scripts/` create-only and runs the project's own `scripts/install-git-hooks.mjs`, which decides the hook as
+before; an install the installer refuses removes the scripts that run created. The check's result shows each script
+the kit creates and a new `runs:` line with the installer's bytes, so the yes is bound to what runs. Bootstrap steps 8-9 take the same route. Contract: init-project revision 8 (part git-hooks, new),
+node-evidence revision 4. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-15 — AD-183: the upgrade's Claude Code hook items get writers the agent runs on the chat yes (kit 14.31.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **`gate-hook.marker-stale`, `read-lane.stale` and `state-block` are now harness items the agent applies on the chat yes

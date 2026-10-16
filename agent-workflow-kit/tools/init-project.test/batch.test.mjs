@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { delimiter, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { BUNDLED_HOOK_PATH, HOOK_FILE_REL, LANES_REL, buildHookSettingsEntry } from '../gate-hook.mjs';
+import { hermeticGitEnv } from '../git-env.mjs';
 import { skillTargets } from '../jev-facts.mjs';
 import {
   APPLY, FIVE, RESTART, RUN_NONE, SUDO, TOOLS, applies, changed, facts, fixture, hashTree, init, isApply, item, lanes,
@@ -228,13 +230,41 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     assert.equal(JSON.parse(readFileSync(join(f.root, LANES_REL), 'utf8')).readLane, true);
   });
 
-  it('a pending enforcement item is listed, not applied here, and spawns nothing', async (t) => {
-    const f = fixture(t, [item('enforcement', 'ENFORCEMENT-WHAT')]);
-    const run = need(init, 'runInitProject');
-    assert.deepEqual(await run(f.deps), { code: 0 });
-    assert.ok(f.printed.includes('listed, not applied here: enforcement — ENFORCEMENT-WHAT'));
-    assert.deepEqual(f.calls, []);
-    assert.deepEqual(f.questions, []);
+  it('on a fresh git project with no package.json a pending enforcement item is previewed by the leaf\'s dry run and applied on the one y, the record refreshed', async (t) => {
+    const f = realFixture(t, new Set(['enforcement', 'state-block']));
+    const gitDir = (process.env.PATH ?? '').split(delimiter).find((dir) => existsSync(join(dir, 'git')));
+    assert.ok(gitDir, 'git must be on PATH');
+    const git = spawnSync('git', ['init', '-q'], { cwd: f.root, env: hermeticGitEnv(process.env, f.home), encoding: 'utf8' });
+    assert.equal(git.status, 0, git.stderr);
+    f.env.PATH = [dirname(process.execPath), gitDir, f.env.PATH].join(delimiter);
+    assert.equal(existsSync(join(f.root, 'package.json')), false);
+    assert.deepEqual(pending(f), ['enforcement', 'state-block']);
+    const respond = f.respond;
+    f.respond = (argv, opts) => {
+      if (![join(TOOLS, 'git-hooks.mjs'), join(TOOLS, 'state-block-hook.mjs')].includes(argv[1])) return respond(argv, opts);
+      const result = spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: opts.env, encoding: 'utf8' });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [
+      ['node', join(TOOLS, 'git-hooks.mjs'), '--apply', '--enforcement', '--cwd', f.root],
+      ['node', join(TOOLS, 'state-block-hook.mjs'), '--apply', '--cwd', f.root],
+    ]);
+    const lines = f.printed.flatMap((line) => line.split('\n'));
+    const preview = lines.indexOf('preview: enforcement');
+    const scope = lines.indexOf('scope: within the declared scope of enforcement');
+    const next = lines.indexOf('preview: state-block');
+    const bundle = join(TOOLS, '../references/scripts');
+    const names = readdirSync(bundle).filter((name) => name.endsWith('.mjs')).sort();
+    assert.ok(preview >= 0 && scope > preview + names.length && next > scope);
+    assert.deepEqual(lines.slice(preview + 1, preview + 1 + names.length), names.map((name) =>
+      `copy: scripts/${name} created sha256:${createHash('sha256').update(readFileSync(join(bundle, name))).digest('hex')}`));
+    for (const name of names) {
+      assert.deepEqual(readFileSync(join(f.root, 'scripts', name)), readFileSync(join(bundle, name)));
+    }
+    assert.match(readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8'), /:install-git-hooks\.mjs$/m);
+    assert.deepEqual(pending(f), []);
   });
 });
 

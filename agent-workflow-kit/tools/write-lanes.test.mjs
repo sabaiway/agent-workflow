@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -20,19 +20,18 @@ const FORM_A = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'sandbox-provision.installable',
   'jev-skill', 'jev-skill.earlier',
-  'gate-hook.marker-stale', 'read-lane.stale', 'state-block',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
 ];
 const FORM_B = ['jev-connect'];
 const FORM_C = [
-  'family-freshness', 'sandbox-provision', 'commit-guard', 'enforcement',
+  'family-freshness', 'sandbox-provision',
 ];
 const HARNESS = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
-  'gate-hook.marker-stale', 'read-lane.stale', 'state-block',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
 ];
-const NO_WRITER = ['commit-guard', 'enforcement'];
-const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', ...NO_WRITER];
+const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision'];
 const ENV_DEPENDENT = ['bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable'];
 const WITH_FORMS = [...FORM_A, ...FORM_B, ...FORM_C];
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,6 +44,8 @@ const createFacts = (t) => {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   return { toolsDir: TOOLS, root: ROOT, env: {}, home, platform: 'linux', tuple: 'apt-get:bubblewrap,socat' };
 };
+const getScriptPaths = () => readdirSync(join(PACKAGE_ROOT, 'references', 'scripts'))
+  .filter((name) => name.endsWith('.mjs')).sort().map((name) => join(ROOT, 'scripts', name));
 const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
   const table = [
     ['velocity-core', 'velocity-profile.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
@@ -56,6 +57,8 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['gate-hook.marker-stale', 'gate-hook.mjs', ['--reseed', '--cwd', ROOT], ['--apply', '--reseed', '--cwd', ROOT]],
     ['read-lane.stale', 'gate-hook.mjs', ['--reseed', '--cwd', ROOT], ['--apply', '--reseed', '--cwd', ROOT]],
     ['state-block', 'state-block-hook.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
+    ['enforcement', 'git-hooks.mjs', ['--enforcement', '--cwd', ROOT], ['--apply', '--enforcement', '--cwd', ROOT]],
+    ['commit-guard', 'git-hooks.mjs', ['--commit-guard', '--cwd', ROOT], ['--apply', '--commit-guard', '--cwd', ROOT]],
     ['mcp-channel', 'mcp.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['mcp-channel.differing', 'mcp.mjs', ['--replace', '--cwd', ROOT], ['--replace', '--apply', '--cwd', ROOT]],
     ['agents', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
@@ -251,6 +254,8 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'gate-hook.marker-stale': hook,
       'read-lane.stale': hook,
       'state-block': [join(ROOT, '.claude', 'hooks', 'state-block-guard.mjs'), ...settings],
+      enforcement: [...getScriptPaths(), join(ROOT, '.git', 'hooks', 'pre-commit')],
+      'commit-guard': [join(ROOT, '.git', 'hooks', 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')],
       'mcp-channel': mcp,
       'mcp-channel.differing': mcp,
       agents,
@@ -272,6 +277,18 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       join(FACTS.home, '.bashrc'), join(FACTS.home, '.bash_profile'),
     ]);
     assert.deepEqual(writesOf('jev-connect', { ...FACTS, platform: 'win32', env: { SHELL: '/bin/bash' } }), []);
+  });
+
+  it('enforcement and commit-guard name pre-commit in a hooksDir inside or outside the project without a throw', (t) => {
+    const FACTS = createFacts(t);
+    const scripts = getScriptPaths();
+    const writesOf = need(lanes, 'writesOf');
+    for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) {
+      const facts = { ...FACTS, hooksDir };
+      const preCommit = join(hooksDir, 'pre-commit');
+      assert.deepEqual(writesOf('enforcement', facts), [...scripts, preCommit]);
+      assert.deepEqual(writesOf('commit-guard', facts), [preCommit, join(ROOT, 'scripts', 'install-git-hooks.mjs')]);
+    }
   });
 });
 
@@ -328,11 +345,11 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
     }
   });
 
-  it('every chat variant and every no-writer variant returns no slot on win32', (t) => {
+  it('every chat variant returns no slot on win32', (t) => {
     const facts = { ...createFacts(t), platform: 'win32' };
     const chat = Object.keys(SEVERITIES).filter((variant) => !HARNESS.includes(variant) && !USER.includes(variant));
     const applySlot = need(lanes, 'applySlot');
-    for (const variant of [...chat, ...NO_WRITER]) {
+    for (const variant of chat) {
       assert.equal(applySlot(variant, facts), null, variant);
     }
   });

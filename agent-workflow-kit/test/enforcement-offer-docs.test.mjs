@@ -23,16 +23,17 @@ const LAUNCHER_CONSENT_YES = 'on a yes: copy';
 const LAUNCHER_COPY_SOURCE = 'copy `<KIT_DIR>/references/scripts';
 const DECLINE_PATH_WARNING = "Never write the skill's absolute path into a deployed doc";
 const AGENTS_DOCS_ROW = 'row of `AGENTS.md`';
-const VISIBLE_PACKAGE_CONDITION = 'when a `package.json` exists and the offer was accepted';
+const VISIBLE_PACKAGE_CONDITION = "when a `package.json` exists and step 8's apply exited 0";
 const INSTALLED_ON_YES = 'installed on a yes';
 const OFFER_ACCEPTED = 'and the enforcement offer was accepted';
+const SCRIPTS_IN_PLACE = 'and the enforcement scripts are in place';
 const WHERE_INSTALLED = 'where installed';
 const RECON_PROXIES = ['(Node projects)', 'If the project has no Node', 'No Node runtime'];
 const INSTALL_CLAIM_PINS = [
   [FAMILY_README, INSTALLED_ON_YES, 4],
   [KIT_README, INSTALLED_ON_YES, 4],
   ['agent-workflow-memory/README.md', INSTALLED_ON_YES, 1],
-  ['agent-workflow-kit/references/contracts.md', OFFER_ACCEPTED, 1],
+  ['agent-workflow-kit/references/contracts.md', SCRIPTS_IN_PLACE, 1],
   ['agent-workflow-memory/references/contracts.md', OFFER_ACCEPTED, 1],
   ['agent-workflow-memory/references/templates/changelog.md', INSTALLED_ON_YES, 1],
   ['agent-workflow-kit/references/templates/changelog.md', INSTALLED_ON_YES, 1],
@@ -115,7 +116,7 @@ describe('enforcement offer docs \u2014 bootstrap.md, deploy-tail.md, memory SKI
     }
   });
 
-  it('the visible wiring is conditional on an existing package.json and an accepted offer', () => {
+  it('the visible wiring is conditional on an existing package.json and an applied offer', () => {
     const bootstrapSteps = boundedRegion(readKit(BOOTSTRAP), BOOTSTRAP);
     assert.equal(occurrences(bootstrapSteps, VISIBLE_PACKAGE_CONDITION), 1, BOOTSTRAP);
   });

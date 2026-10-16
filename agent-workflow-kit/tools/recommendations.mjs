@@ -46,7 +46,7 @@ import {
 } from './velocity-profile.mjs';
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
-import { laneOf, applySlot } from './write-lanes.mjs';
+import { laneOf, applySlot, consoleArgv } from './write-lanes.mjs';
 import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired } from './state-block-hook.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -120,8 +120,10 @@ const ABSENT_CODE = 'ENOENT';
 const ENFORCEMENT_KIT_ROOT = resolve(HERE, '..');
 const ENFORCEMENT_BUNDLE_ROOT = join(ENFORCEMENT_KIT_ROOT, 'references', 'scripts');
 const ENFORCEMENT_WHAT = 'the enforcement scripts are not deployed beside docs/ai (no Node evidence) \u2014 the offer copies them and installs the pre-commit hook';
-const ENFORCEMENT_APPLY_TEMPLATE = 'HAND-APPLY: mkdir -p {root}/scripts && cp {kit}/references/scripts/*.mjs {root}/scripts/ && node {root}/scripts/install-git-hooks.mjs';
-const COMMIT_GUARD_INSTALLER_REMEDY = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 deploy the enforcement scripts (bootstrap steps 8\u20139) and install the hook, then re-run';
+const ENFORCEMENT_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it, so the kit places no script here; with that hook moved aside (your own step) the enforcement item is offered';
+const COMMIT_GUARD_INSTALLER_VIA_ITEM = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
+const COMMIT_GUARD_INSTALLER_OWN_STEP = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
+const COMMIT_GUARD_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
 // ── the section contract tokens (doc-parity-bound in upgrade.md + the mode doc) ────────────────
 export const RECOMMENDATIONS_SECTION_HEADER = '## Recommendations (agent-workflow)';
 export const RECOMMENDATIONS_EMPTY_LINE = 'no recommendations — flow optimal.';
@@ -883,7 +885,7 @@ const probeSourceSize = ({ root, deps, add, skip }) => {
 // The D10 consumer surface: once the declaration is FINAL-capable (the canonical core checks
 // present, the checker LAST — the run-gates helper is the one home of that rule), offer the
 // consented commit-guard install — for a MANAGED guardless pre-commit hook AND for an absent one
-// alike; an UNMANAGED hook is a loud skip (manual merge, never an overwrite offer); a
+// alike; an UNMANAGED hook is a loud skip naming the user's own step (never an overwrite offer); a
 // non-final-capable declaration gets NO offer (an armed guard over a matrix that cannot mint a
 // receipt would block every commit).
 const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs$/m;
@@ -892,6 +894,23 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // the kit's OWN resolved guard path. A commented-out line or a lookalike path (fake-commit-guard)
 // must never read as armed (that would suppress the offer and leave commits unguarded).
 const canonicalGuardLineRe = () => new RegExp(`^node "${escapeRe(toolPath('commit-guard.mjs'))}" --check$`, 'm');
+// The one reader of git's pre-commit: whose hook it is, and whether the canonical guard line arms it.
+export const readPreCommitState = (root, deps = {}) => {
+  const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root);
+  if (hooksPath === null) return { state: 'no-hooks-dir', armed: false };
+  const path = join(hooksPath, 'pre-commit');
+  const hook = (() => {
+    try {
+      if (readsAbsent(deps, path)) return null;
+      return String((deps.readFile ?? readFileSync)(path, 'utf8'));
+    } catch {
+      return null;
+    }
+  })();
+  if (hook === null) return { state: 'absent', armed: false };
+  return { state: INSTALLER_MARKER_RE.test(hook) ? 'managed' : 'unmanaged', armed: canonicalGuardLineRe().test(hook) };
+};
+const formsApply = (variant, root) => consoleArgv(variant, { toolsDir: HERE, root }).apply.map(q).join(' ');
 const probeCommitGuard = ({ root, deps, add, skip }) => {
   try {
     const read = deps.readFile ?? readFileSync;
@@ -907,25 +926,16 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     if (!isFinalCapableDeclaration(gates, root)) return; // no receipt to guard yet — no offer
     const installer = join(root, 'scripts', 'install-git-hooks.mjs');
     if (!(deps.exists ?? existsSync)(installer)) {
-      skip('commit-guard', new Error(COMMIT_GUARD_INSTALLER_REMEDY));
+      skip('commit-guard', new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP));
       return;
     }
-    const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root);
-    if (hooksPath === null) return; // not a git tree — nothing to hook
-    const hook = (() => {
-      try {
-        if (readsAbsent(deps, join(hooksPath, 'pre-commit'))) return null;
-        return String(read(join(hooksPath, 'pre-commit'), 'utf8'));
-      } catch {
-        return null;
-      }
-    })();
-    if (hook !== null && canonicalGuardLineRe().test(hook)) return; // armed — converged (managed or not)
-    if (hook !== null && !INSTALLER_MARKER_RE.test(hook)) {
-      skip('commit-guard', new Error('an UNMANAGED pre-commit hook exists — merge the guard line by hand (the installer refuses to overwrite it)'));
+    const { state, armed } = readPreCommitState(root, deps);
+    if (armed || state === 'no-hooks-dir') return; // armed (managed or not), or not a git tree — converged
+    if (state === 'unmanaged') {
+      skip('commit-guard', new Error(COMMIT_GUARD_UNMANAGED_HOOK));
       return;
     }
-    add('commit-guard', fillTemplate(WHATS['commit-guard'], {}), `node ${q(installer)} --commit-guard ${q(toolPath('commit-guard.mjs'))}`);
+    add('commit-guard', fillTemplate(WHATS['commit-guard'], {}), formsApply('commit-guard', root));
   } catch (err) {
     skip('commit-guard', err);
   }
@@ -940,31 +950,46 @@ const readEnforcementNode = (path, lstat) => {
   }
 };
 
+// The enforcement offer's one admission: true when the item renders, false when nothing renders, and
+// a throw names the skip.
+const enforcementOffer = (root, deps) => {
+  const lstat = deps.lstat ?? lstatSync;
+  const docsAi = join(root, 'docs', 'ai');
+  const docsAiNode = readEnforcementNode(docsAi, lstat);
+  if (docsAiNode === null) return false;
+  if (!docsAiNode.isDirectory()) throw new Error(`${docsAi} is not a plain directory`);
+  const evidence = probeNodeEvidence(root, lstat);
+  if (evidence.state === NODE_EVIDENCE.PACKAGE_JSON || evidence.state === NODE_EVIDENCE.DEPLOYED_SCRIPTS) return false;
+  if (evidence.state === NODE_EVIDENCE.UNREADABLE) throw new Error(`${root}: ${evidence.error}`);
+  if (evidence.state !== NODE_EVIDENCE.NONE) throw new Error(`unknown Node-evidence state: ${evidence.state}`);
+  if (evidence.wrongKind.length > 0) throw new Error(join(root, evidence.wrongKind[0]));
+  const readDir = deps.readdir ?? readdirSync;
+  const bundleRoot = deps.scriptsBundleRoot ?? ENFORCEMENT_BUNDLE_ROOT;
+  const bundleBasenames = readDir(bundleRoot).filter((name) => name.endsWith('.mjs')).sort();
+  if (NODE_EVIDENCE_SCRIPTS.some((name) => !bundleBasenames.includes(name))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
+  const scripts = join(root, 'scripts');
+  const scriptsNode = readEnforcementNode(scripts, lstat);
+  if (scriptsNode !== null && !scriptsNode.isDirectory()) throw new Error(`${scripts} is not a plain directory`);
+  for (const basename of scriptsNode === null ? [] : bundleBasenames) {
+    const destination = join(scripts, basename);
+    if (readEnforcementNode(destination, lstat) === null) continue;
+    throw new Error(`${destination} already exists; the enforcement copy would clobber it`);
+  }
+  if (readPreCommitState(root, deps).state === 'unmanaged') throw new Error(ENFORCEMENT_UNMANAGED_HOOK);
+  return true;
+};
+
+export const enforcementAdmits = (root, deps = {}) => {
+  try {
+    return enforcementOffer(root, deps);
+  } catch {
+    return false;
+  }
+};
+
 export const probeEnforcement = ({ root, deps, add, skip }) => {
   try {
-    const lstat = deps.lstat ?? lstatSync;
-    const docsAi = join(root, 'docs', 'ai');
-    const docsAiNode = readEnforcementNode(docsAi, lstat);
-    if (docsAiNode === null) return;
-    if (!docsAiNode.isDirectory()) throw new Error(`${docsAi} is not a plain directory`);
-    const evidence = probeNodeEvidence(root, lstat);
-    if (evidence.state === NODE_EVIDENCE.PACKAGE_JSON || evidence.state === NODE_EVIDENCE.DEPLOYED_SCRIPTS) return;
-    if (evidence.state === NODE_EVIDENCE.UNREADABLE) throw new Error(`${root}: ${evidence.error}`);
-    if (evidence.state !== NODE_EVIDENCE.NONE) throw new Error(`unknown Node-evidence state: ${evidence.state}`);
-    if (evidence.wrongKind.length > 0) throw new Error(join(root, evidence.wrongKind[0]));
-    const readDir = deps.readdir ?? readdirSync;
-    const bundleRoot = deps.scriptsBundleRoot ?? ENFORCEMENT_BUNDLE_ROOT;
-    const bundleBasenames = readDir(bundleRoot).filter((name) => name.endsWith('.mjs')).sort();
-    if (NODE_EVIDENCE_SCRIPTS.some((name) => !bundleBasenames.includes(name))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
-    const scripts = join(root, 'scripts');
-    const scriptsNode = readEnforcementNode(scripts, lstat);
-    if (scriptsNode !== null && !scriptsNode.isDirectory()) throw new Error(`${scripts} is not a plain directory`);
-    for (const basename of scriptsNode === null ? [] : bundleBasenames) {
-      const destination = join(scripts, basename);
-      if (readEnforcementNode(destination, lstat) === null) continue;
-      throw new Error(`${destination} already exists; the enforcement copy would clobber it`);
-    }
-    add('enforcement', ENFORCEMENT_WHAT, fillTemplate(ENFORCEMENT_APPLY_TEMPLATE, { root: q(root), kit: q(ENFORCEMENT_KIT_ROOT) }));
+    if (enforcementOffer(root, deps)) add('enforcement', ENFORCEMENT_WHAT, formsApply('enforcement', root));
   } catch (err) {
     skip('enforcement', err);
   }

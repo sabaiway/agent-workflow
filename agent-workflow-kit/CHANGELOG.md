@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.32.0 — the git-hook items get a writer: the enforcement scripts and the commit guard are applied on the chat yes, and the project's own installer decides the hook (AD-184)
+
+**Two `/agent-workflow-kit upgrade` items that used to hand the user a shell line are now harness items the agent
+applies on the chat yes, after the danger check: `enforcement` (the bundled scripts and their pre-commit hook) and
+`commit-guard` (the guard line in that hook).** Before, `enforcement` printed `HAND-APPLY: mkdir -p <root>/scripts &&
+cp <kit>/references/scripts/*.mjs <root>/scripts/ && node <root>/scripts/install-git-hooks.mjs`, and `commit-guard` was
+the user's own step, its skips saying "merge the guard line by hand" or pointing at "bootstrap steps 8–9".
+
+- **`tools/git-hooks.mjs`, the writer.** `node <kit>/tools/git-hooks.mjs --enforcement --cwd <root>` (or
+  `--commit-guard`) previews; `--apply` writes. For `enforcement`, where no runnable enforcement script is deployed
+  yet, it copies the 25 bundled `references/scripts/*.mjs` (their tests included) into `scripts/` create-only — a file
+  already there is kept, nothing is written through a link — then runs the project's `scripts/install-git-hooks.mjs`;
+  once one is deployed, and for `commit-guard`, it copies nothing and runs that installer (`commit-guard` with
+  `--commit-guard <kit>/tools/commit-guard.mjs`). The installer is unchanged and decides the hook, as before. When the
+  installer exits non-zero, the writer removes the files this run created (naming any it finds it cannot) and exits 1
+  after the installer's output; when a copy finds a file standing at its path, that file is kept, the earlier copies
+  are removed, nothing runs, and it exits 1. Exits: 0 the preview, `--help` or a completed apply, 1 the apply
+  did not complete, 2 usage, 3 refused by the dry run (no installer where nothing places one, another node kind at
+  `scripts/`, a copy path or the installer, or a path it cannot read).
+- **The danger check covers the two.** Its result lists `writes: scripts/<name> sha256:<hex>` for each script the kit
+  creates (`writes: scripts/ created` when the folder is new) and a new line form, `runs: node
+  scripts/install-git-hooks.mjs sha256:<hex>` (for `commit-guard`, `--commit-guard <kit>/tools/commit-guard.mjs` before
+  the digest), naming the installer it will run and that installer's bytes. The yes is bound to both, so an installer
+  edited after the yes stops the apply. The check reads no settings key, runs no git and names no hook: what the
+  installer writes is shown in its own output at the apply. `init` previews and applies the two on its y.
+- **One reader of the pre-commit hook.** Over a pre-commit hook carrying no installer marker, neither item is offered;
+  where either would otherwise be offered, its skip names your own step: moving the hook aside (`enforcement`) or
+  adding the guard line to it (`commit-guard`). Where `commit-guard` finds no installer, its skip names the
+  `enforcement` item when that item is offered in the same run, and your own step otherwise.
+- **Bootstrap steps 8-9 take the same route.** Step 8 runs the `enforcement` check line, asks once on its result and
+  applies it; step 9 no longer runs the installer or asks you to merge a hook by hand, and in visible mode wires the
+  `package.json` scripts only when step 8's apply exited 0. The `--commit-guard` arm is the advisor's `commit-guard`
+  item, applied the same way.
+- **Shipped text.** The `enforcement` note of `recommendations.md` and `upgrade.md`'s hook-refresh sentence name the
+  new route; the lane paragraph's `HAND-APPLY` example is now `source-size.id-squatter`; `contracts.md` wires the
+  `package.json` scripts only when the enforcement scripts are in place; `deploy-tail.md` leaves a non-marker hook to
+  the user; no apply slot of the two says `HAND-APPLY`.
+
 ## 14.31.0 — the upgrade's Claude Code hook items get writers: a stale gate hook is reseeded in place and the state-block Stop hook is placed and wired, each on the chat yes (AD-183)
 
 **Three `/agent-workflow-kit upgrade` items that used to hand the user a hook to fix by hand are now harness items the

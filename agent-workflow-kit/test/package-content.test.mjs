@@ -204,6 +204,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/bridge-state-dirs.mjs',
       'tools/bridge-wiring.mjs',
       'tools/state-block-hook.mjs',
+      'tools/git-hooks.mjs',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -877,7 +878,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 364 = 363 + tools/bridge-state-dirs.mjs - story S2 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 365 = 364 + tools/bridge-wiring.mjs - story S3 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 366 = 365 + tools/state-block-hook.mjs - story S6 of BRIDGES-WORK-UNDER-THE-SANDBOX
-    assert.equal(packed.length, 366, `tarball file count drifted (${packed.length}\u2260 366)`);
+    // 367 = 366 + tools/git-hooks.mjs - story S8 of BRIDGES-WORK-UNDER-THE-SANDBOX
+    assert.equal(packed.length, 367, `tarball file count drifted (${packed.length}\u2260 367)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

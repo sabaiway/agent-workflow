@@ -15,13 +15,13 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   settings step at all.
 - **BRIDGE-TIER-FLAGLESS-READS-NO-MANIFEST-UNPINNED** — invariant: a flagless or `--kit-tools` velocity run reads no
   bridge manifest. Origin: spec velocity-profile S4 pins the manifest STOP only on `--bridge-tier`; the advisor's
-  core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:444-447`), so a manifest read on every mode
+  core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:446-449`), so a manifest read on every mode
   would turn a broken bundle into a crash there. Narrow fix: one cell running the flagless and `--kit-tools` writer
   over an unreadable bundle root with today's result. Raised by the S11 spec review (lens).
 - **BRIDGE-TIER-ADVISOR-ON-WRONG-TYPED-NETWORK-KEY-UNPINNED** — invariant: a wrong-typed project network key or an
   unreadable manifest makes the Recommendations bridge-tier item a stated skip, never an offer the apply refuses.
   Origin: the shared velocity preflight takes no flag (`agent-workflow-kit/tools/velocity-profile.mjs:903`), so where
-  the S11 network check lives decides the advisor's outcome (`recommendations.mjs:433-440,456-463`), and spec
+  the S11 network check lives decides the advisor's outcome (`recommendations.mjs:435-442,458-465`), and spec
   velocity-profile does not pin it. Narrow fix: one advisor cell over `allowedDomains: "<string>"` expecting the skip
   line. Raised by the S11 spec review (lens, round 2).
 - **BRIDGE-TIER-S1-ZERO-HOSTS-COUNT-UNPINNED** — invariant: with no bridge placed a `--bridge-tier` run prints no
@@ -309,7 +309,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 - **INIT-LISTS-ONLY-USER-ITEMS-UNDER-ARGV-SELECTION** — invariant: `init` lists, besides its previewed variants, only
   the user-lane variants with no argv, never a pending chat item. Origin: under argv-presence selection every chat
-  variant answers no argv (`agent-workflow-kit/tools/write-lanes.mjs:151-152`), so the spec init-project sentence "a
+  variant answers no argv (`agent-workflow-kit/tools/write-lanes.mjs:172`), so the spec init-project sentence "a
   pending variant with no argv is listed with its text" would list chat items (`init-project.mjs:185`, `:233-235`).
   Narrow fix: name the listed set in the root's Order-and-consent bullet. Raised by the S1 spec review (lens 12).
 - **DANGER-CHECK-USAGE-EXITS-INCOMPLETE** — invariant: every malformed invocation of the danger check exits 2 with
@@ -360,27 +360,28 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual: native Windows is unmeasured. Raised by the S1 spec review (lens 17).
 - **DANGER-CHECK-SCALAR-REMOVAL-CLASS** — invariant: a scalar key removed from the settings is classed by the default
   it falls back to. Origin: the part apply-danger-check classes list removals only; `classOf` classes every scalar
-  removal as `nothing widened` (`agent-workflow-kit/tools/apply-danger-check.mjs:124`), so removing `sandbox.enabled:
+  removal as `nothing widened` (`agent-workflow-kit/tools/apply-danger-check.mjs:126`), so removing `sandbox.enabled:
   true` (the sandbox off by default) prints `nothing widened`, and autonomy-render's scope admits it (its value `true`).
   No harness writer removes a scalar today. Narrow fix: the table names scalar removals (`sandbox.enabled` and
   `sandbox.autoAllowBashIfSandboxed` removed: `prompts removed`; `permissions.defaultMode` removed: `nothing widened`)
   and a scope admits no scalar removal. Same class: an altered credentials entry (`sandbox.credentials.envVars`,
-  `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:142`, `:124`).
-  Raised by the S1 code session's self-review; the credentials case by the S1 release lens.
+  `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:144`, `:69`).
+  Raised by the S1 code session's self-review; the credentials case by the S1 release lens; its line by the S6 re-check
+  lens.
 - **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
   that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
-  (`agent-workflow-kit/tools/recommendations.mjs:1555`), whose apply line needs the check's digest
-  (`agent-workflow-kit/tools/write-lanes.mjs:188`). Narrow fix: "run the check line, then the apply line with its
+  (`agent-workflow-kit/tools/recommendations.mjs:1564`), whose apply line needs the check's digest
+  (`agent-workflow-kit/tools/write-lanes.mjs:200`). Narrow fix: "run the check line, then the apply line with its
   digest, in <place>". Residual: a pasted `--expect <digest>` is a parse error in bash, zsh, fish and PowerShell;
   nothing runs. Raised by the S1 diff review (lens round 1).
 - **DANGER-CHECK-DIGEST-OMITS-THE-ROOT** — invariant: the consent digest binds where the change lands. Origin:
-  checkApply prints root-relative lines (`agent-workflow-kit/tools/apply-danger-check.mjs:299-319`), so two projects with
+  checkApply prints root-relative lines (`agent-workflow-kit/tools/apply-danger-check.mjs:314-334`), so two projects with
   identical planned lines share a digest. Narrow fix: a first line `root: <abs>` inside the digest (a spec line-format
   revision). Residual: needs the agent itself to reuse one project's digest on another; the check and apply lines
   carry the same `--cwd`. Raised by the S1 diff review (lens round 1).
 - **ADVISOR-READINESS-RESOLVES-AGAINST-THE-CALLER-CWD** — invariant: one advisor render reads one readiness. Origin:
   the bridge tier reads `detectAtRoot` (a relative `CODEX_HOME` resolves against the project root), while the
-  advisor's other readiness reads (`composeReadiness`, `agent-workflow-kit/tools/recommendations.mjs:552`) call
+  advisor's other readiness reads (`composeReadiness`, `agent-workflow-kit/tools/recommendations.mjs:559`) call
   `detectBackends` against the process cwd, so run from outside the root with a relative override the `review-recipe`
   item can disagree with the `bridge-tier` item. Narrow fix: those reads take `detectAtRoot(root, …)`. No write decision
   rides it. Raised by the S2 diff review (lens round 1).
@@ -399,7 +400,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **RESEED-PRINTS-NO-CLASS-FOR-RE-ARMED-APPROVAL** — invariant: a check result names what a write turns back on. Origin:
   the S6 reseed of a wired gate hook prints only a `writes:` line, no class, though the replaced hook turns gate
   auto-approval (marker-stale) or the read-lane compounds (read-lane.stale) back on; the same form as revision 6's
-  `read-lane.missing` placement over a wired entry (`agent-workflow-kit/tools/apply-danger-check.mjs:251-256`, `:315-317`).
+  `read-lane.missing` placement over a wired entry (`agent-workflow-kit/tools/apply-danger-check.mjs:262-267`, `:330-332`).
   Narrow fix: a class suffix on a hook-file `writes:` line naming what the hook approves. Raised by the S6 spec review
   (lens round 1, m4).
 - **GATE-HOOK-DIVERGED-UNWIRED-RECOVERY-SKIPS-THE-CHECK** — invariant: every recovery the kit prints for a harness
@@ -418,10 +419,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `agent-workflow-kit/test/recommendations-language-contract.test.mjs:126`) and `state-block` is not in it; story S6
   of BRIDGES-WORK-UNDER-THE-SANDBOX gives the item a chat-yes writer. Narrow fix: a one-line `state-block` posture note
   in `references/modes/recommendations.md` and its `RISK_NOTED_KEYS` entry. Raised by the S6 re-read (lens, m5).
-- **COMMIT-GUARD-INSTALLER-ABSENT-REMEDY-NAMES-BOOTSTRAP** — invariant: no advisor skip line names a hand step. Origin:
-  `COMMIT_GUARD_INSTALLER_REMEDY` (`agent-workflow-kit/tools/recommendations.mjs:124`) tells the user to deploy the
-  enforcement scripts by bootstrap steps 8-9; story S8 of BRIDGES-WORK-UNDER-THE-SANDBOX routes those steps. Narrow fix:
-  the remedy names the `enforcement` item. Raised by the S6 spec review (lens round 1, m2, second half).
 - **STATE-BLOCK-HOOK-RESTATES-TWO-GATE-HOOK-REFUSALS** — invariant: one writer discipline, written once. Origin:
   `agent-workflow-kit/tools/state-block-hook.mjs:141-149` restates gate-hook's unsafe-mode refusal (`gate-hook.mjs:291-299`)
   and `:173-178` its stamp refusal (`gate-hook.mjs:332-337`), with gate-hook's error codes. Narrow fix: gate-hook exports
@@ -459,6 +456,65 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `state-block-hook.mjs` `parseArgs` refuses `--dry-run` (`unknown argument`), which `gate-hook.mjs` accepts; the preview
   is already the default. Narrow fix: accept `--dry-run` and refuse it beside `--apply`, as gate-hook does. Raised by the
   S6 diff review (agy round 1, n1).
+- **STATE-BLOCK-CONVERGES-ON-THE-WIRING-ALONE** — invariant: an item converges only when what it installs runs. Origin:
+  `probeStateBlockHook` returns on `isStopHookWired` (`agent-workflow-kit/tools/recommendations.mjs:1061`,
+  `agent-workflow-kit/tools/state-block-hook.mjs:106-112`), which reads only the settings; with the Stop entry wired
+  and `.claude/hooks/state-block-guard.mjs` missing the item is not offered and the hook errors at each turn end. The
+  writer already handles the state (placement `create`, no merge). Narrow fix: the probe offers `state-block` when the
+  runtime file is absent beside a wired entry; one cell for that state. Raised by the S6 release (session 51).
+- **GIT-HOOKS-INSTALLER-SKIPS-ON-ANY-REV-PARSE-FAILURE** — invariant: the hook installer skips only outside a git
+  checkout. Origin: any non-zero `git rev-parse --git-path hooks` exit (dubious ownership, git absent) reads as "not a
+  git checkout" and exits 0 (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:52-55,121-124`): the
+  `enforcement` scripts land, the item converges on Node evidence and no hook exists. Narrow fix: the installer skips
+  on git's own not-a-repository answer alone and exits non-zero on every other failure. Residual: a deployed installer
+  keeps the old bytes until the project's copy is replaced. Raised by the S8 spec consult.
+- **GIT-HOOKS-INSTALLER-ROOT-IS-NOT-THE-WORK-TREE-TOP** — invariant: the installed hook runs from the root it was
+  written for. Origin: the installer's root is its own location (`install-git-hooks.mjs:37`) while git runs the hook
+  from the work-tree top, where its `node scripts/…` lines resolve (`:110-115`): a project root below the top (a
+  monorepo subfolder) gets a hook that fails every commit of the enclosing repository. Narrow fix: the hook changes to
+  the installer's root first, or the installer refuses a root that is not the top. Residual: as the row above. Raised by
+  the S8 spec consult.
+- **GIT-HOOKS-READER-ACCEPTS-ANY-MARKER-NAME** — invariant: the advisor reads a hook as managed only when the installer
+  would rewrite it. Origin: the reader takes any `<name>:install-git-hooks.mjs` marker as `managed`
+  (`agent-workflow-kit/tools/recommendations.mjs:891`) while the installer accepts only its own root's name
+  (`install-git-hooks.mjs:39-49,130`): a renamed root gets a `commit-guard` item, and with no kit script left an
+  `enforcement` item, whose every apply the installer refuses (the check's exit 6, the copies removed), offered again
+  each run. Narrow fix: the reader derives the marker name as the installer does. Raised by the S8 spec consult.
+- **GIT-HOOKS-INSTALLER-WRITES-A-SHARED-HOOKS-DIR** — invariant: a hook placed through the kit's route governs that
+  project's own repository alone. Origin: the installer writes into the dir `git rev-parse --git-path hooks` reports, a
+  global `core.hooksPath` included (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:52-55,125`), and the
+  hook's relative `node scripts/…` lines (`:110-115`) then fail every commit of each other repository using that dir;
+  pre-existing (the hand step ran the same installer). Narrow fix: the advisor withholds both items, a skip naming the
+  dir, when git's hooks dir lies outside both the work tree and `--git-common-dir`. Residual: bootstrap step 8 and the
+  `upgrade.md:46` refresh run the check without the advisor's reader, so the narrow fix leaves those routes writing into
+  a shared dir; the installer's own refusal of a hooks dir outside the repository closes it, with the installer rows'
+  residual (a deployed installer keeps the old bytes). Raised by the S8 diff review (lens round 1, M2).
+- **GIT-HOOKS-ROLLBACK-JUDGES-SCRIPTS-PER-PATH** — invariant: the rollback judges `scripts/` once, no-follow, before any
+  path under it, against the directory this run's own mkdir created or found; any other answer (absent, another kind,
+  another inode, a throwing lstat) removes nothing under it and names it; `scripts/` is removed only when this run's
+  mkdir created it and it is empty. Origin: `rollBack` lstats each created path before judging the dir
+  (`agent-workflow-kit/tools/git-hooks.mjs:85-87`), so a `scripts/` swapped for a regular file throws ENOTDIR out of
+  `fail` and nothing is named; "this run created it" is the dry run's absence (`:67`), so an empty `scripts/` another
+  process makes after the lstat, and this run fills, is removed (`:97-111`). Narrow fix: the leaf's own non-recursive
+  mkdir before the first copy, its inode recorded, EEXIST meaning the dir is not this run's; the rollback judges the
+  dir first and a throwing lstat names the path. Residual: a concurrent writer of the project's `scripts/` during the
+  apply. Raised by the S8 diff review (codex round 1, m2; lens round 1, m3).
+- **COMMIT-GUARD-OFFERED-OVER-A-LINKED-INSTALLER** — invariant: the advisor renders a harness item only where its
+  writer's dry run admits the tree. Origin: `probeCommitGuard` tests the installer with `existsSync`
+  (`agent-workflow-kit/tools/recommendations.mjs:928`), which follows a link; the leaf refuses a linked `scripts/` or
+  installer (exit 3), so the item is offered every run and never applies. Narrow fix: lstat `scripts/` and the
+  installer; another node kind is a skip carrying the leaf's refusal text. Raised by the S8 diff review (lens round 1,
+  m1).
+- **GIT-HOOKS-REFUSES-A-LINK-IT-NEITHER-WRITES-NOR-RUNS** — invariant: the dry run refuses another node kind only at a
+  path it writes or runs. Origin: kinds are checked per bundled name before `deployed` is known
+  (`agent-workflow-kit/tools/git-hooks.mjs:49-53`), so under deployed scripts a linked `scripts/<x>.test.mjs` refuses
+  the refresh route (exit 3). Narrow fix: record kinds, compute `deployed`, then refuse only among the copies (when not
+  deployed) and at the installer. Raised by the S8 diff review (lens round 1, m4).
+- **UPGRADE-HOOK-REFRESH-NAMES-AN-UNRENDERED-LINE** — invariant: every route a mode doc names is a line the agent can
+  run. Origin: `agent-workflow-kit/references/modes/upgrade.md:46` names "the `enforcement` check line" in a state where
+  the advisor renders no `enforcement` item (deployed scripts). Narrow fix: name `apply-danger-check.mjs --variant
+  enforcement` (+21 B against upgrade's full read set, now 2 B under 81920: a documented budget bump with it). Raised by
+  the S8 diff review (lens round 1, m6).
 
 ## Closed
 

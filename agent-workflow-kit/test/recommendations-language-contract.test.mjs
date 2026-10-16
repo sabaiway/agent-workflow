@@ -56,11 +56,15 @@ const RAW_BLOCK_TOKEN = /raw tool block/i;
 const ENFORCEMENT_NOTE_START = '- `enforcement` —';
 const POSTURE_NOTE_BOUNDARY = '\n- ';
 const ENFORCEMENT_NOTE_LITERALS = Object.freeze({
-  handApply: 'HAND-APPLY',
-  noClobber: 'never clobbers an existing file',
-  noFollow: 'never follows a link',
-  installerRefusal: 'refuses to overwrite',
-  mergeRemedy: 'merge the hook by hand',
+  chatApply: 'the agent applies the item on the chat yes after the check',
+  optionalInit: '`init` applies it on the batch terminal yes as the route the user may take instead',
+  createOnly: 'The copy is create-only',
+  noClobberOrFollow: 'an existing file stands and nothing is written through a link',
+  installerRefusal: 'refuses to overwrite a pre-commit hook it did not write',
+  rollback: 'removes the scripts this apply copied',
+  pending: "the item is offered again with the installer's output shown",
+  unmanagedHook: 'over a pre-commit hook the installer did not write the item is not offered',
+  ownStep: "its skip names the user's own step",
 });
 const ENFORCEMENT_RISK_PROFILE_END = /Risk profile: [^\n]+\.$/u;
 
@@ -141,7 +145,7 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     assert.match(notes, /re-run recommendations/i, 'the re-check step is stated');
   });
 
-  it('the enforcement note pins hand-apply safety, installer refusal, and its risk profile', () => {
+  it('the enforcement note pins checked consent, create-only safety, installer refusal, rollback, and its risk profile', () => {
     const start = notes.indexOf(ENFORCEMENT_NOTE_START);
     assert.notEqual(start, -1, 'the enforcement posture note exists');
     const enforcementNote = notes.slice(start).split(POSTURE_NOTE_BOUNDARY)[0];
@@ -149,6 +153,7 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
       assert.ok(enforcementNote.includes(literal), `${label}: ${literal}`);
     }
     assert.match(enforcementNote, ENFORCEMENT_RISK_PROFILE_END);
+    assert.ok(enforcementNote.endsWith("Risk profile: local tooling and a Git hook are added on the chat yes after the check, or on init's y."));
   });
 
   it('the consent-sequence is an explicit informed-consent checkpoint (nothing runs before confirmation)', () => {
@@ -393,7 +398,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39939, '00790aa97408fdcd86f8b47c471a5da39c76a8c87bcb83f94317fc27b5f21d4e'], 'the bytes after spec docs-navigator (the replace consent and the kept-checker navigator)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39974, 'f9ca393a3691554b88373b135385b1522bf8ab1a44cfa640bfc181c69a2b877e'], 'the bytes after story S8 (the enforcement check and apply by the consent route)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -461,12 +466,9 @@ const SLOT_VARIANTS = Object.freeze([
   'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
   'jev-skill.earlier', 'jev-connect', 'family-freshness',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'sandbox-provision',
+  'enforcement', 'commit-guard',
 ]);
-const KEPT_NO_WRITER_APPLY_LITERALS = Object.freeze([
-  'HAND-APPLY: mkdir -p {root}/scripts',
-  '--commit-guard ',
-]);
-const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill']);
+const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill', 'enforcement']);
 const RETIRED_LANE_LITERALS = Object.freeze([
   'applies at your next npx', 'upgrade, then init again', 'written ONLY by', 'never runs a console item',
   'lane: console', 'HAND-APPLY item is never run', 'never run by you', 'only `init` applies',
@@ -494,7 +496,7 @@ const RETIRED_ROUTE_LITERALS = Object.freeze([
 const UNMEASURED_HOSTS = Object.freeze(['Codex', 'Devin', 'agy', 'macOS']);
 
 describe('spec:init-project/S6 — apply slots and posture notes permit the checked consent route', () => {
-  it('harness and user slots carry no HAND-APPLY, inability or retired line; no-writer text stays', () => {
+  it('harness and user slots carry no HAND-APPLY, inability or retired line', () => {
     const applySlot = need(lanes, 'applySlot');
     const facts = { toolsDir: resolve(kitRoot, 'tools'), root: '/project', home: '/home/example', env: {}, platform: 'linux' };
     for (const variant of SLOT_VARIANTS) {
@@ -507,9 +509,6 @@ describe('spec:init-project/S6 — apply slots and posture notes permit the chec
           assert.ok(!line.includes(literal), `${variant} retires: ${literal}`);
         }
       }
-    }
-    for (const literal of KEPT_NO_WRITER_APPLY_LITERALS) {
-      assert.ok(TOOL_SOURCE.includes(literal), `the other form (c) items keep: ${literal}`);
     }
   });
 
@@ -818,6 +817,62 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
 
   it('recommendations.md and SKILL.md together stay within the 52224-byte router budget', () => {
     const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(skillDoc);
+    assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
+  });
+});
+
+describe('spec:init-project/S37 shipped text of the two git-hook items', () => {
+  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+  const note = between(notes, ENFORCEMENT_NOTE_START, POSTURE_NOTE_BOUNDARY);
+  const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
+  const example = between(lane, 'An item marked **HAND-APPLY**', 'For `worktrees-dir`');
+  const invariants = between(MODE_DOC, '**Invariants:**', '\n');
+  const step8 = between(BOOTSTRAP_DOC, '8. **Offer enforcement', '\n9. **');
+  const step9 = between(BOOTSTRAP_DOC, '9. **Wire / hide**', '\n   - **visible**');
+  const upgrade = between(UPGRADE_DOC, '**What the enforcement-script ensure does.**', '\n\n');
+  const bannedTokens = /HAND-APPLY|\bmerge\b|by hand|bootstrap steps? 8|node scripts\/install-git-hooks|copied scripts stay|only when the maintainer applies|\bcp\b|mkdir -p/iu;
+
+  it('the note, bootstrap leads and upgrade paragraph retire hand steps; the example and invariants drop the old exceptions', () => {
+    for (const [label, text] of [['enforcement note', note], ['bootstrap step 8', step8], ['bootstrap step 9 lead', step9], ['upgrade ensure', upgrade]]) {
+      assert.doesNotMatch(text, bannedTokens, label);
+    }
+    assert.doesNotMatch(example, /`enforcement`/u);
+    assert.doesNotMatch(invariants, /no-writer|keep their text/u);
+  });
+
+  it('both apply slots and the advisor source retire the installer and hand-copy instructions', () => {
+    const facts = { toolsDir: resolve(kitRoot, 'tools'), root: '/project', home: '/home/example', env: {}, platform: 'linux' };
+    const applySlot = need(lanes, 'applySlot');
+    for (const variant of ['enforcement', 'commit-guard']) {
+      const slot = applySlot(variant, facts);
+      assert.ok(slot, `${variant} has a slot`);
+      for (const line of [slot.check, slot.apply]) {
+        assert.doesNotMatch(line, /HAND-APPLY|install-git-hooks|\bcp\b|mkdir -p|by hand/u, variant);
+      }
+    }
+    for (const literal of ['HAND-APPLY: mkdir', 'merge the guard line by hand', 'bootstrap steps 8']) {
+      assert.ok(!TOOL_SOURCE.includes(literal), `the advisor retires: ${literal}`);
+    }
+  });
+
+  it('bootstrap checks enforcement before its one ask, leaves refusals pending and applies commit-guard the same way; upgrade uses that route', () => {
+    for (const literal of [
+      'node ${CLAUDE_SKILL_DIR}/tools/apply-danger-check.mjs --variant enforcement --cwd <project>',
+      'Ask once on that result', 'the copy is create-only', '(exit 1 or 3)', 'exits 6', 'fill the command slots as on a no',
+    ]) {
+      assert.ok(step8.includes(literal), `bootstrap step 8 states: ${literal}`);
+    }
+    for (const literal of ["the advisor's `commit-guard` item", 'its check line first', "exits 6 with the installer's output"]) {
+      assert.ok(step9.includes(literal), `bootstrap step 9 states: ${literal}`);
+    }
+    assert.doesNotMatch(step9, /install-git-hooks/u);
+    assert.ok(upgrade.includes('the `enforcement` check line and apply, by the consent route'));
+    assert.doesNotMatch(upgrade, /node scripts\/install-git-hooks\.mjs/u);
+  });
+
+  it('recommendations.md with the router stays within 52224 bytes', () => {
+    const routerModeBudget = 52224;
+    const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md'));
     assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
   });
 });

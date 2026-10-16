@@ -23,6 +23,7 @@ import { planFor } from './jev-skill.mjs';
 import { SKILL_FILES, claudeDirOf, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
+import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { dirCovers as covers } from './declared-paths.mjs';
 
@@ -34,8 +35,9 @@ const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing', ...RESEED_VARIANTS];
 const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
 const AGENT_VARIANTS = ['agents', 'executor-vehicle'];
+const GIT_VARIANTS = ['enforcement', 'commit-guard'];
 const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS,
-  ...SKILL_VARIANTS];
+  ...SKILL_VARIANTS, ...GIT_VARIANTS];
 const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -197,7 +199,15 @@ export const scopeOf = (variant, facts, deps = {}) => {
     for (let at = target.root; at !== target.base && covers(target.base, at); at = dirname(at)) directories.push(at);
     filePaths.push(target.path);
   }
+  const scripts = join(facts.root, SCRIPTS_REL);
+  if (GIT_VARIANTS.includes(variant)) {
+    directories.splice(0, directories.length, scripts);
+    filePaths.push(...BUNDLED_SCRIPT_NAMES.map((name) => join(scripts, name)));
+  }
+  const runs = GIT_VARIANTS.includes(variant) ? ['node', INSTALLER_REL,
+    ...(variant === 'commit-guard' ? ['--commit-guard', join(facts.toolsDir, 'commit-guard.mjs')] : [])] : null;
   return {
+    admitsRun: (argv) => runs !== null && equal(argv, runs),
     admits: ({ path, key, change, value }) => {
       const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL : path === SETTINGS_FILE;
       const gains = variant === 'bridge-tier' || HOOK_KEYS.includes(key) || key === ENABLED_KEY || key === CREDENTIALS
@@ -221,6 +231,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
   const files = [];
   const writes = [];
   const temporaries = [];
+  let runs = null;
   const writerDeps = writerFacts(facts, deps);
   const addFile = (path, before, after) => {
     files.push({ path, before: before ?? null, after });
@@ -280,6 +291,10 @@ export const plannedChange = (variant, facts, deps = {}) => {
         temporaries.push(`temporary: ${dirname(target.root)}/.${stem}.kit-tmp-*`);
         if (target.action === 'replace') temporaries.push(`temporary: ${dirname(target.root)}/.${stem}.kit-old-*`);
       }
+    } else if (GIT_VARIANTS.includes(variant)) {
+      const plan = (deps.planGitHooks ?? planGitHooks)({ root: facts.root, variant, toolsDir: facts.toolsDir });
+      for (const copy of plan.copies.filter(({ action }) => action === 'created')) writes.push({ path: copy.path, bytes: copy.bytes });
+      runs = { argv: plan.runs.shown, line: formatPlan(plan).at(-1) };
     } else throw new Error(`unsupported variant: ${variant}`);
   } catch (error) {
     throw error.code === 'CHECK_HALTED' ? error : halted([error.message]);
@@ -289,7 +304,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
   for (const path of [...changedFiles.map(({ path }) => join(facts.root, path)), ...writes.map(({ path }) => path)]) {
     for (let parent = dirname(path); !existsSync(parent); parent = dirname(parent)) directories.add(parent);
   }
-  return { files, writes, temporaries, directories: [...directories] };
+  return { files, writes, temporaries, directories: [...directories], runs };
 };
 
 export const checkApply = (variant, facts, deps = {}) => {
@@ -318,6 +333,10 @@ export const checkApply = (variant, facts, deps = {}) => {
   }
   for (const path of plan.directories) pathLine(path, true, `writes: ${display(path)}/ created`);
   lines.push(...plan.temporaries);
+  if (plan.runs) {
+    lines.push(plan.runs.line);
+    if (!scope.admitsRun(plan.runs.argv)) refused.push({ path: 'runs:', key: plan.runs.argv.join(' '), reason: `beyond the declared scope of ${variant}` });
+  }
   if (refused.length) {
     for (const entry of refused) lines.push(`refused: ${entry.path} ${entry.key} — ${entry.reason}`);
     lines.push('nothing written');
@@ -369,7 +388,7 @@ export const main = (argv, io = {}) => {
     platform: resolved.platform, claudeDir: args['claude-dir'] };
   let result;
   try {
-    result = checkApply(args.variant, facts, { detect: resolved.detect });
+    result = checkApply(args.variant, facts, { detect: resolved.detect, planGitHooks: resolved.planGitHooks });
   } catch (error) {
     for (const line of error.lines ?? [error.message]) resolved.log(line);
     return 3;

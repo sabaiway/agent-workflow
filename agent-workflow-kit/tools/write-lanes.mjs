@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
+import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL } from './git-hooks.mjs';
 
 export const LANE_CHAT = 'chat';
 export const LANE_HARNESS = 'harness';
@@ -27,8 +28,8 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.id-squatter': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
   'gate-hook.marker-stale': LANE_HARNESS,
-  'commit-guard': LANE_USER,
-  enforcement: LANE_USER,
+  'commit-guard': LANE_HARNESS,
+  enforcement: LANE_HARNESS,
   'read-lane': LANE_CHAT,
   'read-lane.stale': LANE_HARNESS,
   'read-lane.missing': LANE_HARNESS,
@@ -97,6 +98,10 @@ const getStartupPaths = ({ env, home, platform }) => targetsFor({
   platform,
 }).filter(({ path }) => path !== null).map(({ path }) => path);
 
+const preCommitOf = (facts) => join(facts.hooksDir ?? join(facts.root, '.git', 'hooks'), 'pre-commit');
+const getEnforcementPaths = (facts) => [...BUNDLED_SCRIPT_NAMES.map((name) => join(facts.root, SCRIPTS_REL, name)), preCommitOf(facts)];
+const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER_REL)];
+
 const formatCommand = (argv) => argv.map(quoteArg).join(' ');
 const TERMINAL_STEP = 'run in a terminal of your own: ';
 
@@ -148,8 +153,10 @@ const FORMS = Object.freeze({
     userStep: (facts) => 'your own step — the doctor has no install it can run for you here (the reason is this item\'s text) — '
       + `${TERMINAL_STEP}cd ${quoteArg(facts.root)} && ${formatCommand(['node', join(facts.toolsDir, 'autonomy-doctor.mjs')])}`,
   }),
-  'commit-guard': null,
-  enforcement: null,
+  enforcement: createForm('git-hooks.mjs',
+    ['--enforcement', '--cwd', '<root>'], ['--apply', '--enforcement', '--cwd', '<root>'], getEnforcementPaths),
+  'commit-guard': createForm('git-hooks.mjs',
+    ['--commit-guard', '--cwd', '<root>'], ['--apply', '--commit-guard', '--cwd', '<root>'], getGuardPaths),
 });
 
 const resolveArgument = (arg, facts) => {

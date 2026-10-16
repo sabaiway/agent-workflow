@@ -71,8 +71,12 @@ const EACCES_CODE = 'EACCES';
 const EVIDENCE_GATE_FAILURE = 'the clobber scan ran before the evidence gate';
 const KIT_ROOT = resolve(HERE, '..');
 const BUNDLED_SCRIPTS = resolve(KIT_ROOT, 'references', 'scripts');
-const COMMIT_GUARD_REMEDY = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 deploy the enforcement scripts (bootstrap steps 8\u20139) and install the hook, then re-run';
-const ENFORCEMENT_APPLY_TEMPLATE = 'HAND-APPLY: mkdir -p {root}/scripts && cp {kit}/references/scripts/*.mjs {root}/scripts/ && node {root}/scripts/install-git-hooks.mjs';
+const COMMIT_GUARD_OWN_STEP = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
+const COMMIT_GUARD_VIA_ITEM = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
+const ENFORCEMENT_UNMANAGED = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it, so the kit places no script here; with that hook moved aside (your own step) the enforcement item is offered';
+const COMMIT_GUARD_UNMANAGED = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
+const FOREIGN_HOOK = '#!/bin/sh\nexit 0\n';
+const MANAGED_GUARDLESS = '#!/usr/bin/env bash\n# fixture:install-git-hooks.mjs\nset -e\nnode scripts/check.mjs\n';
 const SPACE_PROJECT_PREFIX = 'recommendations none ';
 const EMPTY_BUNDLE_PREFIX = 'recommendations-empty-bundle-';
 const NATIVE_WINDOWS_DETAIL = 'on native Windows Claude Code runs no sandbox: this item takes no effect there';
@@ -126,6 +130,18 @@ const finalCapableGatesJson = () => JSON.stringify({
   ],
 });
 
+// A final-run-capable project with the installer deployed and a fixture hooks dir (injected —
+// the probe never spawns git in these tests).
+const guardProject = () => {
+  const root = makeProject();
+  writeFileSync(join(root, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
+  mkdirSync(join(root, 'scripts'), { recursive: true });
+  writeFileSync(join(root, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+  mkdirSync(join(root, 'hooks'), { recursive: true });
+  return root;
+};
+const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () => join(root, 'hooks'), ...extra });
+
 // An AVAILABLE census over an ordinary JS project — the tree every declaration row here is about. It
 // is injected because makeProject() is deliberately NOT a git tree (git-initing it would change what
 // the sandbox-masks probe sees in every unrelated suite here), and because an unchosen census would
@@ -168,7 +184,7 @@ const maskingDeps = (root, rels = [MCP_JSON_REL]) =>
 const enforcementFor = (root, extra = {}) => {
   const { items, skips } = buildRecommendations({
     cwd: root,
-    deps: hermeticDeps(root, { probes: probeEnforcement ? [probeEnforcement] : [], ...extra }),
+    deps: hermeticDeps(root, { probes: probeEnforcement ? [probeEnforcement] : [], gitHooksPath: () => null, ...extra }),
   });
   return {
     item: items.find((entry) => entry.key === ENFORCEMENT_KEY),
@@ -183,9 +199,6 @@ const guardedBundleRead = (path) => {
   if (resolve(path) === BUNDLED_SCRIPTS) throw new Error(EVIDENCE_GATE_FAILURE);
   return readdirSync(path);
 };
-const expectedEnforcementApply = (root) => ENFORCEMENT_APPLY_TEMPLATE
-  .replaceAll('{root}', () => shellQuoteArg(root))
-  .replace('{kit}', () => shellQuoteArg(KIT_ROOT));
 
 describe('recommendations — section contract', () => {
   it('renders PRESENT-EVEN-WHEN-EMPTY with the exact empty-state line', () => {
@@ -749,15 +762,10 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     assert.deepEqual(JSON.parse(skillJson.stdout).items.find((entry) => entry.variant === skill.variant), skill);
   });
 
-  it('user items render applySlot user steps and no-writer items preserve their text without a check line', () => {
+  it('user items render applySlot user steps without a check line', () => {
     const root = makeProject();
     const deps = hermeticDeps(root, { surveyFamily: () => [{ name: 'agent-workflow-engine', version: '1.0.0', freshness: 'behind' }] });
     const { items } = buildRecommendations({ cwd: root, deps });
-    const noWriters = ['commit-guard', 'enforcement'];
-    const originalApply = 'HAND-APPLY: preserve this user step byte for byte';
-    const preserved = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { probes: [({ add }) => {
-      for (const variant of noWriters) add(variant.split('.')[0], 'a no-writer item', originalApply, variant);
-    }] }) });
     rmSync(root, { recursive: true, force: true });
     const applySlot = need(lanes, 'applySlot');
     const facts = { toolsDir: HERE, root, env: deps.getenv, home: root, platform: 'linux' };
@@ -771,15 +779,6 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
       assert.deepEqual([item.lane, item.check, item.apply], ['user', null, apply]);
       const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
       assert.ok(lines.includes(`   apply: ${apply}`));
-      assert.ok(!lines.some((line) => line.startsWith('   check: ')));
-    }
-    assert.deepEqual(preserved.skips, []);
-    assert.equal(preserved.items.length, noWriters.length);
-    for (const item of preserved.items) {
-      assert.equal(applySlot(item.variant, facts), null);
-      assert.deepEqual([item.lane, item.check, item.apply], ['user', null, originalApply]);
-      const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
-      assert.ok(lines.includes(`   apply: ${originalApply}`));
       assert.ok(!lines.some((line) => line.startsWith('   check: ')));
     }
   });
@@ -1128,13 +1127,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still fifteen harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still seventeen harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 15);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
   });
 });
 
@@ -1225,28 +1224,26 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     assert.ok(!skips.some((skip) => skip.key === 'state-block'));
   });
 
-  it('enforcement preserves its HAND-APPLY text byte for byte and both no-writer slots stay null', () => {
-    const root = makeNoneEvidenceProject();
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
-    rmSync(root, { recursive: true, force: true });
-    const item = items.find((entry) => entry.key === 'enforcement');
-    assert.ok(item);
-    assert.equal(item.apply, expectedEnforcementApply(root));
-    assert.ok(item.apply.startsWith('HAND-APPLY: mkdir -p '));
-    assert.equal(item.lane, 'user');
-    assert.equal(item.check, null);
-    const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
-    assert.ok(lines.includes('   lane: user'));
-    assert.ok(lines.includes(`   apply: ${item.apply}`));
-    assert.ok(!lines.some((line) => line.startsWith('   check: ')));
-    const facts = { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' };
-    const applySlot = need(lanes, 'applySlot');
-    assert.equal(applySlot('commit-guard', facts), null);
-    assert.equal(applySlot('enforcement', facts), null);
+  it('enforcement and commit-guard render applySlot harness lines without hand steps or installer commands', (t) => {
+    const fixtures = [['enforcement', makeNoneEvidenceProject()], ['commit-guard', guardProject()]];
+    for (const [, root] of fixtures) t.after(() => rmSync(root, { recursive: true, force: true }));
+    for (const [variant, root] of fixtures) {
+      const { items } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+      const item = items.find((entry) => entry.key === variant);
+      assert.ok(item, variant);
+      const expected = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+      assert.equal(item.lane, 'harness');
+      assert.deepEqual({ check: item.check, apply: item.apply }, expected);
+      const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
+      const checkAt = lines.indexOf(`   check: ${expected.check}`);
+      assert.ok(checkAt > lines.indexOf('   lane: harness'));
+      assert.equal(lines[checkAt + 1], `   apply: ${expected.apply}`);
+      for (const line of lines) assert.doesNotMatch(line, /HAND-APPLY|install-git-hooks\.mjs|\bcp\b|mkdir -p/u);
+    }
   });
 
-  it('VARIANT_LANES contains fifteen harness variants', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 15);
+  it('VARIANT_LANES contains seventeen harness variants', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
   });
 });
 
@@ -2169,22 +2166,43 @@ describe('recommendations — the inert gate declaration item', () => {
 
 describe('recommendations \u2014 the enforcement item', () => {
   // spec:node-evidence/S9
-  it('recommendations \u2014 the enforcement item: docs/ai + pyproject.toml, no package.json, no scripts/ renders the bootstrap-tail offer', () => {
+  it('recommendations \u2014 the enforcement item: docs/ai + pyproject.toml, no package.json, no scripts/ renders the harness offer', (t) => {
     const root = makeNoneEvidenceProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
     const { item, skip } = enforcementFor(root);
     const registryRow = OPT_IN_CAPABILITIES.find((row) => row.id === ENFORCEMENT_KEY);
     assert.deepEqual(registryRow, { id: ENFORCEMENT_KEY, mode: 'bootstrap', advisorKey: ENFORCEMENT_KEY });
     assert.deepEqual([item?.key, item?.severity, item?.what, skip], [ENFORCEMENT_KEY, SEVERITY_OPTIONAL, WHATS[ENFORCEMENT_KEY], undefined]);
     assert.ok(RISK_NOTED_KEYS.includes(ENFORCEMENT_KEY));
-    assert.equal(item?.apply, expectedEnforcementApply(root));
     const spaceRoot = mkdtempSync(join(tmpdir(), SPACE_PROJECT_PREFIX));
+    t.after(() => rmSync(spaceRoot, { recursive: true, force: true }));
     mkdirSync(join(spaceRoot, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(spaceRoot, 'pyproject.toml'), FIXTURE_PYPROJECT);
     const { item: spaceItem, skip: spaceSkip } = enforcementFor(spaceRoot);
-    assert.equal(spaceItem?.apply, expectedEnforcementApply(spaceRoot));
     assert.equal(spaceSkip, undefined);
-    rmSync(root, { recursive: true, force: true });
-    rmSync(spaceRoot, { recursive: true, force: true });
+    for (const [candidateRoot, candidate] of [[root, item], [spaceRoot, spaceItem]]) {
+      const expected = need(lanes, 'applySlot')('enforcement', { toolsDir: HERE, root: candidateRoot, env: {}, home: candidateRoot, platform: 'linux' });
+      assert.equal(candidate?.lane, 'harness');
+      assert.deepEqual({ check: candidate.check, apply: candidate.apply }, expected);
+    }
+  });
+  it('evidence none skips a foreign pre-commit but offers enforcement over managed and absent hooks', (t) => {
+    const root = makeNoneEvidenceProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, 'hooks'));
+    const deps = { gitHooksPath: () => join(root, 'hooks') };
+    writeFileSync(join(root, 'hooks', 'pre-commit'), FOREIGN_HOOK);
+    const foreign = enforcementFor(root, deps);
+    writeFileSync(join(root, 'hooks', 'pre-commit'), MANAGED_GUARDLESS);
+    const managed = enforcementFor(root, deps);
+    rmSync(join(root, 'hooks', 'pre-commit'));
+    const absent = enforcementFor(root, deps);
+    assert.equal(foreign.item, undefined);
+    assert.equal(foreign.skip?.reason, ENFORCEMENT_UNMANAGED);
+    for (const disposition of [managed, absent]) {
+      assert.equal(disposition.item?.key, ENFORCEMENT_KEY);
+      assert.equal(disposition.skip, undefined);
+    }
   });
   it('recommendations \u2014 the enforcement scripts bundle uses its own dependency seam', () => {
     const root = makeNoneEvidenceProject();
@@ -2273,28 +2291,87 @@ describe('recommendations \u2014 the enforcement item', () => {
   });
 });
 
-describe('recommendations — the commit-guard item (the D10 consumer surface)', () => {
-  // A final-run-capable project with the installer deployed and a fixture hooks dir (injected —
-  // the probe never spawns git in these tests).
-  const guardProject = () => {
-    const root = makeProject();
-    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
-    mkdirSync(join(root, 'scripts'), { recursive: true });
-    writeFileSync(join(root, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
-    mkdirSync(join(root, 'hooks'), { recursive: true });
-    return root;
-  };
-  const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () => join(root, 'hooks'), ...extra });
-  const MANAGED_GUARDLESS = '#!/usr/bin/env bash\n# fixture:install-git-hooks.mjs\nset -e\nnode scripts/check.mjs\n';
+describe('spec:init-project/S35 the advisor\'s reader and table by proof', () => {
+  it('readPreCommitState distinguishes no hooks dir, absent, managed and unmanaged, armed only by the canonical line', (t) => {
+    const root = makeNoneEvidenceProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    mkdirSync(join(root, 'hooks'));
+    const deps = guardDeps(root);
+    const canonical = `node "${join(HERE, 'commit-guard.mjs')}" --check\n`;
+    const lookalike = `node "${join(root, 'fake-commit-guard.mjs')}" --check\n`;
+    const readPreCommitState = need(recommendations, 'readPreCommitState');
+    assert.deepEqual(readPreCommitState(root, { gitHooksPath: () => null }), { state: 'no-hooks-dir', armed: false });
+    assert.deepEqual(readPreCommitState(root, deps), { state: 'absent', armed: false });
+    for (const [state, prefix] of [['managed', MANAGED_GUARDLESS], ['unmanaged', FOREIGN_HOOK]]) {
+      for (const [line, armed] of [['', false], [canonical, true], [`# ${canonical}`, false], [lookalike, false]]) {
+        writeFileSync(join(root, 'hooks', 'pre-commit'), `${prefix}${line}`);
+        assert.deepEqual(readPreCommitState(root, deps), { state, armed }, `${state}: ${line}`);
+      }
+    }
+  });
 
-  it('an ABSENT pre-commit hook under a final-capable declaration fires the consented installer one-liner', () => {
+  it('enforcementAdmits equals the rendered offer on every admitted, silent and refused root', (t) => {
+    const cases = [
+      ['no hooks dir', true, () => {}],
+      ['absent hook', true, (root) => mkdirSync(join(root, 'hooks'))],
+      ['managed hook', true, (root) => {
+        mkdirSync(join(root, 'hooks'));
+        writeFileSync(join(root, 'hooks', 'pre-commit'), MANAGED_GUARDLESS);
+      }],
+      ['empty scripts dir', true, (root) => mkdirSync(join(root, 'scripts'))],
+      ['no docs/ai', false, (root) => rmSync(join(root, 'docs', 'ai'), { recursive: true })],
+      ['package.json', false, (root) => writeFileSync(join(root, 'package.json'), FIXTURE_PACKAGE_JSON)],
+      ['deployed script', false, (root) => {
+        mkdirSync(join(root, 'scripts'));
+        writeFileSync(join(root, 'scripts', DEPLOYED_NODE_SCRIPT), FIXTURE_SCRIPT);
+      }],
+      ['wrong-kind path', false, (root) => mkdirSync(join(root, 'package.json'))],
+      ['existing bundled basename', false, (root) => {
+        mkdirSync(join(root, 'scripts'));
+        writeFileSync(join(root, 'scripts', COLLISION_SCRIPT), FIXTURE_SCRIPT);
+      }],
+      ['foreign hook', false, (root) => {
+        mkdirSync(join(root, 'hooks'));
+        writeFileSync(join(root, 'hooks', 'pre-commit'), FOREIGN_HOOK);
+      }],
+    ];
+    const rows = cases.map(([label, expected, seed]) => {
+      const root = makeNoneEvidenceProject();
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      seed(root);
+      const deps = guardDeps(root, label === 'no hooks dir' ? { gitHooksPath: () => null } : {});
+      const disposition = enforcementFor(root, deps);
+      return { label, expected, root, deps, disposition };
+    });
+    const guardRoot = guardProject();
+    t.after(() => rmSync(guardRoot, { recursive: true, force: true }));
+    const guard = buildRecommendations({ cwd: guardRoot, deps: guardDeps(guardRoot) }).items.find((item) => item.key === 'commit-guard');
+    const enforcementAdmits = need(recommendations, 'enforcementAdmits');
+    for (const { label, expected, root, deps, disposition } of rows) {
+      const admitted = enforcementAdmits(root, deps);
+      assert.equal(admitted, expected, label);
+      assert.equal(admitted, Boolean(disposition.item), label);
+      if (admitted) assert.equal(disposition.skip, undefined, label);
+    }
+    for (const item of [guard, ...rows.filter((row) => row.expected).map((row) => row.disposition.item)]) {
+      assert.ok(item);
+      assert.equal(item.lane, 'harness');
+      assert.equal(typeof item.check, 'string');
+      assert.ok(item.check.length > 0);
+    }
+  });
+});
+
+describe('recommendations — the commit-guard item (the D10 consumer surface)', () => {
+  it('an ABSENT pre-commit hook under a final-capable declaration fires the harness offer', () => {
     const root = guardProject();
     const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'commit-guard');
     assert.ok(item, 'an absent hook gets the offer too — the installer creates it armed');
-    assert.match(item.apply, /^node .*install-git-hooks\.mjs --commit-guard /u);
-    assert.ok(item.apply.endsWith(join(HERE, 'commit-guard.mjs')), `the apply names the kit's own resolved guard tool: ${item.apply}`);
+    const expected = need(lanes, 'applySlot')('commit-guard', { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+    assert.equal(item.lane, 'harness');
+    assert.deepEqual({ check: item.check, apply: item.apply }, expected);
     assert.equal(item.severity, SEVERITY_OPTIONAL);
     assert.ok(!skips.some((s) => s.key === 'commit-guard'));
   });
@@ -2322,13 +2399,21 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     assert.ok(lookalike.items.some((i) => i.key === 'commit-guard'), 'a non-canonical guard path never reads as armed');
   });
 
-  it('an UNMANAGED pre-commit hook is a stated skip (manual merge — never an overwrite offer)', () => {
+  it('an UNMANAGED pre-commit hook is a stated skip naming the user\'s own step', () => {
     const root = guardProject();
     writeFileSync(join(root, 'hooks', 'pre-commit'), '#!/bin/sh\nexit 0\n');
     const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'commit-guard'));
-    assert.ok(skips.some((s) => s.key === 'commit-guard' && /UNMANAGED.*by hand/u.test(s.reason)));
+    assert.equal(skips.find((s) => s.key === 'commit-guard')?.reason, COMMIT_GUARD_UNMANAGED);
+  });
+
+  it('a null hooks directory converges without an item or a skip', (t) => {
+    const root = guardProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root, { gitHooksPath: () => null }) });
+    assert.ok(!items.some((item) => item.key === 'commit-guard'));
+    assert.ok(!skips.some((skip) => skip.key === 'commit-guard'));
   });
 
   it('a declaration that is NOT final-run-capable gets NO offer and NO skip (an armed guard there would refuse every commit)', () => {
@@ -2341,20 +2426,36 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   });
 
   // spec:node-evidence/S10
-  it('a final-capable declaration WITHOUT the deployed installer is a stated skip carrying the remedy', () => {
+  it('a final-capable declaration WITHOUT the installer names the admitted item or the user\'s own deploy step', (t) => {
     const packageRoot = guardProject();
     const scriptsRoot = removePackageEvidence(guardProject());
     rmSync(join(packageRoot, 'scripts', 'install-git-hooks.mjs'));
     rmSync(join(scriptsRoot, 'scripts', 'install-git-hooks.mjs'));
     writeFileSync(join(scriptsRoot, 'scripts', DEPLOYED_NODE_SCRIPT), FIXTURE_SCRIPT);
+    const admittedRoot = makeNoneEvidenceProject();
+    writeFileSync(join(admittedRoot, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
+    mkdirSync(join(admittedRoot, 'hooks'));
+    for (const root of [packageRoot, scriptsRoot, admittedRoot]) t.after(() => rmSync(root, { recursive: true, force: true }));
+    const admitted = buildRecommendations({ cwd: admittedRoot, deps: guardDeps(admittedRoot) });
+    writeFileSync(join(admittedRoot, 'hooks', 'pre-commit'), FOREIGN_HOOK);
+    const foreign = buildRecommendations({ cwd: admittedRoot, deps: guardDeps(admittedRoot) });
     for (const root of [packageRoot, scriptsRoot]) {
       const { items, skips } = buildRecommendations({ cwd: root, deps: guardDeps(root) });
       assert.ok(!items.some((i) => i.key === 'commit-guard'));
       const commitGuardSkip = skips.find((entry) => entry.key === 'commit-guard');
-      assert.equal(commitGuardSkip?.reason, COMMIT_GUARD_REMEDY);
+      assert.equal(commitGuardSkip?.reason, COMMIT_GUARD_OWN_STEP);
       assert.ok(!items.some((entry) => entry.key === ENFORCEMENT_KEY) && !skips.some((entry) => entry.key === ENFORCEMENT_KEY));
       assert.doesNotMatch(commitGuardSkip.reason, /\babove\b/u);
-      rmSync(root, { recursive: true, force: true });
+      assert.doesNotMatch(commitGuardSkip.reason, /bootstrap/u);
+    }
+    assert.ok(admitted.items.some((item) => item.key === ENFORCEMENT_KEY));
+    assert.ok(!admitted.items.some((item) => item.key === 'commit-guard'));
+    assert.equal(admitted.skips.find((skip) => skip.key === 'commit-guard')?.reason, COMMIT_GUARD_VIA_ITEM);
+    assert.ok(!foreign.items.some((item) => item.key === ENFORCEMENT_KEY || item.key === 'commit-guard'));
+    assert.equal(foreign.skips.find((skip) => skip.key === 'commit-guard')?.reason, COMMIT_GUARD_OWN_STEP);
+    assert.equal(foreign.skips.find((skip) => skip.key === ENFORCEMENT_KEY)?.reason, ENFORCEMENT_UNMANAGED);
+    for (const built of [admitted, foreign]) {
+      for (const skip of built.skips) assert.doesNotMatch(skip.reason, /bootstrap/u);
     }
   });
 
