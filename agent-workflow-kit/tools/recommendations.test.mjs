@@ -1127,13 +1127,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still seventeen harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still eighteen harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
   });
 });
 
@@ -1242,8 +1242,8 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains seventeen harness variants', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
+  it('VARIANT_LANES contains eighteen harness variants', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
   });
 });
 
@@ -2633,6 +2633,12 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   });
 });
 
+const worktreesSlot = (root) => {
+  const slot = need(lanes, 'applySlot')('worktrees-dir', { toolsDir: HERE, root: resolve(root) });
+  if (slot == null) throw new Error('worktrees-dir check line is absent');
+  return slot;
+};
+
 describe('recommendations — the worktrees-dir arming item', () => {
   it('quiet only when a trusted host signal confirms the resolved parent dir writable', () => {
     const root = makeProject();
@@ -2642,21 +2648,27 @@ describe('recommendations — the worktrees-dir arming item', () => {
     assert.ok(!skips.some((s) => s.key === 'worktrees-dir'));
   });
 
-  it('worktrees-dir-apply-slot-stays-hand-apply-against-a-trusted-no: the probed dir in the WHAT, no ack lane', () => {
+  it('worktrees-dir-apply-slot-is-the-harness-line-against-a-trusted-no: no ack lane', () => {
     const root = makeProject();
-    const probed = realpathSync(dirname(resolve(root)));
+    const home = realpathSync(root);
+    const dir = join(root, 'farm');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: dir }));
+    const probed = realpathSync(dir);
     const seen = [];
     const { items } = buildRecommendations({
       cwd: root,
-      deps: hermeticDeps(root, { canWriteDir: (d) => { seen.push(d); return false; } }),
+      deps: hermeticDeps(root, { home, canWriteDir: (d) => { seen.push(d); return false; } }),
     });
     rmSync(root, { recursive: true, force: true });
     const item = items.find((i) => i.key === 'worktrees-dir');
     assert.ok(item, 'fires when host capability does not confirm the parent dir writable');
-    assert.deepEqual(seen, [probed], 'the probed dir is the canonical existing ancestor of the default parent');
+    assert.deepEqual(seen, [probed], 'the host signal sees the canonical existing configured parent');
     assert.ok(item.what.includes(probed), `the WHAT names the probed dir: ${item.what}`);
-    assert.match(item.apply, /^HAND-APPLY: add ".+" to sandbox\.filesystem\.allowWrite in \.claude\/settings\.json/);
-    assert.ok(item.apply.includes(probed), 'the HAND-APPLY names the same probed dir');
+    const expected = worktreesSlot(root);
+    assert.equal(item.variant, 'worktrees-dir');
+    assert.equal(item.lane, 'harness');
+    assert.deepEqual({ check: item.check, apply: item.apply }, expected);
     assert.equal(item.detail, null, 'the ack lane cannot converge against a trusted NO, so it is not offered');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
     assert.equal(item.benefit, BENEFITS['worktrees-dir']);
@@ -2698,6 +2710,169 @@ describe('recommendations — the worktrees-dir arming item', () => {
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'worktrees-dir'));
     assert.ok(skips.some((s) => s.key === 'worktrees-dir' && /malformed JSON/.test(s.reason)));
+  });
+});
+
+describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
+  const makeHarnessProject = () => {
+    const root = makeProject();
+    const dir = join(root, 'farm');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: dir }));
+    return { root, home: realpathSync(root), dir: realpathSync(dir) };
+  };
+  const collectWorktrees = (root, deps = hermeticDeps(root)) => {
+    const { items, skips } = buildRecommendations({ cwd: root, deps });
+    return {
+      items: items.filter((item) => item.key === 'worktrees-dir'),
+      skips: skips.filter((skip) => skip.key === 'worktrees-dir'),
+    };
+  };
+
+  it('an ABSENT configured parent is named in the WHAT while the host probes its existing ancestor', () => {
+    const root = makeProject();
+    const home = realpathSync(root);
+    const dir = join(home, 'farm', 'deep');
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: join(root, 'farm', 'deep') }));
+    const seen = [];
+    const { items, skips } = collectWorktrees(root, hermeticDeps(root, {
+      home, canWriteDir: (path) => { seen.push(path); return undefined; },
+    }));
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(seen, [home]);
+    assert.deepEqual(skips, []);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].what, `write access to the worktrees parent dir ${dir} is not confirmed — provision may still stop`);
+    assert.equal(items[0].variant, 'worktrees-dir');
+    assert.equal(items[0].lane, 'harness');
+    assert.equal(items[0].benefit, BENEFITS['worktrees-dir']);
+  });
+
+  it('the home, a parent holding it, and a symlinked home render the user step without check, recipe or ack', () => {
+    const defaultRoot = makeProject();
+    const equalRoot = makeProject();
+    const equalHome = join(equalRoot, 'h');
+    mkdirSync(equalHome);
+    writeFileSync(join(equalRoot, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: equalHome }));
+    const real = mkdtempSync(join(tmpdir(), 'recommendations-home-real-'));
+    const linkedRoot = join(real, 'repo');
+    mkdirSync(join(linkedRoot, 'docs', 'ai'), { recursive: true });
+    writeFileSync(join(linkedRoot, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(linkedRoot, 'package.json'), FIXTURE_PACKAGE_JSON);
+    const linkedHome = `${real}-home-link`;
+    symlinkSync(real, linkedHome);
+    const fixtures = [
+      { root: defaultRoot, home: defaultRoot, dir: realpathSync(dirname(defaultRoot)), cleanup: [defaultRoot] },
+      { root: equalRoot, home: equalHome, dir: realpathSync(equalHome), cleanup: [equalRoot] },
+      { root: linkedRoot, home: linkedHome, dir: realpathSync(real), cleanup: [linkedHome, real] },
+    ];
+    const observed = fixtures.map(({ root, home, dir, cleanup }) => {
+      const result = collectWorktrees(root, hermeticDeps(root, { home }));
+      for (const path of cleanup) rmSync(path, { recursive: true, force: true });
+      return { root, dir, result };
+    });
+    for (const { root, dir, result } of observed) {
+      assert.deepEqual(result.skips, []);
+      assert.equal(result.items.length, 1);
+      const item = result.items[0];
+      assert.equal(item.variant, 'worktrees-dir.home', root);
+      assert.equal(item.lane, 'user');
+      assert.equal(item.severity, SEVERITY_OPTIONAL);
+      assert.equal(item.what, `the worktrees parent dir ${dir} is the home or holds it — the kit grants no write surface there`);
+      assert.equal(item.check, null);
+      assert.equal(item.detail, null);
+      assert.equal(item.apply, 'your own step — point docs/ai/worktrees.json parentDir at a dedicated directory, then run /agent-workflow-kit recommendations');
+      assert.deepEqual({ check: item.check, apply: item.apply }, need(lanes, 'applySlot')('worktrees-dir.home', { toolsDir: HERE, root: resolve(root) }));
+      assert.equal(item.benefit, BENEFITS['worktrees-dir']);
+      const block = formatRecommendations(result);
+      assert.doesNotMatch(block, /check:|recipe:|ack-write|worktreesDirAck/u);
+    }
+  });
+
+  it('a regular-file parentDir is a stated skip instead of an item', () => {
+    const root = makeProject();
+    const dir = join(root, 'farm-file');
+    writeFileSync(dir, 'not a directory\n');
+    writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: dir }));
+    const result = collectWorktrees(root, hermeticDeps(root, { home: realpathSync(root) }));
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(result.items, []);
+    assert.equal(result.skips.length, 1);
+    assert.match(result.skips[0].reason, /parentDir/u);
+  });
+
+  it('a trusted yes converges both the harness and home arms without a skip (preserved)', () => {
+    const harness = makeHarnessProject();
+    const homeRoot = makeProject();
+    const observed = [harness, { root: homeRoot, home: homeRoot }].map(({ root, home }) => {
+      const result = collectWorktrees(root, hermeticDeps(root, { home, canWriteDir: () => true }));
+      rmSync(root, { recursive: true, force: true });
+      return result;
+    });
+    assert.deepEqual(observed, [{ items: [], skips: [] }, { items: [], skips: [] }]);
+  });
+
+  it('declarations in either scope and the ack never converge home; a local declaration converges harness', () => {
+    const observed = ['settings.json', 'settings.local.json', 'ack', 'harness-local'].map((lane) => {
+      const root = lane === 'harness-local' ? makeHarnessProject().root : makeProject();
+      const home = realpathSync(root);
+      const dir = realpathSync(lane === 'harness-local' ? join(root, 'farm') : dirname(root));
+      if (lane === 'ack') {
+        writeFileSync(join(root, 'docs', 'ai', 'acks.json'), JSON.stringify({
+          worktreesDirAck: recipeFingerprint({ hosts: [], dirs: [dir], home }),
+        }));
+      } else {
+        mkdirSync(join(root, '.claude'), { recursive: true });
+        writeFileSync(join(root, '.claude', lane === 'harness-local' ? 'settings.local.json' : lane), JSON.stringify({
+          sandbox: { filesystem: { allowWrite: [dir] } },
+        }));
+      }
+      const result = collectWorktrees(root, hermeticDeps(root, { home }));
+      rmSync(root, { recursive: true, force: true });
+      return { lane, result };
+    });
+    for (const { lane, result } of observed) {
+      assert.deepEqual(result.skips, [], lane);
+      assert.deepEqual(result.items.map(({ variant, lane }) => ({ variant, lane })),
+        lane === 'harness-local' ? [] : [{ variant: 'worktrees-dir.home', lane: 'user' }], lane);
+    }
+  });
+
+  it('neither arm renders HAND-APPLY with an absent host signal or a trusted no', () => {
+    const observed = [false, undefined].flatMap((signal) => ['harness', 'home'].map((arm) => {
+      const root = arm === 'harness' ? makeHarnessProject().root : makeProject();
+      const result = collectWorktrees(root, hermeticDeps(root, { home: realpathSync(root), canWriteDir: () => signal }));
+      rmSync(root, { recursive: true, force: true });
+      return { arm, result };
+    }));
+    for (const { arm, result } of observed) {
+      assert.deepEqual(result.skips, []);
+      assert.equal(result.items.length, 1, arm);
+      for (const line of formatRecommendations(result).split('\n')) assert.doesNotMatch(line, /HAND-APPLY/u, arm);
+    }
+  });
+
+  it('a masked settings.local.json is absent and cannot converge the harness item', () => {
+    const { root, home, dir } = makeHarnessProject();
+    const rel = join('.claude', 'settings.local.json');
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, rel), JSON.stringify({ sandbox: { filesystem: { allowWrite: [dir] } } }));
+    const result = collectWorktrees(root, { ...maskingDeps(root, [rel]), home });
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual(result.skips, []);
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0].variant, 'worktrees-dir');
+    assert.equal(result.items[0].lane, 'harness');
+  });
+
+  it('the CLI help names the worktrees-dir ack fallback without hand-apply-first advice', () => {
+    const root = makeProject();
+    const env = hermeticGitEnv(process.env, root);
+    delete env.CLAUDE_CONFIG_DIR;
+    const out = execFileSync(process.execPath, [join(HERE, 'recommendations.mjs'), '--help'], { encoding: 'utf8', env });
+    rmSync(root, { recursive: true, force: true });
+    assert.ok(out.includes('the worktrees-dir ack fallback'));
+    assert.doesNotMatch(out, /hand-apply-first/u);
   });
 });
 
@@ -2862,28 +3037,27 @@ describe('recommendations — worktrees-dir convergence lanes (D7)', () => {
   // The consent-flow executes only the APPLY slot; a HAND-APPLY line is maintainer territory and a
   // recipe: detail is informational. So the runnable ack preview must BE the apply slot, and the
   // grant advice — which no protocol step executes — rides the detail, labeled as the first step.
-  it('worktrees-dir-apply-slot-is-the-runnable-ack-preview-when-the-ack-lane-is-open', () => {
-    const { root, home, probed } = worktreesProject('farm');
+  it('worktrees-dir-apply-slot-is-the-harness-line-when-the-ack-lane-is-open', () => {
+    const { root, home } = worktreesProject('farm');
     const { item } = probeItem(root, home);
     rmSync(root, { recursive: true, force: true });
     assert.ok(item, 'no declaration, no ack → the item fires');
-    assert.match(item.apply, /^node /, 'the apply slot is a runnable one-liner, never maintainer territory');
-    assert.match(item.apply, /ack-write\.mjs/, 'the apply names the consent-gated ack writer');
-    assert.match(item.apply, /--lane worktrees-dir/, 'the apply pins the ack lane');
-    assert.ok(item.apply.includes(ackFor(probed, home)), 'the apply carries the dir-bound fingerprint');
-    assert.doesNotMatch(item.apply, /--apply/, 'the slot is the dry-run preview — it prints the exact --apply the flow then runs');
+    const expected = worktreesSlot(root);
+    assert.equal(item.lane, 'harness');
+    assert.deepEqual({ check: item.check, apply: item.apply }, expected);
   });
 
-  it('worktrees-dir-detail-carries-the-grant-advice-when-the-ack-lane-is-open', () => {
+  it('worktrees-dir-recipe-is-the-ack-fallback-when-the-ack-lane-is-open', () => {
     const { root, home, probed } = worktreesProject('farm');
     const { item } = probeItem(root, home);
     rmSync(root, { recursive: true, force: true });
     assert.ok(item, 'no declaration, no ack → the item fires');
     assert.ok(item.detail, 'the item carries a recipe: detail');
-    assert.match(item.detail, /^HAND-APPLY FIRST: /, 'the grant advice is labeled as the step to perform first');
-    assert.ok(item.detail.includes(probed), 'the grant advice names the probed dir');
-    assert.match(item.detail, /allowWrite/, 'the grant advice names the settings key');
-    assert.match(item.detail, /terminal fallback/, 'the harness-managed fallback stays stated');
+    const label = 'ack fallback, only on your word that this host ignores the settings key, instead of the grant: ';
+    const preview = `node ${shellQuoteArg(join(HERE, 'ack-write.mjs'))} --lane worktrees-dir --fingerprint ${ackFor(probed, home)} --cwd ${shellQuoteArg(root)}`;
+    assert.ok(item.detail.startsWith(label), 'the recipe opens with the ack fallback label');
+    assert.equal(item.detail.slice(label.length), preview);
+    assert.doesNotMatch(item.detail, /--apply/u);
     assert.doesNotMatch(item.detail, /[\r\n]/u, 'the detail stays one line');
   });
 

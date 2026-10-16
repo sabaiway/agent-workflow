@@ -12,7 +12,8 @@ import {
   writeAutonomyProfile, writeVelocityProfile,
 } from './velocity-profile.mjs';
 import { KIT_GROUNDING_TOOL, bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
-import { mergeAllowWrite, stateDirsOf } from './bridge-state-dirs.mjs';
+import { homeRelative, mergeAllowWrite, stateDirsOf } from './bridge-state-dirs.mjs';
+import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from './worktrees.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { HOOK_FILE_REL, HOOKS_DIR, buildHookSettingsEntry, mergeHookEntry, writeGateHook } from './gate-hook.mjs';
 import { STATE_BLOCK_HOOK_FILE_REL, buildStopHookEntry, mergeStopEntry, writeStateBlockHook } from './state-block-hook.mjs';
@@ -36,8 +37,9 @@ const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
 const AGENT_VARIANTS = ['agents', 'executor-vehicle'];
 const GIT_VARIANTS = ['enforcement', 'commit-guard'];
+const WORKTREES = 'worktrees-dir';
 const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS,
-  ...SKILL_VARIANTS, ...GIT_VARIANTS];
+  ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES];
 const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -181,7 +183,12 @@ export const scopeOf = (variant, facts, deps = {}) => {
     set('permissions.ask', RENDER_OWNED_REDLINE_RULES);
     set('permissions.deny', RENDER_OWNED_REDLINE_RULES);
     allowed[CREDENTIALS] = (value) => value.mode === 'deny';
-  } else if (HOOK_VARIANTS.includes(variant)) set('hooks.PreToolUse', [buildHookSettingsEntry()]);
+  }
+  const grantDir = variant === WORKTREES ? worktreesGrantDir(facts.root, facts) : null;
+  if (grantDir !== null && !worktreesGrantHoldsHome(grantDir, facts.home, facts)) {
+    set('sandbox.filesystem.allowWrite', [homeRelative(grantDir, facts.home)]);
+  }
+  if (HOOK_VARIANTS.includes(variant)) set('hooks.PreToolUse', [buildHookSettingsEntry()]);
   else if (variant === STOP) set('hooks.Stop', [buildStopHookEntry()]);
   else if (MCP_VARIANTS.includes(variant)) {
     set(`${SERVERS_KEY}.${SERVER_NAME}`, [buildServerEntry(join(facts.toolsDir, 'mcp-server.mjs'))]);
@@ -195,6 +202,8 @@ export const scopeOf = (variant, facts, deps = {}) => {
   const directories = SKILL_VARIANTS.includes(variant) ? [] : [join(facts.root, CLAUDE_DIR)];
   if (HOOK_VARIANTS.includes(variant) || variant === STOP) directories.push(join(facts.root, HOOKS_DIR));
   if (AGENT_VARIANTS.includes(variant)) directories.push(join(facts.root, AGENTS_DIR));
+  const existingAncestor = grantDir === null ? null : nearestExistingDir(grantDir, facts);
+  for (let at = grantDir; at !== existingAncestor; at = dirname(at)) directories.push(at);
   for (const target of targets) {
     for (let at = target.root; at !== target.base && covers(target.base, at); at = dirname(at)) directories.push(at);
     filePaths.push(target.path);
@@ -209,8 +218,9 @@ export const scopeOf = (variant, facts, deps = {}) => {
   return {
     admitsRun: (argv) => runs !== null && equal(argv, runs),
     admits: ({ path, key, change, value }) => {
-      const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL : path === SETTINGS_FILE;
-      const gains = variant === 'bridge-tier' || HOOK_KEYS.includes(key) || key === ENABLED_KEY || key === CREDENTIALS
+      const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL
+        : path === (variant === WORKTREES ? SETTINGS_LOCAL_FILE : SETTINGS_FILE);
+      const gains = variant === 'bridge-tier' || variant === WORKTREES || HOOK_KEYS.includes(key) || key === ENABLED_KEY || key === CREDENTIALS
         || (VELOCITY_VARIANTS.includes(variant) && key === 'permissions.ask');
       return correctFile && (!gains || change === 'added') && Boolean(allowed[key]?.(value));
     },
@@ -223,7 +233,7 @@ const jsonAt = (path) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8'
 const halted = (lines) => Object.assign(new Error(lines.join('\n')), { code: 'CHECK_HALTED', lines });
 const maskedFiles = (variant, facts) => {
   const paths = VELOCITY_VARIANTS.includes(variant) || variant === 'autonomy-render' || HOOK_VARIANTS.includes(variant)
-    || variant === STOP ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
+    || variant === STOP || variant === WORKTREES ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
   return paths.flatMap((path) => lstatSync(join(facts.root, path), { throwIfNoEntry: false })?.isCharacterDevice()
     ? [`masked: ${path}`] : []);
 };
@@ -231,6 +241,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
   const files = [];
   const writes = [];
   const temporaries = [];
+  const created = [];
   let runs = null;
   const writerDeps = writerFacts(facts, deps);
   const addFile = (path, before, after) => {
@@ -295,6 +306,11 @@ export const plannedChange = (variant, facts, deps = {}) => {
       const plan = (deps.planGitHooks ?? planGitHooks)({ root: facts.root, variant, toolsDir: facts.toolsDir });
       for (const copy of plan.copies.filter(({ action }) => action === 'created')) writes.push({ path: copy.path, bytes: copy.bytes });
       runs = { argv: plan.runs.shown, line: formatPlan(plan).at(-1) };
+    } else if (variant === WORKTREES) {
+      const plan = writeVelocityProfile({ cwd: facts.root, dryRun: true, worktrees: true }, writerDeps);
+      const before = plan.localSettings.data ?? null;
+      addFile(SETTINGS_LOCAL_FILE, before, mergeAllowWrite(before ?? {}, plan.worktreesDirToAdd));
+      created.push(...plan.worktreesDirsToCreate);
     } else throw new Error(`unsupported variant: ${variant}`);
   } catch (error) {
     throw error.code === 'CHECK_HALTED' ? error : halted([error.message]);
@@ -304,6 +320,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
   for (const path of [...changedFiles.map(({ path }) => join(facts.root, path)), ...writes.map(({ path }) => path)]) {
     for (let parent = dirname(path); !existsSync(parent); parent = dirname(parent)) directories.add(parent);
   }
+  for (const path of created) directories.add(path);
   return { files, writes, temporaries, directories: [...directories], runs };
 };
 

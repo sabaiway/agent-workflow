@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-16 — AD-185: the worktrees grant gets a writer the agent runs on the chat yes (kit 14.33.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**The upgrade's `worktrees-dir` item is now a harness item the agent applies on the chat yes after the danger check,
+where it used to hand the user a settings line to paste.** The new `velocity-profile --worktrees` mode writes one
+`sandbox.filesystem.allowWrite` entry, the worktrees parent, into this copy's `.claude/settings.local.json` only, never
+the committed project settings, and creates the parent when it is missing; a parent that is the home or holds it is
+refused and becomes the user's own step. The acknowledgement stays as the fallback for a host that ignores the key, and
+the `worktrees` provision, land and cleanup stops name this route instead of a settings edit. Contract: velocity-profile
+revision 8 (part worktrees-grant, new), init-project revision 9. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-16 — AD-184: the upgrade's git-hook items get a writer the agent runs on the chat yes (kit 14.32.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **`enforcement` and `commit-guard` are now harness items the agent applies on the chat yes after the danger check,

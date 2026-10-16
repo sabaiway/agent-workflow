@@ -21,18 +21,22 @@ const FORM_A = [
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'sandbox-provision.installable',
   'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
+  'worktrees-dir',
 ];
 const FORM_B = ['jev-connect'];
 const FORM_C = [
   'family-freshness', 'sandbox-provision',
+  'worktrees-dir.home',
 ];
 const HARNESS = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
+  'worktrees-dir',
 ];
-const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision'];
+const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home'];
 const ENV_DEPENDENT = ['bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable'];
+const WORKTREES_HOME_STEP = 'your own step — point docs/ai/worktrees.json parentDir at a dedicated directory, then run /agent-workflow-kit recommendations';
 const WITH_FORMS = [...FORM_A, ...FORM_B, ...FORM_C];
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = '/home/u';
@@ -66,6 +70,7 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['sandbox-provision.installable', 'autonomy-doctor.mjs', [], ['--apply', 'apt-get:bubblewrap,socat']],
     ['jev-skill', 'jev-skill.mjs', ['--claude-dir', claudeDir], ['--apply', '--claude-dir', claudeDir]],
     ['jev-skill.earlier', 'jev-skill.mjs', ['--claude-dir', claudeDir], ['--apply', '--claude-dir', claudeDir]],
+    ['worktrees-dir', 'velocity-profile.mjs', ['--worktrees', '--cwd', ROOT], ['--apply', '--worktrees', '--cwd', ROOT]],
   ];
   return Object.fromEntries(table.map(([variant, file, preview, apply]) => [variant, {
     preview: ['node', join(TOOLS, file), ...preview],
@@ -107,7 +112,7 @@ describe('spec:init-project/S1 every severity key has one of the three lanes and
     for (const variant of keys.filter((v) => !HARNESS.includes(v) && !USER.includes(v))) {
       assert.equal(variantLanes[variant], 'chat', variant);
     }
-    for (const variant of ['read-lane', 'worktrees-dir', 'review-recipe', 'sandbox-masks']) {
+    for (const variant of ['read-lane', 'review-recipe', 'sandbox-masks']) {
       assert.equal(variantLanes[variant], 'chat', variant);
     }
   });
@@ -123,6 +128,12 @@ describe('spec:init-project/S1 every severity key has one of the three lanes and
     for (const variant of Object.keys(SEVERITIES)) {
       assert.equal(isEnvDependent(variant), ENV_DEPENDENT.includes(variant), variant);
     }
+  });
+
+  it('isRejudged is true for worktrees-dir alone', () => {
+    const isRejudged = need(lanes, 'isRejudged');
+    const variantLanes = need(lanes, 'VARIANT_LANES');
+    assert.deepEqual(Object.keys(variantLanes).filter((variant) => isRejudged(variant)), ['worktrees-dir']);
   });
 });
 
@@ -263,6 +274,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'sandbox-provision.installable': [],
       'jev-skill': skills,
       'jev-skill.earlier': skills,
+      'worktrees-dir': [join(ROOT, '.claude', 'settings.local.json')],
     };
     const nullVariants = [...new Set([...FORM_C, ...Object.keys(SEVERITIES).filter((v) => !WITH_FORMS.includes(v))])];
     const writesOf = need(lanes, 'writesOf');
@@ -336,6 +348,7 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
         + `cd ${quoteArg(facts.root)} && node ${quoteArg(join(facts.toolsDir, 'autonomy-doctor.mjs'))}`,
       'sandbox-provision': "your own step — the doctor has no install it can run for you here (the reason is this item's text) — run in a terminal of your own: "
         + `cd ${quoteArg(facts.root)} && node ${quoteArg(join(facts.toolsDir, 'autonomy-doctor.mjs'))}`,
+      'worktrees-dir.home': WORKTREES_HOME_STEP,
     };
     const applySlot = need(lanes, 'applySlot');
     for (const [variant, apply] of Object.entries(expected)) {
@@ -352,5 +365,58 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
     for (const variant of chat) {
       assert.equal(applySlot(variant, facts), null, variant);
     }
+  });
+});
+
+describe('spec:init-project/S38 — worktrees-dir is a harness variant and worktrees-dir.home a user one', () => {
+  it('the worktrees variants have their lanes among exactly eighteen harness and five user severity keys', () => {
+    const variantLanes = need(lanes, 'VARIANT_LANES');
+    const keys = Object.keys(SEVERITIES);
+    assert.equal(variantLanes['worktrees-dir'], 'harness');
+    assert.equal(variantLanes['worktrees-dir.home'], 'user');
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 18);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 5);
+  });
+
+  it('worktrees-dir uses the local settings form and quoted danger-check slot on win32 without changing the five env-dependent variants', (t) => {
+    const facts = { ...createFacts(t), platform: 'win32' };
+    const consoleArgv = need(lanes, 'consoleArgv');
+    const writesOf = need(lanes, 'writesOf');
+    const isEnvDependent = need(lanes, 'isEnvDependent');
+    const applySlot = need(lanes, 'applySlot');
+    assert.deepEqual(consoleArgv('worktrees-dir', facts), {
+      preview: ['node', join(TOOLS, 'velocity-profile.mjs'), '--worktrees', '--cwd', ROOT],
+      apply: ['node', join(TOOLS, 'velocity-profile.mjs'), '--apply', '--worktrees', '--cwd', ROOT],
+    });
+    assert.deepEqual(writesOf('worktrees-dir', facts), [join(ROOT, '.claude', 'settings.local.json')]);
+    assert.equal(isEnvDependent('worktrees-dir'), false);
+    assert.deepEqual(Object.keys(SEVERITIES).filter((variant) => isEnvDependent(variant)).sort(), [...ENV_DEPENDENT].sort());
+    const check = ['node', join(TOOLS, 'apply-danger-check.mjs'), '--variant', 'worktrees-dir', '--cwd', ROOT].map(quoteArg).join(' ');
+    const slot = applySlot('worktrees-dir', facts);
+    assert.deepEqual(slot, { check, apply: `${check} --apply --expect <digest>` });
+    assertSlotLines(slot, 'worktrees-dir');
+  });
+
+  it('worktrees-dir.home has no argv or writes and gives the parentDir user step without a command or paths', (t) => {
+    const facts = { ...createFacts(t), platform: 'win32' };
+    const consoleArgv = need(lanes, 'consoleArgv');
+    const writesOf = need(lanes, 'writesOf');
+    const isEnvDependent = need(lanes, 'isEnvDependent');
+    const applySlot = need(lanes, 'applySlot');
+    assert.equal(consoleArgv('worktrees-dir.home', facts), null);
+    assert.equal(writesOf('worktrees-dir.home', facts), null);
+    assert.equal(isEnvDependent('worktrees-dir.home'), false);
+    const slot = applySlot('worktrees-dir.home', facts);
+    assert.deepEqual(slot, { check: null, apply: WORKTREES_HOME_STEP });
+    for (const forbidden of ['node', TOOLS, ROOT]) {
+      assert.equal(slot.apply.includes(forbidden), false, forbidden);
+    }
+    assertSlotLines(slot, 'worktrees-dir.home');
+  });
+
+  it('preserves the absence of a worktrees.mjs import in the write-lanes source', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./write-lanes.mjs', import.meta.url), 'utf8');
+    assert.equal(source.includes('./worktrees.mjs'), false);
   });
 });

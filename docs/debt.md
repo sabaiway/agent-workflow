@@ -515,6 +515,21 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   the advisor renders no `enforcement` item (deployed scripts). Narrow fix: name `apply-danger-check.mjs --variant
   enforcement` (+21 B against upgrade's full read set, now 2 B under 81920: a documented budget bump with it). Raised by
   the S8 diff review (lens round 1, m6).
+- **ENFORCEMENT-NOT-OFFERED-ON-A-FRESH-CLONE** — invariant: a project whose kit scripts are tracked gets its pre-commit
+  hook offered on every checkout. Origin: a fresh clone of an already-deployed project carries `scripts/*.mjs` in git, so
+  `probeNodeEvidence` answers `deployed-node-scripts` and `enforcementOffer` returns false
+  (`agent-workflow-kit/tools/recommendations.mjs:961-962`), `enforcementAdmits` is false, no hook is installed and no
+  `enforcement` item renders; only the `commit-guard` item, where a final-capable gate declaration lets it render, names
+  the missing hook. Narrow fix: under `deployed-node-scripts` with an `absent` pre-commit state, render the `enforcement`
+  item through its refresh route (the leaf copies nothing and runs the project's installer). Residual: a clone with no
+  final-capable gates gets no item at all. Raised by the S8 lens (residual), recorded at the S10 spec session.
+- **VELOCITY-WRITER-IMPORT-CLOSURE** — invariant: a settings writer loads only the modules its own modes run. Origin:
+  `agent-workflow-kit/tools/velocity-profile.mjs:18` imports the grant derivation from `worktrees.mjs`, so every
+  velocity run (and `apply-danger-check.mjs:16`, which imports both) loads the whole worktrees tool: the writer's
+  import closure went from 22 to 51 modules, its load from ~30 to ~90 ms (measured at the S10 tests session). Narrow
+  fix: move `worktreesGrantDir`, `worktreesGrantHoldsHome` and the derivation they read into one leaf that
+  `worktrees.mjs` re-exports, the three readers importing that leaf. Proof: a closure-count cell over the writer.
+  Residual, not live: load time only; no output, write or refusal changes.
 
 ## Closed
 

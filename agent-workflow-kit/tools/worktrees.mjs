@@ -23,11 +23,12 @@ import {
   patternToProbe,
 } from './known-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { isScratchPlanName, plansInFlight, PLANS_REL, shellQuoteArg } from './review-state.mjs';
+import { isScratchPlanName, plansInFlight, PLANS_REL } from './plan-files.mjs';
+import { shellQuoteArg } from './repo-lex.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
-import { isFinalCapableDeclaration } from './run-gates.mjs';
+import { isFinalCapableDeclaration } from './gates-declaration.mjs';
 import {
   WORKTREES_STOP, stop, EXIT, handoffBasename, recordValue, hasControlByte, displayValue,
   composeProvisionRecordSection, composeLandingValue, composeHandoffStub,
@@ -38,6 +39,8 @@ import {
   readSatelliteIdentity,
 } from './satellite-locator.mjs';
 import { composeSatellitePrompt, resolveSeededPlan } from './worktree-prompt.mjs';
+import { applySlot } from './write-lanes.mjs';
+import { dirCovers } from './declared-paths.mjs';
 
 // The record format and the satellite locator now live in leaves the dispatch side reads too — but
 // every name they took away is re-exported here, so no import site and no asserted error `code`
@@ -577,10 +580,24 @@ export const nearestExistingDir = (path, deps = {}) => {
   return walk(resolve(path));
 };
 
-// The ONE canonical probe-dir derivation provision AND the recommendations advisor share:
-// resolve through the existing-parent realpath, then walk to the nearest existing dir.
+// The provision preflight's probe-dir derivation: resolve through the existing-parent realpath, then
+// walk to the nearest existing dir (the advisor walks worktreesGrantDir's answer the same way).
 export const resolveProbeDir = (path, deps = {}) =>
   nearestExistingDir(realpathThroughExistingParent(path, deps), deps);
+
+// The worktrees write grant names the parent ITSELF (spec bridges/velocity-profile, part worktrees-grant):
+// the writer, the advisor and the danger check read this one derivation, never resolveProbeDir's ancestor.
+export const worktreesGrantDir = (root, deps = {}) => {
+  const realRoot = realpathThroughExistingParent(root, deps);
+  const { parentDir } = loadWorktreesConfig(realRoot, deps);
+  const dir = realpathThroughExistingParent(parentDir == null ? dirname(realRoot) : resolve(realRoot, parentDir), deps);
+  const st = lstatNoFollow(fsOf(deps).lstat, dir);
+  if (st !== null && !st.isDirectory()) throw stop(`${CONFIG_REL}: parentDir names an existing non-directory: ${dir}`);
+  return dir;
+};
+
+export const worktreesGrantHoldsHome = (dir, home, deps = {}) =>
+  dirCovers(dir, resolve(home)) || dirCovers(dir, realpathThroughExistingParent(resolve(home), deps));
 
 export const probeParentWritable = (parentDir, deps = {}) => {
   const { mkdirPlain, rmdir, rand } = fsOf(deps);
@@ -620,10 +637,13 @@ const quoteOwnTool = () => `'${WORKTREES_TOOL_ABS.replace(/'/g, `'\\''`)}'`;
 const composeOwnToolPrefix = (root) =>
   `cd ${shellQuoteArg(root)} && node ${quoteOwnTool()}`;
 
+const composeGrantRoute = (root) => `the kit's worktrees-dir item grants the configured worktrees parent on your yes: the agent runs ${
+  applySlot('worktrees-dir', { toolsDir: dirname(WORKTREES_TOOL_ABS), root }).check
+} and, on your yes on its result, its apply line by the consent route, then runs this command again; when that check refuses, prints nothing to change, or grants a dir that does not hold this command's target, use the terminal fallback below`;
+
 const landWritabilityStop = ({ parentDir, root, slug }) => stop([
   `the worktrees parent dir is not writable from this session: ${parentDir}`,
-  'Arm the ONE-TIME consent (then land runs promptless):',
-  `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(parentDir)}`,
+  composeGrantRoute(root),
   'Or run the full command yourself in a plain terminal:',
   `  ${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`,
 ].join('\n'));
@@ -638,8 +658,7 @@ const writabilityStop = ({ parentDir, root, slug, flags }) => {
   return stop(
     [
       `the worktrees parent dir is not writable from this session: ${parentDir}`,
-      'Arm the ONE-TIME consent (then every provision/cleanup runs promptless):',
-      `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(parentDir)}`,
+      composeGrantRoute(root),
       'Or run the full command yourself in a plain terminal:',
       `  ${composeProvisionArgv({ root, slug, flags })}`,
       `(from the target repo root, when that checkout carries the kit at agent-workflow-kit/: node agent-workflow-kit/tools/worktrees.mjs provision ${q(slug)} ${provisionFlagsTail(flags, q).join(' ')})`,
@@ -3150,8 +3169,7 @@ const destructiveRecovery = ({ slug, branch }) =>
 
 const cleanupWritabilityStop = ({ parentDir, root, slug, branch, abandon }) => stop([
   `the worktrees parent dir is not writable from this session: ${parentDir}`,
-  'Arm the ONE-TIME consent (then every provision/cleanup runs promptless):',
-  `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(parentDir)}`,
+  composeGrantRoute(root),
   'Or run the full command yourself in a plain terminal:',
   `  ${composeOwnToolPrefix(root)} ${composeCleanupCommand({ slug, branch, abandon })}`,
 ].join('\n'));

@@ -80,7 +80,7 @@ import { loadConfig } from './orchestration-config.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
 import { sandboxEnabled, HOST_HONORS_QUALIFIER } from './bridge-wiring.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
-import { loadWorktreesConfig, resolveProbeDir } from './worktrees.mjs';
+import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from './worktrees.mjs';
 import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
@@ -199,6 +199,7 @@ export const SEVERITIES = Object.freeze({
   'sandbox-masks': SEVERITY_OPTIONAL,
   'sandbox-masks.unfenced-mount': SEVERITY_ATTENTION,
   'worktrees-dir': SEVERITY_OPTIONAL,
+  'worktrees-dir.home': SEVERITY_OPTIONAL,
   // The layer is opt-in, so both arms are OFFERS under the frozen registry (attention is a CONFIGURED
   // declaration that is broken): an absent store offers the seed, a store with no live contract offers
   // the decline. Neither arm can leave the flow-optimal line standing — an offer is still an item.
@@ -282,6 +283,7 @@ export const WHATS = Object.freeze({
   'sandbox-masks': '{n} sandbox mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
+  'worktrees-dir.home': 'the worktrees parent dir {dir} is the home or holds it — the kit grants no write surface there',
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
   'jev-connect': 'Jev (TypeSafe) is not connected: TYPESAFE_API_KEY is not in the environment the agent\'s commands run in',
@@ -1404,46 +1406,31 @@ const declaresWritableDir = (root, probeDir, deps) => {
 // existing ancestor resolve to the same dir and keep the same ack.
 export const worktreesDirFingerprint = (probeDir, home) => recipeFingerprint({ hosts: [], dirs: [probeDir], home });
 
-// The worktrees-dir arming item (parallel feature worktrees): fires when write access to the
-// resolved worktrees parent dir (docs/ai/worktrees.json parentDir, else the repo's own parent) is
-// neither confirmed by a trusted host signal nor declared/acknowledged by the maintainer. Before
-// D7 the host signal was the ONLY convergence lane — injectable from tests but never supplied in
-// production, so the item fired forever even once its own advice had been applied.
+const WORKTREES_ACK_FALLBACK = 'ack fallback, only on your word that this host ignores the settings key, instead of the grant: ';
+
+// The worktrees-dir item, by the table of spec bridges/velocity-profile, part worktrees-grant: the grant
+// names the parent itself; the probe dir (its nearest existing ancestor) serves the convergence alone.
 const probeWorktreesDir = ({ root, deps, add, skip }) => {
   try {
-    const config = loadWorktreesConfig(root, deps);
-    const parent = config.parentDir == null ? dirname(root) : resolve(root, config.parentDir);
-    // the SAME canonical derivation the provision preflight probes (worktrees.mjs) — an absent
-    // configured dir resolves to its nearest existing ancestor, never a false denial
-    const probeDir = resolveProbeDir(parent, deps);
-    // A supplied host signal is runtime truth and OVERRIDES both declaration lanes in EITHER
-    // direction: a trusted yes converges, a trusted no fires however the project is configured.
+    const grantDir = worktreesGrantDir(root, deps);
+    const probeDir = nearestExistingDir(grantDir, deps);
     const hostSignal = deps.canWriteDir?.(probeDir);
     if (hostSignal === true) return;
     const home = deps.home ?? homedir();
+    if (worktreesGrantHoldsHome(grantDir, home, deps)) {
+      const dir = truncatedTo(oneLineOf(grantDir), templateBudget(WHATS['worktrees-dir.home']));
+      add('worktrees-dir', fillTemplate(WHATS['worktrees-dir.home'], { dir }), '', 'worktrees-dir.home');
+      return;
+    }
     const fingerprint = worktreesDirFingerprint(probeDir, home);
     if (hostSignal !== false) {
       if (declaresWritableDir(root, probeDir, deps)) return;
       if (readAckValue(root, deps, ACKS_WORKTREES_DIR_KEY) === fingerprint) return;
     }
-    const dir = truncatedTo(oneLineOf(probeDir), templateBudget(WHATS['worktrees-dir']));
-    const grantAdvice = `add ${JSON.stringify(probeDir)} to sandbox.filesystem.allowWrite in .claude/settings.json on settings-native hosts; on harness-managed hosts grant this dir for the session or use the provision terminal fallback`;
-    // The consent-flow executes only the APPLY slot; a HAND-APPLY line is maintainer territory and
-    // a recipe: detail is informational. So when the ack lane is open, the runnable ack preview IS
-    // the apply (dry-run; it prints the exact --apply the flow then runs) and the grant advice
-    // rides the detail, labeled as the first step. Against a trusted NO the ack could never
-    // converge, so the grant advice is the apply and no ack surfaces.
-    if (hostSignal === false) {
-      add('worktrees-dir', fillTemplate(WHATS['worktrees-dir'], { dir }), `HAND-APPLY: ${grantAdvice}`);
-    } else {
-      add(
-        'worktrees-dir',
-        fillTemplate(WHATS['worktrees-dir'], { dir }),
-        `node ${q(toolPath('ack-write.mjs'))} --lane worktrees-dir --fingerprint ${fingerprint} --cwd ${q(root)}`,
-        'worktrees-dir',
-        `HAND-APPLY FIRST: ${grantAdvice}; THEN this item's apply one-liner previews the dir-bound ack and prints the exact --apply that records it`,
-      );
-    }
+    const dir = truncatedTo(oneLineOf(grantDir), templateBudget(WHATS['worktrees-dir']));
+    const ack = `node ${q(toolPath('ack-write.mjs'))} --lane worktrees-dir --fingerprint ${fingerprint} --cwd ${q(root)}`;
+    add('worktrees-dir', fillTemplate(WHATS['worktrees-dir'], { dir }), ack, 'worktrees-dir',
+      hostSignal === false ? null : `${WORKTREES_ACK_FALLBACK}${ack}`);
   } catch (err) {
     skip('worktrees-dir', err);
   }
@@ -1619,7 +1606,7 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // pattern-matching prose that is free to be reworded.
   // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
   // the capped WHAT and does NOT belong in the pure-command apply (the bridge-tier missing-entries
-  // line; the worktrees-dir hand-apply-first grant advice; the
+  // line; the worktrees-dir ack fallback; the
   // agents hidden-mode reconcile follow-up). Single-line like apply; absent for every other item.
   // Returns whether the item really RENDERED. One probe's disposition depends on another's having
   // spoken (the marker-stale ⟷ read-lane.stale precedence), and "the conditions still look right"
@@ -1711,7 +1698,7 @@ Usage:
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
 sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (the bridge-tier
-missing-entries line, the worktrees-dir hand-apply-first grant advice, or the agents hidden-mode reconcile
+missing-entries line, the worktrees-dir ack fallback, or the agents hidden-mode reconcile
 follow-up) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a

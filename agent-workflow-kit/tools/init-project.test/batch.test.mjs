@@ -268,6 +268,118 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
   });
 });
 
+describe('spec:init-project/S43 — init over the worktrees grant', () => {
+  it('a pending worktrees-dir previews and checks the real grant, applies on one y, and leaves no pending item', async (t) => {
+    const f = realFixture(t, new Set(['worktrees-dir']));
+    const parent = join(dirname(f.root), 'farm');
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: parent }));
+    const settings = join(f.root, '.claude/settings.json');
+    const before = readFileSync(settings);
+    assert.equal(existsSync(parent), false);
+    assert.deepEqual(pending(f), ['worktrees-dir']);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [
+      ['node', join(TOOLS, 'velocity-profile.mjs'), '--apply', '--worktrees', '--cwd', f.root],
+    ]);
+    const lines = f.printed.flatMap((line) => line.split('\n'));
+    const preview = lines.indexOf('preview: worktrees-dir');
+    const scope = lines.indexOf('scope: within the declared scope of worktrees-dir');
+    assert.ok(preview >= 0 && scope > preview + 1 && lines.indexOf(RUN_NONE) > scope);
+    assert.deepEqual(JSON.parse(readFileSync(join(f.root, '.claude/settings.local.json'), 'utf8')),
+      { sandbox: { filesystem: { allowWrite: [parent] } } });
+    assert.ok(statSync(parent).isDirectory());
+    assert.deepEqual(readFileSync(settings), before);
+    assert.ok(f.printed.includes(RESTART));
+    assert.deepEqual(pending(f), []);
+  });
+
+  it('a pending worktrees-dir.home is listed and not applied when the default parent holds the home', async (t) => {
+    const f = realFixture(t, new Set(['worktrees-dir.home']));
+    assert.equal(existsSync(join(f.root, 'docs/ai/worktrees.json')), false);
+    assert.deepEqual(pending(f), ['worktrees-dir.home']);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.ok(f.printed.some((line) => line.startsWith('listed, not applied here: worktrees-dir.home — ')));
+    assert.ok(!f.calls.some(({ argv }) => argv[1] === join(TOOLS, 'velocity-profile.mjs') && argv.includes('--worktrees')));
+    assert.deepEqual(applies(f), []);
+    assert.equal(existsSync(join(f.root, '.claude/settings.local.json')), false);
+    assert.deepEqual(pending(f), ['worktrees-dir.home']);
+  });
+});
+
+describe('spec:init-project/S45 — the console y re-judges the worktrees grant', () => {
+  const REJUDGED = 'not applied: worktrees-dir — its danger check no longer answers the previewed result';
+
+  it('a link planted at the parent before the y leaves the grant and every later item unapplied, the link target untouched', async (t) => {
+    const f = realFixture(t, new Set(['velocity-core', 'worktrees-dir']));
+    const parent = join(dirname(f.root), 'farm');
+    const other = join(dirname(f.root), 'other');
+    mkdirSync(other);
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: parent }));
+    assert.deepEqual(pending(f), ['velocity-core', 'worktrees-dir']);
+    f.answers = [async () => {
+      symlinkSync(other, parent);
+      return 'y';
+    }];
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 1 });
+    assert.ok(f.printed.includes(`${REJUDGED}: its digest moved`));
+    assert.ok(f.printed.includes('not applied: velocity-core — an earlier item\'s danger check no longer answers the previewed result'));
+    assert.deepEqual(applies(f), []);
+    assert.equal(existsSync(join(f.root, '.claude/settings.local.json')), false);
+    assert.deepEqual(readdirSync(other), []);
+  });
+
+  it('a re-judge that throws leaves the grant unapplied', async (t) => {
+    const f = realFixture(t, new Set(['worktrees-dir']));
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: join(dirname(f.root), 'farm') }));
+    let checks = 0;
+    f.deps.checkApply = () => {
+      checks += 1;
+      if (checks > 1) throw new Error('the check could not run');
+      return { lines: [], digest: CHECK_DIGEST, refused: [] };
+    };
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 1 });
+    assert.equal(checks, 2);
+    assert.ok(f.printed.includes(`${REJUDGED}: the check could not run`));
+    assert.deepEqual(applies(f), []);
+  });
+
+  it('a re-judge that refuses leaves the grant unapplied, naming the refused keys', async (t) => {
+    const f = realFixture(t, new Set(['worktrees-dir']));
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: join(dirname(f.root), 'farm') }));
+    let checks = 0;
+    f.deps.checkApply = () => {
+      checks += 1;
+      const refused = checks > 1 ? [{ key: 'sandbox.filesystem.allowWrite' }, { key: 'farm' }] : [];
+      return { lines: [], digest: CHECK_DIGEST, refused };
+    };
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 1 });
+    assert.ok(f.printed.includes(`${REJUDGED}: it refuses sandbox.filesystem.allowWrite, farm`));
+    assert.deepEqual(applies(f), []);
+  });
+
+  it('a batch whose earlier writer creates .claude applies the grant first and then the rest', async (t) => {
+    const f = realFixture(t, new Set(['velocity-core', 'worktrees-dir']));
+    const parent = join(dirname(f.root), 'farm');
+    rmSync(join(f.root, '.claude'), { recursive: true });
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: parent }));
+    assert.deepEqual(pending(f), ['velocity-core', 'worktrees-dir']);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.deepEqual(applies(f).map(({ argv }) => argv.includes('--worktrees')), [true, false]);
+    assert.ok(!f.printed.some((line) => line.startsWith(REJUDGED)));
+    assert.ok(existsSync(join(f.root, '.claude/settings.json')));
+    assert.ok(existsSync(join(f.root, '.claude/settings.local.json')));
+    assert.ok(statSync(parent).isDirectory());
+    assert.deepEqual(pending(f), []);
+  });
+});
+
 describe('spec:init-project/S13 consent bound to the previewed state', () => {
   it('the five writers pending on a fresh project all apply on one y', async (t) => {
     const f = realFixture(t);

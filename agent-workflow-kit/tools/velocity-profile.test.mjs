@@ -40,6 +40,11 @@ import { bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
 import { stateDirsOf } from './bridge-state-dirs.mjs';
 import * as velocityModule from './velocity-profile.mjs';
 import { VARIANT_LANES, applySlot } from './write-lanes.mjs';
+import { createHash } from 'node:crypto';
+import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
+import { sandboxSurfaceDelta } from './bridge-wiring.mjs';
+import { homeRelative } from './bridge-state-dirs.mjs';
+import { nearestExistingDir } from './worktrees.mjs';
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -744,6 +749,7 @@ describe('velocity profile writer + CLI', () => {
       kitTools: false,
       bridgeTier: false,
       autonomy: false,
+      worktrees: false,
       check: false,
       cwd: undefined,
     });
@@ -1814,7 +1820,7 @@ describe('spec:velocity-profile/S23 — the apply ask rule: one byte-form, glob 
   it('every harness apply line matches; no plain check line does', (t) => {
     const toolsDir = join(makeTempProject(t), "kit dir's", 'tools');
     const variants = Object.keys(VARIANT_LANES).filter((v) => VARIANT_LANES[v] === 'harness');
-    assert.equal(variants.length, 17);
+    assert.equal(variants.length, 18);
     const rule = askRule();
     for (const platform of ['linux', 'win32']) for (const variant of variants) {
       const slot = applySlot(variant, { toolsDir, root: '/project', home: '/home/example', env: {}, platform });
@@ -1876,5 +1882,372 @@ describe('spec:velocity-profile/S23 — the apply ask rule: one byte-form, glob 
     const rule = askRule();
     assert.equal(readJson(settingsPath(cwd)).permissions.ask.filter((entry) => entry === rule).length, 1);
     assert.equal(checked.stdout.includes(rule), false, checked.stdout);
+  });
+});
+
+describe('spec:velocity-profile/S25 — the --worktrees writer by proof', () => {
+  const need = (mod, name) => {
+    if (!(name in mod)) throw new Error(name + ' is absent');
+    return mod[name];
+  };
+  const makeWorktreesProject = (t, parentDirOf) => {
+    const projectBase = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
+    const homeBase = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
+    t.after(() => {
+      rmSync(projectBase, { recursive: true, force: true });
+      rmSync(homeBase, { recursive: true, force: true });
+    });
+    const real = realpathSync(projectBase);
+    const home = realpathSync(homeBase);
+    const root = join(real, 'repo');
+    seedWorkflowStamp(root);
+    const parentDir = parentDirOf?.({ real, home, root });
+    if (parentDir !== undefined) writeJson(join(root, 'docs/ai/worktrees.json'), { parentDir });
+    return { real, home, root, parentDir };
+  };
+  const hashTree = (path) => {
+    const collect = (at) => {
+      const stat = lstatSync(at);
+      if (stat.isSymbolicLink()) return ['symlink', readlinkSync(at)];
+      if (stat.isDirectory()) return ['directory', readdirSync(at).sort().map((name) => [name, collect(join(at, name))])];
+      if (stat.isFile()) return ['file', readFileSync(at).toString('base64')];
+      return ['other', stat.mode];
+    };
+    return createHash('sha256').update(JSON.stringify([path, collect(path)])).digest('hex');
+  };
+  const hashTrees = ({ real, home }) => [hashTree(real), hashTree(home)];
+  const write = ({ root, home }, dryRun = true) => writeVelocityProfile({ cwd: root, dryRun, worktrees: true }, { home });
+  const run = ({ root, home }, argv = []) => {
+    const log = [];
+    const errlog = [];
+    const code = main([...argv, '--cwd', root], {
+      home,
+      log: (line) => log.push(line),
+      errlog: (line) => errlog.push(line),
+    });
+    return { code, lines: log.join('\n').split('\n'), errors: errlog, stdout: log.join('\n') };
+  };
+  const assertRefused = (fixture, dryRun, predicate) => {
+    const before = hashTrees(fixture);
+    try {
+      assert.throws(() => write(fixture, dryRun), predicate);
+    } finally {
+      assert.deepEqual(hashTrees(fixture), before, 'a refusal changes no paths, kinds or bytes in the project or home');
+    }
+  };
+  const grantLabel = 'worktrees grant (sandbox.filesystem.allowWrite in .claude/settings.local.json) entries:';
+
+  it('dry run lists the absent parent and its missing ancestors in order, ends with the widening notice and writes nothing', (t) => {
+    const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+    const before = hashTrees(fixture);
+    const result = run(fixture, ['--worktrees']);
+    assert.deepEqual(hashTrees(fixture), before);
+    assert.equal(result.code, EXIT_OK, result.errors.join('\n'));
+    assert.deepEqual(result.lines.slice(0, -1), [
+      'agent-workflow velocity profile - DRY RUN (no changes)',
+      `would add ${grantLabel} 1`,
+      `  - ${fixture.parentDir}`,
+      'already present (worktrees grant): 0',
+      `would create: ${join(fixture.real, 'farm')}`,
+      `would create: ${fixture.parentDir}`,
+    ]);
+    const notice = need(velocityModule, 'KIT_WORKTREES_GRANT_NOTICE');
+    assert.equal(result.lines.at(-1), notice);
+    for (const fragment of [
+      'where the host honors the settings sandbox keys',
+      '.claude/settings.local.json',
+      'never the committed project settings',
+      'every worktree provisioned from it',
+      'the whole worktrees parent dir',
+      'sibling repositories under it included',
+      'for every later session',
+      'permissions.blockReadsOutsideWorkingDirectories',
+      'admin-required sandbox',
+      'dedicated docs/ai/worktrees.json parentDir BEFORE the first apply',
+      'no apply removes an entry',
+    ]) assert.ok(notice.includes(fragment), fragment);
+  });
+
+  it('dry run renders a parent under the fake home as ~/wt', (t) => {
+    const fixture = makeWorktreesProject(t, ({ home }) => join(home, 'wt'));
+    const before = hashTrees(fixture);
+    const result = run(fixture, ['--worktrees']);
+    assert.deepEqual(hashTrees(fixture), before);
+    assert.equal(result.code, EXIT_OK, result.errors.join('\n'));
+    assert.ok(result.lines.includes('  - ~/wt'), result.stdout);
+  });
+
+  it('apply creates exactly the missing directories and the sole local allowWrite entry, then repeats with identical bytes', (t) => {
+    const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+    const homeBefore = hashTree(fixture.home);
+    const result = run(fixture, ['--worktrees', '--apply']);
+    assert.equal(result.code, EXIT_OK, result.errors.join('\n'));
+    assert.equal(statSync(join(fixture.real, 'farm')).isDirectory(), true);
+    assert.equal(statSync(fixture.parentDir).isDirectory(), true);
+    assert.deepEqual(readdirSync(fixture.real).sort(), ['farm', 'repo']);
+    assert.deepEqual(readdirSync(join(fixture.real, 'farm')), ['deep']);
+    assert.deepEqual(readdirSync(fixture.parentDir), []);
+    assert.deepEqual(readdirSync(join(fixture.root, CLAUDE_DIR)), ['settings.local.json']);
+    const expected = `${JSON.stringify({ sandbox: { filesystem: { allowWrite: [fixture.parentDir] } } }, null, JSON_INDENT)}\n`;
+    assert.equal(readText(localSettingsPath(fixture.root)), expected);
+    assert.equal(existsSync(settingsPath(fixture.root)), false);
+    assert.equal(hashTree(fixture.home), homeBefore);
+    assert.equal(result.lines[0], 'agent-workflow velocity profile - APPLY');
+    assert.ok(result.lines.includes(`added ${grantLabel} 1`), result.stdout);
+    assert.deepEqual(result.lines.filter((line) => line.startsWith('created:')), [
+      `created: ${join(fixture.real, 'farm')}`,
+      `created: ${fixture.parentDir}`,
+    ]);
+    const beforeSecond = hashTrees(fixture);
+    const second = run(fixture, ['--worktrees', '--apply']);
+    assert.equal(second.code, EXIT_OK, second.errors.join('\n'));
+    assert.equal(readText(localSettingsPath(fixture.root)), expected);
+    assert.deepEqual(hashTrees(fixture), beforeSecond);
+    assert.ok(second.lines.includes(`added ${grantLabel} 0`), second.stdout);
+    assert.ok(second.lines.includes('already present (worktrees grant): 1'), second.stdout);
+  });
+
+  it('apply preserves foreign keys, CRLF and the local inode, leaving project settings byte-identical without any ask rule', (t) => {
+    const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+    ensureClaudeDir(fixture.root);
+    const local = {
+      permissions: { allow: [READ_ALLOW] },
+      sandbox: { filesystem: { allowWrite: ['/foreign'], denyWrite: ['/x'] }, network: { allowedDomains: ['example.test'] } },
+      other: 1,
+    };
+    writeText(localSettingsPath(fixture.root), `${JSON.stringify(local, null, JSON_INDENT)}\n`.replaceAll('\n', '\r\n'));
+    writeJson(settingsPath(fixture.root), { permissions: { allow: [] } });
+    const projectBefore = readText(settingsPath(fixture.root));
+    const inode = statSync(localSettingsPath(fixture.root)).ino;
+    write(fixture, false);
+    assert.deepEqual(readJson(localSettingsPath(fixture.root)), {
+      ...local,
+      sandbox: { ...local.sandbox, filesystem: { ...local.sandbox.filesystem, allowWrite: ['/foreign', fixture.parentDir] } },
+    });
+    const bytes = readText(localSettingsPath(fixture.root));
+    assert.ok(bytes.includes('\r\n'));
+    assert.equal(bytes.replaceAll('\r\n', '').includes('\n'), false);
+    assert.equal(statSync(localSettingsPath(fixture.root)).ino, inode);
+    assert.equal(readText(settingsPath(fixture.root)), projectBefore);
+    assert.equal(Object.hasOwn(readJson(localSettingsPath(fixture.root)).permissions, 'ask'), false);
+    assert.equal(Object.hasOwn(readJson(settingsPath(fixture.root)).permissions, 'ask'), false);
+  });
+
+  it('local exact and ancestor coverage avoid settings writes, missing covered parents are created, and project-only coverage does not count', (t) => {
+    for (const arm of ['exact', 'ancestor', 'missing']) {
+      const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+      if (arm !== 'missing') mkdirSync(fixture.parentDir, { recursive: true });
+      ensureClaudeDir(fixture.root);
+      writeJson(localSettingsPath(fixture.root), {
+        sandbox: { filesystem: { allowWrite: [arm === 'ancestor' ? fixture.real : fixture.parentDir] } },
+      });
+      const bytes = readText(localSettingsPath(fixture.root));
+      const inode = statSync(localSettingsPath(fixture.root)).ino;
+      const beforeDry = hashTrees(fixture);
+      const dry = run(fixture, ['--worktrees']);
+      assert.deepEqual(hashTrees(fixture), beforeDry, arm);
+      assert.equal(dry.code, EXIT_OK, dry.errors.join('\n'));
+      assert.ok(dry.lines.includes(`would add ${grantLabel} 0`), arm);
+      assert.ok(dry.lines.includes('already present (worktrees grant): 1'), arm);
+      const applied = run(fixture, ['--worktrees', '--apply']);
+      assert.equal(applied.code, EXIT_OK, applied.errors.join('\n'));
+      assert.equal(readText(localSettingsPath(fixture.root)), bytes, arm);
+      assert.equal(statSync(localSettingsPath(fixture.root)).ino, inode, arm);
+      assert.equal(existsSync(settingsPath(fixture.root)), false, arm);
+      assert.equal(statSync(fixture.parentDir).isDirectory(), true, arm);
+      if (arm === 'missing') {
+        assert.ok(applied.lines.includes(`created: ${fixture.parentDir}`), applied.stdout);
+        assert.doesNotMatch(applied.stdout, /nothing to change/);
+      } else {
+        assert.equal(applied.lines.some((line) => line.startsWith('created:')), false, arm);
+        assert.deepEqual(hashTrees(fixture), beforeDry, arm);
+      }
+    }
+    const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+    ensureClaudeDir(fixture.root);
+    writeJson(settingsPath(fixture.root), { sandbox: { filesystem: { allowWrite: [fixture.parentDir] } } });
+    const before = hashTrees(fixture);
+    const dry = run(fixture, ['--worktrees']);
+    assert.deepEqual(hashTrees(fixture), before);
+    assert.equal(dry.code, EXIT_OK, dry.errors.join('\n'));
+    assert.ok(dry.lines.includes(`would add ${grantLabel} 1`), dry.stdout);
+  });
+
+  it('the worktrees plan uses sandboxSurfaceDelta over local settings alone and leaves every other tier empty', (t) => {
+    const cases = [undefined, { filesystem: { allowWrite: ['/foreign'] } }].map((sandbox) => {
+      const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+      if (sandbox !== undefined) {
+        ensureClaudeDir(fixture.root);
+        writeJson(localSettingsPath(fixture.root), { sandbox });
+      }
+      const before = hashTrees(fixture);
+      const result = write(fixture);
+      assert.deepEqual(hashTrees(fixture), before);
+      return { fixture, sandbox, result };
+    });
+    const flagless = writeVelocityProfile({ cwd: cases[0].fixture.root, dryRun: true }, { home: cases[0].fixture.home });
+    for (const { fixture, sandbox, result } of cases) {
+      assert.equal(result.worktreesDir, fixture.parentDir);
+      assert.equal(result.worktrees, true);
+      assert.deepEqual(result.worktreesDirToAdd, sandboxSurfaceDelta(
+        { excludedCommands: [], hosts: [], dirs: [result.worktreesDir] },
+        sandbox ?? {},
+        { home: fixture.home, root: fixture.root },
+      ).dirs);
+      assert.deepEqual(result.worktreesDirAlreadyPresent, []);
+      assert.deepEqual(result.worktreesDirsToCreate, [join(fixture.real, 'farm'), fixture.parentDir]);
+      for (const key of ['toAdd', 'askToAdd', 'tierToAdd', 'bridgeToAdd', 'excludedToAdd', 'hostsToAdd', 'dirsToAdd']) {
+        assert.deepEqual(result[key], [], key);
+      }
+    }
+    assert.equal(flagless.worktreesDir, null);
+  });
+
+  it('absolute, relative and default parents derive from worktreesGrantDir, never a missing parent\'s existing ancestor', async (t) => {
+    const cases = [({ real }) => join(real, 'farm/deep'), () => '../wt', undefined].map((parentDirOf) => {
+      const fixture = makeWorktreesProject(t, parentDirOf);
+      const before = hashTrees(fixture);
+      const result = write(fixture);
+      assert.deepEqual(hashTrees(fixture), before);
+      return { fixture, result };
+    });
+    const mod = await import('./worktrees.mjs');
+    const worktreesGrantDir = need(mod, 'worktreesGrantDir');
+    for (const { fixture, result } of cases) {
+      const dir = worktreesGrantDir(fixture.root);
+      assert.equal(result.worktreesDir, homeRelative(dir, fixture.home));
+      if (!existsSync(dir)) assert.notEqual(result.worktreesDir, homeRelative(nearestExistingDir(dir), fixture.home));
+    }
+  });
+
+  it('home, an ancestor of home and a symlinked HOME with the repo directly under its real target refuse dry run and apply without writes', (t) => {
+    const linked = makeWorktreesProject(t);
+    const realHome = join(linked.real, 'realhome');
+    const link = join(linked.real, 'link');
+    const root = join(realHome, 'repo');
+    seedWorkflowStamp(root);
+    symlinkSync(realHome, link, 'dir');
+    const fixtures = [
+      makeWorktreesProject(t, ({ home }) => home),
+      makeWorktreesProject(t, ({ home }) => dirname(home)),
+      { ...linked, root, home: link, parentDir: realHome },
+    ];
+    for (const fixture of fixtures) for (const dryRun of [true, false]) {
+      assertRefused(fixture, dryRun, (error) => {
+        assert.equal(error.code, need(velocityModule, 'VELOCITY_WORKTREES_HOME'));
+        assert.equal(error.message, `[agent-workflow-kit] the worktrees parent dir ${fixture.parentDir} is the home or holds it - the kit grants no write surface there; point docs/ai/worktrees.json parentDir at a dedicated directory`);
+        return true;
+      });
+    }
+  });
+
+  it('a regular-file parentDir and malformed worktrees.json refuse dry run and apply as malformed with zero writes', (t) => {
+    for (const arm of ['file', 'json']) {
+      const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'parent-file'));
+      if (arm === 'file') writeText(fixture.parentDir, '{}\n');
+      else writeText(join(fixture.root, 'docs/ai/worktrees.json'), '{ nope');
+      for (const dryRun of [true, false]) assertRefused(fixture, dryRun, (error) => {
+        assert.equal(error.code, VELOCITY_MALFORMED);
+        if (arm === 'file') {
+          assert.equal(error.message, `[agent-workflow-kit] docs/ai/worktrees.json: parentDir names an existing non-directory: ${fixture.parentDir}`);
+        } else {
+          assert.ok(error.message.includes('docs/ai/worktrees.json: malformed JSON'), error.message);
+          assert.ok(error.message.endsWith('— fix it by hand; the tool never guesses'), error.message);
+        }
+        return true;
+      });
+    }
+  });
+
+  it('local sandbox shapes refuse both modes by exact key, project-only filesystem shapes are ignored and every-run project keys still stop', (t) => {
+    const rows = [
+      ['sandbox', { sandbox: 'x' }, 'must be a JSON object'],
+      ['sandbox.filesystem', { sandbox: { filesystem: 'x' } }, 'must be a JSON object'],
+      ['sandbox.network', { sandbox: { network: 'x' } }, 'must be a JSON object'],
+      ['sandbox.excludedCommands', { sandbox: { excludedCommands: 'x' } }, 'must be an array'],
+      ['sandbox.network.allowedDomains', { sandbox: { network: { allowedDomains: 'x' } } }, 'must be an array'],
+      ...['x', [''], ['  '], [1]].map((allowWrite) => [
+        'sandbox.filesystem.allowWrite', { sandbox: { filesystem: { allowWrite } } }, 'must be an array of non-blank strings',
+      ]),
+    ];
+    for (const [key, data, message] of rows) {
+      const fixture = makeWorktreesProject(t);
+      ensureClaudeDir(fixture.root);
+      writeJson(localSettingsPath(fixture.root), data);
+      for (const dryRun of [true, false]) assertRefused(fixture, dryRun, (error) => {
+        assert.equal(error.code, VELOCITY_MALFORMED);
+        assert.equal(error.message, `[agent-workflow-kit] .claude/settings.local.json: ${key} ${message}`);
+        return true;
+      });
+    }
+    for (const sandbox of [{ filesystem: 'x' }, { filesystem: { allowWrite: [1] } }]) {
+      const fixture = makeWorktreesProject(t);
+      ensureClaudeDir(fixture.root);
+      writeJson(settingsPath(fixture.root), { sandbox });
+      const before = hashTrees(fixture);
+      const dry = run(fixture, ['--worktrees']);
+      assert.deepEqual(hashTrees(fixture), before);
+      assert.equal(dry.code, EXIT_OK, dry.errors.join('\n'));
+      assert.ok(dry.lines.includes(`would add ${grantLabel} 1`), dry.stdout);
+    }
+    const fixture = makeWorktreesProject(t);
+    ensureClaudeDir(fixture.root);
+    writeJson(settingsPath(fixture.root), { permissions: { allow: 'x' } });
+    for (const dryRun of [true, false]) assertRefused(fixture, dryRun, (error) => {
+      assert.equal(error.code, VELOCITY_MALFORMED);
+      assert.ok(error.message.includes('.claude/settings.json: permissions.allow'), error.message);
+      return true;
+    });
+  });
+
+  it('a symlink or directory at settings.local.json refuses dry run and apply as VELOCITY_SYMLINK with zero writes', (t) => {
+    for (const arm of ['symlink', 'directory']) {
+      const fixture = makeWorktreesProject(t);
+      ensureClaudeDir(fixture.root);
+      if (arm === 'symlink') {
+        const target = join(fixture.real, 'local-target.json');
+        writeJson(target, {});
+        symlinkSync(target, localSettingsPath(fixture.root));
+      } else mkdirSync(localSettingsPath(fixture.root));
+      for (const dryRun of [true, false]) assertRefused(fixture, dryRun, (error) => {
+        assert.equal(error.code, velocityModule.VELOCITY_SYMLINK);
+        assert.equal(error.message, '[agent-workflow-kit] .claude/settings.local.json exists but is not a regular file - refusing to clobber it');
+        return true;
+      });
+    }
+  });
+
+  it('a stamp behind the head permits a dry-run grant and refuses only apply with zero writes', (t) => {
+    const fixture = makeWorktreesProject(t, ({ real }) => join(real, 'farm/deep'));
+    seedWorkflowStamp(fixture.root, '3.0.0');
+    const before = hashTrees(fixture);
+    const dry = run(fixture, ['--worktrees']);
+    assert.deepEqual(hashTrees(fixture), before);
+    assert.equal(dry.code, EXIT_OK, dry.errors.join('\n'));
+    assert.ok(dry.lines.includes(`would add ${grantLabel} 1`), dry.stdout);
+    assertRefused(fixture, false, (error) => {
+      assert.equal(error.code, velocityModule.VELOCITY_STAMP);
+      return true;
+    });
+  });
+
+  it('--worktrees beside autonomy, kit-tools, bridge-tier or accept-edits is a usage exit naming the conflicting flag', (t) => {
+    const fixture = makeWorktreesProject(t);
+    for (const flag of ['--autonomy', '--kit-tools', '--bridge-tier', '--accept-edits']) {
+      const before = hashTrees(fixture);
+      const result = run(fixture, ['--worktrees', flag]);
+      assert.deepEqual(hashTrees(fixture), before);
+      assert.equal(result.code, EXIT_USAGE);
+      assert.equal(result.errors[0], `--worktrees is its own mode writing .claude/settings.local.json alone — it cannot be combined with ${flag}`);
+    }
+  });
+
+  it('help names --worktrees, the local file, whole-parent widening and the applies that append the ask rule', () => {
+    const result = runMainWithoutCwd(['--help']);
+    assert.equal(result.code, EXIT_OK, result.stderr);
+    for (const fragment of [
+      '--worktrees', '.claude/settings.local.json', 'the whole parent dir',
+      'Every flagless, --kit-tools and --bridge-tier apply also appends the apply ask rule',
+    ]) assert.ok(result.stdout.includes(fragment), fragment);
   });
 });

@@ -67,6 +67,30 @@ const ENFORCEMENT_NOTE_LITERALS = Object.freeze({
   ownStep: "its skip names the user's own step",
 });
 const ENFORCEMENT_RISK_PROFILE_END = /Risk profile: [^\n]+\.$/u;
+const WORKTREES_NOTE_LITERALS = Object.freeze([
+  'the agent applies the item on the chat yes after the check',
+  '`init` applies it on the batch terminal yes as the route the user may take instead',
+  "written to this copy's `.claude/settings.local.json` only, never the committed project settings",
+  'the parent created when missing',
+  'every sibling path under it (other repositories included)',
+  'for every later session and every worktree provisioned afterwards',
+  'Narrow it BEFORE the first apply: point `docs/ai/worktrees.json` `parentDir` at a dedicated dir',
+  'an earlier one stays until the user deletes it',
+  "renders `worktrees-dir.home` instead, the user's own step",
+  'recorded by the `ack-write --lane worktrees-dir` line the `recipe:` line carries',
+  'the ack fallback for a host that ignores the key',
+  '**resolved probe dir**',
+  'Risk profile: a real write-surface widening where honored — scope it deliberately.',
+]);
+const WORKTREES_LANE_SENTENCE = "For `worktrees-dir` you apply the grant on the chat yes after its check, like every harness item, with no hand step to wait for; its `recipe:` line's `ack-write` preview is the ack fallback, run only on the user's word that the host ignores the settings key, instead of the grant, and against a trusted host NO no ack renders.";
+const WORKTREES_CONSENT_LITERALS = Object.freeze([
+  'An unwritable parent prints the `worktrees-dir` check line and the full terminal command',
+  'The agent runs that check line and, on the chat yes on its result, its apply line by the consent route',
+  "written to this copy's `.claude/settings.local.json` only",
+  "When the check refuses, prints nothing to change, or grants a dir that does not hold the command's target, use the printed terminal command for each operation",
+  "`worktreesDirAck` in `docs/ai/acks.json`, recorded by the `ack-write` line the item's `recipe:` line carries, the fallback instead of the grant",
+  'resolved probe dir',
+]);
 
 describe('recommendations language contract — the presentation tokens are PRESENT (D5)', () => {
   it('the mode doc presents in the user language: facts complete, commands byte-exact, raw block on request', () => {
@@ -133,16 +157,12 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     }
   });
 
-  it('the worktrees-dir note distinguishes host classes and keeps the scope-narrowing mitigation', () => {
-    assert.match(notes, /- `worktrees-dir` — /, 'the posture note exists');
-    assert.match(notes, /settings-native/i, 'the settings-native effect is qualified');
-    assert.match(notes, /harness-managed/i, 'the settings-ignoring host class is named');
-    assert.match(notes, /host\/session/i, 'the harness-managed allowance is host/session-scoped');
-    assert.match(notes, /terminal fallback/i, 'the terminal fallback remains available');
-    assert.match(notes, /every sibling path under it/i, 'the sibling-wide scope is stated');
-    assert.match(notes, /dedicated dir/i, 'the narrowing mitigation is stated');
-    assert.match(notes, /parentDir/, 'the mitigation names the setting');
-    assert.match(notes, /re-run recommendations/i, 'the re-check step is stated');
+  it('the worktrees-dir note pins checked chat consent, local settings, widening, narrowing and the ack fallback', () => {
+    const note = between(notes, '- `worktrees-dir` —', POSTURE_NOTE_BOUNDARY).replace(/\s+/gu, ' ');
+    for (const literal of WORKTREES_NOTE_LITERALS) {
+      assert.ok(note.includes(literal), `the worktrees-dir note states: ${literal}`);
+    }
+    assert.doesNotMatch(note, /settings-native|harness-managed|host\/session|re-run recommendations/iu);
   });
 
   it('the enforcement note pins checked consent, create-only safety, installer refusal, rollback, and its risk profile', () => {
@@ -191,28 +211,21 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
     assert.match(MODE_DOC, /--lane worktrees-dir/, 'the mode doc documents the worktrees-dir ack command');
   });
 
-  it('worktrees-dir-consent-flow-waits-for-the-grant-then-runs-preview-and-printed-apply', () => {
-    // The ack RECORDS a maintainer choice; executing it straight from the render would converge
-    // the item with no grant made. The contract therefore sequences the item: HAND-APPLY is
-    // maintainer territory wherever it renders, and the ack preview (plus its printed --apply)
-    // runs only after the grant/fallback confirmation.
+  it('worktrees-dir-consent-flow-applies-the-grant-after-its-check-with-the-ack-as-fallback', () => {
     assert.match(MODE_DOC, /maintainer territory wherever it renders/i, 'HAND-APPLY is bound to territory, not to a slot');
-    assert.match(
-      MODE_DOC,
-      /wait for the maintainer to confirm the grant is applied \(or the terminal fallback chosen\)/i,
-      'the flow waits for the grant',
-    );
-    assert.match(
-      MODE_DOC,
-      /before running that preview and the exact `--apply` command it prints/i,
-      'the preview AND the printed --apply follow the confirmation',
-    );
+    const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes').replace(/\s+/gu, ' ');
+    assert.ok(lane.includes(WORKTREES_LANE_SENTENCE), 'the grant follows its check and the ack is the fallback');
+    assert.doesNotMatch(lane, /wait for the maintainer to confirm the grant/iu);
     assert.doesNotMatch(
       MODE_DOC,
       /acknowledgement carried by this item's rendered `recipe:` line/,
       'the retired ack-in-recipe claim is gone',
     );
-    assert.match(WORKTREES_DOC, /consent-gated apply one-liner records/i, 'worktrees.md names the apply lane');
+    const consent = between(WORKTREES_DOC, '**Host-specific consent', '\n\n').replace(/\s+/gu, ' ');
+    for (const literal of WORKTREES_CONSENT_LITERALS) {
+      assert.ok(consent.includes(literal), `worktrees.md consent states: ${literal}`);
+    }
+    assert.doesNotMatch(consent, /consent-gated apply one-liner records/iu);
     assert.doesNotMatch(
       WORKTREES_DOC,
       /its rendered `recipe:` line records/,
@@ -468,7 +481,7 @@ const SLOT_VARIANTS = Object.freeze([
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'sandbox-provision',
   'enforcement', 'commit-guard',
 ]);
-const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill', 'enforcement']);
+const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill', 'enforcement', 'worktrees-dir']);
 const RETIRED_LANE_LITERALS = Object.freeze([
   'applies at your next npx', 'upgrade, then init again', 'written ONLY by', 'never runs a console item',
   'lane: console', 'HAND-APPLY item is never run', 'never run by you', 'only `init` applies',
@@ -709,7 +722,6 @@ describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply a
       }),
       ...splitSentences(text, path.endsWith('.md') || path.endsWith('--help')).flatMap(({ text: sentence, first, last }) => {
         const normalized = sentence.toLowerCase();
-        if (/worktrees/iu.test(sentence) && !/codex|agy|antigravity|bridge/iu.test(sentence)) return [];
         const phrases = S21_PHRASES.filter((phrase) => normalized.includes(phrase));
         const keys = S21_KEYS.filter((key) => normalized.includes(key.toLowerCase()));
         return phrases.flatMap((phrase) => keys.map((key) => `${path}:${first}-${last}: ${phrase} + ${key}`));
@@ -727,6 +739,22 @@ describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply a
     assert.match(MODE_DOC, /--lane worktrees-dir/u);
     assert.deepEqual(hits, [], `shipped bridge advice hits:\n${hits.join('\n')}`);
     assert.doesNotMatch(VELOCITY_DOC, /opt-in-capability: sandbox-lane/iu);
+  });
+
+  it('no worktrees consent surface pairs the grant with a hand step', () => {
+    const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit worktrees`'));
+    assert.ok(row, 'the README worktrees row exists');
+    const surfaces = [
+      ['worktrees-dir posture note', between(MODE_DOC, '- `worktrees-dir` —', POSTURE_NOTE_BOUNDARY)],
+      ['lane paragraph', between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes')],
+      ['invariants', between(MODE_DOC, '**Invariants:**', '\n')],
+      ['worktrees.md consent', between(WORKTREES_DOC, '**Host-specific consent', '\n\n')],
+      ['README worktrees row', row],
+    ];
+    const hits = surfaces.flatMap(([label, text]) => splitSentences(text, true).flatMap(({ text: sentence, first, last }) =>
+      /worktrees/iu.test(sentence) && /hand-apply|by hand|yours to paste|maintainer-pasted/iu.test(sentence)
+        ? [`${label}:${first}-${last}: ${sentence}`] : []));
+    assert.deepEqual(hits, [], `worktrees hand-step advice hits:\n${hits.join('\n')}`);
   });
 });
 
@@ -809,6 +837,8 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
     const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
     const example = between(lane, 'An item marked **HAND-APPLY**', 'For `worktrees-dir`');
     assert.doesNotMatch(example, /`read-lane\.stale`/u);
+    assert.match(example, /source-size\.id-squatter/u);
+    assert.doesNotMatch(example, /worktrees/iu);
     for (const start of ['The sandbox items state:', '**Invariants:**']) {
       const line = between(MODE_DOC, start, '\n');
       assert.match(line, /the bare `sandbox-provision`[^·\n]*user's own step/u, start);
@@ -874,5 +904,124 @@ describe('spec:init-project/S37 shipped text of the two git-hook items', () => {
     const routerModeBudget = 52224;
     const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md'));
     assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
+  });
+});
+
+describe('spec:velocity-profile/S26 — velocity.md and the README velocity row document the --worktrees mode', () => {
+  it('the worktrees paragraph pins the one local entry, created parent, home refusal, widening and narrowing', () => {
+    const paragraph = between(VELOCITY_DOC, '**The `--worktrees` grant (own opt-in, its own mode).**', '\n\n').replace(/\s+/gu, ' ');
+    for (const literal of [
+      'velocity-profile.mjs --worktrees [--apply] [--cwd <dir>]',
+      'It writes ONE `sandbox.filesystem.allowWrite` entry, the worktrees parent itself',
+      "into this copy's `.claude/settings.local.json` alone, and creates the parent when it is missing",
+      'It never writes `.claude/settings.json`, seeds no core and no ask rule, and cannot be combined with `--autonomy`, `--kit-tools`, `--bridge-tier` or `--accept-edits`',
+      'A parent that is the home or holds it is refused (`VELOCITY_WORKTREES_HOME`), nothing written',
+      'can then write the whole parent dir, sibling repositories under it included, for every later session',
+      'Narrow it BEFORE the first apply: point `parentDir` at a dedicated dir',
+    ]) {
+      assert.ok(paragraph.includes(literal), `velocity.md worktrees paragraph states: ${literal}`);
+    }
+  });
+
+  it('the opening and invariants name the worktrees exception to the project settings target', () => {
+    const opening = between(VELOCITY_DOC, 'The opt-in onboarding', '\n\n').replace(/\s+/gu, ' ');
+    const invariants = between(VELOCITY_DOC, '**Invariants:**', '\n').replace(/\s+/gu, ' ');
+    assert.ok(opening.includes('its `--worktrees` mode alone writes `.claude/settings.local.json` plus the created parent'));
+    assert.ok(invariants.includes('and with `--worktrees` alone `.claude/settings.local.json` plus the created parent'));
+  });
+
+  it('every local-file refusal or project-only claim before the autonomy heading names the worktrees exception', () => {
+    const seeding = between(VELOCITY_DOC, '### Mode: velocity', '## The `--autonomy` render').replace(/[`*]/gu, '');
+    const hits = splitSentences(seeding, true).filter(({ text }) =>
+      /never writes settings\.local\.json|writes only \.claude\/settings\.json/iu.test(text) && !text.includes('--worktrees'));
+    assert.deepEqual(hits, [], 'settings target claims outside the autonomy render name the --worktrees exception');
+  });
+
+  it('the README velocity row names the fourth local opt-in and neither surface denies the grant writer', () => {
+    const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`'));
+    assert.ok(row, 'the README velocity row exists');
+    assert.ok(row.replace(/\s+/gu, ' ').includes('a fourth opt-in, `--worktrees`, writes the worktrees grant into the local settings, `.claude/settings.local.json`, alone'));
+    for (const [label, text] of [['velocity.md', VELOCITY_DOC], ['README velocity row', row]]) {
+      assert.doesNotMatch(text.replace(/\s+/gu, ' '), /kit never writes the grant|yours to paste/iu, label);
+    }
+    assert.doesNotMatch(row, /never writes `settings\.local\.json`/iu, 'README velocity row');
+  });
+
+  it('the velocity help limits the apply ask rule to flagless, kit-tools and bridge-tier applies', () => {
+    const usage = spawnSync(process.execPath, [resolve(kitRoot, 'tools/velocity-profile.mjs'), '--help'], { encoding: 'utf8' });
+    assert.deepEqual([usage.error, usage.status], [undefined, 0], usage.stderr);
+    assert.ok(usage.stdout.replace(/\s+/gu, ' ').includes('Every flagless, --kit-tools and --bridge-tier apply also appends the apply ask rule'));
+  });
+});
+
+describe("spec:init-project/S44 — the worktrees grant's shipped text", () => {
+  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+  const note = between(notes, '- `worktrees-dir` —', POSTURE_NOTE_BOUNDARY).replace(/\s+/gu, ' ');
+  const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes').replace(/\s+/gu, ' ');
+  const invariants = between(MODE_DOC, '**Invariants:**', '\n').replace(/\s+/gu, ' ');
+  const consent = between(WORKTREES_DOC, '**Host-specific consent', '\n\n').replace(/\s+/gu, ' ');
+  const worktreesRow = README.split('\n').find((line) => line.includes('`/agent-workflow-kit worktrees`'));
+  const routerModeBudget = 52224;
+
+  it('the recipe list names the ack fallback and the lane applies the checked grant within the router budget', () => {
+    const recipes = between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts').replace(/\s+/gu, ' ');
+    assert.ok(recipes.includes('the `worktrees-dir` ack fallback'));
+    assert.ok(lane.includes(WORKTREES_LANE_SENTENCE));
+    const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md'));
+    assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
+  });
+
+  it('the posture note and invariants pin local consent, scope, narrowing, the home step and the recipe ack recorder', () => {
+    for (const literal of WORKTREES_NOTE_LITERALS) {
+      assert.ok(note.includes(literal), `the worktrees-dir note states: ${literal}`);
+    }
+    for (const literal of [
+      'the worktrees grant is seeded into the local settings by the consented `velocity-profile --worktrees`',
+      'recorded by the `ack-write` line its `recipe:` line carries, not by its apply line',
+    ]) {
+      assert.ok(invariants.includes(literal), `recommendations.md invariants state: ${literal}`);
+    }
+  });
+
+  it('worktrees consent names the checked chat apply, local target, terminal fallback and recipe ack recorder', () => {
+    for (const literal of WORKTREES_CONSENT_LITERALS) {
+      assert.ok(consent.includes(literal), `worktrees.md consent states: ${literal}`);
+    }
+    assert.doesNotMatch(consent, /consent-gated apply one-liner|\.claude\/settings\.json|paste/iu);
+  });
+
+  it('the README advisor and worktrees rows name the ack fallback, checked chat apply, local settings and optional init', () => {
+    assert.ok(readmeRow, 'the README advisor row exists');
+    assert.ok(worktreesRow, 'the README worktrees row exists');
+    assert.ok(readmeRow.replace(/\s+/gu, ' ').includes('the worktrees-dir ack fallback for a host that ignores the settings key'));
+    assert.ok(worktreesRow.replace(/\s+/gu, ' ').includes("an unwritable parent prints the `worktrees-dir` check line: the agent applies the grant on your chat yes after the check, one entry in this copy's `.claude/settings.local.json`, never the committed project settings (`init` is the route you may take instead, and the ack is the fallback for a host that ignores the key)"));
+  });
+
+  it('the shipped grant surfaces retire the hand-apply-first, waiting and paste instructions', () => {
+    assert.ok(readmeRow, 'the README advisor row exists');
+    assert.ok(worktreesRow, 'the README worktrees row exists');
+    for (const [label, text] of [
+      ['recommendations.md', MODE_DOC], ['worktrees.md consent', consent],
+      ['README advisor row', readmeRow], ['README worktrees row', worktreesRow],
+    ]) {
+      assert.doesNotMatch(text.replace(/\s+/gu, ' '), /hand-apply-first|wait for the maintainer to confirm the grant|maintainer-pasted commands|The kit does not write this worktrees grant|yours to paste/iu, label);
+    }
+  });
+
+  it('worktrees acknowledgement sentences name no apply one-liner and worktrees-dir sentences name no grant advice or HAND-APPLY', () => {
+    assert.ok(readmeRow, 'the README advisor row exists');
+    assert.ok(worktreesRow, 'the README worktrees row exists');
+    const surfaces = [
+      ['recommendations.md', MODE_DOC], ['worktrees.md consent', consent],
+      ['README advisor row', readmeRow], ['README worktrees row', worktreesRow],
+    ];
+    const hits = surfaces.flatMap(([label, text]) => splitSentences(text, true).flatMap(({ text: sentence, first, last }) => {
+      const normalized = sentence.replace(/[`*]/gu, '').replace(/\s+/gu, ' ');
+      const ackHit = /worktreesDirAck|--lane worktrees-dir|the worktrees-dir acknowledgement/iu.test(normalized)
+        && /apply one-liner|never by the recipe: line/iu.test(normalized);
+      const grantHit = /worktrees-dir/iu.test(normalized) && /grant advice|HAND-APPLY/iu.test(normalized);
+      return ackHit || grantHit ? [`${label}:${first}-${last}: ${sentence}`] : [];
+    }));
+    assert.deepEqual(hits, [], `retired worktrees grant or ack advice:\n${hits.join('\n')}`);
   });
 });

@@ -13,7 +13,7 @@ import { preflightInit } from './init-preflight.mjs';
 import { buildRecommendations, hostFacts } from './recommendations.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
-import { LANE_HARNESS, VARIANT_LANES, consoleArgv, isEnvDependent, isProtectedPath, laneOf, writesOf } from './write-lanes.mjs';
+import { LANE_HARNESS, VARIANT_LANES, consoleArgv, isEnvDependent, isProtectedPath, isRejudged, laneOf, writesOf } from './write-lanes.mjs';
 
 const INSIDE_LINE = 'you are inside an agent; run this in your own terminal';
 const APPLY_PROMPT = 'apply? y/N: ';
@@ -217,17 +217,20 @@ const previewQueue = async (context, queue) => {
     context.print(result.stdout);
     const tuple = result.stdout.match(/--apply\s+(\S+)/)?.[1];
     const facts = { ...context.facts, tuple };
+    let checkDigest = null;
     if (laneOf(item.variant) === LANE_HARNESS) {
       try {
-        const { lines, refused } = context.checkApply(item.variant, facts, {});
+        const { lines, refused, digest } = context.checkApply(item.variant, facts, {});
         for (const line of lines) context.print(line);
         if (refused.length > 0) throw new Error(refused.map(({ key }) => key).join(', '));
+        checkDigest = digest;
       } catch (error) {
         context.print(`not applied: ${item.variant} — the danger check refused: ${error.message}`);
         continue;
       }
     }
-    batch.push({ ...item, applyArgv: consoleArgv(item.variant, facts).apply, writes: writesOf(item.variant, facts) });
+    batch.push({ ...item, checkFacts: facts, checkDigest, applyArgv: consoleArgv(item.variant, facts).apply,
+      writes: writesOf(item.variant, facts) });
     printNote(context, item.key);
   }
   for (const item of queue.filter(({ variant }) => consoleArgv(variant, context.facts) === null)) {
@@ -254,11 +257,24 @@ const takeRecord = (context, queue) => {
   }
 };
 
+// A rejudged item applies only while its check, run again now, answers the digest its preview showed; else the reason.
+const rejudgeFailure = (context, item) => {
+  try {
+    const { refused, digest } = context.checkApply(item.variant, item.checkFacts, {});
+    if (refused.length > 0) return `it refuses ${refused.map(({ key }) => key).join(', ')}`;
+    return digest === item.checkDigest ? null : 'its digest moved';
+  } catch (error) {
+    return String(error?.message || error);
+  }
+};
+
 const runPass = async (context, queue) => {
   const record = takeRecord(context, queue);
   if (record === null) return { code: 1, successes: 0, variants: [] };
-  const batch = await previewQueue(context, queue);
-  if (batch.length === 0) return { code: 0, successes: 0, variants: [] };
+  const previewed = await previewQueue(context, queue);
+  if (previewed.length === 0) return { code: 0, successes: 0, variants: [] };
+  // Rejudged items go first: an earlier writer of the batch (one creating .claude/) would move their check.
+  const batch = [...previewed.filter(({ variant }) => isRejudged(variant)), ...previewed.filter(({ variant }) => !isRejudged(variant))];
   const before = new Map(record);
   const outcome = { code: 0, successes: 0, variants: batch.map((item) => item.variant) };
   context.print(RUN_NONE);
@@ -268,6 +284,15 @@ const runPass = async (context, queue) => {
     const changed = findChanged(record, context.io);
     if (changed) {
       for (const later of batch.slice(index)) context.print(`not applied: ${later.variant} — ${changed} changed outside this batch`);
+      outcome.code = 1;
+      break;
+    }
+    const failure = isRejudged(item.variant) ? rejudgeFailure(context, item) : null;
+    if (failure !== null) {
+      context.print(`not applied: ${item.variant} — its danger check no longer answers the previewed result: ${failure}`);
+      for (const later of batch.slice(index + 1)) {
+        context.print(`not applied: ${later.variant} — an earlier item's danger check no longer answers the previewed result`);
+      }
       outcome.code = 1;
       break;
     }

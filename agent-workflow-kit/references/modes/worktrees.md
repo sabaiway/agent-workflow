@@ -213,16 +213,17 @@ stated skip), and the ancestor chain is verified even when the leaf is ABSENT (a
 `docs/` or `docs/ai` never reads as plain absence). `--dir` overrides per invocation.
 
 **Host-specific consent (zero-prompt only where the host honors it):** every sibling-dir mutation
-runs a REAL create+delete writability probe first. An unwritable parent prints both the
-settings-native line (`sandbox.filesystem.allowWrite` in `.claude/settings.json`) and the full
-terminal command. On a settings-native host that honors the key, adding the parent can make later
-provision/cleanup promptless. On a harness-managed host that ignores project settings, grant the
-narrow parent through the host/session controls; if that is unavailable, use the printed terminal
-command for each operation. The `recommendations` mode surfaces this lane and converges it two ways:
+runs a REAL create+delete writability probe first. An unwritable parent prints the `worktrees-dir`
+check line and the full terminal command. The agent runs that check line and, on the chat yes on
+its result, its apply line by the consent route: one `sandbox.filesystem.allowWrite` entry naming
+the parent, written to this copy's `.claude/settings.local.json` only; where the host honors the
+key, later provision/cleanup then run promptless. When the check refuses, prints nothing to
+change, or grants a dir that does not hold the command's target, use the printed terminal command
+for each operation. The `recommendations` mode surfaces this lane and converges it two ways:
 a declared `sandbox.filesystem.allowWrite` entry covering the probed parent (either settings
-scope), or — on a host that ignores that key — the neutral dir-bound acknowledgement its
-consent-gated apply one-liner records into `docs/ai/acks.json` (`worktreesDirAck`; the dry-run
-preview prints the exact `--apply`). Neither is proof of write
+scope), or — on a host that ignores that key — the neutral dir-bound acknowledgement
+`worktreesDirAck` in `docs/ai/acks.json`, recorded by the `ack-write` line the item's `recipe:`
+line carries, the fallback instead of the grant. Neither is proof of write
 capability: the create+delete probe above stays the runtime truth, and the ack binds to the
 resolved probe dir, so the item re-fires only when that resolved dir changes.
 

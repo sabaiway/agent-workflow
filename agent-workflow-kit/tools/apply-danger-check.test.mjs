@@ -19,8 +19,10 @@ import * as lanes from './write-lanes.mjs';
 import { spawnSync } from 'node:child_process';
 import { hermeticGitEnv } from './git-env.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+import { homeRelative, mergeAllowWrite } from './bridge-state-dirs.mjs';
 
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
+const worktrees = await import('./worktrees.mjs');
 const need = (name) => {
   if (!(name in leaf)) throw new Error(name + ' is absent');
   return leaf[name];
@@ -37,7 +39,7 @@ const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SETTINGS = '.claude/settings.json';
 const VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
   'read-lane.missing', 'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle',
-  'jev-skill', 'jev-skill.earlier'];
+  'jev-skill', 'jev-skill.earlier', 'worktrees-dir'];
 const CLASSES = ['hosts reachable', 'paths writable', 'commands outside the sandbox', 'prompts removed',
   'commands the harness runs', 'nothing widened'];
 const NOTHING = CLASSES[5];
@@ -90,6 +92,8 @@ const fixture = (t) => {
   fs.mkdirSync(home);
   put(join(root, 'docs/ai/.workflow-version'), `${velocity.EXPECTED_WORKFLOW_VERSION}\n`);
   put(join(root, 'docs/ai/autonomy.json'), JSON.stringify({ 'plan-execution': { autonomy: 'sandbox' } }));
+  put(join(root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: 'wt' }));
+  fs.mkdirSync(join(root, 'wt'));
   for (const name of [...velocity.BRIDGE_REVIEW_WRAPPERS, 'codex', 'agy', 'codex-exec', 'agy-run', 'bwrap', 'socat', 'claude']) {
     put(join(bin, name), '#!/bin/sh\nexit 0\n');
     fs.chmodSync(join(bin, name), 0o755);
@@ -126,6 +130,7 @@ const expectedPlan = (variant, f, deps = {}) => {
   const files = [];
   const writes = [];
   const temporaries = [];
+  const worktreesDirectories = [];
   const addFile = (path, after) => files.push({ path, before: json(join(f.root, path)), after });
   if (['velocity-core', 'kit-tools-tier', 'bridge-tier'].includes(variant)) {
     const p = velocity.writeVelocityProfile({ cwd: f.root, dryRun: true,
@@ -170,6 +175,10 @@ const expectedPlan = (variant, f, deps = {}) => {
     for (const item of p.plan.filter(({ action }) => ['place', 're-derive'].includes(action))) {
       writes.push({ path: item.abs, bytes: item.content });
     }
+  } else if (variant === 'worktrees-dir') {
+    const p = velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, worktrees: true }, writerDeps(f));
+    addFile('.claude/settings.local.json', mergeAllowWrite(json(join(f.root, '.claude/settings.local.json')) ?? {}, p.worktreesDirToAdd ?? []));
+    worktreesDirectories.push(...(p.worktreesDirsToCreate ?? []));
   } else {
     const p = planFor({ ...f, ...deps, lstat: fs.lstatSync, readdir: fs.readdirSync, readFile: fs.readFileSync });
     for (const target of p.targets.filter(({ action }) => ['install', 'replace'].includes(action))) {
@@ -180,6 +189,7 @@ const expectedPlan = (variant, f, deps = {}) => {
     }
   }
   const directories = new Set();
+  for (const path of worktreesDirectories) directories.add(path);
   for (const path of [...files.map(({ path }) => join(f.root, path)), ...writes.map(({ path }) => path)]) {
     for (let parent = dirname(path); !fs.existsSync(parent); parent = dirname(parent)) directories.add(parent);
   }
@@ -371,7 +381,7 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
     });
     const copy = copyFixture(t, f);
     const before = snapshot(copy);
-    const settingsBefore = new Map([SETTINGS, '.mcp.json'].map((path) => [path, json(join(copy.root, path))]));
+    const settingsBefore = new Map([SETTINGS, '.mcp.json', '.claude/settings.local.json'].map((path) => [path, json(join(copy.root, path))]));
     const result = unchanged(copy, () => danger.checkApply(variant, copy));
     const cli = capture(copy);
     assert.equal(danger.main([...argvFor(variant, copy), '--apply', '--expect', result.digest], cli.io), 0);
@@ -385,7 +395,7 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
       assert.deepEqual(printed, judgedEntries.entries.map(lineOf));
       assert.deepEqual(sorted(judgedEntries.entries.map(({ path: _, class: __, ...entry }) => entry)), sorted(entries));
     }
-    assertAppliedPaths(copy, before, result, [SETTINGS, '.mcp.json']);
+    assertAppliedPaths(copy, before, result, [SETTINGS, '.mcp.json', '.claude/settings.local.json']);
     unchanged(copy, () => {
       const applied = danger.checkApply(variant, copy);
       digestResult(applied);
@@ -552,6 +562,240 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
         mocked.mock.restore();
         syncBuiltinESMExports();
       }
+    });
+  });
+});
+
+describe('spec:init-project/S39 — the danger check over worktrees-dir by proof', () => {
+  const variant = 'worktrees-dir';
+  const local = '.claude/settings.local.json';
+  const key = 'sandbox.filesystem.allowWrite';
+  const reason = 'beyond the declared scope of worktrees-dir';
+  const needWorktrees = (name) => {
+    if (!(name in worktrees)) throw new Error(name + ' is absent');
+    return worktrees[name];
+  };
+  const worktreesFixture = (t) => {
+    const f = fixture(t);
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: '../farm/deep' }));
+    return f;
+  };
+  const unchangedWorktrees = (f, run) => unchanged(f, () => {
+    const before = tree(dirname(f.root));
+    try {
+      return run();
+    } finally {
+      assert.deepEqual(tree(dirname(f.root)), before, 'whole temporary tree unchanged');
+    }
+  });
+  for (const underHome of [false, true]) it(`no local file: exact ${underHome ? 'home-relative' : 'absolute'} grant and ordered created directories`, (t) => {
+    const f = worktreesFixture(t);
+    const parent = underHome ? join(f.home, 'wt') : join(dirname(f.root), 'farm/deep');
+    if (underHome) put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: parent }));
+    unchangedWorktrees(f, () => {
+      const result = danger.checkApply(variant, f);
+      digestResult(result);
+      assert.deepEqual(result.refused, []);
+      const entry = underHome ? '~/wt' : parent;
+      assert.deepEqual(result.lines, [
+        `${local}:`, `  ${key}: added ${entry} — paths writable`, 'writes: .claude/ created',
+        ...(!underHome ? [`writes: ${dirname(parent)}/ created`] : []),
+        `writes: ${parent}/ created`, `scope: within the declared scope of ${variant}`, `digest: ${result.digest}`,
+      ]);
+      assert.equal(result.lines.some((line) => line.startsWith(SETTINGS) || line.startsWith('  permissions.')), false);
+      const spawn = t.mock.fn(() => { throw new Error('preview spawned'); });
+      const cli = capture(f, spawn);
+      assert.equal(danger.main(argvFor(variant, f), cli.io), 0);
+      assert.equal(spawn.mock.callCount(), 0);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(cli.errors, []);
+      assert.equal(entry, homeRelative(needWorktrees('worktreesGrantDir')(f.root), f.home));
+    });
+  });
+  it('plants: only the extra grant is refused; foreign grants, project settings, removal, ask rule and outside directory are refused', (t) => {
+    const f = worktreesFixture(t);
+    const parent = join(dirname(f.root), 'farm/deep');
+    unchangedWorktrees(f, () => {
+      const scope = danger.scopeOf(variant, f);
+      const result = danger.judgeChange({ variant, files: [{ path: local, before: null,
+        after: atKey(key, [parent, '/elsewhere']) }], scope });
+      assert.deepEqual(result.entries, [parent, '/elsewhere'].map((value) => ({ path: local, key,
+        change: 'added', value, class: CLASSES[1] })));
+      assert.deepEqual(result.refused, [{ path: local, key, reason }]);
+      assert.equal(scope.admits(result.entries[0]), true);
+      assert.equal(scope.admits(result.entries[1]), false);
+      for (const [path, entryKey, before, after] of [
+        [local, key, null, atKey(key, ['/elsewhere'])],
+        [SETTINGS, key, null, atKey(key, [parent])],
+        [local, key, atKey(key, ['/x']), atKey(key, [])],
+        [local, key, atKey(key, [parent]), atKey(key, [])],
+        [local, 'permissions.ask', null, atKey('permissions.ask', [askRule()])],
+      ]) assert.deepEqual(danger.judgeChange({ variant, files: [{ path, before, after }], scope }).refused,
+        [{ path, key: entryKey, reason }]);
+      assert.equal(scope.admitsPath(join(dirname(f.root), 'elsewhere'), true), false);
+      for (const path of [join(f.root, '.claude'), dirname(parent), parent]) assert.equal(scope.admitsPath(path, true), true, path);
+    });
+  });
+  for (const coveringAncestor of [false, true]) it(`local ${coveringAncestor ? 'covering ancestor' : 'exact entry'} with existing parent: nothing to change`, (t) => {
+    const f = worktreesFixture(t);
+    const parent = join(dirname(f.root), 'farm/deep');
+    fs.mkdirSync(parent, { recursive: true });
+    put(join(f.root, local), JSON.stringify(atKey(key, [coveringAncestor ? dirname(f.root) : parent])));
+    unchangedWorktrees(f, () => {
+      const result = danger.checkApply(variant, f);
+      digestResult(result);
+      assert.deepEqual(result.refused, []);
+      assert.deepEqual(result.lines, [`nothing to change: ${variant} is already applied`, `digest: ${result.digest}`]);
+    });
+  });
+  it('local entry with absent parent: only the missing parent and ancestor are printed, no settings line', (t) => {
+    const f = worktreesFixture(t);
+    const parent = join(dirname(f.root), 'farm/deep');
+    put(join(f.root, local), JSON.stringify(atKey(key, [parent])));
+    unchangedWorktrees(f, () => {
+      const result = danger.checkApply(variant, f);
+      digestResult(result);
+      assert.deepEqual(result.refused, []);
+      assert.deepEqual(result.lines, [`writes: ${dirname(parent)}/ created`, `writes: ${parent}/ created`,
+        `scope: within the declared scope of ${variant}`, `digest: ${result.digest}`]);
+      assert.equal(result.lines.includes(`${local}:`), false);
+    });
+  });
+  it('masked local settings: exit 3, masked line alone and nothing spawned', (t) => {
+    const f = worktreesFixture(t);
+    put(join(f.root, local), '{}');
+    unchangedWorktrees(f, () => {
+      const original = fs.lstatSync;
+      const mocked = t.mock.method(fs, 'lstatSync', (path, ...args) => path === join(f.root, local)
+        ? Object.assign(Object.create(original(path)), { isCharacterDevice: () => true, isFile: () => false })
+        : original(path, ...args));
+      syncBuiltinESMExports();
+      try {
+        const spawn = t.mock.fn(() => { throw new Error('masked local settings spawned'); });
+        const cli = capture(f, spawn);
+        const code = danger.main(argvFor(variant, f), cli.io);
+        assert.equal(spawn.mock.callCount(), 0);
+        assert.equal(code, 3);
+        assert.deepEqual(cli.lines, [`masked: ${local}`]);
+        assert.deepEqual(cli.errors, []);
+        assert.throws(() => danger.checkApply(variant, f), (error) =>
+          error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([`masked: ${local}`]));
+      } finally {
+        mocked.mock.restore();
+        syncBuiltinESMExports();
+      }
+    });
+  });
+  for (const [title, setup, code, message] of [
+    ['parent is home', (f) => put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: f.home })),
+      'VELOCITY_WORKTREES_HOME', /the worktrees parent dir .* is the home or holds it/],
+    ['parent holds home', (f) => put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: dirname(f.root) })),
+      'VELOCITY_WORKTREES_HOME', /the worktrees parent dir .* is the home or holds it/],
+    ['symlinked home resolves to the default parent holding the root', (f) => {
+      fs.rmSync(join(f.root, 'docs/ai/worktrees.json'));
+      const link = join(dirname(f.root), 'linked-home');
+      fs.symlinkSync(dirname(f.root), link);
+      f.home = link;
+      f.env.HOME = link;
+    }, 'VELOCITY_WORKTREES_HOME', /the worktrees parent dir .* is the home or holds it/],
+    ['parent names a regular file', (f) => {
+      put(join(dirname(f.root), 'ordinary-file'), 'sentinel');
+      put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: '../ordinary-file' }));
+    }, 'VELOCITY_MALFORMED', /docs\/ai\/worktrees\.json: parentDir names an existing non-directory:/],
+    ['malformed worktrees config', (f) => put(join(f.root, 'docs/ai/worktrees.json'), '{ nope'),
+      'VELOCITY_MALFORMED', /docs\/ai\/worktrees\.json: malformed JSON/],
+    ['malformed local allowWrite', (f) => put(join(f.root, local), JSON.stringify(atKey(key, ['']))),
+      'VELOCITY_MALFORMED', /settings\.local\.json: sandbox\.filesystem\.allowWrite must be an array of non-blank strings/],
+    ['symlinked local settings', (f) => {
+      put(join(f.root, 'other.json'), '{}');
+      fs.mkdirSync(join(f.root, '.claude'));
+      fs.symlinkSync(join(f.root, 'other.json'), join(f.root, local));
+    }, 'VELOCITY_SYMLINK', /settings\.local\.json exists but is not a regular file - refusing to clobber it/],
+  ]) it(`writer refusal: ${title}, exit 3, its message alone and nothing spawned`, (t) => {
+    const f = worktreesFixture(t);
+    setup(f);
+    unchangedWorktrees(f, () => {
+      const spawn = t.mock.fn(() => { throw new Error('writer refusal spawned'); });
+      const cli = capture(f, spawn);
+      const status = danger.main(argvFor(variant, f), cli.io);
+      assert.equal(spawn.mock.callCount(), 0);
+      assert.equal(status, 3);
+      const messages = [];
+      assert.throws(() => velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, worktrees: true }, writerDeps(f)), (error) => {
+        assert.equal(error.code, code);
+        assert.match(error.message, message);
+        messages.push(error.message);
+        return true;
+      });
+      assert.deepEqual(cli.lines, messages);
+      assert.deepEqual(cli.errors, []);
+      assert.throws(() => danger.checkApply(variant, f), (error) =>
+        error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify(messages));
+    });
+  });
+  it('writer bypassed: the independent scope refuses a home-holding grant', (t) => {
+    const f = worktreesFixture(t);
+    put(join(f.root, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: f.home }));
+    unchangedWorktrees(f, () => {
+      const entry = homeRelative(f.home, f.home);
+      assert.equal(entry, '~');
+      const result = danger.judgeChange({ variant, files: [{ path: local, before: null, after: atKey(key, [entry]) }],
+        scope: danger.scopeOf(variant, f) });
+      assert.deepEqual(result.refused, [{ path: local, key, reason }]);
+      assert.equal(needWorktrees('worktreesGrantDir')(f.root), f.home);
+    });
+  });
+  it('real copy apply creates exactly the printed directories and local diff; project settings stay absent; next check has nothing to change', (t) => {
+    const f = worktreesFixture(t);
+    const original = tree(dirname(f.root));
+    const originalHashes = hashes(f);
+    const copy = copyFixture(t, f);
+    const base = dirname(copy.root);
+    const before = tree(base);
+    const homeBefore = hashes(copy)[1];
+    const result = unchangedWorktrees(copy, () => danger.checkApply(variant, copy));
+    digestResult(result);
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor(variant, copy), '--apply', '--expect', result.digest], cli.io), 0);
+    assert.deepEqual(cli.lines, result.lines);
+    assert.deepEqual(cli.errors, []);
+    assert.equal(fs.statSync(join(base, 'farm/deep')).isDirectory(), true);
+    const written = json(join(copy.root, local));
+    const entries = danger.diffFiles(null, written);
+    const judgedEntries = danger.judgeChange({ variant, files: [{ path: local, before: null, after: written }],
+      scope: danger.scopeOf(variant, copy) });
+    assert.deepEqual(judgedEntries.refused, []);
+    assert.deepEqual(entries, [{ key, change: 'added', value: join(base, 'farm/deep') }]);
+    assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), judgedEntries.entries.map(lineOf));
+    assert.deepEqual(sorted(judgedEntries.entries.map(({ path: _, class: __, ...entry }) => entry)), sorted(entries));
+    const after = tree(base);
+    const changed = Object.keys(after).filter((path) => JSON.stringify(after[path]) !== JSON.stringify(before[path]));
+    const directories = result.lines.filter((line) => line.startsWith('writes: '))
+      .map((line) => relative(base, resolve(copy.root, line.slice(8).replace(/\/ created$/, ''))));
+    assert.deepEqual(changed.sort(), [...directories, relative(base, join(copy.root, local))].sort());
+    assert.deepEqual(Object.keys(before).filter((path) => !(path in after)), []);
+    assert.equal(fs.existsSync(join(copy.root, SETTINGS)), false);
+    assert.equal(hashes(copy)[1], homeBefore);
+    unchangedWorktrees(copy, () => {
+      const applied = danger.checkApply(variant, copy);
+      digestResult(applied);
+      assert.deepEqual(applied.refused, []);
+      assert.deepEqual(applied.lines, [`nothing to change: ${variant} is already applied`, `digest: ${applied.digest}`]);
+    });
+    assert.deepEqual(tree(dirname(f.root)), original);
+    assert.deepEqual(hashes(f), originalHashes);
+  });
+  it('CLI accepts --variant worktrees-dir', (t) => {
+    const f = worktreesFixture(t);
+    unchangedWorktrees(f, () => {
+      const spawn = t.mock.fn(() => { throw new Error('CLI preview spawned'); });
+      const cli = capture(f, spawn);
+      assert.equal(danger.main(['--variant', 'worktrees-dir', '--cwd', f.root], cli.io), 0);
+      assert.equal(spawn.mock.callCount(), 0);
+      const result = danger.checkApply(variant, f);
+      digestResult(result);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(cli.errors, []);
     });
   });
 });

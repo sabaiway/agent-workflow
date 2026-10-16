@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { shellQuoteArg } from './review-state.mjs';
+import { applySlot } from './write-lanes.mjs';
 import {
   EXIT, WORKTREES_STOP, composeHandoffStub, copyTreeIfMissing, handoffBasename, runCleanup, runCli,
 } from './worktrees.mjs';
@@ -495,6 +496,12 @@ describe('landing fixups — destructive cleanup edges', () => {
 });
 
 describe('landing fixups round 2 — installed tools and fallback', () => {
+  const getGrantRouteLine = (root) => {
+    const slot = applySlot('worktrees-dir', { toolsDir: TOOL_DIR, root });
+    if (slot === null) throw new Error('worktrees-dir check line is absent');
+    return `the kit's worktrees-dir item grants the configured worktrees parent on your yes: the agent runs ${slot.check} and, on your yes on its result, its apply line by the consent route, then runs this command again; when that check refuses, prints nothing to change, or grants a dir that does not hold this command's target, use the terminal fallback below`;
+  };
+
   it('round-2: land runs installed review and gates tools without a repo-local kit', () => {
     const fixture = makeFixture('installed-child-tools', { children: false });
     const calls = [];
@@ -521,7 +528,7 @@ describe('landing fixups round 2 — installed tools and fallback', () => {
     ]);
   });
 
-  it('round-2: cleanup fallback prints settings-native consent and the absolute own tool', () => {
+  it('round-2: cleanup fallback prints the grant route line and the absolute own tool', () => {
     const fixture = makeFixture('cleanup-own-tool-fallback', { branch: 'feature/custom-fallback' });
     const result = cleanup(fixture, ['--abandon'], {
       mkdirPlain: (path) => {
@@ -531,12 +538,51 @@ describe('landing fixups round 2 — installed tools and fallback', () => {
         return mkdirSync(path);
       },
     });
-    const settingsLine = `  .claude/settings.json → sandbox.filesystem.allowWrite += ${JSON.stringify(fixture.base)}`;
+    const firstLine = `the worktrees parent dir is not writable from this session: ${dirname(fixture.worktree)}`;
     const fallback = `  cd ${shellQuoteArg(fixture.main)} && node ${quotedAlways(WORKTREES_TOOL)} ` +
       `cleanup ${fixture.slug} --branch ${fixture.branch} --abandon`;
     assert.equal(result.code, EXIT.stop);
-    assert.ok(result.errText.includes(settingsLine), `${settingsLine}\n\n${result.errText}`);
+    assert.equal(result.errText.split('\n')[0], `[worktrees] [agent-workflow-kit] ${firstLine}`);
     assert.ok(result.errText.includes(fallback), `${fallback}\n\n${result.errText}`);
+    const routeLine = getGrantRouteLine(fixture.main);
+    assert.ok(result.errText.includes([
+      firstLine,
+      routeLine,
+      'Or run the full command yourself in a plain terminal:',
+      fallback,
+    ].join('\n')), result.errText);
+    assert.doesNotMatch(result.errText, /allowWrite \+=/);
+    assert.doesNotMatch(result.errText, /Arm the ONE-TIME consent/);
+    assert.doesNotMatch(result.errText, /HAND-APPLY/);
+  });
+
+  it('round-2: a denied land --prepare probe prints the grant route line and its own fallback', () => {
+    const fixture = makeFixture('land-own-tool-fallback', { children: false });
+    const result = land(fixture, {
+      spawn: greenSpawn,
+      mkdirPlain: (path) => {
+        if (basename(path).startsWith('.aw-write-probe-')) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return mkdirSync(path);
+      },
+    });
+    const firstLine = `the worktrees parent dir is not writable from this session: ${dirname(fixture.worktree)}`;
+    const fallback = `  cd ${shellQuoteArg(fixture.main)} && node ${quotedAlways(WORKTREES_TOOL)} ` +
+      `land ${fixture.slug} --prepare`;
+    assert.equal(result.code, EXIT.stop);
+    assert.equal(result.errText.split('\n')[0], `[worktrees] [agent-workflow-kit] ${firstLine}`);
+    assert.ok(result.errText.includes(fallback), `${fallback}\n\n${result.errText}`);
+    const routeLine = getGrantRouteLine(fixture.main);
+    assert.ok(result.errText.includes([
+      firstLine,
+      routeLine,
+      'Or run the full command yourself in a plain terminal:',
+      fallback,
+    ].join('\n')), result.errText);
+    assert.doesNotMatch(result.errText, /allowWrite \+=/);
+    assert.doesNotMatch(result.errText, /Arm the ONE-TIME consent/);
+    assert.doesNotMatch(result.errText, /HAND-APPLY/);
   });
 });
 

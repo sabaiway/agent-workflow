@@ -7,6 +7,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { applySlot } from './write-lanes.mjs';
 import {
   EXIT, WORKTREES_STOP, CONFIG_REL, SLUG_RE, validateSlug, loadWorktreesConfig, resolveTargetDir,
   realpathThroughExistingParent, nearestExistingDir, resolveProbeDir, parseWorktreeList,
@@ -224,7 +226,7 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
     assert.equal(resolveProbeDir(join(link, 'absent-a', 'absent-b')), realpathSync(real));
     assert.equal(nearestExistingDir(join(TMP, 'no', 'such', 'dirs')), realpathSync(TMP));
   });
-  it('a denied writability probe: STOP text carries the parent dir, the paste-ready consent, the fallback command; git saw NO mutation', () => {
+  it('a denied writability probe: STOP text carries the parent dir, the grant route line, the fallback command; git saw NO mutation', () => {
     const calls = [];
     const git = recordingGit(calls);
     const out = [];
@@ -239,9 +241,20 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
     assert.equal(code, EXIT.stop);
     const text = err.join('\n');
     assert.match(text, /not writable from this session/);
-    assert.match(text, /sandbox\.filesystem\.allowWrite \+= /);
     assert.match(text, /worktrees\.mjs provision denied2/);
     assert.ok(!calls.some((c) => c.startsWith('worktree add')), `no git mutation may precede the probe: ${calls}`);
+    const getWorktreesCheck = () => {
+      const slot = applySlot('worktrees-dir', { toolsDir: dirname(fileURLToPath(import.meta.url)), root: realpathSync(MAIN) });
+      if (slot === null) throw new Error('worktrees-dir check line is absent');
+      return slot.check;
+    };
+    const route = `the kit's worktrees-dir item grants the configured worktrees parent on your yes: the agent runs ${getWorktreesCheck()} and, on your yes on its result, its apply line by the consent route, then runs this command again; when that check refuses, prints nothing to change, or grants a dir that does not hold this command's target, use the terminal fallback below`;
+    const lines = text.split('\n');
+    assert.equal(lines[1], route);
+    assert.ok(lines.indexOf('Or run the full command yourself in a plain terminal:') > 1);
+    assert.doesNotMatch(text, /allowWrite \+=/);
+    assert.doesNotMatch(text, /Arm the ONE-TIME consent/);
+    assert.doesNotMatch(text, /HAND-APPLY/);
   });
 });
 

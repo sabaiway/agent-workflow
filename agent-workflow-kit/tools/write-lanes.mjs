@@ -42,7 +42,8 @@ export const VARIANT_LANES = Object.freeze({
   'adr-store-migration': LANE_CHAT,
   'sandbox-masks': LANE_CHAT,
   'sandbox-masks.unfenced-mount': LANE_CHAT,
-  'worktrees-dir': LANE_CHAT,
+  'worktrees-dir': LANE_HARNESS,
+  'worktrees-dir.home': LANE_USER,
   'spec-adoption': LANE_CHAT,
   'profile-gap': LANE_CHAT,
   'jev-connect': LANE_USER,
@@ -80,6 +81,7 @@ export const isProtectedPath = (abs, { root, home, hooksDir }) => {
 };
 
 const SETTINGS_WRITES = [SETTINGS_PATH];
+const LOCAL_SETTINGS_WRITES = [join('.claude', 'settings.local.json')];
 const HOOK_WRITES = [join('.claude', 'hooks', 'agent-workflow-gates.mjs'), ...SETTINGS_WRITES];
 const STOP_HOOK_WRITES = [join('.claude', 'hooks', 'state-block-guard.mjs'), ...SETTINGS_WRITES];
 const MCP_WRITES = ['.mcp.json', ...SETTINGS_WRITES];
@@ -105,13 +107,15 @@ const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER
 const formatCommand = (argv) => argv.map(quoteArg).join(' ');
 const TERMINAL_STEP = 'run in a terminal of your own: ';
 
-const createForm = (file, preview, apply, writes, envDependent = false, userStep = null) => Object.freeze({
+// rejudged: the written value derives from state init's record does not watch, so init re-runs its check before the apply.
+const createForm = (file, preview, apply, writes, envDependent = false, userStep = null, rejudged = false) => Object.freeze({
   file,
   preview,
   apply,
   writes,
   envDependent,
   userStep,
+  rejudged,
 });
 
 const CORE_FORM = createForm('velocity-profile.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], SETTINGS_WRITES);
@@ -157,6 +161,11 @@ const FORMS = Object.freeze({
     ['--enforcement', '--cwd', '<root>'], ['--apply', '--enforcement', '--cwd', '<root>'], getEnforcementPaths),
   'commit-guard': createForm('git-hooks.mjs',
     ['--commit-guard', '--cwd', '<root>'], ['--apply', '--commit-guard', '--cwd', '<root>'], getGuardPaths),
+  'worktrees-dir': createForm('velocity-profile.mjs',
+    ['--worktrees', '--cwd', '<root>'], ['--apply', '--worktrees', '--cwd', '<root>'], LOCAL_SETTINGS_WRITES, false, null, true),
+  'worktrees-dir.home': Object.freeze({
+    userStep: () => 'your own step — point docs/ai/worktrees.json parentDir at a dedicated directory, then run /agent-workflow-kit recommendations',
+  }),
 });
 
 const resolveArgument = (arg, facts) => {
@@ -188,6 +197,11 @@ export const writesOf = (variant, facts) => {
 export const isEnvDependent = (variant) => {
   laneOf(variant);
   return FORMS[variant]?.envDependent === true;
+};
+
+export const isRejudged = (variant) => {
+  laneOf(variant);
+  return FORMS[variant]?.rejudged === true;
 };
 
 export const applySlot = (variant, facts) => {

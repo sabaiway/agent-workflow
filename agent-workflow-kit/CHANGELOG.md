@@ -4,6 +4,48 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.33.0 — the worktrees grant gets a writer: the agent writes it into this copy's local settings on the chat yes, and the worktrees stops name that route (AD-185)
+
+**The `worktrees-dir` upgrade item, which used to hand the user a settings line to paste, is now a harness item the
+agent applies on the chat yes, after the danger check.** Before, the item printed `HAND-APPLY FIRST:` advice to add the
+dir to `sandbox.filesystem.allowWrite` in `.claude/settings.json`, and a sandboxed `worktrees` provision, land or
+cleanup that could not write the parent stopped with `.claude/settings.json → sandbox.filesystem.allowWrite += "<dir>"`
+for you to paste.
+
+- **`velocity-profile --worktrees`, the writer.** `node <kit>/tools/velocity-profile.mjs --worktrees --cwd <root>`
+  previews; `--apply` writes. It adds ONE `sandbox.filesystem.allowWrite` entry, the worktrees parent
+  (`docs/ai/worktrees.json` `parentDir`, else the repository's own parent; `~/…` under the home), to this copy's
+  `.claude/settings.local.json` only, never the committed `.claude/settings.json`, merging with what is there. It
+  creates the parent and each missing ancestor first (`would create: <dir>` per dir), whether or not an entry already
+  covers it, and writes no settings byte when one does. It seeds no read-only core and no ask rule. A parent that is the home or holds it is refused
+  (`VELOCITY_WORKTREES_HOME`); so is a malformed `sandbox` key in the local file and a linked or non-regular local file;
+  the flag beside `--autonomy`, `--kit-tools`, `--bridge-tier` or `--accept-edits` is a usage error (exit 2). Every run
+  prints what the entry widens: every sandboxed command of this copy, and of every worktree provisioned from it, can
+  write the whole parent dir, sibling repositories under it included. Choose a dedicated `parentDir` before the first
+  apply: no apply removes an entry.
+- **The advisor item.** `worktrees-dir` now carries the danger check line (`apply-danger-check.mjs --variant
+  worktrees-dir --cwd <root>`) and its apply; its message names the parent itself, where it used to name the nearest
+  existing ancestor. The acknowledgement stays as the `recipe:` line's fallback, run only on your word that this host
+  ignores the settings key, instead of the grant. A parent that is the home or holds it renders the new
+  `worktrees-dir.home` arm instead: your own step, pointing `parentDir` at a dedicated directory. `init` previews the
+  grant with its check and applies it on its y before the other items, running the check again just before: when the
+  result is no longer the one shown (a link planted on the parent's path, say), the grant and every later item are not
+  applied and `init` exits 1.
+- **The danger check covers it.** Variant `worktrees-dir` shows the one local entry, `writes: <dir>/ created` for each
+  dir the apply makes, and judges the local settings file; the yes is bound to that result.
+- **The worktrees stops name the route.** The provision, land and cleanup writability stops keep their first line and
+  their plain-terminal fallback; in place of the settings line to paste they print one line: the kit's `worktrees-dir`
+  item grants the configured parent on your yes, the agent runs its check line, then the apply, then the command again,
+  and the terminal fallback applies when that check refuses, prints nothing to change, or grants a dir that does not
+  hold the command's target.
+- **Shipped text.** `recommendations.md` names the writer, the local file and the ack fallback; `worktrees.md` the
+  check line, the local file and the ack fallback; `velocity.md` and the README's velocity row document the
+  `--worktrees` writer and the local file; the README's worktrees row names the chat yes after the check, the local
+  file and the ack fallback, and its advisor row the ack fallback. No line of the item says `HAND-APPLY`.
+- **Stated limits.** A session under `permissions.blockReadsOutsideWorkingDirectories` or an admin-required sandbox
+  ignores the local `allowWrite`, and a host that ignores the key gains nothing: the ack and the terminal fallback cover
+  both. A root reached through a symlink re-offers an existing acknowledgement once.
+
 ## 14.32.0 — the git-hook items get a writer: the enforcement scripts and the commit guard are applied on the chat yes, and the project's own installer decides the hook (AD-184)
 
 **Two `/agent-workflow-kit upgrade` items that used to hand the user a shell line are now harness items the agent

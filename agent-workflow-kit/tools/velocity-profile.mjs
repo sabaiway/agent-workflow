@@ -13,8 +13,9 @@ import { SHELL_METACHARACTERS, hasShellMetacharacter, isSeedablePathToken } from
 import { isDirectRun } from './direct-run.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL, usedBridges, bundledSandboxRecipe, exclusionOf } from './bridge-sandbox-recipe.mjs';
-import { stateDirsOf, mergeAllowWrite } from './bridge-state-dirs.mjs';
+import { stateDirsOf, mergeAllowWrite, homeRelative } from './bridge-state-dirs.mjs';
 import { HOST_HONORS_QUALIFIER, sandboxSurfaceDelta } from './bridge-wiring.mjs';
+import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from './worktrees.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { validateManifest } from './manifest/validate.mjs';
 export { BRIDGE_REVIEW_WRAPPERS, BRIDGE_REVIEW_MODE, KIT_GROUNDING_TOOL };
@@ -269,6 +270,7 @@ export const VELOCITY_STAMP = 'VELOCITY_STAMP';
 export const VELOCITY_UNSAFE_MODE = 'VELOCITY_UNSAFE_MODE';
 export const VELOCITY_MALFORMED = 'VELOCITY_MALFORMED';
 export const VELOCITY_SYMLINK = 'VELOCITY_SYMLINK';
+export const VELOCITY_WORKTREES_HOME = 'VELOCITY_WORKTREES_HOME';
 // The --autonomy render refuses an absent policy file (a writer renders only a declared policy).
 export const VELOCITY_NO_POLICY = 'VELOCITY_NO_POLICY';
 
@@ -299,6 +301,7 @@ const FLAG_ACCEPT_EDITS = '--accept-edits';
 const FLAG_KIT_TOOLS = '--kit-tools';
 const FLAG_BRIDGE_TIER = '--bridge-tier';
 const FLAG_AUTONOMY = '--autonomy';
+const FLAG_WORKTREES = '--worktrees';
 const FLAG_CHECK = '--check';
 const FLAG_CWD = '--cwd';
 const FLAG_HELP = '--help';
@@ -329,6 +332,7 @@ const RESIDUAL_NOTICE =
 const USAGE = `usage: velocity-profile [--dry-run | --apply] [--kit-tools] [--bridge-tier] [--accept-edits] [--cwd <dir>] [--help]
        velocity-profile --autonomy [--apply] [--cwd <dir>]        (render the autonomy policy)
        velocity-profile --autonomy --check [--cwd <dir>]          (read-only drift gate)
+       velocity-profile --worktrees [--apply] [--cwd <dir>]       (grant the worktrees parent)
 
 Allowlist mode (default): seeds the fixed read-only Claude Code allowlist into .claude/settings.json.
 Default is --dry-run. --apply writes; --accept-edits only sets defaultMode when applying.
@@ -337,7 +341,7 @@ absolute path (args wildcard), run-gates.mjs as ONE exact project-root-pinned by
 (project-exec - it runs YOUR declared gates.json), source-size-check.mjs as ONE exact --check
 byte-string (its read-only mode only - its writers keep prompting), and the writers' exact arg-free
 dry-run preview byte-strings. Never touches settings.local.json.
-Every apply also appends the apply ask rule ${APPLY_ASK_RULE} to permissions.ask once, so all work
+Every flagless, --kit-tools and --bridge-tier apply also appends the apply ask rule ${APPLY_ASK_RULE} to permissions.ask once, so all work
 can stay in auto mode: without it auto mode refuses a harness apply and you must leave auto mode for it; with it the harness shows its usual dialog. It allows nothing.
 --bridge-tier (own consent) derives each entry for a used bridge from the effective project recipes:
 review wrappers' CODE mode (codex-review code, agy-review code), the quoted grounding pre-step rule,
@@ -354,7 +358,16 @@ permissions.ask/deny red-lines + permissions.defaultMode. POLICY-ONLY: never see
 leaves permissions.allow untouched. Preview by default; --apply writes; --check is a read-only drift
 gate (exit 1 on drift). --autonomy cannot combine with --accept-edits, --kit-tools, or --bridge-tier
 (allowlist-mode flags). Refuses an absent policy (seed one first with set-autonomy). Never touches
-settings.local.json.`;
+settings.local.json.
+
+--worktrees (own consent, its own mode) writes ONE sandbox.filesystem.allowWrite entry, the worktrees
+parent (docs/ai/worktrees.json parentDir, else the repository's own parent), into this copy's
+.claude/settings.local.json only, never .claude/settings.json, and creates the parent when it is
+missing; it seeds no core and no ask rule.
+It widens, ${HOST_HONORS_QUALIFIER}: every sandboxed command of this copy
+and of every worktree provisioned from it can then write the whole parent dir, sibling repositories
+under it included. A parent that is the home or holds it is refused. It cannot combine with
+--autonomy, --kit-tools, --bridge-tier or --accept-edits.`;
 
 const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -578,13 +591,13 @@ const collectPreExistingNonReadonly = (sources, derivedTier = [], derivedBridgeA
       .map((entry) => ({ source, entry })),
   );
 
-const assertTargetWritable = (absPath, deps = {}) => {
+const assertTargetWritable = (absPath, deps = {}, relPath = SETTINGS_FILE) => {
   const fs = fsDeps(deps);
   const stat = lstatNoFollow(absPath, fs);
   if (stat !== null && !stat.isFile()) {
     throw makeVelocityProfileError(
       VELOCITY_SYMLINK,
-      `${SETTINGS_FILE} exists but is not a regular file - refusing to clobber it`,
+      `${relPath} exists but is not a regular file - refusing to clobber it`,
     );
   }
 };
@@ -689,6 +702,19 @@ const formatBridgeTier = (result) =>
       ]
     : [];
 
+export const KIT_WORKTREES_GRANT_NOTICE =
+  `worktrees grant: ${HOST_HONORS_QUALIFIER}, every sandboxed command of this copy, and of every worktree provisioned from it afterwards (provision copies the local settings), can write the whole worktrees parent dir, sibling repositories under it included, for every later session. ` +
+  'The entry lands in this copy\'s .claude/settings.local.json only, never the committed project settings. A host that ignores the key, a session under permissions.blockReadsOutsideWorkingDirectories and an admin-required sandbox are unchanged by it. ' +
+  'Narrow it: choose a dedicated docs/ai/worktrees.json parentDir BEFORE the first apply — no apply removes an entry, so a parent changed later leaves the earlier entry in settings.local.json until you delete it, your own step.';
+
+const formatWorktreesGrant = (result) => [
+  `${result.wrote ? 'added' : 'would add'} worktrees grant (sandbox.filesystem.allowWrite in ${SETTINGS_LOCAL_FILE}) entries: ${result.worktreesDirToAdd.length}`,
+  ...formatEntryList(result.worktreesDirToAdd),
+  `already present (worktrees grant): ${result.worktreesDirAlreadyPresent.length}`,
+  ...result.worktreesDirsToCreate.map((dir) => `${result.wrote ? 'created' : 'would create'}: ${dir}`),
+  KIT_WORKTREES_GRANT_NOTICE,
+];
+
 const formatGateAdvisory = (gateCandidates) => [
   'gate advisory: candidates you may add BY HAND to .claude/settings.json or settings.local.json; this tool will NOT add them',
   ...(gateCandidates.length
@@ -710,7 +736,10 @@ const formatDefaultMode = (result) =>
     : `defaultMode: ${result.setsDefaultMode ? `would set to ${ACCEPT_EDITS_MODE}` : 'would not be set by this run'}`;
 
 const formatVelocityProfileResult = (result) =>
-  [
+  result.worktrees ? [
+    result.dryRun ? 'agent-workflow velocity profile - DRY RUN (no changes)' : 'agent-workflow velocity profile - APPLY',
+    ...formatWorktreesGrant(result),
+  ].join(LF) : [
     result.dryRun ? 'agent-workflow velocity profile - DRY RUN (no changes)' : 'agent-workflow velocity profile - APPLY',
     ...formatAllowlist(result),
     ...formatKitTier(result),
@@ -986,7 +1015,65 @@ const deriveUsedBridgeTier = (root, deps = {}) => {
   return { used, recipe, dirs, env, home };
 };
 
+const NO_WORKTREES_GRANT = Object.freeze({
+  worktrees: false, worktreesDir: null, worktreesDirToAdd: [], worktreesDirAlreadyPresent: [], worktreesDirsToCreate: [],
+});
+
+const assertLocalSandboxMergeable = (data) => {
+  const malformed = (key, shape) => makeVelocityProfileError(VELOCITY_MALFORMED, `${SETTINGS_LOCAL_FILE}: ${key} must be ${shape}`);
+  const sandbox = data?.sandbox;
+  if (sandbox === undefined) return {};
+  if (!isJsonObject(sandbox)) throw malformed('sandbox', 'a JSON object');
+  for (const key of ['filesystem', 'network']) {
+    if (sandbox[key] !== undefined && !isJsonObject(sandbox[key])) throw malformed(`sandbox.${key}`, 'a JSON object');
+  }
+  if (sandbox.excludedCommands !== undefined && !Array.isArray(sandbox.excludedCommands)) throw malformed('sandbox.excludedCommands', 'an array');
+  if (sandbox.network?.allowedDomains !== undefined && !Array.isArray(sandbox.network.allowedDomains)) {
+    throw malformed('sandbox.network.allowedDomains', 'an array');
+  }
+  const allowWrite = sandbox.filesystem?.allowWrite;
+  if (allowWrite !== undefined && !(Array.isArray(allowWrite) && allowWrite.every(isResolvableDeclaredEntry))) {
+    throw malformed('sandbox.filesystem.allowWrite', 'an array of non-blank strings');
+  }
+  return sandbox;
+};
+
+const planWorktreesGrant = (preflight, opts) => {
+  const home = opts.home ?? homedir();
+  const root = preflight.cwd;
+  const dir = (() => {
+    try {
+      return worktreesGrantDir(root, opts);
+    } catch (err) {
+      throw makeVelocityProfileError(VELOCITY_MALFORMED, String(err?.message ?? err).replace(/^\[agent-workflow-kit\] /u, ''));
+    }
+  })();
+  if (worktreesGrantHoldsHome(dir, home, opts)) {
+    throw makeVelocityProfileError(VELOCITY_WORKTREES_HOME,
+      `the worktrees parent dir ${dir} is the home or holds it - the kit grants no write surface there; point docs/ai/worktrees.json parentDir at a dedicated directory`);
+  }
+  const sandbox = assertLocalSandboxMergeable(preflight.localSettings?.data);
+  const entry = homeRelative(dir, home);
+  const { dirs: worktreesDirToAdd } = sandboxSurfaceDelta({ excludedCommands: [], hosts: [], dirs: [entry] }, sandbox, { home, root });
+  const existing = nearestExistingDir(dir, opts);
+  const worktreesDirsToCreate = [];
+  for (let at = dir; at !== existing; at = dirname(at)) worktreesDirsToCreate.unshift(at);
+  return {
+    ...planVelocityProfile(preflight, {}),
+    toAdd: [],
+    alreadyPresent: [],
+    askToAdd: [],
+    askAlreadyPresent: [],
+    worktrees: true,
+    worktreesDir: entry,
+    worktreesDirToAdd,
+    worktreesDirAlreadyPresent: worktreesDirToAdd.length ? [] : [entry],
+    worktreesDirsToCreate,
+  };
+};
+
 export const planVelocityProfile = (preflight, opts = {}) => {
+  if (opts.worktrees === true) return planWorktreesGrant(preflight, opts);
   const { acceptEdits, kitTools, bridgeTier } = opts;
   const projectAllow = getAllowEntries(preflight.projectSettings?.data);
   const projectAsk = getPermissions(preflight.projectSettings?.data).ask ?? [];
@@ -1041,17 +1128,32 @@ export const planVelocityProfile = (preflight, opts = {}) => {
     dirsAlreadyPresent,
     executeToAdd,
     setsDefaultMode: acceptEdits === true,
+    ...NO_WORKTREES_GRANT,
   };
 };
 
-export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false, bridgeTier = false } = {}, deps = {}) => {
+// The parent chain goes first, outermost first, so the entry never names a missing directory.
+const applyWorktreesGrant = (projectDir, preflight, plan, resultBase, deps) => {
+  const fs = fsDeps(deps);
+  for (const dir of plan.worktreesDirsToCreate) fs.mkdir(dir);
+  if (plan.worktreesDirToAdd.length === 0) return { wrote: true, dryRun: false, settingsPath: null, ...resultBase };
+  if (preflight.claudeDirAbsent) fs.mkdir(join(projectDir, CLAUDE_DIR), { recursive: true });
+  const settingsPath = join(projectDir, SETTINGS_LOCAL_FILE);
+  const merged = mergeAllowWrite(preflight.localSettings.data ?? {}, plan.worktreesDirToAdd);
+  fs.writeFile(settingsPath, formatJson(merged, preflight.localSettings.eol ?? LF), UTF8);
+  return { wrote: true, dryRun: false, settingsPath, ...resultBase };
+};
+
+export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, kitTools = false, bridgeTier = false, worktrees = false } = {}, deps = {}) => {
   const projectDir = cwd ?? deps.cwd ?? process.cwd();
+  if (worktrees === true) assertTargetWritable(join(projectDir, SETTINGS_LOCAL_FILE), deps, SETTINGS_LOCAL_FILE);
   const preflight = preflightVelocityProfile({ cwd: projectDir }, deps);
   const plan = planVelocityProfile(preflight, {
     ...deps,
     acceptEdits,
     kitTools,
     bridgeTier,
+    worktrees,
   });
   // Drift guard runs on BOTH dry-run and apply (so a dry-run faithfully predicts the apply) and
   // validates the FULL audited core, not just the to-add delta — a drifted core entry is caught even
@@ -1079,6 +1181,7 @@ export const writeVelocityProfile = ({ cwd, acceptEdits = false, dryRun = true, 
       `not a deployed agent-workflow project at lineage ${EXPECTED_WORKFLOW_VERSION} (found ${preflight.stamp ?? 'none'}) - run init/upgrade first`,
     );
   }
+  if (worktrees === true) return applyWorktreesGrant(projectDir, preflight, plan, resultBase, deps);
 
   const fs = fsDeps(deps);
   const settingsPath = join(projectDir, SETTINGS_FILE);
@@ -1697,7 +1800,7 @@ export const formatAutonomyResult = (r) => {
     // boundary is deliberate: permissions.* precedence is the harness's own documented permission
     // model (the layer this whole mode rests on), so those masks stay flat statements.
     const scoped = m.key.startsWith(`${SANDBOX_KEY}.`) ? ` ${HOST_HONORS_QUALIFIER}` : '';
-    lines.push(`  ⚠ ${SETTINGS_LOCAL_FILE} sets ${m.key}=${JSON.stringify(m.local)}, which MASKS this render's ${m.key}=${JSON.stringify(m.rendered)} (local > project) — the local value wins${scoped}, so the render is not effective for that key; the local file is the maintainer's and is never written by the kit.`);
+    lines.push(`  ⚠ ${SETTINGS_LOCAL_FILE} sets ${m.key}=${JSON.stringify(m.local)}, which MASKS this render's ${m.key}=${JSON.stringify(m.rendered)} (local > project) — the local value wins${scoped}, so the render is not effective for that key; the local file is the maintainer's and this render never writes it.`);
   }
   for (const b of r.redlineBypass ?? []) {
     lines.push(`  ⚠ DEGRADE: ${b.source} has a pre-existing allow entry ${b.entry} that would BYPASS the rendered red-line(s) ${b.redlines.join('/')} (a matching allow rule AUTO-APPROVES the command, defeating ask/deny) — remove it by hand; this render never touches permissions.allow.`);
@@ -1881,6 +1984,7 @@ export const parseArgs = (argv) => {
       if (arg === FLAG_KIT_TOOLS) return { ...state, kitTools: true };
       if (arg === FLAG_BRIDGE_TIER) return { ...state, bridgeTier: true };
       if (arg === FLAG_AUTONOMY) return { ...state, autonomy: true };
+      if (arg === FLAG_WORKTREES) return { ...state, worktrees: true };
       if (arg === FLAG_CHECK) return { ...state, check: true };
       if (arg === FLAG_CWD) {
         const next = allArgs[index + 1];
@@ -1890,8 +1994,11 @@ export const parseArgs = (argv) => {
       if (arg.startsWith('-')) throw fail(EXIT_USAGE, `unknown flag: ${arg}`);
       throw fail(EXIT_USAGE, `unexpected argument: ${arg}`);
     },
-    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, bridgeTier: false, autonomy: false, check: false, cwd: undefined, skipNext: false },
+    { help: false, dryRunFlag: false, apply: false, acceptEdits: false, kitTools: false, bridgeTier: false, autonomy: false, worktrees: false, check: false, cwd: undefined, skipNext: false },
   );
+  const worktreesConflict = [[parsed.autonomy, FLAG_AUTONOMY], [parsed.kitTools, FLAG_KIT_TOOLS],
+    [parsed.bridgeTier, FLAG_BRIDGE_TIER], [parsed.acceptEdits, FLAG_ACCEPT_EDITS]].find(([set]) => parsed.worktrees && set);
+  if (worktreesConflict) throw fail(EXIT_USAGE, `${FLAG_WORKTREES} is its own mode writing ${SETTINGS_LOCAL_FILE} alone — it cannot be combined with ${worktreesConflict[1]}`);
 
   if (parsed.dryRunFlag && parsed.apply) throw fail(EXIT_USAGE, `${FLAG_DRY_RUN} and ${FLAG_APPLY} cannot be used together`);
   // The --autonomy render is a SEPARATE mode from the allowlist seeding: the allowlist-only flags
@@ -1911,6 +2018,7 @@ export const parseArgs = (argv) => {
     kitTools: parsed.kitTools,
     bridgeTier: parsed.bridgeTier,
     autonomy: parsed.autonomy,
+    worktrees: parsed.worktrees,
     check: parsed.check,
     cwd: parsed.cwd,
   };
@@ -1939,7 +2047,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       return EXIT_OK;
     }
     const result = writeVelocityProfile(
-      { cwd, acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools, bridgeTier: args.bridgeTier },
+      { cwd, acceptEdits: args.acceptEdits, dryRun: args.dryRun, kitTools: args.kitTools, bridgeTier: args.bridgeTier, worktrees: args.worktrees },
       deps,
     );
     log(formatVelocityProfileResult(result));
