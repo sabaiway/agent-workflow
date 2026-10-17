@@ -243,15 +243,16 @@ describe('recommendations — the source-size item over a VENDORED copy of the c
     }
   });
 
-  it('rec-id-squatter-gets-its-own-attention-arm with a HAND-APPLY recovery, never --adopt', () => {
+  it('rec-id-squatter-gets-its-own-attention-arm with the user\'s own step, never --adopt', () => {
     const cwd = project({ gates: gateFor('true') });
     const { item } = report(cwd);
     assert.ok(item, 'the id is not the identity — the canonical invocation is');
     assert.equal(item.variant, 'source-size.id-squatter');
     assert.equal(item.severity, SEVERITY_ATTENTION, 'the id claims the practice while nothing measures size');
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), item.apply);
-    assert.match(item.apply, /rename the "source-size" gate/, item.apply);
-    assert.match(item.apply, /repoint its cmd at node .*source-size-check\.mjs --check/, item.apply);
+    assert.equal(item.lane, 'user', 'id-squatter is the user\'s own step');
+    assert.equal(item.check, null);
+    assert.equal(item.apply, `your own step — in docs/ai/gates.json rename the "source-size" gate to an id of its own, or repoint its cmd at node "${TOOL}" --check, then run /agent-workflow-kit recommendations`);
+    assert.equal(item.detail, null);
     assert.doesNotMatch(item.apply, /--adopt/, 'the rendered remedy is never the one that exits 1 here');
   });
 

@@ -564,6 +564,38 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   which binds the executor re-derive. Proof: a skill cell with two different installed trees giving two digests.
   Residual, not live: the replaced tree is the kit-vendored pinned copy no user authors, and the window is one
   check-to-apply. Raised by the S11 diff review (codex; the lens's replacement invariant).
+- **FOOTPRINT-GLOBAL-ONE-GIT-ENV** — invariant: the `footprint-global` probe, its check, its apply and `init` ask git
+  for `core.excludesFile` under one env, so they judge one file. Origin: in an agent session the probe, the check and
+  its spawned apply read one ambient env and agree; under `init` the in-process probe reads `process.env`
+  (`agent-workflow-kit/tools/recommendations.mjs:1620`) while its preview and `checkApply` use `spawnEnv =
+  stripGitLocationEnv(...)` (`agent-workflow-kit/tools/init-project.mjs:362,219,223`), which drops every `GIT_` key,
+  `GIT_CONFIG_GLOBAL` included (`agent-workflow-kit/tools/git-env.mjs:16`). Fix: init's probe and its check read one
+  env — the probe reads the env it is handed (`deps.env`, not `process.env` at `recommendations.mjs:1620`) and init
+  hands its probe and its check the same env — then one env derivation inside `planGlobalRemoval`
+  (`agent-workflow-kit/tools/hide-footprint.mjs:391`, spec review-domain/hide-footprint) after a decision on whether
+  `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_*` survive. Proof: init's queue probe and its check under a console env carrying
+  `GIT_DIR` or `GIT_CONFIG_GLOBAL` plan the same file. Residual, not live (a console env carrying either, under
+  `init` only): the item names a file A its probe judged while the check and the apply judge B; with no block in B the
+  apply answers `nothing to change`, with a block in B the y removes B's block (the check shows it) and the item naming A
+  is back on the next run, and with a block in B only `init` lists no item while the agent session does. Raised by the S11 diff review; cut from S9 by its spec
+  review (codex, lens).
+- **ADVISOR-WRITERS-PROFILE-GAP-ROW-FROM-REGISTRY** — invariant: the `profile-gap` row of
+  `agent-workflow-kit/references/advisor-writers.md` names the writer of every `PROFILE_GAPS` entry
+  (`agent-workflow-kit/tools/profile-gaps.mjs:246-253`), proven from the registry, not only from the entries a fixture
+  renders. Origin: `agent-workflow-kit/tools/recommendations.test.mjs:3720-3775` compares the row with the rendered
+  items' writers only, and `session-close-rules` never renders an item; the S54 clause of
+  `docs/ai/specs/kit/install/init-project/index.md` ("for profile-gap every PROFILE_GAPS entry is covered") states this
+  proof. Fix: the cell takes the expected set from the basenames of `PROFILE_GAPS.map((e) => e.apply(root))` and asserts
+  it equals the row, keeping the rendered-union check. Proof: a fixture registry entry naming a new tool fails the cell.
+  Residual, not live: today's row names `rules-insert.mjs`, `tier-preview.mjs` and `checker-gates.mjs`, every writer the
+  six entries' applies use. Raised by the S9 diff review (lens).
+- **USER-STEP-NAMES-KIT-DOC-RELATIVE** — invariant: a user step names a kit doc by a path the user can open from the
+  project. Origin: the `gates-inert.unfillable` and `gates-inert.producer-unrecognized` steps
+  (`agent-workflow-kit/tools/write-lanes.mjs:190-197`) cite `references/modes/gates.md`, a path inside the installed kit
+  (bytes fixed by the advisor-writers part, D1). Fix: a later spec revision prints the resolved
+  `<toolsDir>/../references/modes/gates.md`. Proof: a step cell asserting the printed path exists. Residual, not live: the
+  agent presents the step and resolves the kit-relative `references/modes/` path, as every advisor note does. Raised by
+  the S9 diff review (lens).
 
 ## Closed
 

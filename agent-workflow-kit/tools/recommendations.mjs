@@ -55,7 +55,7 @@ import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-re
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
-import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, GATES_REL, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 // The typed channel's READ-ONLY leaf only — never tools/mcp.mjs, which reaches the write core.
 import {
@@ -119,6 +119,8 @@ export { ACKS_FILE, ACKS_LANE_KEY, ACKS_WORKTREES_DIR_KEY, ACKS_COVERAGE_DOMAIN_
 const HERE = dirname(fileURLToPath(import.meta.url));
 const toolPath = (rel) => join(HERE, rel);
 const q = shellQuoteArg;
+// A user variant's own step, as the lane leaf words it: the rendered apply of every user item.
+const userStepOf = (variant, root) => applySlot(variant, { toolsDir: HERE, root }).apply;
 const ABSENT_CODE = 'ENOENT';
 const ENFORCEMENT_KIT_ROOT = resolve(HERE, '..');
 const ENFORCEMENT_BUNDLE_ROOT = join(ENFORCEMENT_KIT_ROOT, 'references', 'scripts');
@@ -163,6 +165,7 @@ export const SEVERITIES = Object.freeze({
   'review-recipe': SEVERITY_ATTENTION,
   'gates-declaration': SEVERITY_OPTIONAL,
   'gates-inert': SEVERITY_ATTENTION,
+  'gates-inert.unfillable': SEVERITY_ATTENTION,
   'gates-inert.no-verification': SEVERITY_ATTENTION,
   // Both third outcomes are attention, and both therefore block the flow-optimal line MECHANICALLY:
   // an added item makes the verdict non-null. One reports a pair that is dead on a tree the closed
@@ -255,6 +258,7 @@ export const composeVerdict = ({ attention, optional, skipped }) => {
 // banned tokens), never a fixture-coverage gamble. A pure-placeholder template marks a WHAT whose
 // content is fully dynamic (capped at composition by truncation-with-count) — except `profile-gap`, whose
 // WHAT is never truncated: the leaf's suite pins every composed WHAT under the cap.
+const GATES_INERT_WHAT = 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov';
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
   'velocity-core.rule': 'auto mode refuses a harness apply, so work cannot stay in auto mode — the apply ask rule is not seeded',
@@ -267,7 +271,8 @@ export const WHATS = Object.freeze({
   'sandbox-provision.installable': 'the OS sandbox is unavailable: {reason} — installable via the doctor (consent tuple {tuple})',
   'review-recipe': '{degraded}',
   'gates-declaration': 'no declared gate matrix (docs/ai/gates.json absent or empty) — gates prompt one by one; the apply PREVIEWS its --apply line, writes nothing',
-  'gates-inert': 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov',
+  'gates-inert': GATES_INERT_WHAT,
+  'gates-inert.unfillable': GATES_INERT_WHAT,
   'gates-inert.no-verification': "all {n} declared gate(s) are the kit's own checkers — the matrix runs no project-verification command",
   'gates-inert.producer-unrecognized': 'the coverage checker ({id}) has NO producer declared and none offerable, on a tree the changed-line domain barely reaches',
   'gates-inert.coverage-domain-narrow': 'certification covers the assessable minority only — {ext} dominate(s) the tracked tree, and the changed-line domain excludes them',
@@ -588,7 +593,8 @@ const probeReviewRecipe = ({ root, deps, add, skip }) => {
       }
     }
     if (degraded.length > 0) {
-      add('review-recipe', fillTemplate(WHATS['review-recipe'], { degraded: capList(degraded, templateBudget(WHATS['review-recipe'])) }), '/agent-workflow-kit backends');
+      add('review-recipe', fillTemplate(WHATS['review-recipe'], { degraded: capList(degraded, templateBudget(WHATS['review-recipe'])) }),
+        userStepOf('review-recipe', root));
     }
   } catch (err) {
     skip('review-recipe', err);
@@ -651,8 +657,8 @@ const probeGates = ({ root, deps, add, skip, shared }) => {
 // gate is not a kit checker. Cause A's apply follows what the FILL can actually do, which the
 // D-8 placement rule changed: when the checker is the declaration's LAST gate and the project's own
 // scripts yield an offerable producer, the fill now PLACES that producer before the checker, so the
-// remedy is the ordinary consent-gated preview. HAND-APPLY remains exactly where no offerable
-// producer exists, or where the checker is not last — there the edit really is the maintainer's,
+// remedy is the ordinary consent-gated preview. Where no offerable producer exists, or the checker
+// is not last, the arm is the user item `gates-inert.unfillable` — the edit is the project's own,
 // because the fill never reorders entries it did not write.
 //
 // An ABSENT or EMPTY declaration belongs to the gates-declaration item; a malformed one throws out
@@ -765,8 +771,9 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
           add(
             'gates-inert',
             fillTemplate(WHATS['gates-inert.producer-unrecognized'], { id }),
-            `HAND-APPLY: mark the gate that actually writes the lcov with "lcovProducer": true in ${GATES_REL} (references/modes/gates.md names the key), or drop ${id} — and note the fill offers only terminating-class script NAMES, so a recognized body under another name (a "ci" script running node --test) is declared by hand, not marked`,
+            userStepOf('gates-inert.producer-unrecognized', root),
             'gates-inert.producer-unrecognized',
+            `${id} has no producer declared and none offerable — the fill offers only terminating-class script names, so a recognized body under another name (a "ci" script running node --test) is declared as its own gate entry, never marked`,
           );
           return;
         }
@@ -788,13 +795,12 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
         : colliding !== undefined
           ? `a producer IS offerable here, but its id "${colliding.id}" is already declared, so the fill refuses it as a collision — rename that gate, or repoint it at the producer form`
           : `no offerable producer exists here, and the fill never reorders entries it did not write`;
-      add(
-        'gates-inert',
-        fillTemplate(WHATS['gates-inert'], { id }),
-        checkerIsLast && producer
-          ? fillPreviewFor(root, [producer.id])
-          : `HAND-APPLY: declare or MOVE a suite gate carrying the coverage reporters BEFORE ${id} in ${GATES_REL} (references/modes/gates.md names the exact form), or drop ${id} — ${blocked}`,
-      );
+      if (checkerIsLast && producer) {
+        add('gates-inert', fillTemplate(WHATS['gates-inert'], { id }), fillPreviewFor(root, [producer.id]));
+        return;
+      }
+      add('gates-inert', fillTemplate(WHATS['gates-inert.unfillable'], { id }), userStepOf('gates-inert.unfillable', root),
+        'gates-inert.unfillable', blocked);
       return;
     }
     // The source-size checker is one of the kit's OWN checkers, and it is deliberately NOT
@@ -887,15 +893,11 @@ const probeSourceSize = ({ root, deps, add, skip }) => {
     }
     // The id SQUATTER — the id says the practice is declared, the cmd is not this checker under any
     // reading. `--adopt` here mints the record and is then refused by the fill on the id collision:
-    // correct against a squatter, and useless as a RENDERED remedy, so this arm names the two hand
-    // edits that actually resolve it instead.
+    // correct against a squatter, and useless as a RENDERED remedy, so this arm is a user item whose
+    // step names the edits that actually resolve it.
     if (gates.some((gate) => gate.id === SOURCE_SIZE_GATE_ID)) {
-      add(
-        'source-size',
-        fillTemplate(WHATS['source-size.id-squatter'], {}),
-        `HAND-APPLY: in ${GATES_REL}, either rename the "${SOURCE_SIZE_GATE_ID}" gate to an id of its own, or repoint its cmd at node ${q(tool)} --check — then re-run recommendations`,
-        'source-size.id-squatter',
-      );
+      add('source-size', fillTemplate(WHATS['source-size.id-squatter'], {}), userStepOf('source-size.id-squatter', root),
+        'source-size.id-squatter');
       return;
     }
     add('source-size', fillTemplate(WHATS['source-size'], {}), adoptLine);
@@ -1166,7 +1168,7 @@ const renderBrokenExecutor = ({ root, deps, add, skip }) => {
     const blocked = writerBlock(root, deps);
     if (blocked) preconditions.push(`${blocked} — fix that`);
     const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
-    return add(
+    add(
       'executor-vehicle',
       fillTemplate(WHATS['executor-vehicle'], {
         n: configured.length,
@@ -1179,9 +1181,10 @@ const renderBrokenExecutor = ({ root, deps, add, skip }) => {
       'executor-vehicle',
       `${preconditions.length ? `precondition: ${preconditions.join('; ')}; ` : ''}${HIDDEN_AGENTS_FOLLOW_UP(root)}`,
     );
+    return true;
   } catch (err) {
     skip('executor-vehicle', err);
-    return false;
+    return true;
   }
 };
 
@@ -1342,6 +1345,8 @@ export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'workt
 // spec-check's own census; a recorded decline (the `spec-adoption` ack lane) is the fact that
 // silences the item, and an unreadable store is a stated skip so the flow-optimal line never renders
 // over it. The not-adopted apply is the spec-layer ensure; the decline preview rides the recipe line.
+// The one opening of every offer's decline alternative: a chat write the agent runs on the user's decline.
+export const DECLINE_ALTERNATIVE = 'decline alternative (asked apart, before the confirmation; on your decline the agent records it instead of the apply, never after it): ';
 export const probeSpecAdoption = ({ root, deps, add, skip }) => {
   try {
     const survey = surveySpecAdoption(root, deps);
@@ -1357,7 +1362,7 @@ export const probeSpecAdoption = ({ root, deps, add, skip }) => {
         fillTemplate(WHATS['spec-adoption'], {}),
         `node ${q(toolPath('ensure-configs.mjs'))} --reconcile --only ${SPEC_LAYER_ENSURE} --cwd ${q(root)}`,
         'spec-adoption',
-        `HAND-APPLY alternative (instead of the apply, never after it): decline the layer by recording it — ${decline}`,
+        `${DECLINE_ALTERNATIVE}${decline}`,
       );
       return;
     }
@@ -1477,13 +1482,12 @@ export const probeAdrStore = ({ root, deps, add, skip }) => {
   try {
     const shape = ADR_LAYOUT_SHAPES[surveyAdrLayoutStrict(root, deps)];
     if (!shape) return; // migrated, or no ADR substrate at all — nothing to offer
-    // HAND-APPLY, not the standard lane: the consent flow executes the apply slot against the
-    // confirmation given BEFORE the preview, and this crossing requires informed consent AFTER its
-    // dry-run. A runnable one-liner here would auto-run a tree-mutating migration on stale consent.
+    // The apply is the bare dry run: consent takes two steps, as profile-gap's does — the first yes
+    // runs it and the plan is relayed, the same line with --apply runs only on a second yes over it.
     add(
       'adr-store-migration',
       fillTemplate(WHATS['adr-store-migration'], { shape }),
-      `HAND-APPLY: node ${q(toolPath('migrate-adr-store.mjs'))} --dry-run --cwd ${q(root)} — then re-run with --apply ONLY after showing the plan and getting fresh consent`,
+      `node ${q(toolPath('migrate-adr-store.mjs'))} --dry-run --cwd ${q(root)}`,
     );
   } catch (err) {
     skip('adr-store-migration', err);
@@ -1534,7 +1538,7 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
     const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
     const decline = `node ${q(toolPath('ack-write.mjs'))} --lane jev-connect --fingerprint ${JEV_CONNECT_DECLINE} --cwd ${q(root)}`;
     add('jev-connect', WHATS['jev-connect'], applySlot('jev-connect', { toolsDir: HERE }).apply, 'jev-connect',
-      `${place ? `run the apply in ${place}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${decline}`);
+      `${place ? `run the apply in ${place}; ` : ''}${DECLINE_ALTERNATIVE}${decline}`);
   } catch (err) {
     skip('jev-connect', err);
   }
@@ -1568,7 +1572,7 @@ export const probeJevSkill = ({ root, deps, add, skip }) => {
       .map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}; `).join('');
     const record = `node ${q(toolPath('ack-write.mjs'))} --lane jev-skill --fingerprint ${decline} --cwd ${q(root)}`;
     add('jev-skill', what, line, behind.length ? 'jev-skill.earlier' : 'jev-skill',
-      `${place ? `run the apply in ${place}; ` : ''}${untouched}${note ? `${note}; ` : ''}HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — ${record}`);
+      `${place ? `run the apply in ${place}; ` : ''}${untouched}${note ? `${note}; ` : ''}${DECLINE_ALTERNATIVE}${record}`);
   } catch (err) {
     skip('jev-skill', err);
   }
@@ -1664,10 +1668,9 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // which item fired, and only this field says which ARM of it did — so a consumer (the pre-publish
   // smoke asserting a specific false-green never returns) can assert the exact outcome instead of
   // pattern-matching prose that is free to be reworded.
-  // `detail` (optional) is an extra rendered `recipe:` line — factual context that is TOO LONG for
-  // the capped WHAT and does NOT belong in the pure-command apply (the bridge-tier missing-entries
-  // line; the worktrees-dir ack fallback; the
-  // agents hidden-mode reconcile follow-up). Single-line like apply; absent for every other item.
+  // `detail` (optional) is an extra rendered `recipe:` line — an item's own facts or its alternative,
+  // TOO LONG for the capped WHAT and outside the pure-command apply (such as the bridge-tier
+  // missing-entries line or the worktrees-dir ack fallback). Single-line like apply; absent otherwise.
   // Returns whether the item really RENDERED. One probe's disposition depends on another's having
   // spoken (the marker-stale ⟷ read-lane.stale precedence), and "the conditions still look right"
   // is not the same fact as "an item exists" — the shape backstop can refuse, and a condition read
@@ -1757,9 +1760,9 @@ Usage:
 
 Computes the deterministic Recommendations section every kit upgrade ends with — VERDICT-FIRST:
 one composed verdict line opens every non-optimal render, then per item {severity · what is
-sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (the bridge-tier
-missing-entries line, the worktrees-dir ack fallback, or the agents hidden-mode reconcile
-follow-up) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
+sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (an item's own
+facts or its alternative, such as the bridge-tier missing-entries line or
+the worktrees-dir ack fallback) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
@@ -1770,8 +1773,8 @@ allow rules, <wrapper> * exclusions (codex-exec * where an execute slot delegate
 sandbox.network.allowedDomains and state dirs in sandbox.filesystem.allowWrite. Where the host
 honors the settings sandbox keys, an excluded wrapper runs outside the sandbox, every sandboxed
 command of the project can reach each host, and every sandboxed command can write each state dir;
-plan/diff review modes and delegated execution keep their prompt. Items marked HAND-APPLY stay
-the user's own step.
+plan/diff review modes and delegated execution keep their prompt.
+A user item stays the user's own step.
 
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report
 rendered (items or empty); 1 error; 2 usage.`;

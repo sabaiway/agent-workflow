@@ -8,8 +8,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { constants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, SETTINGS_REL, allowRulesFor, readRegistration } from './mcp-registration.mjs';
+import { applySlot } from './write-lanes.mjs';
 
 const load = () => import('./mcp.mjs');
 
@@ -222,22 +223,6 @@ describe('writeMcp — the guarded registration writer', () => {
     });
   });
 
-  it('masked: nothing is written, BOTH paste-ready fragments are handed over, and the run succeeds', async () => {
-    const { writeMcp, formatResult } = await load();
-    await withRoot((root) => {
-      // Delegate for every OTHER path: a blanket ENOENT would answer for the project root too.
-      const masked = { ...io, lstat: (path, ...rest) => (path === mcpAbs(root) ? maskedStat() : lstatSync(path, ...rest)) };
-      const r = writeMcp({ cwd: root, dryRun: false }, masked);
-      assert.equal(r.masked, true);
-      assert.equal(r.wrote, false);
-      assert.equal(existsSync(mcpAbs(root)), false);
-      const report = formatResult(r);
-      assert.match(report, /HAND-APPLY/u);
-      assert.ok(report.includes(SERVER_PATH) && report.includes(ENABLED_KEY), 'both fragments are in the report');
-      assert.ok(report.includes(MCP_JSON_REL) && report.includes(SETTINGS_REL), 'each named with the file it belongs to');
-    });
-  });
-
   // The handoff is scoped to `.mcp.json`. Reached for either target and taken before every other
   // refusal, it turned two mandatory STOPs into a successful hand-apply.
   it('fold: a masked settings.json is a REFUSAL — the handoff is scoped to .mcp.json alone', async () => {
@@ -267,22 +252,6 @@ describe('writeMcp — the guarded registration writer', () => {
       const masked = { ...io, lstat: (p, ...rest) => (p === mcpAbs(root) ? maskedStat() : lstatSync(p, ...rest)) };
       const err = caught(() => writeMcp({ cwd: root, dryRun: false }, masked));
       assert.equal(err?.code, MCP_MALFORMED, err?.message ?? 'a masked success instead of a refusal');
-    });
-  });
-
-  // Behind a mask the kit cannot see what the file holds, so a whole-file body pasted as instructed
-  // would delete every foreign server it was never able to read.
-  it('fold: the masked handoff hands over the ENTRY to merge, never a whole-file body', async () => {
-    const { writeMcp, formatResult } = await load();
-    await withRoot((root) => {
-      const masked = { ...io, lstat: (p, ...rest) => (p === mcpAbs(root) ? maskedStat() : lstatSync(p, ...rest)) };
-      const report = formatResult(writeMcp({ cwd: root, dryRun: false }, masked));
-      assert.match(report, /HAND-APPLY/u);
-      assert.ok(report.includes(SERVER_PATH) && report.includes(SERVER_NAME), 'the entry itself is handed over');
-      assert.match(report, /merge/iu, 'the instruction is a MERGE');
-      assert.match(report, /keep every other server/iu, 'and it says so about what the kit cannot see');
-      assert.doesNotMatch(report, /paste into/iu, 'a paste-the-whole-file instruction IS the clobber');
-      assert.match(report, /hide-footprint/u, 'a hand-applied registration needs the reconcile just as much');
     });
   });
 
@@ -405,6 +374,81 @@ describe('writeMcp — the guarded registration writer', () => {
     // whatever directory the tool happened to run in.
     assert.equal(main(['--cwd', ''], sink), 2, 'an explicitly empty target is a usage error, never the cwd');
     assert.equal(main(['--apply', '--cwd', '   '], sink), 2, 'and neither is whitespace');
+  });
+});
+
+describe('spec:init-project/S55 the masked mcp report by proof', () => {
+  it('a masked .mcp.json writes nothing, returns no fragments and exits 0', async () => {
+    const { writeMcp, main } = await load();
+    await withRoot((root) => {
+      const masked = { ...io, lstat: (path, ...rest) => (path === mcpAbs(root) ? maskedStat() : lstatSync(path, ...rest)) };
+      const result = writeMcp({ cwd: root, dryRun: false }, masked);
+      assert.equal(result.masked, true);
+      assert.equal(result.wrote, false);
+      const out = [];
+      const deps = { ...masked, log: (line) => out.push(line), errlog: (line) => out.push(line) };
+      assert.equal(main(['--apply', '--cwd', root], deps), 0, out.join('\n'));
+      assert.equal(existsSync(mcpAbs(root)), false);
+      assert.equal(existsSync(settingsAbs(root)), false);
+      assert.equal(Object.hasOwn(result, 'fragments'), false, 'the masked result has no own fragments key');
+    });
+  });
+
+  const maskedReportLines = (result, variant, MCP_TOOL) => {
+    const posture = 'trust posture: the registered server is a READ-ONLY child of your MCP client';
+    const hidden = 'hidden-mode note: if this deployment is hidden';
+    const slot = applySlot(variant, { toolsDir: dirname(MCP_TOOL), root: result.root });
+    return {
+      opened: (report) => report.split('\n').map((line) => [posture, hidden].find((opening) => line.startsWith(opening)) ?? line),
+      expected: [
+        `agent-workflow MCP registration — nothing was written: .mcp.json is a ${result.registration.mcpJson.className} (an OS sandbox device mask is the usual cause).`,
+        "  the advisor's mcp-channel item applies the registration by the consent route — its check line runs once more outside the sandbox and the apply line runs on the yes given on that result:",
+        '  check: ' + slot.check,
+        '  apply: ' + slot.apply,
+        posture,
+        hidden,
+      ],
+    };
+  };
+
+  it('the masked report has exactly six lines naming the advisor item and its consent route', async () => {
+    const { writeMcp, formatResult, MCP_TOOL } = await load();
+    await withRoot((root) => {
+      const masked = { ...io, lstat: (path, ...rest) => (path === mcpAbs(root) ? maskedStat() : lstatSync(path, ...rest)) };
+      const result = writeMcp({ cwd: root, dryRun: false }, masked);
+      const report = formatResult(result);
+      const { opened, expected } = maskedReportLines(result, 'mcp-channel', MCP_TOOL);
+      assert.deepEqual(opened(report), expected, 'the masked report is the six-line advisor consent route, without a handoff body');
+      for (const forbidden of ['mcpServers', 'merge', 'paste', 'HAND-APPLY', 'enabledMcpjsonServers', SERVER_PATH]) {
+        assert.equal(report.includes(forbidden), false, `the masked report carries no ${forbidden}`);
+      }
+    });
+  });
+
+  it('a masked run under --replace routes through the mcp-channel.differing check and apply', async () => {
+    const { writeMcp, formatResult, MCP_TOOL } = await load();
+    await withRoot((root) => {
+      const masked = { ...io, lstat: (path, ...rest) => (path === mcpAbs(root) ? maskedStat() : lstatSync(path, ...rest)) };
+      const result = writeMcp({ cwd: root, dryRun: false, replace: true }, masked);
+      const report = formatResult(result);
+      const { opened, expected } = maskedReportLines(result, 'mcp-channel.differing', MCP_TOOL);
+      assert.deepEqual(opened(report), expected, 'the replace intent reaches the printed route');
+      assert.equal(report.includes('--variant mcp-channel --'), false, 'no base-variant line under --replace');
+    });
+  });
+
+  it('--help names the masked consent route and preserves the exact-entry preview line', async () => {
+    const { main } = await load();
+    const out = [];
+    const deps = { ...io, log: (line) => out.push(line), errlog: (line) => out.push(line) };
+    assert.equal(main(['--help'], deps), 0);
+    const help = out.join('\n');
+    assert.ok(help.split('\n').includes('Default is --dry-run (a preview that prints the exact entry and writes nothing).'));
+    const clause = help.replace(/\s+/gu, ' ').match(/Where \.mcp\.json is a device node[^.]*\./u)?.[0];
+    assert.ok(clause, 'the masked-state help sentence is present');
+    assert.match(clause, /mcp-channel/u, "the masked-state help clause names the advisor's mcp-channel item");
+    assert.match(clause, /consent route/u);
+    assert.doesNotMatch(clause, /merge|paste|printed/iu);
   });
 });
 

@@ -59,6 +59,8 @@ const need = (mod, name) => {
 };
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 import { makeProject as makeProfileProject } from './tier-preview.test/harness.test.mjs';
+import { CENSUS_VERDICT } from './tracked-tree-census.mjs';
+import { RULES_REGIONS, extractRegionBy } from './rules-regions.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PACKAGE_JSON = '{"name":"fixture"}\n';
@@ -80,6 +82,13 @@ const MANAGED_GUARDLESS = '#!/usr/bin/env bash\n# fixture:install-git-hooks.mjs\
 const SPACE_PROJECT_PREFIX = 'recommendations none ';
 const EMPTY_BUNDLE_PREFIX = 'recommendations-empty-bundle-';
 const NATIVE_WINDOWS_DETAIL = 'on native Windows Claude Code runs no sandbox: this item takes no effect there';
+const UNFILLABLE_STEP = 'your own step — in docs/ai/gates.json declare or move a suite gate carrying the coverage reporters before the coverage checker (references/modes/gates.md names the exact form), or drop that checker, then run /agent-workflow-kit recommendations';
+const PRODUCER_UNRECOGNIZED_STEP = 'your own step — in docs/ai/gates.json mark the gate that writes the lcov with "lcovProducer": true (references/modes/gates.md names the key), or drop the coverage checker, then run /agent-workflow-kit recommendations';
+const REVIEW_RECIPE_STEP = 'your own step — set up the backend the recipe names with /agent-workflow-kit setup (it places the bridge skill and links its wrappers, and names the CLI install and sign-in that stay yours; /agent-workflow-kit backends shows what is missing), or re-pick the recipe with /agent-workflow-kit set-recipe, then run /agent-workflow-kit recommendations';
+const CHECKER_NOT_LAST = 'coverage-check is not the LAST declared gate, so there is no trailing position to place a producer before, and the fill never reorders entries it did not write';
+const PRODUCER_COLLISION = 'a producer IS offerable here, but its id "test" is already declared, so the fill refuses it as a collision — rename that gate, or repoint it at the producer form';
+const NO_PRODUCER = 'no offerable producer exists here, and the fill never reorders entries it did not write';
+const PRODUCER_UNRECOGNIZED_DETAIL = 'coverage-check has no producer declared and none offerable — the fill offers only terminating-class script names, so a recognized body under another name (a "ci" script running node --test) is declared as its own gate entry, never marked';
 
 // Recipe expectations are READ FROM the bundled manifests (the advisor's own single source) —
 // a hardcoded list here would silently outdate the moment a manifest gains an observed entry.
@@ -247,11 +256,13 @@ describe('recommendations — section contract', () => {
     assert.match(r.stderr, /not a directory/);
   });
 
-  it('--help names the empty-state line, the hand-apply boundary, and the optional `recipe:` line', () => {
+  it('--help names the empty-state line, the user-step sentence, and the optional `recipe:` line', () => {
     const r = main(['--help']);
     assert.equal(r.code, 0);
     assert.ok(r.stdout.includes(RECOMMENDATIONS_EMPTY_LINE));
-    assert.match(r.stdout, /HAND-APPLY/);
+    assert.doesNotMatch(r.stdout, /HAND-APPLY/);
+    assert.ok(r.stdout.split('\n').includes("A user item stays the user's own step."));
+    assert.ok(r.stdout.replace(/\s+/gu, ' ').includes("an optional `recipe:` line (an item's own facts or its alternative, such as the bridge-tier missing-entries line or the worktrees-dir ack fallback)"));
     // The literal `recipe:` label (with the colon), checked against the ACTUAL rendered --help output.
     assert.match(r.stdout, /optional `recipe:` line/i, 'the --help documents the optional recipe: line');
   });
@@ -457,15 +468,12 @@ describe('recommendations — the ADR-store crossing offer', () => {
     assert.match(formatRecommendations({ items, skips }), /NOT attested/, 'optimality is not claimed over a probe that could not run');
   });
 
-  it('the apply lane is HAND-APPLY and previews — the consent flow never auto-runs a tree-mutating crossing', () => {
+  it('the chat crossing takes two-step consent over the dry-run plan', () => {
     const { items } = itemsFor({ 'docs/ai/history/decisions-archive.md': '' });
-    assert.match(items[0].apply, /^HAND-APPLY: /);
-    assert.match(items[0].apply, /fresh consent/);
-    // The RUNNABLE half — everything before the prose that follows the em dash — must be the
-    // preview. The mutation may only be NAMED in the prose, never handed over ready to run.
-    const runnable = items[0].apply.split(' — ')[0];
-    assert.match(runnable, /--dry-run/);
-    assert.doesNotMatch(runnable, /--apply/, 'the runnable half is the PREVIEW, never the mutation');
+    assert.equal(items[0].apply, `node ${shellQuoteArg(join(HERE, 'migrate-adr-store.mjs'))} --dry-run --cwd ${shellQuoteArg(HERE)}`);
+    assert.equal(items[0].lane, 'chat');
+    assert.equal(items[0].detail, null);
+    assert.doesNotMatch(items[0].apply, /HAND-APPLY|--apply/u);
   });
 });
 
@@ -485,8 +493,9 @@ describe('recommendations — the spec-adoption item (spec:spec-adoption/S5)', (
     return built;
   };
 
-  it('an absent store is ONE optional offer: the ensure applies it, the decline is a NAMED hand-apply alternative on the recipe line', () => {
-    const { items, skips } = advise(makeProject());
+  it('an absent store is ONE optional offer: the ensure applies it, the decline the agent records on the recipe line', () => {
+    const root = makeProject();
+    const { items, skips } = advise(root);
     assert.deepEqual([items.length, skips.length], [1, 0]);
     // Both arms are OFFERS: the layer is opt-in, and the frozen registry reserves attention for a
     // configured declaration that is broken.
@@ -495,10 +504,10 @@ describe('recommendations — the spec-adoption item (spec:spec-adoption/S5)', (
     assert.match(items[0].what, /feature-spec store absent \(docs\/ai\/specs\)/);
     assert.ok(items[0].apply.startsWith('node ') && items[0].apply.includes('ensure-configs.mjs'), items[0].apply);
     assert.ok(items[0].apply.includes('--reconcile --only specs --cwd '), items[0].apply);
-    // The alternative is exclusive of the apply and is never run by the consent flow — the label says so.
-    assert.ok(items[0].detail.startsWith('HAND-APPLY alternative (instead of the apply, never after it):'), items[0].detail);
-    assert.ok(items[0].detail.includes('ack-write.mjs'), items[0].detail);
-    assert.ok(items[0].detail.includes(`--lane spec-adoption --fingerprint ${declineFingerprint()}`), items[0].detail);
+    const alternative = need(recommendations, 'DECLINE_ALTERNATIVE');
+    assert.equal(alternative, 'decline alternative (asked apart, before the confirmation; on your decline the agent records it instead of the apply, never after it): ');
+    assert.equal(items[0].detail, alternative + `node ${shellQuoteArg(join(HERE, 'ack-write.mjs'))} --lane spec-adoption --fingerprint ${declineFingerprint()} --cwd ${shellQuoteArg(root)}`);
+    assert.doesNotMatch(items[0].detail, /HAND-APPLY/u);
     const out = formatRecommendations({ items, skips });
     assert.ok(!out.includes(RECOMMENDATIONS_EMPTY_LINE), 'an item never renders beside the flow-optimal line');
     assert.match(out, /1 optional recommendation\(s\)/);
@@ -723,13 +732,17 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     assert.ok(parsed.items.length > 0);
     for (const [key, apply] of [
       ['gates-declaration', `node ${join(HERE, 'gates-init.mjs')} --cwd ${root}`],
-      ['review-recipe', '/agent-workflow-kit backends'],
     ]) {
       const item = parsed.items.find((entry) => entry.key === key);
       assert.ok(item);
       assert.equal(item.lane, 'chat');
       assert.equal(item.apply, apply);
     }
+    const review = parsed.items.find((entry) => entry.key === 'review-recipe');
+    assert.ok(review);
+    assert.equal(review.lane, 'user');
+    assert.equal(review.check, null);
+    assert.equal(review.apply, need(lanes, 'applySlot')('review-recipe', { toolsDir: HERE, root }).apply);
     for (const item of [...items, ...parsed.items]) {
       const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
       assert.equal(item.lane, laneOf(item.variant));
@@ -930,9 +943,8 @@ describe('recommendations — cwd-independent apply one-liners (subdir-proof)', 
       const okShape =
         /^node \/[^\s]+\.mjs(?: |$)/.test(item.apply) ||
         /^cd \/[^\s]+ && node \/[^\s]+\.mjs$/.test(item.apply) ||
-        /^\/agent-workflow-kit [a-z-]+ \(run IN the target project/.test(item.apply) ||
-        item.apply.startsWith('HAND-APPLY');
-      assert.ok(okShape, `${item.key}: apply must be abs-path node / cd-pinned node / skill invocation / HAND-APPLY: ${item.apply}`);
+        /^\/agent-workflow-kit [a-z-]+ \(run IN the target project/.test(item.apply);
+      assert.ok(okShape, `${item.key}: apply must be abs-path node / cd-pinned node / skill invocation: ${item.apply}`);
       assert.doesNotMatch(item.apply, /(?:^|\s)(?:\.\/|\.\.\/|node tools\/)/u, `${item.key}: no relative path segments: ${item.apply}`);
       if (item.apply.startsWith('node ') && item.apply.includes(' --cwd ')) {
         assert.match(item.apply, / --cwd \//u, `${item.key}: --cwd must pin an absolute root`);
@@ -1822,7 +1834,9 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
     const item = items.find((i) => i.key === 'review-recipe');
     assert.ok(item, 'a configured-but-unsatisfiable recipe is a real sub-optimality');
     assert.match(item.what, /plan-execution\.review: configured council degrades to solo/);
-    assert.equal(item.apply, '/agent-workflow-kit backends');
+    assert.equal(item.lane, 'user');
+    assert.equal(item.check, null);
+    assert.equal(item.apply, REVIEW_RECIPE_STEP);
   });
 
   it('a bridge detector that throws makes the review-recipe probe a stated SKIP, never an item from an empty readiness', () => {
@@ -1929,12 +1943,9 @@ describe('recommendations — the inert gate declaration item', () => {
     // left in the git dir — the second reads as `coverage=certified`, so it cannot be called a pass
     // over nothing.
     assert.match(item.what, /certifies nothing this run, or reads a stale lcov/);
-    // HAND-APPLY because this fixture offers NO producer — the project declares no scripts at all,
-    // so there is nothing for the fill to place and the edit really is the maintainer's. The
-    // rendered line must never look like something the consent flow can run.
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), `cause A is maintainer territory here: ${item.apply}`);
-    assert.match(item.apply, /BEFORE coverage-check/);
-    assert.match(item.apply, /no offerable producer exists here/);
+    assert.equal(item.variant, 'gates-inert.unfillable');
+    assert.equal(item.apply, UNFILLABLE_STEP);
+    assert.equal(item.detail, NO_PRODUCER);
   });
 
   // The D-8 consequence for this item: once the fill can PLACE a producer before a trailing checker,
@@ -1952,13 +1963,12 @@ describe('recommendations — the inert gate declaration item', () => {
     rmSync(root, { recursive: true, force: true });
     const item = built.items.find((i) => i.key === 'gates-inert');
     assert.ok(item, 'the inert pair still fires');
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), `the only offerable producer collides on its id: ${item.apply}`);
+    assert.equal(item.variant, 'gates-inert.unfillable');
+    assert.equal(item.apply, UNFILLABLE_STEP);
+    assert.equal(item.detail, PRODUCER_COLLISION);
   });
 
   it('cause A: a checker that is NOT last states THAT cause — never "no offerable producer" over a producer that exists', () => {
-    // Two different situations reach the same HAND-APPLY branch, and they need different sentences:
-    // here a producer is offerable AND already declared — what blocks the fill is the checker's
-    // POSITION, which the fill may not change. Saying no producer exists would be plainly false.
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
@@ -1968,9 +1978,9 @@ describe('recommendations — the inert gate declaration item', () => {
     rmSync(root, { recursive: true, force: true });
     const item = built.items.find((i) => i.key === 'gates-inert');
     assert.ok(item, 'a checker with nothing before it is inert whatever follows it');
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), item.apply);
-    assert.doesNotMatch(item.apply, /no offerable producer/, `a producer IS offerable here: ${item.apply}`);
-    assert.match(item.apply, /not the LAST/, `the real cause is the checker's position: ${item.apply}`);
+    assert.equal(item.variant, 'gates-inert.unfillable');
+    assert.equal(item.apply, UNFILLABLE_STEP);
+    assert.equal(item.detail, CHECKER_NOT_LAST);
   });
 
   it('cause A with an OFFERABLE producer and the checker LAST renders the fill preview, not HAND-APPLY', () => {
@@ -1981,7 +1991,7 @@ describe('recommendations — the inert gate declaration item', () => {
     rmSync(root, { recursive: true, force: true });
     const item = built.items.find((i) => i.key === 'gates-inert');
     assert.ok(item, 'the inert pair still fires — the offer does not fix anything by existing');
-    assert.doesNotMatch(item.apply, /^HAND-APPLY/, `the fill can place the producer here: ${item.apply}`);
+    assert.equal(item.variant, 'gates-inert');
     assert.match(item.apply, /^node \/[^\s]*gates-init\.mjs --cwd \//, `it renders the seeder preview: ${item.apply}`);
   });
 
@@ -2004,7 +2014,9 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.ok(item, 'a producer that runs too late leaves the checker just as inert');
     assert.match(item.what, /has no producer before it/);
     assert.match(item.what, /reads a stale lcov/, 'the late-producer shape is exactly where stale bytes get certified');
-    assert.match(item.apply, /declare or MOVE a suite gate/, 'the remedy names the reorder, since the fill cannot do it');
+    assert.equal(item.variant, 'gates-inert.unfillable');
+    assert.equal(item.apply, UNFILLABLE_STEP);
+    assert.equal(item.detail, CHECKER_NOT_LAST);
   });
 
   // The apply is a PREVIEW, so what it must earn is a runnable next step. In cause A the declaration
@@ -2129,7 +2141,9 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.equal(item.variant, 'gates-inert.producer-unrecognized');
     assert.doesNotMatch(item.what, /cannot be expressed/, `the false claim is gone: ${item.what}`);
     assert.match(item.what, /NO producer declared and none offerable/, item.what);
-    assert.match(item.apply, /a recognized body under another name/, `and the apply names the gap: ${item.apply}`);
+    assert.equal(item.apply, PRODUCER_UNRECOGNIZED_STEP);
+    assert.equal(item.detail, PRODUCER_UNRECOGNIZED_DETAIL);
+    assert.match(item.detail, /a recognized body under another name/, `the recipe names the gap: ${item.detail}`);
   });
 
   it('an EXACT producer ahead of the checker fires neither cause — and never a skip', () => {
@@ -3452,6 +3466,329 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
   }
   it('the harness variant count is twenty-one', () => {
     assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+  });
+});
+
+describe('spec:init-project/S54 the advisor arms by their tables', () => {
+  const builtItems = [];
+  const CHECKER = `node "${join(HERE, 'coverage-check.mjs')}" --check`;
+  const SOURCE_SIZE = `node "${join(HERE, 'source-size-check.mjs')}" --check`;
+  const SQUATTER_STEP = `your own step — in docs/ai/gates.json rename the "source-size" gate to an id of its own, or repoint its cmd at node "${join(HERE, 'source-size-check.mjs')}" --check, then run /agent-workflow-kit recommendations`;
+  const NARROW = {
+    counts: { assessable: 1, unsupported: 3, 'out-of-domain': 1, 'excluded-test': 0 },
+    unsupportedExtensions: ['.ts'],
+    verdict: CENSUS_VERDICT.NARROW,
+    total: 5,
+  };
+  const gate = (id, cmd) => ({ id, title: id, cmd });
+  const makeRoot = (t) => {
+    const root = makeProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    return root;
+  };
+  const collect = (root, extra = {}) => {
+    const deps = hermeticDeps(root, { platform: 'linux', planGlobalRemoval: () => null, ...extra });
+    const built = buildRecommendations({ cwd: root, deps });
+    builtItems.push(...built.items);
+    return {
+      ...built,
+      env: deps.getenv,
+      home: deps.jevHost?.home ?? deps.home,
+      platform: deps.jevHost?.platform ?? deps.platform,
+    };
+  };
+  const buildGates = (t, gates, { scripts, narrow = false } = {}) => {
+    const root = makeRoot(t);
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
+    if (scripts !== undefined) {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts }));
+    }
+    return collect(root, narrow ? { takeCensus: () => NARROW } : {});
+  };
+  const buildUnfillable = (t) => [
+    {
+      built: buildGates(t, [gate('coverage-check', CHECKER), gate('lint', 'true')], { scripts: { test: 'node --test' } }),
+      detail: CHECKER_NOT_LAST,
+    },
+    {
+      built: buildGates(t, [gate('test', 'true'), gate('coverage-check', CHECKER)], { scripts: { test: 'node --test' } }),
+      detail: PRODUCER_COLLISION,
+    },
+    {
+      built: buildGates(t, [gate('lint', 'true'), gate('coverage-check', CHECKER)]),
+      detail: NO_PRODUCER,
+    },
+  ];
+  const buildUserFixtures = (t) => {
+    const unfillable = buildUnfillable(t).map(({ built }) => built);
+    const unrecognized = buildGates(t, [gate('lint', 'true'), gate('coverage-check', CHECKER)], { narrow: true });
+    const squatter = buildGates(t, [{ id: 'source-size', title: 'S', cmd: 'true' }]);
+    const root = makeRoot(t);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
+    return [...unfillable, unrecognized, squatter, collect(root)];
+  };
+  const buildDeclines = (t) => {
+    const spec = collect(makeRoot(t));
+    const connect = collect(makeRoot(t));
+    const root = makeRoot(t);
+    const home = mkdtempSync(join(tmpdir(), 's54-jev-home-'));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const getenv = { PATH: '/nonexistent-path-for-tests', TYPESAFE_API_KEY: 'a-test-key' };
+    const skill = collect(root, { getenv, jevHost: { home } });
+    const foreign = join(home, '.agents', 'skills', 'typesafe-ai');
+    mkdirSync(foreign, { recursive: true });
+    const decorated = collect(root, {
+      getenv: { ...getenv, WSL_DISTRO_NAME: 'Fixture', CLAUDE_CONFIG_DIR: 'relative' },
+      jevHost: { home },
+    });
+    return { spec, connect, skill, decorated, foreign };
+  };
+  const buildChatItems = async (t) => {
+    const items = buildInventoryFixtures().flatMap((built) => built.items);
+    builtItems.push(...items);
+    const addBuilt = (built) => items.push(...built.items);
+    addBuilt(collect(makeRoot(t)));
+    addBuilt(buildGates(t, [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)], { scripts: { test: 'node --test' } }));
+    addBuilt(buildGates(t, [gate('review-state', `node "${join(HERE, 'review-state.mjs')}" --check`)]));
+    addBuilt(buildGates(t, [gate('suite', COVERAGE_PRODUCER_BODY), gate('coverage-check', CHECKER)], { narrow: true }));
+    addBuilt(buildGates(t, [gate('source-size', SOURCE_SIZE)]));
+    const draftsRoot = makeRoot(t);
+    const specs = join(draftsRoot, 'docs', 'ai', 'specs');
+    mkdirSync(specs);
+    const drafts = {
+      'index.md': ROOT_DOC(['- [a](./a.md)', '- [b](./b.md)']),
+      'a.md': specDoc('a').replace('status: live', 'status: draft'),
+      'b.md': specDoc('b').replace('status: live', 'status: draft'),
+    };
+    for (const [name, text] of Object.entries(drafts)) {
+      writeFileSync(join(specs, name), text);
+    }
+    addBuilt(collect(draftsRoot));
+    const vendoredRoot = makeRoot(t);
+    runFixtureGit(vendoredRoot, ['init', '-q', '-b', 'main']);
+    mkdirSync(join(vendoredRoot, 'src'));
+    mkdirSync(join(vendoredRoot, 'vendor'));
+    writeFileSync(join(vendoredRoot, 'src', 'a.mjs'), 'export const a = 1;\n');
+    const copy = join(vendoredRoot, 'vendor', 'source-size-check.mjs');
+    writeFileSync(copy, readFileSync(join(HERE, 'source-size-check.mjs')));
+    const { SOURCE_SIZE_DEFAULTS } = await import('./source-size-core.mjs');
+    writeFileSync(join(vendoredRoot, 'docs', 'ai', 'source-size.json'), JSON.stringify({
+      _README: 'fixture',
+      schema: 1,
+      defaults: { ...SOURCE_SIZE_DEFAULTS },
+      roots: ['src'],
+      exclude: [],
+      extensions: ['.mjs'],
+    }));
+    writeFileSync(join(vendoredRoot, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('source-size', `node "${copy}" --check`)] }));
+    runFixtureGit(vendoredRoot, ['add', '-A']);
+    const sourceSize = await import('./source-size-check.mjs');
+    const minted = sourceSize.main(['--write-baseline', '--reason', 'initial adoption', '--cwd', vendoredRoot]);
+    assert.equal(minted.code, 0, minted.stdout + minted.stderr);
+    runFixtureGit(vendoredRoot, ['add', '-A']);
+    addBuilt(collect(vendoredRoot));
+    const { repoFactory, writeFence, stubs, line } = await import('./sandbox-masks-harness.test.mjs');
+    const root = repoFactory('s54-mount', { 'docs/ai/.workflow-version': '4.0.0\n' })();
+    writeFence(root, '.zshrc');
+    const readMountinfo = () => [
+      line(1, 0, '8:1', '/', '/'),
+      line(2, 1, '8:2', '/wt', root),
+      line(3, 2, '0:40', '/tmp/empty', `${root}/.bashrc`),
+      '',
+    ].join('\n');
+    addBuilt(collect(root, { ...stubs({ '.bashrc': 'file' }), readMountinfo }));
+    const template = readFileSync(join(KIT_ROOT, 'references', 'templates', 'agent_rules.md'), 'utf8');
+    const region = extractRegionBy(template, RULES_REGIONS[1].headingRe);
+    assert.equal(region.count, 1, 'the Story sessions region exists once in the bundled rules');
+    const lines = template.split('\n');
+    const withoutStorySessions = [...lines.slice(0, region.start), ...lines.slice(region.end)].join('\n');
+    const profile = makeProfileProject({ files: {
+      'docs/ai/orchestration.json': '{}\n',
+      'docs/ai/gates.json': '{"gates":[]}\n',
+      'docs/ai/agent_rules.md': withoutStorySessions,
+    } });
+    addBuilt(collect(profile.root, { probes: [probeProfileGaps] }));
+    return items;
+  };
+
+  it('1 — unfillable has the base attention severity and WHAT', () => {
+    assert.equal(SEVERITIES['gates-inert.unfillable'], SEVERITY_ATTENTION);
+    assert.equal(WHATS['gates-inert.unfillable'], WHATS['gates-inert']);
+  });
+
+  it('2 — the three unfillable declarations render their blocked recipe while a placeable producer keeps the chat preview', (t) => {
+    const blocked = buildUnfillable(t);
+    const fill = buildGates(t, [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)], { scripts: { test: 'node --test' } });
+    for (const { built, detail } of blocked) {
+      const items = built.items.filter((item) => item.key === 'gates-inert');
+      assert.equal(items.length, 1);
+      const [item] = items;
+      assert.equal(item.variant, 'gates-inert.unfillable');
+      assert.equal(item.lane, 'user');
+      assert.equal(item.check, null);
+      assert.equal(item.apply, UNFILLABLE_STEP);
+      assert.equal(item.detail, detail);
+      assert.ok(formatRecommendations({ items, skips: [] }).split('\n').includes(`   recipe: ${detail}`));
+    }
+    const items = fill.items.filter((item) => item.key === 'gates-inert');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].variant, 'gates-inert');
+    assert.equal(items[0].lane, 'chat');
+    assert.equal(items[0].apply, `node ${shellQuoteArg(join(HERE, 'gates-init.mjs'))} --cwd ${shellQuoteArg(fill.root)} --only test`);
+  });
+
+  it('3 — producer-unrecognized and the source-size id squatter render their user steps', (t) => {
+    const unrecognized = buildGates(t, [gate('lint', 'true'), gate('coverage-check', CHECKER)], { narrow: true });
+    const squatter = buildGates(t, [{ id: 'source-size', title: 'S', cmd: 'true' }]);
+    const producerItems = unrecognized.items.filter((item) => item.key === 'gates-inert');
+    const squatterItems = squatter.items.filter((item) => item.key === 'source-size');
+    assert.equal(producerItems.length, 1);
+    assert.equal(squatterItems.length, 1);
+    assert.equal(producerItems[0].variant, 'gates-inert.producer-unrecognized');
+    assert.equal(producerItems[0].lane, 'user');
+    assert.equal(producerItems[0].apply, PRODUCER_UNRECOGNIZED_STEP);
+    assert.equal(producerItems[0].detail, PRODUCER_UNRECOGNIZED_DETAIL);
+    assert.equal(squatterItems[0].variant, 'source-size.id-squatter');
+    assert.equal(squatterItems[0].lane, 'user');
+    assert.equal(squatterItems[0].apply, SQUATTER_STEP);
+    assert.equal(squatterItems[0].detail, null);
+  });
+
+  it('4 — the inventory legacy archive renders the bare ADR dry run in chat', () => {
+    const inventory = buildInventoryFixtures();
+    const items = inventory.flatMap((built) => built.items);
+    builtItems.push(...items);
+    const migrations = items.filter((item) => item.key === 'adr-store-migration');
+    assert.equal(migrations.length, 1);
+    const [item] = migrations;
+    const { root } = inventory.find((built) => built.items.includes(item));
+    assert.equal(item.apply, `node ${shellQuoteArg(join(HERE, 'migrate-adr-store.mjs'))} --dry-run --cwd ${shellQuoteArg(root)}`);
+    assert.equal(item.lane, 'chat');
+    assert.equal(item.detail, null);
+    assert.doesNotMatch(item.apply, /HAND-APPLY|--apply/u);
+  });
+
+  it('5 — decline recipes keep their ack lines and the Jev place, untouched and config-note prefixes', async (t) => {
+    const { spec, connect, skill, decorated, foreign } = buildDeclines(t);
+    const alternative = need(recommendations, 'DECLINE_ALTERNATIVE');
+    const { SKILL_PINS } = await import('./jev-facts.mjs');
+    const ack = (lane, fingerprint, root) => `node ${shellQuoteArg(join(HERE, 'ack-write.mjs'))} --lane ${lane} --fingerprint ${fingerprint} --cwd ${shellQuoteArg(root)}`;
+    const connectFingerprint = recommendations.factFingerprint('jev-connect:declined');
+    const skillFingerprint = recommendations.factFingerprint(`jev-skill:declined:${SKILL_PINS[0].tag}`);
+    const rows = [
+      [spec, 'spec-adoption', declineFingerprint(), ''],
+      [connect, 'jev-connect', connectFingerprint, ''],
+      [skill, 'jev-skill', skillFingerprint, ''],
+      [decorated, 'jev-skill', skillFingerprint, `run the apply in the WSL distro Fixture terminal; left untouched: ${foreign} — holds no entry; CLAUDE_CONFIG_DIR is set to relative, not an absolute path: the Claude Code target is ${join(decorated.home, '.claude')}; `],
+    ];
+    for (const [built, key, fingerprint, prefix] of rows) {
+      const item = built.items.find((entry) => entry.key === key);
+      assert.ok(item, key);
+      assert.equal(item.detail, prefix + alternative + ack(key, fingerprint, built.root));
+      assert.doesNotMatch(item.detail, /HAND-APPLY/u);
+    }
+  });
+
+  it('6 — an invalid recipe with a customized executor has exactly one stated skip and no executor item', (t) => {
+    const root = makeRoot(t);
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), '{ "routine": { "carrier": "bogus" } }');
+    mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'agents', 'executor.md'), '---\nname: executor\ntools: Read, Bash\n---\nmine\n');
+    const built = collect(root);
+    const skips = built.skips.filter((skip) => skip.key === 'executor-vehicle');
+    assert.equal(skips.length, 1, 'executor-vehicle speaks exactly once over the invalid carrier');
+    assert.match(skips[0].reason, /bogus/u);
+    assert.deepEqual(built.items.filter((item) => item.key === 'executor-vehicle'), []);
+  });
+
+  it('7 — every revision-11 user arm renders applySlot with no check line', (t) => {
+    const variants = ['gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe'];
+    const fixtures = buildUserFixtures(t);
+    const selected = fixtures.flatMap((built) => built.items
+      .filter((item) => variants.includes(item.variant))
+      .map((item) => ({ item, built })));
+    assert.deepEqual([...new Set(selected.map(({ item }) => item.variant))].sort(), [...variants].sort(), 'every revision-11 user variant renders');
+    for (const { item, built } of selected) {
+      const { root, env, home, platform } = built;
+      assert.equal(item.lane, 'user', item.variant);
+      assert.equal(item.apply, need(lanes, 'applySlot')(item.variant, { toolsDir: HERE, root, env, home, platform }).apply, item.variant);
+      assert.equal(item.check, null, item.variant);
+      assert.ok(!formatRecommendations({ items: [item], skips: [] }).split('\n').some((line) => line.startsWith('   check: ')), item.variant);
+    }
+  });
+
+  it('8 — every chat variant renders exactly its table writers and the judge rejects missing, unrelated and wrong writers', async (t) => {
+    const text = readFileSync(join(KIT_ROOT, 'references', 'advisor-writers.md'), 'utf8');
+    const items = (await buildChatItems(t)).filter((item) => item.lane === 'chat');
+    const variants = Object.entries(need(lanes, 'VARIANT_LANES')).filter(([, lane]) => lane === 'chat').map(([variant]) => variant);
+    assert.deepEqual([...new Set(items.map((item) => item.variant))].sort(), [...variants].sort(), 'rendered chat variants equal the lane registry');
+    const readTable = (text) => {
+      const lines = text.split('\n');
+      const separator = lines.findIndex((line) => /^\|\s*---\s*\|\s*---\s*\|\s*---\s*\|\s*$/u.test(line));
+      assert.ok(separator >= 0, 'the writer table has its three-column separator');
+      return lines.slice(separator + 1)
+        .filter((line) => /^\|.*\|$/u.test(line))
+        .map((line) => line.slice(1, -1).split('|').map((cell) => cell.trim()))
+        .map(([variant, lane, writers]) => ({ variant, lane, writers: writers.split(', ') }));
+    };
+    const judgeChatWriters = (table, items) => {
+      const mismatches = [];
+      const rendered = new Map();
+      for (const item of items) {
+        const row = table.find((entry) => entry.variant === item.variant && entry.lane === 'chat');
+        if (!row) {
+          mismatches.push(`${item.variant}: missing chat row`);
+          continue;
+        }
+        const paths = [...item.apply.matchAll(/\bnode\s+(?:'([^']+)'|"([^"]+)"|([^\s;&|]+))/gu)];
+        const writers = paths.map((match) => (match[1] ?? match[2] ?? match[3]).split('/').at(-1));
+        const modes = [...item.apply.matchAll(/\/agent-workflow-kit\s+([a-z-]+)/gu)].map((match) => match[1]);
+        const named = [...writers, ...modes];
+        const union = rendered.get(item.variant) ?? new Set();
+        rendered.set(item.variant, union);
+        for (const writer of named) {
+          union.add(writer);
+          if (!row.writers.includes(writer)) {
+            mismatches.push(`${item.variant}: apply writer ${writer} is absent from its row`);
+          }
+        }
+      }
+      for (const row of table.filter((entry) => entry.lane === 'chat')) {
+        const union = rendered.get(row.variant) ?? new Set();
+        for (const writer of row.writers) {
+          if (!union.has(writer)) {
+            mismatches.push(`${row.variant}: row writer ${writer} never renders`);
+          }
+        }
+      }
+      return mismatches;
+    };
+    const table = readTable(text);
+    assert.deepEqual(judgeChatWriters(table, items), []);
+    const missing = table.map((row) => row.variant === 'profile-gap' ? { ...row, writers: row.writers.filter((writer) => writer !== 'tier-preview.mjs') } : row);
+    const unrelated = table.map((row) => row.variant === 'gates-declaration' ? { ...row, writers: [...row.writers, 'ack-write.mjs'] } : row);
+    const wrong = table.map((row) => row.variant === 'adr-store-migration' ? { ...row, writers: ['ensure-configs.mjs'] } : row);
+    assert.ok(judgeChatWriters(missing, items).some((message) => message.includes('profile-gap: apply writer tier-preview.mjs')));
+    assert.ok(judgeChatWriters(unrelated, items).some((message) => message.includes('gates-declaration: row writer ack-write.mjs')));
+    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('adr-store-migration: apply writer migrate-adr-store.mjs')));
+    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('adr-store-migration: row writer ensure-configs.mjs')));
+  });
+
+  it('9 — no built item, inventory render or help line carries the retired marker', async (t) => {
+    const help = main(['--help']);
+    assert.equal(help.code, 0, help.stderr);
+    for (const line of help.stdout.split('\n')) {
+      assert.doesNotMatch(line, /HAND-APPLY/u, 'help carries no retired marker');
+    }
+    buildUserFixtures(t);
+    buildDeclines(t);
+    await buildChatItems(t);
+    const inventory = buildInventoryFixtures().flatMap((built) => built.items);
+    for (const item of [...builtItems, ...inventory]) {
+      for (const line of formatRecommendations({ items: [item], skips: [] }).split('\n')) {
+        assert.doesNotMatch(line, /HAND-APPLY/u, `${item.variant} carries no retired marker`);
+      }
+    }
   });
 });
 

@@ -4,6 +4,44 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.35.0 — every advisor item that only said "do it by hand" now names the kit tool the agent runs on your yes, or plainly says it is your own step; a shipped table lists each item's writer (AD-187)
+
+**The `HAND-APPLY` marker is gone from the advisor, its mode docs and the README: each item it marked either has a
+writer the agent runs on the chat yes or is a user item whose apply line is your exact step.** Before, those advisor
+lines and the masked `mcp` report carried `HAND-APPLY`, which left the step to you even where a kit tool could make
+the write.
+
+- **Three `docs/ai/gates.json` arms and `review-recipe` are user items.** The fill only adds gates, so a coverage
+  checker with no producer it can place, a checker with no producer it can recognise, and a gate squatting the
+  `source-size` id are your own edits: the new variant `gates-inert.unfillable` and the moved
+  `gates-inert.producer-unrecognized` and `source-size.id-squatter` render `your own step — in docs/ai/gates.json …,
+  then run /agent-workflow-kit recommendations`, with the item's own facts on the `recipe:` line of the two
+  `gates-inert` arms (the squatter's message states its fact). The squatter's step
+  prints the `node "<tools>/source-size-check.mjs" --check` repoint only when that path is safe to print in a gate cmd,
+  else the rename alone. `review-recipe` names `/agent-workflow-kit setup` or `set-recipe` as your step;
+  `/agent-workflow-kit backends` is a report, not a writer. `init` lists each as `listed, not applied here` and applies
+  nothing. Lanes: nine user, fifteen chat, twenty-one harness.
+- **The ADR store migration keeps its writer, under two yeses.** `adr-store-migration`'s apply is the bare
+  `migrate-adr-store.mjs --dry-run` line: on your first yes the agent runs it and shows the whole plan; the same line
+  with `--apply` in place of `--dry-run` runs only on a second yes given over that plan.
+- **A declined offer is recorded by the agent.** `spec-adoption`, `jev-connect`, `jev-skill` and `jev-skill.earlier`
+  carry a `decline alternative` on their `recipe:` line: on your decline the agent runs the `ack-write.mjs` line and
+  its printed `--apply` instead of the apply, and the item stays away (a Jev skill decline lasts until the kit pins a
+  newer skill). Seed, connect or install keep their route.
+- **The masked `mcp` report names the route.** Where a sandbox hides `.mcp.json`, `mcp` writes nothing, exits 0 and
+  names the advisor's `mcp-channel` item with its check and apply lines (the `mcp-channel.differing` arm's under
+  `--replace`); it no longer prints an entry or a settings body to paste.
+  `mcp --help`, the README `mcp` row, the catalog line and `mcp.md` say the same; `renderFragments` and the masked
+  result's `fragments` field are removed.
+- **`references/advisor-writers.md`, a new shipped table.** One row per advisor variant (forty-five): its lane and its
+  writer — the harness form's file, the chat apply's tools or writer mode — or `user step`. A suite fails on a
+  missing, extra or duplicated row, a wrong lane or writer, and a chat apply naming a tool its row does not list.
+- **Fix.** Over a schema-invalid `docs/ai/orchestration.json` the `executor-vehicle` probe reports one stated skip
+  and no longer also renders the `executor-vehicle.differing` item.
+- **Stated limits.** The three `gates.json` edits have no writer by design (the fill only adds gates: it never edits,
+  removes, reorders or renames an existing entry). Under `init`, the `footprint-global` probe and its check can judge different global ignore files when the
+  console env sets `GIT_DIR` or `GIT_CONFIG_GLOBAL` (debt row FOOTPRINT-GLOBAL-ONE-GIT-ENV).
+
 ## 14.34.0 — bootstrap and the upgrade stop making five protected writes mid-session: attribution, the legacy global ignore block, a hand-edited executor and the commit guard are applied on the chat yes (AD-186)
 
 **Five writes that bootstrap, the upgrade or a migration note made by themselves mid-session are now advisor items the

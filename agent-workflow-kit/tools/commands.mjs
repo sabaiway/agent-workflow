@@ -194,7 +194,7 @@ const CATALOG = [
     invocation: invocationOf('mcp'),
     group: 'Configure',
     kind: GUARDED,
-    oneLine: 'Register the kit’s read-only MCP server in this project, so path questions and literal searches run as typed tool calls instead of shell command strings — previews the exact entry it would declare, writes only on your yes, and where a sandbox hides the file it hands you the text to paste instead.',
+    oneLine: 'Register the kit’s read-only MCP server in this project, so path questions and literal searches run as typed tool calls instead of shell command strings — previews the exact entry it would declare, writes only on your yes, and where a sandbox hides the file it writes nothing and names the advisor’s mcp-channel item, which applies it by the consent route.',
   },
   {
     key: 'recipes',

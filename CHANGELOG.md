@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-17 — AD-187: every advisor hand step gets a writer or is named as the user's own step (kit 14.35.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**The `HAND-APPLY` marker leaves the advisor: each item it marked now has a writer the agent runs on the chat yes or is
+a user item whose apply line is the user's exact step.** Three `docs/ai/gates.json` arms (the new
+`gates-inert.unfillable`, `gates-inert.producer-unrecognized`, `source-size.id-squatter`) and `review-recipe` move to
+the user lane; `adr-store-migration` runs its dry run on the first yes and `--apply` only on a second; the decline of
+the spec-layer and Jev offers is recorded by the agent; the masked `mcp` report names the `mcp-channel` item instead
+of printing text to paste. The new shipped `references/advisor-writers.md` lists every variant's writer or user step,
+drift-checked by a suite. Contracts: init-project revision 11 (part advisor-writers, new), jev-guide revision 9,
+spec-adoption revision 2, velocity-profile revision 9. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-17 — AD-186: bootstrap and the upgrade stop making five protected writes mid-session (kit 14.34.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **Five writes bootstrap, the upgrade or a migration note made by themselves mid-session are now advisor items the

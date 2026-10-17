@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { SEVERITIES } from './recommendations.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
+import { classifySourceSizeGate } from './source-size-gate-cmd.mjs';
 import * as lanes from './write-lanes.mjs';
 
 const need = (mod, name) => {
@@ -36,7 +37,10 @@ const HARNESS = [
   'worktrees-dir',
   'attribution', 'footprint-global', 'executor-vehicle.differing',
 ];
-const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home'];
+const USER = [
+  'jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home',
+  'gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe',
+];
 const ENV_DEPENDENT = ['bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable'];
 const WORKTREES_HOME_STEP = 'your own step — point docs/ai/worktrees.json parentDir at a dedicated directory, then run /agent-workflow-kit recommendations';
 const WITH_FORMS = [...FORM_A, ...FORM_B, ...FORM_C];
@@ -117,7 +121,7 @@ describe('spec:init-project/S1 every severity key has one of the three lanes and
     for (const variant of keys.filter((v) => !HARNESS.includes(v) && !USER.includes(v))) {
       assert.equal(variantLanes[variant], 'chat', variant);
     }
-    for (const variant of ['read-lane', 'review-recipe', 'sandbox-masks']) {
+    for (const variant of ['read-lane', 'sandbox-masks']) {
       assert.equal(variantLanes[variant], 'chat', variant);
     }
   });
@@ -381,13 +385,12 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
 });
 
 describe('spec:init-project/S38 — worktrees-dir is a harness variant and worktrees-dir.home a user one', () => {
-  it('the worktrees variants have their lanes among exactly twenty-one harness and five user severity keys', () => {
+  it('the worktrees variants have their lanes among exactly twenty-one harness severity keys', () => {
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const keys = Object.keys(SEVERITIES);
     assert.equal(variantLanes['worktrees-dir'], 'harness');
     assert.equal(variantLanes['worktrees-dir.home'], 'user');
     assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 5);
   });
 
   it('worktrees-dir uses the local settings form and quoted danger-check slot on win32 without changing the five env-dependent variants', (t) => {
@@ -430,5 +433,101 @@ describe('spec:init-project/S38 — worktrees-dir is a harness variant and workt
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('./write-lanes.mjs', import.meta.url), 'utf8');
     assert.equal(source.includes('./worktrees.mjs'), false);
+  });
+});
+
+describe('spec:init-project/S53 the four user variants of revision 11 by proof', () => {
+  const variants = ['gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe'];
+
+  it('the four variants are user among nine user, twenty-one harness and fifteen chat keys, with no HAND-APPLY in any slot', (t) => {
+    const facts = createFacts(t);
+    const variantLanes = need(lanes, 'VARIANT_LANES');
+    const applySlot = need(lanes, 'applySlot');
+    const keys = Object.keys(SEVERITIES);
+    for (const variant of variants) {
+      assert.equal(variantLanes[variant], 'user', variant);
+    }
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 9);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'chat').length, 15);
+    for (const variant of keys) {
+      const slot = applySlot(variant, facts);
+      for (const line of [slot?.check, slot?.apply].filter((line) => line != null)) {
+        assert.equal(line.includes('HAND-APPLY'), false, variant);
+      }
+    }
+  });
+
+  it('the four variants have no argv, writes, environment dependence or rejudgment and return their exact user steps', (t) => {
+    const facts = createFacts(t);
+    const consoleArgv = need(lanes, 'consoleArgv');
+    const writesOf = need(lanes, 'writesOf');
+    const isEnvDependent = need(lanes, 'isEnvDependent');
+    const isRejudged = need(lanes, 'isRejudged');
+    const applySlot = need(lanes, 'applySlot');
+    const expected = {
+      'gates-inert.unfillable': 'your own step — in docs/ai/gates.json declare or move a suite gate carrying the coverage reporters before the coverage checker (references/modes/gates.md names the exact form), or drop that checker, then run /agent-workflow-kit recommendations',
+      'gates-inert.producer-unrecognized': 'your own step — in docs/ai/gates.json mark the gate that writes the lcov with "lcovProducer": true (references/modes/gates.md names the key), or drop the coverage checker, then run /agent-workflow-kit recommendations',
+      'source-size.id-squatter': `your own step — in docs/ai/gates.json rename the "source-size" gate to an id of its own, or repoint its cmd at node "${join(TOOLS, 'source-size-check.mjs')}" --check, then run /agent-workflow-kit recommendations`,
+      'review-recipe': 'your own step — set up the backend the recipe names with /agent-workflow-kit setup (it places the bridge skill and links its wrappers, and names the CLI install and sign-in that stay yours; /agent-workflow-kit backends shows what is missing), or re-pick the recipe with /agent-workflow-kit set-recipe, then run /agent-workflow-kit recommendations',
+    };
+    for (const variant of variants) {
+      assert.equal(consoleArgv(variant, facts), null, variant);
+      assert.equal(writesOf(variant, facts), null, variant);
+      assert.equal(isEnvDependent(variant), false, variant);
+      assert.equal(isRejudged(variant), false, variant);
+      const slot = applySlot(variant, facts);
+      assert.deepEqual(slot, { check: null, apply: expected[variant] }, variant);
+      if (variant === 'review-recipe') {
+        for (const mode of ['setup', 'backends', 'set-recipe']) {
+          assert.equal(slot.apply.includes(`/agent-workflow-kit ${mode}`), true, mode);
+        }
+      } else {
+        assert.equal(slot.apply.startsWith('your own step — in docs/ai/gates.json '), true, variant);
+        assert.equal(slot.apply.endsWith(', then run /agent-workflow-kit recommendations'), true, variant);
+      }
+      assertSlotLines(slot, variant);
+    }
+  });
+
+  it('the write-lanes source imports the shared double-quote and line safety predicates', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./write-lanes.mjs', import.meta.url), 'utf8');
+    const lines = source.split('\n');
+    for (const line of [
+      "import { dqUnsafePath } from './checker-claim.mjs';",
+      "import { isLineUnsafe } from './source-size-refusal.mjs';",
+    ]) {
+      assert.equal(lines.includes(line), true, line);
+    }
+  });
+
+  it('the squatter repoint cmd through a tools symlink with a space and an apostrophe classifies canonical', (t) => {
+    const base = mkdtempSync(join(tmpdir(), 'write-lanes-symlink-'));
+    t.after(() => rmSync(base, { recursive: true, force: true }));
+    const link = join(base, "o'brien kit tools");
+    symlinkSync(join(PACKAGE_ROOT, 'tools'), link, 'dir');
+    const facts = { ...createFacts(t), toolsDir: link };
+    const applySlot = need(lanes, 'applySlot');
+    const slot = applySlot('source-size.id-squatter', facts);
+    assert.ok(slot, 'source-size.id-squatter must return a user slot');
+    const expectedCmd = `node "${join(link, 'source-size-check.mjs')}" --check`;
+    assert.equal(slot.apply.includes(` repoint its cmd at ${expectedCmd},`), true);
+    const cmd = slot.apply.match(/repoint its cmd at (node "[^"]+" --check)/)?.[1];
+    assert.equal(cmd, expectedCmd);
+    assert.equal(classifySourceSizeGate(cmd, ROOT), 'canonical');
+  });
+
+  it('tools paths holding a dollar or U+2028 return only the exact squatter rename step without a cmd', (t) => {
+    const facts = createFacts(t);
+    const applySlot = need(lanes, 'applySlot');
+    const apply = 'your own step — in docs/ai/gates.json rename the "source-size" gate to an id of its own, then run /agent-workflow-kit recommendations';
+    const toolsDirs = [join(facts.home, 'kit$tools'), join(facts.home, `kit${String.fromCharCode(0x2028)}tools`)];
+    for (const toolsDir of toolsDirs) {
+      const slot = applySlot('source-size.id-squatter', { ...facts, toolsDir });
+      assert.deepEqual(slot, { check: null, apply }, toolsDir);
+      assert.equal(slot.apply.includes('node'), false, toolsDir);
+      assert.equal(slot.apply.includes('--check'), false, toolsDir);
+    }
   });
 });

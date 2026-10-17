@@ -158,14 +158,18 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
     // offers, so it is pinned ABSENT in both directions.
     assert.match(item.what, /NO producer declared and none offerable/, item.what);
     assert.doesNotMatch(item.what, /cannot be expressed/, item.what);
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), item.apply);
+    assert.equal(item.apply, 'your own step — in docs/ai/gates.json mark the gate that writes the lcov with "lcovProducer": true (references/modes/gates.md names the key), or drop the coverage checker, then run /agent-workflow-kit recommendations', 'producer-unrecognized applies the user step');
+    assert.equal(item.lane, 'user');
+    assert.equal(item.check, null);
     assert.match(item.apply, /"lcovProducer": true/, 'the honest remedy is marking the real producer');
-    assert.match(item.apply, /or drop coverage-check/, 'or dropping the checker — those are the two');
+    assert.match(item.apply, /or drop the coverage checker/, 'or dropping the checker — those are the two');
     assert.doesNotMatch(item.apply, /gates-init/, 'never the fill preview: this suite has no form the fill can offer');
+    assert.equal(item.detail, 'coverage-check has no producer declared and none offerable — the fill offers only terminating-class script names, so a recognized body under another name (a "ci" script running node --test) is declared as its own gate entry, never marked');
     // `node --test` may appear ONLY as the named residual, never as the prescription: the two
     // remedies above are the whole of what this arm tells the reader to do.
     assert.doesNotMatch(item.apply, /declare a .*node --test/, 'never a node --test prescription over a project that has no such suite');
-    assert.match(item.apply, /a recognized body under another name/, 'and the fill\'s name screen is named as the gap it is');
+    assert.doesNotMatch(item.detail, /declare a .*node --test/, 'never a node --test prescription over a project that has no such suite');
+    assert.match(item.detail, /a recognized body under another name/, 'and the fill\'s name screen is named as the gap it is');
   });
 
   it('an OFFERABLE producer disqualifies the arm — a TS-dominant tree with a node --test script gets the fill preview', () => {
@@ -184,7 +188,7 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
     assert.match(item.apply, /gates-init\.mjs --cwd .* --only test$/, `and its apply names the producer to declare: ${item.apply}`);
   });
 
-  it('an offered producer whose id COLLIDES is still expressible — the arm keys on the offer, not on what the fill may select', () => {
+  it('an offered producer whose id COLLIDES is still expressible — the user item names the blocked fill', () => {
     // The fill filters its selection by id collision, and reusing that filtered answer for the
     // EXPRESSIBILITY claim is the same falsity one corner further in: this project has a `node --test`
     // script, so its suite is expressible; only the preview is blocked, because the id is taken.
@@ -195,14 +199,14 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
     });
     const { item } = report(root);
     assert.ok(item, 'the dead pair is still a dead pair');
-    assert.equal(item.variant, 'gates-inert', `the suite is expressible, so this is the base arm: ${item.what}`);
+    assert.equal(item.variant, 'gates-inert.unfillable', `the suite is expressible, so this is the user item: ${item.what}`);
     assert.doesNotMatch(item.what, /cannot be expressed/, item.what);
-    assert.ok(item.apply.startsWith('HAND-APPLY:'), `and the fill cannot help, so the edit is the maintainer's: ${item.apply}`);
+    assert.equal(item.apply, 'your own step — in docs/ai/gates.json declare or move a suite gate carrying the coverage reporters before the coverage checker (references/modes/gates.md names the exact form), or drop that checker, then run /agent-workflow-kit recommendations');
     // The REASON is the assertion, not the prefix: a hand-apply that blames an absent producer sends
     // the reader looking for a script they already have, and this row would stay green over it.
-    assert.doesNotMatch(item.apply, /no offerable producer exists here/, `a producer IS offerable — it collides: ${item.apply}`);
-    assert.match(item.apply, /its id "test" is already declared/, `the conflicting id is named: ${item.apply}`);
-    assert.match(item.apply, /rename that gate, or repoint it/, `and the two edits that clear it: ${item.apply}`);
+    assert.doesNotMatch(item.detail, /no offerable producer exists here/, `a producer IS offerable — it collides: ${item.detail}`);
+    assert.match(item.detail, /its id "test" is already declared/, `the conflicting id is named: ${item.detail}`);
+    assert.match(item.detail, /rename that gate, or repoint it/, `and the two edits that clear it: ${item.detail}`);
   });
 
   it('a marker on the CHECKER ITSELF is not its own producer — the dead pair still fires producer-unrecognized', () => {
@@ -244,9 +248,10 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
       const { root } = fixture({ tsFiles: 3, gates: [gate('coverage-check', CHECKER), producer] });
       const { item } = report(root);
       assert.ok(item, label);
-      assert.equal(item.variant, 'gates-inert', `${label}: the base ordering arm, not a third outcome`);
+      assert.equal(item.variant, 'gates-inert.unfillable', `${label}: the user ordering arm, not a third outcome`);
       assert.match(item.what, /has no producer before it/, label);
-      assert.match(item.apply, /declare or MOVE a suite gate/, `${label}: the MOVE remedy survives`);
+      assert.match(item.apply, /declare or move a suite gate/, `${label}: the MOVE remedy survives`);
+      assert.ok(item.detail.startsWith('coverage-check is not the LAST declared gate'), `${label}: the ordering reason names the checker`);
     }
   });
 
@@ -273,7 +278,7 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
       const dead = fixture({ ...counts, gates: [gate('lint', 'true'), gate('coverage-check', CHECKER)] });
       const deadItem = report(dead.root).item;
       assert.ok(deadItem, `${label}: a dead pair is still a dead pair`);
-      assert.equal(deadItem.variant, 'gates-inert', `${label}: the base arm, not a third outcome`);
+      assert.equal(deadItem.variant, 'gates-inert.unfillable', `${label}: the user arm, not a third outcome`);
       assert.match(deadItem.what, /certifies nothing this run, or reads a stale lcov/, label);
     }
   });
@@ -317,7 +322,7 @@ describe('advisor third outcomes — an UNAVAILABLE census never buys an optimal
     const root = nonGit([gate('lint', 'true'), gate('coverage-check', CHECKER)]);
     const built = report(root);
     assert.ok(built.item, 'a checker with no producer is inert whether or not the tree can be censused');
-    assert.equal(built.item.variant, 'gates-inert', 'the arm that needs no census states it');
+    assert.equal(built.item.variant, 'gates-inert.unfillable', 'the arm that needs no census states it');
     assert.equal(built.skip, undefined, 'and an item that renders needs no skip beside it to block optimality');
   });
 

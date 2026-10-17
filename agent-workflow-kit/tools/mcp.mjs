@@ -22,21 +22,21 @@
 //   • the preflight is READ-ONLY: an absent `.claude/` is a NAMED state, and the dir is created on
 //     `--apply` only (assertCreatableDirSafe mkdirs, so it may not run in a preview);
 //   • a MASKED target (an OS sandbox injects a character device where `.mcp.json` would be — this
-//     repo is exactly that case) is not a failure: the kit hands over both paste-ready fragments,
-//     writes nothing, and exits 0. Where it cannot write, it says precisely what it would have.
+//     repo is exactly that case) is not a failure: the kit writes nothing, exits 0 and names the
+//     advisor's mcp-channel item, whose check line re-judges outside the sandbox;
 //   • never `settings.local.json`; never commits.
 //
 // The read half lives in mcp-registration.mjs, which the advisor and `uninstall` use — so what is
 // there and what would be written are computed by one module, never by two that can disagree.
 //
-// Exit codes: 0 done / dry-run (incl. the hand-apply masked state); 1 precondition STOP; 2 usage.
+// Exit codes: 0 done / dry-run (incl. the masked state); 1 precondition STOP; 2 usage.
 // Dependency-free beyond the kit's own exports, Node >= 22. No side effects on import.
 
 import {
   lstatSync, openSync, closeSync, fstatSync, writeFileSync, ftruncateSync, fsyncSync,
   renameSync, constants,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertCreatableDirSafe, writeContainedFileAtomic } from './atomic-write.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -46,7 +46,6 @@ import {
   CLAUDE_DIR_REL,
   ENABLED_KEY,
   MCP_JSON_REL,
-  SERVERS_KEY,
   SERVER_NAME,
   SETTINGS_REL,
   STATE,
@@ -54,9 +53,9 @@ import {
   mergeMcpJson,
   mergeSettings,
   readRegistration,
-  renderFragments,
 } from './mcp-registration.mjs';
 import { shellQuoteArg } from './review-state.mjs';
+import { applySlot } from './write-lanes.mjs';
 
 const q = shellQuoteArg;
 
@@ -83,7 +82,8 @@ Default is --dry-run (a preview that prints the exact entry and writes nothing).
 
 Without --replace, an existing "${SERVER_NAME}" entry that STRUCTURALLY DIFFERS is refused unwritten (key
 order is ignored). Where ${MCP_JSON_REL} is a device node, FIFO or socket — an OS sandbox
-mask is the usual cause — the entry to merge is printed and nothing is written.
+mask is the usual cause — nothing is written, and the report names the advisor's mcp-channel
+item, which applies the registration by the consent route.
 Never writes settings.local.json; never commits.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -105,9 +105,9 @@ const lstatNoFollow = (path, lstat = lstatSync) => {
 // A target we could not read or parse is never overwritten: a merge over a file whose current
 // content is unknown is a clobber wearing a merge's name.
 //
-// `maskedAllowed` is TRUE for `.mcp.json` alone. That file has a sanctioned handoff — the kit hands
-// over the entry for a human to merge from outside the sandbox — and `settings.json` has none, so a
-// mask there is an ordinary refusal rather than a second, unplanned success path.
+// `maskedAllowed` is TRUE for `.mcp.json` alone. That file has a sanctioned route — the advisor's
+// mcp-channel item, whose check line re-judges outside the sandbox — and `settings.json` has none, so
+// a mask there is an ordinary refusal rather than a second, unplanned success path.
 const assertTargetUsable = (target, { maskedAllowed = false } = {}) => {
   if (target.state === STATE.MASKED) {
     if (maskedAllowed) return;
@@ -168,7 +168,7 @@ export const preflightMcp = ({ cwd, replace = false }, deps = {}) => {
 };
 
 // The plan is pure over the registration: what is missing, and the exact body each file would get.
-// Both bodies are built even when nothing is written — they ARE the preview and the hand-apply text.
+// Both bodies are built even when nothing is written — they ARE the preview.
 export const planMcp = (registration) => ({
   writeMcpJson: !registration.mcpJson.matches,
   writeSettings: !registration.settings.complete,
@@ -225,9 +225,8 @@ const writeTarget = (root, target, body, deps, stop) => {
 
 export const writeMcp = ({ cwd, dryRun = true, replace = false } = {}, deps = {}) => {
   const preflight = preflightMcp({ cwd: cwd ?? deps.cwd ?? process.cwd(), replace }, deps);
-  const base = { ...preflight, dryRun, wrote: false };
-  if (preflight.masked) return { ...base, fragments: renderFragments(preflight.registration) };
-  if (dryRun) return base;
+  const base = { ...preflight, dryRun, replace, wrote: false };
+  if (preflight.masked || dryRun) return base;
 
   const { root, registration, plan } = preflight;
   const stop = (message) => makeMcpError(MCP_SYMLINK, message);
@@ -286,19 +285,19 @@ const settingsLine = (result) => {
   return `  - ${SETTINGS_REL}: ${dryRun ? 'would set' : 'set'} ${parts.join(' · ')}`;
 };
 
-// The hand-apply text. The two halves are worded differently because the kit KNOWS different things
-// about them: the settings body is a real merge over content it read, while the `.mcp.json` half is
-// the entry ALONE — behind the mask this mode cannot see what that file already declares, and a
-// whole-file body pasted as instructed would delete every server it could not see.
+// The masked report names the item that applies the registration by the consent route: its check
+// line, run once more outside the sandbox, reads the real file this mode cannot see through the mask.
+// A run under --replace routes through the differing arm, whose check and apply carry the replace.
 const maskedReport = (result) => {
   const target = result.registration.mcpJson;
+  const variant = result.replace ? 'mcp-channel.differing' : 'mcp-channel';
+  const { check, apply } = applySlot(variant, { toolsDir: dirname(MCP_TOOL), root: result.root });
   return [
     // The CLASS is what was observed; the sandbox mask is the usual CAUSE but is not established here.
-    `agent-workflow MCP registration — HAND-APPLY: ${MCP_JSON_REL} is a ${target.className} (an OS sandbox device mask is the usual cause), so nothing was written.`,
-    `  merge this entry into ${MCP_JSON_REL} under "${SERVERS_KEY}", and keep every other server it already declares (this mode cannot read them through the mask):`,
-    indented(`"${SERVER_NAME}": ${result.fragments.mcpEntry.trimEnd()}`),
-    `  merge into ${SETTINGS_REL} (that file was observable — and read where present — so this body already carries what is in it):`,
-    indented(result.fragments.settings),
+    `agent-workflow MCP registration — nothing was written: ${MCP_JSON_REL} is a ${target.className} (an OS sandbox device mask is the usual cause).`,
+    "  the advisor's mcp-channel item applies the registration by the consent route — its check line runs once more outside the sandbox and the apply line runs on the yes given on that result:",
+    `  check: ${check}`,
+    `  apply: ${apply}`,
     POSTURE_LINE,
     HIDDEN_MODE_LINE,
   ].join(LF);

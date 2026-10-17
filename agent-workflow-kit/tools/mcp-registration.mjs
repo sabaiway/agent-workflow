@@ -311,7 +311,7 @@ const classifyDir = (abs, io) => {
   return { state: STATE.FOREIGN, className: describeNonRegular(st) };
 };
 
-// ── the merges (ONE definition, shared by the writer's bodies and the paste-ready fragments) ──
+// ── the merges (ONE definition, shared by the writer's bodies) ──
 // Merge-don't-clobber in both: every foreign server, key and allow rule is carried over untouched,
 // and our own entry/rules are added idempotently.
 
@@ -334,19 +334,6 @@ export const mergeSettings = (registration) => {
 };
 
 export const formatJson = (data, eol) => `${JSON.stringify(data, null, JSON_INDENT).replaceAll(LF, eol)}${eol}`;
-
-// The two hand-apply bodies — the whole output of the MASKED arm.
-//
-// They are deliberately DIFFERENT shapes, because what the kit knows about each file differs. The
-// settings file was OBSERVABLE — and read where present — so its body is a real merge: it already
-// carries every foreign key it had. The masked `.mcp.json` was not observable at all, so a
-// whole-file body would name only our server and, pasted as
-// instructed, would delete every foreign server the mask hid. `mcpEntry` is therefore the ENTRY
-// ALONE, to be merged under `mcpServers` by a human who can see what is actually in that file.
-export const renderFragments = (registration) => ({
-  mcpEntry: formatJson(registration.entry, registration.mcpJson.eol),
-  settings: formatJson(mergeSettings(registration), registration.settings.eol),
-});
 
 // A LIBRARY module the mode doc names by path — so someone can try to run it. A no-op on import;
 // on a direct run it points at the command that acts on what this module only reports.

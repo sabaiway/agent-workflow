@@ -250,7 +250,16 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
   const bridgeLine = ({ file, text }) => /^kit:bridges\/[^/]+\/bin\/[^/]+\.test\.mjs$/.test(file) || file === 'kit:tools/detect-backends.mjs'
     || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text));
 
-  it('says jev or typesafe only on admitted surfaces and write-lanes or apply-danger-check lines naming a jev variant or leaf, with neither word in init-project', () => {
+  it('says jev or typesafe only on admitted surfaces, advisor-writers table rows and write-lanes or apply-danger-check lines naming a jev variant or leaf, with neither word in init-project', () => {
+    const tableLines = fileLines('kit:references/advisor-writers.md').filter(({ text }) => WORDS.test(text));
+    assert.equal(tableLines.length, 3, 'advisor-writers.md carries exactly three jev table rows');
+    const tableKeys = tableLines.map(({ text }) => {
+      const row = text.match(/^\| (jev-connect|jev-skill(?:\.earlier)?) \| (?:user|harness) \| (user step|jev-skill\.mjs) \|$/);
+      assert.ok(row, text);
+      assert.doesNotMatch(text.replace(row[1], '').replace(row[2], ''), WORDS, text);
+      return row[1];
+    });
+    assert.deepEqual(tableKeys.sort(), ['jev-connect', 'jev-skill', 'jev-skill.earlier']);
     const laneSource = readRequired('tools/write-lanes.mjs');
     const dangerSource = readRequired('tools/apply-danger-check.mjs');
     const initSource = readRequired('tools/init-project.mjs');
@@ -269,6 +278,7 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
       ...paragraphOf('kit:bridges/codex-cli-bridge/SKILL.md'), ...paragraphOf('kit:bridges/antigravity-cli-bridge/SKILL.md')];
     allowed.push(...fileLines('kit:tools/write-lanes.mjs').filter(({ text }) => WORDS.test(text)));
     allowed.push(...fileLines('kit:tools/apply-danger-check.mjs').filter(({ text }) => WORDS.test(text)));
+    allowed.push(...tableLines);
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
       const manifest = `kit:bridges/${bridge}/capability.json`;

@@ -9,7 +9,7 @@ import { BENEFITS, OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recomme
 import { ACK_LANES } from '../tools/ack-store.mjs';
 import * as lanes from '../tools/write-lanes.mjs';
 import * as velocityModule from '../tools/velocity-profile.mjs';
-import { kindOf } from '../tools/commands.mjs';
+import { COMMANDS, kindOf } from '../tools/commands.mjs';
 
 const need = (mod, name) => {
   if (!(name in mod)) {
@@ -212,7 +212,7 @@ describe('recommendations contract — risk lives at the consent moment (D3, clo
   });
 
   it('worktrees-dir-consent-flow-applies-the-grant-after-its-check-with-the-ack-as-fallback', () => {
-    assert.match(MODE_DOC, /maintainer territory wherever it renders/i, 'HAND-APPLY is bound to territory, not to a slot');
+    assert.doesNotMatch(MODE_DOC, /maintainer territory/i, 'the retired maintainer territory sentence is absent');
     const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes').replace(/\s+/gu, ' ');
     assert.ok(lane.includes(WORKTREES_LANE_SENTENCE), 'the grant follows its check and the ack is the fallback');
     assert.doesNotMatch(lane, /wait for the maintainer to confirm the grant/iu);
@@ -297,11 +297,12 @@ describe('recommendations contract — the third-outcome vocabulary reaches the 
     assert.match(notes, /NO acknowledgement silences it/i, 'and the unminted boundary too');
   });
 
-  it('the destructive arms stay HAND-APPLY in the doc, never a command the consent flow runs', () => {
+  it("the user-item arms name the user's own step without HAND-APPLY", () => {
     for (const phrase of ['`producer-unrecognized`', '`id-squatter`']) {
       const at = notes.indexOf(phrase);
       assert.notEqual(at, -1, `${phrase} is documented`);
-      assert.match(notes.slice(at, at + 1400), /HAND-APPLY/, `${phrase} names its hand-apply territory`);
+      assert.match(notes.slice(at, at + 1400), /the user's own step/, `${phrase} names the user's own step`);
+      assert.doesNotMatch(notes.slice(at, at + 1400), /HAND-APPLY/, `${phrase} retires HAND-APPLY`);
     }
   });
 });
@@ -411,7 +412,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39786, '326f1c49a0bb4cd41d0b6a45bc887bcd35fb80678b9a12a38441c55990bd0688'], 'the bytes after story S11');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39773, 'f88da2c4fe4f553d2012b35d3d8443dd5b8e88fad0e7ed11b54acc98ae20a103'], 'the bytes after story S9');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -421,11 +422,11 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
 const JEV_NOTE_START = '- `jev-connect` — ';
 const JEV_SKILL_NOTE_START = '- `jev-skill` — ';
 const JEV_SKILL_NOTE_LITERALS = Object.freeze([
-  'HAND-APPLY', 'chat yes', 'after the check', 'third-party text', 'pinned', 'verified copy',
+  'the agent records', 'chat yes', 'after the check', 'third-party text', 'pinned', 'verified copy',
   'never updated silently', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json',
 ]);
 const JEV_NOTE_LITERALS = Object.freeze([
-  'HAND-APPLY', "user's own step", 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run",
+  'the agent records', "user's own step", 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run",
   'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json',
 ]);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAttribution', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
@@ -446,6 +447,7 @@ describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked
     for (const literal of JEV_NOTE_LITERALS) {
       assert.ok(note.includes(literal), `the jev-connect note states: ${literal}`);
     }
+    assert.doesNotMatch(note, /HAND-APPLY/);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
     assert.match(between(MODE_DOC, 'The **read-only deployment advisor**', '**Live host/session facts'), /Jev not connected on this host, the Jev skill not installed for every agent/);
   });
@@ -455,6 +457,7 @@ describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked
     for (const literal of JEV_SKILL_NOTE_LITERALS) {
       assert.ok(note.includes(literal), `the jev-skill note states: ${literal}`);
     }
+    assert.doesNotMatch(note, /HAND-APPLY/);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
   });
   it('ACK_LANES maps jev-connect to jevConnectAck and jev-skill to jevSkillAck, and the writer usage names both lanes', () => {
@@ -480,6 +483,8 @@ const SLOT_VARIANTS = Object.freeze([
   'jev-skill.earlier', 'jev-connect', 'family-freshness',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'sandbox-provision',
   'enforcement', 'commit-guard',
+  'gates-inert.unfillable', 'gates-inert.producer-unrecognized',
+  'source-size.id-squatter', 'review-recipe',
 ]);
 const HARNESS_POSTURE_KEYS = Object.freeze(['bridge-tier', 'gate-hook', 'mcp-channel', 'jev-skill', 'enforcement', 'worktrees-dir']);
 const RETIRED_LANE_LITERALS = Object.freeze([
@@ -501,7 +506,7 @@ const CONSENT_ROUTE_LITERALS = Object.freeze([
   'a check that refuses', 'unapplied and pending', 'a changed digest', 'asks a new yes',
   'a no, a harness refusal and any other failure', 'leave the item pending with its output shown',
   'a chat item is never retried outside the sandbox', 'every failure of a chat step is a stop',
-  "user's own step", 'hand-apply', 'whatever its lane', 'handed over as worded',
+  "user's own step", 'handed over as worded',
 ]);
 const RETIRED_ROUTE_LITERALS = Object.freeze([
   'in the sandbox first', 'a write the os refuses on a protected file', 'mcp masked report',
@@ -586,7 +591,10 @@ describe('spec:init-project/S7 — consent route, doc pointers and optional cons
       assert.match(text, /\bagent\b[^.]*\bappl(?:y|ies)\b/i);
       assert.match(text, /after the check/i);
       assert.match(text, /\binit\b[^.]*\b(?:optional|may take|instead)\b|\b(?:optional|may take|instead)\b[^.]*\binit\b/i);
-      if (text !== MCP_DOC) assert.match(text, /a user item, and any item marked HAND-APPLY, stays your own step/);
+      if (text !== MCP_DOC) {
+        assert.match(text, /a user item stays your own step/);
+        assert.doesNotMatch(text, /HAND-APPLY/);
+      }
     }
   });
 });
@@ -733,9 +741,10 @@ describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply a
     for (const command of ['mcp']) {
       const row = README.split('\n').find((line) => line.includes(`\`/agent-workflow-kit ${command}\``));
       assert.ok(row, `README row: ${command}`);
-      assert.match(row, /paste-ready/iu, command);
+      assert.match(row, /`mcp-channel`/u, command);
+      assert.doesNotMatch(row, /paste-ready/iu, command);
     }
-    assert.match(MODE_DOC, /HAND-APPLY/u);
+    assert.doesNotMatch(MODE_DOC, /HAND-APPLY/u);
     assert.match(MODE_DOC, /--lane worktrees-dir/u);
     assert.deepEqual(hits, [], `shipped bridge advice hits:\n${hits.join('\n')}`);
     assert.doesNotMatch(VELOCITY_DOC, /opt-in-capability: sandbox-lane/iu);
@@ -833,11 +842,12 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
     assert.match(line, /^writer — /u);
   });
 
-  it('the HAND-APPLY example excludes read-lane.stale and both sandbox passages call the bare item the user\'s own step', () => {
+  it('the user-item example excludes read-lane.stale and both sandbox passages call the bare item the user\'s own step', () => {
     const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
-    const example = between(lane, 'An item marked **HAND-APPLY**', 'For `worktrees-dir`');
+    const example = between(lane, 'A user item is the user', 'After presenting');
     assert.doesNotMatch(example, /`read-lane\.stale`/u);
     assert.match(example, /source-size\.id-squatter/u);
+    assert.doesNotMatch(example, /enforcement/iu);
     assert.doesNotMatch(example, /worktrees/iu);
     for (const start of ['The sandbox items state:', '**Invariants:**']) {
       const line = between(MODE_DOC, start, '\n');
@@ -855,7 +865,6 @@ describe('spec:init-project/S37 shipped text of the two git-hook items', () => {
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
   const note = between(notes, ENFORCEMENT_NOTE_START, POSTURE_NOTE_BOUNDARY);
   const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.');
-  const example = between(lane, 'An item marked **HAND-APPLY**', 'For `worktrees-dir`');
   const invariants = between(MODE_DOC, '**Invariants:**', '\n');
   const step8 = between(BOOTSTRAP_DOC, '8. **Offer enforcement', '\n9. **');
   const step9 = between(BOOTSTRAP_DOC, '9. **Wire / hide**', '\n   - **visible**');
@@ -863,10 +872,13 @@ describe('spec:init-project/S37 shipped text of the two git-hook items', () => {
   const bannedTokens = /HAND-APPLY|\bmerge\b|by hand|bootstrap steps? 8|node scripts\/install-git-hooks|copied scripts stay|only when the maintainer applies|\bcp\b|mkdir -p/iu;
 
   it('the note, bootstrap leads and upgrade paragraph retire hand steps; the example and invariants drop the old exceptions', () => {
+    const example = between(lane, 'A user item is the user', 'After presenting');
     for (const [label, text] of [['enforcement note', note], ['bootstrap step 8', step8], ['bootstrap step 9 lead', step9], ['upgrade ensure', upgrade]]) {
       assert.doesNotMatch(text, bannedTokens, label);
     }
     assert.doesNotMatch(example, /`enforcement`/u);
+    assert.match(example, /source-size\.id-squatter/u);
+    assert.doesNotMatch(example, /read-lane\.stale|worktrees/iu);
     assert.doesNotMatch(invariants, /no-writer|keep their text/u);
   });
 
@@ -1103,5 +1115,110 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
     const help = between(read('tools/ensure-configs.mjs'), 'Usage:', '`;');
     assert.ok(help.includes("is pending — the advisor's executor-vehicle.differing item"));
     assert.doesNotMatch(help, /\bre-derive(?:d)?\b/iu);
+  });
+});
+
+describe('spec:init-project/S57 shipped text of revision 11', () => {
+  const readmeSurfaces = [
+    between(README, '### 1.', '### 2.'),
+    between(README, 'After `init`,', '> **Optional standalone'),
+    between(README, '> **Two kinds of "upgrade":', '\n---'),
+    between(README, 'The kit is the member you install', '\n```'),
+  ];
+
+  it('the advisor sources, help and shipped restatements retire HAND-APPLY', () => {
+    const usage = spawnSync(process.execPath, [resolve(kitRoot, 'tools/recommendations.mjs'), '--help'], { encoding: 'utf8' });
+    assert.deepEqual([usage.error, usage.status], [undefined, 0], usage.stderr);
+    const surfaces = [
+      ['tools/recommendations.mjs', TOOL_SOURCE],
+      ['tools/write-lanes.mjs', read('tools/write-lanes.mjs')],
+      ['recommendations --help', usage.stdout],
+      ['recommendations.md', MODE_DOC],
+      ['gates.md producer paragraph', between(read('references/modes/gates.md'), '**The coverage PRODUCER', '\n')],
+      ['mcp.md MASKED arm', between(MCP_DOC, '- **MASKED**', '\n')],
+      ...readmeSurfaces.map((text, index) => [`README restatement ${index + 1}`, text]),
+    ];
+    for (const [label, text] of surfaces) {
+      for (const line of text.split('\n')) {
+        assert.doesNotMatch(line, /hand-apply/iu, `${label} retires HAND-APPLY`);
+      }
+    }
+  });
+
+  it('the lane names the user step and keeps the second-yes exception in the printed-follow-up sentence', () => {
+    const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '\n4.').replace(/\s+/gu, ' ');
+    assert.ok(lane.includes("A user item is the user's own step, handed over as worded"), 'the lane names the user item as the user\'s own step');
+    assert.ok(lane.includes('(e.g. `source-size.id-squatter`)'), 'the lane keeps the user-item example');
+    assert.doesNotMatch(lane, /maintainer territory/iu);
+    const followUp = 'you run that printed follow-up command — no second ask, no improvisation (each writer keeps its own consent semantics: previews, `--apply` flags, refusals) — except profile-gap and adr-store-migration, whose apply line runs with --apply (appended, or in place of --dry-run) only on a second yes over the relayed preview.';
+    assert.ok(lane.includes(followUp), 'the printed-follow-up sentence itself carries both second-yes exceptions');
+  });
+
+  it('the recipe descriptions name user facts and alternatives and the README points to the writers table', () => {
+    const recipeShape = "an optional `recipe:` line (an item's own facts or its alternative, such as the `bridge-tier` missing-entries line or the `worktrees-dir` ack fallback)";
+    assert.ok(MODE_DOC.split('\n')[6].includes(recipeShape), 'recommendations.md line 7 names the recipe class with its pinned examples');
+    assert.ok(readmeRow, 'the README advisor row exists');
+    assert.ok(readmeRow.includes("a user item's own facts, the spec-adoption decline preview"), 'the README advisor row names user facts before the decline preview');
+    assert.ok(readmeRow.includes('`references/advisor-writers.md`'), 'the README advisor row points to the writers table');
+    assert.ok(readmeRow.includes('the worktrees-dir ack fallback for a host that ignores the settings key'), 'the README keeps the worktrees ack fallback');
+    assert.ok(readmeRow.includes('runs EXACTLY the rendered one-liners and the follow-up commands required by the mode doc, only on the answer authorizing that step — your yes to apply or your explicit decline to record it — with a second yes where the mode doc requires it'),
+      'the README advisor row names the follow-up commands, the recorded decline and the second yes');
+  });
+
+  it('the posture notes name user steps, two-step migration consent and recorded declines without dropping a risk key', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    const bullets = notes.split(POSTURE_NOTE_BOUNDARY);
+    const gatesNote = bullets.find((note) => note.startsWith('`gates-inert` —'));
+    assert.ok(gatesNote?.includes('the user item `gates-inert.unfillable`'), 'the gates-inert note names the unfillable user item');
+    assert.ok(gatesNote.includes("the user's own step"), 'the gates-inert note names the user\'s own step');
+    for (const start of ['ADDITIONAL `gates-inert` arms', '`source-size` —']) {
+      const note = bullets.find((entry) => entry.startsWith(start));
+      assert.ok(note?.includes("the user's own step"), `${start} names the user's own step`);
+    }
+    const migration = bullets.find((note) => note.startsWith('`adr-store-migration` —'));
+    assert.ok(migration?.includes('the first yes runs the dry run'), 'the migration note runs the dry run on the first yes');
+    assert.ok(migration.includes('runs only on a SECOND yes given over that plan'), 'the migration apply waits for the second yes over the plan');
+    for (const key of ['spec-adoption', 'jev-connect', 'jev-skill']) {
+      const note = bullets.find((entry) => entry.startsWith(`\`${key}\` —`));
+      assert.ok(note?.includes('the agent records'), `${key} names the decline the agent records`);
+      assert.ok(note.includes('BEFORE the confirmation'), `${key} asks apart before the confirmation`);
+    }
+    const noteKeys = [...notes.matchAll(/^- `([a-z-]+)`/gmu)].map((match) => match[1]);
+    assert.deepEqual([...noteKeys].sort(), [...RISK_NOTED_KEYS].sort(), 'risk-marked keys still equal the posture-note keys');
+  });
+
+  it('the README and catalog masked clauses name the mcp-channel consent route', () => {
+    const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit mcp`'));
+    assert.ok(row, 'the README mcp row exists');
+    const masked = between(row, 'Where an OS sandbox masks', '. ');
+    assert.ok(masked.includes('`mcp-channel`'), 'the README masked sentence names mcp-channel');
+    assert.ok(masked.includes('consent route'), 'the README masked sentence names the consent route');
+    assert.doesNotMatch(masked, /merge|paste|hands/iu, 'the README masked sentence retires the text handoff');
+    assert.ok(row.includes('**exact entry is printed before consent**'), 'the README keeps the preview exact-entry promise');
+    const command = COMMANDS.find(({ key }) => key === 'mcp');
+    assert.ok(command, 'the mcp catalog entry exists');
+    assert.ok(command.oneLine.includes('mcp-channel'), 'the mcp catalog names mcp-channel');
+    assert.ok(command.oneLine.includes('consent route'), 'the mcp catalog names the consent route');
+    assert.doesNotMatch(command.oneLine, /paste|hands|merge|\b(?:fragment|slot|marker|reconcile)\b/iu, 'the mcp catalog retires handoff text and keeps its vocabulary boundary');
+  });
+
+  it('mcp.md routes the masked arm through the item and keeps the settings merge refusal', () => {
+    const masked = between(MCP_DOC, '- **MASKED**', '\n');
+    assert.ok(masked.includes('`mcp-channel`'), 'the mcp.md MASKED arm names mcp-channel');
+    assert.ok(masked.includes('consent route'), 'the mcp.md MASKED arm names the consent route');
+    assert.doesNotMatch(masked, /mcpServers|paste|hands over/iu, 'the MASKED arm retires fragments and handoff instructions');
+    assert.match(masked, /merge/u, 'the masked settings.json refusal keeps its merge boundary');
+    for (const start of ['**Refusals', '**Exit codes:**']) {
+      assert.match(between(MCP_DOC, start, '\n'), /`mcp-channel`/u, `${start} names mcp-channel`);
+    }
+    assert.doesNotMatch(MCP_DOC, /hand-apply|paste|hands over|what it would have/iu, 'mcp.md retires the masked text handoff');
+  });
+
+  it('upgrade names the recorded decline and the advisor stays within the router byte budget', () => {
+    assert.ok(UPGRADE_DOC.includes('the decline the agent records'), 'upgrade.md names the decline the agent records');
+    assert.doesNotMatch(UPGRADE_DOC, /hand-apply/iu, 'upgrade.md retires hand-apply');
+    const routerModeBudget = 52224;
+    const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md'));
+    assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
   });
 });

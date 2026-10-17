@@ -5,6 +5,7 @@ import { hostname, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildRecommendations, main as advisorMain, probeJevConnect } from '../recommendations.mjs';
+const recommendations = await import('../recommendations.mjs');
 
 // The place rule and the guide are loaded dynamically, so the suite loads on a tree without them and each cell fails at its first call.
 const facts = await import('../jev-facts.mjs').catch(() => ({}));
@@ -106,7 +107,9 @@ describe('spec:jev-guide/S27 the place by proof: one ordered rule, a line of its
       assert.doesNotMatch(items[0].apply, /applies at your next|restart the agent/);
       assert.deepEqual(need(lanes, 'consoleArgv')('jev-connect', { toolsDir: TOOLS, platform }).apply,
         ['node', join(TOOLS, 'jev-connect.mjs')]);
-      assert.ok(items[0].detail.startsWith(`${prefixOf(place)}HAND-APPLY alternative`), items[0].detail);
+      const opening = need(recommendations, 'DECLINE_ALTERNATIVE');
+      assert.ok(items[0].detail.startsWith(`${prefixOf(place)}${opening}`), items[0].detail);
+      assert.doesNotMatch(items[0].detail, /HAND-APPLY/);
     });
   }
 
@@ -122,7 +125,9 @@ describe('spec:jev-guide/S27 the place by proof: one ordered rule, a line of its
       assert.equal(result.code, 0, result.stderr);
       const [item] = JSON.parse(result.stdout).items.filter(({ key }) => key === 'jev-connect');
       const place = placeOf({ env: process.env, platform: process.platform, hostname: hostname(), container: dockerenv() });
-      assert.ok(item.detail.startsWith(`${prefixOf(place)}HAND-APPLY alternative`), `${place} | ${item.detail}`);
+      const opening = need(recommendations, 'DECLINE_ALTERNATIVE');
+      assert.ok(item.detail.startsWith(`${prefixOf(place)}${opening}`), `${place} | ${item.detail}`);
+      assert.doesNotMatch(item.detail, /HAND-APPLY/);
     });
   });
 });

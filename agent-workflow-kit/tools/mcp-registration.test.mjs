@@ -344,33 +344,6 @@ describe('readRegistration — the registration facts of one project', () => {
       assert.deepEqual(r.settings.allowMissing, r.allowRules);
     });
   });
-
-  // ── the paste-ready fragments (the masked arm's whole output, and uninstall's edit text) ──
-
-  // The two fragments are DIFFERENT shapes on purpose — the settings body is a merge over content
-  // that was read, while the .mcp.json fragment is the ENTRY ALONE, because behind a mask nobody
-  // here knows what that file already declares.
-  it('renderFragments hands over the ENTRY for .mcp.json and a full merge body for settings', async () => {
-    const { readRegistration, renderFragments, ENABLED_KEY, SERVERS_KEY, allowRulesFor } = await load();
-    withRoot((root) => {
-      const fragments = renderFragments(readRegistration(root, io));
-      assert.deepEqual(JSON.parse(fragments.mcpEntry), { type: 'stdio', command: 'node', args: [SERVER_PATH] });
-      assert.equal(fragments.mcpEntry.includes(SERVERS_KEY), false, 'never a whole-file body — that is what deletes a foreign server');
-      const settings = JSON.parse(fragments.settings);
-      assert.deepEqual(settings[ENABLED_KEY], [SERVER_NAME]);
-      assert.deepEqual(settings.permissions.allow, allowRulesFor());
-    });
-  });
-
-  it('renderFragments over an EXISTING settings file merges rather than proposing a clobber', async () => {
-    const { readRegistration, renderFragments, SETTINGS_REL } = await load();
-    withRoot((root) => {
-      writeJson(join(root, SETTINGS_REL), { permissions: { allow: ['Bash(ls:*)'] }, includeCoAuthoredBy: false });
-      const settings = JSON.parse(renderFragments(readRegistration(root, io)).settings);
-      assert.equal(settings.includeCoAuthoredBy, false, 'a foreign key survives the proposed fragment');
-      assert.equal(settings.permissions.allow[0], 'Bash(ls:*)', 'and so does a foreign allow rule, in place');
-    });
-  });
 });
 
 // withoutRegistration is the token-removal COMPLEMENT of mergeSettings — not its exact inverse: a

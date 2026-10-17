@@ -3,6 +3,10 @@ import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
 import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL } from './git-hooks.mjs';
+import { dqUnsafePath } from './checker-claim.mjs';
+import { isLineUnsafe } from './source-size-refusal.mjs';
+import { SOURCE_SIZE_GATE_ID } from './source-size-gate-cmd.mjs';
+import { GATES_REL } from './gates-declaration.mjs';
 
 export const LANE_CHAT = 'chat';
 export const LANE_HARNESS = 'harness';
@@ -16,16 +20,17 @@ export const VARIANT_LANES = Object.freeze({
   'autonomy-render': LANE_HARNESS,
   'sandbox-provision': LANE_USER,
   'sandbox-provision.installable': LANE_USER,
-  'review-recipe': LANE_CHAT,
+  'review-recipe': LANE_USER,
   'gates-declaration': LANE_CHAT,
   'gates-inert': LANE_CHAT,
+  'gates-inert.unfillable': LANE_USER,
   'gates-inert.no-verification': LANE_CHAT,
-  'gates-inert.producer-unrecognized': LANE_CHAT,
+  'gates-inert.producer-unrecognized': LANE_USER,
   'gates-inert.coverage-domain-narrow': LANE_CHAT,
   'source-size': LANE_CHAT,
   'source-size.unminted': LANE_CHAT,
   'source-size.adopted-elsewhere': LANE_CHAT,
-  'source-size.id-squatter': LANE_CHAT,
+  'source-size.id-squatter': LANE_USER,
   'gate-hook': LANE_HARNESS,
   'gate-hook.marker-stale': LANE_HARNESS,
   'commit-guard': LANE_HARNESS,
@@ -109,6 +114,15 @@ const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER
 
 const formatCommand = (argv) => argv.map(quoteArg).join(' ');
 const TERMINAL_STEP = 'run in a terminal of your own: ';
+const OWN_STEP = 'your own step — ';
+const RERUN_ADVISOR = ', then run /agent-workflow-kit recommendations';
+
+const squatterStep = (facts) => {
+  const tool = join(facts.toolsDir, 'source-size-check.mjs');
+  const rename = `${OWN_STEP}in ${GATES_REL} rename the "${SOURCE_SIZE_GATE_ID}" gate to an id of its own`;
+  if (dqUnsafePath(tool) || isLineUnsafe(tool)) return `${rename}${RERUN_ADVISOR}`;
+  return `${rename}, or repoint its cmd at node "${tool}" --check${RERUN_ADVISOR}`;
+};
 
 // rejudged: the written value derives from state init's record does not watch, so init re-runs its check before the apply.
 const createForm = (file, preview, apply, writes, envDependent = false, userStep = null, rejudged = false) => Object.freeze({
@@ -155,13 +169,13 @@ const FORMS = Object.freeze({
   'jev-skill': SKILL_FORM,
   'jev-skill.earlier': SKILL_FORM,
   'jev-connect': createForm('jev-connect.mjs', null, [], getStartupPaths, true,
-    (facts, argv) => 'your own step — it asks for the key in your terminal and the key never goes into the chat — '
+    (facts, argv) => `${OWN_STEP}it asks for the key in your terminal and the key never goes into the chat — `
       + `${TERMINAL_STEP}${formatCommand(argv.apply)}`),
   'family-freshness': Object.freeze({
-    userStep: () => `your own step — ${TERMINAL_STEP}${formatCommand(['npx', '@sabaiway/agent-workflow-kit@latest', 'init'])}`,
+    userStep: () => `${OWN_STEP}${TERMINAL_STEP}${formatCommand(['npx', '@sabaiway/agent-workflow-kit@latest', 'init'])}`,
   }),
   'sandbox-provision': Object.freeze({
-    userStep: (facts) => 'your own step — the doctor has no install it can run for you here (the reason is this item\'s text) — '
+    userStep: (facts) => `${OWN_STEP}the doctor has no install it can run for you here (the reason is this item's text) — `
       + `${TERMINAL_STEP}cd ${quoteArg(facts.root)} && ${formatCommand(['node', join(facts.toolsDir, 'autonomy-doctor.mjs')])}`,
   }),
   enforcement: createForm('git-hooks.mjs',
@@ -171,7 +185,21 @@ const FORMS = Object.freeze({
   'worktrees-dir': createForm('velocity-profile.mjs',
     ['--worktrees', '--cwd', '<root>'], ['--apply', '--worktrees', '--cwd', '<root>'], LOCAL_SETTINGS_WRITES, false, null, true),
   'worktrees-dir.home': Object.freeze({
-    userStep: () => 'your own step — point docs/ai/worktrees.json parentDir at a dedicated directory, then run /agent-workflow-kit recommendations',
+    userStep: () => `${OWN_STEP}point docs/ai/worktrees.json parentDir at a dedicated directory${RERUN_ADVISOR}`,
+  }),
+  'gates-inert.unfillable': Object.freeze({
+    userStep: () => `${OWN_STEP}in ${GATES_REL} declare or move a suite gate carrying the coverage reporters before the coverage checker`
+      + ` (references/modes/gates.md names the exact form), or drop that checker${RERUN_ADVISOR}`,
+  }),
+  'gates-inert.producer-unrecognized': Object.freeze({
+    userStep: () => `${OWN_STEP}in ${GATES_REL} mark the gate that writes the lcov with "lcovProducer": true`
+      + ` (references/modes/gates.md names the key), or drop the coverage checker${RERUN_ADVISOR}`,
+  }),
+  'source-size.id-squatter': Object.freeze({ userStep: squatterStep }),
+  'review-recipe': Object.freeze({
+    userStep: () => `${OWN_STEP}set up the backend the recipe names with /agent-workflow-kit setup (it places the bridge skill`
+      + ' and links its wrappers, and names the CLI install and sign-in that stay yours; /agent-workflow-kit backends shows what is'
+      + ` missing), or re-pick the recipe with /agent-workflow-kit set-recipe${RERUN_ADVISOR}`,
   }),
 });
 

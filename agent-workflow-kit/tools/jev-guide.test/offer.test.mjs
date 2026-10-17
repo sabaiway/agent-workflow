@@ -132,10 +132,11 @@ describe('spec:jev-guide/S18 the item and the decline round trip', () => {
     assert.equal(skips.length, 0);
     assert.deepEqual(items, [{ key: LANE, variant: LANE, severity: SEVERITY_OPTIONAL, lane: 'user', what: WHAT, benefit: BENEFIT,
       check: null, apply: userStep(),
-      detail: `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${LANE} --fingerprint ${DECLINE} --cwd ${q(root)}` }]);
+      detail: need(loaded, 'DECLINE_ALTERNATIVE') + `node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${LANE} --fingerprint ${DECLINE} --cwd ${q(root)}` }]);
+    assert.equal(need(loaded, 'DECLINE_ALTERNATIVE'), 'decline alternative (asked apart, before the confirmation; on your decline the agent records it instead of the apply, never after it): ');
     assert.ok(formatRecommendations({ items, skips }).includes(WHAT));
     assert.doesNotMatch(items[0].apply, /applies at your next|restart the agent/);
-    const command = items[0].detail.slice(items[0].detail.indexOf('— ') + '— '.length);
+    const command = items[0].detail.slice(need(loaded, 'DECLINE_ALTERNATIVE').length);
     const env = hermeticGitEnv({ PATH: process.env.PATH }, root);
     const wrong = spawnSync('sh', ['-c', `${command.replace(DECLINE, OTHER)} --apply`], { encoding: 'utf8', cwd: root, env });
     assert.equal(wrong.error, undefined);
@@ -159,7 +160,7 @@ describe('spec:jev-guide/S18 the item and the decline round trip', () => {
     assert.deepEqual(items.map(({ apply }) => apply), [userStep()]);
     assert.deepEqual(need(lanes, 'applySlot')(LANE, { toolsDir: TOOLS }), { check: null, apply: userStep() });
     assert.equal(items[0].detail, `run the apply in a terminal inside this container; ${plain.detail}`);
-    assert.ok(plain.detail.startsWith('HAND-APPLY alternative'), plain.detail);
+    assert.ok(plain.detail.startsWith(need(loaded, 'DECLINE_ALTERNATIVE')), plain.detail);
   });
 
 });
@@ -266,7 +267,7 @@ const TARGET_ROWS = {
   'absent and earlier mixed': [null, 'older', 'current'],
 };
 const SKILL_ACKS = { absent: null, declined: SKILL_DECLINE, 'another fingerprint': OTHER, unreadable: null };
-const recordFor = (root) => `HAND-APPLY alternative (instead of the apply, never after it): decline the offer by recording it — node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${SKILL_LANE} --fingerprint ${SKILL_DECLINE} --cwd ${q(root)}`;
+const recordFor = (root) => need(loaded, 'DECLINE_ALTERNATIVE') + `node ${q(join(TOOLS, 'ack-write.mjs'))} --lane ${SKILL_LANE} --fingerprint ${SKILL_DECLINE} --cwd ${q(root)}`;
 
 describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () => {
   for (const [keyName, env] of Object.entries(KEYS)) {
@@ -298,7 +299,8 @@ describe('spec:jev-guide/S35 the jev-skill item through deps.probes alone', () =
     assert.equal(skips.length, 0);
     assert.deepEqual(items, [{ key: SKILL_LANE, variant: SKILL_LANE, severity: SEVERITY_OPTIONAL, lane: 'harness', what: SKILL_WHAT, benefit: SKILL_BENEFIT,
       ...skillSlot(SKILL_LANE, root, join(home, '.claude')), detail: recordFor(root) }]);
-    const command = items[0].detail.slice(items[0].detail.lastIndexOf('— ') + '— '.length);
+    const opening = need(loaded, 'DECLINE_ALTERNATIVE');
+    const command = items[0].detail.slice(items[0].detail.lastIndexOf(opening) + opening.length);
     const env = hermeticGitEnv({ PATH: process.env.PATH }, home);
     const written = spawnSync('sh', ['-c', `${command} --apply`], { encoding: 'utf8', cwd: root, env });
     assert.equal(written.error, undefined);
