@@ -28,8 +28,8 @@ const OTHER_LINEAGE = '2.0.0';
 const TARGETS = [
   ['epic', 'author', ['subagent', 'solo']],
   ['epic', 'review', ['reviewed', 'solo']],
-  ['task', 'author', ['delegated', 'subagent', 'solo']],
-  ['task', 'execute', ['delegated', 'subagent', 'solo']],
+  ['task', 'author', ['subagent', 'solo']],
+  ['task', 'execute', ['subagent', 'solo']],
 ];
 const json = (value) => JSON.stringify(value, null, 2);
 const record = (declined) => json({ schema: 1, declined });

@@ -8,7 +8,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refuseDirectRun } from './direct-run.mjs';
 import { deriveLensTemplate } from './review-roster-resolve.mjs';
-import { EXECUTOR_DEFAULTS, VEHICLES_REL, readVehicles, resolveExecutor } from './vehicle-settings.mjs';
+import { EXECUTOR_DEFAULTS, VEHICLES_REL, readVehicles, resolveExecutor, resolveReviewLens } from './vehicle-settings.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +68,12 @@ export const readBundledAgents = (deps = {}) => {
     throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `no bundled agent templates found in ${bundleDir} — the kit install is incomplete`);
   }
   return templates;
+};
+
+const bundledTemplate = (name, deps) => {
+  const bundled = readBundledAgents(deps).find((item) => item.name === name);
+  if (!bundled) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${name} is missing from the bundle`);
+  return bundled;
 };
 
 // ── the preflight reads (velocity discipline: symlink-safe, stamp read, no writes) ────
@@ -130,9 +136,24 @@ export const deriveExecutorBody = (bundledContent, posture) =>
   deriveLensTemplate(bundledContent, executorVehicleSpec(posture));
 
 export const executorTemplate = (posture, deps = {}) => {
-  const bundled = readBundledAgents(deps).find((item) => item.name === EXECUTOR_VEHICLE);
-  if (!bundled) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${EXECUTOR_VEHICLE} is missing from the bundle`);
+  const bundled = bundledTemplate(EXECUTOR_VEHICLE, deps);
   return { name: EXECUTOR_VEHICLE, content: deriveExecutorBody(bundled.content, posture), rederive: true };
+};
+
+// ── the bundled review lens, derived from its posture like the executor ───────────────
+
+export const REVIEW_LENS_VEHICLE = 'review-lens.md';
+export const REVIEW_LENS_VEHICLE_REL = `${AGENTS_DIR}/${REVIEW_LENS_VEHICLE}`;
+
+export const readReviewLensPosture = (projectDir, deps = {}) => {
+  const fs = readFsDeps(deps);
+  return resolveReviewLens(readVehicles(projectDir, fs.readFile, fs.lstat));
+};
+
+export const reviewLensTemplate = (posture, deps = {}) => {
+  const bundled = bundledTemplate(REVIEW_LENS_VEHICLE, deps);
+  const spec = { stem: 'review-lens', model: posture.model, effort: posture.effort, derived: true };
+  return { name: REVIEW_LENS_VEHICLE, content: deriveLensTemplate(bundled.content, spec), rederive: true };
 };
 
 // The executor ensure's cell 6: a regular placed executor whose bytes differ from the body derived from
@@ -220,8 +241,7 @@ const lensFrontmatter = (frontmatter, stem) => {
 
 const templateFor = (spec, deps) => {
   if (spec.template == null) return null;
-  const bundled = readBundledAgents(deps).find((item) => item.name === `${spec.template}.md`);
-  if (!bundled) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${spec.template}.md is missing from the bundle`);
+  const bundled = bundledTemplate(`${spec.template}.md`, deps);
   return {
     name: `${spec.stem}.md`,
     content: spec.derived ? deriveLensTemplate(bundled.content, spec) : bundled.content,

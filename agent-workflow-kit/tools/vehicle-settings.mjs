@@ -3,11 +3,14 @@ import { join } from 'node:path';
 
 export const VEHICLES_REL = 'docs/ai/vehicles.json';
 export const EXECUTOR_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high', fallback: 'sonnet' });
+export const REVIEW_LENS_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high' });
 
 const README_KEY = '_README';
 const EXECUTOR_KEY = 'executor';
-const TOP_LEVEL_KEYS = Object.freeze([README_KEY, EXECUTOR_KEY]);
+const LENS_KEY = 'review-lens';
+const TOP_LEVEL_KEYS = Object.freeze([README_KEY, EXECUTOR_KEY, LENS_KEY]);
 const EXECUTOR_KEYS = Object.freeze(Object.keys(EXECUTOR_DEFAULTS));
+const LENS_KEYS = Object.freeze(Object.keys(REVIEW_LENS_DEFAULTS));
 const OBJECT_TYPE = 'object';
 const STRING_TYPE = 'string';
 const EMPTY_STRING = '';
@@ -44,6 +47,25 @@ const unreadable = (reason) => ({ state: UNREADABLE, reason });
 const describeError = (error) => String(error?.code ?? error?.message ?? error);
 const formatReadError = (error) => `${VEHICLES_REL}: ${UNREADABLE} (${describeError(error)})`;
 
+const validateSection = (value, rel, name, keys) => {
+  const section = value[name];
+  if (!isPlainObject(section)) return refuseValue(rel, name, OBJECT_REQUIRED);
+  for (const key of Object.keys(section)) {
+    if (!keys.includes(key)) return refuseValue(rel, `${name}.${key}`, UNKNOWN_KEY);
+  }
+  for (const key of keys) {
+    const qualifiedKey = `${name}.${key}`;
+    if (!Object.hasOwn(section, key)) return refuseValue(rel, qualifiedKey, REQUIRED_KEY);
+    const token = section[key];
+    if (typeof token !== STRING_TYPE) return refuseValue(rel, qualifiedKey, STRING_REQUIRED);
+    if (token === EMPTY_STRING) return refuseValue(rel, qualifiedKey, NONEMPTY_REQUIRED);
+    if (!TOKEN_PATTERN.test(token) || token.trim() !== token) {
+      return refuseValue(rel, qualifiedKey, TOKEN_REQUIRED);
+    }
+  }
+  return { ok: true, values: Object.fromEntries(keys.map((key) => [key, section[key]])) };
+};
+
 export const validateVehicles = (value, rel = VEHICLES_REL) => {
   if (!isPlainObject(value)) return refuseValue(rel, BODY_NAME, OBJECT_REQUIRED);
   for (const key of Object.keys(value)) {
@@ -53,26 +75,15 @@ export const validateVehicles = (value, rel = VEHICLES_REL) => {
     return refuseValue(rel, README_KEY, STRING_REQUIRED);
   }
   if (!Object.hasOwn(value, EXECUTOR_KEY)) return refuseValue(rel, EXECUTOR_KEY, REQUIRED_KEY);
-  const executor = value[EXECUTOR_KEY];
-  if (!isPlainObject(executor)) return refuseValue(rel, EXECUTOR_KEY, OBJECT_REQUIRED);
-  for (const key of Object.keys(executor)) {
-    if (!EXECUTOR_KEYS.includes(key)) return refuseValue(rel, `${EXECUTOR_KEY}.${key}`, UNKNOWN_KEY);
-  }
-  for (const key of EXECUTOR_KEYS) {
-    const qualifiedKey = `${EXECUTOR_KEY}.${key}`;
-    if (!Object.hasOwn(executor, key)) return refuseValue(rel, qualifiedKey, REQUIRED_KEY);
-    const token = executor[key];
-    if (typeof token !== STRING_TYPE) return refuseValue(rel, qualifiedKey, STRING_REQUIRED);
-    if (token === EMPTY_STRING) return refuseValue(rel, qualifiedKey, NONEMPTY_REQUIRED);
-    if (!TOKEN_PATTERN.test(token) || token.trim() !== token) {
-      return refuseValue(rel, qualifiedKey, TOKEN_REQUIRED);
-    }
-  }
-  if (executor.fallback === executor.model) {
+  const executor = validateSection(value, rel, EXECUTOR_KEY, EXECUTOR_KEYS);
+  if (!executor.ok) return executor;
+  if (executor.values.fallback === executor.values.model) {
     return refuseValue(rel, EXECUTOR_KEY, DISTINCT_FALLBACK_REQUIRED);
   }
-  const { model, effort, fallback } = executor;
-  return { ok: true, settings: { executor: { model, effort, fallback } } };
+  const settings = { executor: executor.values };
+  if (!Object.hasOwn(value, LENS_KEY)) return { ok: true, settings };
+  const lens = validateSection(value, rel, LENS_KEY, LENS_KEYS);
+  return lens.ok ? { ok: true, settings: { ...settings, [LENS_KEY]: lens.values } } : lens;
 };
 
 const probeEntry = (path, lstat) => {
@@ -121,6 +132,17 @@ export const resolveExecutor = (answer) => {
   }
   if (answer?.state === ABSENT) {
     return { posture: { ...EXECUTOR_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
+  }
+  if (answer?.state === UNREADABLE) return { posture: null, reason: answer.reason };
+  throw fail(CONFIG_EXIT_CODE, `${VEHICLES_REL}: ${UNKNOWN_STATE} ${String(answer?.state)}`);
+};
+
+export const resolveReviewLens = (answer) => {
+  if (answer?.state === PRESENT && Object.hasOwn(answer.settings, LENS_KEY)) {
+    return { posture: { ...answer.settings[LENS_KEY], source: FILE_SOURCE }, reason: null };
+  }
+  if (answer?.state === PRESENT || answer?.state === ABSENT) {
+    return { posture: { ...REVIEW_LENS_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
   }
   if (answer?.state === UNREADABLE) return { posture: null, reason: answer.reason };
   throw fail(CONFIG_EXIT_CODE, `${VEHICLES_REL}: ${UNKNOWN_STATE} ${String(answer?.state)}`);

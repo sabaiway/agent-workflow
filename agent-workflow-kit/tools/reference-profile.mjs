@@ -22,8 +22,8 @@ const target = (activity, slot, candidates) => Object.freeze({ activity, slot, c
 export const TIER_TARGETS = Object.freeze([
   target('epic', 'author', ['subagent', 'solo']),
   target('epic', 'review', ['reviewed', 'solo']),
-  target('task', 'author', ['delegated', 'subagent', 'solo']),
-  target('task', 'execute', ['delegated', 'subagent', 'solo']),
+  target('task', 'author', ['subagent', 'solo']),
+  target('task', 'execute', ['subagent', 'solo']),
 ]);
 
 const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

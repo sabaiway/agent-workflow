@@ -1,8 +1,12 @@
 {
-  "_README": "The executor vehicle's model, effort and fallback as a project setting, read by the kit's vehicle-settings readers into one posture, which the placed executor's body follows: the agents writer derives it from model and effort, the upgrade reports a differing body as pending, and fallback names the model of the one retry; seeded once and never clobbered, hand-edited as three bare tokens with fallback differing from model.",
+  "_README": "The executor vehicle's model, effort and fallback as a project setting, read by the kit's vehicle-settings readers into one posture, which the placed executor's body follows: the agents writer derives it from model and effort, the upgrade reports a differing body as pending, and fallback names the model of the one retry; seeded once and never clobbered, hand-edited as three bare tokens with fallback differing from model. The optional review-lens section holds the bundled review lens's model and effort, opus and high by default: the agents writer derives the placed review-lens.md from them and re-derives a differing copy.",
   "executor": {
     "model": "opus",
     "effort": "high",
     "fallback": "sonnet"
+  },
+  "review-lens": {
+    "model": "opus",
+    "effort": "high"
   }
 }

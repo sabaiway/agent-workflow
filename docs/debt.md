@@ -206,7 +206,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `epic.review = reviewed (computed default) → codex-review` (`recipes-shorthand.test.mjs:28`) and `status` prints
   `epic.review: reviewed (default)` (`family-registry.test.mjs:1114`); `orchestration-readme.mjs:74` and the seed
   `references/templates/orchestration.json:2` say it "is reviewed as soon as a review backend is ready"; the tier
-  offer previews `epic.review = reviewed` and `task.author = delegated` (`tier-preview.test.mjs:93`); a delegated
+  offer previews `epic.review = reviewed` (`tier-preview.test.mjs:92`; since KIT-DEFAULT-POSTURE S1 its
+  `task.author` previews `subagent`, no bridge); a delegated
   `task.author` renders `→ codex-exec` in the active line (`recipes-shorthand.test.mjs:47`) and the codex-exec
   driving contract under `procedures task` (`procedures.mjs:168`, pinned by `procedures-roster.test.mjs:191`).
   Narrow fix: those surfaces render `epic.review` as the lens review and `task.author` as the orchestrator's prompt,
@@ -596,6 +597,31 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `<toolsDir>/../references/modes/gates.md`. Proof: a step cell asserting the printed path exists. Residual, not live: the
   agent presents the step and resolves the kit-relative `references/modes/` path, as every advisor note does. Raised by
   the S9 diff review (lens).
+- **ONE-AGENTS-APPLY-REDERIVES-BOTH-BODIES-UNSTATED** — invariant: an advisor item's text names every file its apply
+  writes. Origin: the `executor-vehicle.differing` item applies through the agents writer's `--apply`
+  (`agent-workflow-kit/tools/write-lanes.mjs:162`), which after story S1 of KIT-DEFAULT-POSTURE also
+  re-derives a differing `review-lens.md`; the item's text names only the executor, and the `agents` item's text only
+  the lens, so a yes to one rewrites both. Narrow fix: one sentence in review-roster's vehicles part and each text
+  naming both bodies when both differ. Residual, not live: the apply-danger check prints every file the writer would
+  rewrite before the apply (`agent-workflow-kit/tools/apply-danger-check.mjs:299-301`). Raised by the KIT-DEFAULT-POSTURE spec review
+  (lens, round 1).
+- **BARE-STEM-NEVER-DERIVED-SENTENCE-OVERREACHES** — invariant: the vehicles part states which bare stems the writer
+  derives in every configured state. Origin: review-roster's vehicles part (revision 7, story S1 of KIT-DEFAULT-POSTURE) says every bare stem
+  other than `review-lens` is never derived, while a bare stem deduped with a configured derived member of the same
+  stem is derived and placed (`agent-workflow-kit/tools/cheap-agents-derived.test.mjs:49-63`). Narrow fix: "Every other
+  bare stem takes no posture: it is surveyed as-is, and its file is derived only through a configured derived member of
+  the same stem." Residual, not live: the code and its pinned test already behave so. Raised by the KIT-DEFAULT-POSTURE spec review
+  (lens, round 2).
+- **AGENTS-OFFER-PRESENT-BUT-UNUSABLE-OVERREACHES** — invariant: a restatement of which executor states the `agents`
+  offer cannot observe names only the states it converges over. Origin: `agent-workflow-kit/references/modes/agents.md:17`
+  ("can never observe a present-but-unusable vehicle") and `references/modes/recommendations.md:25` ("which a
+  present-but-unusable executor also satisfies"), wording carried from before KIT-DEFAULT-POSTURE S1; a symlinked or
+  non-regular `executor.md` makes `planPlacement` throw (`agent-workflow-kit/tools/cheap-agents-read.mjs:107-108`) and an
+  unreadable `docs/ai/vehicles.json` makes the probe skip (`agent-workflow-kit/tools/recommendations.mjs:1093-1095`), so
+  the offer states a skip there instead of converging; only a regular executor failing the check converges, the scope
+  `recommendations.mjs:436` states. Narrow fix: both docs say "a regular-file executor that fails the check (it is
+  re-derived, never placed)". Residual, not live: the skip line names the reason, and `executor-vehicle` still renders
+  the solo degrade. Raised by the KIT-DEFAULT-POSTURE S1 diff review (lens, round 2).
 
 ## Closed
 

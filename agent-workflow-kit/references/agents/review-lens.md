@@ -1,7 +1,7 @@
 ---
 name: review-lens
 description: Read-only ADDITIONAL review lens — an independent opinion additional to the orchestrator's own review and to whatever configured backends ran; never a substitute for either. Grants no shell, so it can never turn a review into a wave of approval prompts. Never for writing code or running gates.
-model: sonnet
+model: opus
 effort: high
 tools: Read, Grep, Glob
 ---

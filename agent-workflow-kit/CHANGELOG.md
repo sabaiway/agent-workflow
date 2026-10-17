@@ -4,6 +4,32 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.36.0 — the review lens runs on opus/high by default and its model is a setting; the task tier offer proposes the executor, not codex (AD-188)
+
+**The bundled review lens now takes its model and effort from `docs/ai/vehicles.json`, opus and high unless you set
+otherwise, and the agents writer keeps the placed `review-lens.md` in step with that setting.** Before, the lens was
+pinned to sonnet in its bundled file, and a project that wanted another model edited the placed copy by hand.
+
+- **One setting.** `docs/ai/vehicles.json` takes an optional `review-lens` section of exactly `model` and `effort`
+  (bare tokens, checked like the executor's). Without the section the lens runs opus/high; a malformed section makes
+  the file unreadable, and the agents writer stops with `CHEAP_AGENTS_VEHICLES` and places nothing. New projects get
+  the section in the seed; an existing file is never rewritten and needs no section.
+- **The placed lens is derived.** `/agent-workflow-kit agents` builds `review-lens.md` from the bundled body with
+  exactly its `model:` and `effort:` lines set from the posture, and re-derives a placed copy that differs on
+  `--apply` (`would re-derive` in the preview). The report prints
+  `review-lens posture: model=… effort=… (source: file|default) — set in docs/ai/vehicles.json`. The cheap-lane
+  vehicles and the lenses a review roster derives stay preserved when you customize them.
+- **The upgrade reaches it through the `agents` item.** When the placed lens differs from its derived body, the
+  advisor's `agents` item says so beside any vehicles still to place; the agent applies it on your yes after its
+  check.
+- **The tier offer proposes `subagent`, then `solo`, for `task.author` and `task.execute`.** `delegated` is no
+  longer offered, so a ready codex changes no offered task value. A recorded decline of the offer stays current.
+
+**Upgrade note.** Run `/agent-workflow-kit upgrade` and answer yes to the `agents` item: the placed review lens moves
+to opus/high. To keep another posture, set it in the `review-lens` section of `docs/ai/vehicles.json` first, for
+example `"review-lens": { "model": "sonnet", "effort": "high" }`. A task slot an earlier tier offer set to
+`delegated` stays as it is; `/agent-workflow-kit set-recipe --set task.execute=subagent` (and `task.author`) moves it.
+
 ## 14.35.0 — every advisor item that only said "do it by hand" now names the kit tool the agent runs on your yes, or plainly says it is your own step; a shipped table lists each item's writer (AD-187)
 
 **The `HAND-APPLY` marker is gone from the advisor, its mode docs and the README: each item it marked either has a

@@ -15,6 +15,7 @@ const EXPORT_NAMES = Object.freeze({
   path: 'VEHICLES_REL', defaults: 'EXECUTOR_DEFAULTS', validate: 'validateVehicles',
   read: 'readVehicles', load: 'loadVehicles', resolve: 'resolveExecutor',
   ensure: 'ensureVehicles', implementations: 'OWN_IMPLEMENTATIONS', operations: 'ENSURE_OPS',
+  lensDefaults: 'REVIEW_LENS_DEFAULTS', resolveLens: 'resolveReviewLens',
 });
 const ABSENT_PREFIX = 'absent: ';
 const absent = (name) => () => { throw new Error(`${ABSENT_PREFIX}${name}`); };
@@ -27,6 +28,8 @@ const validateVehicles = loaded.validateVehicles ?? absent(EXPORT_NAMES.validate
 const readVehicles = loaded.readVehicles ?? absent(EXPORT_NAMES.read);
 const loadVehicles = loaded.loadVehicles ?? absent(EXPORT_NAMES.load);
 const resolveExecutor = loaded.resolveExecutor ?? absent(EXPORT_NAMES.resolve);
+const REVIEW_LENS_DEFAULTS = loaded.REVIEW_LENS_DEFAULTS ?? absent(EXPORT_NAMES.lensDefaults);
+const resolveReviewLens = loaded.resolveReviewLens ?? absent(EXPORT_NAMES.resolveLens);
 const ensureVehicles = loadedEnsures.ensureVehicles ?? absent(EXPORT_NAMES.ensure);
 const OWN_IMPLEMENTATIONS = loadedEnsures.OWN_IMPLEMENTATIONS ?? absent(EXPORT_NAMES.implementations);
 const ENSURE_OPS = loadedVocabulary.ENSURE_OPS ?? absent(EXPORT_NAMES.operations);
@@ -52,6 +55,13 @@ const EXPECTED_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high', fallbac
 const CUSTOM_EXECUTOR = Object.freeze({ model: 'primary.v2', effort: 'medium', fallback: 'backup-model_1' });
 const README = 'Hand edited project settings.';
 const VALID_BODY = Object.freeze({ _README: README, executor: CUSTOM_EXECUTOR });
+const LENS_KEY = 'review-lens';
+const LENS_KEYS = Object.freeze(['model', 'effort']);
+const EXPECTED_LENS_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high' });
+const CUSTOM_LENS = Object.freeze({ model: 'lens.v3', effort: 'low' });
+const LENS_BODY = Object.freeze({ ...VALID_BODY, [LENS_KEY]: CUSTOM_LENS });
+const LENS_OBJECT_REASON = `${LENS_KEY} must be a plain object`;
+const NEWLINE_TOKEN = ['opus', 'tools: Bash'].join(String.fromCharCode(10));
 const PRESENT = 'present';
 const ABSENT = 'absent';
 const UNREADABLE = 'unreadable';
@@ -105,6 +115,8 @@ const withProject = (run) => {
     rmSync(directory, { recursive: true, force: true });
   }
 };
+const lensKey = (key) => `${LENS_KEY}.${key}`;
+const without = (object, missingKey) => Object.fromEntries(Object.entries(object).filter(([key]) => key !== missingKey));
 const writeSettings = (directory, value) => writeFileSync(join(directory, SETTINGS_REL), JSON.stringify(value));
 const throwPermission = () => { throw Object.assign(new Error(PERMISSION_CODE), { code: PERMISSION_CODE }); };
 const assertReason = (reason, expectedWord) => {
@@ -146,10 +158,6 @@ it('reads and resolves authored values (spec:vehicle-settings/S1)', () => {
     assert.deepEqual(validateVehicles(VALID_BODY), { ok: true, settings });
     assert.deepEqual(validateVehicles(settings), { ok: true, settings });
     assert.equal(VEHICLES_REL, SETTINGS_REL);
-    assert.deepEqual(Object.keys(loaded).sort(), [
-      EXPORT_NAMES.path, EXPORT_NAMES.defaults, EXPORT_NAMES.validate,
-      EXPORT_NAMES.read, EXPORT_NAMES.load, EXPORT_NAMES.resolve,
-    ].sort());
   });
 });
 
@@ -164,9 +172,10 @@ it('resolves absence to frozen defaults and pins the seed (spec:vehicle-settings
       posture: { ...EXECUTOR_DEFAULTS, source: DEFAULT_SOURCE }, reason: null,
     });
     const template = JSON.parse(readFileSync(join(KIT_ROOT, TEMPLATE_REL), ENCODING));
-    assert.deepEqual(Object.keys(template), [README_KEY, EXECUTOR_KEY]);
+    assert.deepEqual(Object.keys(template), [README_KEY, EXECUTOR_KEY, LENS_KEY]);
     assert.equal(typeof template._README, STRING_TYPE);
     assert.deepEqual(template.executor, EXECUTOR_DEFAULTS);
+    assert.deepEqual(template[LENS_KEY], REVIEW_LENS_DEFAULTS);
     assert.equal(existsSync(join(directory, SETTINGS_REL)), false);
   });
 });
@@ -180,20 +189,31 @@ it('refuses every malformed form without a posture (spec:vehicle-settings/S3)', 
     { value: {}, reason: matchWord(EXECUTOR_KEY) },
     ...nonObjects.map((executor) => ({ value: { executor }, reason: matchWord(EXECUTOR_KEY) })),
     ...EXECUTOR_KEYS.map((missingKey) => ({
-      value: { executor: Object.fromEntries(Object.entries(CUSTOM_EXECUTOR).filter(([key]) => key !== missingKey)) },
-      reason: matchWord(missingKey),
+      value: { executor: without(CUSTOM_EXECUTOR, missingKey) }, reason: matchWord(missingKey),
     })),
     { value: { executor: { ...CUSTOM_EXECUTOR, [UNKNOWN_KEY]: true } }, reason: matchWord(UNKNOWN_KEY) },
     ...EXECUTOR_KEYS.flatMap((key) => [false, EMPTY_TOKEN, ...BAD_TOKENS].map((value) => ({
       value: { executor: { ...CUSTOM_EXECUTOR, [key]: value } }, reason: matchWord(key),
     }))),
     { value: { executor: { ...CUSTOM_EXECUTOR, [FALLBACK_KEY]: CUSTOM_EXECUTOR[MODEL_KEY] } }, reason: matchWord(FALLBACK_KEY) },
+    ...nonObjects.map((lens) => ({ value: { ...VALID_BODY, [LENS_KEY]: lens }, reason: matchWord(LENS_OBJECT_REASON) })),
+    ...LENS_KEYS.map((missingKey) => ({
+      value: { ...VALID_BODY, [LENS_KEY]: without(CUSTOM_LENS, missingKey) }, reason: matchWord(lensKey(missingKey)),
+    })),
+    ...[UNKNOWN_KEY, FALLBACK_KEY].map((key) => ({
+      value: { ...LENS_BODY, [LENS_KEY]: { ...CUSTOM_LENS, [key]: CUSTOM_EXECUTOR[FALLBACK_KEY] } }, reason: matchWord(lensKey(key)),
+    })),
+    { value: { [LENS_KEY]: CUSTOM_LENS }, reason: matchWord(EXECUTOR_KEY) },
+    ...LENS_KEYS.flatMap((key) => [false, EMPTY_TOKEN, ...BAD_TOKENS, NEWLINE_TOKEN].map((value) => ({
+      value: { ...LENS_BODY, [LENS_KEY]: { ...CUSTOM_LENS, [key]: value } }, reason: matchWord(lensKey(key)),
+    }))),
   ];
   for (const { value, reason } of malformed) {
     withProject((directory) => {
       writeSettings(directory, value);
       const answer = readVehicles(directory);
       assertUnreadable(answer, reason);
+      assert.deepEqual(resolveReviewLens(answer), { posture: null, reason: answer.reason });
       assertLoadFailure(() => loadVehicles(directory), answer.reason);
       const validation = validateVehicles(value);
       assert.equal(validation.ok, false);
@@ -308,4 +328,37 @@ it('seeds once, preserves authored bytes and owns the fourth slot (spec:vehicle-
   assert.equal(OWN_IMPLEMENTATIONS.vehicles, ensureVehicles);
   assert.equal(ENSURE_OPS[VEHICLES_INDEX], VEHICLES_OP);
   assert.equal(ENSURE_OPS[AUTONOMY_INDEX], AUTONOMY_OP);
+});
+
+it('resolves the review lens from its section or the frozen defaults (spec:vehicle-settings/S6)', () => {
+  assert.deepEqual(REVIEW_LENS_DEFAULTS, EXPECTED_LENS_DEFAULTS);
+  assert.equal(Object.isFrozen(REVIEW_LENS_DEFAULTS), true);
+  assert.deepEqual(Object.keys(loaded).sort(), [
+    EXPORT_NAMES.path, EXPORT_NAMES.defaults, EXPORT_NAMES.validate, EXPORT_NAMES.read,
+    EXPORT_NAMES.load, EXPORT_NAMES.resolve, EXPORT_NAMES.lensDefaults, EXPORT_NAMES.resolveLens,
+  ].sort());
+  const defaultLens = { posture: { ...EXPECTED_LENS_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
+  withProject((directory) => {
+    writeSettings(directory, LENS_BODY);
+    const answer = readVehicles(directory);
+    assert.deepEqual(answer, { state: PRESENT, settings: { executor: CUSTOM_EXECUTOR, [LENS_KEY]: CUSTOM_LENS } });
+    assert.deepEqual(resolveReviewLens(answer), { posture: { ...CUSTOM_LENS, source: FILE_SOURCE }, reason: null });
+    assert.deepEqual(resolveExecutor(answer), { posture: { ...CUSTOM_EXECUTOR, source: FILE_SOURCE }, reason: null });
+  });
+  withProject((directory) => {
+    writeSettings(directory, VALID_BODY);
+    const answer = readVehicles(directory);
+    assert.equal(Object.hasOwn(answer.settings, LENS_KEY), false);
+    assert.deepEqual(resolveReviewLens(answer), defaultLens);
+  });
+  withProject((directory) => {
+    assert.deepEqual(resolveReviewLens(readVehicles(directory)), defaultLens);
+    writeFileSync(join(directory, SETTINGS_REL), INVALID_JSON);
+    const answer = readVehicles(directory);
+    assert.equal(answer.state, UNREADABLE);
+    assert.deepEqual(resolveReviewLens(answer), { posture: null, reason: answer.reason });
+  });
+  for (const answer of [{ state: UNKNOWN_STATE }, null]) {
+    assert.throws(() => resolveReviewLens(answer), (error) => error instanceof Error && error.exitCode === EXIT_FAILURE);
+  }
 });

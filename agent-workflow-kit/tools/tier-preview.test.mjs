@@ -23,8 +23,7 @@ const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', '
   'named-queue-row-seed'];
 const CHECKER_LINE = 'checker-gates-declared: undecidable — declaration-absent';
 const WORDS = ['present', 'offered', 'declined', 'undecidable'];
-const TARGETS = [['epic', 'author', ['subagent', 'solo']], ['epic', 'review', ['reviewed', 'solo']],
-  ['task', 'author', ['delegated', 'subagent', 'solo']], ['task', 'execute', ['delegated', 'subagent', 'solo']]];
+const TARGETS = [['epic', 'author', ['subagent', 'solo']], ['epic', 'review', ['reviewed', 'solo']], ['task', 'author', ['subagent', 'solo']], ['task', 'execute', ['subagent', 'solo']]];
 const SLOT_LINE_RE = /^ {2}([a-z-]+)\.([a-z]+) = ([a-z]+)((?: — [a-z]+ skipped: .+)*)$/;
 const NONE_READY = {};
 const ALL_READY = { codex: 'ready', agy: 'ready', executor: 'placed' };
@@ -84,13 +83,15 @@ describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule',
     const slots = under(run.lines, 'epic-task-slots').slice(1).map((line) => line.match(SLOT_LINE_RE));
     assert.deepEqual(slots.map((match) => match[3]), ['solo', 'solo', 'solo', 'solo']);
     assert.match(slots[0][4], /^ — subagent skipped: .*\/agent-workflow-kit agents/);
-    assert.match(slots[2][4], /^ — delegated skipped: .+ — subagent skipped: .*\/agent-workflow-kit agents/);
+    for (const match of slots.slice(2)) assert.match(match[4], /^ — subagent skipped: .*\/agent-workflow-kit agents/);
   });
 
-  it('prints the first candidate of each slot when every provider is ready', async () => {
+  it('prints the first candidate of each slot when every provider is ready, no ready bridge changing a task value', async () => {
     const { run } = await preview({ files: { [CONFIG]: seed() } }, ALL_READY);
     assert.deepEqual(under(run.lines, 'epic-task-slots').slice(1),
-      ['  epic.author = subagent', '  epic.review = reviewed', '  task.author = delegated', '  task.execute = delegated']);
+      ['  epic.author = subagent', '  epic.review = reviewed', '  task.author = subagent', '  task.execute = subagent']);
+    const vehicleOnly = await preview({ files: { [CONFIG]: seed() } }, { executor: 'placed' });
+    assert.deepEqual(under(vehicleOnly.run.lines, 'epic-task-slots').slice(3), under(run.lines, 'epic-task-slots').slice(3));
   });
 
   it('prints only values the slot type admits', async () => {
@@ -141,8 +142,8 @@ describe('spec:tier-offer/S2 the preview is the default and writes zero bytes', 
 });
 
 describe('spec:tier-offer/S3 never over a declared slot', () => {
-  it('reports every slot present and never rewrites the config when all four are declared', async () => {
-    const minified = JSON.stringify({ ...SEED_CONFIG, ...EVERY_TARGET });
+  it('reports every slot present and never rewrites the config when all four are declared, a delegated task slot kept', async () => {
+    const minified = JSON.stringify({ ...SEED_CONFIG, ...EVERY_TARGET, task: { author: 'delegated', execute: 'delegated' } });
     const { root } = makeProject({ files: { [CONFIG]: minified } });
     const run = await runOffer(root, ['--apply'], readinessOf(ALL_READY));
     assert.equal(run.code, 0, run.stderr);
@@ -156,10 +157,10 @@ describe('spec:tier-offer/S3 never over a declared slot', () => {
     const minified = JSON.stringify({ ...SEED_CONFIG, ...declared });
     const { root, run } = await preview({ files: { [CONFIG]: minified } }, ALL_READY);
     assert.deepEqual(under(run.lines, 'epic-task-slots').slice(1),
-      ['  epic.author = subagent', '  epic.review: present', '  task.author: present', '  task.execute = delegated']);
+      ['  epic.author = subagent', '  epic.review: present', '  task.author: present', '  task.execute = subagent']);
     const applied = await runOffer(root, ['--apply'], readinessOf(ALL_READY));
     assert.equal(applied.code, 0, applied.stderr);
-    const expected = { ...SEED_CONFIG, epic: { review: ['review-lens'], author: 'subagent' }, task: { author: 'solo', execute: 'delegated' } };
+    const expected = { ...SEED_CONFIG, epic: { review: ['review-lens'], author: 'subagent' }, task: { author: 'solo', execute: 'subagent' } };
     assert.equal(bytesOf(root, CONFIG).toString(), serializeConfig(expected));
   });
 });

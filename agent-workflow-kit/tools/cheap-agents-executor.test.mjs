@@ -16,6 +16,8 @@ const executorVehicleSpec = loaded.executorVehicleSpec ?? absent;
 const deriveExecutorBody = loaded.deriveExecutorBody ?? absent;
 const executorTemplate = loaded.executorTemplate ?? absent;
 const CHEAP_AGENTS_VEHICLES = loaded.CHEAP_AGENTS_VEHICLES ?? absent;
+const readReviewLensPosture = loaded.readReviewLensPosture ?? absent;
+const reviewLensTemplate = loaded.reviewLensTemplate ?? absent;
 const SETTINGS_REL = 'docs/ai/vehicles.json';
 const CONFIG_REL = 'docs/ai/orchestration.json';
 const EXECUTOR_NAME = 'executor.md';
@@ -229,8 +231,10 @@ it('spec:executor-vehicle/S3 places and re-derives executor while preserving oth
     assert.equal(result.plan.filter((item) => item.name === EXECUTOR_NAME).length, 1);
     assert.equal(result.plan.findIndex((item) => item.name === EXECUTOR_NAME), readBundledAgents().findIndex((item) => item.name === EXECUTOR_NAME));
     for (const item of others) {
-      assert.equal(result.plan.find((row) => row.name === item.name).action, 'customized-preserved');
-      assert.equal(readFileSync(item.abs, 'utf8'), `Customized ${item.name}\n`);
+      const lensRow = item.name === 'review-lens.md';
+      assert.equal(result.plan.find((row) => row.name === item.name).action, lensRow ? 're-derive' : 'customized-preserved');
+      const derived = lensRow && !dryRun ? reviewLensTemplate(readReviewLensPosture(root).posture).content : null;
+      assert.equal(readFileSync(item.abs, 'utf8'), derived ?? `Customized ${item.name}\n`);
     }
     assert.equal(readExecutor(root), dryRun ? CUSTOM : executorTemplate(posture).content);
   }

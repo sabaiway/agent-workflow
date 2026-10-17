@@ -88,7 +88,7 @@ describe('bundled vehicles — frontmatter pins', () => {
         assert.equal(model[1], 'haiku', 'a cheap-lane vehicle is pinned to the cheap model');
         assert.match(frontmatter, /^effort: low$/m, 'a cheap-lane vehicle is pinned to low effort');
       } else {
-        assert.equal(model[1], 'sonnet', 'the review lens is pinned to a review-capable model');
+        assert.notEqual(model[1], 'haiku', 'the review lens is pinned off the cheap model (its value pin lives in the review-lens suite)');
         assert.match(frontmatter, /^effort: high$/m, 'and to an effort that can actually review');
       }
       const name = frontmatter.match(/^name: (\S+)$/m);

@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-17 — AD-188: the review lens's model is a setting, opus/high by default; the task tier offer leaves `delegated` out (kit 14.36.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**The bundled review lens takes its model and effort from an optional `review-lens` section of
+`docs/ai/vehicles.json`, opus and high by default; the agents writer derives the placed `review-lens.md` from it and
+re-derives a differing copy, and the advisor's `agents` item carries that re-derive to upgrading projects.** The tier
+offer proposes `subagent`, then `solo`, for both task slots; a slot already set stays. Contracts: vehicle-settings
+revision 3, executor-vehicle revision 5, review-roster revision 7, tier-offer revision 5. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-17 — AD-187: every advisor hand step gets a writer or is named as the user's own step (kit 14.35.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **The `HAND-APPLY` marker leaves the advisor: each item it marked now has a writer the agent runs on the chat yes or is

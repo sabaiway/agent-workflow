@@ -6,6 +6,8 @@ import { join } from 'node:path';
 const agents = await import('./cheap-agents-read.mjs');
 const { lensVehicleSpec, deriveLensTemplate } = await import('./review-roster-resolve.mjs');
 const { BUNDLED_LENS_TEMPLATES } = await import('./review-roster.mjs');
+const { REVIEW_LENS_DEFAULTS } = await import('./vehicle-settings.mjs').catch(() => ({}));
+const lensDefaults = () => REVIEW_LENS_DEFAULTS ?? assert.fail('REVIEW_LENS_DEFAULTS is absent');
 
 const PROJECT = '/virtual/project';
 const missing = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
@@ -32,7 +34,7 @@ describe('parameterized lens vehicle survey (spec:review-roster/S4)', () => {
     const bundled = readFileSync(join(agents.BUNDLED_AGENTS_DIR, 'review-lens.md'), 'utf8');
     assert.deepEqual(survey('review-lens', bundled), {
       state: 'placed', reason: null, rel: '.claude/agents/review-lens.md',
-      model: 'sonnet', effort: 'high',
+      model: lensDefaults().model, effort: lensDefaults().effort,
     });
     assert.deepEqual(
       survey('review-lens', '---\nname: review-lens\nmodel: opus\neffort: high\ntools: [Read, Grep]\n---\ncustom\n'),

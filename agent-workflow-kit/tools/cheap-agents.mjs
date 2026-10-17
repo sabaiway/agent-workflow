@@ -14,8 +14,9 @@
 //     STOPs both, since the derived lenses it names cannot be known);
 //   • symlink-safe — a symlinked project root, `.claude`, `.claude/agents` or target file is a
 //     STOP, in a dry-run too, never a write-through;
-//   • preserves differing .claude/agents/ files (`customized — preserved`), except the executor:
-//     on apply its body is re-derived from docs/ai/vehicles.json, replacing a hand edit;
+//   • preserves differing .claude/agents/ files (`customized — preserved`), except the executor
+//     and the bundled review lens: on apply each body is re-derived from docs/ai/vehicles.json
+//     (the lens from its review-lens section, opus and high by default), replacing the earlier body;
 //     an identical file is `already current` (idempotent re-run);
 //   • writes ONLY under .claude/agents/ — never settings.json / settings.local.json, never
 //     commits.
@@ -38,7 +39,7 @@ import { shellQuoteArg } from './repo-lex.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { lensMembersOf } from './review-roster.mjs';
 import { deriveLensTemplate, lensVehicleSpec } from './review-roster-resolve.mjs';
-import { loadVehicles, resolveExecutor } from './vehicle-settings.mjs';
+import { loadVehicles, resolveExecutor, resolveReviewLens } from './vehicle-settings.mjs';
 import { safeLine } from './carriers.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 // The READ core, never a second copy: the bundle, the placement plan and the executor survey live
@@ -55,7 +56,9 @@ import {
   CHEAP_AGENTS_CONFIG,
   CHEAP_AGENTS_VEHICLES,
   EXECUTOR_VEHICLE,
+  REVIEW_LENS_VEHICLE,
   executorTemplate,
+  reviewLensTemplate,
   makeCheapAgentsError,
   readFsDeps,
   readBundledAgents,
@@ -100,15 +103,16 @@ const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 
 Places the bundled subagent definitions into the project's ${AGENTS_DIR}/. Four vehicles grant NO
 shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps, changelog
-fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle on a review-capable
-model. The fifth, executor, is the ONE full-tool vehicle: dispatched only for a bounded execution,
+fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle, opus/high unless
+docs/ai/vehicles.json sets another posture. The fifth, executor, is the ONE full-tool vehicle: dispatched only for a bounded execution,
 authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and
 it never commits.
 Default is --dry-run (a preview; writes nothing). --apply writes.
 Configured derived review lenses are planned and placed beside the bundled vehicles.
-An existing file with DIFFERENT content is preserved and reported, never overwritten, except the executor.
-The executor's model and effort come from docs/ai/vehicles.json, and a placed executor whose bytes differ
-from the derived body is re-derived on --apply (a hand edit is replaced, never preserved).`;
+An existing file with DIFFERENT content is preserved and reported, never overwritten, except the executor
+and the review lens. The executor's model and effort come from docs/ai/vehicles.json, the review lens's
+from its review-lens section there (opus and high by default), and a placed executor or review-lens.md
+whose bytes differ from its derived body is re-derived on --apply (the earlier body is replaced, never preserved).`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -151,11 +155,12 @@ const loadConfigOrStop = (cwd, deps) => {
   }
 };
 
-const loadExecutorPostureOrStop = (cwd, deps) => {
+const loadPosturesOrStop = (cwd, deps) => {
   try {
-    return resolveExecutor(loadVehicles(cwd, deps.readFile, deps.lstat)).posture;
+    const answer = loadVehicles(cwd, deps.readFile, deps.lstat);
+    return { posture: resolveExecutor(answer).posture, lensPosture: resolveReviewLens(answer).posture };
   } catch (err) {
-    throw makeCheapAgentsError(CHEAP_AGENTS_VEHICLES, `${err?.message ?? err} — the agents writer cannot derive the executor vehicle — nothing is placed`);
+    throw makeCheapAgentsError(CHEAP_AGENTS_VEHICLES, `${err?.message ?? err} — the agents writer cannot derive the executor and review-lens vehicles — nothing is placed`);
   }
 };
 
@@ -182,10 +187,12 @@ export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
   const fs = writeFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
   refuseSymlinkedRoot(projectDir, deps);
-  const posture = loadExecutorPostureOrStop(projectDir, deps);
-  const derived = [executorTemplate(posture, deps), ...configuredDerivedTemplates(projectDir, deps)];
+  const { posture, lensPosture } = loadPosturesOrStop(projectDir, deps);
+  const derived = [
+    executorTemplate(posture, deps), reviewLensTemplate(lensPosture, deps), ...configuredDerivedTemplates(projectDir, deps),
+  ];
   const preflight = preflightCheapAgents({ cwd: projectDir, derived }, deps);
-  if (dryRun) return { wrote: false, dryRun: true, posture, ...preflight };
+  if (dryRun) return { wrote: false, dryRun: true, posture, lensPosture, ...preflight };
 
   if (!preflight.stampOk) {
     throw makeCheapAgentsError(
@@ -202,7 +209,7 @@ export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
       });
     } else fs.writeFile(item.abs, item.content, UTF8);
   }
-  return { wrote: toWrite.length > 0, dryRun: false, posture, ...preflight };
+  return { wrote: toWrite.length > 0, dryRun: false, posture, lensPosture, ...preflight };
 };
 
 // ── report ────────────────────────────────────────────────────────────────────────────
@@ -213,9 +220,12 @@ const ACTION_LABEL = {
   're-derive': 're-derived — a hand edit was replaced; set the model in docs/ai/vehicles.json',
   'customized-preserved': 'customized — preserved (delete the file to reseed from the bundle)',
 };
+const LENS_REDERIVE_LABEL = 're-derived — the earlier body was replaced; set its model and effort in docs/ai/vehicles.json';
+const labelOf = (item) =>
+  (item.action === 're-derive' && item.name === REVIEW_LENS_VEHICLE ? LENS_REDERIVE_LABEL : ACTION_LABEL[item.action]);
 
 export const formatResult = (result) => {
-  const { posture } = result;
+  const { posture, lensPosture } = result;
   const lines = [
     result.dryRun
       ? 'agent-workflow subagent vehicles — DRY RUN (no changes)'
@@ -223,7 +233,7 @@ export const formatResult = (result) => {
   ];
   for (const item of result.plan) {
     const verb = result.dryRun && item.action === 'place' ? 'would place'
-      : result.dryRun && item.action === 're-derive' ? 'would re-derive' : ACTION_LABEL[item.action];
+      : result.dryRun && item.action === 're-derive' ? 'would re-derive' : labelOf(item);
     lines.push(`  - ${item.rel}: ${verb}`);
   }
   if (!result.stampOk) {
@@ -235,6 +245,7 @@ export const formatResult = (result) => {
     `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
     'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
     `executor posture: model=${safeLine(posture.model)} effort=${safeLine(posture.effort)} fallback=${safeLine(posture.fallback)} (source: ${safeLine(posture.source)}) — set in docs/ai/vehicles.json`,
+    `review-lens posture: model=${safeLine(lensPosture.model)} effort=${safeLine(lensPosture.effort)} (source: ${safeLine(lensPosture.source)}) — set in docs/ai/vehicles.json`,
   );
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
