@@ -75,16 +75,19 @@ import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySo
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
-import { resolveGitHooksPath } from './commit-guard.mjs';
+import { readPreCommitState } from './git-hooks.mjs';
+export { resolveGitHooksPath, readPreCommitState, canonicalGuardLineRe, INSTALLER_MARKER_RE } from './git-hooks.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
 import { sandboxEnabled, HOST_HONORS_QUALIFIER } from './bridge-wiring.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from './worktrees.mjs';
-import { preflightCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
+import { preflightCheapAgents, writeCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
+import { ATTRIBUTION_KEY, LEGACY_ATTRIBUTION_KEY, attributionHidesText, effectiveAttribution, readAttributionChoice, wrongTypedKey } from './attribution.mjs';
+import { planGlobalRemoval } from './hide-footprint.mjs';
 import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
-import { surveyExecutorVehicle, readExecutorPosture, executorTemplate, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
+import { surveyExecutorVehicle, readExecutorPosture, executorBodyDiffers, executorTemplate, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -194,6 +197,12 @@ export const SEVERITIES = Object.freeze({
   // names the subagent carrier over a vehicle that cannot carry it — a configured declaration that
   // is broken, which is what attention means.
   'executor-vehicle': SEVERITY_ATTENTION,
+  // A hand edit of the placed executor is not a broken declaration — the vehicle still carries — so
+  // re-deriving it is an offer.
+  'executor-vehicle.differing': SEVERITY_OPTIONAL,
+  // The AGENTS.md block is a configured choice the harness does not honour.
+  attribution: SEVERITY_ATTENTION,
+  'footprint-global': SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
   'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
@@ -278,6 +287,9 @@ export const WHATS = Object.freeze({
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
+  'executor-vehicle.differing': 'the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — a hand edit stands until it is re-derived',
+  attribution: 'AGENTS.md says attribution off but .claude/settings.json does not hide the harness trailer and PR text',
+  'footprint-global': 'legacy kit ignore line(s) sit in {file} — they ignore kit paths in every repository here',
   'family-freshness': '{parts}',
   'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox mask(s) clutter git status — the managed exclude block is absent or stale',
@@ -343,6 +355,8 @@ export const BENEFITS = Object.freeze({
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
   agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle (no prompt flood); the executor carries slices you verify',
   'executor-vehicle': 'carrier readiness — a slot you configured subagent dispatches the subagent it names instead of silently running solo',
+  attribution: 'attribution — the harness adds no Co-Authored-By trailer, PR text or session link, as your AGENTS.md block requires',
+  'footprint-global': 'hygiene — the legacy machine-global excludes stop ignoring kit paths in every other repository on this host',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
   'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — a mask git ignores through the block leaves git status; a mount-only one leaves git add -A and the review fingerprint too',
@@ -351,6 +365,10 @@ export const BENEFITS = Object.freeze({
   'profile-gap': 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step',
   'jev-connect': 'decisions — a typed choice with a confidence in under a second for your code and the agent\'s scripts, once for every project here',
   'jev-skill': 'the TypeSafe skill for Claude Code, Codex and Antigravity CLI, one pinned verified copy per agent root, from one command you run',
+});
+// The one arm whose gain differs from its base item's (BENEFITS stays keyed by item key).
+export const VARIANT_BENEFITS = Object.freeze({
+  'executor-vehicle.differing': 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names, not a hand edit',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -388,6 +406,8 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
   { id: 'enforcement', mode: 'bootstrap', advisorKey: 'enforcement' },
+  { id: 'attribution', mode: 'bootstrap', advisorKey: 'attribution' },
+  { id: 'footprint-global', mode: 'bootstrap', advisorKey: 'footprint-global' },
   { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
   { id: 'sandbox-masks', mode: 'sandbox-masks', advisorKey: 'sandbox-masks' },
   { id: 'mcp-channel', mode: 'mcp', advisorKey: 'mcp-channel' },
@@ -890,27 +910,11 @@ const probeSourceSize = ({ root, deps, add, skip }) => {
 // alike; an UNMANAGED hook is a loud skip naming the user's own step (never an overwrite offer); a
 // non-final-capable declaration gets NO offer (an armed guard over a matrix that cannot mint a
 // receipt would block every commit).
-const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs$/m;
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-// Convergence needs the EXACT canonical armed line the installer writes — full-line anchored on
-// the kit's OWN resolved guard path. A commented-out line or a lookalike path (fake-commit-guard)
-// must never read as armed (that would suppress the offer and leave commits unguarded).
-const canonicalGuardLineRe = () => new RegExp(`^node "${escapeRe(toolPath('commit-guard.mjs'))}" --check$`, 'm');
-// The one reader of git's pre-commit: whose hook it is, and whether the canonical guard line arms it.
-export const readPreCommitState = (root, deps = {}) => {
-  const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root);
-  if (hooksPath === null) return { state: 'no-hooks-dir', armed: false };
-  const path = join(hooksPath, 'pre-commit');
-  const hook = (() => {
-    try {
-      if (readsAbsent(deps, path)) return null;
-      return String((deps.readFile ?? readFileSync)(path, 'utf8'));
-    } catch {
-      return null;
-    }
-  })();
-  if (hook === null) return { state: 'absent', armed: false };
-  return { state: INSTALLER_MARKER_RE.test(hook) ? 'managed' : 'unmanaged', armed: canonicalGuardLineRe().test(hook) };
+// The advisor asks git under its own process env; only the commit-guard apply passes the installer's.
+const readHookState = (root, deps) => {
+  const hook = readPreCommitState(root, { ...deps, env: undefined });
+  if (hook.state === 'unreadable') throw new Error(`${hook.path} is unreadable (${hook.code}) — the pre-commit hook cannot be judged`);
+  return hook;
 };
 const formsApply = (variant, root) => consoleArgv(variant, { toolsDir: HERE, root }).apply.map(q).join(' ');
 const probeCommitGuard = ({ root, deps, add, skip }) => {
@@ -931,7 +935,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
       skip('commit-guard', new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP));
       return;
     }
-    const { state, armed } = readPreCommitState(root, deps);
+    const { state, armed } = readHookState(root, deps);
     if (armed || state === 'no-hooks-dir') return; // armed (managed or not), or not a git tree — converged
     if (state === 'unmanaged') {
       skip('commit-guard', new Error(COMMIT_GUARD_UNMANAGED_HOOK));
@@ -977,7 +981,7 @@ const enforcementOffer = (root, deps) => {
     if (readEnforcementNode(destination, lstat) === null) continue;
     throw new Error(`${destination} already exists; the enforcement copy would clobber it`);
   }
-  if (readPreCommitState(root, deps).state === 'unmanaged') throw new Error(ENFORCEMENT_UNMANAGED_HOOK);
+  if (readHookState(root, deps).state === 'unmanaged') throw new Error(ENFORCEMENT_UNMANAGED_HOOK);
   return true;
 };
 
@@ -1125,16 +1129,31 @@ const writerBlock = (root, deps) => {
   }
 };
 
+const HIDDEN_AGENTS_FOLLOW_UP = (root) => `hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`;
+
 const probeExecutorVehicle = ({ root, deps, add, skip }) => {
+  if (renderBrokenExecutor({ root, deps, add, skip })) return;
+  try {
+    if (!executorBodyDiffers(root, deps)) return;
+    const plan = writeCheapAgents({ cwd: root, dryRun: true }, deps);
+    if (!plan.stampOk) throw new Error(`run /agent-workflow-kit upgrade first (deployment stamp ${plan.stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`);
+    add('executor-vehicle', WHATS['executor-vehicle.differing'], formsApply('executor-vehicle.differing', root),
+      'executor-vehicle.differing', HIDDEN_AGENTS_FOLLOW_UP(root));
+  } catch (err) {
+    skip('executor-vehicle', err);
+  }
+};
+
+const renderBrokenExecutor = ({ root, deps, add, skip }) => {
   try {
     // The VALIDATED reader, as probeReviewRecipe uses it: a schema-invalid config is a stated skip,
     // never an item computed over a shape nothing accepted.
     const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const configured = Object.entries(ACTIVITIES).flatMap(([activity, def]) =>
       Object.keys(def.slots).filter((slot) => config?.[activity]?.[slot] === 'subagent'));
-    if (configured.length === 0) return;
+    if (configured.length === 0) return false;
     const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
-    if (!VEHICLE_BROKEN_STATES.includes(survey.state)) return;
+    if (!VEHICLE_BROKEN_STATES.includes(survey.state)) return false;
     const reason = safeLine(survey.reason ?? '');
     const { posture, reason: settingsReason } = readExecutorPosture(root, deps);
     const stamp = readStamp(join(root, WORKFLOW_STAMP), readFsDeps(deps));
@@ -1147,7 +1166,7 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
     const blocked = writerBlock(root, deps);
     if (blocked) preconditions.push(`${blocked} — fix that`);
     const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
-    add(
+    return add(
       'executor-vehicle',
       fillTemplate(WHATS['executor-vehicle'], {
         n: configured.length,
@@ -1158,10 +1177,11 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
       // frontmatter or read-only tools included), so those states need no precondition; every precondition above is a refusal the apply would meet.
       `node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
       'executor-vehicle',
-      `${preconditions.length ? `precondition: ${preconditions.join('; ')}; ` : ''}hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
+      `${preconditions.length ? `precondition: ${preconditions.join('; ')}; ` : ''}${HIDDEN_AGENTS_FOLLOW_UP(root)}`,
     );
   } catch (err) {
     skip('executor-vehicle', err);
+    return false;
   }
 };
 
@@ -1314,7 +1334,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill']);
+export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1564,9 +1584,48 @@ export const probeProfileGaps = ({ root, deps, add, skip }) => {
   }
 };
 
+// The attribution item by its table (spec init-project, part in-session-writes): a choice of off the
+// effective settings do not honour; the writer's preflight runs before it renders, so no rendered check always exits 3.
+const probeAttribution = ({ root, deps, add, skip }) => {
+  try {
+    if (readAttributionChoice(root, deps) !== 'off') return;
+    const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root }).data;
+    const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root }).data;
+    const effective = effectiveAttribution(project, local);
+    if (attributionHidesText(effective)) return;
+    preflightVelocityProfile({ cwd: root }, deps);
+    for (const [file, data] of [[SETTINGS_FILE, project], [SETTINGS_LOCAL_FILE, local]]) {
+      const wrong = wrongTypedKey(data);
+      if (wrong) throw new Error(`${file}: ${wrong} — the attribution item cannot judge it`);
+    }
+    const setsText = (value) => value !== null && typeof value === 'object' && ['commit', 'pr'].some((key) => Object.hasOwn(value, key));
+    const localKey = Object.hasOwn(local ?? {}, ATTRIBUTION_KEY) && !attributionHidesText({ [ATTRIBUTION_KEY]: local[ATTRIBUTION_KEY] }) ? ATTRIBUTION_KEY
+      : local?.[LEGACY_ATTRIBUTION_KEY] === true && !setsText(effective[ATTRIBUTION_KEY]) ? LEGACY_ATTRIBUTION_KEY : null;
+    if (localKey) throw new Error(`${SETTINGS_LOCAL_FILE} sets ${localKey} so the harness adds its text — a local-scope override is your own edit`);
+    add('attribution', WHATS.attribution, formsApply('attribution', root));
+  } catch (err) {
+    skip('attribution', err);
+  }
+};
+
+// The leftover machine-global block: the one plan the hide reports and the --remove-global mode removes,
+// asked of git under the home the advisor was given.
+const probeFootprintGlobal = ({ root, deps, add, skip }) => {
+  try {
+    const home = deps.home ?? deps.jevHost?.home ?? homedir();
+    const plan = (deps.planGlobalRemoval ?? planGlobalRemoval)({ env: { ...process.env, HOME: home }, home }, root, { home });
+    if (plan === null) return;
+    const file = truncatedTo(plan.source, templateBudget(WHATS['footprint-global']));
+    add('footprint-global', fillTemplate(WHATS['footprint-global'], { file }), formsApply('footprint-global', root));
+  } catch (err) {
+    skip('footprint-global', err);
+  }
+};
+
 // ── assembly (frozen presentation order) ─────────────────────────────────────────────────────────
 const PROBES = Object.freeze([
   probeVelocityItems,
+  probeAttribution,
   probeAutonomyItems,
   probeSandboxProvision,
   probeReviewRecipe,
@@ -1582,6 +1641,7 @@ const PROBES = Object.freeze([
   probeFamilyFreshness,
   probeAdrStore,
   probeMasksItem,
+  probeFootprintGlobal,
   probeWorktreesDir,
   probeMcpChannel,
   probeSpecAdoption,
@@ -1629,7 +1689,7 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
       home: deps.jevHost?.home ?? deps.home ?? '',
       platform: deps.jevHost?.platform ?? deps.platform,
     });
-    items.push({ key, variant, severity: SEVERITIES[variant], lane: laneOf(variant), what, benefit: BENEFITS[key],
+    items.push({ key, variant, severity: SEVERITIES[variant], lane: laneOf(variant), what, benefit: VARIANT_BENEFITS[variant] ?? BENEFITS[key],
       check: slot?.check ?? null, apply: slot?.apply ?? apply, detail });
     return true;
   };

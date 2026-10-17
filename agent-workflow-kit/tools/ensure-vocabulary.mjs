@@ -18,9 +18,8 @@ export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', '
 // ensure's pair refresh (reader or checker) — a deployed script on a body a release shipped,
 // rewritten to the bundled one; a custom body is rewritten only by the replace run the user's yes
 // starts (--replace-custom), never by a plain run.
-// `re-derived` is the executor ensure rewriting a placed executor whose bytes differ from the body derived from docs/ai/vehicles.json.
-export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated', 're-derived']);
-export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate', 'would-re-derive']);
+export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
+export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
 
 // The CLOSED outcome vocabulary. Closed at RUNTIME, not by convention: composing an outcome with a
 // token outside this list throws, so an op cannot quietly invent a word the mode doc has never heard
@@ -33,6 +32,7 @@ export const ENSURE_TOKENS = Object.freeze([
   'already-current',
   'already-present',
   'not-placed',
+  'pending',
   'customized-preserved',
   'malformed-preserved',
   'skipped-no-node-evidence',
@@ -80,7 +80,7 @@ export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'note-refreshed',
   'refreshed',
   'regenerated',
-  're-derived',
+  'pending',
   'already-current',
   'customized-preserved',
   'malformed-preserved',

@@ -530,6 +530,40 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   fix: move `worktreesGrantDir`, `worktreesGrantHoldsHome` and the derivation they read into one leaf that
   `worktrees.mjs` re-exports, the three readers importing that leaf. Proof: a closure-count cell over the writer.
   Residual, not live: load time only; no output, write or refusal changes.
+- **INIT-CONSOLE-Y-REJUDGES-ONE-FORM** — invariant: a console y's record never holds host state a written value
+  resolves through. Origin: `init` re-judges only the forms `isRejudged` names (`worktrees-dir`, and from S11
+  `footprint-global`: `agent-workflow-kit/tools/write-lanes.mjs:209`, `agent-workflow-kit/tools/init-project.mjs:277,290`);
+  every other form applies the record taken at the preview, and `autonomy-render` writes or drops its credential
+  denials by the `claude` version on PATH (`agent-workflow-kit/tools/velocity-profile.mjs:1469-1475`), pre-existing.
+  Narrow fix (S10, S45 of init-project): the `rejudged` form property, the batch re-running a rejudged item's check
+  just before its launch. Generalization: every form whose written value reads host state is rejudged, or its record
+  carries that state. Residual: a `claude` upgrade between the preview and the y changes the credential block written.
+  Raised by the S10 diff review; recorded at S11.
+- **STATUS-AND-UNINSTALL-READ-THE-LEGACY-ATTRIBUTION-KEY** — invariant: every reader of the project's attribution choice
+  judges the effective settings through `attributionHidesText`, the one predicate the `attribution` item converges on.
+  Origin: `status` reads `includeCoAuthoredBy` alone (`agent-workflow-kit/tools/family-registry.mjs:552-562`, rendered
+  at `agent-workflow-kit/tools/renderers.mjs:141-145`), and `uninstall` names only that key as the kit's edit
+  (`agent-workflow-kit/tools/uninstall.mjs:768,778,781`), so the `attribution` object the item writes is reported as
+  absent and is not named for removal. Narrow fix: both readers import `effectiveAttribution` and
+  `attributionHidesText` from `agent-workflow-kit/tools/attribution.mjs`; `uninstall` names the `attribution` key too.
+  Proof: a status cell and an uninstall cell over a settings file holding only the object form. Residual, not live:
+  report text only; no write or refusal changes. A non-goal of S11 (in-session-writes, stated limits).
+- **PENDING-EXECUTOR-LINE-NAMES-ONE-ARM** — invariant: the executor ensure's `pending` line names the advisor arm
+  that renders for the same tree. Origin: the line and its texts name `executor-vehicle.differing`
+  (`agent-workflow-kit/tools/ensure-executor.mjs:69`, `agent-workflow-kit/references/modes/upgrade.md:44`,
+  `agent-workflow-kit/tools/ensure-configs.mjs:91`), while a `subagent` slot over an executor whose frontmatter is
+  invalid renders the base `executor-vehicle` arm instead (`agent-workflow-kit/tools/recommendations.mjs:1135,1159`).
+  Narrow fix: name the item key `executor-vehicle`, true of both arms, in the line, the spec clause
+  (executor-vehicle, init-project S50) and their pins. Proof: an ensure cell and an advisor cell over that tree.
+  Residual, not live: both arms apply the same `cheap-agents.mjs --apply`, so the user's yes re-derives the body
+  either way; only the arm's name differs. Raised by the S11 copy lens.
+- **CONSENT-BINDS-EVERY-REPLACED-TREE** — invariant: every check line for a write that replaces an existing tree
+  carries the replaced tree's digest, as a write over an existing regular file now does. Origin: the skill variants'
+  `replace` writes print the new tree's digest alone (`agent-workflow-kit/tools/apply-danger-check.mjs:304-310`,
+  `directory: true`). Narrow fix (S11): `checkApply` derives `replaces` for every write over an existing regular file,
+  which binds the executor re-derive. Proof: a skill cell with two different installed trees giving two digests.
+  Residual, not live: the replaced tree is the kit-vendored pinned copy no user authors, and the window is one
+  check-to-apply. Raised by the S11 diff review (codex; the lens's replacement invariant).
 
 ## Closed
 

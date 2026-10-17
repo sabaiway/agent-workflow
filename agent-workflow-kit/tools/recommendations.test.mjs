@@ -662,6 +662,15 @@ const buildInventoryFixtures = () => {
     getenv: { PATH: '/nonexistent-path-for-tests', TYPESAFE_API_KEY: 'a-test-key' }, jevHost: { home: home12 } }) }));
   rmSync(root12, { recursive: true, force: true });
   rmSync(home12, { recursive: true, force: true });
+  const attributionRoot = makeProject();
+  writeFileSync(join(attributionRoot, 'AGENTS.md'), '> **Agent attribution: off** (chosen at setup).\n');
+  results.push(buildRecommendations({ cwd: attributionRoot, deps: hermeticDeps(attributionRoot) }));
+  rmSync(attributionRoot, { recursive: true, force: true });
+  const footprintRoot = makeProject();
+  results.push(buildRecommendations({ cwd: footprintRoot, deps: hermeticDeps(footprintRoot, {
+    planGlobalRemoval: () => ({ source: join(footprintRoot, '.gitignore_global'), before: '/scripts/check-docs-size.mjs\n', after: '', removedLines: ['/scripts/check-docs-size.mjs'] }),
+  }) }));
+  rmSync(footprintRoot, { recursive: true, force: true });
   return results;
 };
 
@@ -1127,13 +1136,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still eighteen harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still twenty-one harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
   });
 });
 
@@ -1242,8 +1251,8 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains eighteen harness variants', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
+  it('VARIANT_LANES contains twenty-one harness variants', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
   });
 });
 
@@ -1875,11 +1884,11 @@ describe('recommendations — the executor-vehicle attention item (spec:carriers
     assert.equal(found.length, 1);
     assert.equal(found[0].what, '1 slot(s) configured subagent but the executor vehicle is unusable: tools: Read is read-only — every such slot runs solo until it is usable');
   });
-  it('placed, customized and no subagent slot: NOTHING — the rest of the list is untouched', () => {
+  it('placed, customized and no subagent slot: no attention item — the rest of the list is untouched', () => {
     const placed = run(CARRIER, BUNDLED);
     const unconfigured = run(JSON.stringify({ routine: { carrier: 'solo' } }), BUNDLED);
     const cases = { placed, customized: run(CARRIER, '---\nname: executor\ntools: Read, Bash\n---\nmine\n'), unconfigured };
-    for (const [label, r] of Object.entries(cases)) assert.deepEqual(r.found, [], `${label} raises no item`);
+    for (const [label, r] of Object.entries(cases)) assert.deepEqual(r.found.filter((i) => i.variant === 'executor-vehicle'), [], `${label} raises no attention item`);
     assert.deepEqual(placed.items.map((i) => i.key), unconfigured.items.map((i) => i.key), 'the same full list either way');
   });
   it('a config the validated reader refuses is a stated SKIP, never an item', () => {
@@ -2310,9 +2319,33 @@ describe('spec:init-project/S35 the advisor\'s reader and table by proof', () =>
     }
   });
 
+  it('readPreCommitState reports a directory hook as unreadable EISDIR and never armed', async (t) => {
+    const root = guardProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const path = join(root, 'hooks', 'pre-commit');
+    mkdirSync(path);
+    const loaded = await import('./git-hooks.mjs');
+    const readPreCommitState = loaded.readPreCommitState ?? (() => { throw new Error('readPreCommitState is absent'); });
+    assert.deepEqual(readPreCommitState(root, guardDeps(root)), { state: 'unreadable', code: 'EISDIR', path, armed: false });
+  });
+
+  for (const key of ['commit-guard', ENFORCEMENT_KEY]) {
+    it(`${key} skips an unreadable hook with its path and EISDIR instead of offering an item`, (t) => {
+      const root = key === 'commit-guard' ? guardProject() : makeNoneEvidenceProject();
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const path = join(root, 'hooks', 'pre-commit');
+      mkdirSync(path, { recursive: true });
+      const built = buildRecommendations({ cwd: root, deps: guardDeps(root) });
+      const reason = `${path} is unreadable (EISDIR) — the pre-commit hook cannot be judged`;
+      assert.deepEqual(built.items.filter((item) => item.key === key), []);
+      assert.deepEqual(built.skips.filter((skip) => skip.key === key), [{ key, reason }]);
+    });
+  }
+
   it('enforcementAdmits equals the rendered offer on every admitted, silent and refused root', (t) => {
     const cases = [
       ['no hooks dir', true, () => {}],
+      ['unreadable hook', false, (root) => mkdirSync(join(root, 'hooks', 'pre-commit'), { recursive: true })],
       ['absent hook', true, (root) => mkdirSync(join(root, 'hooks'))],
       ['managed hook', true, (root) => {
         mkdirSync(join(root, 'hooks'));
@@ -2714,6 +2747,9 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
+  it('the harness variant count is twenty-one', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+  });
   const makeHarnessProject = () => {
     const root = makeProject();
     const dir = join(root, 'farm');
@@ -3258,6 +3294,164 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.ok(skip, 'the check that could not run says so');
     assert.match(skip.reason, /docs\/ai\/vehicles\.json/u);
     assert.match(skip.reason, /\bunreadable\b/u);
+  });
+});
+
+describe('spec:init-project/S48 — the advisor attribution, footprint-global and differing executor tables', () => {
+  const collect = (root, key, extra = {}) => {
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { planGlobalRemoval: () => null, ...extra }) });
+    return { items: built.items.filter((item) => item.key === key), skips: built.skips.filter((skip) => skip.key === key) };
+  };
+  const assertHarnessItem = async (root, built, variant, severity) => {
+    assert.equal(built.items.length, 1);
+    assert.deepEqual(built.skips, []);
+    const [item] = built.items;
+    assert.equal(item.variant, variant);
+    assert.equal(item.severity, severity);
+    assert.equal(item.lane, 'harness');
+    const slot = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+    assert.deepEqual({ check: item.check, apply: item.apply }, slot);
+    const benefits = variant === 'executor-vehicle.differing' ? need(await import('./recommendations.mjs'), 'VARIANT_BENEFITS') : BENEFITS;
+    assert.equal(item.benefit, benefits[variant]);
+    assert.ok(item.what.length <= ITEM_LINE_CAP);
+    assert.ok(item.benefit.length <= ITEM_LINE_CAP);
+    const rendered = formatRecommendations(built);
+    assert.ok(rendered.split('\n').includes(`   check: ${slot.check}`));
+    assert.ok(rendered.split('\n').includes(`   apply: ${slot.apply}`));
+    assert.doesNotMatch(rendered, /HAND-APPLY/u);
+    return item;
+  };
+  const attributionRows = [
+    ['off, no settings', 'off', null, null, 'item'],
+    ['off, project includeCoAuthoredBy true', 'off', { includeCoAuthoredBy: true }, null, 'item'],
+    ['off, project commit text', 'off', { attribution: { commit: 'credit' } }, null, 'item'],
+    ['local includeCoAuthoredBy true', 'off', null, { includeCoAuthoredBy: true }, /\bincludeCoAuthoredBy\b/u],
+    ['local commit text', 'off', null, { attribution: { commit: 'credit' } }, /\battribution\b/u],
+    ['local wrong attribution type', 'off', null, { attribution: 'wrong' }, /\battribution\b/u],
+    ['local wrong includeCoAuthoredBy type', 'off', null, { includeCoAuthoredBy: 'wrong' }, /\bincludeCoAuthoredBy\b/u],
+    ['off, auto mode', 'off', { permissions: { defaultMode: 'auto' } }, null, /\bunsafe or unknown permissions\.defaultMode\b/u],
+    ['off, hidden object', 'off', { attribution: { commit: '', pr: '', sessionUrl: false } }, null, 'silent'],
+    ['off, attribution false', 'off', { attribution: false }, null, 'silent'],
+    ['off, includeCoAuthoredBy false alone', 'off', { includeCoAuthoredBy: false }, null, 'silent'],
+    ['on', 'on', null, null, 'silent'],
+    ['on, auto mode', 'on', { permissions: { defaultMode: 'auto' } }, null, 'silent'],
+    ['absent block', '', null, null, 'silent'],
+    ['absent AGENTS.md', null, null, null, 'silent'],
+  ];
+  for (const [label, choice, project, local, expected] of attributionRows) {
+    it(`attribution: ${label}`, async (t) => {
+      const root = makeProject();
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      if (choice !== null) writeFileSync(join(root, 'AGENTS.md'), choice ? `> **Agent attribution: ${choice}** (chosen at setup).\n` : '# Project\n');
+      mkdirSync(join(root, '.claude'));
+      for (const [file, data] of [['settings.json', project], ['settings.local.json', local]]) {
+        if (data !== null) writeFileSync(join(root, '.claude', file), JSON.stringify(data));
+      }
+      const built = collect(root, 'attribution');
+      if (expected === 'item') {
+        const item = await assertHarnessItem(root, built, 'attribution', SEVERITY_ATTENTION);
+        assert.equal(item.what, WHATS.attribution);
+      } else {
+        assert.deepEqual(built.items, []);
+        if (expected === 'silent') assert.deepEqual(built.skips, []);
+        else {
+          assert.equal(built.skips.length, 1);
+          assert.match(built.skips[0].reason, expected);
+          if (local !== null) assert.match(built.skips[0].reason, /\.claude\/settings\.local\.json/u);
+        }
+      }
+      assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
+      assert.equal(SEVERITIES.attribution, SEVERITY_ATTENTION);
+    });
+  }
+  for (const outcome of ['plan', 'null', 'throw']) {
+    it(`footprint-global: ${outcome}`, async (t) => {
+      const root = makeProject();
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const source = join(root, '.gitignore_global');
+      const reason = `FOOTPRINT_STOP: cannot read ${source} (EACCES)`;
+      const planGlobalRemoval = () => {
+        if (outcome === 'throw') throw new Error(reason);
+        return outcome === 'null' ? null : { source, before: '/scripts/check-docs-size.mjs\n', after: '', removedLines: ['/scripts/check-docs-size.mjs'] };
+      };
+      const built = collect(root, 'footprint-global', { planGlobalRemoval });
+      if (outcome === 'plan') {
+        const item = await assertHarnessItem(root, built, 'footprint-global', SEVERITY_OPTIONAL);
+        assert.ok(item.what.includes(source));
+      } else {
+        assert.deepEqual(built.items, []);
+        assert.equal(built.skips.length, outcome === 'throw' ? 1 : 0);
+        if (outcome === 'throw') assert.match(built.skips[0].reason, /\bFOOTPRINT_STOP\b/u);
+      }
+      assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
+      assert.equal(SEVERITIES['footprint-global'], SEVERITY_OPTIONAL);
+    });
+  }
+  const executorRows = [
+    ['customized, no slot', 'customized', false, 'differing'],
+    ['customized, configured slot', 'customized', true, 'differing'],
+    ['unusable, no slot', 'unusable', false, 'differing'],
+    ['unusable, configured slot', 'unusable', true, 'base'],
+    ['placed, no slot', 'placed', false, 'silent'],
+    ['placed, configured slot', 'placed', true, 'silent'],
+    ['missing, no slot', 'missing', false, 'silent'],
+    ['missing, configured slot', 'missing', true, 'base'],
+    ['symlinked agents, no slot', 'symlink', false, /\.claude\/agents is a symlink/u],
+    ['configured derived lens directory', 'lens-directory', false, /review-lens-opus-high\.md exists but is not a regular file/u],
+    ['stale stamp, differing executor', 'stale-differing', false, /run \/agent-workflow-kit upgrade first/u],
+    ['stale stamp, current executor', 'stale-current', false, 'silent'],
+  ];
+  for (const [label, state, configured, expected] of executorRows) {
+    it(`executor-vehicle: ${label}`, async (t) => {
+      const root = makeProject();
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      const reader = await import('./cheap-agents-read.mjs');
+      const { writeCheapAgents } = await import('./cheap-agents.mjs');
+      const config = { routine: { carrier: configured ? 'subagent' : 'solo' } };
+      if (state === 'lens-directory') config['plan-execution'] = { review: ['review-lens:opus:high'] };
+      writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
+      if (state.startsWith('stale-')) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
+      const dir = join(root, '.claude', 'agents');
+      mkdirSync(dir, { recursive: true });
+      if (state === 'symlink') {
+        rmSync(dir, { recursive: true });
+        mkdirSync(join(root, 'vehicles'));
+        symlinkSync(join(root, 'vehicles'), dir);
+      }
+      const { posture } = reader.readExecutorPosture(root);
+      const current = reader.executorTemplate(posture).content;
+      const body = state === 'placed' || state === 'stale-current' ? current
+        : state === 'unusable' ? '---\nname: executor\ntools: Read\n---\nbody\n' : `${current}\ncustom\n`;
+      if (state !== 'missing') writeFileSync(join(dir, 'executor.md'), body);
+      if (state === 'lens-directory') mkdirSync(join(dir, 'review-lens-opus-high.md'));
+      const built = collect(root, 'executor-vehicle');
+      const executorBodyDiffers = need(reader, 'executorBodyDiffers');
+      assert.equal(executorBodyDiffers(root), !['missing', 'placed', 'stale-current'].includes(state));
+      if (expected === 'differing') {
+        assert.equal(writeCheapAgents({ cwd: root, dryRun: true }).stampOk, true);
+        const item = await assertHarnessItem(root, built, 'executor-vehicle.differing', SEVERITY_OPTIONAL);
+        assert.equal(item.what, WHATS['executor-vehicle.differing']);
+        assert.match(item.detail, /hidden-mode deployments only:.*--reconcile/u);
+        assert.ok(formatRecommendations(built).split('\n').includes(`   recipe: ${item.detail}`));
+      } else if (expected === 'base') {
+        const item = await assertHarnessItem(root, built, 'executor-vehicle', SEVERITY_ATTENTION);
+        assert.match(item.what, new RegExp(`1 slot\\(s\\) configured subagent but the executor vehicle is ${state}`));
+        assert.match(item.detail, /hidden-mode deployments only:.*--reconcile/u);
+      } else {
+        assert.deepEqual(built.items, []);
+        if (expected === 'silent') assert.deepEqual(built.skips, []);
+        else {
+          assert.equal(built.skips.length, 1);
+          assert.match(built.skips[0].reason, expected);
+          if (!state.startsWith('stale-')) assert.throws(() => writeCheapAgents({ cwd: root, dryRun: true }), expected);
+          else assert.equal(writeCheapAgents({ cwd: root, dryRun: true }).stampOk, false);
+        }
+      }
+      assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
+    });
+  }
+  it('the harness variant count is twenty-one', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
   });
 });
 

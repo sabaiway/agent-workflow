@@ -2,7 +2,8 @@
 // git-hooks.mjs — the thin writer of the two git-hook items (`enforcement`, `commit-guard`): it copies
 // the bundled scripts create-only and spawns the project's own scripts/install-git-hooks.mjs, which
 // decides the hook at the write. The leaf decides nothing about the hook: the danger check binds the
-// copies and the installer bytes this dry run answers, never git's hooks dir.
+// copies and the installer bytes this dry run answers, never git's hooks dir. It is also the home of the
+// one pre-commit reader, which the commit-guard apply runs after the installer to verify the arm.
 import { lstatSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
@@ -11,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { NODE_EVIDENCE_SCRIPTS } from './node-evidence.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { isDirectRun } from './direct-run.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
@@ -38,6 +40,34 @@ const nodeAt = (path, lstat) => {
 };
 const isPlainDir = (node) => node !== null && node.isDirectory() && !node.isSymbolicLink();
 const isFile = (node) => node !== null && node.isFile() && !node.isSymbolicLink();
+
+// The absolute hooks dir git itself reports (a linked worktree's own, core.hooksPath), or null outside a git tree.
+export const resolveGitHooksPath = (projectDir, env = process.env) => {
+  const result = spawnSync('git', ['rev-parse', '--git-path', 'hooks'], { cwd: projectDir, env, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+  if (result.error || result.status !== 0) return null;
+  return resolve(projectDir, result.stdout.toString('utf8').replace(/\r?\n$/, ''));
+};
+
+export const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs$/m;
+const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Armed means the exact line the installer writes on the kit's own guard path; a commented or lookalike line is not.
+export const canonicalGuardLineRe = (toolsDir = TOOLS) => new RegExp(`^node "${escapeRe(join(toolsDir, 'commit-guard.mjs'))}" --check$`, 'm');
+
+// The one reader of git's pre-commit: whose hook it is, and whether the canonical guard line arms it.
+export const readPreCommitState = (root, deps = {}) => {
+  const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root, deps.env);
+  if (hooksPath === null) return { state: 'no-hooks-dir', armed: false };
+  const path = join(hooksPath, 'pre-commit');
+  let hook;
+  try {
+    (deps.lstat ?? lstatSync)(path);
+    hook = String((deps.readFile ?? readFileSync)(path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { state: 'absent', armed: false };
+    return { state: 'unreadable', code: error?.code ?? String(error?.message ?? error), path, armed: false };
+  }
+  return { state: INSTALLER_MARKER_RE.test(hook) ? 'managed' : 'unmanaged', armed: canonicalGuardLineRe(deps.toolsDir).test(hook) };
+};
 
 // The dry run: what the apply copies and the installer it runs, with the bytes of each.
 export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSync, readFile = readFileSync }) => {
@@ -115,7 +145,7 @@ const rollBack = (plan, created, io) => {
 
 export const applyGitHooks = (plan, io = {}) => {
   const resolved = { lstat: lstatSync, unlink: unlinkSync, rmdir: rmdirSync, readdir: readdirSync, env: process.env,
-    log: console.log, error: console.error, writeFile: writeProjectFileCreateOnly,
+    log: console.log, error: console.error, writeFile: writeProjectFileCreateOnly, toolsDir: TOOLS,
     spawn: (argv, options) => spawnSync(argv[0], argv.slice(1), options), ...io };
   const created = [];
   const leftovers = [];
@@ -145,7 +175,15 @@ export const applyGitHooks = (plan, io = {}) => {
   const child = resolved.spawn(plan.runs.argv, { cwd: plan.root, env: resolved.env, stdio: 'inherit' });
   if (child.status !== 0) return fail([`installer exited ${child.status ?? child.signal ?? child.error?.code}`]);
   for (const path of leftovers) resolved.error(`not removed: ${path}`);
-  return EXIT_OK;
+  if (plan.variant !== 'commit-guard') return EXIT_OK;
+  // An installer older than the arm ignores --commit-guard and still exits 0, so the arm is read back under its env.
+  const hooksDir = resolveGitHooksPath(plan.root, resolved.env);
+  const hook = readPreCommitState(plan.root, { env: resolved.env, toolsDir: resolved.toolsDir, gitHooksPath: () => hooksDir });
+  if (hook.state === 'no-hooks-dir' || hook.armed) return EXIT_OK;
+  const path = join(hooksDir, 'pre-commit');
+  resolved.error(hook.state === 'unreadable' ? `${path} is unreadable (${hook.code}) after the installer exited 0`
+    : `${path} carries no commit-guard line after the installer exited 0 — an installer older than the arm ignores --commit-guard; refreshing ${INSTALLER_REL} from the kit's references/scripts/ copy is your own step`);
+  return EXIT_INCOMPLETE;
 };
 
 export const parseArgs = (argv) => {

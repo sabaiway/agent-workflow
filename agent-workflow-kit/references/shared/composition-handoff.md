@@ -2,14 +2,14 @@
 
 **Hand-off contract (explicit; tested independent of agent interpretation).**
 - **Delegated** (memory valid): the kit passes the **target project dir** + the **three setup
-  answers** (visibility / language / attribution) to `agent-workflow-memory`, which writes
+  answers** (visibility / language / attribution — memory is told to skip its step-4 settings write; the `attribution` item of step 11 sets it) to `agent-workflow-memory`, which writes
   `docs/ai/` + `AGENTS.md` (carrying the **three empty pointer pairs** — `workflow:methodology`,
   `workflow:orchestration` and `workflow:autonomy`) + **`.memory-version`**. The kit then **reconciles
   the bounded pointers** (below) and writes the kit-fallback **`.workflow-version`**. → **both stamps** present. In **hidden** mode the kit is the **single
   hide authority**: after the hand-off it runs `tools/hide-footprint.mjs` (bootstrap step 9 — `${CLAUDE_SKILL_DIR}/references/modes/bootstrap.md`), which **absorbs
   memory's project-local footprint lines** into the one canonical `.git/info/exclude` block and adds
-  the external footprint — so there is **no machine-global write** at any step (a stale memory's
-  residual global block is cleaned via the upgrade reconcile, below).
+  the external footprint — so the hide makes **no machine-global write** (a stale memory's
+  residual global block is the advisor's footprint-global item).
 - **Fallback** (memory absent/invalid): the kit runs the bootstrap procedure (`${CLAUDE_SKILL_DIR}/references/modes/bootstrap.md`) from its own
   bundled assets — whose entry-point template now ships **three empty pointer pairs** (`workflow:methodology`
   + `workflow:orchestration` + `workflow:autonomy`) the kit reconciles + fills — and writes **`.workflow-version`** only.

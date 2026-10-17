@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.34.0 — bootstrap and the upgrade stop making five protected writes mid-session: attribution, the legacy global ignore block, a hand-edited executor and the commit guard are applied on the chat yes (AD-186)
+
+**Five writes that bootstrap, the upgrade or a migration note made by themselves mid-session are now advisor items the
+agent applies on the chat yes, after the danger check, or that stay pending.** Before, under the sandbox each one met a
+refused write with no route: bootstrap and note 1.2.0 set `includeCoAuthoredBy` in `.claude/settings.json`; bootstrap
+and the hide removed the legacy machine-global ignore block with `--remove-global` after an ask; note 3.0.0 migrated
+the commit guard; and the configs step rewrote a hand-edited `.claude/agents/executor.md`.
+
+- **`attribution`, a new item and its writer.** When `AGENTS.md` reads `Agent attribution: off` and the effective
+  project and local settings do not hide the harness's Co-Authored-By trailer and PR text,
+  `node <kit>/tools/attribution.mjs --cwd <root>` previews and `--apply` sets `attribution` to
+  `{"commit":"","pr":"","sessionUrl":false}` in the project `.claude/settings.json`, in place, keeping every other key.
+  An existing `"includeCoAuthoredBy": false` already counts unless an `attribution` object carries a `commit` or `pr`
+  field. A wrong-typed key in the project file refuses (`ATTRIBUTION_MALFORMED`); one in the local file is a stated
+  skip, and a local-scope override is your own edit. With
+  `agent-workflow-memory` installed, bootstrap tells memory to skip its own settings write; this item sets it.
+- **`footprint-global`, a new item.** A legacy kit block in the machine-global ignore file (`core.excludesFile`) is
+  removed only by this item: `hide-footprint.mjs --remove-global` is now its own mode, which removes each recognised
+  legacy line, keeps every other byte, prints the removed lines as a backup, and needs at least one kit-specific line
+  before it removes anything. The hide, `--reconcile` and `--unhide` never write that file; the hide and `--unhide`
+  report the block kept, as `--reconcile` does on a hidden deployment.
+  `--keep-global` is removed (it was the default). A refused write stops with `cannot write the global excludes …`.
+- **`executor-vehicle.differing`, a new arm.** The configs step no longer rewrites a placed executor whose body differs
+  from the one `docs/ai/vehicles.json` derives: it reports `pending` (the tokens `would-re-derive` and `re-derived` are
+  gone), and the optional item re-derives it through the agents writer on your yes.
+- **`commit-guard` verifies the arm.** After the project's installer exits 0, the apply reads the pre-commit hook back;
+  an installer older than the arm ignores `--commit-guard`, so the apply exits 1 with one line naming the hook (the
+  danger check's apply line reports 6) and the item returns at the next run. Refreshing that installer from the kit's
+  `references/scripts/` copy is your own step.
+- **The danger check binds what a file write replaces.** Every `writes:` line over an existing regular file now ends with
+  `— replaces sha256:<the bytes there now>`, so a file edited after the check moves the digest and needs a new yes.
+  `init` runs each check under the same environment it launches the apply with.
+- **Shipped text.** Bootstrap steps 4 and 9, the upgrade's configs and footprint paragraphs, notes 1.2.0 and 3.0.0,
+  `deploy-tail.md`, `composition-handoff.md`, `contracts.md` and `recommendations.md` name the items, and the
+  `vehicles.json` seed note says the upgrade reports a differing body as pending; none keeps a "No Node" branch for
+  these writes.
+- **Stated limits.** `status` and `uninstall` still read only `includeCoAuthoredBy`; a pre-arm installer is refreshed
+  by you; a declined `footprint-global` returns at the next run.
+
 ## 14.33.0 — the worktrees grant gets a writer: the agent writes it into this copy's local settings on the chat yes, and the worktrees stops name that route (AD-185)
 
 **The `worktrees-dir` upgrade item, which used to hand the user a settings line to paste, is now a harness item the

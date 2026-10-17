@@ -216,7 +216,7 @@ const previewQueue = async (context, queue) => {
     }
     context.print(result.stdout);
     const tuple = result.stdout.match(/--apply\s+(\S+)/)?.[1];
-    const facts = { ...context.facts, tuple };
+    const facts = { ...context.facts, env: context.spawnEnv, tuple };
     let checkDigest = null;
     if (laneOf(item.variant) === LANE_HARNESS) {
       try {

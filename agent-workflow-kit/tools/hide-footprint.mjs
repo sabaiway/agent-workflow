@@ -14,9 +14,9 @@
 // Decisions (plan D1–D16): one managed fence, re-derived wholesale → re-run is byte-identical (zero
 // diff); tracked → ASK; present-but-untracked high-risk (generic names) → ASK; everything else → HIDE;
 // asks are excluded from the block unless opted in via `--include` (an asks-only, traversal/glob-free
-// path). Add-local-first, then DETECT + REPORT the residual legacy global block — removal is the
-// explicit, ASK-gated `--remove-global` (prints a restorable backup), never a default (an arbitrary
-// host's OTHER hidden repo may rely on the same root-anchored global lines). Windows is supported (text
+// path). Add-local-first, then DETECT + REPORT the residual legacy global block — the hide never writes
+// the global file; removal is the `--remove-global` mode alone, the advisor's footprint-global item
+// (prints a restorable backup; another of the host's hidden repos may rely on the same lines). Windows is supported (text
 // edit; forward-slash patterns; CRLF preserved via EOL detection). Dependency-free, Node >= 22.
 
 import {
@@ -90,10 +90,13 @@ const canonicalize = (pattern) => {
 // canonicalize alone misses glob children, so the consented line would be dropped → a silent un-hide.
 const recognizeHideRule = (pattern) => canonicalize(pattern) ?? (matchesKnownGlob(pattern) ? normalizeSlashes(pattern) : null);
 
-// Slash-tolerant membership in the HISTORICAL global set.
-const historicalMatch = (pattern) => {
+// The historical lines any repository's own ignore may carry: a removal plan needs one kit-specific line besides them.
+const GENERIC_GLOBAL_PATHS = new Set(['/AGENTS.md', '/CLAUDE.md', '/docs/ai/', '/docs/plans/', '/.claude/skills/']);
+
+// Slash-tolerant membership in a global path set (the HISTORICAL one by default).
+const historicalMatch = (pattern, set = HISTORICAL_GLOBAL_PATHS) => {
   const p = normalizeSlashes(pattern);
-  return HISTORICAL_GLOBAL_PATHS.has(p) || HISTORICAL_GLOBAL_PATHS.has(`${p}/`) || (p.endsWith('/') && HISTORICAL_GLOBAL_PATHS.has(p.slice(0, -1)));
+  return set.has(p) || set.has(`${p}/`) || (p.endsWith('/') && set.has(p.slice(0, -1)));
 };
 
 // ── EOL + line model ────────────────────────────────────────────────────────────
@@ -144,8 +147,8 @@ const defaultGit = (args, { cwd, env }) => {
 const runGit = (deps, dir, args) => (deps.git ?? defaultGit)(args, { cwd: dir, env: deps.env ?? process.env });
 
 const fsOf = (deps = {}) => ({
-  readFile: deps.readFile ?? ((p) => readFileSync(p, 'utf8')),
-  writeFile: deps.writeFile ?? ((p, c) => writeFileSync(p, c, 'utf8')),
+  readFile: deps.readFile ?? ((p, encoding = 'utf8') => readFileSync(p, encoding)),
+  writeFile: deps.writeFile ?? ((p, c, encoding = 'utf8') => writeFileSync(p, c, encoding)),
   stat: deps.stat ?? statSync,
   readdir: deps.readdir ?? readdirSync,
 });
@@ -362,45 +365,60 @@ const globalExcludesPath = (deps, dir, home) => {
   if (r.status === 1) return null; // unset = NORMAL "nothing to migrate" (not a STOP)
   if (r.status !== 0) throw stop(`git config --get core.excludesFile failed (exit ${r.status}): ${r.stderr.trim()}`);
   const p = r.stdout.trim();
-  return p ? expandTilde(p, home) : null;
+  return p ? resolve(dir, expandTilde(p, home)) : null;
 };
 
-// Detect + REPORT a residual legacy global block; remove ONLY contiguous recognized runs (header +
-// historical paths) and ONLY when removeGlobal — printing the removed lines as a restorable backup.
-export const migrateFromGlobal = (deps, dir, { home, removeGlobal, dryRun }) => {
-  const fsx = fsOf(deps);
-  const gp = globalExcludesPath(deps, dir, home);
-  if (!gp) return { found: false, source: null, removedLines: [], action: 'none' };
-  let content;
+// The pure core over the global file read as latin1: each recognised legacy line goes with its own
+// terminator and every other byte stays; null without one kit-specific line among them.
+export const globalRemovalOf = (text) => {
+  const parts = text.split(/(\r\n|\n|\r)/);
+  const removedLines = [];
+  let after = '';
+  let specific = false;
+  for (let i = 0; i < parts.length; i += 2) {
+    const t = parts[i].trim();
+    const pattern = lineToPattern(parts[i]);
+    const marker = isLegacyGlobalHeader(t) || isAd013Comment(t);
+    if (marker || (pattern && historicalMatch(pattern))) {
+      removedLines.push(parts[i]);
+      specific ||= marker || !historicalMatch(pattern, GENERIC_GLOBAL_PATHS);
+    } else after += parts[i] + (parts[i + 1] ?? '');
+  }
+  return specific ? { removedLines, after } : null;
+};
+
+// The one answer the hide's kept line, the advisor's probe, the danger check and --remove-global read.
+export const planGlobalRemoval = (deps, root, { home }) => {
+  const source = globalExcludesPath(deps, root, home);
+  if (!source) return null;
+  let before;
   try {
-    content = fsx.readFile(gp);
+    before = fsOf(deps).readFile(source, 'latin1');
   } catch (err) {
-    if (err && err.code === 'ENOENT') return { found: false, source: gp, removedLines: [], action: 'none' };
-    throw stop(`cannot read global excludes ${gp} (${err.code ?? 'fs error'})`);
+    if (err && err.code === 'ENOENT') return null;
+    throw stop(`cannot read global excludes ${source} (${err.code ?? 'fs error'})`);
   }
-  const eol = detectEol(content);
-  const lines = splitLines(content);
-  const recognized = (raw) => {
-    const t = raw.trim();
-    if (isLegacyGlobalHeader(t) || isAd013Comment(t)) return true;
-    const pat = lineToPattern(raw);
-    return pat ? historicalMatch(pat) : false;
-  };
-  const kept = [];
-  const removed = [];
-  let i = 0;
-  while (i < lines.length) {
-    if (recognized(lines[i])) {
-      while (i < lines.length && recognized(lines[i])) { removed.push(lines[i]); i += 1; }
-    } else {
-      kept.push(lines[i]);
-      i += 1;
-    }
+  const removal = globalRemovalOf(before);
+  return removal && { source, before, ...removal };
+};
+
+// Detect + REPORT a residual legacy global block; the hide never writes the global file.
+export const migrateFromGlobal = (deps, dir, { home }) => {
+  const plan = planGlobalRemoval(deps, dir, { home });
+  if (!plan) return { found: false, source: null, removedLines: [], action: 'none' };
+  return { found: true, source: plan.source, removedLines: plan.removedLines, action: 'kept' };
+};
+
+// The --remove-global mode: no exclude file read, no local block written; a refused write is the lane's STOP.
+const removeGlobal = (opts, deps) => {
+  const plan = planGlobalRemoval(deps, resolve(opts.dir ?? process.cwd()), { home: deps.home ?? os.homedir() });
+  if (!plan || opts.dryRun) return { plan, action: plan ? 'would-remove' : 'none' };
+  try {
+    fsOf(deps).writeFile(plan.source, plan.after, 'latin1');
+  } catch (err) {
+    throw stop(`cannot write the global excludes ${plan.source} (${err?.code ?? err?.message ?? err}) — the block stays`);
   }
-  if (removed.length === 0) return { found: false, source: gp, removedLines: [], action: 'none' };
-  if (!removeGlobal) return { found: true, source: gp, removedLines: removed, action: 'kept' };
-  if (!dryRun) fsx.writeFile(gp, joinLines(kept, eol));
-  return { found: true, source: gp, removedLines: removed, action: 'removed', backup: removed.join('\n') };
+  return { plan, action: 'removed' };
 };
 
 // ── --include validation (D4 — only an asks[] path; no traversal/glob) ───────────
@@ -452,9 +470,9 @@ export const hideFootprint = (opts = {}, deps = {}) => {
   const fenceBodyLines = fence.state === 'ok' ? lines.slice(fence.startIdx + 1, fence.endIdx) : [];
   const after = fence.state === 'ok' ? lines.slice(fence.endIdx + 1) : [];
 
-  // ── unhide (D12): drop our fence; report/remove the residual global block ──────
+  // ── unhide (D12): drop our fence; report the residual global block ──────
   if (opts.unhide) {
-    const global = migrateFromGlobal(deps, dir, { home, removeGlobal: opts.removeGlobal, dryRun });
+    const global = migrateFromGlobal(deps, dir, { home });
     const newLines = [...before, ...after];
     const newContent = joinLines(newLines, eol);
     const changed = newContent !== content;
@@ -520,8 +538,8 @@ export const hideFootprint = (opts = {}, deps = {}) => {
     throw stop(`hide verification failed — these were written but are not hidden by the project-local exclude: ${notHidden.map((v) => v.path).join(', ')}`);
   }
 
-  // ── then detect/report (or remove) the residual legacy global block (D6) ───────
-  const global = migrateFromGlobal(deps, dir, { home, removeGlobal: opts.removeGlobal, dryRun });
+  // ── then detect + report the residual legacy global block (D6) ─────────────────
+  const global = migrateFromGlobal(deps, dir, { home });
 
   const action = !changed ? 'noop' : fence.state === 'ok' ? 'updated' : 'created';
   return {
@@ -545,29 +563,29 @@ export const hideFootprint = (opts = {}, deps = {}) => {
 
 // ── CLI ───────────────────────────────────────────────────────────────────────────
 
-const USAGE = `usage: hide-footprint [--dir <project>] [--reconcile] [--include=<path>]... [--keep-global | --remove-global] [--unhide] [--dry-run] [--help]
+const USAGE = `usage: hide-footprint [--dir <project>] [--reconcile] [--include=<path>]... [--unhide] [--dry-run] [--help]
+       hide-footprint --remove-global [--dir <project>] [--dry-run]
 
   --dir <project>     the target project (default: cwd)
   --reconcile         upgrade mode — infer visibility first; write zero bytes when VISIBLE, ASK when AMBIGUOUS
   --include=<path>    opt a surfaced ASK path into the hidden set (only an asks[] path; no glob/traversal)
-  --keep-global       keep + report the residual legacy machine-global block (DEFAULT)
-  --remove-global     remove the recognized legacy machine-global block (prints a restorable backup)
-  --unhide            remove the project-local managed block (residual global only with --remove-global)
+  --remove-global     its own mode: remove the recognized legacy machine-global block (prints a restorable backup)
+  --unhide            remove the project-local managed block
   --dry-run           print the plan; change nothing
   --help, -h          this help
 
-Writes ONE managed block in the PROJECT-LOCAL .git/info/exclude (never the machine-global excludes).
+Writes ONE managed block in the PROJECT-LOCAL .git/info/exclude; a residual legacy machine-global block is
+kept and reported, and only --remove-global (the advisor's footprint-global item) removes it.
 Tracked files are never silently un-tracked — the tool prints the \`git rm --cached\` it will not run.`;
 
 const parseArgs = (argv) => {
-  const out = { dir: undefined, reconcile: false, include: [], removeGlobal: false, keepGlobal: false, unhide: false, dryRun: false, help: false, bad: null };
+  const out = { dir: undefined, reconcile: false, include: [], removeGlobal: false, unhide: false, dryRun: false, help: false, bad: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') out.help = true;
     else if (a === '--dry-run') out.dryRun = true;
     else if (a === '--reconcile') out.reconcile = true;
     else if (a === '--unhide') out.unhide = true;
-    else if (a === '--keep-global') out.keepGlobal = true;
     else if (a === '--remove-global') out.removeGlobal = true;
     else if (a === '--dir') {
       const next = argv[i + 1];
@@ -580,15 +598,22 @@ const parseArgs = (argv) => {
       else { out.include.push(next); i += 1; }
     } else out.bad = `unknown argument: ${a}`;
   }
-  if (out.keepGlobal && out.removeGlobal) out.bad = '--keep-global and --remove-global are mutually exclusive';
+  if (out.removeGlobal && !out.bad && (out.reconcile || out.unhide || out.include.length)) out.bad = '--remove-global is its own mode — it cannot be combined with --reconcile, --unhide or --include';
   return out;
 };
 
 const fmtGlobal = (g) => {
-  if (!g || g.action === 'none' || g.action === 'skipped') return [];
-  if (g.action === 'kept') return [`  • residual legacy machine-global block in ${g.source} (${g.removedLines.filter((l) => l.trim() && !l.trim().startsWith('#')).length} path line(s)) — KEPT + reported; pass --remove-global to remove (with a printed backup)`];
-  if (g.action === 'removed') return [`  • removed the legacy machine-global block from ${g.source} (backup of ${g.removedLines.length} line(s) printed below)`, ...g.removedLines.map((l) => `      | ${l}`)];
-  return [];
+  if (!g || g.action !== 'kept') return [];
+  return [`  • residual legacy machine-global block in ${g.source} (${g.removedLines.filter((l) => l.trim() && !l.trim().startsWith('#')).length} path line(s)) — KEPT + reported; the advisor's footprint-global item removes it (with a printed backup)`];
+};
+
+const formatRemoval = ({ plan, action }, dryRun) => {
+  const lines = [dryRun ? 'hide-footprint — DRY RUN (no changes)' : 'hide-footprint'];
+  if (action === 'none') return [...lines, '  • no legacy machine-global block to remove'].join('\n');
+  const n = plan.removedLines.length;
+  lines.push(action === 'removed' ? `  • removed the legacy machine-global block from ${plan.source} (backup of ${n} line(s) printed below)`
+    : `  • would remove the legacy machine-global block from ${plan.source} (${n} line(s)):`);
+  return [...lines, ...plan.removedLines.map((l) => `      | ${l}`)].join('\n');
 };
 
 export const formatReport = (r, dryRun) => {
@@ -624,10 +649,11 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   if (args.help) { log(USAGE); return 0; }
   if (args.bad) { errlog(args.bad); errlog(USAGE); return 2; }
   try {
-    const result = hideFootprint(
-      { dir: args.dir, dryRun: args.dryRun, reconcile: args.reconcile, include: args.include, removeGlobal: args.removeGlobal, unhide: args.unhide },
-      deps,
-    );
+    if (args.removeGlobal) {
+      log(formatRemoval(removeGlobal({ dir: args.dir, dryRun: args.dryRun }, deps), args.dryRun));
+      return 0;
+    }
+    const result = hideFootprint({ dir: args.dir, dryRun: args.dryRun, reconcile: args.reconcile, include: args.include, unhide: args.unhide }, deps);
     log(formatReport(result, args.dryRun));
     return 0;
   } catch (err) {

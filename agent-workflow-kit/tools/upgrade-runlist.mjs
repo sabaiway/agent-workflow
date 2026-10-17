@@ -40,7 +40,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
       'note-refreshed',
       'refreshed',
       'regenerated',
-      're-derived',
+      'pending',
       'already-current',
       'customized-preserved',
       'malformed-preserved',

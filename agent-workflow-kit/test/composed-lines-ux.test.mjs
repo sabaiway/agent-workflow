@@ -20,7 +20,7 @@ import {
 } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
 import { ensureExecutor } from '../tools/ensure-executor.mjs';
-import { EXECUTOR_VEHICLE_REL } from '../tools/cheap-agents-read.mjs';
+import { EXECUTOR_VEHICLE_REL, executorTemplate, readExecutorPosture } from '../tools/cheap-agents-read.mjs';
 import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
 // Loaded against the pre-fix tree too (red-first): absent, the specs fixtures below are skipped and
 // the completeness suite reds on the unwitnessed tokens.
@@ -290,8 +290,8 @@ if (ensureSpecs) {
   ensureFx('executor-not-placed', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
   mkdirSync(join(dir, '.claude', 'agents'), { recursive: true });
   writeFileSync(join(dir, EXECUTOR_VEHICLE_REL), 'a hand-edited executor body');
-  ensureFx('executor-would-re-derive', ensureExecutor({ cwd: dir, kitRoot: KIT, dryRun: true, deps: {} }));
-  ensureFx('executor-re-derived', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
+  ensureFx('executor-pending', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
+  writeFileSync(join(dir, EXECUTOR_VEHICLE_REL), executorTemplate(readExecutorPosture(dir).posture).content);
   ensureFx('executor-already-current', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));
   writeFileSync(join(dir, VEHICLES_REL), '{ not json');
   ensureFx('executor-vehicle-settings-unreadable', ensureExecutor({ cwd: dir, kitRoot: KIT, deps: {} }));

@@ -7,6 +7,7 @@ import {
   migrateFromGlobal,
   buildBlock,
   formatReport,
+  main,
   START_MARKER,
   END_MARKER,
 } from './hide-footprint.mjs';
@@ -343,69 +344,202 @@ describe('verify', () => {
 
 // ── migrateFromGlobal (D6/D7) ────────────────────────────────────────────────────
 
-describe('migrateFromGlobal', () => {
+describe('spec:hide-footprint/S6 legacy global removal', () => {
   const GLOBAL = '/home/u/.gitignore_global';
-  const kitOld = [
-    '',
-    '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)',
+  const header = '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)';
+  const kitLines = [
+    header,
     '/AGENTS.md', '/CLAUDE.md', '/docs/ai/',
     '/scripts/_expect-shim.mjs', '/scripts/install-git-hooks.mjs',
-    '',
-  ].join('\n');
+  ];
+  const kitOld = `\n${kitLines.join('\n')}\n`;
+  const recordIo = (deps) => {
+    const calls = [];
+    const log = [];
+    const errlog = [];
+    const io = Object.fromEntries(['readFile', 'writeFile', 'stat', 'readdir', 'git'].map((name) => [name, (...args) => {
+      calls.push([name, ...args]);
+      return deps[name](...args);
+    }]));
+    return { calls, log, errlog, deps: { ...deps, ...io, log: (line) => log.push(line), errlog: (line) => errlog.push(line) } };
+  };
 
-  it('default KEEPS + reports the legacy global block; --remove-global removes it + returns a backup', () => {
-    const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, kitOld) });
-    const kept = migrateFromGlobal(deps, DIR, { home: '/home/u', removeGlobal: false, dryRun: false });
-    assert.equal(kept.action, 'kept');
-    assert.ok(kept.removedLines.includes('/AGENTS.md'));
-    assert.equal(world.nodes.get(GLOBAL).content, kitOld, 'kept = file untouched');
+  const ad013 = '# standalone local-dev agent skills — kept out of THIS repo (project-local; visibility is a project setting)';
+  for (const [name, before, removedLines, after] of [
+    ['kit-old', kitOld, kitLines, '\n'],
+    ['user line interleaved', `${header}\n/AGENTS.md\n/my/own/rule\n/CLAUDE.md\n\n`, [header, '/AGENTS.md', '/CLAUDE.md'], '/my/own/rule\n\n'],
+    ['memory-old', `${header}\n/AGENTS.md\n/docs/ai/\n/docs/ai/.memory-version\n/docs/plans/\n`, [header, '/AGENTS.md', '/docs/ai/', '/docs/ai/.memory-version', '/docs/plans/'], ''],
+    ['AD-013', `${ad013}\n.claude/skills/\n`, [ad013, '.claude/skills/'], ''],
+  ]) {
+    it(`${name}: core and plan agree; migrateFromGlobal keeps the file untouched`, async () => {
+      const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, before) });
+      const recorded = recordIo(deps);
+      const loaded = await import('./hide-footprint.mjs');
+      const globalRemovalOf = loaded.globalRemovalOf ?? (() => { throw new Error('globalRemovalOf is absent'); });
+      const planGlobalRemoval = loaded.planGlobalRemoval ?? (() => { throw new Error('planGlobalRemoval is absent'); });
+      assert.deepEqual(globalRemovalOf(before), { removedLines, after });
+      assert.deepEqual(planGlobalRemoval(recorded.deps, DIR, { home: deps.home }), { source: GLOBAL, before, removedLines, after });
+      assert.deepEqual(migrateFromGlobal(recorded.deps, DIR, { home: deps.home }), {
+        found: true, source: GLOBAL, removedLines, action: 'kept',
+      });
+      assert.equal(world.nodes.get(GLOBAL).content, before);
+      assert.deepEqual(recorded.calls.filter(([name]) => name === 'writeFile'), []);
+    });
+  }
 
-    const { world: w2, deps: d2 } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, kitOld) });
-    const removed = migrateFromGlobal(d2, DIR, { home: '/home/u', removeGlobal: true, dryRun: false });
-    assert.equal(removed.action, 'removed');
-    assert.ok(removed.backup.includes('/AGENTS.md'));
-    assert.ok(!w2.nodes.get(GLOBAL).content.includes('/AGENTS.md'), 'global block removed');
+  for (const [name, text] of [
+    ['no recognised line', '# personal rules\n/my/own/rule\n'],
+    ['generic lines only', '/AGENTS.md\n/CLAUDE.md\n/docs/ai/\n/docs/plans/\n/.claude/skills/\ndocs/ai\n'],
+  ]) {
+    it(`globalRemovalOf returns null: ${name}`, async () => {
+      const loaded = await import('./hide-footprint.mjs');
+      const globalRemovalOf = loaded.globalRemovalOf ?? (() => { throw new Error('globalRemovalOf is absent'); });
+      assert.equal(globalRemovalOf(text), null);
+    });
+  }
+
+  for (const [name, before, removedLines, after] of [
+    ['blank separator before the block', `user\n\n${header}\n/AGENTS.md\n`, [header, '/AGENTS.md'], 'user\n\n'],
+    ['trailing blank', `${header}\n/AGENTS.md\n\n`, [header, '/AGENTS.md'], '\n'],
+    ['CRLF throughout', `user\r\n${header}\r\n/AGENTS.md\r\nkeep\r\n`, [header, '/AGENTS.md'], 'user\r\nkeep\r\n'],
+    ['mixed endings', `first\r\n${header}\r/AGENTS.md\nmiddle\r/CLAUDE.md\r\nlast\n`, [header, '/AGENTS.md', '/CLAUDE.md'], 'first\r\nmiddle\rlast\n'],
+    ['no final newline, recognised last line', `user\n${header}\n/AGENTS.md`, [header, '/AGENTS.md'], 'user\n'],
+    ['no final newline, user last line', `${header}\n/AGENTS.md\nuser`, [header, '/AGENTS.md'], 'user'],
+    ['latin1 user byte', `${header}\n/AGENTS.md\n/caf\xe9\n`, [header, '/AGENTS.md'], '/caf\xe9\n'],
+  ]) {
+    it(`globalRemovalOf keeps every other byte: ${name}`, async () => {
+      const loaded = await import('./hide-footprint.mjs');
+      const globalRemovalOf = loaded.globalRemovalOf ?? (() => { throw new Error('globalRemovalOf is absent'); });
+      assert.deepEqual(globalRemovalOf(before), { removedLines, after });
+    });
+  }
+
+  for (const [name, global] of [['key unset (exit 1)', null], ['file absent', GLOBAL]]) {
+    it(`planGlobalRemoval returns null: ${name}; migrateFromGlobal answers none`, async () => {
+      const { deps } = mk({ global });
+      const recorded = recordIo(deps);
+      const loaded = await import('./hide-footprint.mjs');
+      const planGlobalRemoval = loaded.planGlobalRemoval ?? (() => { throw new Error('planGlobalRemoval is absent'); });
+      assert.equal(planGlobalRemoval(recorded.deps, DIR, { home: deps.home }), null);
+      assert.deepEqual(migrateFromGlobal(recorded.deps, DIR, { home: deps.home }), {
+        found: false, source: null, removedLines: [], action: 'none',
+      });
+      assert.deepEqual(recorded.calls.filter(([name]) => name === 'writeFile'), []);
+    });
+  }
+
+  for (const [value, source] of [[GLOBAL, GLOBAL], ['~/.gitignore_global', GLOBAL], ['rel/excludes', join(DIR, 'rel/excludes')]]) {
+    it(`planGlobalRemoval resolves ${value} and reads before as latin1`, async () => {
+      const before = `${header}\r\n/AGENTS.md\n/caf\xe9\r`;
+      const { deps } = mk({ global: value }, { world: (w) => w.abs(source, before) });
+      const env = { HOME: deps.home };
+      const recorded = recordIo({ ...deps, env });
+      const loaded = await import('./hide-footprint.mjs');
+      const planGlobalRemoval = loaded.planGlobalRemoval ?? (() => { throw new Error('planGlobalRemoval is absent'); });
+      assert.deepEqual(planGlobalRemoval(recorded.deps, DIR, { home: deps.home }), {
+        source, before, removedLines: [header, '/AGENTS.md'], after: '/caf\xe9\r',
+      });
+      assert.deepEqual(recorded.calls, [
+        ['git', ['config', '--get', 'core.excludesFile'], { cwd: DIR, env }],
+        ['readFile', source, 'latin1'],
+      ]);
+    });
+  }
+
+  for (const failure of ['git exit 128', 'read EACCES']) {
+    it(`planGlobalRemoval throws FOOTPRINT_STOP on ${failure}`, async () => {
+      const { deps } = mk({ global: GLOBAL });
+      const failing = failure === 'git exit 128'
+        ? { git: () => ({ status: 128, stdout: '', stderr: 'fatal: boom' }) }
+        : { readFile: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } };
+      const loaded = await import('./hide-footprint.mjs');
+      const planGlobalRemoval = loaded.planGlobalRemoval ?? (() => { throw new Error('planGlobalRemoval is absent'); });
+      assert.throws(() => planGlobalRemoval({ ...deps, ...failing }, DIR, { home: deps.home }), (error) => error.code === FOOTPRINT_STOP);
+    });
+  }
+
+  it('--remove-global --dry-run prints the plan without reading the exclude or writing', () => {
+    const { world, deps } = mk({ global: GLOBAL }, { exclude: '# local\n', world: (w) => w.abs(GLOBAL, kitOld) });
+    const recorded = recordIo(deps);
+    assert.equal(main(['--remove-global', '--dry-run', '--dir', DIR], recorded.deps), 0);
+    assert.deepEqual(recorded.log, [[
+      'hide-footprint — DRY RUN (no changes)',
+      `  • would remove the legacy machine-global block from ${GLOBAL} (${kitLines.length} line(s)):`,
+      ...kitLines.map((line) => `      | ${line}`),
+    ].join('\n')]);
+    assert.deepEqual(recorded.errlog, []);
+    assert.deepEqual(recorded.calls.map(([name, path]) => [name, path]), [
+      ['git', ['config', '--get', 'core.excludesFile']], ['readFile', GLOBAL],
+    ]);
+    assert.equal(world.nodes.get(GLOBAL).content, kitOld);
+    assert.equal(world.read('.git/info/exclude'), '# local\n');
   });
 
-  it('preserves a user line interleaved with the legacy block', () => {
-    const withUser = `/AGENTS.md\n/CLAUDE.md\n\n/my/own/rule\n`;
-    const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, withUser) });
-    const r = migrateFromGlobal(deps, DIR, { home: '/home/u', removeGlobal: true, dryRun: false });
-    assert.equal(r.action, 'removed');
-    assert.ok(world.nodes.get(GLOBAL).content.includes('/my/own/rule'), 'user line preserved');
-    assert.ok(!world.nodes.get(GLOBAL).content.includes('/AGENTS.md'));
+  it('--remove-global applies latin1 after and prints the restorable backup lines', () => {
+    const before = `${header}\r\n/AGENTS.md\n/caf\xe9\r`;
+    const after = '/caf\xe9\r';
+    const { world, deps } = mk({ global: GLOBAL }, { exclude: '# local\n', world: (w) => w.abs(GLOBAL, before) });
+    const recorded = recordIo(deps);
+    assert.equal(main(['--remove-global', '--dir', DIR], recorded.deps), 0);
+    assert.deepEqual(recorded.log, [[
+      'hide-footprint',
+      `  • removed the legacy machine-global block from ${GLOBAL} (backup of 2 line(s) printed below)`,
+      `      | ${header}`,
+      '      | /AGENTS.md',
+    ].join('\n')]);
+    assert.deepEqual(recorded.errlog, []);
+    assert.deepEqual(recorded.calls, [
+      ['git', ['config', '--get', 'core.excludesFile'], { cwd: DIR, env: process.env }],
+      ['readFile', GLOBAL, 'latin1'],
+      ['writeFile', GLOBAL, after, 'latin1'],
+    ]);
+    assert.equal(world.nodes.get(GLOBAL).content, after);
+    assert.equal(world.read('.git/info/exclude'), '# local\n');
   });
 
-  it('core.excludesFile unset (exit 1) → no-op, never a STOP', () => {
-    const { deps } = mk({ global: null });
-    const r = migrateFromGlobal(deps, DIR, { home: '/home/u', removeGlobal: true, dryRun: false });
-    assert.equal(r.found, false);
-    assert.equal(r.action, 'none');
+  it('--remove-global with nothing to remove prints the no-legacy line and writes nothing', () => {
+    const { deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, '/my/own/rule\n') });
+    const recorded = recordIo(deps);
+    assert.equal(main(['--remove-global', '--dir', DIR], recorded.deps), 0);
+    assert.deepEqual(recorded.log, ['hide-footprint\n  • no legacy machine-global block to remove']);
+    assert.deepEqual(recorded.errlog, []);
+    assert.deepEqual(recorded.calls.filter(([name]) => name === 'writeFile'), []);
   });
 
-  it('a memory-old global path-set (no header) is recognized + removed', () => {
-    const memOld = `/AGENTS.md\n/docs/ai/\n/docs/ai/.memory-version\n/docs/plans/\n`;
-    const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, memOld) });
-    const r = migrateFromGlobal(deps, DIR, { home: '/home/u', removeGlobal: true, dryRun: false });
-    assert.equal(r.action, 'removed');
-    assert.equal(world.nodes.get(GLOBAL).content, '', 'whole memory-old block recognized + removed');
-  });
+  for (const code of ['EROFS', 'EPERM', 'EACCES', null]) {
+    it(`--remove-global returns 1 without throwing when writeFile refuses: ${code ?? 'boom'}`, () => {
+      const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, kitOld) });
+      const recorded = recordIo({ ...deps, writeFile: () => { throw Object.assign(new Error('boom'), code ? { code } : {}); } });
+      assert.equal(main(['--remove-global', '--dir', DIR], recorded.deps), 1);
+      assert.deepEqual(recorded.errlog, [
+        `[agent-workflow-kit] cannot write the global excludes ${GLOBAL} (${code ?? 'boom'}) — the block stays`,
+      ]);
+      assert.deepEqual(recorded.log, []);
+      assert.equal(world.nodes.get(GLOBAL).content, kitOld);
+    });
+  }
 
-  it('the AD-013 standalone form as a GLOBAL block is recognized + removed (the third D7 fixture)', () => {
-    const ad013 = '# standalone local-dev agent skills — kept out of THIS repo (project-local; visibility is a project setting)\n.claude/skills/\n';
-    const { world, deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, ad013) });
-    const r = migrateFromGlobal(deps, DIR, { home: '/home/u', removeGlobal: true, dryRun: false });
-    assert.equal(r.action, 'removed');
-    assert.ok(r.backup.includes('.claude/skills/'));
-    assert.equal(world.nodes.get(GLOBAL).content, '', 'AD-013 comment + bare line removed');
-  });
+  for (const args of [['--remove-global', '--reconcile'], ['--remove-global', '--unhide'], ['--remove-global', '--include=/X'], ['--keep-global']]) {
+    it(`usage rejects ${args.join(' ')} before any IO`, () => {
+      const { deps } = mk({ global: GLOBAL }, { world: (w) => w.abs(GLOBAL, kitOld) });
+      const recorded = recordIo(deps);
+      assert.equal(main([...args, '--dir', DIR], recorded.deps), 2);
+      assert.equal(recorded.errlog.length, 2);
+      assert.equal(recorded.errlog[0], args[0] === '--keep-global'
+        ? 'unknown argument: --keep-global'
+        : '--remove-global is its own mode — it cannot be combined with --reconcile, --unhide or --include');
+      assert.match(recorded.errlog[1], /^usage: hide-footprint/);
+      assert.deepEqual(recorded.log, []);
+      assert.deepEqual(recorded.calls, []);
+    });
+  }
 });
 
 // ── --unhide (D12) ───────────────────────────────────────────────────────────────
 
 describe('--unhide', () => {
   const GLOBAL = '/home/u/.gitignore_global';
-  it('deletes the fence; default reports the residual global block; --remove-global removes it', () => {
+  it('deletes the fence and keeps the residual global block even with removeGlobal: true', () => {
     const exclude = `# boiler\n${START_MARKER}\n/AGENTS.md\n/docs/ai/\n${END_MARKER}\n`;
     const kitOld = '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)\n/AGENTS.md\n/docs/ai/\n';
     const { world, deps } = mk({ global: GLOBAL }, { exclude, world: (w) => w.abs(GLOBAL, kitOld) });
@@ -419,8 +553,8 @@ describe('--unhide', () => {
 
     const { world: w2, deps: d2 } = mk({ global: GLOBAL }, { exclude, world: (w) => w.abs(GLOBAL, kitOld) });
     const r2 = hideFootprint({ dir: DIR, unhide: true, removeGlobal: true }, d2);
-    assert.equal(r2.global.action, 'removed');
-    assert.ok(!w2.nodes.get(GLOBAL).content.includes('/AGENTS.md'));
+    assert.equal(r2.global.action, 'kept');
+    assert.equal(w2.nodes.get(GLOBAL).content, kitOld);
   });
 });
 
@@ -512,22 +646,7 @@ describe('formatReport characterization', () => {
       '  • ASK /GEMINI.md — present but its name is generic (Gemini CLI) — confirm before hiding',
       '  • tracked, NOT hidden: /.claude/settings.json — run `git rm --cached -- .claude/settings.json` to un-track (kept on disk)',
       '  • skipped 1 already-ignored (tracked .gitignore)',
-      '  • residual legacy machine-global block in /home/u/.gitignore_global (1 path line(s)) — KEPT + reported; pass --remove-global to remove (with a printed backup)',
-    ].join('\n'));
-  });
-
-  it('a removed legacy global block prints the restorable backup lines', () => {
-    const out = formatReport(result({
-      action: 'updated',
-      wrote: ['/AGENTS.md'],
-      global: { action: 'removed', source: '/home/u/.gitignore_global', removedLines: ['/AGENTS.md'] },
-    }), false);
-    assert.equal(out, [
-      'hide-footprint',
-      `  • updated ${EXCLUDE}`,
-      '  • hidden (1): /AGENTS.md',
-      '  • removed the legacy machine-global block from /home/u/.gitignore_global (backup of 1 line(s) printed below)',
-      '      | /AGENTS.md',
+      "  • residual legacy machine-global block in /home/u/.gitignore_global (1 path line(s)) — KEPT + reported; the advisor's footprint-global item removes it (with a printed backup)",
     ].join('\n'));
   });
 

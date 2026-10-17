@@ -5,7 +5,7 @@
 //   gates          docs/ai/gates.json          seed-if-missing (an existing declaration is authored content)
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
-//   executor       .claude/agents/executor.md  re-derived from docs/ai/vehicles.json when its bytes differ; absent stays absent
+//   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
 //   scripts        scripts/<ADR enforcement>   seed-if-missing, ADR-layout detect FIRST
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
@@ -80,16 +80,16 @@ Usage:
   --help, -h    this help
 
 Every SEED is CREATE-ONLY: an existing file is preserved byte-for-byte, never clobbered and never
-refreshed in place. Four ops refresh instead: the orchestration onboarding note, only while it still
+refreshed in place. Three ops refresh instead: the orchestration onboarding note, only while it still
 matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer reader
 and checker pairs, only while a file's bytes are a body a release shipped (an edited file is
 preserved, the writes that depend on it — the spec store root included — are withheld behind it,
-and ONE printed replace line replaces every edited file only on the user's yes); the placed executor
-vehicle (.claude/agents/executor.md), re-derived from docs/ai/vehicles.json
-whenever its bytes differ from the derived body (a hand edit is replaced, never preserved; an absent
-file is never placed here); and the navigator index — a GENERATED artifact, regenerated
+and ONE printed replace line replaces every edited file only on the user's yes); and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale; where a module the project's hook loads is not the bundled one,
 the project's own checker judges the navigator and a write it rejects is put back byte for byte.
+The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
+body derived from docs/ai/vehicles.json is pending — the advisor's executor-vehicle.differing item
+changes it on your yes; an absent file is never placed here.
 The enforcement-script ensure detects an older ADR-store layout FIRST and instructs the opt-in
 migration instead of seeding.
 

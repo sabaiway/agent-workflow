@@ -411,7 +411,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39974, 'f9ca393a3691554b88373b135385b1522bf8ab1a44cfa640bfc181c69a2b877e'], 'the bytes after story S8 (the enforcement check and apply by the consent route)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39786, '326f1c49a0bb4cd41d0b6a45bc887bcd35fb80678b9a12a38441c55990bd0688'], 'the bytes after story S11');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -428,9 +428,9 @@ const JEV_NOTE_LITERALS = Object.freeze([
   'HAND-APPLY', "user's own step", 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run",
   'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json',
 ]);
-const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
+const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAttribution', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
   'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
-  'probeMasksItem', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
+  'probeMasksItem', 'probeFootprintGlobal', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
 describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked apply', () => {
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
@@ -1023,5 +1023,85 @@ describe("spec:init-project/S44 — the worktrees grant's shipped text", () => {
       return ackHit || grantHit ? [`${label}:${first}-${last}: ${sentence}`] : [];
     }));
     assert.deepEqual(hits, [], `retired worktrees grant or ack advice:\n${hits.join('\n')}`);
+  });
+});
+
+describe('spec:init-project/S50 — shipped text of the five writes', () => {
+  it('bootstrap declares both capabilities and routes steps 4 and 9 through their items without hand steps', () => {
+    for (const key of ['attribution', 'footprint-global']) {
+      assert.ok(BOOTSTRAP_DOC.includes(`<!-- opt-in-capability: ${key} -->`), key);
+    }
+    const step4 = between(BOOTSTRAP_DOC, '4. **Choose agent attribution', '\n5. **');
+    const step9 = between(BOOTSTRAP_DOC, '9. **Wire / hide**', '\n10. **');
+    assert.ok(step4.includes("the advisor's `attribution` item of step 11 sets the harness setting"));
+    assert.ok(step9.includes("the advisor's `footprint-global` item of step 11 removes it on the user's yes after its check"));
+    for (const step of [step4, step9]) {
+      assert.doesNotMatch(step, /\b(?:by hand|No Node on the agent host|includeCoAuthoredBy|create it if absent|write the one managed block)\b/iu);
+    }
+  });
+
+  it('upgrade names footprint-global and the pending differing arm within its full 81920-byte read budget', () => {
+    const footprint = between(UPGRADE_DOC, '**`footprint` — hidden-mode footprint reconcile', '\n\n');
+    assert.ok(footprint.includes("the advisor's `footprint-global` item removes it"));
+    assert.doesNotMatch(footprint, /\bask before `--remove-global`/iu);
+    const executor = between(UPGRADE_DOC, '**What the executor ensure does.**', '\n\n');
+    for (const text of [between(UPGRADE_DOC, '3. `configs` —', '\n'), between(UPGRADE_DOC, '**`configs` —', '\n\n'), executor]) {
+      assert.ok(text.includes('`pending`'));
+      assert.doesNotMatch(text, /\b(?:re-derived|would-re-derive)\b/u);
+    }
+    assert.ok(executor.includes("the advisor's `executor-vehicle.differing` item re-derives it on the user's yes"));
+    assert.ok(between(read('references/shared/composition-handoff.md'), '- **Delegated**', '- **Fallback**')
+      .includes('memory is told to skip its step-4 settings write; the `attribution` item of step 11 sets it'));
+    const files = ['SKILL.md', 'references/modes/upgrade.md', ...['deploy-tail', 'report-footer', 'composition-handoff', 'command-shapes'].map((name) => `references/shared/${name}.md`)];
+    const bytes = files.reduce((sum, path) => sum + Buffer.byteLength(read(path)), 0);
+    assert.ok(bytes <= 81920, `upgrade full read set: ${bytes} > 81920 bytes`);
+  });
+
+  it('migration steps, verification and rollback name their items and retire manual creation, merging and grep verification', () => {
+    const attribution = read('migrations/1.2.0-agent-attribution.md');
+    const step5 = between(attribution, '5. **Whenever the Attribution block', '\n6.');
+    const step4 = between(read('migrations/3.0.0-hardened-core-loop.md'), '4. **Commit guard', '\n5.');
+    for (const [key, text] of [
+      ['attribution', step5], ['attribution', between(attribution, '## Verification', '## Rollback')],
+      ['attribution', between(attribution, '## Rollback', '')], ['commit-guard', step4],
+    ]) {
+      assert.ok(text.includes(`\`${key}\``), key);
+      assert.doesNotMatch(text, /\b(?:create it as|if absent|STOP and merge|by hand|grep)\b/iu, key);
+    }
+    assert.ok(step5.replace(/\s+/gu, ' ').includes('"includeCoAuthoredBy": false already converges the item'));
+    assert.ok(step4.replace(/\s+/gu, ' ').includes("A cmp -s against the kit's references/scripts/ copy tells whether the project's copy is the current one; a differing copy may be an older deploy or the user's own edit, and refreshing it is the user's own step."));
+  });
+
+  it('the trailer gotcha and the attribution and visibility contracts name the advisor items', () => {
+    const trailer = between(read('references/shared/deploy-tail.md'), '- **The `Co-Authored-By` trailer', '\n');
+    const contracts = read('references/contracts.md');
+    const attribution = between(contracts, '- **Two enforcement layers**', '\n');
+    const visibility = between(contracts, '- **hidden** (in-tree)', '\n');
+    for (const text of [trailer, attribution]) {
+      assert.ok(text.includes("the advisor's `attribution` item sets the harness setting"));
+    }
+    assert.ok(visibility.includes("removal is the advisor's `footprint-global` item, which the agent applies on the user's yes after its check"));
+  });
+
+  it('the two posture notes permit checked chat consent and optional init, warn about other repositories and distinguish differing from placed', () => {
+    const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+    for (const key of ['attribution', 'footprint-global']) {
+      const note = between(notes, `- \`${key}\` — `, POSTURE_NOTE_BOUNDARY);
+      assert.ok(note.includes('the agent applies the item on the chat yes after the check'), key);
+      assert.ok(note.includes('`init` applies it on the terminal y as the route the user may take instead'), key);
+    }
+    assert.ok(between(notes, '- `footprint-global` — ', POSTURE_NOTE_BOUNDARY).includes("Another of the user's repositories may rely on the same lines"));
+    const executor = between(MODE_DOC, '**The `executor-vehicle` item', '\n\n');
+    assert.ok(executor.includes('the optional `executor-vehicle.differing` arm, re-derived on the chat yes after the check'));
+    assert.ok(executor.includes('**`placed` renders NOTHING**'));
+    assert.doesNotMatch(executor, /\bcustomized\b[^.;\n]*\brenders? NOTHING\b/iu);
+  });
+
+  it('composition and vehicles name the pending items and ensure-configs help retires re-derive', () => {
+    assert.ok(read('references/shared/composition-handoff.md').replace(/\s+/gu, ' ').includes("(a stale memory's residual global block is the advisor's footprint-global item)"));
+    assert.ok(JSON.parse(read('references/templates/vehicles.json'))._README.includes('the upgrade reports a differing body as pending'));
+    const help = between(read('tools/ensure-configs.mjs'), 'Usage:', '`;');
+    assert.ok(help.includes("is pending — the advisor's executor-vehicle.differing item"));
+    assert.doesNotMatch(help, /\bre-derive(?:d)?\b/iu);
   });
 });

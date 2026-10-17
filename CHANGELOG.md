@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-17 — AD-186: bootstrap and the upgrade stop making five protected writes mid-session (kit 14.34.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**Five writes bootstrap, the upgrade or a migration note made by themselves mid-session are now advisor items the
+agent applies on the chat yes after the danger check, or that stay pending.** Two items and one arm are new: `attribution` (the
+new `tools/attribution.mjs` sets Claude Code's `attribution` setting when `AGENTS.md` reads off), `footprint-global`
+(`hide-footprint --remove-global` is its own mode; the hide never writes the machine-global ignore file) and
+`executor-vehicle.differing` (the configs step reports a hand-edited executor `pending` instead of rewriting it). The
+existing `commit-guard` item reads the hook back and stays pending over an installer older than its arm. The danger
+check's `writes:` line over an existing regular file now carries the digest of the bytes it replaces. Contracts:
+init-project revision 10 (part in-session-writes, new), executor-vehicle revision 4, hide-footprint revision 2,
+upgrade-delivery revision 7, carriers revision 10. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-16 — AD-185: the worktrees grant gets a writer the agent runs on the chat yes (kit 14.33.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **The upgrade's `worktrees-dir` item is now a harness item the agent applies on the chat yes after the danger check,

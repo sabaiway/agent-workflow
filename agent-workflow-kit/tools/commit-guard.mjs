@@ -41,9 +41,7 @@
 // boundary). Read-only; dependency-free; Node >= 22. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { isDirectRun } from './direct-run.mjs';
 import { computeTreeFingerprint, buildState, decideCheck, quoteReportName, shellQuoteArg } from './review-state.mjs';
@@ -54,25 +52,14 @@ import {
 import { resolveLcovPath } from './coverage-check.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 import { computeFlowDecision } from './flow-check.mjs';
-import { GIT_MAX_BUFFER, resolveGitLocation } from './git-env.mjs';
+import { resolveGitLocation } from './git-env.mjs';
 import { escapeForDisplay } from './repo-lex.mjs';
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 
-const gitLine = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
-  if (r.error || r.status !== 0) return null;
-  return r.stdout.toString('utf8').replace(/\r?\n$/, '');
-};
-
-// resolveGitHooksPath(projectDir) → the ABSOLUTE hooks dir git itself reports (a linked worktree
-// answers with ITS OWN hooks path — never a hardcoded `.git/hooks`), or null outside a git tree.
-// The one home consumers (the recommendations guard-install probe) read instead of re-deriving it.
-export const resolveGitHooksPath = (projectDir) => {
-  const line = gitLine(['rev-parse', '--git-path', 'hooks'], projectDir);
-  return line == null ? null : resolve(projectDir, line);
-};
+// The hooks-path question and the pre-commit reader live in git-hooks.mjs, their writer's home.
+export { resolveGitHooksPath, readPreCommitState, canonicalGuardLineRe, INSTALLER_MARKER_RE } from './git-hooks.mjs';
 
 // How many offending paths the index-lag refusal names before it states a remainder count: enough
 // to act on, bounded so a wide lag cannot bury a pre-commit hook's output.

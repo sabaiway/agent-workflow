@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ENSURE_OPS, WRITE_TOKENS, DRY_RUN_TOKENS } from './ensure-vocabulary.mjs';
+import { ENSURE_OPS, WRITE_TOKENS, DRY_RUN_TOKENS, ENSURE_TOKENS, RELAYED_ENSURE_TOKENS } from './ensure-vocabulary.mjs';
 import { EXECUTOR_VEHICLE_REL, readBundledAgents } from './cheap-agents-read.mjs';
 
 const loaded = await import('./ensure-executor.mjs').catch(() => ({}));
@@ -148,27 +148,22 @@ describe('spec:executor-vehicle/S5', () => {
       for (const dryRun of [true, false]) runUnchanged(cwd, dryRun, 'already-current', null, [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'source', ...fields, 'nothing', 'written']);
     }
   });
-  it('cell 6 previews and applies re-derivation and preserves bytes when rename fails', () => {
+  it('cell 6 answers pending on preview and run without writing or renaming', (t) => {
     ensureExecutor({ cwd: opening.cwd, kitRoot: KIT_ROOT, dryRun: true });
     for (const settings of [undefined, SETTINGS]) {
       const cwd = makeProject(settings, CUSTOM);
       const target = join(cwd, EXECUTOR_VEHICLE_REL);
-      runUnchanged(cwd, true, 'would-re-derive', null, [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'would', 'rewritten']);
-      const expected = snapshot(cwd);
-      const body = deriveExpected(settings);
-      expected.set(EXECUTOR_VEHICLE_REL, ['file', Buffer.from(body)]);
-      const answer = ensureExecutor({ cwd, kitRoot: KIT_ROOT, dryRun: false });
-      const fields = settings === undefined ? ['model=opus', 'effort=high'] : ['model=sonnet', 'effort=medium'];
-      assertOutcome(answer, 're-derived', null, [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'hand', 'edit', 'replaced', ...fields]);
-      assert.deepEqual(readFileSync(target), Buffer.from(body));
-      assert.deepEqual(snapshot(cwd), expected);
-      writeFileSync(target, CUSTOM);
-      const renames = [];
-      const deps = { rename: (from, to) => { renames.push([from, to]); throw Object.assign(new Error('EROFS'), { code: 'EROFS' }); } };
-      runUnchanged(cwd, false, 'failed', 'write-refused', [EXECUTOR_VEHICLE_REL, 'EROFS'], { deps });
-      assert.equal(renames.length, 1);
-      assert.equal(renames[0][1], target);
-      assert.equal(readFileSync(target, 'utf8'), CUSTOM);
+      const deps = {
+        rename: t.mock.fn(() => assert.fail('pending must not rename')),
+        writeFile: t.mock.fn(() => assert.fail('pending must not write')),
+      };
+      for (const dryRun of [true, false]) {
+        runUnchanged(cwd, dryRun, 'pending', null,
+          [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'executor-vehicle.differing', 'nothing', 'written'], { deps });
+        assert.deepEqual(readFileSync(target), Buffer.from(CUSTOM));
+      }
+      assert.equal(deps.rename.mock.callCount(), 0);
+      assert.equal(deps.writeFile.mock.callCount(), 0);
     }
   });
   it('cell 7 propagates ancestor and executor probe and read errors without writing', () => {
@@ -195,8 +190,89 @@ describe('spec:executor-vehicle/S5', () => {
     assert.equal(EXECUTOR_OP, 'executor');
     assert.equal(ENSURE_OPS[4], 'executor');
     assert.equal(ENSURE_OPS[3], 'vehicles');
-    const index = WRITE_TOKENS.indexOf('re-derived');
-    assert.ok(index >= 0);
-    assert.equal(DRY_RUN_TOKENS[index], 'would-re-derive');
+    for (const tokens of [WRITE_TOKENS, DRY_RUN_TOKENS]) {
+      assert.equal(tokens.includes('re-derived'), false);
+      assert.equal(tokens.includes('would-re-derive'), false);
+    }
+    for (const tokens of [ENSURE_TOKENS, RELAYED_ENSURE_TOKENS]) assert.ok(tokens.includes('pending'));
+  });
+});
+
+describe('spec:init-project/S51 configs finish over a differing executor', () => {
+  afterEach(() => {
+    while (roots.length) rmSync(roots.pop(), { recursive: true, force: true });
+  });
+  it('shares executorBodyDiffers from the read core and imports no atomic write in the ensure', () => {
+    const tools = join(KIT_ROOT, 'tools');
+    for (const name of ['ensure-executor.mjs', 'recommendations.mjs']) {
+      const source = readFileSync(join(tools, name), 'utf8');
+      assert.match(source, /import\s*\{[^}]*\bexecutorBodyDiffers\b[^}]*\}\s*from\s*['"]\.\/cheap-agents-read\.mjs['"]/u);
+      if (name === 'ensure-executor.mjs') assert.doesNotMatch(source, /import[^;]*atomic-write/u);
+    }
+    const declarations = readdirSync(tools).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs'))
+      .filter((name) => /\b(?:const|function)\s+executorBodyDiffers\b/u.test(readFileSync(join(tools, name), 'utf8')));
+    assert.deepEqual(declarations, ['cheap-agents-read.mjs']);
+    assert.match(readFileSync(join(tools, declarations[0]), 'utf8'), /export const executorBodyDiffers\b/u);
+  });
+  for (const state of ['absent', 'symlink', 'directory', 'malformed', 'unreadable', 'custom', 'derived', 'read-error']) {
+    it(`executorBodyDiffers judges ${state} without writing`, async () => {
+      const cwd = makeProject(state === 'malformed' ? MALFORMED : SETTINGS);
+      if (['symlink', 'directory'].includes(state)) placeWrongNode(cwd, EXECUTOR_VEHICLE_REL, state);
+      else if (state !== 'absent') {
+        mkdirSync(join(cwd, AGENTS_DIR), { recursive: true });
+        writeFileSync(join(cwd, EXECUTOR_VEHICLE_REL), state === 'derived' ? deriveExpected(SETTINGS) : CUSTOM);
+      }
+      const denied = Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      const target = join(cwd, state === 'unreadable' ? SETTINGS_REL : EXECUTOR_VEHICLE_REL);
+      const deps = ['unreadable', 'read-error'].includes(state)
+        ? { readFile: denyRead(target, [], denied, readFileSync) } : {};
+      const before = snapshot(cwd);
+      const loaded = await import('./cheap-agents-read.mjs');
+      const executorBodyDiffers = loaded.executorBodyDiffers ?? (() => { throw new Error('executorBodyDiffers is absent'); });
+      if (state === 'read-error') assert.throws(() => executorBodyDiffers(cwd, deps), denied);
+      else assert.equal(executorBodyDiffers(cwd, deps), state === 'custom');
+      assert.deepEqual(snapshot(cwd), before);
+    });
+  }
+  it('keeps all other configs tokens and renders both differing and global-footprint items', async () => {
+    const { main } = await import('./ensure-configs.mjs');
+    const { buildRecommendations, formatRecommendations } = await import('./recommendations.mjs');
+    const cwd = makeProject();
+    const home = makeProject();
+    const run = (body) => {
+      rmSync(cwd, { recursive: true, force: true });
+      mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+      writeFileSync(join(cwd, 'package.json'), '{"name":"fixture"}\n');
+      writeFileSync(join(cwd, 'docs/ai/.workflow-version'), '4.0.0');
+      writeFileSync(join(cwd, SETTINGS_REL), SETTINGS);
+      if (body !== undefined) {
+        mkdirSync(join(cwd, AGENTS_DIR), { recursive: true });
+        writeFileSync(join(cwd, EXECUTOR_VEHICLE_REL), body);
+      }
+      return main(['--reconcile', '--cwd', cwd], { kitRoot: KIT_ROOT });
+    };
+    const tokensOf = (stdout) => stdout.split('\n').map((line) => line.match(/^ {2}([a-z-]+): ([a-z-]+)$/u))
+      .filter(Boolean).map(([, op, token]) => ({ op, token }));
+    const baseline = run();
+    const differing = run(CUSTOM);
+    assert.equal(baseline.code, 0, baseline.stderr);
+    assert.equal(differing.code, 0, differing.stderr);
+    const tokens = tokensOf(differing.stdout);
+    assert.deepEqual(tokens.map(({ op }) => op), ENSURE_OPS);
+    assert.deepEqual(tokens.find(({ op }) => op === 'executor'), { op: 'executor', token: 'pending' });
+    assert.deepEqual(tokens.filter(({ op }) => op !== 'executor'), tokensOf(baseline.stdout).filter(({ op }) => op !== 'executor'));
+    assert.deepEqual(readFileSync(join(cwd, EXECUTOR_VEHICLE_REL)), Buffer.from(CUSTOM));
+    const deps = {
+      home,
+      planGlobalRemoval: () => ({ source: '/h/.gitignore_global', before: 'x', after: '', removedLines: ['x'] }),
+    };
+    const result = buildRecommendations({ cwd, deps });
+    const differingItem = result.items.find((item) => item.variant === 'executor-vehicle.differing');
+    const globalItem = result.items.find((item) => item.key === 'footprint-global');
+    assert.ok(differingItem, JSON.stringify(result.skips));
+    assert.ok(globalItem, JSON.stringify(result.skips));
+    const rendered = formatRecommendations(result);
+    assert.ok(rendered.includes(differingItem.what));
+    assert.ok(rendered.includes(globalItem.what));
   });
 });

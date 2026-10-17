@@ -30,6 +30,21 @@ describe('spec:init-project/S11 previews and one terminal y', () => {
     assert.deepEqual(f.printed.slice(start, start + 9), ['preview: velocity-core', 'VC-PREVIEW', 'CHECK: velocity-core', `digest: ${CHECK_DIGEST}`,
       'preview: bridge-tier', 'BT-PREVIEW', 'CHECK: bridge-tier', `digest: ${CHECK_DIGEST}`, note]);
   });
+  it('the check facts carry the env every launch receives, with no GIT_ key', async (t) => {
+    const f = fixture(t, [item('velocity-core')]);
+    f.env.GIT_CONFIG_GLOBAL = join(f.home, '.gitconfig');
+    const checked = [];
+    f.deps.checkApply = (variant, checkFacts) => {
+      checked.push(checkFacts.env);
+      return { lines: [`digest: ${CHECK_DIGEST}`], digest: CHECK_DIGEST, refused: [] };
+    };
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
+    assert.ok(checked.length > 0 && f.calls.length > 0);
+    for (const env of [...checked, ...f.calls.map(({ opts }) => opts.env)]) {
+      assert.deepEqual(env, f.calls[0].opts.env);
+      assert.ok(!Object.keys(env).some((key) => /^GIT_/iu.test(key)));
+    }
+  });
   it('the run-none line prints before the y and one y applies the batch', async (t) => {
     const queue = [item('velocity-core'), item('bridge-tier')];
     const f = fixture(t, queue);
@@ -377,6 +392,77 @@ describe('spec:init-project/S45 — the console y re-judges the worktrees grant'
     assert.ok(existsSync(join(f.root, '.claude/settings.local.json')));
     assert.ok(statSync(parent).isDirectory());
     assert.deepEqual(pending(f), []);
+  });
+});
+
+describe('spec:init-project/S49 — init previews and applies the new variants on one y', () => {
+  const createFixture = (t, variants) => {
+    const f = realFixture(t, new Set(variants));
+    f.respond = (argv, opts) => {
+      assert.equal(argv[0], 'node');
+      assert.ok(['velocity-profile.mjs', 'gate-hook.mjs', 'mcp.mjs', 'attribution.mjs', 'hide-footprint.mjs'].some((name) => argv[1] === join(TOOLS, name)));
+      return spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: opts.env, encoding: 'utf8' });
+    };
+    return f;
+  };
+
+  it('attribution previews the real writer before its check and applies on one y with a restart hint', async (t) => {
+    const f = createFixture(t, ['attribution']);
+    put(join(f.root, 'AGENTS.md'), '> **Agent attribution: off** (chosen at setup).\n');
+    assert.deepEqual(pending(f), ['attribution']);
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    const lines = f.printed.flatMap((line) => line.split('\n'));
+    const preview = lines.indexOf('preview: attribution');
+    const dryRun = lines.indexOf('would set attribution (.claude/settings.json): {"commit":"","pr":"","sessionUrl":false}');
+    const check = lines.indexOf('.claude/settings.json:');
+    const scope = lines.indexOf('scope: within the declared scope of attribution');
+    assert.ok(preview >= 0 && dryRun > preview && check > dryRun && scope > check);
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [['node', join(TOOLS, 'attribution.mjs'), '--apply', '--cwd', f.root]]);
+    assert.deepEqual(JSON.parse(readFileSync(join(f.root, '.claude/settings.json'), 'utf8')).attribution, { commit: '', pr: '', sessionUrl: false });
+    assert.ok(f.printed.includes(RESTART));
+    assert.deepEqual(pending(f), []);
+  });
+
+  for (const moved of [false, true]) it(moved
+    ? 'a legacy line added before the y leaves footprint-global unapplied with the moved-digest reason'
+    : 'footprint-global previews removal and applies before velocity-core on one y, preserving every user byte', async (t) => {
+    const f = createFixture(t, moved ? ['footprint-global'] : ['velocity-core', 'footprint-global']);
+    const global = join(f.home, '.gitignore_global');
+    const before = 'user-first\r\n# agent-workflow-kit hidden mode (machine-local, applies to every repo on this host)\n/AGENTS.md\n/docs/ai/\n/scripts/check-docs-size.mjs\nuser-last\n';
+    put(join(f.home, '.gitconfig'), '[core]\n\texcludesFile = ~/.gitignore_global\n');
+    put(global, before);
+    f.env.GIT_CONFIG_GLOBAL = join(f.home, '.gitconfig');
+    f.env.GIT_CONFIG_NOSYSTEM = '1';
+    assert.deepEqual(pending(f), moved ? ['footprint-global'] : ['velocity-core', 'footprint-global']);
+    if (moved) f.answers = [async () => {
+      put(global, readFileSync(global, 'utf8') + '/docs/plans/\n');
+      return 'y';
+    }];
+    const run = need(init, 'runInitProject');
+    assert.deepEqual(await run(f.deps), { code: moved ? 1 : 0 });
+    assert.deepEqual(f.questions, [APPLY]);
+    const lines = f.printed.flatMap((line) => line.split('\n'));
+    const preview = lines.indexOf('preview: footprint-global');
+    const dryRun = lines.indexOf(`  • would remove the legacy machine-global block from ${global} (4 line(s)):`);
+    assert.ok(preview >= 0 && dryRun > preview);
+    assert.deepEqual(f.calls.find(({ argv }) => argv[1] === join(TOOLS, 'hide-footprint.mjs'))?.argv,
+      ['node', join(TOOLS, 'hide-footprint.mjs'), '--remove-global', '--dry-run', '--dir', f.root]);
+    const launches = f.calls.filter(({ argv }) => isApply(argv) || (argv.includes('--remove-global') && !argv.includes('--dry-run')));
+    if (moved) {
+      assert.ok(f.printed.includes('not applied: footprint-global — its danger check no longer answers the previewed result: its digest moved'));
+      assert.deepEqual(readFileSync(global), Buffer.from(before + '/docs/plans/\n'));
+      assert.deepEqual(launches, []);
+      assert.deepEqual(applies(f), []);
+    } else {
+      assert.deepEqual(launches.map(({ argv }) => argv), [
+        ['node', join(TOOLS, 'hide-footprint.mjs'), '--remove-global', '--dir', f.root],
+        ['node', join(TOOLS, 'velocity-profile.mjs'), '--apply', '--cwd', f.root],
+      ]);
+      assert.deepEqual(readFileSync(global), Buffer.from('user-first\r\nuser-last\n'));
+      assert.deepEqual(pending(f), []);
+    }
   });
 });
 

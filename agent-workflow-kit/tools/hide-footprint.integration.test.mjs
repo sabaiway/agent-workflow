@@ -89,7 +89,7 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
   it('precedence: a path in BOTH global excludes and the local block is reported by the LOCAL block', () => {
     const { dir, git, deps } = env;
     const globalExcludes = join(env.home, 'gitignore_global');
-    writeFileSync(globalExcludes, '/AGENTS.md\n');
+    writeFileSync(globalExcludes, '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)\n/AGENTS.md\n');
     git(['config', 'core.excludesFile', globalExcludes]);
     writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
     const r = hideFootprint({ dir }, deps); // default keeps the global block
@@ -166,16 +166,47 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
     assert.equal(git(['status', '--porcelain', '--untracked-files=all']).trim(), '', 'nothing of the spec layer is visible to git');
   });
 
-  it('delegated-hidden, STALE memory: a memory-old GLOBAL block is migrated away with --remove-global', () => {
-    const { dir, git, deps } = env;
-    const globalExcludes = join(env.home, 'gitignore_global');
-    writeFileSync(globalExcludes, '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)\n/AGENTS.md\n/docs/ai/\n/docs/ai/.memory-version\n');
-    git(['config', 'core.excludesFile', globalExcludes]);
-    writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
-    const r = hideFootprint({ dir, removeGlobal: true }, deps);
-    assert.equal(r.global.action, 'removed');
-    assert.ok(!readFileSync(globalExcludes, 'utf8').includes('/AGENTS.md'), 'global block removed');
-    assert.match(checkIgnoreSource(git, dir, 'AGENTS.md') ?? '', /info\/exclude/, 'now hidden project-local');
+  describe('spec:hide-footprint/S7 legacy global block stays byte-identical', () => {
+    const writeLegacyBlock = () => {
+      const { home, dir, git } = env;
+      const path = join(home, 'gitignore_global');
+      writeFileSync(path, '# agent-workflow-kit hidden mode (machine-local; remove these lines to un-hide)\n/AGENTS.md\n/docs/ai/\n/docs/ai/.memory-version\n');
+      git(['config', 'core.excludesFile', path]);
+      writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
+      return { path, before: readFileSync(path) };
+    };
+
+    for (const [title, flags] of [
+      ['A: hide keeps the global bytes and names the removal item', []],
+      ['B: reconcile on a hidden deployment keeps the global bytes and names the removal item', ['--reconcile']],
+      ['C: unhide after the hide keeps the global bytes and names the removal item', ['--unhide']],
+    ]) {
+      it(title, () => {
+        const { dir, git, deps } = env;
+        const { path, before } = writeLegacyBlock();
+        if (flags.length > 0) hideFootprint({ dir }, deps);
+        const lines = [];
+        const errors = [];
+        const log = (text) => lines.push(...text.split('\n'));
+        const errlog = (text) => errors.push(text);
+        assert.equal(main([...flags, '--dir', dir], { ...deps, log, errlog }), 0);
+        assert.deepEqual(errors, []);
+        assert.deepEqual(readFileSync(path), before);
+        assert.deepEqual(lines.filter((line) => line.includes('residual legacy machine-global block')), [
+          `  • residual legacy machine-global block in ${path} (3 path line(s)) — KEPT + reported; the advisor's footprint-global item removes it (with a printed backup)`,
+        ]);
+        assert.ok(!lines.some((line) => line.includes('pass --remove-global')));
+        if (flags.length === 0) assert.match(checkIgnoreSource(git, dir, 'AGENTS.md') ?? '', /info\/exclude/);
+      });
+    }
+
+    it('D: an old caller removeGlobal option keeps the global bytes', () => {
+      const { dir, deps } = env;
+      const { path, before } = writeLegacyBlock();
+      const r = hideFootprint({ dir, removeGlobal: true }, deps);
+      assert.equal(r.global.action, 'kept');
+      assert.deepEqual(readFileSync(path), before);
+    });
   });
 
   describe('visibility inference (D16)', () => {

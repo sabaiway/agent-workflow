@@ -135,6 +135,18 @@ export const executorTemplate = (posture, deps = {}) => {
   return { name: EXECUTOR_VEHICLE, content: deriveExecutorBody(bundled.content, posture), rederive: true };
 };
 
+// The executor ensure's cell 6: a regular placed executor whose bytes differ from the body derived from
+// the settings; the placed file's read failure throws.
+export const executorBodyDiffers = (projectDir, deps = {}) => {
+  const fs = readFsDeps(deps);
+  const abs = join(projectDir, EXECUTOR_VEHICLE_REL);
+  const stat = lstatNoFollow(abs, fs);
+  if (stat === null || stat.isSymbolicLink() || !stat.isFile()) return false;
+  const { posture } = readExecutorPosture(projectDir, deps);
+  if (posture === null) return false;
+  return fs.readFile(abs, UTF8) !== executorTemplate(posture, deps).content;
+};
+
 const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
 
 // The YAML subset a vehicle's frontmatter is read with: a bare scalar, a single- or double-quoted

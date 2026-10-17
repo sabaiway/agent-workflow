@@ -22,6 +22,7 @@ const FORM_A = [
   'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
   'worktrees-dir',
+  'attribution', 'footprint-global', 'executor-vehicle.differing',
 ];
 const FORM_B = ['jev-connect'];
 const FORM_C = [
@@ -33,6 +34,7 @@ const HARNESS = [
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
   'worktrees-dir',
+  'attribution', 'footprint-global', 'executor-vehicle.differing',
 ];
 const USER = ['jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home'];
 const ENV_DEPENDENT = ['bridge-tier', 'jev-connect', 'jev-skill', 'jev-skill.earlier', 'sandbox-provision.installable'];
@@ -71,6 +73,9 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['jev-skill', 'jev-skill.mjs', ['--claude-dir', claudeDir], ['--apply', '--claude-dir', claudeDir]],
     ['jev-skill.earlier', 'jev-skill.mjs', ['--claude-dir', claudeDir], ['--apply', '--claude-dir', claudeDir]],
     ['worktrees-dir', 'velocity-profile.mjs', ['--worktrees', '--cwd', ROOT], ['--apply', '--worktrees', '--cwd', ROOT]],
+    ['attribution', 'attribution.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
+    ['footprint-global', 'hide-footprint.mjs', ['--remove-global', '--dry-run', '--dir', ROOT], ['--remove-global', '--dir', ROOT]],
+    ['executor-vehicle.differing', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
   ];
   return Object.fromEntries(table.map(([variant, file, preview, apply]) => [variant, {
     preview: ['node', join(TOOLS, file), ...preview],
@@ -130,10 +135,14 @@ describe('spec:init-project/S1 every severity key has one of the three lanes and
     }
   });
 
-  it('isRejudged is true for worktrees-dir alone', () => {
+  it('isRejudged is true for worktrees-dir and footprint-global alone', () => {
     const isRejudged = need(lanes, 'isRejudged');
     const variantLanes = need(lanes, 'VARIANT_LANES');
-    assert.deepEqual(Object.keys(variantLanes).filter((variant) => isRejudged(variant)), ['worktrees-dir']);
+    assert.equal(isRejudged('worktrees-dir'), true);
+    assert.equal(isRejudged('footprint-global'), true);
+    for (const variant of Object.keys(variantLanes).filter((v) => !['worktrees-dir', 'footprint-global'].includes(v))) {
+      assert.equal(isRejudged(variant), false, variant);
+    }
   });
 });
 
@@ -275,6 +284,9 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'jev-skill': skills,
       'jev-skill.earlier': skills,
       'worktrees-dir': [join(ROOT, '.claude', 'settings.local.json')],
+      attribution: settings,
+      'footprint-global': [],
+      'executor-vehicle.differing': agents,
     };
     const nullVariants = [...new Set([...FORM_C, ...Object.keys(SEVERITIES).filter((v) => !WITH_FORMS.includes(v))])];
     const writesOf = need(lanes, 'writesOf');
@@ -369,12 +381,12 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
 });
 
 describe('spec:init-project/S38 — worktrees-dir is a harness variant and worktrees-dir.home a user one', () => {
-  it('the worktrees variants have their lanes among exactly eighteen harness and five user severity keys', () => {
+  it('the worktrees variants have their lanes among exactly twenty-one harness and five user severity keys', () => {
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const keys = Object.keys(SEVERITIES);
     assert.equal(variantLanes['worktrees-dir'], 'harness');
     assert.equal(variantLanes['worktrees-dir.home'], 'user');
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 18);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
     assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 5);
   });
 

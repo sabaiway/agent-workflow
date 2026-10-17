@@ -316,3 +316,71 @@ describe('spec:init-project/S34 the git-hook writer by proof on a temp git proje
     assert.throws(() => need('planGitHooks')({ root, variant: 'enforcement', lstat }), denied);
   });
 });
+
+describe('spec:init-project/S52 commit-guard verifies the installed hook under one env', () => {
+  const placeInstaller = (root, state, body) => put(root, INSTALLER, state === 'absent' || state === 'no-hooks-dir'
+    ? 'process.exit(0);\n' : [
+      "import { mkdirSync, writeFileSync } from 'node:fs';",
+      "import { spawnSync } from 'node:child_process';",
+      "import { join } from 'node:path';",
+      "const hooks = spawnSync('git', ['rev-parse', '--git-path', 'hooks'], { encoding: 'utf8', env: process.env });",
+      "const hook = join(hooks.stdout.trim(), 'pre-commit');",
+      "mkdirSync(hooks.stdout.trim(), { recursive: true });",
+      state === 'directory' ? 'mkdirSync(hook);' : `writeFileSync(hook, ${JSON.stringify(body)});`,
+    ].join('\n'));
+  for (const [state, code] of [
+    ['unarmed', 1], ['absent', 1], ['directory', 1], ['unmanaged', 1], ['armed', 0],
+    ['bundled', 0], ['no-hooks-dir', 0], ['custom-hooks', 1], ['enforcement', 0], ['dry-run', 0],
+  ]) it(`${state}: returns ${code} and preserves the installer's result`, (t) => {
+    const { root, io } = makeProject(t);
+    if (state === 'custom-hooks') Object.assign(io.env, {
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.hooksPath', GIT_CONFIG_VALUE_0: join(root, 'custom-hooks'),
+    });
+    if (state === 'no-hooks-dir') {
+      io.env.GIT_DIR = join(root, 'missing-git-dir');
+      assert.equal(need('resolveGitHooksPath')(root, io.env), null);
+    }
+    const body = state === 'unmanaged' ? UNMANAGED : '#!/bin/sh\n# installed by:install-git-hooks.mjs\n'
+      + (state === 'armed' ? `node "${join(TOOLS, 'commit-guard.mjs')}" --check\n` : '');
+    if (state === 'bundled') put(root, INSTALLER, readBundle('install-git-hooks.mjs'));
+    else placeInstaller(root, state, body);
+    const outsideGit = () => snapshot(root).filter(({ name }) => name !== '.git');
+    const before = outsideGit();
+    if (state !== 'enforcement') io.writeFile = t.mock.fn(() => assert.fail('commit-guard must write nothing'));
+    const flags = state === 'dry-run' ? [] : ['--apply'];
+    assert.equal(invoke([...flags, state === 'enforcement' ? '--enforcement' : '--commit-guard'], io), code);
+    const hook = join(root, state === 'custom-hooks' ? 'custom-hooks' : '.git/hooks', 'pre-commit');
+    const expected = state === 'directory' ? `${hook} is unreadable (EISDIR) after the installer exited 0`
+      : `${hook} carries no commit-guard line after the installer exited 0 — an installer older than the arm ignores --commit-guard; refreshing scripts/install-git-hooks.mjs from the kit's references/scripts/ copy is your own step`;
+    assert.deepEqual(io.errors, code === 1 ? [expected] : []);
+    if (state !== 'enforcement') {
+      assert.deepEqual(outsideGit().filter(({ name }) => name !== 'custom-hooks'), before);
+      assert.equal(io.writeFile.mock.callCount(), 0);
+    }
+    assert.equal(io.spawn.mock.callCount(), state === 'dry-run' ? 0 : 1);
+    if (state !== 'dry-run') assert.equal(io.spawn.mock.calls[0].arguments[1].env, io.env);
+    if (state === 'directory') assert.ok(lstatSync(hook).isDirectory());
+    else if (['absent', 'no-hooks-dir', 'dry-run'].includes(state)) assert.equal(existsSync(hook), false);
+    else if (state !== 'bundled') assert.deepEqual(readFileSync(hook), Buffer.from(body));
+    const result = need('readPreCommitState')(root, { env: io.env });
+    const expectedState = state === 'no-hooks-dir' ? state : state === 'directory' ? 'unreadable'
+      : ['absent', 'dry-run'].includes(state) ? 'absent' : state === 'unmanaged' ? state : 'managed';
+    assert.equal(result.state, expectedState);
+    assert.equal(result.armed, ['armed', 'bundled'].includes(state));
+    if (state === 'armed') assert.ok(need('canonicalGuardLineRe')().test(body));
+  });
+  it('owns the four hook facts once, re-exports identical objects and has no guard import', async () => {
+    const names = ['readPreCommitState', 'canonicalGuardLineRe', 'INSTALLER_MARKER_RE', 'resolveGitHooksPath'];
+    const source = readFileSync(join(TOOLS, 'git-hooks.mjs'), 'utf8');
+    assert.doesNotMatch(source, /\b(?:import|export)\b[^;]*['"]\.\/commit-guard\.mjs['"]/u);
+    const facades = await Promise.all(['./recommendations.mjs', './commit-guard.mjs'].map((path) => import(path)));
+    for (const name of names) {
+      const declarations = readdirSync(TOOLS).filter((file) => file.endsWith('.mjs') && !file.endsWith('.test.mjs'))
+        .filter((file) => new RegExp(`\\bconst\\s+${name}\\s*=`, 'u').test(readFileSync(join(TOOLS, file), 'utf8')));
+      assert.deepEqual(declarations, ['git-hooks.mjs']);
+      assert.match(source, new RegExp(`export const ${name}\\b`, 'u'));
+      for (const facade of facades) assert.equal(facade[name], need(name));
+    }
+    assert.equal(need('resolveGitHooksPath').length, 1);
+  });
+});

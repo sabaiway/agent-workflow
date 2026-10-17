@@ -25,6 +25,8 @@ import { SKILL_FILES, claudeDirOf, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
 import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
+import { ATTRIBUTION_HIDDEN, ATTRIBUTION_KEY, writeAttribution } from './attribution.mjs';
+import { globalRemovalOf, planGlobalRemoval } from './hide-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { dirCovers as covers } from './declared-paths.mjs';
 
@@ -35,11 +37,13 @@ const RESEED_VARIANTS = ['gate-hook.marker-stale', 'read-lane.stale'];
 const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing', ...RESEED_VARIANTS];
 const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
-const AGENT_VARIANTS = ['agents', 'executor-vehicle'];
+const AGENT_VARIANTS = ['agents', 'executor-vehicle', 'executor-vehicle.differing'];
 const GIT_VARIANTS = ['enforcement', 'commit-guard'];
 const WORKTREES = 'worktrees-dir';
+const ATTRIBUTION = 'attribution';
+const FOOTPRINT = 'footprint-global';
 const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS,
-  ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES];
+  ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES, ATTRIBUTION, FOOTPRINT];
 const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -69,10 +73,12 @@ export const KEY_TABLE = Object.freeze({
   [ENABLED_KEY]: 4,
   [SERVERS_KEY]: 4,
   [CREDENTIALS]: 5,
+  [ATTRIBUTION_KEY]: 5,
 });
-const SCALARS = ['permissions.defaultMode', 'sandbox.enabled', 'sandbox.autoAllowBashIfSandboxed'];
+const SCALARS = ['permissions.defaultMode', 'sandbox.enabled', 'sandbox.autoAllowBashIfSandboxed', ATTRIBUTION_KEY];
 const valid = (key, value, element = false) => {
   if (key.startsWith(`${SERVERS_KEY}.`) || key === SERVERS_KEY) return object(value);
+  if (key === ATTRIBUTION_KEY) return object(value) || typeof value === 'boolean';
   if (key === 'permissions.defaultMode') return typeof value === 'string';
   if (SCALARS.includes(key)) return typeof value === 'boolean';
   if (!element) return Array.isArray(value) && value.every((entry) => valid(key, entry, true));
@@ -150,6 +156,7 @@ export const judgeChange = ({ variant, files, scope }) => {
   }
   return { entries, refused };
 };
+const footprintPlan = (facts, deps) => (deps.planGlobalRemoval ?? planGlobalRemoval)({ env: facts.env, home: facts.home }, facts.root, { home: facts.home });
 const writerFacts = (facts, deps) => ({
   ...deps, ...facts,
   detect: deps.detect ?? facts.detect,
@@ -183,7 +190,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
     set('permissions.ask', RENDER_OWNED_REDLINE_RULES);
     set('permissions.deny', RENDER_OWNED_REDLINE_RULES);
     allowed[CREDENTIALS] = (value) => value.mode === 'deny';
-  }
+  } else if (variant === ATTRIBUTION) set(ATTRIBUTION_KEY, [ATTRIBUTION_HIDDEN]);
   const grantDir = variant === WORKTREES ? worktreesGrantDir(facts.root, facts) : null;
   if (grantDir !== null && !worktreesGrantHoldsHome(grantDir, facts.home, facts)) {
     set('sandbox.filesystem.allowWrite', [homeRelative(grantDir, facts.home)]);
@@ -199,7 +206,9 @@ export const scopeOf = (variant, facts, deps = {}) => {
     claudeDir: facts.claudeDir ?? claudeDirOf(facts.env, facts.home, facts.platform).dir }) : [];
   const filePaths = HOOK_VARIANTS.includes(variant) ? [join(facts.root, HOOK_FILE_REL)]
     : variant === STOP ? [join(facts.root, STATE_BLOCK_HOOK_FILE_REL)] : [];
-  const directories = SKILL_VARIANTS.includes(variant) ? [] : [join(facts.root, CLAUDE_DIR)];
+  const directories = SKILL_VARIANTS.includes(variant) || variant === FOOTPRINT ? [] : [join(facts.root, CLAUDE_DIR)];
+  const globalFile = variant === FOOTPRINT ? footprintPlan(facts, deps)?.source : undefined;
+  if (globalFile) filePaths.push(globalFile);
   if (HOOK_VARIANTS.includes(variant) || variant === STOP) directories.push(join(facts.root, HOOKS_DIR));
   if (AGENT_VARIANTS.includes(variant)) directories.push(join(facts.root, AGENTS_DIR));
   const existingAncestor = grantDir === null ? null : nearestExistingDir(grantDir, facts);
@@ -222,7 +231,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
         : path === (variant === WORKTREES ? SETTINGS_LOCAL_FILE : SETTINGS_FILE);
       const gains = variant === 'bridge-tier' || variant === WORKTREES || HOOK_KEYS.includes(key) || key === ENABLED_KEY || key === CREDENTIALS
         || (VELOCITY_VARIANTS.includes(variant) && key === 'permissions.ask');
-      return correctFile && (!gains || change === 'added') && Boolean(allowed[key]?.(value));
+      return correctFile && (!gains || change === 'added') && !(key === ATTRIBUTION_KEY && change === 'removed') && Boolean(allowed[key]?.(value));
     },
     admitsPath: (path, directory = false) => directory ? directories.includes(path)
       : filePaths.includes(path) || (AGENT_VARIANTS.includes(variant) && covers(join(facts.root, AGENTS_DIR), path)),
@@ -230,10 +239,11 @@ export const scopeOf = (variant, facts, deps = {}) => {
 };
 
 const jsonAt = (path) => existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+const regularBytes = (path) => lstatSync(path, { throwIfNoEntry: false })?.isFile() ? readFileSync(path) : undefined;
 const halted = (lines) => Object.assign(new Error(lines.join('\n')), { code: 'CHECK_HALTED', lines });
 const maskedFiles = (variant, facts) => {
   const paths = VELOCITY_VARIANTS.includes(variant) || variant === 'autonomy-render' || HOOK_VARIANTS.includes(variant)
-    || variant === STOP || variant === WORKTREES ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
+    || variant === STOP || variant === WORKTREES || variant === ATTRIBUTION ? [SETTINGS_FILE, SETTINGS_LOCAL_FILE] : MCP_VARIANTS.includes(variant) ? [MCP_JSON_REL, SETTINGS_FILE] : [];
   return paths.flatMap((path) => lstatSync(join(facts.root, path), { throwIfNoEntry: false })?.isCharacterDevice()
     ? [`masked: ${path}`] : []);
 };
@@ -275,13 +285,12 @@ export const plannedChange = (variant, facts, deps = {}) => {
       if (plan.wirePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeHookEntry(plan.projectSettings.data));
       const path = join(facts.root, HOOK_FILE_REL);
       if (plan.placePlanned) writes.push({ path, bytes: plan.bundleContent });
-      if (plan.reseedPlanned) writes.push({ path, bytes: plan.bundleContent, replaces: readFileSync(path) });
+      if (plan.reseedPlanned) writes.push({ path, bytes: plan.bundleContent });
     } else if (variant === STOP) {
       const plan = writeStateBlockHook({ cwd: facts.root, dryRun: true }, writerDeps);
       if (plan.mergePlanned) addFile(SETTINGS_FILE, plan.projectSettings.data, mergeStopEntry(plan.projectSettings.data));
       const path = join(facts.root, STATE_BLOCK_HOOK_FILE_REL);
-      if (plan.placement === 'create') writes.push({ path, bytes: plan.bundleContent });
-      if (plan.placement === 'replace') writes.push({ path, bytes: plan.bundleContent, replaces: readFileSync(path) });
+      if (['create', 'replace'].includes(plan.placement)) writes.push({ path, bytes: plan.bundleContent });
     } else if (MCP_VARIANTS.includes(variant)) {
       const result = writeMcp({ cwd: facts.root, dryRun: true, replace: variant === 'mcp-channel.differing' }, writerDeps);
       const { plan, registration } = result;
@@ -311,6 +320,17 @@ export const plannedChange = (variant, facts, deps = {}) => {
       const before = plan.localSettings.data ?? null;
       addFile(SETTINGS_LOCAL_FILE, before, mergeAllowWrite(before ?? {}, plan.worktreesDirToAdd));
       created.push(...plan.worktreesDirsToCreate);
+    } else if (variant === ATTRIBUTION) {
+      const plan = writeAttribution({ cwd: facts.root, dryRun: true }, writerDeps);
+      if (plan.planned) addFile(SETTINGS_FILE, plan.before, plan.after);
+    } else if (variant === FOOTPRINT) {
+      const plan = footprintPlan(facts, deps);
+      if (plan !== null) {
+        const bytes = readFileSync(plan.source, 'latin1');
+        const core = globalRemovalOf(bytes);
+        const matches = plan.before === bytes && core !== null && equal(plan.removedLines, core.removedLines) && plan.after === core.after;
+        writes.push({ path: plan.source, bytes: Buffer.from(plan.after, 'latin1'), replaces: Buffer.from(plan.before, 'latin1'), removes: plan.removedLines, matches });
+      }
     } else throw new Error(`unsupported variant: ${variant}`);
   } catch (error) {
     throw error.code === 'CHECK_HALTED' ? error : halted([error.message]);
@@ -345,8 +365,13 @@ export const checkApply = (variant, facts, deps = {}) => {
       reason: `beyond the declared scope of ${variant}` });
   };
   for (const write of plan.writes) {
-    const replaces = write.replaces === undefined ? '' : ` — replaces sha256:${sha(write.replaces)}`;
+    const old = write.replaces ?? (write.directory ? undefined : regularBytes(write.path));
+    const replaces = old === undefined ? '' : ` — replaces sha256:${sha(old)}`;
     pathLine(write.path, false, `writes: ${display(write.path)} sha256:${sha(write.bytes)}${replaces}`);
+    for (const line of write.removes ?? []) lines.push(`removes: ${line}`);
+    if (write.matches === false) {
+      refused.push({ path: display(write.path), key: display(write.path), reason: 'the plan is not the one the file\'s own bytes give' });
+    }
   }
   for (const path of plan.directories) pathLine(path, true, `writes: ${display(path)}/ created`);
   lines.push(...plan.temporaries);
@@ -405,7 +430,7 @@ export const main = (argv, io = {}) => {
     platform: resolved.platform, claudeDir: args['claude-dir'] };
   let result;
   try {
-    result = checkApply(args.variant, facts, { detect: resolved.detect, planGitHooks: resolved.planGitHooks });
+    result = checkApply(args.variant, facts, { detect: resolved.detect, planGitHooks: resolved.planGitHooks, planGlobalRemoval: resolved.planGlobalRemoval });
   } catch (error) {
     for (const line of error.lines ?? [error.message]) resolved.log(line);
     return 3;

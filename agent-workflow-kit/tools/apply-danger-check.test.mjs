@@ -173,7 +173,7 @@ const expectedPlan = (variant, f, deps = {}) => {
   } else if (['agents', 'executor-vehicle'].includes(variant)) {
     const p = writeCheapAgents({ cwd: f.root, dryRun: true });
     for (const item of p.plan.filter(({ action }) => ['place', 're-derive'].includes(action))) {
-      writes.push({ path: item.abs, bytes: item.content });
+      writes.push({ path: item.abs, bytes: item.content, ...(item.action === 're-derive' ? { replaces: fs.readFileSync(item.abs) } : {}) });
     }
   } else if (variant === 'worktrees-dir') {
     const p = velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, worktrees: true }, writerDeps(f));
@@ -266,7 +266,8 @@ describe('spec:init-project/S21 closed classification table and key-level diff',
     assert.ok(Object.isFrozen(danger.CHANGE_CLASSES));
     assert.ok(Object.isFrozen(danger.KEY_TABLE));
     assert.deepEqual(Object.keys(danger.KEY_TABLE).sort(),
-      [...LIST_ROWS, ...SCALAR_ROWS].map(([key]) => key).concat('sandbox.credentials.envVars', 'mcpServers').sort());
+      [...LIST_ROWS, ...SCALAR_ROWS].map(([key]) => key).concat('sandbox.credentials.envVars', 'mcpServers', 'attribution').sort());
+    assert.equal(danger.CHANGE_CLASSES[danger.KEY_TABLE.attribution], NOTHING);
     for (const name of ['judgeChange', 'scopeOf', 'plannedChange', 'checkApply', 'main']) assert.equal(typeof danger[name], 'function');
   });
   for (const [key, value, addedClass, removedClass] of LIST_ROWS) it(`${key}: additions and removals over absent, empty and populated files`, () => {
@@ -1277,6 +1278,253 @@ describe('spec:velocity-profile/S8 used bridge scope, additions only and state-d
       assert.ok(result.lines.includes(lineOf({ key: 'sandbox.filesystem.allowWrite', value: dir, change: 'added', class: CLASSES[1] })));
       const plan = velocity.writeVelocityProfile({ cwd: f.root, dryRun: true, bridgeTier: true }, writerDeps(f));
       assert.deepEqual([plan.excludedToAdd, plan.dirsToAdd], [['codex-review *'], [dir]]);
+    });
+  });
+});
+
+describe('spec:init-project/S47 the danger check over in-session writers by proof', () => {
+  const hidden = { commit: '', pr: '', sessionUrl: false };
+  const local = '.claude/settings.local.json';
+  const header = '# agent-workflow-kit hidden mode (machine-local, applies to every repo on this host)';
+  const legacy = [header, '/AGENTS.md', '/scripts/check-docs-size.mjs'];
+  const loadName = async (module, name) => {
+    const loaded = await import(module).catch((cause) => ({ cause }));
+    return loaded[name] ?? (() => { throw new Error(`${name} is absent`, { cause: loaded.cause }); });
+  };
+  const configureGlobal = (f) => {
+    put(join(f.home, '.gitconfig'), '[core]\n\texcludesFile = ~/.gitignore_global\n');
+    return { ...f, env: { ...f.env, PATH: process.env.PATH, HOME: f.home,
+      GIT_CONFIG_GLOBAL: join(f.home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1' } };
+  };
+  const writesLine = (path, before, after) =>
+    `writes: ${path} sha256:${sha(Buffer.from(after, 'latin1'))} — replaces sha256:${sha(Buffer.from(before, 'latin1'))}`;
+  for (const prior of [null, { attribution: { commit: 'old', pr: 'old' } }]) {
+    it(`attribution: ${prior ? 'altered' : 'added'} hidden object, nothing widened, copy apply matches printed diff`, async (t) => {
+      const f = fixture(t);
+      if (prior) put(join(f.root, SETTINGS), JSON.stringify(prior));
+      const writeAttribution = await loadName('./attribution.mjs', 'writeAttribution');
+      const originalHashes = hashes(f);
+      unchanged(f, () => {
+        const plan = writeAttribution({ cwd: f.root, dryRun: true }, writerDeps(f));
+        assert.equal(plan.planned, true);
+        assert.deepEqual(plan.after, { ...prior, attribution: hidden });
+        const result = danger.checkApply('attribution', f);
+        assertPreview('attribution', f, result, { files: [{ path: SETTINGS, before: plan.before, after: plan.after }],
+          writes: [], temporaries: [], directories: plan.claudeDirAbsent ? [join(f.root, '.claude')] : [] });
+        assert.equal(result.lines[0], `${SETTINGS}:`);
+        assert.equal(result.lines[1], lineOf({ key: 'attribution', value: hidden, class: NOTHING,
+          change: prior ? 'altered' : 'added', ...(prior ? { previous: prior.attribution } : {}) }));
+      });
+      const copy = copyFixture(t, f);
+      const before = snapshot(copy);
+      const result = unchanged(copy, () => danger.checkApply('attribution', copy));
+      assert.equal(danger.main([...argvFor('attribution', copy), '--apply', '--expect', result.digest], capture(copy).io), 0);
+      const entries = danger.diffFiles(prior, json(join(copy.root, SETTINGS)));
+      assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), entries.map((entry) => lineOf({ ...entry, class: NOTHING })));
+      assertAppliedPaths(copy, before, result, [SETTINGS]);
+      assert.deepEqual(hashes(f), originalHashes);
+    });
+  }
+  for (const settings of [{ attribution: hidden }, { attribution: false }, { includeCoAuthoredBy: false }]) {
+    it(`attribution: hidden settings ${JSON.stringify(settings)} have nothing to change`, async (t) => {
+      const f = fixture(t);
+      put(join(f.root, SETTINGS), JSON.stringify(settings));
+      const writeAttribution = await loadName('./attribution.mjs', 'writeAttribution');
+      unchanged(f, () => {
+        assert.equal(writeAttribution({ cwd: f.root, dryRun: true }, writerDeps(f)).planned, false);
+        const result = danger.checkApply('attribution', f);
+        digestResult(result);
+        assert.deepEqual(result.lines, ['nothing to change: attribution is already applied', `digest: ${result.digest}`]);
+        assert.deepEqual(result.refused, []);
+      });
+    });
+  }
+  for (const [title, path, before, after, key] of [
+    ['other value', SETTINGS, null, { attribution: true }, 'attribution'],
+    ['second key', SETTINGS, null, { attribution: hidden, includeCoAuthoredBy: false }, 'includeCoAuthoredBy'],
+    ['local key', local, null, { attribution: hidden }, 'attribution'],
+    ['hidden key removal', SETTINGS, { attribution: hidden }, {}, 'attribution'],
+  ]) it(`attribution: planted ${title} is refused naming ${key}`, (t) => {
+    const f = fixture(t);
+    unchanged(f, () => {
+      const result = danger.judgeChange({ variant: 'attribution', files: [{ path, before, after }], scope: danger.scopeOf('attribution', f) });
+      assert.deepEqual(result.refused, [{ path, key, reason: key === 'includeCoAuthoredBy' ? 'unknown key' : 'beyond the declared scope of attribution' }]);
+      assert.deepEqual(result.entries, judged(before, after, path).entries);
+      assert.ok(result.entries.some((entry) => entry.key === 'attribution' && entry.class === NOTHING));
+    });
+  });
+  for (const path of [SETTINGS, local]) it(`attribution: masked ${path} exits 3`, (t) => {
+    const f = fixture(t);
+    put(join(f.root, path), '{}');
+    unchanged(f, () => {
+      const original = fs.lstatSync;
+      const mocked = t.mock.method(fs, 'lstatSync', (file, ...args) => file === join(f.root, path)
+        ? Object.assign(Object.create(original(file)), { isCharacterDevice: () => true, isFile: () => false }) : original(file, ...args));
+      syncBuiltinESMExports();
+      try {
+        const cli = capture(f, () => { throw new Error('masked settings spawned'); });
+        assert.equal(danger.main(argvFor('attribution', f), cli.io), 3);
+        assert.deepEqual(cli.lines, [`masked: ${path}`]);
+        assert.deepEqual(cli.errors, []);
+      } finally {
+        mocked.mock.restore();
+        syncBuiltinESMExports();
+      }
+    });
+  });
+  for (const [key, value] of [['attribution', 'wrong'], ['includeCoAuthoredBy', 'wrong']]) {
+    it(`attribution: wrong-typed ${key} preserves the writer refusal at exit 3`, async (t) => {
+      const f = fixture(t);
+      put(join(f.root, SETTINGS), JSON.stringify({ [key]: value }));
+      const writeAttribution = await loadName('./attribution.mjs', 'writeAttribution');
+      unchanged(f, () => {
+        const messages = [];
+        assert.throws(() => writeAttribution({ cwd: f.root, dryRun: true }, writerDeps(f)), (error) => {
+          assert.match(error.message, /\bATTRIBUTION_MALFORMED\b/);
+          assert.match(error.message, new RegExp(`\\b${key}\\b`));
+          messages.push(error.message);
+          return true;
+        });
+        const cli = capture(f, () => { throw new Error('wrong-typed settings spawned'); });
+        assert.equal(danger.main(argvFor('attribution', f), cli.io), 3);
+        assert.deepEqual(cli.lines, messages);
+        assert.deepEqual(cli.errors, []);
+      });
+    });
+  }
+  for (const [title, before, after] of [
+    ['interleaved user line', `${header}\nkeep\n${legacy.slice(1).join('\n')}\n`, 'keep\n'],
+    ['blank separator before block', `keep\n\n${legacy.join('\n')}\n`, 'keep\n\n'],
+    ['trailing blank', `${legacy.join('\n')}\nkeep\n\n`, 'keep\n\n'],
+    ['CRLF', `keep\r\n${legacy.join('\r\n')}\r\n`, 'keep\r\n'],
+    ['mixed endings', `keep\r\n${header}\r/AGENTS.md\nuser\r/scripts/check-docs-size.mjs\r\n`, 'keep\r\nuser\r'],
+    ['no final newline', `${legacy.join('\n')}\nkeep`, 'keep'],
+    ['non-UTF-8 byte', `caf\xe9\n${legacy.join('\n')}\n`, 'caf\xe9\n'],
+  ]) it(`footprint-global: ${title}, exact digests and removed spans, real copy apply`, async (t) => {
+    const f = configureGlobal(fixture(t));
+    const path = join(f.home, '.gitignore_global');
+    put(path, Buffer.from(before, 'latin1'));
+    const globalRemovalOf = await loadName('./hide-footprint.mjs', 'globalRemovalOf');
+    const planGlobalRemoval = await loadName('./hide-footprint.mjs', 'planGlobalRemoval');
+    const originalHashes = hashes(f);
+    unchanged(f, () => {
+      assert.deepEqual(globalRemovalOf(before), { after, removedLines: legacy });
+      assert.deepEqual(planGlobalRemoval({ env: f.env }, f.root, { home: f.home }), { source: path, before, after, removedLines: legacy });
+      const result = danger.checkApply('footprint-global', f);
+      digestResult(result);
+      assert.deepEqual(result.refused, []);
+      assert.deepEqual(result.lines, [writesLine(path, before, after), ...legacy.map((line) => `removes: ${line}`),
+        'scope: within the declared scope of footprint-global', `digest: ${result.digest}`]);
+      assert.ok(result.lines[0].endsWith(` — replaces sha256:${sha(fs.readFileSync(path))}`));
+      const cli = capture(f, () => { throw new Error('preview spawned'); });
+      assert.equal(danger.main(argvFor('footprint-global', f), cli.io), 0);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(cli.errors, []);
+    });
+    const copy = configureGlobal(copyFixture(t, f));
+    const copyPath = join(copy.home, '.gitignore_global');
+    const snapshotBefore = snapshot(copy);
+    const beforeBytes = fs.readFileSync(copyPath);
+    const result = unchanged(copy, () => danger.checkApply('footprint-global', copy));
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor('footprint-global', copy), '--apply', '--expect', result.digest], cli.io), 0);
+    const afterBytes = fs.readFileSync(copyPath);
+    assert.deepEqual(afterBytes, Buffer.from(after, 'latin1'));
+    assert.equal(result.lines[0], `writes: ${copyPath} sha256:${sha(afterBytes)} — replaces sha256:${sha(beforeBytes)}`);
+    assert.deepEqual(cli.lines, result.lines);
+    assert.deepEqual(cli.errors, []);
+    assertAppliedPaths(copy, snapshotBefore, result, []);
+    assert.deepEqual(hashes(f), originalHashes);
+  });
+  it('footprint-global: another cwd prints the same absolute writes path', (t) => {
+    const f = configureGlobal(fixture(t));
+    const path = join(f.home, '.gitignore_global');
+    put(path, `${legacy.join('\n')}\nkeep\n`);
+    unchanged(f, () => {
+      const first = capture(f);
+      assert.equal(danger.main(argvFor('footprint-global', f), first.io), 0);
+      const cwd = process.cwd();
+      try {
+        process.chdir(f.home);
+        const cli = capture(f);
+        assert.equal(danger.main(['--variant', 'footprint-global', '--cwd', relative(f.home, f.root)], cli.io), 0);
+        assert.deepEqual(cli.lines, first.lines);
+        assert.equal(cli.lines[0], writesLine(path, `${legacy.join('\n')}\nkeep\n`, 'keep\n'));
+      } finally {
+        process.chdir(cwd);
+      }
+    });
+  });
+  for (const [title, content] of [
+    ['unset core.excludesFile', `${legacy.join('\n')}\n`], ['absent file', null],
+    ['no recognised line', 'user\n'], ['only generic lines', '/AGENTS.md\n/CLAUDE.md\n/docs/ai/\n/docs/plans/\n/.claude/skills/\n'],
+  ]) it(`footprint-global: ${title} has nothing to change`, (t) => {
+    const f = configureGlobal(fixture(t));
+    if (content !== null) put(join(f.home, '.gitignore_global'), content);
+    if (title === 'unset core.excludesFile') put(join(f.home, '.gitconfig'), '');
+    unchanged(f, () => {
+      const result = danger.checkApply('footprint-global', f);
+      digestResult(result);
+      assert.deepEqual(result.lines, ['nothing to change: footprint-global is already applied', `digest: ${result.digest}`]);
+      assert.deepEqual(result.refused, []);
+      const cli = capture(f, () => { throw new Error('empty preview spawned'); });
+      assert.equal(danger.main(argvFor('footprint-global', f), cli.io), 0);
+      assert.deepEqual(cli.lines, result.lines);
+      assert.deepEqual(cli.errors, []);
+    });
+  });
+  for (const title of ['unrecognised line removed', 'generic-only file', 'before differs', 'after differs']) {
+    it(`footprint-global: planted ${title} refuses naming the file at exit 1`, async (t) => {
+      const f = configureGlobal(fixture(t));
+      const path = join(f.home, '.gitignore_global');
+      const before = title === 'generic-only file' ? '/AGENTS.md\n/docs/ai/\n' : `caf\xe9\n${legacy.join('\n')}\n`;
+      put(path, Buffer.from(before, 'latin1'));
+      const globalRemovalOf = await loadName('./hide-footprint.mjs', 'globalRemovalOf');
+      unchanged(f, () => {
+        const core = globalRemovalOf(before);
+        const plan = title === 'generic-only file' ? { source: path, before, after: '', removedLines: ['/AGENTS.md', '/docs/ai/'] }
+          : { source: path, before: title === 'before differs' ? before.replace('\xe9', '\ufffd') : before,
+            after: title === 'unrecognised line removed' ? '' : title === 'after differs' ? `${core.after}extra\n` : core.after,
+            removedLines: title === 'unrecognised line removed' ? ['caf\xe9', ...core.removedLines] : core.removedLines };
+        const deps = { planGlobalRemoval: () => plan };
+        const result = danger.checkApply('footprint-global', f, deps);
+        digestResult(result);
+        assert.deepEqual(result.refused.map(({ path, key }) => ({ path, key })), [{ path, key: path }]);
+        assert.ok(result.lines.some((line) => line.startsWith(`refused: ${path} ${path} — `)));
+        assert.ok(result.lines.includes('nothing written'));
+        const cli = capture(f, () => { throw new Error('planted removal spawned'); });
+        assert.equal(danger.main([...argvFor('footprint-global', f), '--apply', '--expect', result.digest], { ...cli.io, ...deps }), 1);
+        assert.deepEqual(cli.lines, result.lines);
+        assert.deepEqual(cli.errors, []);
+      });
+    });
+  }
+  it('executor-vehicle.differing: re-derive writes the derived digest within the agents scope', (t) => {
+    const f = fixture(t);
+    const path = '.claude/agents/executor.md';
+    put(join(f.root, path), 'differing body\n');
+    const digest = unchanged(f, () => {
+      const plan = writeCheapAgents({ cwd: f.root, dryRun: true });
+      const executor = plan.plan.find((item) => item.rel === path);
+      assert.equal(executor.action, 're-derive');
+      assert.notEqual(executor.content, fs.readFileSync(join(f.root, path), 'utf8'));
+      const result = danger.checkApply('executor-vehicle.differing', f);
+      assertPreview('executor-vehicle.differing', f, result, expectedPlan('executor-vehicle', f));
+      assert.ok(result.lines.includes(`writes: ${path} sha256:${sha(executor.content)} — replaces sha256:${sha('differing body\n')}`));
+      assert.ok(result.lines.includes('scope: within the declared scope of executor-vehicle.differing'));
+      return result.digest;
+    });
+    put(join(f.root, path), 'another body\n');
+    assert.notEqual(unchanged(f, () => danger.checkApply('executor-vehicle.differing', f).digest), digest);
+  });
+  for (const variant of ['attribution', 'footprint-global', 'executor-vehicle.differing']) it(`CLI accepts --variant ${variant}`, (t) => {
+    const f = variant === 'footprint-global' ? configureGlobal(fixture(t)) : fixture(t);
+    if (variant === 'executor-vehicle.differing') put(join(f.root, '.claude/agents/executor.md'), 'differing body\n');
+    unchanged(f, () => {
+      const cli = capture(f, () => { throw new Error('CLI preview spawned'); });
+      assert.equal(danger.main(argvFor(variant, f), cli.io), 0);
+      assert.deepEqual(cli.lines, danger.checkApply(variant, f).lines);
+      assert.deepEqual(cli.errors, []);
     });
   });
 });
