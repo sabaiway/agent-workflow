@@ -4,6 +4,32 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.37.0 — the first project rules theme, project layout, ships with the writer of a record of what each effective rules file was built from and a read-only check; nothing is laid into a project yet (AD-189)
+
+**The kit now carries default project rules as thematic prose files, starting with project layout, and a command
+line that checks the file agents read still stands for its sources.** This release ships the files' shape, the theme
+registry, the record's writer and the check; the upgrade op that lays the theme into your project comes in a later release,
+so this one writes no rules file into your project.
+
+- **Four files per theme.** `docs/ai/rules/<theme>.md` is the kit's rules, `docs/ai/rules/local/<theme>.md` is
+  yours and wins, `docs/ai/rules/effective/<theme>.md` is what agents read, and
+  `docs/ai/rules/effective/sources.json` records, per theme, the sha256 of the kit, local (or `absent`) and effective
+  files. Rules are plain prose with no keys; with no local file the effective file equals the kit file, with one an
+  agent merges the two by meaning once. No code merges two texts.
+- **The project-layout template** (`references/rules/project-layout.md`): a module is a directory holding its code,
+  tests, mocks, fixtures and command-line entry; its index exports only what is used outside; no README repeats its
+  spec; modules nest by meaning, never by technical layer; a spec's path mirrors its module's; old code keeps its
+  place as a recorded exception.
+- **`node tools/project-rules/rules-cli.mjs --check [--cwd <project>]`** prints one line per theme — `absent`,
+  `current`, `drift` naming every moved file, or `record` with its state — and writes nothing. It exits 0 when every
+  theme is `current` or `absent`, 1 otherwise, every stop line saying `run /agent-workflow-kit upgrade`; 2 is usage.
+  It judges only against the record, never against the bundled template.
+- **`--record --theme <name> --kit <sha256> --local <sha256|absent> --effective <sha256>`** is the merging agent's
+  call: it writes the theme's entry only when the files still hash to the passed digests and the effective file fits
+  the merge, and otherwise exits 1 naming the failed condition, writing nothing.
+
+**Upgrade note.** No step: the module ships, and no rules file reaches a project until the later upgrade op.
+
 ## 14.36.0 — the review lens runs on opus/high by default and its model is a setting; the task tier offer proposes the executor, not codex (AD-188)
 
 **The bundled review lens now takes its model and effort from `docs/ai/vehicles.json`, opus and high unless you set

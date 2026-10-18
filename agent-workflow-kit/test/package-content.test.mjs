@@ -207,6 +207,13 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/git-hooks.mjs',
       'tools/attribution.mjs',
       'references/advisor-writers.md',
+      // the project-rules module and its theme template - by NAME because a project declares the CLI path as its gate command
+      'tools/project-rules/themes.mjs',
+      'tools/project-rules/rules-check.mjs',
+      'tools/project-rules/rules-record.mjs',
+      'tools/project-rules/rules-cli.mjs',
+      'tools/project-rules/index.mjs',
+      'references/rules/project-layout.md',
       'tools/feedback-record.mjs',
       'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -883,7 +890,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 367 = 366 + tools/git-hooks.mjs - story S8 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 368 = 367 + tools/attribution.mjs - story S11 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 369 = 368 + references/advisor-writers.md - story S9 of BRIDGES-WORK-UNDER-THE-SANDBOX
-    assert.equal(packed.length, 369, `tarball file count drifted (${packed.length}\u2260 369)`);
+    // 375 = 369 + the five tools/project-rules/ modules (themes, rules-check, rules-record, rules-cli, index) and references/rules/project-layout.md - story S1 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
+    assert.equal(packed.length, 375, `tarball file count drifted (${packed.length}\u2260 375)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

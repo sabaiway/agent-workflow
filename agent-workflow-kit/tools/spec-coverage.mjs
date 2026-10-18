@@ -7,7 +7,7 @@
 // contract a REQUIREMENT with a ratchet — a shipped tool no contract governs is a REFUSAL, and the
 // debt of today's uncovered tools may only shrink.
 //
-// The contract this module is built to is `docs/ai/specs/kit/spec-coverage.md`, and it was written
+// The contract this module is built to is `docs/ai/specs/kit/spec-layer/spec-coverage.md`, and it was written
 // BEFORE this file. That order is the point: a contract amended after the code describes whatever
 // the last review happened to find, which makes review an open question with no bounded answer.
 //

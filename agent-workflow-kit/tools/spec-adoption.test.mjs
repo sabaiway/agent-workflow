@@ -1,5 +1,5 @@
 // spec-adoption.test.mjs — the four adoption states, the decline ack and the status line body
-// (docs/ai/specs/kit/spec-adoption.md), plus the spec-check census seam it composes.
+// (docs/ai/specs/kit/spec-layer/spec-adoption.md), plus the spec-check census seam it composes.
 // Dynamic imports: the suite LOADS without the modules under test.
 
 import { describe, it, after } from 'node:test';

@@ -1,5 +1,5 @@
 // spec-adoption.mjs — which of the four adoption states the feature-spec store is in, and whether the layer
-// was declined. Contract: docs/ai/specs/kit/spec-adoption.md. The census and the per-document read are
+// was declined. Contract: docs/ai/specs/kit/spec-layer/spec-adoption.md. The census and the per-document read are
 // spec-check's own exported seam; this module walks nothing of its own. Read-only, Node >= 22.
 
 import { join } from 'node:path';

@@ -7,6 +7,14 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-18 — AD-189: project rules in thematic prose files, a record of what each effective file was built from, and a read-only check (kit 14.37.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**The kit ships the new `tools/project-rules/` module — the theme registry, the writer of
+`docs/ai/rules/effective/sources.json`, a read-only check and its command line (`--check`, `--record`) — and the
+first theme, project layout, as a prose template with no keyed rule lines.** No rules file reaches a project yet: the upgrade op
+that lays the theme down is a later story. This repository declares the `project-rules` gate, which answers `absent`.
+Contract: project-rules revision 1 (new). Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-17 — AD-188: the review lens's model is a setting, opus/high by default; the task tier offer leaves `delegated` out (kit 14.36.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **The bundled review lens takes its model and effort from an optional `review-lens` section of
