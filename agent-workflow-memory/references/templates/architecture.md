@@ -9,28 +9,13 @@ maxLines: 350
 
 # Architecture
 
-> How the code is organized. Layers, boundaries, where new code goes.
+> How the code is organized: where each module lives and where new code goes.
 
-## Layers
+## Layout rules
 
-```
-UI Components       ← {{src/components/}}
-    ↓
-Hooks / Composition ← {{src/hooks/}}
-    ↓
-Services (pure)     ← {{src/services/}}
-    ↓
-State / Storage     ← {{src/store/ or src/data/}}
-    ↓
-Types / Schemas     ← {{src/types/}}
-```
-
-## Module Boundaries
-
-- **Components** — render only. No fetching, no business logic.
-- **Hooks** — orchestration; combine services + state.
-- **Services** — pure functions. Easy to test.
-- **State** — single source of truth per domain.
+The code is laid out by the project-layout rules: modules nest by meaning, and a name says where
+code, tests and specs live. In a kit deployment those rules live in
+`docs/ai/rules/effective/project-layout.md`, laid down by the kit's upgrade.
 
 ## File Tree (top level)
 

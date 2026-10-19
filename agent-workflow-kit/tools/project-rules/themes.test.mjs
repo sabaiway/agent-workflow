@@ -10,6 +10,10 @@ import { load, need } from './rules-harness.test.mjs';
 const KIT_ROOT = new URL('../../', import.meta.url);
 const TEMPLATE = new URL('references/rules/project-layout.md', KIT_ROOT);
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
+const REPO_ROOT = new URL('../', KIT_ROOT);
+const SPEC_CANON = new URL('agent-workflow-engine/references/specs.md', REPO_ROOT);
+const SLICED_BULLET = '- **Spec drives modular, feature-sliced architecture.**';
+const ARCHITECTURE_TEMPLATES = ['agent-workflow-memory', 'agent-workflow-kit'].map((pkg) => `${pkg}/references/templates/architecture.md`);
 
 const ENTRY = {
   name: 'project-layout',
@@ -29,6 +33,13 @@ const PRESCRIPTIONS = [
 
 const templateText = () => readFileSync(TEMPLATE, 'utf8');
 const bodyLines = (text) => text.replace(FRONTMATTER_RE, '').split('\n');
+const sliceBullet = (text) => {
+  const start = text.indexOf(SLICED_BULLET);
+  const end = text.indexOf('\n- **', start + SLICED_BULLET.length);
+  return start === -1 ? '' : text.slice(start, end === -1 ? undefined : end);
+};
+const findLead = (text) => text.slice(text.indexOf('\n# Architecture\n')).split('\n').find((line) => line.startsWith('> '));
+const loadEffective = async () => need(await load('./themes.mjs'), 'themePaths')('project-layout').effective;
 
 describe('spec:project-rules/S1 THEMES holds exactly project-layout and themePaths derives its four paths', () => {
   it('THEMES is a frozen array of exactly one frozen entry equal to the project-layout entry', async () => {
@@ -106,4 +117,24 @@ describe('spec:project-rules/S2 the bundled project-layout template is keyless p
     const missing = PRESCRIPTIONS.filter((phrase) => !body.includes(phrase));
     assert.deepEqual(missing, [], 'every prescription phrase is present');
   });
+});
+
+describe('spec:project-rules/S33 the spec canon and both architecture templates hand the layout to the project-layout rules', () => {
+  it('the feature-sliced bullet names the effective file as laid down in a kit deployment', async () => {
+    const effective = await loadEffective();
+    const bullet = sliceBullet(readFileSync(SPEC_CANON, 'utf8'));
+    assert.ok(bullet.includes(effective), `the feature-sliced bullet names ${effective}`);
+    assert.match(bullet, /in a kit deployment/i);
+  });
+
+  for (const path of ARCHITECTURE_TEMPLATES) {
+    it(`${path} names the effective file and carries no layer section`, async () => {
+      const effective = await loadEffective();
+      const text = readFileSync(new URL(path, REPO_ROOT), 'utf8');
+      assert.ok(text.includes(effective), `the template names ${effective}`);
+      assert.match(text, /in a kit deployment/i);
+      assert.doesNotMatch(text, /^## (?:Layers|Module Boundaries)\s*$/m, 'no Layers or Module Boundaries heading');
+      assert.match(findLead(text) ?? '', /^> (?!.*\bLayers\b)/, 'a lead line after # Architecture, without the word Layers');
+    });
+  }
 });

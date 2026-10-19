@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.39.0 — agents find the project rules from a row in the entry file's Memory Map, and you change them through one command, `/agent-workflow-kit rules` (AD-191)
+
+**Every upgrade now keeps a Memory Map row in `AGENTS.md` that links `docs/ai/rules/effective/project-layout.md`, so an
+agent reads the layout rules before it creates, moves or names a file.** The new `/agent-workflow-kit rules` changes
+your own rules: it shows the exact text and writes `docs/ai/rules/local/<theme>.md` only on your yes, then rebuilds and
+checks the file agents read.
+
+- **The Memory Map row.** `inject-methodology.mjs reconcile` adds one row per rules theme on the line after the
+  `docs/ai/agent_rules.md` row, in the same one write as the three pointers, whether or not the effective file exists
+  yet. A row already there is kept byte for byte, also when you edited it; a row with a text an earlier release
+  shipped is refreshed (none yet). Where it cannot be placed (no `docs/ai/agent_rules.md` row, that row on two lines,
+  or the 100-line limit) the row is skipped with its reason and nothing stops. The reconcile's line names the row's
+  outcome beside the pointers, the zero-diff line included; a run that adds a row is no longer zero-diff.
+- **`/agent-workflow-kit rules`, a Configure writer.** It starts with the rules ensure, then does one of three things you
+  ask: change a rule in your local file; move an edit you made to the kit file `docs/ai/rules/<theme>.md` (its ensure
+  line says it carries your edit) into your local file and delete the kit file, which the next ensure seeds again; or
+  drop your local file. On `pending` it does the merge, shows what changed and records it. It stops on a refusal, ends
+  on `rules-cli.mjs --check` answering `current`, and never writes the effective file by hand.
+- **The upgrade offers the mode** on a kit-file line that says it carries your edit, and its step-4 and step-8 reports
+  relay the Memory Map row's outcome.
+- **The architecture template points to the layout rules.** `references/templates/architecture.md` drops the Layers and
+  Module Boundaries sections for one section naming `docs/ai/rules/effective/project-layout.md`; a deployed
+  `docs/ai/architecture.md` is yours and is not changed.
+- The router budget for a mode read with the router is 53248 B (was 52224 B); the router stays within 12288 B.
+
+**Upgrade note.** No step: the next upgrade adds the row to `AGENTS.md`. To change a layout rule, run
+`/agent-workflow-kit rules` and say what to change.
+
 ## 14.38.0 — the upgrade and bootstrap lay the project-layout rules into your project and keep the file agents read current; with your own local rules the agent does the merge (AD-190)
 
 **`/agent-workflow-kit upgrade` and bootstrap now write the project-layout rules into `docs/ai/rules/`, keep

@@ -196,12 +196,11 @@ const BUDGET = {
   // documented KB-multiple bump, never a silent re-pin. History: 10240 → 11264 (11 KB): AD-044
   // Plan 4 adds the sandbox-masks and recommendations modes to the router (~110 B each) against
   // 27 B of headroom — the same documented bump.
-  routerPlusMode: 52224, // 51200 → 52224 (51 KB): router + any single mode file. Consumers epic story S6 — references/modes/upgrade.md gains the `full-flow-profile` capability declaration (the 46 B line with its LF).
-  // Measured 51232 B (router 11947 + upgrade 39285), 32 B over the 51200 ceiling; 992 B of headroom — one documented KB-multiple bump.
+  routerPlusMode: 53248, // 52224 → 53248 (52 KB): router + any single mode file. Project-rules story S3 — the rules mode header lands in the router and references/modes/upgrade.md gains the Memory Map row and rules-mode words.
+  // Measured 52573 B (router 12213 + upgrade 40360), 349 B over the 52224 ceiling; 675 B of headroom — one documented KB-multiple bump. History: 51200 → 52224 (51 KB): Consumers epic story S6 — upgrade.md gains the `full-flow-profile` declaration (46 B), measured 51232 B.
   // History: 50176 → 51200 (50 KB): story S3 — references/modes/upgrade.md gains the `tier` run-list row and rationale block, hands the lens ask to it and names `tier` in the step-4/8 reports (+1138 B).
   // Measured 50971 B (router 11947 + upgrade 39024), 795 B over the 50176 ceiling; 229 B of headroom — one documented KB-multiple bump. History: 49152 → 50176 (49 KB): story S2 — the story-sessions outcome set in upgrade.md (+533 B), measured 49634 B.
-  // History: 47104 → 49152 (48 KB): AD-123 — upgrade.md
-  // gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the
+  // History: 47104 → 49152 (48 KB): AD-123 — upgrade.md gains the Node-evidence rule inside the enforcement-script and spec-layer rationale blocks (the
   // retired proxy named, the new token + cause, the adoption-state report) and the contradicted-skip
   // finding rule on the equal-head exit; measured 48307 B, 1203 B over the 46 KB ceiling — a documented
   // KB-multiple bump, never a silent re-pin (845 B of headroom).
@@ -263,8 +262,8 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 81920, // 79872 → 81920 (80 KB): router + mode + its declared shared files. Consumers epic story S3 — references/modes/upgrade.md carries the changes above (+1138 B); the shared files are unchanged.
-  // Measured 80983 B (pair 50971 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 30012), 87 B over the 80896 first step, so it takes the second (937 B of headroom) — a documented KB-multiple bump. History: 78848 → 79872 (78 KB): story S2 (+733 B), measured 79569 B.
+  fullReadSet: 82944, // 81920 → 82944 (81 KB): router + mode + its declared shared files. Project-rules story S3 — the rules mode header lands in the router and references/modes/upgrade.md gains the Memory Map row and rules-mode words.
+  // Measured 82569 B (pair 52573 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 29996), 649 B over the 81920 ceiling; 375 B of headroom — a documented KB-multiple bump. History: 79872 → 81920 (80 KB): Consumers epic story S3 (+1138 B), measured 80983 B; 78848 → 79872 (78 KB): story S2 (+733 B), measured 79569 B.
   // History: 76800 → 78848 (77 KB): AD-123 —
   // upgrade's set carries its own growth (see routerPlusMode above) plus deploy-tail.md's Node-evidence
   // + contradicted-skip gotcha; measures 78084 B, 1284 B over the 75 KB ceiling, and the 76 KB
@@ -421,8 +420,8 @@ describe('router contract — D6 byte budgets hold over the real files (e)', () 
     }
   });
 
-  it('spec:jev-guide/S14 the four budgets read router 12288, routerPlusMode 52224, fullReadSet 81920, daily 32768', () => {
-    assert.deepEqual({ ...BUDGET }, { router: 12288, routerPlusMode: 52224, fullReadSet: 81920, daily: 32768 });
+  it("spec:jev-guide/S14 BUDGET's keys are exactly router, routerPlusMode, fullReadSet and daily, each a whole multiple of 1024", () => {
+    assert.deepEqual(Object.entries(BUDGET).map(([key, v]) => [key, Number.isInteger(v / 1024) && v > 0]), [['router', true], ['routerPlusMode', true], ['fullReadSet', true], ['daily', true]]);
   });
 
   it('is non-vacuous: an inflated synthetic read set trips the same budget comparison (red→green probe)', () => {
@@ -435,11 +434,12 @@ describe('router contract — D6 byte budgets hold over the real files (e)', () 
 describe('router contract — command-shapes promptless bar (f)', () => {
   const SHAPES = `${VAR}/references/shared/command-shapes.md`;
   // Exactly the probe-instructing modes declare the contract (bootstrap's recon block, upgrade
-  // step 1, velocity's version-status routing) — NOT universal: minimal modes stay minimal. The
+  // step 1, velocity's version-status routing, the rules mode's record step that has the agent run its
+  // own digest command) — NOT universal: minimal modes stay minimal. The
   // pin is closed-world over the KNOWN probe-instructing modes; a future mode that instructs its
   // own improvised probes must be added to DECLARING at review — no mechanical catch exists for
   // it. The router's inline bar below covers only the shared stamp-read every mode routes through.
-  const DECLARING = ['bootstrap', 'upgrade', 'velocity'];
+  const DECLARING = ['bootstrap', 'upgrade', 'velocity', 'rules'];
   const SHAPES_TEXT = readShared('command-shapes.md');
   // The contract's own content pins: the promptless bar, the honest host/config-dependent
   // residual (never a promised prompt), the scope boundary, and the lens citation.

@@ -31,8 +31,8 @@ installed `agent-workflow-engine`** (`references/methodology-slot.md` + `referen
 + `references/autonomy-slot.md`,
 the family's one source of truth) — **not** a bundled mirror, and **not** the full references. The
 live read is **lazy + fail-loud**: the engine is consulted **only when a slot actually needs filling**,
-so a deployment with **all three** pointers filled reconciles to a zero-diff no-op even on a host
-without the engine (one still missing the autonomy pair needs the engine to gain it); when a fill
+so a deployment with **all three** pointers filled and its Memory Map rows present reconciles to a
+zero-diff no-op even on a host without the engine (one still missing the autonomy pair needs the engine to gain it); when a fill
 **is** needed and the engine is **absent/invalid**, reconcile
 **STOPs** — report it in plain language with the one-line install command
 `npx @sabaiway/agent-workflow-engine@latest init` (`npx @sabaiway/agent-workflow-kit@latest init`

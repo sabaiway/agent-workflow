@@ -4,6 +4,13 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.2.1 — the architecture template points to the layout rules instead of a fixed set of layers (AD-191)
+
+`references/templates/architecture.md`: the lead line drops "Layers", and the Layers and Module Boundaries sections
+give way to one section, **Layout rules**: modules nest by meaning, and in a kit deployment the rules live in
+`docs/ai/rules/effective/project-layout.md`. The File Tree and the rest of the template are unchanged; a deployed
+`docs/ai/architecture.md` is never rewritten. PATCH: template text only.
+
 ## 8.2.0 — the docs navigator stamps a cap it honours past 80 lines (AD-182)
 
 **`references/scripts/check-docs-size.mjs` now writes a `docs/ai/index.md` that its own default run and `--check-index`

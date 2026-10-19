@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-19 — AD-191: agents find the project rules from a Memory Map row, and `/agent-workflow-kit rules` changes them (kit 14.39.0 MINOR; engine 5.12.1 and memory 8.2.1 PATCH; both bridges unchanged)
+
+**The kit's reconcile keeps one Memory Map row per rules theme in `AGENTS.md`, linking its effective file, and the new
+writer mode `/agent-workflow-kit rules` writes the user's local rules on their yes, moves an edited kit file into
+them or drops them, and ends on `--check` current.** The spec canon (engine) and both architecture templates
+(memory, kit) point to the project-layout rules instead of a fixed set of layers. This repository's `AGENTS.md` gains
+the row. Contracts: project-rules revision 3, jev-guide revision 10, init-project revision 12. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-19 — AD-190: the upgrade lays the project-layout rules into every project through a ninth ensure op (kit 14.38.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **The kit's upgrade gains the ensure op `rules`, after the spec layer and before the navigator, and bootstrap runs it

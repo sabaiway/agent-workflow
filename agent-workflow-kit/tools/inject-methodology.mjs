@@ -6,10 +6,9 @@
 //   2. workflow:orchestration — the recipe-vocabulary pointer  (references/orchestration-slot.md).
 //   3. workflow:autonomy     — the autonomy-policy read contract (references/autonomy-slot.md).
 //
-// All share ONE generic marker engine (a slot DESCRIPTOR parameterizes the markers / anchor /
-// empty-slot / leading-blank). The methodology exports (findSlot / injectMethodology / ensureSlot /
-// reconcileSlot / slotNeedsFill / extractSlot) delegate to it byte-for-byte, so the methodology
-// contract is unchanged; the later slots are the SAME engine with different descriptors.
+// All share ONE generic marker engine (a slot DESCRIPTOR parameterizes the markers / anchor / empty-slot
+// / leading-blank); the methodology exports delegate to it byte-for-byte. After the three slots,
+// reconcile keeps one Memory Map row per project-rules theme (project-rules/memory-map-row.mjs).
 //
 // Contract per slot, strictly enforced:
 //   exactly one ordered start→end pair → replace only the bytes between them;
@@ -17,17 +16,15 @@
 //   any malformed state (single, reversed, nested, duplicate) → NO-OP WITH AN ERROR, never edit.
 // The live read is lazy + fail-loud: resolve+read the engine ONLY when a fill is actually needed, and
 // STOP loudly (never a silent fallback) when the engine is needed but absent/invalid.
-//
 // Pure string functions (testable with byte-preservation fixtures); dependency-free, Node >= 22.
 //
-// Canonical-refresh (AD-025): a slot filled BEFORE a clause existed is normally preserved verbatim
-// (reconcile only fills an EMPTY slot). To push a NEW canonical clause to the EXISTING filled base
-// without clobbering a user's customization, reconcileMarkerSlot also REFRESHES a filled slot — but
-// ONLY when its content normalize-matches a KNOWN PRIOR canonical fragment (drift-guarded, append-only
-// per descriptor). A customized slot never matches → preserved verbatim + a read-only upgrade advisory.
+// Canonical-refresh (AD-025): reconcileMarkerSlot REFRESHES a filled slot ONLY when its content
+// normalize-matches a KNOWN PRIOR canonical fragment (drift-guarded, append-only per descriptor); a
+// customized slot never matches → preserved verbatim + a read-only upgrade advisory.
 
 import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
+import { reconcileMemoryMapRows } from './project-rules/index.mjs';
 
 export const START_MARKER = '<!-- workflow:methodology:start -->';
 export const END_MARKER = '<!-- workflow:methodology:end -->';
@@ -326,6 +323,7 @@ export const isFillCapRefusal = (errorMessage) =>
   isCapRefusal(errorMessage) && errorMessage.includes('injection would push');
 
 const EXIT = Symbol('inject-methodology.exit');
+const ROW_WORDS = { inserted: 'added', kept: 'already present', refreshed: 'refreshed to the current text' };
 
 // The return-code entry point (5.1): argv[] + injected env/home → { code, stdout, stderr }, no
 // process.argv / process.exit / console inside — an in-process caller is as hermetic as a spawned
@@ -574,16 +572,18 @@ export const runCli = async (argv, deps = {}) => {
       }
     }
 
-    // ── One atomic write of the final (three-slot) text ──
-    if (finalText === text) {
+    // ── The Memory Map rows on the three-slot text, then one atomic write ──
+    const rows = reconcileMemoryMapRows(finalText, { maxLines: AGENTS_MD_CAP });
+    const describeRows = rows.outcomes.map((o) => `the ${o.theme} Memory Map row ${ROW_WORDS[o.status] ?? `skipped — ${o.note}`}`).join('; ');
+    if (rows.text === text) {
       // Byte-unchanged. Still report a skip (it is not "nothing to do" — a pointer was withheld).
-      if (orchSkipped || autSkipped) log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
-      else log('[inject-methodology] reconcile: all three pointers already present and filled — nothing to do (zero-diff).');
+      if (orchSkipped || autSkipped) log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}; ${describeRows}.`);
+      else log(`[inject-methodology] reconcile: all three pointers already present and filled; ${describeRows} — nothing to do (zero-diff).`);
       reportNotes();
       return result(0);
     }
-    await writeAtomic(finalText);
-    log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}.`);
+    await writeAtomic(rows.text);
+    log(`[inject-methodology] reconcile: ${describeMeth}; ${describeOrch}; ${describeAut}; ${describeRows}.`);
     reportNotes();
     return result(0);
   }

@@ -197,6 +197,13 @@ const CATALOG = [
     oneLine: 'Register the kit’s read-only MCP server in this project, so path questions and literal searches run as typed tool calls instead of shell command strings — previews the exact entry it would declare, writes only on your yes, and where a sandbox hides the file it writes nothing and names the advisor’s mcp-channel item, which applies it by the consent route.',
   },
   {
+    key: 'rules',
+    invocation: invocationOf('rules'),
+    group: 'Configure',
+    kind: WRITER,
+    oneLine: 'Change your own project rules, such as how files and modules are laid out: your rules go into your local file, which wins over the kit’s defaults; the exact text is shown first and written only on your yes.',
+  },
+  {
     key: 'recipes',
     invocation: invocationOf('recipes'),
     group: 'Orchestrate',

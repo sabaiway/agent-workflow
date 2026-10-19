@@ -801,7 +801,7 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     const atCap = [...head, ...pad].join('\n') + '\n';
     await withTempAgents(atCap, async (agents) => {
       const out = await runScript(['reconcile', agents], { env: withEngine(ENGINE) });
-      assert.match(out, /skipped/i, 'the orchestration cap-skip is reported, not silent');
+      assert.match(out, /orchestration-recipes pointer skipped/i, 'the orchestration cap-skip is reported, not silent');
       assert.equal(readFileSync(agents, 'utf8'), atCap, 'file byte-unchanged — the orchestration pointer was withheld, methodology already present');
     });
   });
@@ -825,7 +825,7 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
       const out = await runScript(['reconcile', agents], { env: withEngine(oldEngine) });
       const text = readFileSync(agents, 'utf8');
       assert.equal(extractSlot(text).trim(), FRAGMENT.trim(), 'methodology pointer filled (not discarded by the too-old engine)');
-      assert.match(out, /skipped/i, 'the orchestration skip is reported (not silent)');
+      assert.match(out, /orchestration-recipes pointer skipped/i, 'the orchestration skip is reported (not silent)');
       assert.match(out, /too old/i, 'the skip names the too-old-engine reason');
       assert.ok(!hasOrchSlot(text), 'a too-old engine adds no orchestration pointer');
       assert.ok(!hasAutSlot(text), 'a too-old engine adds no autonomy pointer either');

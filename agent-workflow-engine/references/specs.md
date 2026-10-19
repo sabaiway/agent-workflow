@@ -180,10 +180,11 @@ the retroactive path below.
   existing name — the spec's declared module root IS the mapping, no rename ride-alongs; folder
   promotion keeps the slug. A module root is a DIRECTORY or a DECLARED FILE SET, so a file-based
   boundary binds without an architectural refactor.
-- **Spec drives modular, feature-sliced architecture.** Code is organized by feature slice, not by
-  technical layer; a spec's drill-down mirrors the slice's module boundaries; the pure rule / IO
-  shell split is the default module anatomy, composing with the source-size practice (a module you
-  can hold whole is the unit of review).
+- **Spec drives modular, feature-sliced architecture.** A spec's drill-down mirrors the module
+  boundaries the code is laid out by; the pure rule / IO shell split is the default module anatomy,
+  composing with the source-size practice (a module you can hold whole is the unit of review). Where
+  code, tests and specs go is the project-layout rules' (in a kit deployment
+  `docs/ai/rules/effective/project-layout.md`).
 - **ONE dependency rule: the dependency graph is explicit and acyclic.** A slice depends on `shared`
   and on another slice's PUBLIC contract only when that edge is DECLARED in its spec; an undeclared
   cross-slice reach-in is refused at review.

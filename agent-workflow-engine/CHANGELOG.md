@@ -4,6 +4,13 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.12.1 — the spec canon hands where code, tests and specs go to the project-layout rules (AD-191)
+
+`references/specs.md`: the bullet **Spec drives modular, feature-sliced architecture** keeps its name, the drill-down
+that mirrors the module boundaries and the pure rule / IO shell split; it no longer prescribes slices over technical
+layers, and names the project-layout rules (in a kit deployment `docs/ai/rules/effective/project-layout.md`) as where
+code, tests and specs go. PATCH: canon text only.
+
 ## 5.12.0 — the story flow: seven steps with one checked result each, four sessions, review on the spec with the plan's ledger and on the staged diff, one commit after the diff review (AD-170)
 
 `references/planning.md` gains `## The story flow`: Epic, Spec, Plan, Tests, Code, Diff review and Release and

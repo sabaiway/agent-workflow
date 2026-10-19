@@ -178,11 +178,11 @@ describe('routeInvocation — safety invariant: NO unrecognized/garbage token re
 // ── (c) every entry is well-formed: a valid kind, a non-trivial plain-language oneLine, a known group,
 //        and no leaked internal terminology. ─────────────────────────────────────────────────────────
 
-describe('commands catalog — well-formed entries', () => {
-  // Terms the SKILL.md "never leak kit internals" Gotcha forbids in user-facing text (incl. slot /
-  // fragment / inject / reconcile / anchor / marker), plus the registry/stamp internals.
-  const INTERNAL_TERMS = /\b(reconcile|inject|slot|fragment|anchor|marker|fence|manifestState|hiddenFence|capability\.json|stamp|\.workflow-version|\.memory-version)\b/i;
+// Terms the SKILL.md "never leak kit internals" Gotcha forbids in user-facing text (incl. slot /
+// fragment / inject / reconcile / anchor / marker), plus the registry/stamp internals.
+const INTERNAL_TERMS = /\b(reconcile|inject|slot|fragment|anchor|marker|fence|manifestState|hiddenFence|capability\.json|stamp|\.workflow-version|\.memory-version)\b/i;
 
+describe('commands catalog — well-formed entries', () => {
   for (const c of COMMANDS) {
     it(`${c.key}: valid kind, group, and a non-trivial leak-free oneLine`, () => {
       assert.ok(KINDS.has(c.kind), `kind "${c.kind}" must be one of read-only/writer/guarded`);
@@ -310,6 +310,20 @@ describe('commands surface: the now mode is present on every user-facing surface
     const row = readFileSync(README_MD, 'utf8').split('\n').find((line) => line.startsWith('| `/agent-workflow-kit now`'));
     assert.ok(row, 'the README Use table carries the now row');
     assert.match(row, /NOW.*STEPS.*QUEUE.*CAMPAIGN/);
+  });
+});
+
+describe('spec:project-rules/S30 the rules mode is a Configure writer after mcp, routed and headed in SKILL.md', () => {
+  it('pins its catalog place, kind and leak-free one-liner, its routing and its writer router line after mcp', () => {
+    const command = commandFor('rules');
+    assert.ok(command, 'the rules catalog entry exists');
+    assert.equal(COMMANDS.findIndex((c) => c.key === 'rules'), COMMANDS.findIndex((c) => c.key === 'mcp') + 1, 'rules sits right after mcp');
+    assert.deepEqual([command.group, command.kind, command.invocation], ['Configure', WRITER, '/agent-workflow-kit rules']);
+    assert.ok(!INTERNAL_TERMS.test(command.oneLine), `oneLine leaks an internal term: ${command.oneLine}`);
+    assert.deepEqual([routeInvocation('rules'), routeInvocation(command.invocation)], ['rules', 'rules']);
+    const skill = readFileSync(SKILL_MD, 'utf8');
+    assert.equal(skill.split('\n').filter((line) => line.startsWith('### Mode: ')).find((_, i, all) => all[i - 1] === '### Mode: mcp'), '### Mode: rules', 'the rules header follows the mcp section');
+    assert.ok(skill.includes('### Mode: rules\n\nwriter — read `${CLAUDE_SKILL_DIR}/references/modes/rules.md` before acting.'), 'the writer router line points at the mode doc');
   });
 });
 

@@ -634,8 +634,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   in S5: a read door beside the op entry. Raised by the S2 spec review (lens).
 - **RULES-TEMPLATE-EDIT-WITHOUT-ITS-PRIOR-UNPINNED** — invariant: a release that changes a theme template appends the
   outgoing body to the prior catalog. Origin: nothing reds when `agent-workflow-kit/references/rules/project-layout.md`
-  changes without a catalog entry, so every deployment of the previous release would read as edited. Narrow fix: the
-  priors suite pins the current template's sha256. Raised by the S2 spec review (lens).
+  changes without a catalog entry, so every deployment of the previous release would read as edited, and the rules
+  mode (story S3) would then offer to move the previous body into the local file, where it wins. Narrow fix: the
+  priors suite pins the current template's sha256; it lands before any change of a theme template. Raised by the S2
+  spec review (lens).
 - **BOOTSTRAP-RULES-FAILED-LINE-UNSTATED** — invariant: every command a deploy step runs says what its failure means
   for the next step. Origin: bootstrap's step 10 runs the rules op (project-rules revision 2) and relays its line, but
   does not say whether a `rules: failed` line stops the stamp (`agent-workflow-kit/references/modes/bootstrap.md:37-49`).
@@ -659,6 +661,24 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   and `--record` refuses with the false `is not a regular file` (`agent-workflow-kit/tools/project-rules/rules-record.mjs:41`).
   Narrow fix: past `wrongNode`, read an `error` record as unreadable and replace it, the message naming the reader's
   code; a spec edit to rules-ensure. Raised by the S2 diff review (lens).
+- **MEMORY-MAP-ROW-OUTRANKS-A-WITHHELD-POINTER** — invariant: a pointer the reconcile withholds this run (an engine
+  too old for its fragment) never loses its line to the Memory Map row, and the row never pushes a later migration
+  block past the 100-line cap. Origin: the row leaf's cap check sees only the current text, while the chained
+  pointers follow a causal order (`agent-workflow-kit/tools/inject-methodology.mjs:531-541`) and the pre-1.2.0 block
+  placement exits `cap` (`agent-workflow-kit/tools/migration-blocks.mjs:125-126`). Narrow fix: skip the row with a
+  stated reason when a pointer was withheld this run; order the migration blocks before the row. Raised by the
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S3 spec review (lens).
+- **ROUTER-BUDGET-LITERALS-COPIED-IN-THE-RECOMMENDATIONS-SUITE** — invariant: each router byte budget is written once,
+  in `BUDGET` of `agent-workflow-kit/test/router-contract.test.mjs`. Origin:
+  `agent-workflow-kit/test/recommendations-language-contract.test.mjs:775,858,915,976,1220` copy 52224, so a
+  documented bump of `routerPlusMode` leaves five stale pins. Narrow fix: move `BUDGET` into a small data module both
+  suites import, and read it there. Raised by the S3 spec review (orchestrator self-review).
+- **MEMORY-MAP-ANCHOR-WRAPPED-AFTER-A-PIPE-READS-WHOLE** — invariant: an anchor row spread over more than one line is
+  always skipped, never split by the inserted row. Origin: `isWhole` in
+  `agent-workflow-kit/tools/project-rules/memory-map-row.mjs:23` reads a line as a whole row when it ends with `|`, so
+  a `docs/ai/agent_rules.md` row broken right after a cell separator takes the new row between its two lines. Narrow
+  fix: a whole anchor row carries its three cells on its one line; a memory-map-row cell for the break after a `|`.
+  Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S3 diff review (codex).
 
 ## Closed
 
