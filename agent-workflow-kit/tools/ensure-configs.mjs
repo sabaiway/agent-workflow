@@ -10,6 +10,9 @@
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
 //                                              user's yes; store root seeded behind a current checker
+//   rules          docs/ai/rules/<theme>.md    the kit file seeded, or refreshed on a shipped prior body; with
+//                  + effective/ + sources.json no local file the effective copy and its record rebuilt; with
+//                                              one the merge an agent does is named, never done
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact); under
 //                                              a project hook module that is not the bundled one, a write
 //                                              the project's own checker rejects is put back
@@ -40,12 +43,13 @@ import { isDirectRun } from './direct-run.mjs';
 import { ensureExecutor } from './ensure-executor.mjs';
 import { ENSURE_OPS, OWN_IMPLEMENTATIONS, failedOutcome } from './ensure-ops.mjs';
 import { ensureSpecs } from './ensure-specs.mjs';
+import { ensureRules } from './project-rules/index.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The op table this CLI walks — name → implementation, in ENSURE_OPS order. Composed HERE (the one
-// consumer) because the executor and spec-layer ensures import ensure-ops.mjs for their outcome door and probes.
-export const ENSURE_IMPLEMENTATIONS = Object.freeze({ ...OWN_IMPLEMENTATIONS, executor: ensureExecutor, specs: ensureSpecs });
+// consumer) because the executor, spec-layer and rules ensures import ensure-ops.mjs for their outcome door and probes.
+export const ENSURE_IMPLEMENTATIONS = Object.freeze({ ...OWN_IMPLEMENTATIONS, executor: ensureExecutor, specs: ensureSpecs, rules: ensureRules });
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
@@ -63,13 +67,13 @@ const REPLACE_WITH_ONLY = '--replace-custom runs the spec layer and then the nav
 const REPLACE_WITH_DRY_RUN = "--replace-custom writes on the user's yes, so it cannot be combined with --dry-run — nothing was run";
 const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after the spec layer succeeds';
 
-const HELP = `ensure-configs — the eight stamp-independent upgrade ensures, as ONE command.
+const HELP = `ensure-configs — the nine stamp-independent upgrade ensures, as ONE command.
 
 Usage:
   node ensure-configs.mjs --reconcile [--dry-run] [--only <op>] [--cwd <project>]
   node ensure-configs.mjs --reconcile --replace-custom <digest> [--cwd <project>]
 
-  --reconcile   required — run the eight ensures (${ENSURE_OPS.join(', ')})
+  --reconcile   required — run the nine ensures (${ENSURE_OPS.join(', ')})
   --dry-run     report what each ensure WOULD do; write nothing
   --only <op>   run EXACTLY ONE of them (an unknown, missing or repeated value is a usage error)
   --replace-custom <digest>
@@ -80,11 +84,13 @@ Usage:
   --help, -h    this help
 
 Every SEED is CREATE-ONLY: an existing file is preserved byte-for-byte, never clobbered and never
-refreshed in place. Three ops refresh instead: the orchestration onboarding note, only while it still
+refreshed in place. Four ops refresh instead: the orchestration onboarding note, only while it still
 matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer reader
 and checker pairs, only while a file's bytes are a body a release shipped (an edited file is
 preserved, the writes that depend on it — the spec store root included — are withheld behind it,
-and ONE printed replace line replaces every edited file only on the user's yes); and the navigator index — a GENERATED artifact, regenerated
+and ONE printed replace line replaces every edited file only on the user's yes); the project rules
+kit file, only while its bytes are a body a release shipped (an edited one is kept), with the effective
+file rebuilt as its copy and recorded where no local file exists; and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale; where a module the project's hook loads is not the bundled one,
 the project's own checker judges the navigator and a write it rejects is put back byte for byte.
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the

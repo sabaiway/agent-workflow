@@ -212,6 +212,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/project-rules/rules-check.mjs',
       'tools/project-rules/rules-record.mjs',
       'tools/project-rules/rules-cli.mjs',
+      'tools/project-rules/rules-ensure.mjs', 'tools/project-rules/rules-priors.mjs',
       'tools/project-rules/index.mjs',
       'references/rules/project-layout.md',
       'tools/feedback-record.mjs',
@@ -891,7 +892,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 368 = 367 + tools/attribution.mjs - story S11 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 369 = 368 + references/advisor-writers.md - story S9 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 375 = 369 + the five tools/project-rules/ modules (themes, rules-check, rules-record, rules-cli, index) and references/rules/project-layout.md - story S1 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
-    assert.equal(packed.length, 375, `tarball file count drifted (${packed.length}\u2260 375)`);
+    // 377 = 375 + tools/project-rules/rules-ensure.mjs (the upgrade op) and tools/project-rules/rules-priors.mjs (the prior catalog) - story S2 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
+    assert.equal(packed.length, 377, `tarball file count drifted (${packed.length}\u2260 377)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

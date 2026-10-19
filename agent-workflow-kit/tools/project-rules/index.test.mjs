@@ -1,5 +1,5 @@
-// The one door of the project-rules module: the index re-exports exactly THEMES and checkRules, and no
-// other kit module reaches a file of this directory past it. Contract: docs/ai/specs/kit/project-rules/index.md.
+// The one door of the project-rules module: the index re-exports exactly THEMES, checkRules and ensureRules,
+// and no other kit module reaches a file of this directory past it. Contract: docs/ai/specs/kit/project-rules/index.md.
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -33,16 +33,17 @@ const kitModules = () => {
   return files;
 };
 
-describe('spec:project-rules/S15 the index exports exactly THEMES and checkRules', () => {
-  it('re-exports the very THEMES and checkRules, and no kit module imports past the index', async () => {
+describe('spec:project-rules/S15 the index exports exactly THEMES, checkRules and ensureRules', () => {
+  it('re-exports the very THEMES, checkRules and ensureRules, and no kit module imports past the index', async () => {
+    const ensureRules = need(await load('./rules-ensure.mjs'), 'ensureRules');
     const index = await load('./index.mjs');
     const THEMES = need(await load('./themes.mjs'), 'THEMES');
     const checkRules = need(await load('./rules-check.mjs'), 'checkRules');
-    need(index, 'THEMES');
-    need(index, 'checkRules');
-    assert.deepEqual(Object.keys(index).sort(), ['THEMES', 'checkRules']);
+    for (const name of ['THEMES', 'checkRules', 'ensureRules']) need(index, name);
+    assert.deepEqual(Object.keys(index).sort(), ['THEMES', 'checkRules', 'ensureRules']);
     assert.equal(index.THEMES, THEMES);
     assert.equal(index.checkRules, checkRules);
+    assert.equal(index.ensureRules, ensureRules);
 
     assert.deepEqual(pastTheDoor("import { x } from '../project-rules/themes.mjs';\nexport * from \"./project-rules/index.mjs\";"),
       ['../project-rules/themes.mjs']);

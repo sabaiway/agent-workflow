@@ -40,7 +40,7 @@ const link = (root, target, rel) => {
 const copyPassed = () => entryOf({ kit: KIT_TEXT, effective: KIT_TEXT });
 const mergePassed = () => entryOf({ kit: KIT_TEXT, local: LOCAL_TEXT, effective: MERGED_TEXT });
 
-describe('spec:project-rules/S3 record writes the closed entry and keeps every other theme', () => {
+describe('spec:project-rules/S3 record writes the closed entry, keeps every other theme and replaces an unreadable record', () => {
   it('writes schema 1 with the local absent stated for a kit copy with no record', async () => {
     const writeRecord = await writeRecordOf();
     const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT }));
@@ -86,6 +86,28 @@ describe('spec:project-rules/S3 record writes the closed entry and keeps every o
     assert.deepEqual(Object.keys(written.themes), [OTHER.name, THEME]);
     assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [OTHER.name]: other, [THEME]: copyPassed() }));
   });
+
+  it('replaces a record that is not JSON with one holding only the written entry', async () => {
+    const writeRecord = await writeRecordOf();
+    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: '{ not json\n' }));
+    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
+  });
+
+  it('replaces a record with schema 2 with one holding only the written entry', async () => {
+    const writeRecord = await writeRecordOf();
+    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: recordText({ [THEME]: copyPassed() }, 2) }));
+    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
+  });
+
+  it('replaces a record whose kit digest is wrapped in an array with one holding only the written entry', async () => {
+    const writeRecord = await writeRecordOf();
+    const entry = { ...copyPassed(), kit: [copyPassed().kit] };
+    const root = track(makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: JSON.stringify({ schema: 1, themes: { [THEME]: entry } }) }));
+    assert.equal(writeRecord(root, THEME, copyPassed()).ok, true);
+    assert.equal(readFileSync(join(root, RECORD), 'utf8'), recordText({ [THEME]: copyPassed() }));
+  });
 });
 
 // refuses(root, theme, passed, condition, deps?) → the refusal, asserted to name the condition and to
@@ -105,16 +127,6 @@ const refuses = async (root, theme, passed, condition, deps = {}) => {
 describe('spec:project-rules/S4 record writes nothing and names the failed condition', () => {
   it('theme: a theme outside the registry', async () => {
     await refuses(copyProject(), 'no-such-theme', copyPassed(), 'theme');
-  });
-
-  it('unreadable-record: a record that is not JSON', async () => {
-    const root = makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: '{ not json\n' });
-    await refuses(root, THEME, copyPassed(), 'unreadable-record');
-  });
-
-  it('unreadable-record: a record with schema 2', async () => {
-    const root = makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: recordText({ [THEME]: copyPassed() }, 2) });
-    await refuses(root, THEME, copyPassed(), 'unreadable-record');
   });
 
   it('record-path: the record path is a directory', async () => {
@@ -157,12 +169,6 @@ describe('spec:project-rules/S4 record writes nothing and names the failed condi
     };
     const result = await refuses(copyProject(), THEME, copyPassed(), 'write', { write });
     assert.match(result.message, /disk full/);
-  });
-
-  it('unreadable-record: a record whose kit digest is wrapped in an array', async () => {
-    const entry = { ...copyPassed(), kit: [copyPassed().kit] };
-    const root = makeProject({ [KIT]: KIT_TEXT, [EFFECTIVE]: KIT_TEXT, [RECORD]: JSON.stringify({ schema: 1, themes: { [THEME]: entry } }) });
-    await refuses(root, THEME, copyPassed(), 'unreadable-record');
   });
 
   it('unreadable-file: docs/ai/rules/local is a symlink to a real directory holding a valid local', async () => {

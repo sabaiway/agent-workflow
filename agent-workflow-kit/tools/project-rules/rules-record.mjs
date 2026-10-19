@@ -40,7 +40,7 @@ const judge = (root, theme, passed, deps) => {
   const recordRead = readUnder(root, RECORD_PATH, deps);
   if (!['ok', 'absent'].includes(recordRead.outcome)) return fail('record-path', `${RECORD_PATH} is not a regular file`);
   const record = readRecord(recordRead, themes);
-  if (!record.ok) return fail('unreadable-record', `${RECORD_PATH} is unreadable: ${record.reason}`);
+  const kept = record.ok ? record.themes : {};
   const paths = themePaths(theme);
   const files = Object.fromEntries(ROLES.map((role) => [role, readUnder(root, paths[role], deps)]));
   const unreadable = ROLES.find((role) => !['ok', 'absent'].includes(files[role].outcome));
@@ -60,7 +60,7 @@ const judge = (root, theme, passed, deps) => {
   } else if (!effective.equals(kit)) {
     return fail('effective-differs-from-kit', `with no local file ${paths.effective} must equal ${paths.kit}`);
   }
-  return { ok: true, themes: record.themes };
+  return { ok: true, themes: kept };
 };
 
 // writeRecord(root, theme, passed, deps?) → { ok: true, path, entry } | { ok: false, condition, message }.

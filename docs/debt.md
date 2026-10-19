@@ -393,8 +393,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   process cwd and failed alike. Narrow fix: expand a literal `~`/`~/…` override against the home before the probe.
   Raised by the S2 diff review (codex round 2).
 - **UPGRADE-REPORT-RELAYS-THE-PRE-REPLACE-SPECS-LINE** — invariant: the upgrade report relays the last outcome of each
-  ensure. Origin: steps 4 and 8 relay "the eight … lines exactly as the one ensure run composed them"
-  (`agent-workflow-kit/references/modes/upgrade.md:114`, `:124`); after the yes to the specs replace (story S5 of
+  ensure. Origin: steps 4 and 8 relay "the nine … lines exactly as the one ensure run composed them"
+  (`agent-workflow-kit/references/modes/upgrade.md:116`, `:126`); after the yes to the specs replace (story S5 of
   BRIDGES-WORK-UNDER-THE-SANDBOX) that is the step-3 specs line, which says the edited files were left as written,
   over files the replace run overwrote. Narrow fix: as for the late `--only index` line, the report relays the replace
   run's specs line when it ran. Raised by the S5 spec review (lens, final check).
@@ -552,7 +552,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **PENDING-EXECUTOR-LINE-NAMES-ONE-ARM** — invariant: the executor ensure's `pending` line names the advisor arm
   that renders for the same tree. Origin: the line and its texts name `executor-vehicle.differing`
   (`agent-workflow-kit/tools/ensure-executor.mjs:69`, `agent-workflow-kit/references/modes/upgrade.md:44`,
-  `agent-workflow-kit/tools/ensure-configs.mjs:91`), while a `subagent` slot over an executor whose frontmatter is
+  `agent-workflow-kit/tools/ensure-configs.mjs:97`), while a `subagent` slot over an executor whose frontmatter is
   invalid renders the base `executor-vehicle` arm instead (`agent-workflow-kit/tools/recommendations.mjs:1135,1159`).
   Narrow fix: name the item key `executor-vehicle`, true of both arms, in the line, the spec clause
   (executor-vehicle, init-project S50) and their pins. Proof: an ensure cell and an advisor cell over that tree.
@@ -622,6 +622,43 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `recommendations.mjs:436` states. Narrow fix: both docs say "a regular-file executor that fails the check (it is
   re-derived, never placed)". Residual, not live: the skip line names the reason, and `executor-vehicle` still renders
   the solo degrade. Raised by the KIT-DEFAULT-POSTURE S1 diff review (lens, round 2).
+- **RULES-RECORD-REPLACE-DROPS-A-NEWER-KITS-ENTRIES** — invariant: an older kit never deletes a newer kit's record
+  entries. Origin: the record writer replaces an unreadable record (project-rules revision 2), and `parseRecord` reads
+  a theme outside the registry as unreadable (`agent-workflow-kit/tools/project-rules/rules-check.mjs:57`), so an
+  older kit's upgrade would replace a record holding a theme only a newer kit knows; one theme exists today. Narrow
+  fix: replace as absent only for the other parse failures, keeping such entries. Raised by the S2 spec review (lens).
+- **PROJECT-RULES-DOOR-DRAGS-THE-WRITER-GRAPH** — invariant: a read-only consumer of the project-rules registry or
+  check imports no writer. Origin: `agent-workflow-kit/tools/project-rules/index.mjs` re-exports `ensureRules` beside
+  `THEMES` and `checkRules` (project-rules revision 2), so a read-only tool importing the door would breach
+  `agent-workflow-kit/test/read-graph-purity.test.mjs:79-82`; no read-only consumer exists before story S5. Narrow fix
+  in S5: a read door beside the op entry. Raised by the S2 spec review (lens).
+- **RULES-TEMPLATE-EDIT-WITHOUT-ITS-PRIOR-UNPINNED** — invariant: a release that changes a theme template appends the
+  outgoing body to the prior catalog. Origin: nothing reds when `agent-workflow-kit/references/rules/project-layout.md`
+  changes without a catalog entry, so every deployment of the previous release would read as edited. Narrow fix: the
+  priors suite pins the current template's sha256. Raised by the S2 spec review (lens).
+- **BOOTSTRAP-RULES-FAILED-LINE-UNSTATED** — invariant: every command a deploy step runs says what its failure means
+  for the next step. Origin: bootstrap's step 10 runs the rules op (project-rules revision 2) and relays its line, but
+  does not say whether a `rules: failed` line stops the stamp (`agent-workflow-kit/references/modes/bootstrap.md:37-49`).
+  Narrow fix: one clause, "a failed line is relayed with its cause and the stamp still follows; the next upgrade lays
+  the theme". Raised by the S2 spec review (lens, round 2).
+- **BOOTSTRAP-RULES-COMMAND-NOT-SPAWNED** — invariant: the command a mode doc prints is the command a test runs.
+  Origin: project-rules S25 pins that bootstrap's step 10 carries the rules run, while S23 spawns its own command, so
+  a typo in the documented flag passes both. Narrow fix: S25 extracts the step-10 command by pattern and spawns it on
+  the S23 fixture, as `agent-workflow-kit/test/fallback-bootstrap.test.mjs:26-30` does for step 7. Raised by the S2
+  spec review (lens, round 2).
+- **RULES-ENSURE-SUITE-MISSES-THREE-WRONG-WRITES** — invariant: each write decision of the rules op has a cell that
+  fails on the tempting wrong code. Origin: `agent-workflow-kit/tools/project-rules/rules-ensure.test.mjs:220-233`
+  never reads the kit file a pending run seeds or refreshes, `:274-285` loses a seed race only to other bytes, and no
+  cell injects two themes, so a skipped pending kit write, a stop on a same-bytes race and a last-theme-only token
+  pass. Narrow fix: assert the kit bytes in the non-dry pending cells, a same-bytes `loseSeed` cell for the kit and the
+  effective file, and two-theme cells (`deps.themes` plus a second template in `makeKit`) for the survey stop, the
+  cross-theme token and the one replace line. The code is correct today. Raised by the S2 diff review (lens).
+- **RULES-RECORD-NOT-UTF8-HAS-NO-WRITER** — invariant: every record the check reports as unreadable on a regular file
+  has a writer that replaces it. Origin: `agent-workflow-kit/tools/fs-read-nofollow.mjs:89` answers `error` for
+  invalid UTF-8, so the upgrade fails `unexpected-error` (`agent-workflow-kit/tools/project-rules/rules-ensure.mjs:35`)
+  and `--record` refuses with the false `is not a regular file` (`agent-workflow-kit/tools/project-rules/rules-record.mjs:41`).
+  Narrow fix: past `wrongNode`, read an `error` record as unreadable and replace it, the message naming the reader's
+  code; a spec edit to rules-ensure. Raised by the S2 diff review (lens).
 
 ## Closed
 

@@ -34,8 +34,10 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
      - A **leftover machine-wide ignore block** from an older deployment is kept and reported (harmless — the project-local rules win); the advisor's `footprint-global` item of step 11 removes it on the user's yes after its check, which prints each line it removes — another of the user's repos may rely on the same machine-wide rules.
      - Report the result plainly (what is now hidden). **Windows is supported.**
    - **Do not edit `package.json`** in hidden mode — a tracked change leaks the whole system.
-10. **Stamp the deployment lineage.** **First re-run the step-7 navigator finalizer**
-    (`--ensure-index`) whenever a later step touched `docs/ai` — the reconciles that follow the
+10. **Stamp the deployment lineage.** In both paths, delegated and fallback, **first lay down the
+    project rules** — `node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --only rules --cwd <project>`,
+    relaying its line — **then re-run the step-7 navigator finalizer**
+    (`--ensure-index`) whenever a later step touched `docs/ai` — the rules run and the reconciles that follow the
     template copy do (the agent-rules lens,
     `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`); it is idempotent, so an
     untouched tree simply reports `already-current`. Then write the **deployment-lineage head** into

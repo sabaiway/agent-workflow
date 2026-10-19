@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-19 — AD-190: the upgrade lays the project-layout rules into every project through a ninth ensure op (kit 14.38.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
+
+**The kit's upgrade gains the ensure op `rules`, after the spec layer and before the navigator, and bootstrap runs it
+in step 10: it lays each theme's kit file, keeps the effective file its copy with its record where no local file
+exists, and with a local file whose merge is not yet recorded prints the merge an agent does and the exact record
+command.** An edited kit file is kept (with no frontmatter, nothing else is written for its theme); the new
+append-only prior catalog (`rules-priors.mjs`) ships empty; the record writer now replaces a record whose UTF-8 text
+is not JSON of its schema. This repository now carries the project-layout rules, and its `project-rules` gate
+answers `current`. Contracts: project-rules revision 2, executor-vehicle revision 6. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-18 — AD-189: project rules in thematic prose files, a record of what each effective file was built from, and a read-only check (kit 14.37.0 MINOR; memory 8.2.0, engine 5.12.0 and both bridges unchanged)
 
 **The kit ships the new `tools/project-rules/` module — the theme registry, the writer of

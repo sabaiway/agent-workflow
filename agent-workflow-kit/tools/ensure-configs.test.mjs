@@ -140,7 +140,7 @@ describe('the reconcile run', () => {
       assert.equal(first.code, 0);
       // The ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
       // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
@@ -160,26 +160,25 @@ describe('the reconcile run', () => {
     });
   });
 
-  it('spec:executor-vehicle/S6 — eight ops with executor fifth after vehicles, and --help says eight', () => {
-    assert.equal(ENSURE_OPS.length, 8);
-    assert.equal(ENSURE_OPS[3], 'vehicles');
-    assert.equal(ENSURE_OPS[4], 'executor');
+  it('spec:executor-vehicle/S6 — nine ops with executor fifth after vehicles, rules between specs and index, and --help says nine', () => {
+    assert.equal(ENSURE_OPS.length, 9);
+    assert.deepEqual([ENSURE_OPS[3], ENSURE_OPS[4]], ['vehicles', 'executor']);
+    assert.deepEqual(ENSURE_OPS.slice(6), ['specs', 'rules', 'index']);
     withProject((dir) => {
       const r = main(['--reconcile'], { cwd: dir });
       const tokens = tokensOf(r.stdout);
-      assert.equal(tokens.length, 8);
+      assert.equal(tokens.length, 9);
       assert.deepEqual(tokens.map((t) => t.op), [...ENSURE_OPS]);
-      assert.deepEqual(tokens[3].op, 'vehicles');
       assert.deepEqual(tokens[4], { op: 'executor', token: 'not-placed' });
       assert.equal(r.code, 0, r.stderr);
     });
     const help = main(['--help']).stdout;
     const lines = help.split('\n');
-    assert.match(lines[0], /\beight\b/);
+    assert.match(lines[0], /\bnine\b/);
     const usage = lines.find((line) => line.includes('--reconcile') && line.includes('required'));
-    assert.match(usage, /\beight\b/);
+    assert.match(usage, /\bnine\b/);
     assert.ok(usage.includes(ENSURE_OPS.join(', ')));
-    assert.doesNotMatch(help, /\bseven\b/);
+    assert.doesNotMatch(help, /\beight\b/);
   });
 
   for (const [label, argvFor] of [
@@ -409,6 +408,7 @@ describe('one op failing never skips the rest', () => {
         { op: 'executor', token: 'not-placed' },
         { op: 'scripts', token: 'seeded' },
         { op: 'specs', token: 'seeded' },
+        { op: 'rules', token: 'seeded' },
         { op: 'index', token: 'regenerated' },
       ]);
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
@@ -430,7 +430,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });

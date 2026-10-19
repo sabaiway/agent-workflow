@@ -4,6 +4,33 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.38.0 — the upgrade and bootstrap lay the project-layout rules into your project and keep the file agents read current; with your own local rules the agent does the merge (AD-190)
+
+**`/agent-workflow-kit upgrade` and bootstrap now write the project-layout rules into `docs/ai/rules/`, keep
+`docs/ai/rules/effective/project-layout.md` a copy of them, and record what it was built from, so
+`rules-cli.mjs --check` answers `current`.** Where you keep your own rules in `docs/ai/rules/local/`, no code merges
+them: the upgrade prints the merge the agent does and the command that records it.
+
+- **A ninth upgrade ensure, `rules`,** runs after the spec layer and before the navigator, so the navigator lists the
+  files it lays. Its outcome is one of `seeded`, `refreshed`, `regenerated`, `pending`, `customized-preserved` or
+  `already-current`, or `failed` with its cause; `--dry-run` answers the `would-` form and writes nothing. Bootstrap
+  runs it as `ensure-configs.mjs --reconcile --only rules` in step 10, before the navigator re-run.
+- **The kit file `docs/ai/rules/<theme>.md`** is created when absent, kept when it is the bundled template, refreshed
+  when it holds a body an earlier release shipped, and kept byte for byte when you edited it: the line then says your
+  own rules belong in `docs/ai/rules/local/<theme>.md`, where they win. The catalog of earlier bodies ships empty, so
+  nothing is refreshed yet.
+- **With no local file** the effective file is rebuilt as the kit file's copy and its record entry is written; an
+  edited kit file with no frontmatter is kept and nothing else is written for that theme.
+- **With a local file** nothing is written to the effective file or the record; until the merge is recorded, the line
+  starts `merge needed — `, states how to merge (by meaning, the local file winning a conflict, the frontmatter kept,
+  the user shown what changed) and prints the exact `rules-cli.mjs --record` command to run after it.
+- **A `docs/ai/rules/effective/sources.json` that reads as UTF-8 text but is not JSON of the record's schema** is now
+  replaced by the record writer instead of stopping it, in `--record` and in the upgrade alike; a directory or a
+  symlink on its path still stops it, writing nothing.
+
+**Upgrade note.** No step: the next upgrade lays the theme. If it prints `merge needed`, the agent merges, shows you
+what changed and runs the printed command.
+
 ## 14.37.0 — the first project rules theme, project layout, ships with the writer of a record of what each effective rules file was built from and a read-only check; nothing is laid into a project yet (AD-189)
 
 **The kit now carries default project rules as thematic prose files, starting with project layout, and a command

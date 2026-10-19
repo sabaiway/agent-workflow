@@ -11,7 +11,8 @@
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
 // root it seeds is a docs/ai file the navigator must count.
 // `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'index']);
+// `rules` follows `specs` and precedes `index`: the rules files it lays are docs/ai files the navigator counts.
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
