@@ -4,6 +4,23 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.3.0 — the hook installer arms the project-rules check and the layout check (AD-193)
+
+**`references/scripts/install-git-hooks.mjs` gains `--rules-check <path>` and `--layout-check <path>`.** Each writes
+`node "<absolute path>" --check` followed by its role comment, `# rules-check` or `# layout-check`, after the docs and
+scripts lines and before the commit-guard line.
+
+- A flagless run keeps each armed line by its role; two lines of one role exit 1 naming the role. No flag removes
+  them.
+- `--rules-check` takes only a path to `rules-cli.mjs` and `--layout-check` only one to `source-size-check.mjs`; a path
+  holding `"`, `$`, a backtick, a backslash, CR or LF exits 2 (on Windows the path's `\` become `/` first). A missing
+  file exits 1, a flag without a value exits 2; each writes nothing.
+- Over a hook with neither line, a flagless or `--commit-guard` run writes exactly the hook 4.0.0 to 8.2.1 wrote.
+- Its two test suites strip every inherited git variable before they run git, so they also pass inside the
+  pre-commit hook.
+
+MINOR: two new flags. The paths arrive from the caller; the kit's `hook-checks` item passes its own tools.
+
 ## 8.2.1 — the architecture template points to the layout rules instead of a fixed set of layers (AD-191)
 
 `references/templates/architecture.md`: the lead line drops "Layers", and the Layers and Module Boundaries sections

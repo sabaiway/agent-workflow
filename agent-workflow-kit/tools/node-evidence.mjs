@@ -1,8 +1,9 @@
 // node-evidence.mjs — does Node PROVABLY run in this project tree? Contract: docs/ai/specs/kit/node-evidence.md.
 // Pure over an injectable lstat; no writes, no side effects on import. Dependency-free, Node >= 22.
 
-import { lstatSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const NODE_EVIDENCE = Object.freeze({
   PACKAGE_JSON: 'package-json',
@@ -13,6 +14,13 @@ export const NODE_EVIDENCE = Object.freeze({
 
 export const PACKAGE_JSON_REL = 'package.json';
 export const SCRIPTS_DIR = 'scripts';
+export const INSTALLER_REL = `${SCRIPTS_DIR}/install-git-hooks.mjs`;
+
+// Every *.mjs of the kit's references/scripts/, sorted, the tests and the shim included: what the
+// enforcement copy places. Read from this kit copy at import, so a module the git-hooks leaf's own
+// imports reach names the bundle without importing that leaf back.
+export const BUNDLED_SCRIPT_NAMES = Object.freeze(readdirSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'references', 'scripts'))
+  .filter((name) => name.endsWith('.mjs')).sort());
 
 // The runnable scripts the bootstrap copies from references/scripts/ — pinned against the bundle by the suite.
 export const NODE_EVIDENCE_SCRIPTS = Object.freeze([

@@ -430,7 +430,7 @@ const JEV_NOTE_LITERALS = Object.freeze([
   'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json',
 ]);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAttribution', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
-  'probeCommitGuard', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
+  'probeCommitGuard', 'probeHookChecks', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
   'probeMasksItem', 'probeFootprintGlobal', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
 describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked apply', () => {

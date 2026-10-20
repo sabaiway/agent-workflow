@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,6 +53,7 @@ const velocityModule = await import('./velocity-profile.mjs');
 const { probeSpecAdoption, probeEnforcement, probeProfileGaps } = recommendations;
 const { composeProfileGapScreen } = await import('./profile-gap-screen.mjs').catch(() => ({}));
 const lanes = await import('./write-lanes.mjs').catch(() => ({}));
+const gitHooks = await import('./git-hooks.mjs');
 const need = (mod, name) => {
   if (!(name in mod)) throw new Error(`${name} is absent`);
   return mod[name];
@@ -150,6 +151,18 @@ const guardProject = () => {
   return root;
 };
 const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () => join(root, 'hooks'), ...extra });
+// A git deployment carrying the bundled installer and an empty hooks/; `piles` tracked files in lib/ put lib/ past the entries band.
+const layoutRoot = ({ piles = 0, installer = true, root = makeProject() } = {}) => {
+  runFixtureGit(root, ['init', '-q']);
+  if (installer) cpSync(join(BUNDLED_SCRIPTS, 'install-git-hooks.mjs'), join(root, 'scripts', 'install-git-hooks.mjs'));
+  mkdirSync(join(root, 'hooks'));
+  mkdirSync(join(root, 'lib'));
+  for (let i = 0; i < piles; i += 1) writeFileSync(join(root, 'lib', `m${i}.mjs`), FIXTURE_SCRIPT);
+  runFixtureGit(root, ['add', '-A']);
+  return root;
+};
+// The hermetic git env with a PATH, so the source-size probe's own git reads reach the fixture.
+const gitPathEnv = (root) => hermeticGitEnv({ PATH: process.env.PATH }, root);
 
 // An AVAILABLE census over an ordinary JS project — the tree every declaration row here is about. It
 // is injected because makeProject() is deliberately NOT a git tree (git-initing it would change what
@@ -680,6 +693,9 @@ const buildInventoryFixtures = () => {
     planGlobalRemoval: () => ({ source: join(footprintRoot, '.gitignore_global'), before: '/scripts/check-docs-size.mjs\n', after: '', removedLines: ['/scripts/check-docs-size.mjs'] }),
   }) }));
   rmSync(footprintRoot, { recursive: true, force: true });
+  const layoutPiles = layoutRoot({ piles: 25 });
+  results.push(buildRecommendations({ cwd: layoutPiles, deps: guardDeps(layoutPiles, { env: gitPathEnv(layoutPiles) }) }));
+  rmSync(layoutPiles, { recursive: true, force: true });
   return results;
 };
 
@@ -1148,13 +1164,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still twenty-one harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still twenty-two harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
   });
 });
 
@@ -1263,8 +1279,8 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains twenty-one harness variants', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+  it('VARIANT_LANES contains twenty-two harness variants', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
   });
 });
 
@@ -2315,7 +2331,8 @@ describe('recommendations \u2014 the enforcement item', () => {
 });
 
 describe('spec:init-project/S35 the advisor\'s reader and table by proof', () => {
-  it('readPreCommitState distinguishes no hooks dir, absent, managed and unmanaged, armed only by the canonical line', (t) => {
+  const UNARMED = { rulesArmed: false, rulesForeign: false, layoutArmed: false, layoutForeign: false };
+  it('readPreCommitState distinguishes no hooks dir, absent, managed and unmanaged, armed only by the canonical line, its four role fields false with no role line', (t) => {
     const root = makeNoneEvidenceProject();
     t.after(() => rmSync(root, { recursive: true, force: true }));
     mkdirSync(join(root, 'hooks'));
@@ -2323,24 +2340,24 @@ describe('spec:init-project/S35 the advisor\'s reader and table by proof', () =>
     const canonical = `node "${join(HERE, 'commit-guard.mjs')}" --check\n`;
     const lookalike = `node "${join(root, 'fake-commit-guard.mjs')}" --check\n`;
     const readPreCommitState = need(recommendations, 'readPreCommitState');
-    assert.deepEqual(readPreCommitState(root, { gitHooksPath: () => null }), { state: 'no-hooks-dir', armed: false });
-    assert.deepEqual(readPreCommitState(root, deps), { state: 'absent', armed: false });
+    assert.deepEqual(readPreCommitState(root, { gitHooksPath: () => null }), { state: 'no-hooks-dir', armed: false, ...UNARMED });
+    assert.deepEqual(readPreCommitState(root, deps), { state: 'absent', armed: false, ...UNARMED });
     for (const [state, prefix] of [['managed', MANAGED_GUARDLESS], ['unmanaged', FOREIGN_HOOK]]) {
       for (const [line, armed] of [['', false], [canonical, true], [`# ${canonical}`, false], [lookalike, false]]) {
         writeFileSync(join(root, 'hooks', 'pre-commit'), `${prefix}${line}`);
-        assert.deepEqual(readPreCommitState(root, deps), { state, armed }, `${state}: ${line}`);
+        assert.deepEqual(readPreCommitState(root, deps), { state, armed, ...UNARMED }, `${state}: ${line}`);
       }
     }
   });
 
-  it('readPreCommitState reports a directory hook as unreadable EISDIR and never armed', async (t) => {
+  it('readPreCommitState reports a directory hook as unreadable EISDIR and never armed, its four role fields false', async (t) => {
     const root = guardProject();
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const path = join(root, 'hooks', 'pre-commit');
     mkdirSync(path);
     const loaded = await import('./git-hooks.mjs');
     const readPreCommitState = loaded.readPreCommitState ?? (() => { throw new Error('readPreCommitState is absent'); });
-    assert.deepEqual(readPreCommitState(root, guardDeps(root)), { state: 'unreadable', code: 'EISDIR', path, armed: false });
+    assert.deepEqual(readPreCommitState(root, guardDeps(root)), { state: 'unreadable', code: 'EISDIR', path, armed: false, ...UNARMED });
   });
 
   for (const key of ['commit-guard', ENFORCEMENT_KEY]) {
@@ -2680,6 +2697,100 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   });
 });
 
+describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', () => {
+  const whatOf = (checks) => `the pre-commit hook lacks this kit's ${checks} — the kit arms each line, refreshing a known-prior installer first`;
+  const NAMES = { rules: 'project-rules check', layout: 'layout check', both: 'project-rules and layout checks' };
+  const CURRENT = { checkRules: () => [{ theme: 'project-layout', verdict: 'current' }] };
+  const roleLine = (tool, role) => `node "${tool}" --check # ${role}\n`;
+  const RULES = roleLine(join(HERE, 'project-rules', 'rules-cli.mjs'), 'rules-check');
+  const LAYOUT = roleLine(join(HERE, 'source-size-check.mjs'), 'layout-check');
+  const hook = (text) => (root) => writeFileSync(join(root, 'hooks', 'pre-commit'), text);
+  const boom = (name) => () => { throw new Error(`${name} exploded`); };
+  // The leaf's own dry run over the same tree: the checks it would arm, or null on its nothing-to-plan refusal.
+  const leafChecks = (root, extra) => {
+    try {
+      const { roles } = need(gitHooks, 'planGitHooks')({ root, variant: 'hook-checks', gitHooksPath: () => join(root, 'hooks'), ...extra });
+      return NAMES[roles.length === 2 ? 'both' : roles[0]];
+    } catch (error) {
+      if (error.exitCode !== 3 || !error.message.startsWith('nothing to plan')) throw error;
+    }
+    return null;
+  };
+  const rows = [
+    { label: 'no docs/ai', seed: (root) => rmSync(join(root, 'docs', 'ai'), { recursive: true }), extra: CURRENT, want: null },
+    { label: 'no hooks dir', extra: { ...CURRENT, gitHooksPath: () => null }, want: null },
+    { label: 'both lines armed', seed: hook(MANAGED_GUARDLESS + RULES + LAYOUT), extra: CURRENT, want: null, leaf: true },
+    { label: 'layout armed, rules not current', seed: hook(MANAGED_GUARDLESS + LAYOUT), want: null, leaf: true },
+    { label: 'the tree on disk past its band, rules not current: the layout line waits for the record', piles: 25, want: NAMES.layout, wait: true },
+    { label: 'layout armable on disk, hook absent', want: NAMES.layout, leaf: true },
+    { label: 'both armable', extra: CURRENT, want: NAMES.both, leaf: true },
+    { label: 'rules line on another path', seed: hook(MANAGED_GUARDLESS + roleLine('/elsewhere/rules-cli.mjs', 'rules-check') + LAYOUT), want: NAMES.rules, leaf: true },
+    { label: 'unmanaged hook', seed: hook(FOREIGN_HOOK), skip: () => 'an UNMANAGED pre-commit hook exists — the installer never overwrites it; adding the lines this item would arm to it is your own step' },
+    { label: 'installer absent, enforcement admitted', installer: false, none: true, skip: () => COMMIT_GUARD_VIA_ITEM },
+    { label: 'installer absent', installer: false, skip: () => COMMIT_GUARD_OWN_STEP },
+    { label: 'rules answer throws', extra: { checkRules: boom('rules') }, skip: () => 'rules exploded' },
+    { label: 'layout answer throws', extra: { readLayoutSetup: boom('layout') }, skip: () => 'layout exploded' },
+    { label: 'unreadable hook', seed: (root) => mkdirSync(join(root, 'hooks', 'pre-commit')), skip: (root) => `${join(root, 'hooks', 'pre-commit')} is unreadable (EISDIR) — the pre-commit hook cannot be judged` },
+  ];
+
+  it('renders nothing, a stated skip or the optional harness item by each row, its layout answer the leaf\'s over the tree on disk', (t) => {
+    for (const { label, seed, extra = {}, want, leaf, skip, piles, installer, none, wait = false } of rows) {
+      const root = layoutRoot({ piles, installer, root: none ? makeNoneEvidenceProject() : makeProject() });
+      t.after(() => rmSync(root, { recursive: true, force: true }));
+      seed?.(root);
+      const built = buildRecommendations({ cwd: root, deps: guardDeps(root, { env: gitPathEnv(root), ...extra }) });
+      const items = built.items.filter((item) => item.key === 'hook-checks');
+      assert.deepEqual(built.skips.filter((entry) => entry.key === 'hook-checks'), skip ? [{ key: 'hook-checks', reason: skip(root) }] : [], label);
+      assert.equal(built.items.some((item) => item.variant === 'source-size.layout'), wait, label);
+      if (leaf) assert.equal(leafChecks(root, extra), want, label);
+      assert.deepEqual(items.map((item) => [item.severity, item.lane, item.what, item.detail]), want ? [[SEVERITY_OPTIONAL, 'harness', whatOf(want), wait ? 'the layout line follows the source-size.layout record — apply that item first; this item\'s check line then arms the layout line too' : null]] : [], label);
+      if (!want) continue;
+      assert.deepEqual({ check: items[0].check, apply: items[0].apply }, need(lanes, 'applySlot')('hook-checks', { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' }), label);
+    }
+  });
+
+  it('the mode doc applies source-size.layout before the hook-checks check line, its hook-checks note carries the risk profile, and RISK_NOTED_KEYS holds hook-checks', () => {
+    const note = (key) => readFileSync(join(KIT_ROOT, 'references', 'modes', 'recommendations.md'), 'utf8').split('\n').find((text) => text.startsWith(`- \`${key}\` — `)) ?? '';
+    assert.ok(note('source-size').includes('`source-size.layout` is applied before the `hook-checks` check line runs, whose layout line follows that record.'));
+    assert.match(note('hook-checks'), /Risk profile: \S/u);
+    assert.ok(RISK_NOTED_KEYS.includes('hook-checks'));
+  });
+
+  it('a kit tools path holding $ renders the stated skip naming it (a copy of the kit, spawned)', (t) => {
+    const [base, root] = [mkdtempSync(join(tmpdir(), 'rec-kit-$-')), makeProject()];
+    t.after(() => [base, root].forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+    cpSync(KIT_ROOT, base, { recursive: true, filter: (src) => !/^[\\/](?:test|releases|stats)(?:[\\/]|$)|\.test(?:\.mjs)?$/u.test(src.slice(KIT_ROOT.length)) });
+    const env = { ...hermeticGitEnv(process.env, base), CLAUDE_CONFIG_DIR: undefined };
+    const run = spawnSync(process.execPath, [join(base, 'tools', 'recommendations.mjs'), '--cwd', root, '--json'], { encoding: 'utf8', env, maxBuffer: GIT_MAX_BUFFER });
+    assert.deepEqual([run.error, run.signal, run.status], [undefined, null, 0], run.stderr);
+    const { items, skips } = JSON.parse(run.stdout);
+    assert.ok(!items.some((item) => item.key === 'hook-checks'));
+    const prefix = `the kit's tools path ${join(base, 'tools')} carries ", $, a backtick, a backslash, CR or LF`;
+    assert.deepEqual(skips.filter((entry) => entry.key === 'hook-checks').map((entry) => entry.reason.slice(0, prefix.length)), [prefix]);
+  });
+
+  it('a no to the record writes nothing and renders both again; a yes to both, the record first, arms the layout line and the next run renders neither', (t) => {
+    const root = layoutRoot({ piles: 25 });
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const [env, hooks] = [gitPathEnv(root), join(root, '.git', 'hooks')];
+    const run = () => buildRecommendations({ cwd: root, deps: hermeticDeps(root, { env, gitHooksPath: () => hooks }) }).items
+      .filter((item) => item.variant === 'source-size.layout' || item.key === 'hook-checks')
+      .map((item) => (item.key === 'hook-checks' ? [item.variant, item.what, item.detail] : [item.variant]));
+    const both = [['source-size.layout'], ['hook-checks', whatOf(NAMES.layout), 'the layout line follows the source-size.layout record — apply that item first; this item\'s check line then arms the layout line too']];
+    assert.deepEqual(run(), both);
+    assert.deepEqual(run(), both, 'a no: the next run renders both again');
+    assert.deepEqual([existsSync(join(root, 'docs', 'ai', 'source-size.json')), existsSync(join(hooks, 'pre-commit'))], [false, false]);
+    const record = spawnSync(process.execPath, [join(HERE, 'source-size-check.mjs'), '--write-baseline', '--reason', 'initial adoption', '--cwd', root], { encoding: 'utf8', env });
+    assert.deepEqual([record.error, record.signal, record.status], [undefined, null, 0], record.stderr);
+    const plan = need(gitHooks, 'planGitHooks')({ root, variant: 'hook-checks', gitHooksPath: () => hooks });
+    const io = { env, spawn: (argv, options) => spawnSync(argv[0], argv.slice(1), { ...options, stdio: 'pipe' }), error: (message) => assert.fail(message) };
+    assert.equal(need(gitHooks, 'applyGitHooks')(plan, io), 0);
+    const state = need(recommendations, 'readPreCommitState')(root, { gitHooksPath: () => hooks });
+    assert.deepEqual([state.state, state.layoutArmed, state.rulesArmed], ['managed', true, false]);
+    assert.deepEqual(run(), []);
+  });
+});
+
 const worktreesSlot = (root) => {
   const slot = need(lanes, 'applySlot')('worktrees-dir', { toolsDir: HERE, root: resolve(root) });
   if (slot == null) throw new Error('worktrees-dir check line is absent');
@@ -2761,8 +2872,8 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
-  it('the harness variant count is twenty-one', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+  it('the harness variant count is twenty-two', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
   });
   const makeHarnessProject = () => {
     const root = makeProject();
@@ -3464,8 +3575,8 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }
-  it('the harness variant count is twenty-one', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+  it('the harness variant count is twenty-two', () => {
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
   });
 });
 

@@ -26,6 +26,7 @@ import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
 import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
 import { ATTRIBUTION_HIDDEN, ATTRIBUTION_KEY, writeAttribution } from './attribution.mjs';
+import { classifyDeployedScript } from './script-priors.mjs';
 import { globalRemovalOf, planGlobalRemoval } from './hide-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { dirCovers as covers } from './declared-paths.mjs';
@@ -38,7 +39,7 @@ const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing', ...RESEED_VARIANTS];
 const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
 const AGENT_VARIANTS = ['agents', 'executor-vehicle', 'executor-vehicle.differing'];
-const GIT_VARIANTS = ['enforcement', 'commit-guard'];
+const GIT_VARIANTS = ['enforcement', 'commit-guard', 'hook-checks'];
 const WORKTREES = 'worktrees-dir';
 const ATTRIBUTION = 'attribution';
 const FOOTPRINT = 'footprint-global';
@@ -219,13 +220,16 @@ export const scopeOf = (variant, facts, deps = {}) => {
   }
   const scripts = join(facts.root, SCRIPTS_REL);
   if (GIT_VARIANTS.includes(variant)) {
-    directories.splice(0, directories.length, scripts);
-    filePaths.push(...BUNDLED_SCRIPT_NAMES.map((name) => join(scripts, name)));
+    directories.splice(0, directories.length, ...(variant === 'hook-checks' ? [] : [scripts]));
+    filePaths.push(...(variant === 'hook-checks' ? [join(facts.root, INSTALLER_REL)] : BUNDLED_SCRIPT_NAMES.map((name) => join(scripts, name))));
   }
-  const runs = GIT_VARIANTS.includes(variant) ? ['node', INSTALLER_REL,
-    ...(variant === 'commit-guard' ? ['--commit-guard', join(facts.toolsDir, 'commit-guard.mjs')] : [])] : null;
+  const rules = ['--rules-check', join(facts.toolsDir, 'project-rules', 'rules-cli.mjs')];
+  const layout = ['--layout-check', join(facts.toolsDir, 'source-size-check.mjs')];
+  const flagSets = variant === 'hook-checks' ? [rules, layout, [...rules, ...layout]]
+    : variant === 'commit-guard' ? [['--commit-guard', join(facts.toolsDir, 'commit-guard.mjs')]] : [[]];
+  const runs = GIT_VARIANTS.includes(variant) ? flagSets.map((flags) => ['node', INSTALLER_REL, ...flags]) : [];
   return {
-    admitsRun: (argv) => runs !== null && equal(argv, runs),
+    admitsRun: (argv) => runs.some((run) => equal(argv, run)),
     admits: ({ path, key, change, value }) => {
       const correctFile = key.startsWith(`${SERVERS_KEY}.`) ? path === MCP_JSON_REL
         : path === (variant === WORKTREES ? SETTINGS_LOCAL_FILE : SETTINGS_FILE);
@@ -314,6 +318,12 @@ export const plannedChange = (variant, facts, deps = {}) => {
     } else if (GIT_VARIANTS.includes(variant)) {
       const plan = (deps.planGitHooks ?? planGitHooks)({ root: facts.root, variant, toolsDir: facts.toolsDir });
       for (const copy of plan.copies.filter(({ action }) => action === 'created')) writes.push({ path: copy.path, bytes: copy.bytes });
+      if (plan.refresh) {
+        // The one replace hook-checks makes: the bundled installer's bytes over a catalogued prior body.
+        const bundled = readFileSync(join(facts.toolsDir, '..', 'references', INSTALLER_REL));
+        const { path, bytes, replaces } = plan.refresh;
+        writes.push({ path, bytes, replaces, matches: bundled.equals(bytes) && classifyDeployedScript(replaces, basename(INSTALLER_REL), bundled) === 'prior' });
+      }
       runs = { argv: plan.runs.shown, line: formatPlan(plan).at(-1) };
     } else if (variant === WORKTREES) {
       const plan = writeVelocityProfile({ cwd: facts.root, dryRun: true, worktrees: true }, writerDeps);

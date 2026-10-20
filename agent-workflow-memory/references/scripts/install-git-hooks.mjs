@@ -20,6 +20,13 @@
 // ambiguous duplicate fails closed); `--no-commit-guard` is the one consented disable; passing
 // both flags together is a usage error.
 //
+// RULES AND LAYOUT CHECKS (optional): `--rules-check <path>` and `--layout-check <path>` arm one line
+// each, `node "<abs>" --check # rules-check` and `node "<abs>" --check # layout-check`, ahead of the
+// guard. The role comment is what a line's role is read by, so the guard rule above never matches
+// either line and a legacy guard line keeps its role whatever its file name. Each takes only its own
+// tool's file name and a path in one safe shell representation (on win32 its separators made `/`),
+// and is carried forward by flagless re-runs exactly as the guard is; no flag disarms either.
+//
 // Package-manager-agnostic: the hook calls the scripts via `node` directly (no pnpm/npm
 // assumption). Re-running is safe — the script detects a previously installed hook via
 // the MAGIC_MARKER comment and rewrites only that file.
@@ -59,6 +66,15 @@ const gitHooksDir = () => {
 // (quoted path + a bare ` --check` tail; nothing else in the managed hook matches).
 const GUARD_LINE_RE = /^node "([^"]+)" --check$/;
 
+// The two role-tagged lines, in hook order, each bound to its own tool's file name.
+const ROLES = [
+  { flag: '--rules-check', role: 'rules-check', file: 'rules-cli.mjs' },
+  { flag: '--layout-check', role: 'layout-check', file: 'source-size-check.mjs' },
+].map((entry) => ({ ...entry, re: new RegExp(`^node "([^"]+)" --check # ${entry.role}$`) }));
+
+// A path the shell would read as anything but itself inside double quotes is refused.
+const SHELL_ACTIVE = /["$`\\\r\n]/;
+
 const ARGV = process.argv.slice(2);
 
 // The optional commit-guard line: an explicit --commit-guard <path> arms it (resolved at install
@@ -86,6 +102,44 @@ const resolveGuardFlags = (argv) => {
   return { mode: 'arm', path: abs };
 };
 
+// A role flag arms its line with the resolved path in its one safe shell representation, or refuses.
+const resolveRoleFlag = (argv, { flag, file }) => {
+  const at = argv.indexOf(flag);
+  if (at === -1) return null;
+  const given = argv[at + 1];
+  if (!given) {
+    console.error(`[install-git-hooks] ${flag} needs a path`);
+    process.exit(2);
+  }
+  const resolved = resolve(ROOT, given);
+  const abs = process.platform === 'win32' ? resolved.replaceAll('\\', '/') : resolved;
+  if (basename(abs) !== file) {
+    console.error(`[install-git-hooks] ${flag} takes a path to ${file}, got ${abs}`);
+    process.exit(2);
+  }
+  if (SHELL_ACTIVE.test(abs)) {
+    console.error(`[install-git-hooks] ${flag} ${JSON.stringify(abs)} carries ", $, a backtick, a backslash, CR or LF — inside the hook's quotes it would not name that file; refusing to arm it`);
+    process.exit(2);
+  }
+  if (!existsSync(abs)) {
+    console.error(`[install-git-hooks] ${flag} ${abs} does not exist`);
+    process.exit(1);
+  }
+  return abs;
+};
+
+// Flagless re-runs carry each armed role line forward by the guard's rule: one keeps its path, none
+// leaves it out, more than one fails CLOSED naming the role.
+const carriedRolePath = (existingHook, { role, re }) => {
+  if (existingHook === null) return null;
+  const matches = existingHook.split('\n').map((l) => re.exec(l)).filter(Boolean);
+  if (matches.length > 1) {
+    console.error(`[install-git-hooks] the managed pre-commit hook carries ${matches.length} ${role} lines — ambiguous; remove the duplicates by hand and re-run (refusing to guess)`);
+    process.exit(1);
+  }
+  return matches.length === 1 ? matches[0][1] : null;
+};
+
 // Flagless re-runs carry the armed guard forward from the MANAGED hook — strictly parsed:
 // exactly one guard-shaped line keeps its path; none keeps the hook plain; more than one is
 // ambiguous and fails CLOSED (an installer must never guess which line was the real guard).
@@ -99,7 +153,7 @@ const carriedGuardPath = (existingHook) => {
   return matches.length === 1 ? matches[0][1] : null;
 };
 
-const preCommitContent = (guardPath) => `#!/usr/bin/env bash
+const preCommitContent = (guardPath, rolePaths = []) => `#!/usr/bin/env bash
 ${MAGIC_MARKER}
 # Auto-installed by scripts/install-git-hooks.mjs (run it from "prepare" or by hand).
 # Runs the docs cap-validator + index-freshness gate + rotation-freshness checks
@@ -113,10 +167,11 @@ node scripts/archive-changelog.mjs --check
 node scripts/archive-issues.mjs --check
 node scripts/archive-decisions.mjs --check
 node --test scripts/*.test.mjs
-${guardPath ? `node "${guardPath}" --check\n` : ''}`;
+${rolePaths.map((path, at) => (path ? `node "${path}" --check # ${ROLES[at].role}\n` : '')).join('')}${guardPath ? `node "${guardPath}" --check\n` : ''}`;
 
 const main = async () => {
   const flags = resolveGuardFlags(ARGV);
+  const roleFlags = ROLES.map((role) => resolveRoleFlag(ARGV, role));
   const hooksDir = gitHooksDir();
   if (hooksDir === null) {
     console.log('[install-git-hooks] git cannot resolve a hooks path here — skipping (not a git checkout).');
@@ -136,7 +191,8 @@ const main = async () => {
   }
 
   const guardPath = flags.mode === 'arm' ? flags.path : flags.mode === 'disable' ? null : carriedGuardPath(existing);
-  const content = preCommitContent(guardPath);
+  const rolePaths = ROLES.map((role, at) => roleFlags[at] ?? carriedRolePath(existing, role));
+  const content = preCommitContent(guardPath, rolePaths);
   if (existing === content) {
     console.log('[install-git-hooks] pre-commit already up to date.');
     return;
@@ -146,7 +202,7 @@ const main = async () => {
   await writeFile(preCommitPath, content, 'utf8');
   await chmod(preCommitPath, 0o755);
   console.log(
-    `[install-git-hooks] installed ${preCommitPath} (docs caps + index freshness + archive checks + scripts/ tests${guardPath ? ' + commit guard' : ''}).`,
+    `[install-git-hooks] installed ${preCommitPath} (docs caps + index freshness + archive checks + scripts/ tests${rolePaths.map((path, at) => (path ? ` + ${ROLES[at].role}` : '')).join('')}${guardPath ? ' + commit guard' : ''}).`,
   );
 };
 

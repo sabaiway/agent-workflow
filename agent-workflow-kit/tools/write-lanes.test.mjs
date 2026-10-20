@@ -21,7 +21,7 @@ const FORM_A = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'sandbox-provision.installable',
   'jev-skill', 'jev-skill.earlier',
-  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard', 'hook-checks',
   'worktrees-dir',
   'attribution', 'footprint-global', 'executor-vehicle.differing',
 ];
@@ -33,7 +33,7 @@ const FORM_C = [
 const HARNESS = [
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
-  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard',
+  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard', 'hook-checks',
   'worktrees-dir',
   'attribution', 'footprint-global', 'executor-vehicle.differing',
 ];
@@ -69,6 +69,7 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['state-block', 'state-block-hook.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['enforcement', 'git-hooks.mjs', ['--enforcement', '--cwd', ROOT], ['--apply', '--enforcement', '--cwd', ROOT]],
     ['commit-guard', 'git-hooks.mjs', ['--commit-guard', '--cwd', ROOT], ['--apply', '--commit-guard', '--cwd', ROOT]],
+    ['hook-checks', 'git-hooks.mjs', ['--hook-checks', '--cwd', ROOT], ['--apply', '--hook-checks', '--cwd', ROOT]],
     ['mcp-channel', 'mcp.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['mcp-channel.differing', 'mcp.mjs', ['--replace', '--cwd', ROOT], ['--replace', '--apply', '--cwd', ROOT]],
     ['agents', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
@@ -280,6 +281,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'state-block': [join(ROOT, '.claude', 'hooks', 'state-block-guard.mjs'), ...settings],
       enforcement: [...getScriptPaths(), join(ROOT, '.git', 'hooks', 'pre-commit')],
       'commit-guard': [join(ROOT, '.git', 'hooks', 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')],
+      'hook-checks': [join(ROOT, '.git', 'hooks', 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')],
       'mcp-channel': mcp,
       'mcp-channel.differing': mcp,
       agents,
@@ -385,12 +387,12 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
 });
 
 describe('spec:init-project/S38 — worktrees-dir is a harness variant and worktrees-dir.home a user one', () => {
-  it('the worktrees variants have their lanes among exactly twenty-one harness severity keys', () => {
+  it('the worktrees variants have their lanes among exactly twenty-two harness severity keys', () => {
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const keys = Object.keys(SEVERITIES);
     assert.equal(variantLanes['worktrees-dir'], 'harness');
     assert.equal(variantLanes['worktrees-dir.home'], 'user');
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 22);
   });
 
   it('worktrees-dir uses the local settings form and quoted danger-check slot on win32 without changing the five env-dependent variants', (t) => {
@@ -439,7 +441,7 @@ describe('spec:init-project/S38 — worktrees-dir is a harness variant and workt
 describe('spec:init-project/S53 the four user variants of revision 11 by proof', () => {
   const variants = ['gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe'];
 
-  it('the four variants are user among nine user, twenty-one harness and sixteen chat keys, with no HAND-APPLY in any slot', (t) => {
+  it('the four variants are user among nine user, twenty-two harness and seventeen chat keys, with no HAND-APPLY in any slot', (t) => {
     const facts = createFacts(t);
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const applySlot = need(lanes, 'applySlot');
@@ -448,8 +450,8 @@ describe('spec:init-project/S53 the four user variants of revision 11 by proof',
       assert.equal(variantLanes[variant], 'user', variant);
     }
     assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 9);
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'chat').length, 16);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 22);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'chat').length, 17);
     for (const variant of keys) {
       const slot = applySlot(variant, facts);
       for (const line of [slot?.check, slot?.apply].filter((line) => line != null)) {
@@ -529,5 +531,20 @@ describe('spec:init-project/S53 the four user variants of revision 11 by proof',
       assert.equal(slot.apply.includes('node'), false, toolsDir);
       assert.equal(slot.apply.includes('--check'), false, toolsDir);
     }
+  });
+});
+
+describe('spec:init-project/S62 hook-checks in the lanes by proof', () => {
+  it('is harness, previews and applies git-hooks.mjs --hook-checks with --apply first, neither env-dependent nor rejudged, its slot quoting the check over a tools dir with a space and an apostrophe, on linux and win32', (t) => {
+    const git = ['node', join(TOOLS, 'git-hooks.mjs')];
+    const check = `node ${[join(TOOLS, 'apply-danger-check.mjs'), '--variant', 'hook-checks', '--cwd', ROOT].map(quoteArg).join(' ')}`;
+    assert.deepEqual([lanes.VARIANT_LANES['hook-checks'], lanes.isEnvDependent('hook-checks'), lanes.isRejudged('hook-checks')], ['harness', false, false]);
+    for (const facts of ['linux', 'win32'].map((platform) => ({ ...createFacts(t), platform }))) {
+      assert.deepEqual(lanes.consoleArgv('hook-checks', facts), { preview: [...git, '--hook-checks', '--cwd', ROOT], apply: [...git, '--apply', '--hook-checks', '--cwd', ROOT] });
+      assert.deepEqual(lanes.applySlot('hook-checks', facts), { check, apply: `${check} --apply --expect <digest>` }, facts.platform);
+    }
+  });
+  it('writesOf names exactly the pre-commit of a hooksDir inside or outside the project and the deployed installer', (t) => {
+    for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) assert.deepEqual(lanes.writesOf('hook-checks', { ...createFacts(t), hooksDir }), [join(hooksDir, 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')]);
   });
 });

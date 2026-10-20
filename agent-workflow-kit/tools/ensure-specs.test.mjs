@@ -281,10 +281,10 @@ describe('the state table — admitted writes and the run token', () => {
     assert.deepEqual(d, { writes: [], withheld: true });
   });
 
-  it('the refresh-lane pairs and the catalog domain agree (drift pin on the PRODUCTION constants)', () => {
+  it('the refresh-lane pairs are the catalog domain but the hook installer (drift pin on the PRODUCTION constants)', () => {
     const pairs = [...READER_PAIR, ...CHECKER_PAIR];
     assert.equal(new Set(pairs).size, pairs.length, 'no file sits in both pairs');
-    assert.deepEqual([...pairs].sort(), [...PRIOR_FILES].sort());
+    assert.deepEqual([...pairs].sort(), PRIOR_FILES.filter((file) => file !== 'install-git-hooks.mjs').sort());
     assert.deepEqual(READER_PAIR, READER);
     assert.deepEqual(CHECKER_PAIR, CHECKER);
   });

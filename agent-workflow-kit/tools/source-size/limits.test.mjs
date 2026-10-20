@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 const loadLimits = () => import('./limits.mjs');
 const loadLayout = () => import('./layout.mjs');
 const loadRecord = () => import('./record.mjs');
+const loadSetup = () => import('./setup.mjs');
 const loadDoor = () => import('./index.mjs');
 const loadCore = () => import('../source-size-core.mjs');
 const loadReport = () => import('../source-size-report.mjs');
@@ -21,6 +22,7 @@ const FILE_NAMES = {
   'limits.mjs': ['KIT_LIMITS', 'SCHEMA1_REASON', 'applyOverride', 'limitLines', 'limitsDefect', 'migrateSchema1', 'resolveLimits'],
   'layout.mjs': ['SPEC_STORE_ROOT', 'bandOf', 'layoutCounts', 'layoutDefect', 'walkSpecStore'],
   'record.mjs': ['changesFor', 'isRaise', 'materialize', 'ownEntry', 'planRecord', 'projectLayout', 'serialize'],
+  'setup.mjs': ['SETUP_ANSWERS', 'checkTargetOf', 'layoutSetupOf'],
 };
 const DOOR_NAMES = Object.values(FILE_NAMES).flat();
 const IDS = ['lines-per-file', 'bytes-per-line', 'entries-per-directory', 'depth', 'files-per-root'];
@@ -272,12 +274,12 @@ describe('the limit lines state every resolved limit', () => {
   });
 });
 
-describe('spec:source-size/S14 the door exports exactly the nineteen names of limits.mjs, layout.mjs and record.mjs, and no kit module imports past it', () => {
-  it('re-exports the very exports of its three files through the door and the core, and no kit module reaches a file of it but the door', async () => {
+describe('spec:source-size/S14 the door exports exactly the twenty-two names of limits.mjs, layout.mjs, record.mjs and setup.mjs, and no kit module imports past it', () => {
+  it('re-exports the very exports of its four files through the door and the core, and no kit module reaches a file of it but the door', async () => {
     const door = await loadDoor();
-    const modules = { 'limits.mjs': await loadLimits(), 'layout.mjs': await loadLayout(), 'record.mjs': await loadRecord() };
+    const modules = { 'limits.mjs': await loadLimits(), 'layout.mjs': await loadLayout(), 'record.mjs': await loadRecord(), 'setup.mjs': await loadSetup() };
     const core = await loadCore();
-    assert.equal(DOOR_NAMES.length, 19);
+    assert.equal(DOOR_NAMES.length, 22);
     assert.deepEqual(Object.keys(door).sort(), [...DOOR_NAMES].sort());
     for (const [file, names] of Object.entries(FILE_NAMES)) {
       assert.deepEqual(Object.keys(modules[file]).sort(), [...names].sort(), `the door exports exactly the exports of ${file}`);

@@ -4,6 +4,36 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.41.0 — the commit hook runs the project-rules check and the layout check, set up by two advisor items on your yes (AD-193)
+
+**Two new advisor items set the checks up: `source-size.layout` records the directories already beyond the layout
+limits, and `hook-checks` adds the project-rules line and, once layout can be judged, the layout line to your
+pre-commit hook.** The agent applies each on your chat yes; a no writes nothing, and the item is offered again on the
+next run.
+
+- **`hook-checks` (harness lane).** `git-hooks.mjs --hook-checks` plans a line while it is missing and its check can
+  pass (every project-rules theme current; the layout setup answering `armable`), and whenever a line of its role runs
+  another path than this kit's tool. A hook installer a release shipped unedited (memory 4.0.0 to 8.2.1) is replaced
+  with this kit's copy first; the check shows that replace with both digests. After the installer runs, the hook is
+  read again: an outcome with a passed line unarmed (or the installer failing) exits 1, and the earlier installer
+  comes back exactly when the hook still holds the bytes it held before the run. Over a clone with no pre-commit hook,
+  the installer writes its whole hook, whose docs, archive and `scripts/` test lines then run at every commit too.
+- **`source-size.layout` (chat lane).** Offered when the piles already there must be recorded first: with no size
+  config, `source-size-check.mjs --write-baseline --reason "initial adoption"`; on a minted config without layout,
+  `--write-baseline --layout --reason "initial adoption"`. Its recipe line says how a branch or linked worktree without
+  the record is judged. Where the size check stops on a minted config, or a declared root sits inside `docs/ai/specs`,
+  the item is not offered and a skip line says why; on a schema-1 or unminted config that config's own item speaks.
+- **`--write-baseline --layout`** on a minted config without layout now raises the layout record alone: growth since
+  the last record refuses, exit 1, writing nothing, and names the plain `--write-baseline --reason` it needs first.
+- **One setup rule.** `tools/source-size/setup.mjs` states what a `--check` run judges and answers `armable`, `record`
+  or `held`; the advisor and the leaf both ask it, of the tree on disk, through the read core's `readLayoutSetup`.
+
+**Upgrade note.** Say yes to `source-size.layout`, when it is offered, before `hook-checks`. Where your size config
+measures `scripts/`, the installer replace can grow that root past its record: the next size check, the hook's layout
+line or a declared source-size gate, then stops and names the reasoned `--write-baseline`; run it once. The new hook
+lines carry this kit copy's absolute tool paths, so a moved or removed kit stops every commit until `hook-checks` is
+applied again from the kit in place.
+
 ## 14.40.0 — the size check judges every limit with a tolerance, counts entries per directory, depth and files per root, and changes a kit number only through `--override` (AD-192)
 
 **`source-size-check.mjs` now judges five limits from one frozen kit table, each with a tolerance: a value over its

@@ -71,11 +71,11 @@ import { takeCensus, censusFact, CENSUS_VERDICT } from './tracked-tree-census.mj
 // fill's own WRITER is never called from here — the advisor renders its consent-gated command, it
 // does not run it.
 import { buildOffer } from './gates-init.mjs';
-import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig } from './source-size-core.mjs';
+import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig, readLayoutSetup } from './source-size-core.mjs';
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
-import { readPreCommitState } from './git-hooks.mjs';
+import { hookCheckAnswers, plannedRoles, readPreCommitState, unsafeToolsPath } from './git-hooks.mjs';
 export { resolveGitHooksPath, readPreCommitState, canonicalGuardLineRe, INSTALLER_MARKER_RE } from './git-hooks.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
@@ -130,6 +130,13 @@ const ENFORCEMENT_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 t
 const COMMIT_GUARD_INSTALLER_VIA_ITEM = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
 const COMMIT_GUARD_INSTALLER_OWN_STEP = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
 const COMMIT_GUARD_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
+const HOOK_CHECKS_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the lines this item would arm to it is your own step';
+const HOOK_CHECKS_WAIT = 'the layout line follows the source-size.layout record \u2014 apply that item first; this item\'s check line then arms the layout line too';
+const LAYOUT_RECORD_RECIPE = 'the hook is per clone and the config per branch: a branch or linked worktree with no size config is judged under the kit\'s values and stops on its piles until it takes the record (a hidden deployment\'s linked worktree carries none); one with an older config without layout is not judged on layout; one whose config is schema 1 or unminted stops every commit on that config\'s own stop until it takes the current config';
+const LAYOUT_HELD = {
+  stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 record that growth first with the reasoned --write-baseline its stop names, then re-run',
+  'store-root': ({ root }) => `the source-size config declares the root "${root}" at or inside the spec store docs/ai/specs \u2014 the layout record starts once that root is declared outside it`,
+};
 // ── the section contract tokens (doc-parity-bound in upgrade.md + the mode doc) ────────────────
 export const RECOMMENDATIONS_SECTION_HEADER = '## Recommendations (agent-workflow)';
 export const RECOMMENDATIONS_EMPTY_LINE = 'no recommendations — flow optimal.';
@@ -185,12 +192,14 @@ export const SEVERITIES = Object.freeze({
   'source-size.id-squatter': SEVERITY_ATTENTION,
   // A minted schema-1 config is a record the check stops on until the writer moves it.
   'source-size.schema-1': SEVERITY_ATTENTION,
+  'source-size.layout': SEVERITY_OPTIONAL,
   'gate-hook': SEVERITY_OPTIONAL,
   // A placed hook that predates the marker key goes DARK on a marker-carrying declaration (unknown
   // key → auto-approval off), so a CONFIGURED capability silently stops working: attention, not an
   // offer to enable something.
   'gate-hook.marker-stale': SEVERITY_ATTENTION,
   'commit-guard': SEVERITY_OPTIONAL,
+  'hook-checks': SEVERITY_OPTIONAL,
   enforcement: SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
   'read-lane.stale': SEVERITY_ATTENTION,
@@ -282,11 +291,13 @@ export const WHATS = Object.freeze({
   'source-size': 'no source-size gate — module size drifts unmeasured, and an over-cap file is invisible instead of recorded debt',
   'source-size.unminted': 'the source-size gate is declared over an unminted record ({state}) — the check refuses it, or if absent judges layout alone, no line',
   'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write',
+  'source-size.layout': 'the layout record is not started — starting it records any directory already beyond the layout limits, so the commit hook can judge layout',
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
   'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'gate-hook.marker-stale': 'the declaration carries the lcovProducer key but the placed hook predates it — the hook goes dark and every gate prompts',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
+  'hook-checks': 'the pre-commit hook lacks this kit\'s {checks} — the kit arms each line, refreshing a known-prior installer first',
   enforcement: ENFORCEMENT_WHAT,
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
@@ -359,6 +370,7 @@ export const BENEFITS = Object.freeze({
   'source-size': 'maintainability — a module you can hold whole stays reviewable, and size drift becomes recorded, reasoned debt',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
+  'hook-checks': 'enforcement — every commit runs the checks armed here, so their findings stop the commit',
   enforcement: 'enforcement — bundled checks and the pre-commit hook keep caps, archives, and the generated index current',
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
@@ -379,6 +391,7 @@ export const BENEFITS = Object.freeze({
 // The one arm whose gain differs from its base item's (BENEFITS stays keyed by item key).
 export const VARIANT_BENEFITS = Object.freeze({
   'executor-vehicle.differing': 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names, not a hand edit',
+  'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -416,6 +429,7 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'read-lane', mode: 'hook', advisorKey: 'read-lane' },
   { id: 'commit-guard', mode: 'commit-guard', advisorKey: 'commit-guard' },
   { id: 'enforcement', mode: 'bootstrap', advisorKey: 'enforcement' },
+  { id: 'hook-checks', mode: 'bootstrap', advisorKey: 'hook-checks' },
   { id: 'attribution', mode: 'bootstrap', advisorKey: 'attribution' },
   { id: 'footprint-global', mode: 'bootstrap', advisorKey: 'footprint-global' },
   { id: 'state-block', mode: 'state-block-guard', advisorKey: 'state-block' },
@@ -855,13 +869,30 @@ const schema1Minted = (root, deps) => {
   try { const { state, config } = loadSourceSizeConfig(root, deps); return state === 'minted' && config.schema === 1; } catch { return false; }
 };
 
-const probeSourceSize = ({ root, deps, add, skip }) => {
+// The layout setup's answer for the layout arm; its throw is a stated skip, and the other arms still speak.
+const layoutSetupOrSkip = (root, deps, skip) => {
+  try {
+    return readLayoutSetup(root, deps);
+  } catch (err) {
+    skip('source-size.layout', err);
+    return null;
+  }
+};
+
+const probeSourceSize = ({ root, deps, add, skip, shared }) => {
   try {
     const tool = toolPath('source-size-check.mjs');
     if (schema1Minted(root, deps)) {
       add('source-size', fillTemplate(WHATS['source-size.schema-1'], {}), `node ${q(tool)} --write-baseline --cwd ${q(root)}`, 'source-size.schema-1');
       return;
     }
+    // The layout arm, additive: the record renders as its own item ahead of the other arms; a held answer
+    // no other arm speaks for is a stated skip, so the item's absence is explained in the run it goes.
+    const setup = layoutSetupOrSkip(root, deps, skip);
+    if (setup?.answer === 'record') {
+      shared.layoutRecord = add('source-size', fillTemplate(WHATS['source-size.layout'], {}),
+        `node ${q(tool)} ${setup.args.map(q).join(' ')} --cwd ${q(root)}`, 'source-size.layout', LAYOUT_RECORD_RECIPE);
+    } else if (setup?.answer === 'held' && Object.hasOwn(LAYOUT_HELD, setup.reason)) skip('source-size.layout', new Error(LAYOUT_HELD[setup.reason](setup)));
     const declaration = loadDeclaration(root, deps);
     const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
     // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
@@ -962,6 +993,30 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     add('commit-guard', fillTemplate(WHATS['commit-guard'], {}), formsApply('commit-guard', root));
   } catch (err) {
     skip('commit-guard', err);
+  }
+};
+
+// The hook-checks offer: the commit-guard probe's shape over the two answers the leaf asks, on disk.
+const HOOK_CHECK_NAMES = { rules: 'project-rules check', layout: 'layout check', both: 'project-rules and layout checks' };
+const probeHookChecks = ({ root, deps, add, skip, shared }) => {
+  try {
+    if (!(deps.exists ?? existsSync)(join(root, 'docs', 'ai'))) return;
+    const unsafe = unsafeToolsPath(HERE);
+    if (unsafe !== null) throw new Error(unsafe);
+    const hook = readHookState(root, deps);
+    if (hook.state === 'no-hooks-dir') return;
+    const roles = plannedRoles(hookCheckAnswers(root, deps), hook).map(({ key }) => key);
+    const waits = shared.layoutRecord === true && !hook.layoutArmed && !roles.includes('layout');
+    if (roles.length === 0 && !waits) return;
+    if (hook.state === 'unmanaged') throw new Error(HOOK_CHECKS_UNMANAGED_HOOK);
+    if (!(deps.exists ?? existsSync)(join(root, 'scripts', 'install-git-hooks.mjs'))) {
+      throw new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP);
+    }
+    const keys = [...roles, ...(waits ? ['layout'] : [])];
+    const checks = HOOK_CHECK_NAMES[keys.length === 2 ? 'both' : keys[0]];
+    add('hook-checks', fillTemplate(WHATS['hook-checks'], { checks }), formsApply('hook-checks', root), 'hook-checks', waits ? HOOK_CHECKS_WAIT : null);
+  } catch (err) {
+    skip('hook-checks', err);
   }
 };
 
@@ -1357,7 +1412,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
+export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'hook-checks', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1657,6 +1712,7 @@ const PROBES = Object.freeze([
   probeGatesInert,
   probeSourceSize,
   probeCommitGuard,
+  probeHookChecks,
   probeEnforcement,
   probeReadLane,
   probeStateBlockHook,

@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
-import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL } from './git-hooks.mjs';
+import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_DIR } from './node-evidence.mjs';
 import { dqUnsafePath } from './checker-claim.mjs';
 import { isLineUnsafe } from './source-size-refusal.mjs';
 import { SOURCE_SIZE_GATE_ID } from './source-size-gate-cmd.mjs';
@@ -32,9 +32,11 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.adopted-elsewhere': LANE_CHAT,
   'source-size.id-squatter': LANE_USER,
   'source-size.schema-1': LANE_CHAT,
+  'source-size.layout': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
   'gate-hook.marker-stale': LANE_HARNESS,
   'commit-guard': LANE_HARNESS,
+  'hook-checks': LANE_HARNESS,
   enforcement: LANE_HARNESS,
   'read-lane': LANE_CHAT,
   'read-lane.stale': LANE_HARNESS,
@@ -110,7 +112,7 @@ const getStartupPaths = ({ env, home, platform }) => targetsFor({
 }).filter(({ path }) => path !== null).map(({ path }) => path);
 
 const preCommitOf = (facts) => join(facts.hooksDir ?? join(facts.root, '.git', 'hooks'), 'pre-commit');
-const getEnforcementPaths = (facts) => [...BUNDLED_SCRIPT_NAMES.map((name) => join(facts.root, SCRIPTS_REL, name)), preCommitOf(facts)];
+const getEnforcementPaths = (facts) => [...BUNDLED_SCRIPT_NAMES.map((name) => join(facts.root, SCRIPTS_DIR, name)), preCommitOf(facts)];
 const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER_REL)];
 
 const formatCommand = (argv) => argv.map(quoteArg).join(' ');
@@ -183,6 +185,8 @@ const FORMS = Object.freeze({
     ['--enforcement', '--cwd', '<root>'], ['--apply', '--enforcement', '--cwd', '<root>'], getEnforcementPaths),
   'commit-guard': createForm('git-hooks.mjs',
     ['--commit-guard', '--cwd', '<root>'], ['--apply', '--commit-guard', '--cwd', '<root>'], getGuardPaths),
+  'hook-checks': createForm('git-hooks.mjs',
+    ['--hook-checks', '--cwd', '<root>'], ['--apply', '--hook-checks', '--cwd', '<root>'], getGuardPaths),
   'worktrees-dir': createForm('velocity-profile.mjs',
     ['--worktrees', '--cwd', '<root>'], ['--apply', '--worktrees', '--cwd', '<root>'], LOCAL_SETTINGS_WRITES, false, null, true),
   'worktrees-dir.home': Object.freeze({

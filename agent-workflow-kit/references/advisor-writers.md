@@ -23,9 +23,11 @@
 | source-size.adopted-elsewhere | chat | ack-write.mjs |
 | source-size.id-squatter | user | user step |
 | source-size.schema-1 | chat | source-size-check.mjs |
+| source-size.layout | chat | source-size-check.mjs |
 | gate-hook | harness | gate-hook.mjs |
 | gate-hook.marker-stale | harness | gate-hook.mjs |
 | commit-guard | harness | git-hooks.mjs |
+| hook-checks | harness | git-hooks.mjs |
 | enforcement | harness | git-hooks.mjs |
 | read-lane | chat | gate-hook.mjs |
 | read-lane.stale | harness | gate-hook.mjs |

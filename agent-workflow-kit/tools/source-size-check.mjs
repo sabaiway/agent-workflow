@@ -42,6 +42,8 @@ import {
   SOURCE_SIZE_SCHEMA,
   applyOverride,
   assertNoStoreRoot,
+  checkTargetOf,
+  isRaise,
   loadSourceSizeConfig,
   matchesSourceSizeGate,
   materialize,
@@ -82,6 +84,7 @@ import {
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const RECORD_NOUN = 'the source-size record';
+const LAYOUT_GROWTH_LEAD = 'source-size: --layout REFUSED — it starts the layout record and raises nothing else, but the record no longer holds for this tree, so that growth takes --write-baseline --reason first; nothing was written.';
 
 // What an absent config is judged as: schema 2 under the kit's values, layout over "." and the store.
 const ABSENT = Object.freeze({ _README: TEMPLATE_README, schema: SOURCE_SIZE_SCHEMA });
@@ -89,14 +92,12 @@ const ABSENT = Object.freeze({ _README: TEMPLATE_README, schema: SOURCE_SIZE_SCH
 // Every run returns the config it resolved, so the CLI states the limits that run judged, and the
 // scope it judged, so the CLI says once what it did not.
 export const runCheck = ({ cwd, deps = {} }) => {
-  const { state, config: present, missingMachineKeys } = loadSourceSizeConfig(cwd, deps);
-  const absent = state === 'absent';
-  const config = absent ? validateSourceSizeConfig(ABSENT) : present;
-  if (config.schema === 1) return { code: 1, lines: schema1StopLines(cwd), config };
-  if (!absent && state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys }), config };
-  const judged = { absent, layout: absent || config.layout !== null };
+  const target = checkTargetOf({ loaded: loadSourceSizeConfig(cwd, deps), absentConfig: validateSourceSizeConfig(ABSENT) });
+  const { config, judged } = target;
+  if (target.stop === 'schema-1') return { code: 1, lines: schema1StopLines(cwd), config };
+  if (target.stop === 'unminted') return { code: 1, lines: unmintedRefusalLines(cwd, { state: target.state, missing: target.missing }), config };
   const verdict = judgeTree(cwd, config, deps, judged);
-  return { code: stopsOf(verdict.findings).length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict, absent }), config, judged };
+  return { code: stopsOf(verdict.findings).length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict, absent: judged.absent }), config, judged };
 };
 
 // ── the writer ────────────────────────────────────────────────────────────────────────────────────
@@ -133,6 +134,9 @@ export const runWriteBaseline = ({ cwd, reason, layout = false, deps = {} }) => 
   const judged = { absent, layout: absent || layout || config.layout !== null };
   const { plan, bandWarnings, warnings } = judgeForWrite(cwd, config, deps, judged);
   const starts = layout && !absent && config.layout === null;
+  // Starting layout on a minted record raises the layout record alone: growth takes the plain write first.
+  const plain = starts && loaded.state === 'minted' ? plan.deltas.filter((delta) => !plan.layout.deltas.includes(delta)) : [];
+  if (plain.some(isRaise)) return { code: 1, lines: [...bandWarnings, LAYOUT_GROWTH_LEAD, ...reasonRequiredLines(cwd, plain)], config, judged };
   if (plan.raises.length > 0 && reason === undefined) return { code: 1, lines: [...bandWarnings, ...reasonRequiredLines(cwd, plan.deltas, { layout: starts })], config, judged };
   const body = serialize(schema2Of(parsed), materialize(plan, reason));
   // Whether anything was written is decided by the BYTES, not by the delta count: completing a

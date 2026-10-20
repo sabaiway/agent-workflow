@@ -28,3 +28,9 @@ export {
   projectLayout,
   serialize,
 } from './record.mjs';
+
+export {
+  SETUP_ANSWERS,
+  checkTargetOf,
+  layoutSetupOf,
+} from './setup.mjs';

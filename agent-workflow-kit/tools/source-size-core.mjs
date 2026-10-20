@@ -1,6 +1,6 @@
 // source-size-core.mjs — the PURE READ core of the source-size practice (D-18): the ONE import point
-// for every surface that must ask about the practice without reaching a writer. It owns no logic and
-// no write API, and spawns only a read-only git query, so the read-graph purity suite
+// for every surface that must ask about the practice without reaching a writer. It owns no logic but
+// the layout setup's one bound form, no write API, and spawns only a read-only git query, so the read-graph purity suite
 // (test/read-graph-purity.test.mjs) stays true however the halves behind it move.
 //
 // The halves, each holding ONE rule set and each within the cap this practice declares:
@@ -10,10 +10,15 @@
 //   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher),
 //                                and which of the three tool claims it makes when it is not
 //   • source-size/index.mjs    — the door of the size check's module: the kit's limits and their
-//                                lines, the band and the layout count, and the recorded ratchet as data
+//                                lines, the band and the layout count, the recorded ratchet as data
+//                                and the layout setup
 //
-// Re-export only: a consumer imports the practice, never a particular half, so a later split moves
-// code without touching a single call site.
+// Re-export only, but for readLayoutSetup: a consumer imports the practice, never a particular half, so
+// a later split moves code without touching a single call site.
+
+import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_SCHEMA, loadSourceSizeConfig, validateSourceSizeConfig } from './source-size-config.mjs';
+import { judgeTree, stopsOf } from './source-size-judge.mjs';
+import { layoutSetupOf } from './source-size/index.mjs';
 
 export {
   SOURCE_SIZE_CONFIG_REL,
@@ -71,6 +76,9 @@ export {
   resolveLimits,
   serialize,
   walkSpecStore,
+  SETUP_ANSWERS,
+  checkTargetOf,
+  layoutSetupOf,
 } from './source-size/index.mjs';
 
 export {
@@ -84,3 +92,14 @@ export {
 // The claim vocabulary itself — a consumer naming an outcome imports the name, never a string
 // literal it could misspell into a silently-never-true comparison.
 export { CHECKER_CLAIM } from './checker-claim.mjs';
+
+// readLayoutSetup(root, deps) → the layout setup's answer for a project, the one bound form the advisor
+// and the git-hooks leaf ask: the loader, the tree judge and its stop filter, the absent config the
+// check judges (schema 2 under the kit's values) and the reason the record's first entries take.
+export const readLayoutSetup = (root, deps = {}) => layoutSetupOf(root, {
+  loadSourceSizeConfig,
+  judgeTree,
+  stopsOf,
+  absentConfig: validateSourceSizeConfig({ schema: SOURCE_SIZE_SCHEMA }),
+  reason: INITIAL_ADOPTION_REASON,
+}, deps);

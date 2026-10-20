@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-20 — AD-193: the commit hook runs the project-rules check and the layout check, set up by the advisor (kit 14.41.0 MINOR, memory 8.3.0 MINOR; engine 5.12.1 and both bridges unchanged)
+
+**Every deployment's pre-commit hook can now run the project-rules check and, once the existing piles are recorded,
+the layout check.** The hook installer gains `--rules-check` and `--layout-check`, each line tagged with its role; the
+advisor's chat item `source-size.layout` records the piles first, and its harness item `hook-checks` arms the lines,
+replacing a hook installer a release shipped unedited with the kit's copy first. A no writes nothing and the item is
+offered again, so a hand-deleted layout record is offered again too wherever the tree needs one. Contracts: init-project revision 14 (part
+git-hooks revision 11), source-size revision 4, project-rules revision 5, node-evidence revision 5. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-20 — AD-192: the size check judges every limit with a tolerance and counts layout, from one frozen kit table (kit 14.40.0 MINOR; engine 5.12.1, memory 8.2.1 and both bridges unchanged)
 
 **The kit's five size limits — lines per file, bytes per line, entries per directory, depth and files per root — live

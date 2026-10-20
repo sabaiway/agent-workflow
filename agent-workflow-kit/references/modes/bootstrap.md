@@ -1,6 +1,7 @@
 ### Mode: bootstrap
 
 <!-- opt-in-capability: enforcement -->
+<!-- opt-in-capability: hook-checks -->
 <!-- opt-in-capability: attribution -->
 <!-- opt-in-capability: footprint-global -->
 

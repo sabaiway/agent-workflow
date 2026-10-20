@@ -465,26 +465,26 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   runtime file is absent beside a wired entry; one cell for that state. Raised by the S6 release (session 51).
 - **GIT-HOOKS-INSTALLER-SKIPS-ON-ANY-REV-PARSE-FAILURE** — invariant: the hook installer skips only outside a git
   checkout. Origin: any non-zero `git rev-parse --git-path hooks` exit (dubious ownership, git absent) reads as "not a
-  git checkout" and exits 0 (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:52-55,121-124`): the
+  git checkout" and exits 0 (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:59-62,176-179`): the
   `enforcement` scripts land, the item converges on Node evidence and no hook exists. Narrow fix: the installer skips
   on git's own not-a-repository answer alone and exits non-zero on every other failure. Residual: a deployed installer
   keeps the old bytes until the project's copy is replaced. Raised by the S8 spec consult.
 - **GIT-HOOKS-INSTALLER-ROOT-IS-NOT-THE-WORK-TREE-TOP** — invariant: the installed hook runs from the root it was
-  written for. Origin: the installer's root is its own location (`install-git-hooks.mjs:37`) while git runs the hook
-  from the work-tree top, where its `node scripts/…` lines resolve (`:110-115`): a project root below the top (a
+  written for. Origin: the installer's root is its own location (`install-git-hooks.mjs:44`) while git runs the hook
+  from the work-tree top, where its `node scripts/…` lines resolve (`:164-169`): a project root below the top (a
   monorepo subfolder) gets a hook that fails every commit of the enclosing repository. Narrow fix: the hook changes to
   the installer's root first, or the installer refuses a root that is not the top. Residual: as the row above. Raised by
   the S8 spec consult.
 - **GIT-HOOKS-READER-ACCEPTS-ANY-MARKER-NAME** — invariant: the advisor reads a hook as managed only when the installer
   would rewrite it. Origin: the reader takes any `<name>:install-git-hooks.mjs` marker as `managed`
   (`agent-workflow-kit/tools/recommendations.mjs:891`) while the installer accepts only its own root's name
-  (`install-git-hooks.mjs:39-49,130`): a renamed root gets a `commit-guard` item, and with no kit script left an
+  (`install-git-hooks.mjs:46-56,185`): a renamed root gets a `commit-guard` item, and with no kit script left an
   `enforcement` item, whose every apply the installer refuses (the check's exit 6, the copies removed), offered again
   each run. Narrow fix: the reader derives the marker name as the installer does. Raised by the S8 spec consult.
 - **GIT-HOOKS-INSTALLER-WRITES-A-SHARED-HOOKS-DIR** — invariant: a hook placed through the kit's route governs that
   project's own repository alone. Origin: the installer writes into the dir `git rev-parse --git-path hooks` reports, a
-  global `core.hooksPath` included (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:52-55,125`), and the
-  hook's relative `node scripts/…` lines (`:110-115`) then fail every commit of each other repository using that dir;
+  global `core.hooksPath` included (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:59-62,180`), and the
+  hook's relative `node scripts/…` lines (`:164-169`) then fail every commit of each other repository using that dir;
   pre-existing (the hand step ran the same installer). Narrow fix: the advisor withholds both items, a skip naming the
   dir, when git's hooks dir lies outside both the work tree and `--git-common-dir`. Residual: bootstrap step 8 and the
   `upgrade.md:46` refresh run the check without the advisor's reader, so the narrow fix leaves those routes writing into
@@ -685,6 +685,28 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   nothing is written. Narrow fix: one layout-check cell running `--write-baseline` over a symlinked `docs/ai/specs`,
   asserting exit 1 and the config's bytes unchanged. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S5 spec
   review (lens, re-read).
+- **GIT-HOOK-GUARD-PATH-ACCEPTS-SHELL-ACTIVE-BYTES** — invariant: the path a hook line runs is the file it names. Origin:
+  the installer's `--commit-guard` writes `node "<abs>" --check` for any resolved path, so a path carrying `$`, a
+  backtick, `"` or a backslash is expanded by the shell inside the quotes and the hook runs another command, while the
+  reader still reads the line as armed (`install-git-hooks.mjs:97,170`). Not folded in S6: the two new flags refuse such
+  a path, and the guard keeps today's behaviour byte for byte so the tests deployed beside the prior installer stay
+  green. Narrow fix: the guard flag adopts the same one safe shell representation, its test cells updated in the same
+  memory release. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S6 spec review (codex, round 1).
+- **HOOK-CHECKS-RENDERS-WHILE-ITS-CHECK-REFUSES** — invariant: an offered item's check can succeed. Origin: with the
+  rules line armed and the layout record declined, `hook-checks` still renders (its render condition counts a
+  `source-size.layout` item in the same run) while its dry run has nothing to plan, exit 3, every run — harmless, a
+  refusing check leaves the item pending. Narrow fix: that exit-3 line names the `source-size.layout` item as the step
+  that comes first. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S6 spec review (lens, round 2).
+- **INSTALLER-SUITE-FAILS-INSIDE-ITS-OWN-HOOK** — invariant: a suite the kit deploys into `scripts/` passes inside the
+  pre-commit hook that runs it. Origin: the 4.0.0-8.2.1 `install-git-hooks.test.mjs` linked-worktree cell spawns git
+  with the hook's inherited `GIT_*` variables; measured 2026-10-20, a `git commit` whose hook runs that suite fails the
+  cell. Narrow fix shipped in memory 8.3.0: both installer suites strip every inherited git variable. Residual, live: a
+  deployment keeps its older suite, since the enforcement copy is create-only and no refresh lane carries the tests;
+  the generalization is a refresh lane for the deployed suites. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S6
+  live walk.
+
+## Closed
+
 - **LAYOUT-DECLINE-IS-UNDONE-BY-A-HAND-DELETE** — invariant: turning layout judging off takes a recorded, reasoned
   step. Origin: under source-size revision 3 a present config without the machine key `layout` is not judged on
   layout, and an absent config is judged on layout but on no line, so hand-deleting `layout` or the whole config
@@ -692,9 +714,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   decided; S6's offer of the layout record (the advisor item that stays open on a no) is where it closes. Proof when
   it lands: a deployment whose `layout` key was deleted hears the offer again on its next advisor run. Raised by the
   EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S5 spec review (lens, round 1).
-
-## Closed
-
+  Closed in kit 14.41.0 (AD-193): the advisor's `source-size.layout` item is offered on every run while the record is
+  missing and the setup does not hold it (a stopping check or a root inside `docs/ai/specs` is a stated skip), a no
+  writing nothing; proved by S41's deleted-key cell and the S6 live walk.
 - **PARITY-RESOLVE-TERNARY** — queued when the fix (one redundant `isAbsolute` ternary spelled twice)
   reached outside the phase that raised it, then FOLDED in a later round of the same step: correcting
   the wrapper-link resolution base required touching both call sites anyway, and the check is no

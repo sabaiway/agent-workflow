@@ -276,7 +276,7 @@ describe('spec:init-project/S34 the git-hook writer by proof on a temp git proje
     const io = makeIo(t, join(root, 'does-not-exist'), hermeticGitEnv(process.env, root));
     assert.equal(invoke(['--help'], io), 0);
     assert.equal(io.lines.length, 1);
-    assert.match(io.lines[0], /^usage: git-hooks /);
+    assert.equal(io.lines[0], 'usage: git-hooks (--enforcement | --commit-guard | --hook-checks) [--cwd <root>] [--apply]');
     assert.deepEqual(io.errors, []);
     const file = put(root, 'regular-file', FOREIGN);
     const invalid = [
@@ -285,6 +285,7 @@ describe('spec:init-project/S34 the git-hook writer by proof on a temp git proje
     ];
     const before = snapshot(root);
     for (const argv of invalid) assert.equal(invoke(argv, { ...io, cwd: root }), 2);
+    assert.ok(io.errors.includes('pass exactly one of --enforcement, --commit-guard and --hook-checks'), io.errors.join('\n'));
     assert.equal(io.spawn.mock.callCount(), 0);
     assert.deepEqual(snapshot(root), before);
   });
@@ -382,5 +383,98 @@ describe('spec:init-project/S52 commit-guard verifies the installed hook under o
       for (const facade of facades) assert.equal(facade[name], need(name));
     }
     assert.equal(need('resolveGitHooksPath').length, 1);
+  });
+});
+
+const [PRIOR, BUNDLED] = [readFileSync(join(TOOLS, '..', 'test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt')), readBundle('install-git-hooks.mjs')];
+const [RULES_CLI, SIZE_CLI] = [join(TOOLS, 'project-rules', 'rules-cli.mjs'), join(TOOLS, 'source-size-check.mjs')];
+const BOTH = ['--rules-check', RULES_CLI, '--layout-check', SIZE_CLI];
+const roleLine = (path, role) => `node "${path}" --check # ${role}-check`;
+const [RULES_ON, LAYOUT_ON, RULES_ELSEWHERE, LAYOUT_ELSEWHERE] = [[RULES_CLI, 'rules'], [SIZE_CLI, 'layout'], ['/elsewhere/rules-cli.mjs', 'rules'], ['/elsewhere/source-size-check.mjs', 'layout']].map((pair) => roleLine(...pair));
+const managed = (...lines) => ['#!/bin/sh', '# fixture:install-git-hooks.mjs', ...lines, ''].join('\n');
+const THEME = '# Project layout\n';
+const THEME_FILES = { 'docs/ai/rules/project-layout.md': THEME, 'docs/ai/rules/effective/project-layout.md': THEME, 'docs/ai/rules/effective/sources.json': JSON.stringify({ schema: 1, themes: { 'project-layout': { kit: sha(THEME), local: 'absent', effective: sha(THEME) } } }) };
+const deploy = (t, { installer = PRIOR, rules = true, hook } = {}) => {
+  const { root, io } = makeProject(t);
+  for (const [rel, bytes] of Object.entries(rules ? THEME_FILES : { 'docs/ai/README.md': '' })) put(root, rel, bytes);
+  if (installer !== null) (installer === 'dir' ? mkdirSync(join(root, INSTALLER), { recursive: true }) : put(root, INSTALLER, installer));
+  if (hook !== undefined) put(root, '.git/hooks/pre-commit', hook, { mode: 0o755 });
+  return { root, io, hookPath: join(root, '.git', 'hooks', 'pre-commit') };
+};
+const runsLine = (flags, bytes) => `runs: node ${INSTALLER} ${flags.join(' ')} sha256:${sha(bytes)}`;
+const REFRESH = `refresh: ${INSTALLER} sha256:${sha(BUNDLED)} — replaces sha256:${sha(PRIOR)}`;
+
+describe('spec:init-project/S60 the --hook-checks dry run by proof on a temp git project', () => {
+  for (const [name, opts, code, expected] of [
+    ['a prior installer under two armable unarmed lines', {}, 0, () => [REFRESH, runsLine(BOTH, BUNDLED)]],
+    ['a current installer', { installer: BUNDLED }, 0, () => [runsLine(BOTH, BUNDLED)]],
+    ['a custom installer', { installer: FOREIGN }, 0, () => [runsLine(BOTH, FOREIGN)]],
+    ['an armed rules line and a layout line on another path', { installer: BUNDLED, hook: managed(RULES_ON, LAYOUT_ELSEWHERE) }, 0, () => [runsLine(BOTH.slice(2), BUNDLED)]],
+    ['a rules line on another path and an armed layout line', { installer: BUNDLED, hook: managed(RULES_ELSEWHERE, LAYOUT_ON) }, 0, () => [runsLine(BOTH.slice(0, 2), BUNDLED)]],
+    ['no rules theme and an armed layout line', { rules: false, hook: managed(LAYOUT_ON) }, 3, () => ['nothing to plan — the rules-check line: not armable (project-layout: absent); the layout-check line: armed']],
+    ['both lines armed', { hook: managed(RULES_ON, LAYOUT_ON) }, 3, () => ['nothing to plan — the rules-check line: armed; the layout-check line: armed']],
+    ['an absent installer', { installer: null }, 3, (root) => [`${join(root, INSTALLER)} is absent — nothing here places the hook installer`]],
+    ['an installer that is a directory', { installer: 'dir' }, 3, (root) => [`${join(root, INSTALLER)} is not a regular file`]],
+    ['a scripts/ that is a link', { installer: null, link: true }, 3, (root) => [`${join(root, 'scripts')} is not a plain directory`]],
+    ['a kit tools path holding $', { toolsDir: '/kit$x/tools' }, 3, () => ['the kit\'s tools path /kit$x/tools carries ", $, a backtick, a backslash, CR or LF — a hook line would not run the file it names']],
+  ]) it(`${name}: exit ${code} with its lines, writing nothing`, (t) => {
+    const { root, io } = deploy(t, opts);
+    if (opts.link) symlinkSync(mkdtempSync(join(root, 'real-')), join(root, 'scripts'));
+    const before = snapshot(root);
+    assert.deepEqual([invoke(['--hook-checks'], { ...io, toolsDir: opts.toolsDir ?? TOOLS }), code === 0 ? io.lines : io.errors, snapshot(root), io.spawn.mock.callCount()], [code, expected(root), before, 0]);
+  });
+  it('a minted layout record over scripts/: the refresh and the layout line, then --check stops on the grown aggregate until a reasoned write', (t) => {
+    const { root, io, hookPath } = deploy(t, { installer: BUNDLED });
+    const run = (...argv) => spawnSync(process.execPath, argv, { cwd: root, env: io.env, encoding: 'utf8' });
+    assert.equal(run(join(root, INSTALLER), '--rules-check', RULES_CLI).status, 0);
+    for (const [rel, bytes] of [['docs/ai/source-size.json', JSON.stringify({ schema: 2, roots: ['scripts'], exclude: [], extensions: ['.mjs'] })], [INSTALLER, PRIOR]]) put(root, rel, bytes);
+    assert.deepEqual([spawnSync('git', ['add', '-A'], { cwd: root, env: io.env }).status, run(SIZE_CLI, '--write-baseline', '--layout', '--reason', 'adopted').status], [0, 0]);
+    assert.deepEqual([invoke(['--hook-checks'], io), io.lines], [0, [REFRESH, runsLine(BOTH.slice(2), BUNDLED)]]);
+    assert.deepEqual([invoke(['--apply', '--hook-checks'], io), readFileSync(join(root, INSTALLER)), need('readPreCommitState')(root, { env: io.env })],
+      [0, BUNDLED, { state: 'managed', armed: false, rulesArmed: true, rulesForeign: false, layoutArmed: true, layoutForeign: false }]);
+    const [hook, stop] = [readFileSync(hookPath), run(SIZE_CLI, '--check')];
+    assert.ok(stop.status === 1 && /scripts: aggregate lines/.test(stop.stdout) && stop.stdout.includes(`--write-baseline --cwd "${root}" --reason`), stop.stdout);
+    assert.deepEqual([run(SIZE_CLI, '--write-baseline', '--reason', 'grown').status, run(SIZE_CLI, '--check').status, readFileSync(hookPath)], [0, 0, hook]);
+  });
+});
+
+describe('spec:init-project/S61 the --apply --hook-checks by proof', () => {
+  const keeps = (hook) => `${INSTALLER} keeps the refreshed bytes: ${hook} no longer holds what it held before the installer ran, or cannot be read, and the prior body would drop the new lines at its next run`;
+  const writes = (text, status) => (hook) => (put(dirname(hook), 'pre-commit', text), { status });
+  for (const [name, opts, act, code, errors, after] of [
+    ['a refresh then a success', {}, 'real', 0, () => [], BUNDLED],
+    ['a non-zero exit over an untouched hook', { hook: managed() }, () => ({ status: 1 }), 1, () => ['installer exited 1'], PRIOR],
+    ['an exit 0 arming nothing over an absent hook', {}, () => ({ status: 0 }), 1, (hook) => [`${hook} carries no rules-check line after the installer exited 0 — an installer older than the arm ignores --rules-check; refreshing ${INSTALLER} from the kit's references/scripts/ copy is your own step`], PRIOR],
+    ['a non-zero exit after the hook was written', {}, writes(managed(), 1), 1, (hook) => ['installer exited 1', keeps(hook)], BUNDLED],
+    ['an unreadable hook after exit 0', {}, (hook) => (mkdirSync(hook, { recursive: true }), { status: 0 }), 1, (hook) => [`${hook} is unreadable (EISDIR) after the installer exited 0`, keeps(hook)], BUNDLED],
+    ['a custom installer leaving a same-role line on another path', { installer: FOREIGN }, writes(managed(RULES_ELSEWHERE, RULES_ON, LAYOUT_ON), 0), 1, (hook) => [`${hook} still carries a rules-check line on a path other than this kit's after the installer exited 0`], FOREIGN],
+    ['a restore that cannot be made', { failRestore: true }, () => ({ status: 1 }), 1, () => ['installer exited 1', `not restored: ${INSTALLER} (disk gone)`], BUNDLED],
+    ['a no-hooks-dir answer', { noHooks: true }, 'real', 0, () => [], BUNDLED],
+  ]) it(`${name}: exit ${code}`, (t) => {
+    const { root, io, hookPath } = deploy(t, opts);
+    const [plan, before, env, seen, lines] = [need('planGitHooks')({ root, variant: 'hook-checks' }), existsSync(hookPath) ? readFileSync(hookPath) : null, opts.noHooks ? { ...io.env, GIT_DIR: join(root, 'missing') } : io.env, [], []];
+    const spawn = t.mock.fn((argv, options) => (seen.push(readFileSync(argv[1])), act === 'real' ? io.spawn(argv, options) : act(hookPath)));
+    const replaceFile = (dir, path, bytes) => { if (seen.length > 0) throw new Error('disk gone'); writeFileSync(path, bytes); };
+    assert.equal(need('applyGitHooks')(plan, { env, spawn, error: (line) => lines.push(line), ...(opts.failRestore ? { replaceFile } : {}) }), code);
+    assert.deepEqual([lines, seen, readFileSync(join(root, INSTALLER)), spawn.mock.calls.map(({ arguments: [argv, options] }) => [argv, options.cwd, options.env])],
+      [errors(hookPath), [opts.installer ?? BUNDLED], after, [[['node', join(root, INSTALLER), ...BOTH], root, env]]]);
+    if (after === PRIOR) assert.deepEqual(existsSync(hookPath) ? readFileSync(hookPath) : null, before);
+    if (code === 0) assert.deepEqual(['state', 'rulesArmed', 'layoutArmed'].map((key) => need('readPreCommitState')(root, { env })[key]), opts.noHooks ? ['no-hooks-dir', false, false] : ['managed', true, true]);
+  });
+  it('readPreCommitState answers exactly its fields in every state, arming by the canonical lines and flagging a foreign one', (t) => {
+    const dir = makeTemp(t);
+    const read = (hook, deps) => (hook === undefined || put(dir, 'pre-commit', hook), need('readPreCommitState')(dir, { gitHooksPath: () => dir, ...deps }));
+    const [off, WIN_RULES] = [{ armed: false, rulesArmed: false, rulesForeign: false, layoutArmed: false, layoutForeign: false }, roleLine('C:/kit/project-rules/rules-cli.mjs', 'rules')];
+    for (const [hook, deps, expected] of [
+      [undefined, { gitHooksPath: () => null }, { state: 'no-hooks-dir' }], [undefined, {}, { state: 'absent' }],
+      [managed(), { readFile: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } }, { state: 'unreadable', code: 'EACCES', path: join(dir, 'pre-commit') }],
+      [managed(`node "${join(TOOLS, 'commit-guard.mjs')}" --check`, RULES_ON, LAYOUT_ON), {}, { state: 'managed', armed: true, rulesArmed: true, layoutArmed: true }],
+      [managed(`# ${RULES_ON}`, `${LAYOUT_ON} `, `${RULES_ON} # no`), {}, { state: 'managed' }],
+      [managed(RULES_ELSEWHERE, LAYOUT_ELSEWHERE), {}, { state: 'managed', rulesForeign: true, layoutForeign: true }],
+      [`#!/bin/sh\n${RULES_ON}\n${RULES_ELSEWHERE}\n`, {}, { state: 'unmanaged', rulesArmed: true, rulesForeign: true }],
+      [managed(WIN_RULES), { toolsDir: 'C:\\kit', platform: 'win32' }, { state: 'managed', rulesArmed: true }],
+      [managed(WIN_RULES), { toolsDir: 'C:\\kit', platform: 'linux' }, { state: 'managed', rulesForeign: true }],
+    ]) assert.deepEqual(read(hook, deps), { ...off, ...expected }, hook);
+    assert.ok([need('canonicalRulesLineRe')().test(RULES_ON), need('canonicalLayoutLineRe')().test(LAYOUT_ON), need('canonicalRulesLineRe')('C:\\kit', 'win32').test(WIN_RULES)].every(Boolean));
   });
 });

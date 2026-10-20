@@ -66,11 +66,11 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     assert.deepEqual(check(rows), []);
   });
 
-  it('has exactly one row per VARIANT_LANES key, forty-six in total', () => {
+  it('has exactly one row per VARIANT_LANES key, forty-eight in total', () => {
     const rows = readRows(readTable());
     const variantLanes = need(lanes, 'VARIANT_LANES');
     assert.deepEqual(tableMismatches(rows, variantLanes), []);
-    assert.equal(Object.keys(variantLanes).length, 46);
+    assert.equal(Object.keys(variantLanes).length, 48);
   });
 
   it('gives every row the lane returned by laneOf', () => {
@@ -109,10 +109,12 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, sixteen chat and twenty-one harness rows', () => {
+  it('counts nine user, seventeen chat and twenty-two harness rows', () => {
     const rows = readRows(readTable());
     assert.equal(rows.filter(({ lane }) => lane === 'user').length, 9, 'user row count');
-    assert.equal(rows.filter(({ lane }) => lane === 'chat').length, 16, 'chat row count');
-    assert.equal(rows.filter(({ lane }) => lane === 'harness').length, 21, 'harness row count');
+    assert.equal(rows.filter(({ lane }) => lane === 'chat').length, 17, 'chat row count');
+    assert.equal(rows.filter(({ lane }) => lane === 'harness').length, 22, 'harness row count');
+    assert.deepEqual(['hook-checks', 'source-size.layout'].map((v) => rows.find(({ variant }) => variant === v)), [
+      { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' }]);
   });
 });
