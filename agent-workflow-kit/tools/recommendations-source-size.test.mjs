@@ -286,3 +286,58 @@ describe('recommendations — the source-size item over a VENDORED copy of the c
     assert.match(item.apply, /--adopt/, 'whose remedy is still the one consented verb');
   });
 });
+
+// The check stops on a minted schema-1 config whatever is declared, so its move is asked before every
+// gate arm; a config the probe cannot read is never taken for schema 1 and keeps today's answers.
+describe('spec:source-size/S36 — a minted schema-1 config is offered the --write-baseline move ahead of the gate arms', () => {
+  const MINTED1 = { ...AUTHORED, baseline: {}, aggregate: { src: { lines: 1, reason: 'initial adoption' } } };
+  const canonical = { gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Source size', cmd: `node "${TOOL}" --check` }] };
+  const WHAT = 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write';
+  const vendor = (cwd) => {
+    const abs = join(cwd, 'vendor', 'source-size-check.mjs');
+    mkdirSync(dirname(abs), { recursive: true });
+    copyFileSync(TOOL, abs);
+    writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Source size', cmd: `node "${abs}" --check` }] }, null, 2));
+    git(cwd, ['add', '-A']);
+    return cwd;
+  };
+  const unreadable = (gates) => {
+    const cwd = project({ config: null, gates });
+    writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), '{ not json');
+    git(cwd, ['add', '-A']);
+    return cwd;
+  };
+
+  it('schema1-arm-first: with no gate, a canonical, a tool-elsewhere or an id-squatter gate the item is the move, with no reason, until it is made', () => {
+    const cases = [['no gate', project({ config: MINTED1 })], ['a canonical gate', project({ config: MINTED1, gates: canonical })], ['a tool-elsewhere gate', vendor(project({ config: MINTED1 }))],
+      ['an id squatter', project({ config: MINTED1, gates: { gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Mine', cmd: 'true' }] } })]];
+    for (const [label, cwd] of cases) {
+      for (const run of [1, 2]) {
+        const { item, skip } = report(cwd);
+        assert.deepEqual([item?.variant, item?.severity, item?.lane, item?.what, item?.apply, skip], ['source-size.schema-1', SEVERITY_ATTENTION, 'chat', WHAT, `node ${TOOL} --write-baseline --cwd ${cwd}`, undefined], `${label}, run ${run}`);
+      }
+    }
+    // Non-vacuity: the rendered move, run as rendered from a foreign cwd, is what converges the item.
+    const cwd = cases[1][1];
+    const moved = spawnSync('node', [TOOL, '--write-baseline', '--cwd', cwd], { cwd: TMP, encoding: 'utf8' });
+    assert.equal(moved.status, 0, `${moved.stdout}${moved.stderr}`);
+    assert.equal(JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8')).schema, 2);
+    git(cwd, ['add', '-A']);
+    assert.equal(report(cwd).item, undefined, 'a canonical gate over the moved record is silent');
+  });
+
+  it('schema1-unminted-and-unreadable: an unminted config keeps the unminted arm with its new text, and an unreadable config keeps today\'s arms', () => {
+    for (const [state, config] of [['authored', AUTHORED], ['absent', null]]) {
+      const { item } = report(project({ config, gates: canonical }));
+      assert.equal(item?.what, `the source-size gate is declared over an unminted record (${state}) — the check refuses it, or if absent judges layout alone, no line`, state);
+      assert.equal(item.variant, 'source-size.unminted', state);
+      assert.match(item.apply, /--adopt --reason "initial adoption"/, state);
+    }
+    assert.equal(report(unreadable()).item?.variant, 'source-size', 'with no gate an unreadable config keeps the base offer');
+    for (const [label, cwd] of [['a canonical gate', unreadable(canonical)], ['a tool-elsewhere gate', vendor(unreadable())]]) {
+      const { item, skip } = report(cwd);
+      assert.equal(item, undefined, label);
+      assert.match(skip?.reason ?? '', /source-size\.json is not valid JSON/, `${label}: the probe reports the unreadable config`);
+    }
+  });
+});

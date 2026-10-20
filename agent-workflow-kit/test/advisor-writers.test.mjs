@@ -66,11 +66,11 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     assert.deepEqual(check(rows), []);
   });
 
-  it('has exactly one row per VARIANT_LANES key, forty-five in total', () => {
+  it('has exactly one row per VARIANT_LANES key, forty-six in total', () => {
     const rows = readRows(readTable());
     const variantLanes = need(lanes, 'VARIANT_LANES');
     assert.deepEqual(tableMismatches(rows, variantLanes), []);
-    assert.equal(Object.keys(variantLanes).length, 45);
+    assert.equal(Object.keys(variantLanes).length, 46);
   });
 
   it('gives every row the lane returned by laneOf', () => {
@@ -109,10 +109,10 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, fifteen chat and twenty-one harness rows', () => {
+  it('counts nine user, sixteen chat and twenty-one harness rows', () => {
     const rows = readRows(readTable());
     assert.equal(rows.filter(({ lane }) => lane === 'user').length, 9, 'user row count');
-    assert.equal(rows.filter(({ lane }) => lane === 'chat').length, 15, 'chat row count');
+    assert.equal(rows.filter(({ lane }) => lane === 'chat').length, 16, 'chat row count');
     assert.equal(rows.filter(({ lane }) => lane === 'harness').length, 21, 'harness row count');
   });
 });

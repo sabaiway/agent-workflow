@@ -9,22 +9,34 @@
 //   • A RECORDED size is debt, not permission: every entry carries a reason, and the reason lands
 //     verbatim in the JSON, the commit message and the release CHANGELOG — so it is validated as the
 //     single line those three surfaces can carry.
+//   • SCHEMAS — 2 is the shape: the kit's limits live in its code (tools/source-size/), the config
+//     holds the scope, the record and a project's reasoned overrides. 1 is still read strictly and
+//     resolved in memory by the very transform the writer moves it with; a read writes nothing.
 //
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { SOURCE_SIZE_CONFIG_REL, configFail, configPathFor, isLineUnsafe } from './source-size-refusal.mjs';
+import { KIT_LIMITS, SPEC_STORE_ROOT, layoutDefect, limitsDefect, migrateSchema1, resolveLimits } from './source-size/index.mjs';
 
-export const SOURCE_SIZE_SCHEMA = 1;
-export const SOURCE_SIZE_DEFAULTS = Object.freeze({ maxLines: 400, maxLineBytes: 1000 });
+export const SOURCE_SIZE_SCHEMA = 2;
+export const SOURCE_SIZE_DEFAULTS = Object.freeze({
+  maxLines: KIT_LIMITS['lines-per-file'].value,
+  maxLineBytes: KIT_LIMITS['bytes-per-line'].value,
+});
 export const REASON_MAX_BYTES = 300;
 // The reason a FIRST mint records: every value is new, so every value is a raise, and "this is what
 // the tree already carried when the practice arrived" is the honest sentence for all of them.
 export const INITIAL_ADOPTION_REASON = 'initial adoption';
+// The root an absent `roots` declares: every tracked path. Admitted only as the sole root.
+export const WHOLE_TREE_ROOT = '.';
 
-export const AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'defaults', 'roots', 'exclude', 'extensions']);
+export const AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits']);
+const SCHEMA1_AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'defaults', 'roots', 'exclude', 'extensions']);
 export const MACHINE_KEYS = Object.freeze(['baseline', 'aggregate']);
+// The layout record is a machine key of its own, and no part of the state: MINTED means the two above.
+export const LAYOUT_KEY = 'layout';
 const ENTRY_KEYS = Object.freeze(['lines', 'maxLineBytes', 'reason']);
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -74,8 +86,9 @@ export const reasonDefect = (reason) => {
   return null;
 };
 
-// Whole-segment prefix containment: "a/b" contains "a/b" and "a/b/c", never "a/bc".
-export const segmentPrefixOf = (prefix, path) => path === prefix || path.startsWith(`${prefix}/`);
+// Whole-segment prefix containment: "a/b" contains "a/b" and "a/b/c", never "a/bc"; the root "."
+// contains every path.
+export const segmentPrefixOf = (prefix, path) => prefix === WHOLE_TREE_ROOT || path === prefix || path.startsWith(`${prefix}/`);
 
 // practiceFacts(config) → the numbers every surface that SPEAKS for the practice states: the caps,
 // how much is declared, and how much is recorded. Derived in ONE place so the plan-time render and
@@ -119,18 +132,20 @@ const validateEntryMap = (map, what, requiredDimensions, extra) => {
   }
 };
 
-// validateSourceSizeConfig(parsed) → the normalized config. THROWS configFail (exit 2) on anything it
-// cannot judge — an unknown key included, because a typo'd key would otherwise disarm a rule.
-export const validateSourceSizeConfig = (parsed) => {
-  if (!isPlainObject(parsed)) throw configFail(`${SOURCE_SIZE_CONFIG_REL} must contain a JSON object`);
-  const known = new Set([...AUTHORED_KEYS, ...MACHINE_KEYS]);
-  const unknown = Object.keys(parsed).filter((k) => !known.has(k));
-  if (unknown.length > 0) {
-    throw configFail(`${SOURCE_SIZE_CONFIG_REL} carries unknown key(s): ${unknown.join(', ')} — known keys are ${[...known].join(', ')}`);
+// Where layout is judged, the spec store is a root of its own, so a declared root at or inside it
+// would count the same entries twice.
+export const assertNoStoreRoot = (roots) => {
+  const inside = roots.find((root) => segmentPrefixOf(SPEC_STORE_ROOT, root));
+  if (inside !== undefined) {
+    throw configFail(`"roots" declares "${inside}", at or inside the spec store ${SPEC_STORE_ROOT} — where layout is judged the store is a root of its own, so declare a root outside it`);
   }
-  if (parsed.schema !== SOURCE_SIZE_SCHEMA) {
-    throw configFail(`"schema" must be ${SOURCE_SIZE_SCHEMA}, got ${JSON.stringify(parsed.schema)}`);
-  }
+};
+
+const emptyArrayFail = (key) =>
+  configFail(`"${key}" must be a non-empty array — scope is DECLARED, never guessed, so an empty "${key}" is a misdeclaration rather than an empty green`);
+
+// Schema 1 is judged as it always was: its numbers under `defaults`, its scope declared in full.
+const validateSchema1 = (parsed) => {
   if (!isPlainObject(parsed.defaults)) throw configFail('"defaults" must be an object carrying maxLines and maxLineBytes');
   const unknownDefaults = Object.keys(parsed.defaults).filter((k) => !['maxLines', 'maxLineBytes'].includes(k));
   if (unknownDefaults.length > 0) throw configFail(`"defaults" carries unknown key(s): ${unknownDefaults.join(', ')}`);
@@ -139,24 +154,61 @@ export const validateSourceSizeConfig = (parsed) => {
     if (defect) throw configFail(defect);
   }
   for (const key of ['roots', 'extensions']) {
-    if (!Array.isArray(parsed[key]) || parsed[key].length === 0) {
-      throw configFail(`"${key}" must be a non-empty array — scope is DECLARED, never guessed, so an empty "${key}" is a misdeclaration rather than an empty green`);
-    }
-    for (const value of parsed[key]) {
-      const defect = key === 'roots' ? declaredPathDefect(value, 'a "roots" entry') : extensionDefect(value);
+    if (!Object.hasOwn(parsed, key)) throw emptyArrayFail(key);
+  }
+};
+
+// The keys each schema may carry. A key of the other schema is a stop named as such: a `defaults` on
+// schema 2 would be a second home for a kit value, and a `limits` on schema 1 a shape no writer made.
+const keysDefect = (parsed) => {
+  if (parsed.schema === 2 && Object.hasOwn(parsed, 'defaults')) {
+    return '"defaults" is a schema-1 key — the kit\'s limits live in the kit\'s code, and a project states its own number as a reasoned override under "limits"';
+  }
+  if (parsed.schema === 1 && Object.hasOwn(parsed, 'limits')) {
+    return '"limits" is a schema-2 key — a schema-1 config states its numbers under "defaults"; --write-baseline moves it to schema 2';
+  }
+  if (parsed.schema === 1 && Object.hasOwn(parsed, LAYOUT_KEY)) {
+    return '"layout" is a schema-2 key — a schema-1 config records no layout; --write-baseline moves it to schema 2';
+  }
+  const known = new Set([...(parsed.schema === 1 ? SCHEMA1_AUTHORED_KEYS : [...AUTHORED_KEYS, LAYOUT_KEY]), ...MACHINE_KEYS]);
+  const unknown = Object.keys(parsed).filter((k) => !known.has(k));
+  return unknown.length === 0 ? null : `${SOURCE_SIZE_CONFIG_REL} carries unknown key(s): ${unknown.join(', ')} — known keys are ${[...known].join(', ')}`;
+};
+
+// validateSourceSizeConfig(parsed) → the normalized config. THROWS configFail (exit 2) on anything it
+// cannot judge — an unknown key included, because a typo'd key would otherwise disarm a rule.
+export const validateSourceSizeConfig = (parsed) => {
+  if (!isPlainObject(parsed)) throw configFail(`${SOURCE_SIZE_CONFIG_REL} must contain a JSON object`);
+  if (parsed.schema !== 1 && parsed.schema !== SOURCE_SIZE_SCHEMA) {
+    throw configFail(`"schema" must be 1 or ${SOURCE_SIZE_SCHEMA}, got ${JSON.stringify(parsed.schema)}`);
+  }
+  const keys = keysDefect(parsed);
+  if (keys) throw configFail(keys);
+  if (parsed.schema === 1) validateSchema1(parsed);
+  // A schema-1 config is resolved in memory by the very transform the writer moves it with.
+  const shape = parsed.schema === 1 ? migrateSchema1(parsed) : parsed;
+  for (const key of ['roots', 'extensions']) {
+    if (!Object.hasOwn(shape, key)) continue;
+    if (!Array.isArray(shape[key]) || shape[key].length === 0) throw emptyArrayFail(key);
+    for (const value of shape[key]) {
+      const defect = key === 'extensions' ? extensionDefect(value) : value === WHOLE_TREE_ROOT ? null : declaredPathDefect(value, 'a "roots" entry');
       if (defect) throw configFail(defect);
     }
   }
+  const roots = shape.roots ?? [WHOLE_TREE_ROOT];
   // A root declared twice is not "overlapping itself" by the rule below (the rule compares distinct
   // values), yet it double-counts everywhere a root is ITERATED rather than keyed — the printed
   // delta most visibly, which is the durable record of a regeneration.
   const declaredRoots = new Set();
-  for (const root of parsed.roots) {
+  for (const root of roots) {
     if (declaredRoots.has(root)) throw configFail(`"roots" declares "${root}" twice — a duplicated root double-counts its files wherever roots are iterated`);
     declaredRoots.add(root);
   }
-  for (const outer of parsed.roots) {
-    for (const inner of parsed.roots) {
+  if (roots.length > 1 && roots.includes(WHOLE_TREE_ROOT)) {
+    throw configFail(`"roots" declares "${WHOLE_TREE_ROOT}" beside another root — "${WHOLE_TREE_ROOT}" covers every tracked path, so it is admitted only as the sole root`);
+  }
+  for (const outer of roots) {
+    for (const inner of roots) {
       if (outer !== inner && segmentPrefixOf(outer, inner)) {
         throw configFail(`"roots" entries overlap: "${inner}" sits inside "${outer}" — an overlapping root double-counts its files in the aggregate`);
       }
@@ -168,6 +220,10 @@ export const validateSourceSizeConfig = (parsed) => {
       const defect = declaredPathDefect(value, 'an "exclude" entry');
       if (defect) throw configFail(defect);
     }
+  }
+  if (Object.hasOwn(shape, 'limits')) {
+    const defect = limitsDefect(shape.limits, reasonDefect);
+    if (defect) throw configFail(defect);
   }
   if (Object.hasOwn(parsed, 'baseline')) {
     validateEntryMap(parsed.baseline, 'baseline', 'any', (key) => {
@@ -182,14 +238,23 @@ export const validateSourceSizeConfig = (parsed) => {
       }
     });
   }
+  if (Object.hasOwn(parsed, LAYOUT_KEY)) {
+    const defect = layoutDefect(parsed.layout, reasonDefect);
+    if (defect) throw configFail(defect);
+    assertNoStoreRoot(roots);
+  }
+  // `defaults` keeps the shape the judge, practiceFacts and the plan-time cap read, now resolved.
+  const { limits, defaults } = resolveLimits(shape.limits);
   return {
     schema: parsed.schema,
-    defaults: { ...parsed.defaults },
-    roots: [...parsed.roots],
+    defaults,
+    limits,
+    roots: [...roots],
     exclude: Object.hasOwn(parsed, 'exclude') ? [...parsed.exclude] : [],
-    extensions: [...parsed.extensions],
+    extensions: Object.hasOwn(shape, 'extensions') ? [...shape.extensions] : [],
     baseline: Object.hasOwn(parsed, 'baseline') ? { ...parsed.baseline } : null,
     aggregate: Object.hasOwn(parsed, 'aggregate') ? { ...parsed.aggregate } : null,
+    layout: Object.hasOwn(parsed, LAYOUT_KEY) ? parsed.layout : null,
   };
 };
 

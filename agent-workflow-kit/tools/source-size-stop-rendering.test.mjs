@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main as checkMain } from './source-size-check.mjs';
 import { main as proceduresMain } from './procedures.mjs';
-import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_DEFAULTS } from './source-size-core.mjs';
+import { SOURCE_SIZE_CONFIG_REL } from './source-size-core.mjs';
 
 // The boundary's own exports are pulled in DYNAMICALLY: a static import of a name the fix introduces
 // makes the whole file unloadable before that fix, and a test that cannot load is not a red test —
@@ -94,8 +94,7 @@ const lines = (n) => 'x\n'.repeat(n);
 
 const AUTHORED = {
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -148,11 +147,11 @@ describe('source-size — a stop renders as ONE line whatever the project put in
 
   it('report-line-escapes-a-newline-bearing-path: the checker report cannot be forged either', () => {
     const bad = `src/a${LF}source-size: PASS — nothing to see here.mjs`;
-    const cwd = project({ files: { [bad]: lines(401) }, config: minted({ aggregate: { src: { lines: 401, reason: 'r' } } }) });
+    const cwd = project({ files: { [bad]: lines(441) }, config: minted({ aggregate: { src: { lines: 441, reason: 'r' } } }) });
     const result = checkMain(['--check', '--cwd', cwd]);
     assert.equal(result.code, 1);
     assert.ok(!result.stdout.split('\n').some((line) => line.startsWith('source-size: PASS')), `no forged line reaches the report:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/a\\u000asource-size: PASS — nothing to see here\.mjs: lines 401/);
+    assert.match(result.stdout, /src\/a\\u000asource-size: PASS — nothing to see here\.mjs: lines 441 exceeds the declared default 400 beyond its band/);
   });
 
   it('escape-round-trips-the-whole-set: both serializers agree with the rule over EVERY member', async () => {
@@ -198,12 +197,12 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     const overCap = `src/${plantedName}.mjs`;
     const emptyRoot = `root${plant([0x2029])}`;
     const roots = ['src', emptyRoot];
-    const aggregate = { src: { lines: 401, reason: 'initial adoption' }, [emptyRoot]: { lines: 0, reason: 'initial adoption' } };
+    const aggregate = { src: { lines: 441, reason: 'initial adoption' }, [emptyRoot]: { lines: 0, reason: 'initial adoption' } };
     const plantedKey = `k${plant([0x00, 0x2028])}`;
 
     const withRoots = (over = {}) => ({ ...AUTHORED, roots, ...over });
     const plantedProject = (config, suffix = '') => {
-      const cwd = project({ files: { [overCap]: lines(401) }, config }, suffix);
+      const cwd = project({ files: { [overCap]: lines(441) }, config }, suffix);
       mkdirSync(join(cwd, emptyRoot), { recursive: true });
       return cwd;
     };
@@ -230,7 +229,7 @@ describe('source-size — a stop renders as ONE line whatever the project put in
       { label: 'check green over the minted record', result: checkMain(['--check', '--cwd', minting]), code: 0, expect: ['source-size: PASS'], command: 'none' },
       { label: 'check FAIL with the command rendered', result: checkMain(['--check', '--cwd', violating]), code: 1, expect: [escapedPath, jsonPath], command: 'rendered' },
       { label: 'check FAIL on a line-unsafe cwd (withheld)', result: checkMain(['--check', '--cwd', unsafeCwd]), code: 1, expect: [escapedPath, jsonPath], command: 'withheld' },
-      { label: 'absent config', result: checkMain(['--check', '--cwd', absent]), code: 1, expect: [absentConfigPath], command: 'none' },
+      { label: 'absent config, judged under the kit\'s values', result: checkMain(['--check', '--cwd', absent]), code: 0, expect: [absentConfigPath], command: 'none' },
       { label: 'the advisor block over an unreadable declaration', result: render(unreadable), code: 0, expect: [escapedKey], command: 'none' },
       { label: 'the checker over the same declaration', result: checkMain(['--check', '--cwd', unreadable]), code: 2, expect: [escapedKey], command: 'none' },
     ];
@@ -270,8 +269,8 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     // problem is a character that cannot be rendered on a line, sends them to fix the wrong thing.
     // At the INTERSECTION (a newline is both) the line ground wins: a path that cannot be printed at
     // all is not a quoting question, and both grounds lead to the same recovery anyway.
-    const config = { ...AUTHORED, baseline: {}, aggregate: { src: { lines: 401, reason: 'r' } } };
-    const make = (suffix) => project({ files: { 'src/big.mjs': lines(401) }, config }, suffix);
+    const config = { ...AUTHORED, baseline: {}, aggregate: { src: { lines: 441, reason: 'r' } } };
+    const make = (suffix) => project({ files: { 'src/big.mjs': lines(441) }, config }, suffix);
     const cases = [
       ['shell-unsafe only', make('dq$unsafe'), /does not survive double-quoting/, /cannot appear in a rendered line/],
       ['line-unsafe only', make(`${LINE_SEPARATOR}dir`), /cannot appear in a rendered line/, /does not survive double-quoting/],
@@ -290,7 +289,7 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     // A reason is copied VERBATIM into the JSON entry, the commit message and the CHANGELOG, so it
     // cannot be escaped on the way out — the three destinations would each carry different bytes. The
     // boundary holds it at the door instead, and the door must know the whole set.
-    const cwd = project({ files: { 'src/big.mjs': lines(401) }, config: { ...AUTHORED } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) }, config: { ...AUTHORED } });
     for (const code of LINE_UNSAFE_CODES) {
       const result = checkMain(['--write-baseline', '--cwd', cwd, '--reason', `why${CH(code)}forged`]);
       assert.equal(result.code, 2, `U+${code.toString(16).padStart(4, '0')} must be refused as a reason`);
@@ -298,34 +297,47 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     }
   });
 
-  it('every-finding-kind-names-its-own-escaped-target: all nine branches, each with its own hostile name', async () => {
-    // Nine branches render nine different sentences about a project-controlled target. Giving each
-    // kind its OWN hostile target is what makes the check per-branch: a shared name would let one
-    // branch's correct line satisfy the assertion for a branch that dropped its target entirely.
+  it('every-finding-kind-names-its-own-escaped-target: every branch, stop or warning, each with its own hostile name', async () => {
+    // Every branch renders a different sentence about a project-controlled target — a file, a root or
+    // a directory. Giving each kind its OWN hostile target is what makes the check per-branch: a
+    // shared name would let one branch's correct line satisfy the assertion for a branch that dropped
+    // its target entirely. A warning opens after its one anchored prefix, a stop after its indent.
     const { checkReportLines } = await import('./source-size-report.mjs');
     const KINDS = [
-      ['over-default', 'rel', { dimension: 'lines', actual: 401, allowed: 400 }],
-      ['grew', 'rel', { dimension: 'lines', actual: 402, recorded: 401 }],
-      ['stale', 'rel', { dimension: 'lines', actual: 300, recorded: 401 }],
-      ['record-obsolete', 'rel', { dimension: 'lines', actual: 10, allowed: 400, recorded: 401 }],
-      ['entry-gone', 'rel', { recorded: { lines: 401 } }],
-      ['aggregate-grew', 'root', { actual: 10, recorded: 5 }],
-      ['aggregate-stale', 'root', { actual: 3, recorded: 5 }],
-      ['aggregate-unrecorded', 'root', { actual: 7 }],
-      ['aggregate-root-gone', 'root', { recorded: 5 }],
+      ['over-default', 'stop', 'rel', { dimension: 'lines', actual: 441, allowed: 400, ceiling: 440 }],
+      ['grew', 'stop', 'rel', { dimension: 'lines', actual: 442, recorded: 441 }],
+      ['stale', 'warning', 'rel', { dimension: 'lines', actual: 441, recorded: 500 }],
+      ['record-obsolete', 'warning', 'rel', { dimension: 'lines', actual: 10, allowed: 400, ceiling: 440, recorded: 441 }],
+      ['entry-gone', 'warning', 'rel', { recorded: { lines: 441 } }],
+      ['within-band', 'warning', 'rel', { dimension: 'lines', actual: 440, allowed: 400, ceiling: 440 }],
+      ['aggregate-grew', 'stop', 'root', { actual: 10, recorded: 5 }],
+      ['aggregate-stale', 'warning', 'root', { actual: 3, recorded: 5 }],
+      ['aggregate-unrecorded', 'stop', 'root', { actual: 7 }],
+      ['aggregate-root-gone', 'warning', 'root', { recorded: 5 }],
+      ['root-unrecorded', 'stop', 'root', { actual: 7 }],
+      ['root-grew', 'stop', 'root', { actual: 50, recorded: 40, ceiling: 44 }],
+      ['root-stale', 'warning', 'root', { actual: 3, recorded: 5 }],
+      ['root-band', 'warning', 'root', { actual: 42, recorded: 40, ceiling: 44 }],
+      ['root-gone', 'warning', 'root', { recorded: 5 }],
+      ['dir-over', 'stop', 'dir', { dimension: 'entries', actual: 23, allowed: 20, ceiling: 22 }],
+      ['dir-grew', 'stop', 'dir', { dimension: 'entries', actual: 24, recorded: 23 }],
+      ['dir-stale', 'warning', 'dir', { dimension: 'depth', actual: 6, recorded: 7 }],
+      ['dir-obsolete', 'warning', 'dir', { dimension: 'entries', actual: 21, allowed: 20, ceiling: 22, recorded: 23 }],
+      ['dir-band', 'warning', 'dir', { dimension: 'entries', actual: 22, allowed: 20, ceiling: 22 }],
+      ['dir-gone', 'warning', 'dir', { recorded: { entries: 23 } }],
     ];
     const targetFor = (kind) => `${kind}${plant([0x0a, 0x2028])}${CH(0xd800)}`;
-    const findings = KINDS.map(([kind, field, extra]) => ({ kind, [field]: targetFor(kind), ...extra }));
+    const findings = KINDS.map(([kind, severity, field, extra]) => ({ kind, severity, [field]: targetFor(kind), ...extra }));
     const config = { ...AUTHORED, baseline: {}, aggregate: {} };
     // The pasteable suggestion reads the projection for every rel it names, so the synthetic verdict
     // carries one — a fixture missing it would fail on its own shape rather than on the rule.
-    const projected = new Map(KINDS.filter(([, field]) => field === 'rel').map(([kind]) => [targetFor(kind), { lines: 401 }]));
+    const projected = new Map(KINDS.filter(([, , field]) => field === 'rel').map(([kind]) => [targetFor(kind), { lines: 441 }]));
     const verdict = { findings, scope: { files: [], emptyRoots: [] }, projected };
 
     const lines = checkReportLines({ cwd: join(TMP, 'synthetic'), config, verdict });
     for (const [kind] of KINDS) {
       const expected = oracleEscape(targetFor(kind));
-      const own = lines.filter((line) => line.trim().startsWith(`${expected}:`));
+      const own = lines.filter((line) => line.trim().replace(/^source-size: WARNING — /, '').startsWith(`${expected}:`));
       assert.equal(own.length, 1, `${kind}: exactly one line must OPEN with this kind's own escaped target, got ${own.length}:\n${lines.join('\n')}`);
     }
     assert.deepEqual(lines.filter((line) => oracleUnsafe(line)), [], 'and no rendered line carries anything unsafe');
@@ -359,12 +371,12 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     const withNewline = `src/a${LF}b.mjs`;
     const withLiteral = 'src/a\\u000ab.mjs';
     const cwd = project({
-      files: { [withNewline]: lines(401), [withLiteral]: lines(402) },
-      config: minted({ aggregate: { src: { lines: 803, reason: 'r' } } }),
+      files: { [withNewline]: lines(441), [withLiteral]: lines(442) },
+      config: minted({ aggregate: { src: { lines: 883, reason: 'r' } } }),
     });
     const result = checkMain(['--check', '--cwd', cwd]);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/a\\u000ab\.mjs: lines 401/, 'the real newline renders as its escape');
-    assert.match(result.stdout, /src\/a\\\\u000ab\.mjs: lines 402/, 'the literal backslash renders doubled, so the two can never collide');
+    assert.match(result.stdout, /src\/a\\u000ab\.mjs: lines 441 exceeds the declared default 400 beyond its band/, 'the real newline renders as its escape');
+    assert.match(result.stdout, /src\/a\\\\u000ab\.mjs: lines 442 exceeds the declared default 400 beyond its band/, 'the literal backslash renders doubled, so the two can never collide');
   });
 });

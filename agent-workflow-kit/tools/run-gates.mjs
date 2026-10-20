@@ -72,6 +72,7 @@ import {
 // token this runner records) — run-gates already imports core-evidence, so a shared home is the
 // only direction that has no cycle. Re-exported here: this module is the vocabulary's public face.
 import { COVERAGE } from './coverage-state.mjs';
+import { CHECKER_CLAIM, SOURCE_SIZE_WARNING_PREFIX, classifySourceSizeGate } from './source-size-core.mjs';
 
 export { GATES_REL, loadDeclaration, validateDeclaration, canonicalCheckerGates, isFinalCapableDeclaration, isReviewDependentGate };
 export { COVERAGE };
@@ -227,8 +228,16 @@ export const BASH_PROBE_CMD = 'true';
 const formatSeconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
 const trimTrailingNewline = (text) => text.replace(/\n$/, '');
 
-// Run the selected gates sequentially (declaration order). A green gate logs one PASS line; a
-// failing gate logs FAIL + its captured stdout/stderr VERBATIM (triage without re-running).
+// A green source-size check's warnings print on every run, so the matrix echoes them — and nothing
+// else of its output — under a gate running this checker or a regular-file copy of it elsewhere.
+const SOURCE_SIZE_CLAIMS = new Set([CHECKER_CLAIM.CANONICAL, CHECKER_CLAIM.ELSEWHERE]);
+const sourceSizeWarnings = (gate, cwd, stdout) => (SOURCE_SIZE_CLAIMS.has(classifySourceSizeGate(gate.cmd, cwd))
+  ? String(stdout).split(/\r?\n/).filter((line) => line.startsWith(SOURCE_SIZE_WARNING_PREFIX))
+  : []);
+
+// Run the selected gates sequentially (declaration order). A green gate logs one PASS line (and a
+// source-size check its warnings); a failing gate logs FAIL + its captured stdout/stderr VERBATIM
+// (triage without re-running).
 export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log }) => {
   const results = [];
   for (const gate of gates) {
@@ -242,6 +251,7 @@ export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now,
     results.push({ id: gate.id, title: gate.title, ok, code, elapsedMs, stdout: res.stdout ? String(res.stdout) : '' });
     if (ok) {
       log(`   PASS (${formatSeconds(elapsedMs)})`);
+      for (const line of sourceSizeWarnings(gate, cwd, res.stdout ?? '')) log(line);
     } else {
       log(`   FAIL exit=${code} (${formatSeconds(elapsedMs)})`);
       if (res.stdout) log(trimTrailingNewline(res.stdout));
@@ -797,7 +807,7 @@ export const runCli = (argv, deps = {}) => {
         }
       }
     }
-    // A green gate's stdout is deliberately not echoed — the table IS the report. The row above
+    // A green gate's stdout is not echoed but for a source-size check's warnings — the table IS the report. The row above
     // now names the withheld verdict; this block adds the checker's OWN words and the remedy, so a
     // plain run never leaves a PASS standing for a coverage claim that was never made. Only that.
     if (!opts.final && coverage.state === COVERAGE.notRun && coverage.checkerRow?.ok) {

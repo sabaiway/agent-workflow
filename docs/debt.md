@@ -679,6 +679,19 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   a `docs/ai/agent_rules.md` row broken right after a cell separator takes the new row between its two lines. Narrow
   fix: a whole anchor row carries its three cells on its one line; a memory-map-row cell for the break after a `|`.
   Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S3 diff review (codex).
+- **SPEC-STORE-REFUSAL-WRITES-NOTHING-UNPINNED** — invariant: a `--write-baseline` run that meets a spec store present
+  but not a directory refuses, exit 1, and leaves the config byte-unchanged. Origin: spec source-size S29 (revision 3)
+  states the refusal; the S5 plan's T3 names a `--check` cell over a symlinked store and no writer cell proving
+  nothing is written. Narrow fix: one layout-check cell running `--write-baseline` over a symlinked `docs/ai/specs`,
+  asserting exit 1 and the config's bytes unchanged. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S5 spec
+  review (lens, re-read).
+- **LAYOUT-DECLINE-IS-UNDONE-BY-A-HAND-DELETE** — invariant: turning layout judging off takes a recorded, reasoned
+  step. Origin: under source-size revision 3 a present config without the machine key `layout` is not judged on
+  layout, and an absent config is judged on layout but on no line, so hand-deleting `layout` or the whole config
+  turns a judgement off with only the printed not-judged line to show it. Not folded in S5: the decline design is
+  decided; S6's offer of the layout record (the advisor item that stays open on a no) is where it closes. Proof when
+  it lands: a deployment whose `layout` key was deleted hears the offer again on its next advisor run. Raised by the
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S5 spec review (lens, round 1).
 
 ## Closed
 

@@ -7,14 +7,14 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main } from './source-size-check.mjs';
 import { GROWTH_REASON_PLACEHOLDER } from './source-size-report.mjs';
-import { configPathFor, matchesSourceSizeGate, SOURCE_SIZE_DEFAULTS } from './source-size-core.mjs';
+import { configPathFor, matchesSourceSizeGate } from './source-size-core.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-ratchet-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -36,8 +36,7 @@ const declaredLines = (files) => Object.entries(files)
 
 const CONFIG = (baseline, aggregateLines) => ({
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -60,6 +59,10 @@ const project = (files, baseline, { aggregateLines = declaredLines(files), suffi
 const check = (cwd) => main(['--check', '--cwd', cwd]);
 const lines = (n) => 'x\n'.repeat(n);
 const regenerator = (cwd) => `node "${TOOL}" --write-baseline --cwd "${cwd}"`;
+const configOf = (cwd) => JSON.parse(readFileSync(configPathFor(cwd), 'utf8'));
+const TIGHTEN = 'source-size: WARNING — a record above is lower or gone, so regenerating lowers or removes it with no reason: ';
+// The NOTE that layout is not judged names the --reason that starts it; the size lines never do.
+const said = (result) => result.stdout.split('\n').filter((line) => !line.startsWith('source-size: NOTE — ')).join('\n');
 
 // A directory named `name` holding a symlink to the checker — the bare-token cases need a path that
 // really resolves, or the matcher would refuse them for being unresolvable instead of for their bytes.
@@ -83,29 +86,30 @@ describe('source-size — a recorded size is debt for exactly what it records', 
     assert.match(result.stdout, /src\/wide\.mjs: maxLineBytes 1001 exceeds the declared default 1000/);
   });
 
-  it('baseline-entry-exempts-only-recorded-dimension, the other way round: a maxLineBytes-only record does not hide new lines', () => {
+  it('baseline-entry-exempts-only-recorded-dimension, the other way round: a maxLineBytes-only record does not hide new lines, a lines record does', () => {
     const cwd = project(
-      { 'src/big.mjs': lines(401) },
+      { 'src/big.mjs': lines(441) },
       { 'src/big.mjs': { maxLineBytes: 1, reason: 'recorded at adoption' } },
     );
     const result = check(cwd);
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)/, result.stdout);
     assert.equal(result.code, 1, `a dimension nobody recorded must still be judged:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
-  });
-
-  it('a record covering the violating dimension still exempts it', () => {
-    const cwd = project({ 'src/big.mjs': lines(401) }, { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } });
-    assert.equal(check(cwd).code, 0);
+    const covered = project({ 'src/big.mjs': lines(441) }, { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } });
+    assert.equal(check(covered).code, 0, 'a record covering the violating dimension still exempts it');
   });
 });
 
 describe('source-size — the recorded ratchet (D-3)', () => {
   // spec:source-size/S1
-  it('ratchet-recorded-file-may-not-grow: recorded debt is not permission to grow', () => {
-    const cwd = project({ 'src/big.mjs': lines(420) }, { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } });
+  it('ratchet-recorded-file-may-not-grow: recorded debt is not permission to grow, and the growth alone stops', () => {
+    const cwd = project(
+      { 'src/big.mjs': lines(460), 'src/near.mjs': lines(420) },
+      { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } },
+    );
     const result = check(cwd);
+    assert.match(result.stdout, /^source-size: FAIL — 1 finding\(s\)/m, `a file within its band beside the growth only warns:\n${result.stdout}`);
     assert.equal(result.code, 1, `a recorded file that grew must refuse:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/big\.mjs: lines 420 exceeds its recorded baseline 401/);
+    assert.match(result.stdout, /src\/big\.mjs: lines 460 exceeds its recorded baseline 441/);
   });
 
   it('ratchet-linebytes-may-not-grow: the second dimension rides the same rule', () => {
@@ -119,106 +123,184 @@ describe('source-size — the recorded ratchet (D-3)', () => {
   });
 
   // spec:source-size/S2
-  it('ratchet-stale-baseline-fails: a record ABOVE the tree is headroom nobody earned', () => {
-    const cwd = project({ 'src/big.mjs': lines(401) }, { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } });
-    const result = check(cwd);
-    assert.equal(result.code, 1, `a stale record must refuse, not pass:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 is under the recorded 500 — the baseline is STALE/);
+  it('ratchet-stale-baseline-warns: a record ABOVE the tree is headroom nobody earned, warned on every run until the regeneration lowers it', () => {
+    const cwd = project({ 'src/big.mjs': lines(441) }, { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } });
+    const runs = [check(cwd), check(cwd)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `a stale record warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, /^source-size: WARNING — src\/big\.mjs: lines 441 is under the recorded 500 — the regeneration lowers it$/m);
+    }
+    assert.equal(runs[1].stdout, runs[0].stdout, 'the warning repeats on every run');
+    assert.ok(runs[0].stdout.includes(`${TIGHTEN}${regenerator(cwd)}`), runs[0].stdout);
+    assert.doesNotMatch(said(runs[0]), /--reason/, 'lowering a record takes no reason');
+    const lowered = main(['--write-baseline', '--cwd', cwd]);
+    assert.equal(lowered.code, 0, `${lowered.stdout}${lowered.stderr}`);
+    assert.deepEqual(configOf(cwd).baseline, { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } });
+    assert.doesNotMatch(check(cwd).stdout, /WARNING/, 'the lowered record settles the warning');
   });
 
-  it('ratchet-linebytes-tighten: a shrunk long line stales its record the same way', () => {
+  it('ratchet-linebytes-tighten: a shrunk long line warns on its record the same way', () => {
     const cwd = project(
       { 'src/wide.mjs': `${'x'.repeat(1001)}\n` },
       { 'src/wide.mjs': { maxLineBytes: 1200, reason: 'recorded at adoption' } },
     );
     const result = check(cwd);
-    assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/wide\.mjs: maxLineBytes 1001 is under the recorded 1200 — the baseline is STALE/);
+    assert.equal(result.code, 0, `a stale record warns, exit 0:\n${result.stdout}`);
+    assert.match(result.stdout, /^source-size: WARNING — src\/wide\.mjs: maxLineBytes 1001 is under the recorded 1200 — the regeneration lowers it$/m);
   });
 
-  it('ratchet-record-under-the-cap-is-obsolete: a record the file no longer needs is stated, not silently kept', () => {
+  it('ratchet-record-under-the-cap-is-obsolete: a record the file no longer needs is stated on every run, not silently kept', () => {
     // A hand-authored record may sit at or below the cap. The regenerator would DROP it, so a check
-    // that passed would disagree with the writer about the very same tree.
+    // that said nothing would disagree with the writer about the very same tree.
     const cwd = project({ 'src/a.mjs': lines(350) }, { 'src/a.mjs': { lines: 350, reason: 'hand-authored' } });
     const result = check(cwd);
-    assert.equal(result.code, 1, `the checker and the regenerator must read one projection:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/a\.mjs: lines 350 no longer exceeds the declared default 400 — the record must go/);
-    assert.doesNotMatch(result.stdout, /--reason/, 'dropping a record raises nothing');
+    assert.equal(result.code, 0, `an obsolete record warns, exit 0:\n${result.stdout}`);
+    assert.match(result.stdout, /^source-size: WARNING — src\/a\.mjs: lines 350 is within its band \(up to 440\), so its record is obsolete — the regeneration removes it$/m);
+    assert.doesNotMatch(said(result), /--reason/, 'dropping a record raises nothing');
     assert.match(result.stdout, /REVIEW FOCUS — a recorded size went DOWN or disappeared/);
   });
 
-  it('ratchet-growth-below-the-cap-is-not-a-raise: the refusal may never demand a reason the regenerator does not need', () => {
+  it('ratchet-growth-below-the-cap-is-not-a-raise: the warning may never demand a reason the regenerator does not need', () => {
     const cwd = project({ 'src/a.mjs': lines(380) }, { 'src/a.mjs': { lines: 350, reason: 'hand-authored' } });
     const result = check(cwd);
-    assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/a\.mjs: lines 380 no longer exceeds the declared default 400 — the record must go/);
-    assert.doesNotMatch(result.stdout, /--reason/, 'the regeneration REMOVES this record — asking for a reason states a requirement that is not real');
+    assert.equal(result.code, 0, `a record the regeneration removes warns, exit 0:\n${result.stdout}`);
+    assert.match(result.stdout, /src\/a\.mjs: lines 380 is within its band \(up to 440\), so its record is obsolete — the regeneration removes it/);
+    assert.doesNotMatch(said(result), /--reason/, 'the regeneration REMOVES this record — asking for a reason states a requirement that is not real');
     assert.doesNotMatch(result.stdout, /exceeds its recorded baseline/);
   });
 
-  it('refusal-hand-entry-carries-every-recorded-dimension: the printed entry is the WHOLE record, never the violating half', () => {
-    // lines grew, the recorded long line did not: an entry printed from the findings alone would
-    // drop maxLineBytes, and pasting it would fail the very next check.
+  it('refusal-hand-entry-carries-every-recorded-dimension: the printed entry is the WHOLE projected record, never the violating half nor a dimension within its band', () => {
+    // w: lines grew, the recorded long line did not — an entry printed from the findings alone would
+    // drop maxLineBytes. x: its long line grew while its 420 lines sit within their band, unrecorded.
     const cwd = project(
-      { 'src/w.mjs': `${'w'.repeat(1001)}\n${lines(419)}` },
-      { 'src/w.mjs': { lines: 401, maxLineBytes: 1001, reason: 'recorded at adoption' } },
+      { 'src/w.mjs': `${'w'.repeat(1001)}\n${lines(460)}`, 'src/x.mjs': `${'x'.repeat(1100)}\n${lines(419)}` },
+      {
+        'src/w.mjs': { lines: 441, maxLineBytes: 1001, reason: 'recorded at adoption' },
+        'src/x.mjs': { lines: 420, maxLineBytes: 1001, reason: 'recorded at adoption' },
+      },
     );
     const result = check(cwd);
+    assert.match(result.stdout, /"src\/x\.mjs": \{ "maxLineBytes": 1100, "reason": "<why this size is accepted>" \}/, result.stdout);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /"src\/w\.mjs": \{ "lines": 420, "maxLineBytes": 1001, "reason": "<why this size is accepted>" \}/);
+    assert.match(result.stdout, /"src\/w\.mjs": \{ "lines": 461, "maxLineBytes": 1001, "reason": "<why this size is accepted>" \}/);
   });
 
   // spec:source-size/S7
-  it('ratchet-entry-file-gone-errors: a deleted record and a renamed one both surface, never silently', () => {
+  it('ratchet-entry-file-gone-warns: a deleted record and a renamed one both surface on every run, never silently, until the regeneration removes them', () => {
     const deleted = project({ 'src/keep.mjs': lines(10) }, { 'src/gone.mjs': { lines: 900, reason: 'recorded at adoption' } });
-    const afterDelete = check(deleted);
-    assert.equal(afterDelete.code, 1);
-    assert.match(afterDelete.stdout, /src\/gone\.mjs: recorded in "baseline" but no longer in scope/);
+    const runs = [check(deleted), check(deleted)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `a gone record warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, /^source-size: WARNING — src\/gone\.mjs: recorded in "baseline" but no longer in scope — split, renamed or deleted; the regeneration removes it$/m);
+    }
+    assert.ok(runs[0].stdout.includes(`${TIGHTEN}${regenerator(deleted)}`), runs[0].stdout);
+    assert.equal(main(['--write-baseline', '--cwd', deleted]).code, 0, 'removing a record takes no reason');
+    assert.deepEqual(configOf(deleted).baseline, {});
+    assert.doesNotMatch(check(deleted).stdout, /gone\.mjs/, 'the regeneration settled it');
 
-    const renamed = project({ 'src/new-name.mjs': lines(401) }, { 'src/old-name.mjs': { lines: 401, reason: 'recorded at adoption' } });
+    const renamed = project({ 'src/new-name.mjs': lines(441) }, { 'src/old-name.mjs': { lines: 441, reason: 'recorded at adoption' } });
     const afterRename = check(renamed);
-    assert.equal(afterRename.code, 1);
-    assert.match(afterRename.stdout, /src\/old-name\.mjs: recorded in "baseline" but no longer in scope/);
-    assert.match(afterRename.stdout, /src\/new-name\.mjs: lines 401 exceeds the declared default 400/);
+    assert.equal(afterRename.code, 1, 'the new name beyond its band stops');
+    assert.match(afterRename.stdout, /^source-size: WARNING — src\/old-name\.mjs: recorded in "baseline" but no longer in scope/m);
+    assert.match(afterRename.stdout, /src\/new-name\.mjs: lines 441 exceeds the declared default 400 beyond its band/);
   });
 });
 
 describe('source-size — a refusal renders the step the reader can actually perform (D-3a)', () => {
-  it('refusal-tighten-prints-exact-command: shrinking is progress, so the regenerator is paste-ready and needs no reason', () => {
-    const cwd = project({ 'src/big.mjs': lines(401) }, { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } });
+  it('a tighten warns with the exact regenerator and no reason; a growth stops with a TEMPLATE stating the reason is required', () => {
+    const cwd = project({ 'src/big.mjs': lines(441) }, { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } });
     const result = check(cwd);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, `shrinking is progress, so it warns:\n${result.stdout}`);
     assert.ok(result.stdout.includes(regenerator(cwd)), `the exact regenerator must be printed:\n${result.stdout}`);
-    assert.doesNotMatch(result.stdout, /--reason/, 'a pure tighten must not ask for a reason');
-  });
+    assert.doesNotMatch(said(result), /--reason/, 'a pure tighten must not ask for a reason');
 
-  it('refusal-growth-prints-reason-template: a raise renders a TEMPLATE and states that the reason is required', () => {
-    const cwd = project({ 'src/big.mjs': lines(420) }, { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } });
-    const result = check(cwd);
-    assert.equal(result.code, 1);
+    const grown = project({ 'src/big.mjs': lines(460) }, { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } });
+    const growth = check(grown);
+    assert.equal(growth.code, 1);
     assert.ok(
-      result.stdout.includes(`${regenerator(cwd)} --reason "${GROWTH_REASON_PLACEHOLDER}"`),
-      `the growth lane must render the command as a reason-carrying template:\n${result.stdout}`,
+      growth.stdout.includes(`${regenerator(grown)} --reason "${GROWTH_REASON_PLACEHOLDER}"`),
+      `the growth lane must render the command as a reason-carrying template:\n${growth.stdout}`,
     );
-    assert.match(result.stdout, /reason is REQUIRED/);
+    assert.match(growth.stdout, /reason is REQUIRED/);
   });
 
   it('refusal-dq-unsafe-states-parameters: an unrenderable project path withholds the command and names the manual lane', () => {
-    const cwd = project({ 'src/big.mjs': lines(401) }, {}, { suffix: '-$dq' });
+    const cwd = project({ 'src/big.mjs': lines(441) }, {}, { suffix: '-$dq' });
     const result = check(cwd);
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)/, result.stdout);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
     assert.doesNotMatch(result.stdout, /--write-baseline --cwd/, 'a path that does not survive quoting is never rendered into a command');
     assert.match(result.stdout, /no paste-ready command is printed/i);
-    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 401/);
+    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 441/);
   });
 
-  it('refusal-teaches-split-quality-on-lowered-entry: a record that went DOWN carries the review focus (D-9)', () => {
-    const lowered = project({ 'src/big.mjs': lines(401) }, { 'src/big.mjs': { lines: 900, reason: 'recorded at adoption' } });
-    assert.match(check(lowered).stdout, /REVIEW FOCUS — a recorded size went DOWN or disappeared/);
+  it('refusal-teaches-split-quality-on-lowered-entry: a record that went DOWN warns with the review focus (D-9)', () => {
+    const lowered = check(project({ 'src/big.mjs': lines(441) }, { 'src/big.mjs': { lines: 900, reason: 'recorded at adoption' } }));
+    assert.equal(lowered.code, 0, `a lowered record warns, exit 0:\n${lowered.stdout}`);
+    assert.match(lowered.stdout, /REVIEW FOCUS — a recorded size went DOWN or disappeared/);
 
-    const grown = project({ 'src/big.mjs': lines(420) }, { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } });
+    const grown = project({ 'src/big.mjs': lines(460) }, { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } });
     assert.doesNotMatch(check(grown).stdout, /REVIEW FOCUS/, 'growth is not a split — the focus line must not fire');
+  });
+});
+
+const AUTHORED = { _README: 'fixture', schema: 2, roots: ['src'], exclude: [], extensions: ['.mjs'] };
+const WITHIN = /^source-size: WARNING — src\/a\.mjs: lines 440 is over the limit 400 but within its band \(up to 440\) — no record is kept; past 440 it stops$/m;
+
+describe('spec:source-size/S26 a file within its line band warns on every run and carries no record; beyond the band it stops unless a record holds it', () => {
+  it('440 lines warn on every run, exit 0, and the mint records nothing for the file', () => {
+    const cwd = project({ 'src/a.mjs': lines(440) }, {});
+    const runs = [check(cwd), check(cwd)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `a file within its band warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, WITHIN);
+    }
+    assert.equal(runs[1].stdout, runs[0].stdout, 'the warning repeats on every run');
+    writeFileSync(configPathFor(cwd), JSON.stringify(AUTHORED, null, 2));
+    const minted = main(['--write-baseline', '--cwd', cwd, '--reason', 'initial adoption']);
+    assert.equal(minted.code, 0, `${minted.stdout}${minted.stderr}`);
+    assert.deepEqual(configOf(cwd).baseline, {}, 'a warning never raises a record');
+    assert.deepEqual(configOf(cwd).aggregate, { src: { lines: 440, reason: 'initial adoption' } });
+  });
+
+  it('441 lines stop with no record, and a record of them holds them', () => {
+    const result = check(project({ 'src/a.mjs': lines(441) }, {}));
+    assert.match(result.stdout, /^ {2}src\/a\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)$/m, result.stdout);
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /"src\/a\.mjs": \{ "lines": 441, "reason": "<why this size is accepted>" \}/);
+    const held = check(project({ 'src/a.mjs': lines(441) }, { 'src/a.mjs': { lines: 441, reason: 'recorded' } }));
+    assert.equal(held.code, 0, held.stdout);
+    assert.doesNotMatch(held.stdout, /WARNING/);
+  });
+
+  it('a file recorded at 450 that drops to 430 holds an obsolete record that warns until the regeneration removes it with no reason', () => {
+    const cwd = project({ 'src/a.mjs': lines(430) }, { 'src/a.mjs': { lines: 450, reason: 'recorded' } });
+    const runs = [check(cwd), check(cwd)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `an obsolete record warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, /^source-size: WARNING — src\/a\.mjs: lines 430 is within its band \(up to 440\), so its record is obsolete — the regeneration removes it$/m);
+    }
+    assert.ok(runs[0].stdout.includes(`${TIGHTEN}${regenerator(cwd)}`), runs[0].stdout);
+    const write = main(['--write-baseline', '--cwd', cwd]);
+    assert.equal(write.code, 0, 'removing the record takes no reason');
+    assert.match(write.stdout, /^source-size: WARNING — src\/a\.mjs: lines 430 is over the limit 400 but within its band \(up to 440\) — no record is kept/m, 'the write states the warning it leaves standing');
+    assert.deepEqual(configOf(cwd).baseline, {});
+    const settled = check(cwd);
+    assert.equal(settled.code, 0);
+    assert.match(settled.stdout, /src\/a\.mjs: lines 430 is over the limit 400 but within its band \(up to 440\) — no record is kept/);
+    assert.doesNotMatch(settled.stdout, /obsolete/);
+  });
+
+  it('the projection records a dimension only beyond its band: 441 lines and 1001 bytes, never 440 lines or 1000 bytes', () => {
+    const cwd = project({
+      'src/a.mjs': lines(440), 'src/b.mjs': lines(441), 'src/c.mjs': `${'x'.repeat(1000)}\n`, 'src/d.mjs': `${'x'.repeat(1001)}\n`,
+    }, {});
+    const written = main(['--write-baseline', '--cwd', cwd, '--reason', 'beyond the band']);
+    assert.deepEqual(configOf(cwd).baseline, {
+      'src/b.mjs': { lines: 441, reason: 'beyond the band' },
+      'src/d.mjs': { maxLineBytes: 1001, reason: 'beyond the band' },
+    }, `${written.stdout}${written.stderr}`);
+    assert.equal(written.code, 0);
   });
 });
 

@@ -31,6 +31,7 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.unminted': LANE_CHAT,
   'source-size.adopted-elsewhere': LANE_CHAT,
   'source-size.id-squatter': LANE_USER,
+  'source-size.schema-1': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
   'gate-hook.marker-stale': LANE_HARNESS,
   'commit-guard': LANE_HARNESS,

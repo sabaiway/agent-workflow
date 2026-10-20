@@ -30,8 +30,7 @@ const lines = (n) => 'x\n'.repeat(n);
 
 const CONFIG = (over = {}) => ({
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -71,12 +70,12 @@ const suggestedEntries = (stdout) => {
 };
 
 describe('source-size — what the checker prints must survive the validator that reads it back', () => {
-  it('printed-baseline-entry-revalidates: the entry a refusal tells a human to paste is ACCEPTED by the config validator', () => {
-    const cwd = project({ files: { 'src/wide.mjs': `${'x'.repeat(1001)}\n`, 'src/big.mjs': lines(401) } });
+  it('printed-baseline-entry-revalidates: the entry a refusal tells a human to paste is ACCEPTED by the config validator, and names no file within its band', () => {
+    const cwd = project({ files: { 'src/wide.mjs': `${'x'.repeat(1001)}\n`, 'src/big.mjs': lines(441), 'src/near.mjs': lines(440) } });
     const result = check(cwd);
-    assert.equal(result.code, 1);
     const baseline = suggestedEntries(result.stdout);
-    assert.deepEqual(Object.keys(baseline).sort(), ['src/big.mjs', 'src/wide.mjs']);
+    assert.deepEqual(Object.keys(baseline).sort(), ['src/big.mjs', 'src/wide.mjs'], result.stdout);
+    assert.equal(result.code, 1);
     for (const entry of Object.values(baseline)) entry.reason = 'accepted for now';
     assert.doesNotThrow(() => validateSourceSizeConfig({ ...CONFIG(), baseline }));
   });
@@ -101,10 +100,12 @@ describe('source-size — what the checker prints must survive the validator tha
     );
   });
 
-  it('absent-refusal-names-no-unimplemented-verb: the printed authoring file mentions no command this build rejects', () => {
+  it('absent-refusal-names-no-unimplemented-verb: --check judges an absent config, and the authoring file --override prints mentions no command this build rejects', () => {
     const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
-    const result = check(cwd);
+    assert.equal(check(cwd).code, 0, 'an absent config is judged under the kit values, not refused');
+    const result = main(['--override', 'depth', '--value', '7', '--reason', 'r', '--cwd', cwd]);
     assert.equal(result.code, 1);
+    assert.match(result.stdout, /is absent, so the scope of this practice is undeclared/);
     assert.doesNotMatch(result.stdout, /--write-baseline/);
     assert.doesNotMatch(result.stdout, /--adopt/);
     assert.doesNotMatch(result.stdout, /--reason/);

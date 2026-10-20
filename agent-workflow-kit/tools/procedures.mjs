@@ -53,7 +53,7 @@ import { readRegistration } from './mcp-registration.mjs';
 // The declared source-size practice (D-17 U1), read through the practice's PURE READ core — never
 // source-size-check.mjs, which owns the writer half: this advisor is a read root of
 // test/read-graph-purity.test.mjs, and the core exists so a surface can ask without reaching a writer.
-import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY, loadSourceSizeConfig, practiceFacts } from './source-size-core.mjs';
+import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY, escapeForLine, limitLines, loadSourceSizeConfig, practiceFacts } from './source-size-core.mjs';
 export { CONFIG_REL };
 
 // ── argument + override parsing (usage errors → exit 2) ─────────────────────────────
@@ -562,11 +562,18 @@ const declaredPracticeAdvice = (cwd, readFile, lstat) => {
   const unmintedRecord = declaration.state === 'incomplete'
     ? `  recorded: PARTIAL — the machine record is half-written (missing ${declaration.missingMachineKeys.map((key) => `"${key}"`).join(', ')}), so the ratchet holds nothing yet; run \`source-size-check.mjs --check\` for the mint step.`
     : '  recorded: NOTHING YET — the caps are declared but no size is recorded, so the ratchet holds nothing; run `source-size-check.mjs --check` for the mint step.';
+  // The five limits are the check's own lines, from the one function both renders read.
+  const { config } = declaration;
   return [
     DECLARED_PRACTICE_HEADER,
     `  caps: ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line, over ${facts.roots} declared root(s).`,
+    ...limitLines(config.limits, { escape: escapeForLine, recorded: config.layout !== null }).map((line) => `  ${line}`),
+    config.layout !== null
+      ? '  layout: recorded — entries per directory, depth and files per root are judged by the size check.'
+      : '  layout: not recorded — `source-size-check.mjs --write-baseline --layout --reason "<text>"` starts it.',
+    ...(config.schema === 1 ? ['  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it to schema 2.'] : []),
     declaration.state === 'minted'
-      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s), EXACT — growth takes a reasoned bump, never free headroom.`
+      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.`
       : unmintedRecord,
     `  why: ${SOURCE_SIZE_WHY}`,
   ];

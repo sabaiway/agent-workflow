@@ -100,6 +100,17 @@ describe('plan-shape facts — filesystem-only evidence', () => {
     assert.equal(facts.pathFacts['docs/readme.md'].inScope, false);
   });
 
+  it('counts every declared-extension path under the root "." when a schema-2 declaration names no roots', async () => {
+    const { buildFacts } = await loadFacts();
+    const root = makeTree();
+    writeJson(root, 'docs/ai/source-size.json', { schema: 2, exclude: ['src/gen'], extensions: ['.mjs'] });
+    const paths = ['src/a.mjs', 'a.mjs', 'docs/readme.md', 'src/gen/b.mjs'];
+    for (const path of paths) write(root, path, 'source\n');
+    const facts = buildFacts(root, { paths });
+    assert.deepEqual(paths.map((path) => facts.pathFacts[path].inScope), [true, true, false, false]);
+    assert.deepEqual([facts.capDeclared, facts.cap], [true, 400]);
+  });
+
   it('refuses a malformed declaration as usage instead of guessing the cap', async () => {
     const { buildFacts } = await loadFacts();
     const root = makeTree();

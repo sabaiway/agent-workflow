@@ -51,8 +51,8 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
 
   it('merges and records on pending, and stops with nothing further written on failed or a non-zero record command', () => {
     assertPhrases(readRules(), [
-      '**3. After each of these, run the ensure again.** On `pending`, do the merge its line states, show the user what changed in the final rules, then run the record command the line prints with the sha256 of the merged file',
-      'When an ensure run answers `failed`, or the record command exits non-zero, relay the line and stop: write, delete and record nothing further, and run no closing check as if the change held.',
+      '**3. After each of the three rules routes, run the ensure again.** On `pending`, do the merge its line states, show the user what changed in the final rules, then run the record command the line prints with the sha256 of the merged file',
+      'When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop: write, delete and record nothing further, and run no closing check as if the change held.',
     ], 'the pending and refusal steps');
   });
 
@@ -61,6 +61,30 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
       'Run `node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --only index --cwd <project>`, then `node ${CLAUDE_SKILL_DIR}/tools/project-rules/rules-cli.mjs --check --cwd <project>`, which answers `current` for every theme',
       "It never writes the effective file except with the merge a `pending` line states, never changes the kit file's text (the move deletes the file whole and the ensure seeds it again), and never writes a local file without the user's request.",
     ], 'the closing checks and the never sentence');
+  });
+});
+
+describe('spec:project-rules/S34 the rules mode routes a number to the size check override, never into a rules file', () => {
+  it('shows the exact --override command with only the numbers the user named, --kit-default to return, run on the yes', () => {
+    assertPhrases(readRules(), [
+      "- **Change a number.** A request to change a number, a limit's value or its tolerance, is never written into a rules file: the rules are prose and carry no numbers",
+      'Show the exact `node ${CLAUDE_SKILL_DIR}/tools/source-size-check.mjs --override <id> [--value <n>] [--tolerance <p>] --reason "<text>" --cwd <project>` command, passing only the numbers the user named',
+      "with `--kit-default` in their place to return to the kit's numbers; run it on the user's yes and relay its lines.",
+    ], 'the number route');
+  });
+
+  it('ends the number route with no ensure, merge, record or closing check', () => {
+    assertPhrases(readRules(), [
+      'This route ends there: it runs no ensure, merge, record or closing check.',
+    ], 'the end of the number route');
+  });
+
+  it('counts four routes in step 2, names the three rules routes in step 3, and stops on a non-zero --override', () => {
+    assertPhrases(readRules(), [
+      '\n**2. Do what the user asks — one of four.**\n',
+      '\n**3. After each of the three rules routes, run the ensure again.**',
+      '**It stops on a refusal.** When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop',
+    ], 'the step headers and the stop');
   });
 });
 

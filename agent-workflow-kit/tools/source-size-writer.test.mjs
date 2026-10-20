@@ -13,7 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main } from './source-size-check.mjs';
-import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, measureFile } from './source-size-core.mjs';
+import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, SOURCE_SIZE_WHY, measureFile } from './source-size-core.mjs';
+import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-writer-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -30,8 +31,7 @@ const lines = (n) => 'x\n'.repeat(n);
 
 const AUTHORED = (over = {}) => ({
   _README: 'fixture — the authored half, written by a human',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: ['src/vendor'],
   extensions: ['.mjs'],
@@ -59,15 +59,26 @@ const writeBaseline = (cwd, reason) =>
 const configPath = (cwd) => join(cwd, 'docs', 'ai', 'source-size.json');
 const configOf = (cwd) => JSON.parse(readFileSync(configPath(cwd), 'utf8'));
 const out = (result) => `${result.stdout}\n${result.stderr}`;
+const canonical = (value) => `${JSON.stringify(value, null, 2)}\n`;
+// A schema-1 file and the schema-2 file its move must write, the records carried verbatim.
+const SCHEMA1 = (over = {}) => ({ _README: 'fixture — a schema-1 file', schema: 1, defaults: { ...SOURCE_SIZE_DEFAULTS }, roots: ['src'], exclude: [], extensions: ['.mjs'], ...over });
+const MOVED = (records) => ({ _README: SCHEMA1()._README, schema: 2, roots: ['src'], exclude: [], extensions: ['.mjs'], ...records });
+const RECORDS = { baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 451, reason: 'recorded at adoption' } } };
+const DEPLOYED = { 'src/a.mjs': lines(10), 'src/big.mjs': lines(441), 'docs/ai/.workflow-version': `${EXPECTED_WORKFLOW_VERSION}\n` };
+const KIT_LIMIT_LINES = ['lines-per-file 400, tolerance 10%', 'bytes-per-line 1000, tolerance 0%', 'entries-per-directory 20, tolerance 10%', 'depth 5, tolerance 0%', 'files-per-root none recorded, tolerance 10%'].map((limit) => `source-size: limit ${limit} — from kit`);
+const stated = (result) => [result.code, ...result.stdout.split('\n').slice(0, 5)];
+const movedLine = (cwd) => `source-size: ${configPath(cwd)} moved from schema 1 to schema 2 in this write.`;
+const adopt = (cwd) => main(['--adopt', '--reason', INITIAL_ADOPTION_REASON, '--cwd', cwd]);
+const gatesPath = (cwd) => join(cwd, 'docs', 'ai', 'gates.json');
 
 describe('source-size — the config contract the writer honours (D-5)', () => {
-  it('config-absent-refuses-with-authoring-content: the writer never invents a scope either', () => {
+  it('config-absent-refuses-with-authoring-content: on an absent config the writer writes schema 2, its first raises taking --reason', async () => {
+    const { TEMPLATE_README } = await import('./source-size-report.mjs');
     const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
-    const result = writeBaseline(cwd, 'initial adoption');
-    assert.equal(result.code, 1, out(result));
-    assert.match(result.stdout, /is absent, so the scope of this practice is undeclared/);
-    assert.match(result.stdout, /"roots": \[\s*"<a directory this practice covers>"/);
-    assert.equal(existsSync(configPath(cwd)), false, 'a refusal writes nothing');
+    assert.deepEqual(stated(writeBaseline(cwd)), [1, ...KIT_LIMIT_LINES], 'a first record is a raise, so it takes --reason');
+    assert.equal(existsSync(configPath(cwd)), false, 'a refused write leaves it absent');
+    assert.equal(writeBaseline(cwd, 'initial adoption').code, 0);
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ _README: TEMPLATE_README, schema: 2, baseline: {}, aggregate: { '.': { lines: 0, reason: 'initial adoption' } }, layout: { roots: { '.': { files: 1, reason: 'initial adoption' } }, directories: {} } }));
   });
 
   it('config-authored-state-check-refuses-with-mint-command: the AUTHORED→MINTED seam names the exact command', () => {
@@ -100,7 +111,7 @@ describe('source-size — the config contract the writer honours (D-5)', () => {
   });
 
   it('writer-idempotent-serialization: regenerating an unchanged tree reproduces the file byte for byte', () => {
-    const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(441) } });
     assert.equal(writeBaseline(cwd, INITIAL_ADOPTION_REASON).code, 0);
     const first = readFileSync(configPath(cwd));
     assert.equal(writeBaseline(cwd).code, 0, 'an unchanged tree raises nothing, so it needs no reason');
@@ -108,55 +119,55 @@ describe('source-size — the config contract the writer honours (D-5)', () => {
   });
 
   it('mint-on-authored-config-succeeds: author, mint, run green — the ratchet is armed on a project that is not this kit', () => {
-    const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(401), 'src/vendor/huge.mjs': lines(900) } });
+    const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(441), 'src/vendor/huge.mjs': lines(900) } });
     assert.equal(check(cwd).code, 1, 'an AUTHORED config is not yet a ratchet');
-    assert.equal(writeBaseline(cwd, INITIAL_ADOPTION_REASON).code, 0);
+    assert.deepEqual(stated(writeBaseline(cwd, INITIAL_ADOPTION_REASON)), [0, ...KIT_LIMIT_LINES]);
     assert.equal(check(cwd).code, 0, 'the minted record matches the tree it was minted from');
     const minted = configOf(cwd);
-    assert.deepEqual(minted.baseline, { 'src/big.mjs': { lines: 401, reason: INITIAL_ADOPTION_REASON } }, 'only the violator is recorded; the excluded path is out of scope');
-    assert.deepEqual(minted.aggregate, { src: { lines: 411, reason: INITIAL_ADOPTION_REASON } });
+    assert.deepEqual(minted.baseline, { 'src/big.mjs': { lines: 441, reason: INITIAL_ADOPTION_REASON } }, 'only the violator is recorded; the excluded path is out of scope');
+    assert.deepEqual(minted.aggregate, { src: { lines: 451, reason: INITIAL_ADOPTION_REASON } });
 
-    writeFileSync(join(cwd, 'src', 'big.mjs'), lines(402));
+    writeFileSync(join(cwd, 'src', 'big.mjs'), lines(442));
     const grown = check(cwd);
     assert.equal(grown.code, 1, `the armed ratchet refuses the next line:\n${grown.stdout}`);
-    assert.match(grown.stdout, /src\/big\.mjs: lines 402 exceeds its recorded baseline 401/);
+    assert.match(grown.stdout, /src\/big\.mjs: lines 442 exceeds its recorded baseline 441/);
   });
 });
 
 describe('source-size — a raise is reasoned, a tighten is free (D-3a)', () => {
   it('write-baseline-tighten-needs-no-reason: shrinking is progress', () => {
     const cwd = project({
-      files: { 'src/big.mjs': lines(401) },
+      files: { 'src/big.mjs': lines(441) },
       config: AUTHORED({ baseline: { 'src/big.mjs': { lines: 500, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 500, reason: 'recorded at adoption' } } }),
     });
     const result = writeBaseline(cwd);
-    assert.equal(result.code, 0, out(result));
-    assert.equal(configOf(cwd).baseline['src/big.mjs'].lines, 401);
+    assert.deepEqual(stated(result), [0, ...KIT_LIMIT_LINES], out(result));
+    assert.equal(configOf(cwd).baseline['src/big.mjs'].lines, 441);
     assert.equal(configOf(cwd).baseline['src/big.mjs'].reason, 'recorded at adoption', 'a tighten keeps the reason that was already recorded');
   });
 
   it('write-baseline-raise-without-reason-refuses: the checker cannot invent the human\'s reason', () => {
     const cwd = project({
-      files: { 'src/big.mjs': lines(420) },
-      config: AUTHORED({ baseline: { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 401, reason: 'recorded at adoption' } } }),
+      files: { 'src/big.mjs': lines(460) },
+      config: AUTHORED({ baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 441, reason: 'recorded at adoption' } } }),
     });
     const result = writeBaseline(cwd);
-    assert.equal(result.code, 1, out(result));
+    assert.deepEqual(stated(result), [1, ...KIT_LIMIT_LINES], out(result));
     assert.match(out(result), /--reason/);
-    assert.equal(configOf(cwd).baseline['src/big.mjs'].lines, 401, 'a refused regeneration writes nothing');
+    assert.equal(configOf(cwd).baseline['src/big.mjs'].lines, 441, 'a refused regeneration writes nothing');
   });
 
   it('ratchet-raise-requires-reason: the reason lands VERBATIM in the entry it raised, and nowhere else', () => {
     const cwd = project({
-      files: { 'src/big.mjs': lines(420), 'src/wide.mjs': `${'x'.repeat(1001)}\n` },
+      files: { 'src/big.mjs': lines(460), 'src/wide.mjs': `${'x'.repeat(1001)}\n` },
       config: AUTHORED({
-        baseline: { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' }, 'src/wide.mjs': { maxLineBytes: 1001, reason: 'recorded at adoption' } },
-        aggregate: { src: { lines: 402, reason: 'recorded at adoption' } },
+        baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' }, 'src/wide.mjs': { maxLineBytes: 1001, reason: 'recorded at adoption' } },
+        aggregate: { src: { lines: 442, reason: 'recorded at adoption' } },
       }),
     });
-    assert.equal(writeBaseline(cwd, 'tranche 1: the parser moved here').code, 0);
+    assert.deepEqual(stated(writeBaseline(cwd, 'tranche 1: the parser moved here')), [0, ...KIT_LIMIT_LINES]);
     const written = configOf(cwd);
-    assert.deepEqual(written.baseline['src/big.mjs'], { lines: 420, reason: 'tranche 1: the parser moved here' });
+    assert.deepEqual(written.baseline['src/big.mjs'], { lines: 460, reason: 'tranche 1: the parser moved here' });
     assert.deepEqual(written.baseline['src/wide.mjs'], { maxLineBytes: 1001, reason: 'recorded at adoption' }, 'an untouched entry keeps its own reason');
   });
 
@@ -172,34 +183,31 @@ describe('source-size — a raise is reasoned, a tighten is free (D-3a)', () => 
   });
 
   it('mint-captures-both-dimensions: a file over both caps records both, and a file over one records one', () => {
-    const cwd = project({
-      files: { 'src/both.mjs': `${'x'.repeat(1001)}\n${lines(400)}`, 'src/tall.mjs': lines(401) },
-    });
-    assert.equal(writeBaseline(cwd, INITIAL_ADOPTION_REASON).code, 0);
-    const baseline = configOf(cwd).baseline;
-    assert.deepEqual(baseline['src/both.mjs'], { lines: 401, maxLineBytes: 1001, reason: INITIAL_ADOPTION_REASON });
-    assert.deepEqual(baseline['src/tall.mjs'], { lines: 401, reason: INITIAL_ADOPTION_REASON });
+    const cwd = project({ files: { 'src/both.mjs': `${'x'.repeat(1001)}\n${lines(440)}`, 'src/tall.mjs': lines(441) } });
+    assert.deepEqual(stated(writeBaseline(cwd, INITIAL_ADOPTION_REASON)), [0, ...KIT_LIMIT_LINES]);
+    const both = { 'src/both.mjs': { lines: 441, maxLineBytes: 1001, reason: INITIAL_ADOPTION_REASON }, 'src/tall.mjs': { lines: 441, reason: INITIAL_ADOPTION_REASON } };
+    assert.deepEqual(configOf(cwd).baseline, both);
     assert.equal(check(cwd).code, 0);
   });
 
   it('regenerator-prints-old-new-delta: the printed delta is the record the commit message carries', () => {
     const cwd = project({
-      files: { 'src/big.mjs': lines(420), 'src/small.mjs': lines(10) },
+      files: { 'src/big.mjs': lines(460), 'src/small.mjs': lines(10) },
       config: AUTHORED({
-        baseline: { 'src/big.mjs': { lines: 401, reason: 'recorded at adoption' }, 'src/gone.mjs': { lines: 900, reason: 'recorded at adoption' } },
-        aggregate: { src: { lines: 411, reason: 'recorded at adoption' } },
+        baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' }, 'src/gone.mjs': { lines: 900, reason: 'recorded at adoption' } },
+        aggregate: { src: { lines: 451, reason: 'recorded at adoption' } },
       }),
     });
     const result = writeBaseline(cwd, 'tranche 1: flow-check split');
-    assert.equal(result.code, 0, out(result));
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 → 420/);
+    assert.deepEqual(stated(result), [0, ...KIT_LIMIT_LINES], out(result));
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 → 460/);
     assert.match(result.stdout, /src\/gone\.mjs: lines 900 → none/);
-    assert.match(result.stdout, /src: aggregate lines 411 → 430/);
+    assert.match(result.stdout, /src: aggregate lines 451 → 470/);
     assert.match(result.stdout, /reason: tranche 1: flow-check split/);
   });
 
   it('reason-empty-refused and reason-multiline-refused: the string lands in JSON, a commit message and a CHANGELOG', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
     for (const [reason, pattern] of [['', /non-empty/], ['first line\nsecond line', /ONE line/], ['x'.repeat(400), /at most 300/]]) {
       const result = writeBaseline(cwd, reason);
       assert.equal(result.code, 2, `a malformed reason is a usage refusal: ${JSON.stringify(reason)}\n${out(result)}`);
@@ -227,21 +235,21 @@ describe('source-size — what the writer says it did', () => {
 
   it('write-refusal-prints-every-delta-not-only-raises: the promised record is the WHOLE old→new, marked', () => {
     const cwd = project({
-      files: { 'src/big.mjs': lines(420) },
+      files: { 'src/big.mjs': lines(460) },
       config: AUTHORED({
-        baseline: { 'src/big.mjs': { lines: 401, reason: 'r' }, 'src/gone.mjs': { lines: 900, reason: 'r' } },
-        aggregate: { src: { lines: 420, reason: 'r' } },
+        baseline: { 'src/big.mjs': { lines: 441, reason: 'r' }, 'src/gone.mjs': { lines: 900, reason: 'r' } },
+        aggregate: { src: { lines: 460, reason: 'r' } },
       }),
     });
     const result = writeBaseline(cwd);
-    assert.equal(result.code, 1, out(result));
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 → 420 \(raise\)/);
+    assert.deepEqual(stated(result), [1, ...KIT_LIMIT_LINES], out(result));
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 → 460 \(raise\)/);
     assert.match(result.stdout, /src\/gone\.mjs: lines 900 → none/, 'a removal riding the same regeneration must not vanish from the record');
     assert.match(result.stdout, /RAISES 1 recorded value/);
   });
 
   it('writer-canonicalizes-only-the-serialization: authored VALUES and their order survive, the bytes are the writer\'s', () => {
-    const handWritten = '{\n    "_README": "four spaces, and an escape: \\u00e9",\n    "schema": 1,\n    "defaults": {"maxLines": 400, "maxLineBytes": 1000},\n    "roots": ["src"],\n    "extensions": [".mjs"]\n}';
+    const handWritten = '{\n    "_README": "four spaces, and an escape: \\u00e9",\n    "schema": 2,\n    "roots": ["src"],\n    "extensions": [".mjs"]\n}';
     const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
     writeFileSync(configPath(cwd), handWritten);
     const minted = writeBaseline(cwd, INITIAL_ADOPTION_REASON);
@@ -250,15 +258,7 @@ describe('source-size — what the writer says it did', () => {
     // The exact BYTES, not the parsed values: an implementation that kept the human's four-space
     // indent and the \u00e9 escape would satisfy a values-only assertion, which is precisely the
     // contract this test exists to pin.
-    const expected = `${JSON.stringify({
-      _README: 'four spaces, and an escape: \u00e9',
-      schema: 1,
-      defaults: { maxLines: 400, maxLineBytes: 1000 },
-      roots: ['src'],
-      extensions: ['.mjs'],
-      baseline: {},
-      aggregate: { src: { lines: 10, reason: INITIAL_ADOPTION_REASON } },
-    }, null, 2)}\n`;
+    const expected = canonical({ _README: 'four spaces, and an escape: \u00e9', schema: 2, roots: ['src'], extensions: ['.mjs'], baseline: {}, aggregate: { src: { lines: 10, reason: INITIAL_ADOPTION_REASON } } });
     assert.equal(readFileSync(configPath(cwd), 'utf8'), expected);
   });
 
@@ -288,6 +288,87 @@ describe('source-size — what the writer says it did', () => {
     assert.equal(minted.code, 0, out(minted));
     assert.deepEqual(configOf(cwd).aggregate, { constructor: { lines: 10, reason: INITIAL_ADOPTION_REASON } });
     assert.equal(check(cwd).code, 0, 'the config the writer just wrote must be one it accepts');
+  });
+});
+
+describe('source-size — spec:source-size/S18 the check stops on a schema-1 config and names the move', () => {
+  it('check-stops-on-schema-1: the limit lines, then the one line naming --write-baseline, exit 1, the file untouched', () => {
+    const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: SCHEMA1({ defaults: { maxLines: 300, maxLineBytes: 1000 }, ...RECORDS }) });
+    const before = readFileSync(configPath(cwd));
+    const result = check(cwd);
+    assert.deepEqual(result.stdout.split('\n'), ['source-size: limit lines-per-file 300, tolerance 10% — from override: carried from schema 1', ...KIT_LIMIT_LINES.slice(1), `source-size: STOPPED — ${configPath(cwd)} is schema 1, which the check no longer judges; --write-baseline moves it to schema 2 in its one write (a raise riding it still takes --reason): node "${TOOL}" --write-baseline --cwd "${cwd}"`, `source-size: WHY — ${SOURCE_SIZE_WHY}`], out(result));
+    assert.equal(result.code, 1, out(result));
+    assert.deepEqual(readFileSync(configPath(cwd)), before, 'the check writes nothing');
+  });
+});
+
+describe('source-size — spec:source-size/S19 the writer moves a schema-1 config to schema 2 in its one write', () => {
+  it('write-baseline-moves-schema-1: authored keys in their order, defaults replaced in its place by the differing value only, the template _README renewed, both records carried, no raise', async () => {
+    const { SCHEMA1_TEMPLATE_README, TEMPLATE_README } = await import('./source-size-report.mjs');
+    assert.equal(typeof SCHEMA1_TEMPLATE_README, 'string', 'the report keeps the schema-1 template text beside the template');
+    const records = { baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 451, reason: 'recorded at adoption' } } };
+    const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(441) }, config: { schema: 1, _README: SCHEMA1_TEMPLATE_README, roots: ['src'], defaults: { maxLines: 300, maxLineBytes: 1000 }, extensions: ['.mjs'], exclude: ['src/vendor'], ...records } });
+    const moved = writeBaseline(cwd);
+    const limits = { 'lines-per-file': { value: 300, tolerance: 10, reason: 'carried from schema 1' } };
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ schema: 2, _README: TEMPLATE_README, roots: ['src'], limits, extensions: ['.mjs'], exclude: ['src/vendor'], ...records }));
+    assert.equal(moved.code, 0, `the move needs no reason, because it raises nothing:\n${out(moved)}`);
+    assert.ok(moved.stdout.includes(movedLine(cwd)), moved.stdout);
+    assert.ok(moved.stdout.includes('source-size: limit lines-per-file 300, tolerance 10% — from override: carried from schema 1'), moved.stdout);
+    assert.doesNotMatch(moved.stdout, /\(raise\)|^reason:/m, 'the move raised no record');
+  });
+
+  it('write-baseline-moves-schema-1: any other _README verbatim and an equal defaults dropped; a raise riding the move still takes --reason', () => {
+    const cwd = project({ files: DEPLOYED, config: SCHEMA1(RECORDS) });
+    const moved = writeBaseline(cwd);
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical(MOVED(RECORDS)));
+    assert.equal(moved.code, 0, out(moved));
+    assert.ok(moved.stdout.includes(movedLine(cwd)), moved.stdout);
+    const authored = project({ files: { 'src/a.mjs': lines(10) }, config: SCHEMA1() });
+    const before = readFileSync(configPath(authored));
+    const refused = writeBaseline(authored);
+    assert.equal(refused.code, 1, out(refused));
+    assert.match(refused.stdout, /RAISES 1 recorded value/);
+    assert.deepEqual(readFileSync(configPath(authored)), before, 'a refused move writes nothing');
+    assert.equal(writeBaseline(authored, INITIAL_ADOPTION_REASON).code, 0);
+    assert.deepEqual(configOf(authored), MOVED({ baseline: {}, aggregate: { src: { lines: 10, reason: INITIAL_ADOPTION_REASON } } }));
+  });
+
+  it('adopt-moves-a-minted-schema-1-config-in-its-own-write: a grown tree then stops, no gate declared, the records unchanged', () => {
+    const cwd = project({ files: DEPLOYED, config: SCHEMA1(RECORDS) });
+    writeFileSync(join(cwd, 'src', 'a.mjs'), lines(12));
+    const result = adopt(cwd);
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical(MOVED(RECORDS)), 'the move is its own write, nothing regenerated');
+    assert.equal(result.code, 1, out(result));
+    assert.equal(result.stdout.split('\n')[0], movedLine(cwd));
+    assert.match(result.stdout, /src: aggregate lines 453 exceeds the recorded budget 451/);
+    assert.match(result.stdout, /--adopt STOPPED before declaring/);
+    assert.equal(existsSync(gatesPath(cwd)), false, 'no gate was declared over a record the tree outgrew');
+  });
+
+  it('adopt-moves-a-minted-schema-1-config-in-its-own-write: a scope stop after the move still prints the move', () => {
+    const cwd = project({ files: DEPLOYED, config: SCHEMA1(RECORDS) });
+    git(cwd, ['rm', '-q', '--cached', 'src/a.mjs', 'src/big.mjs']);
+    const result = adopt(cwd);
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical(MOVED(RECORDS)), 'the move was written');
+    assert.equal(result.stdout, movedLine(cwd), out(result));
+    assert.match(result.stderr, /the declared scope matches ZERO tracked files/);
+    assert.equal(result.code, 1, out(result));
+  });
+
+  it('adopt-moves-a-minted-schema-1-config-in-its-own-write: the adopted arm moves and converges; an authored one with no --reason writes nothing', () => {
+    const gates = JSON.stringify({ gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Source size', cmd: `node "${TOOL}" --check` }] }, null, 2);
+    const cwd = project({ files: { ...DEPLOYED, 'docs/ai/gates.json': gates }, config: SCHEMA1(RECORDS) });
+    const result = adopt(cwd);
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical(MOVED(RECORDS)), 'the move is its own write, nothing regenerated');
+    assert.equal(result.code, 0, out(result));
+    assert.equal(result.stdout.split('\n')[0], movedLine(cwd));
+    assert.match(result.stdout, /already declared — nothing to declare; --adopt converged/);
+    assert.equal(readFileSync(gatesPath(cwd), 'utf8'), gates, 'the declared gate is untouched');
+    const authored = project({ files: DEPLOYED, config: SCHEMA1() });
+    const before = readFileSync(configPath(authored));
+    assert.equal(main(['--adopt', '--cwd', authored]).code, 1, 'a first mint raises, so it needs a reason');
+    assert.deepEqual(readFileSync(configPath(authored)), before, 'a refused mint writes nothing, and no separate move ran');
+    assert.equal(existsSync(gatesPath(authored)), false);
   });
 });
 

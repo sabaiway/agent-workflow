@@ -35,8 +35,7 @@ const git = (cwd, args) => {
 
 const AUTHORED = {
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -175,6 +174,25 @@ describe('source-size — the gates-init candidate (4.1.a)', () => {
     assert.equal(candidate, null);
     assert.equal(note.includes('\n'), false, `a note is ONE line: ${JSON.stringify(note)}`);
     assert.match(note, /we\\u000aird/, 'and the byte is shown escaped rather than dropped — two different paths must never print the same');
+  });
+});
+
+describe('spec:source-size/S37 — the gate fill withholds the gate over a minted schema-1 config and names the --write-baseline move', () => {
+  const SCHEMA1 = { ...AUTHORED, schema: 1, defaults: { ...SOURCE_SIZE_DEFAULTS } };
+  const MINTED1 = { ...SCHEMA1, baseline: {}, aggregate: { src: { lines: 1, reason: 'initial adoption' } } };
+  it('schema1-withheld: a hand-written minted schema-1 config is withheld naming the move, and the unminted withhold still comes first', () => {
+    const cwd = project({ config: MINTED1 });
+    assert.deepEqual(sourceSizeCandidate(cwd), { candidate: null, note: `the source-size candidate was withheld: the declared practice is schema 1, which the check stops on until it is moved — run node "${TOOL}" --write-baseline --cwd "${cwd}", then re-run this preview` });
+    assert.equal(buildOffer(cwd).entries.some((e) => e.id === SOURCE_SIZE_GATE_ID), false, 'the offer carries no gate the check would red');
+    const unminted = sourceSizeCandidate(project({ config: SCHEMA1 }));
+    assert.equal(unminted.candidate, null);
+    assert.match(unminted.note, /not yet MINTED \(authored\)/, `the unminted withhold wins over schema 1: ${unminted.note}`);
+    assert.doesNotMatch(unminted.note, /schema 1/);
+  });
+  it('schema1-unrenderable-path: the path withhold over a minted schema-1 config names the move before declaring the gate by hand', () => {
+    const { candidate, note } = sourceSizeCandidate(project({ config: MINTED1 }), { sourceSizeTool: '/kit/we"ird/tools/source-size-check.mjs' });
+    assert.equal(candidate, null);
+    assert.ok(note.endsWith('— move the record to schema 2 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then declare the gate by hand'), note);
   });
 });
 

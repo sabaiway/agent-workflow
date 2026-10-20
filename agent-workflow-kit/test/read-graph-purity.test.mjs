@@ -30,7 +30,8 @@ const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{
 // The two `.claude/` writers join the write side with it — velocity-profile.mjs is what makes the
 // leaf's own settings-path literals load-bearing rather than a duplication (it exports the same two
 // strings, and importing them would pull the whole settings WRITER into the read graph).
-const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs', 'mcp-registration.mjs'];
+// source-size/index.mjs joins them because it is the door of the size check's module, which the core reaches, so it must stay write-free.
+const READ_ROOTS = ['flow-store-read.mjs', 'procedures.mjs', 'source-size-core.mjs', 'mcp-registration.mjs', 'source-size/index.mjs'];
 const WRITE_MODULES = ['atomic-write.mjs', 'flow-store.mjs', 'orchestration-write.mjs', 'mcp.mjs', 'velocity-profile.mjs', 'cheap-agents.mjs'];
 
 const moduleFiles = (() => {

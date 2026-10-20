@@ -5,10 +5,11 @@
 // here. NOTHING in the read graph imports THIS module, so the advisor surfaces can ask about the
 // practice without ever reaching a writer (D-18).
 //
-// What --check judges: every in-scope file against the config's `defaults`, and every RECORDED size
-// against the ratchet instead — a record may not grow, may not sit above what the tree measures, and
-// may not outlive its file. Each declared root carries the same ratchet over its summed lines, so
-// splitting one big file into six buys no headroom.
+// What --check judges: every in-scope file against the resolved limits with their bands, layout
+// where it is recorded or the config is absent, and every RECORDED size against the ratchet — a
+// record may not grow, and one above the tree or gone warns until the regeneration lowers or removes
+// it. Each declared root carries the same exact ratchet over its summed lines, so splitting one big
+// file into six buys no headroom. An absent config is judged under the kit's values.
 //
 // What --write-baseline does: regenerates the machine keys from the tree, and ONLY the machine keys.
 // The authored half is copied through with its VALUES and their ORDER preserved exactly; the file
@@ -21,7 +22,12 @@
 // What --adopt does: mints the record and declares the gate — the whole adoption as ONE consented
 // line, because the alternative is a two-step ceremony whose halves can be left half-done. It
 // composes the two writers it already has (this module's mint, the fill's consented apply restricted
-// to this one id) and owns no write of its own.
+// to this one id) and owns no write of its own, but for the schema-1 move of a minted config, which
+// carries both records verbatim.
+//
+// What --override does: once a regeneration under the current limits would raise nothing, writes or
+// removes one reasoned override of a kit limit and regenerates the machine keys under the new limits
+// in the same write. Every write here moves a schema-1 config to schema 2; --check stops on one.
 //
 // Exit codes: 0 green / 1 violation or refusal / 2 usage, config or enumeration error.
 // Dependency-free, Node >= 22. No side effects on import.
@@ -30,121 +36,147 @@ import { resolve } from 'node:path';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mjs';
 import { isDirectRun, sameFile } from './direct-run.mjs';
 import {
-  AUTHORED_KEYS,
+  KIT_LIMITS,
   SOURCE_SIZE_CONFIG_REL,
   SOURCE_SIZE_GATE_ID,
+  SOURCE_SIZE_SCHEMA,
+  applyOverride,
+  assertNoStoreRoot,
   loadSourceSizeConfig,
   matchesSourceSizeGate,
+  materialize,
+  migrateSchema1,
+  planRecord,
   reasonDefect,
   scopeFail,
+  serialize,
+  validateSourceSizeConfig,
 } from './source-size-core.mjs';
-import { changesFor, isRaise, judgeTree, ownEntry } from './source-size-judge.mjs';
+import { bandWarningsOf, judgeTree, standingWarningsOf, stopsOf } from './source-size-judge.mjs';
 import { GATES_REL, loadDeclaration } from './gates-declaration.mjs';
 import { applyFill } from './gates-init.mjs';
 import {
+  HELP,
+  TEMPLATE_README,
+  TEMPLATE_READMES,
   absentRefusalLines,
   adoptAbsentRefusalLines,
   checkReportLines,
   gateAlreadyDeclaredLines,
   gateDeclaredLines,
   gateRefusedLines,
+  notJudgedLines,
+  overrideOutgrownLines,
+  overrideUnchangedLines,
+  overrideWrittenLines,
   reasonRequiredLines,
   recordNoLongerHoldsLines,
   recordRecognizedLines,
+  schema1MovedLines,
+  schema1StopLines,
+  statedLimitLines,
   unmintedRefusalLines,
+  warningLines,
   writtenLines,
 } from './source-size-report.mjs';
 
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
 const RECORD_NOUN = 'the source-size record';
 
+// What an absent config is judged as: schema 2 under the kit's values, layout over "." and the store.
+const ABSENT = Object.freeze({ _README: TEMPLATE_README, schema: SOURCE_SIZE_SCHEMA });
+
+// Every run returns the config it resolved, so the CLI states the limits that run judged, and the
+// scope it judged, so the CLI says once what it did not.
 export const runCheck = ({ cwd, deps = {} }) => {
-  const { state, config, missingMachineKeys } = loadSourceSizeConfig(cwd, deps);
-  if (state === 'absent') return { code: 1, lines: absentRefusalLines(cwd) };
-  if (state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys }) };
-  const verdict = judgeTree(cwd, config, deps);
-  return { code: verdict.findings.length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict }) };
+  const { state, config: present, missingMachineKeys } = loadSourceSizeConfig(cwd, deps);
+  const absent = state === 'absent';
+  const config = absent ? validateSourceSizeConfig(ABSENT) : present;
+  if (config.schema === 1) return { code: 1, lines: schema1StopLines(cwd), config };
+  if (!absent && state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys }), config };
+  const judged = { absent, layout: absent || config.layout !== null };
+  const verdict = judgeTree(cwd, config, deps, judged);
+  return { code: stopsOf(verdict.findings).length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict, absent }), config, judged };
 };
 
 // ── the writer ────────────────────────────────────────────────────────────────────────────────────
 
-// planRecord computes what the regeneration WOULD write, before any reason is applied — so a raise
-// can be refused without ever building an entry that carries no reason. It reads the JUDGE's
-// projection, never its own: the checker's verdict and the file the writer produces are then two
-// renderings of one computation, and neither can promise what the other would not do.
-const planRecord = ({ config, verdict }) => {
-  const oldBaseline = config.baseline ?? {};
-  const oldAggregate = config.aggregate ?? {};
-  const files = verdict.scope.files.map((rel) => {
-    const next = verdict.projected.get(rel);
-    const recorded = ownEntry(oldBaseline, rel);
-    return { rel, next, recorded, changes: changesFor(rel, next, recorded) };
-  });
-  const roots = config.roots.map((root) => ({
-    root,
-    lines: verdict.rootLines.get(root) ?? 0,
-    recorded: ownEntry(oldAggregate, root),
-  }));
-  const deltas = [
-    ...files.flatMap(({ changes }) => changes),
-    // A record whose file left scope is REMOVED, never kept: that is what makes a split or a rename
-    // visible in the delta instead of silently surviving as headroom.
-    ...Object.entries(oldBaseline)
-      .filter(([rel]) => !verdict.measured.has(rel))
-      .flatMap(([rel, recorded]) => changesFor(rel, {}, recorded)),
-    ...roots
-      .filter(({ lines, recorded }) => (recorded ? recorded.lines : null) !== lines)
-      .map(({ root, lines, recorded }) => ({ target: root, dimension: 'aggregate lines', from: recorded ? recorded.lines : null, to: lines })),
-    ...Object.entries(oldAggregate)
-      .filter(([root]) => !config.roots.includes(root))
-      .map(([root, recorded]) => ({ target: root, dimension: 'aggregate lines', from: recorded.lines, to: null })),
-  ];
-  return { files, roots, deltas, raises: deltas.filter(isRaise) };
+// A schema-1 config is moved by the one transform, the kit's old template `_README` replaced by the
+// new one; every write of this module goes through it, so no writer ever writes schema 1 back.
+const schema2Of = (parsed) => (parsed.schema === 1 ? migrateSchema1(parsed, TEMPLATE_READMES) : parsed);
+
+// What a move says it did, read off the moved config itself.
+const movedLines = (cwd, parsed) => (parsed.schema === 1 ? schema1MovedLines(cwd) : []);
+
+const writeRecord = (cwd, body, deps) =>
+  writeDocsAiFileAtomic(cwd, SOURCE_SIZE_CONFIG_REL, body, deps, { stop: scopeFail, noun: RECORD_NOUN });
+
+// A run that writes prints every warning its write leaves standing; a refused write prints only
+// those standing today.
+const judgeForWrite = (cwd, config, deps, judged) => {
+  const verdict = judgeTree(cwd, config, deps, judged);
+  const { findings } = verdict;
+  return { verdict, plan: planRecord({ config, verdict }), bandWarnings: warningLines(bandWarningsOf(findings)), warnings: warningLines(standingWarningsOf(findings)) };
 };
 
-// The reason of an entry the regeneration did NOT raise is the one already recorded — a tighten
-// rewrites a number, never the human sentence that justified it.
-const materialize = ({ files, roots }, reason) => ({
-  baseline: Object.fromEntries(
-    files
-      .filter(({ next }) => Object.keys(next).length > 0)
-      .map(({ rel, next, recorded, changes }) => [rel, {
-        ...next,
-        reason: changes.some(isRaise) ? reason : recorded.reason,
-      }]),
-  ),
-  aggregate: Object.fromEntries(
-    roots.map(({ root, lines, recorded }) => [root, {
-      lines,
-      reason: !recorded || lines > recorded.lines ? reason : recorded.reason,
-    }]),
-  ),
-});
-
-// The file is CANONICALLY serialized: the authored VALUES and the ORDER the human wrote them in are
-// preserved exactly, their formatting is not — this file is machine-maintained and the writer owns
-// half of it, so one deterministic rendering is what makes "regenerate an unchanged tree and get the
-// same bytes" true at all.
-const serialize = (parsed, machineKeys) => {
-  const authored = Object.fromEntries(Object.keys(parsed).filter((key) => AUTHORED_KEYS.includes(key)).map((key) => [key, parsed[key]]));
-  return `${JSON.stringify({ ...authored, ...machineKeys }, null, 2)}\n`;
-};
-
-export const runWriteBaseline = ({ cwd, reason, deps = {} }) => {
+// Layout is regenerated wherever it is judged; --layout starts it on a present config with none, and
+// changes nothing on one that records layout or is absent.
+export const runWriteBaseline = ({ cwd, reason, layout = false, deps = {} }) => {
   // Checked BEFORE the config is read, so a project that was never deployed hears about the
   // deployment rather than about a file it has no place to put.
   assertDocsAiDeployment(cwd, deps, { stop: scopeFail, rel: SOURCE_SIZE_CONFIG_REL, noun: RECORD_NOUN });
-  const { state, config, parsed, text } = loadSourceSizeConfig(cwd, deps);
-  if (state === 'absent') return { code: 1, lines: absentRefusalLines(cwd) };
-  const verdict = judgeTree(cwd, config, deps);
-  const plan = planRecord({ config, verdict });
-  if (plan.raises.length > 0 && reason === undefined) return { code: 1, lines: reasonRequiredLines(cwd, plan.deltas) };
-  const body = serialize(parsed, materialize(plan, reason));
+  const loaded = loadSourceSizeConfig(cwd, deps);
+  const absent = loaded.state === 'absent';
+  const parsed = absent ? ABSENT : loaded.parsed;
+  const config = absent ? validateSourceSizeConfig(parsed) : loaded.config;
+  if (layout && !absent && config.layout === null) assertNoStoreRoot(config.roots);
+  const judged = { absent, layout: absent || layout || config.layout !== null };
+  const { plan, bandWarnings, warnings } = judgeForWrite(cwd, config, deps, judged);
+  const starts = layout && !absent && config.layout === null;
+  if (plan.raises.length > 0 && reason === undefined) return { code: 1, lines: [...bandWarnings, ...reasonRequiredLines(cwd, plan.deltas, { layout: starts })], config, judged };
+  const body = serialize(schema2Of(parsed), materialize(plan, reason));
   // Whether anything was written is decided by the BYTES, not by the delta count: completing a
   // hand-edited half record changes the file while raising nothing at all.
-  const changed = body !== text;
-  if (changed) writeDocsAiFileAtomic(cwd, SOURCE_SIZE_CONFIG_REL, body, deps, { stop: scopeFail, noun: RECORD_NOUN });
-  return { code: 0, lines: writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed }) };
+  const changed = body !== loaded.text;
+  if (changed) writeRecord(cwd, body, deps);
+  const written = writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed });
+  return { code: 0, lines: [...warnings, ...movedLines(cwd, parsed), ...written], config, judged };
+};
+
+// --override: the projection under the CURRENT limits comes first, so an override's reason never
+// lands on drift it did not cause; only then is the override applied and the record regenerated
+// under the new limits, in the same atomic write.
+export const runOverride = ({ cwd, id, value, tolerance, kitDefault, reason, deps = {} }) => {
+  assertDocsAiDeployment(cwd, deps, { stop: scopeFail, rel: SOURCE_SIZE_CONFIG_REL, noun: RECORD_NOUN });
+  const { state, config, parsed, text, missingMachineKeys } = loadSourceSizeConfig(cwd, deps);
+  if (state === 'absent') return { code: 1, lines: absentRefusalLines(cwd) };
+  if (state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys }), config };
+  const judged = { absent: false, layout: config.layout !== null };
+  const current = planRecord({ config, verdict: judgeTree(cwd, config, deps, judged) });
+  if (current.raises.length > 0) return { code: 1, lines: overrideOutgrownLines(cwd, current.deltas), config, judged };
+  const resolved = config.limits[id];
+  const filled = kitDefault ? null : { value: value ?? resolved.value, tolerance: tolerance ?? resolved.tolerance, reason };
+  const kit = KIT_LIMITS[id];
+  if (filled !== null && filled.tolerance === kit.tolerance && (kit.value === null || filled.value === kit.value)) {
+    throw usageFail(`--override ${id} equals the kit's own numbers — pass --kit-default to return to them; the writer never writes an override equal to the kit's`);
+  }
+  const next = applyOverride(schema2Of(parsed), id, filled);
+  const nextConfig = validateSourceSizeConfig(next);
+  const { plan, warnings } = judgeForWrite(cwd, nextConfig, deps, judged);
+  const body = serialize(next, materialize(plan, reason));
+  if (body === text) return { code: 0, lines: [...warnings, ...overrideUnchangedLines(cwd, id)], config: nextConfig, judged };
+  writeRecord(cwd, body, deps);
+  return {
+    code: 0,
+    judged,
+    lines: [
+      ...warnings,
+      ...overrideWrittenLines({ cwd, id, removed: kitDefault, reason }),
+      ...movedLines(cwd, parsed),
+      ...(plan.deltas.length === 0 ? [] : writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed: true })),
+    ],
+    config: nextConfig,
+  };
 };
 
 // ── the adoption verb (D-16) ──────────────────────────────────────────────────────────────────────
@@ -201,65 +233,55 @@ const recognizeRecord = ({ cwd, deps }) => {
   return { code: 0, lines: recordRecognizedLines(cwd) };
 };
 
+// A MINTED schema-1 config is moved in its own write before adoption reads it as schema 2: the
+// authored half transformed, both machine records carried verbatim, nothing regenerated — so the
+// adoption reason can never ride a raise. An authored or incomplete one is moved by the mint itself.
+const moveMinted = (cwd, parsed, deps) => {
+  writeRecord(cwd, serialize(schema2Of(parsed), { baseline: parsed.baseline, aggregate: parsed.aggregate }), deps);
+  return movedLines(cwd, parsed);
+};
+
+// A stop after the move still prints the move: the write happened, and no stop may hide it.
+const reportingMove = (moved, run) => {
+  try {
+    return run();
+  } catch (err) {
+    throw Object.assign(err, { lines: [...moved, ...(err.lines ?? [])] });
+  }
+};
+
 // --adopt = settle the record, then declare the gate. The order is not a preference: the fill offers
 // the gate ONLY over a minted config (declaring it earlier would declare a gate that refuses), so
 // the record is what makes the declaration offerable at all.
 export const runAdopt = ({ cwd, reason, deps = {} }) => {
-  const { state } = loadSourceSizeConfig(cwd, deps);
+  const { state, config, parsed } = loadSourceSizeConfig(cwd, deps);
   if (state === 'absent') return { code: 1, lines: adoptAbsentRefusalLines(cwd) };
+  const moved = state === 'minted' && config.schema === 1 ? moveMinted(cwd, parsed, deps) : [];
   // ADOPTED is asked FIRST, and it is a question about the GATE alone. Idempotence cannot be made
   // conditional on the record still holding: a declared gate reports its own staleness on every run,
   // with the reasoned lane, and stopping here would tell a reader the gate was not declared while it
   // plainly is — which is exactly what re-running the advisor's one-liner on a drifted tree does.
   // Once the gate is there and the record is minted, nothing is left to adopt.
   const declared = gateIsDeclared(cwd, deps);
-  if (declared && state === 'minted') return { code: 0, lines: gateAlreadyDeclaredLines(GATES_REL) };
+  if (declared && state === 'minted') return { code: 0, lines: [...moved, ...gateAlreadyDeclaredLines(GATES_REL)] };
   // Either half carries its OWN self-servable refusals (a raise with no reason, a project with no
   // docs/ai, a record the tree outgrew). They are returned unchanged: re-wording them here would be
   // the second practice this module exists to avoid, and each already names the step that clears it.
-  const record = state === 'minted' ? recognizeRecord({ cwd, deps }) : runWriteBaseline({ cwd, reason, deps });
-  if (record.code !== 0) return record;
-  if (declared) return { code: 0, lines: [...record.lines, ...gateAlreadyDeclaredLines(GATES_REL)] };
+  const record = state === 'minted' ? reportingMove(moved, () => recognizeRecord({ cwd, deps })) : runWriteBaseline({ cwd, reason, deps });
+  if (record.code !== 0) return { code: record.code, lines: [...moved, ...record.lines] };
+  if (declared) return { code: 0, lines: [...moved, ...record.lines, ...gateAlreadyDeclaredLines(GATES_REL)] };
   const gate = declareGate(cwd, deps);
-  return { code: gate.code, lines: [...record.lines, ...gate.lines] };
+  return { code: gate.code, lines: [...moved, ...record.lines, ...gate.lines] };
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
-const MODES = Object.freeze(['--check', '--write-baseline', '--adopt']);
-
-const HELP = `source-size-check — the declared source-size practice (agent-workflow family).
-
-Usage:
-  node source-size-check.mjs --check [--cwd <project-root>]
-  node source-size-check.mjs --write-baseline [--reason "<text>"] [--cwd <project-root>]
-  node source-size-check.mjs --adopt [--reason "<text>"] [--cwd <project-root>]
-
-Judges every in-scope file against ${SOURCE_SIZE_CONFIG_REL}: git-tracked files under a declared
-root carrying a declared extension, minus the excluded path-segment prefixes. Scope is DECLARED,
-never guessed — with the config absent the check REFUSES and prints the exact file to author.
-Symlinks and submodule gitlinks are skipped by kind; an unmerged index, a non-UTF-8 in-scope path,
-an unverifiable in-scope file and an empty declared scope are refusals, never silent greens.
-
-Counting: lines, and the longest line in BYTES. A terminator never counts (the CR of a CRLF
-included); a last line with no final newline still counts; an empty file is 0 lines.
-
-A file carrying a recorded baseline entry is recorded DEBT: it is judged against the record, which
-may not grow, may not sit above the measured size, and may not outlive its file. Each declared root
-carries the same ratchet over its summed lines.
-
---write-baseline regenerates the machine keys (baseline, aggregate) from the tree. The authored keys
-keep their values and their order; the file is canonically serialized, so its formatting is the
-writer's. A regeneration that RAISES any recorded value needs --reason; the string is recorded in
-the entry it raised. A pure tighten needs none.
-
---adopt is the ONE-line adoption: it mints the record and declares the source-size gate (and NOTHING
-else) in docs/ai/gates.json. It is idempotent on an already-adopted project. With the config absent
-it refuses with the exact file to author — that authoring is the practice's single manual step, and
-the refusal says so. A refused declaration exits nonzero and reports both halves: what was minted and
-what was not declared.
-
-Exit codes: 0 green; 1 violation or refusal; 2 usage, config or enumeration error.`;
+const MODES = Object.freeze(['--check', '--write-baseline', '--adopt', '--override']);
+const RUNS = Object.freeze({ '--check': runCheck, '--write-baseline': runWriteBaseline, '--adopt': runAdopt, '--override': runOverride });
+// The modes whose run states the limits it judged; --adopt composes them and says what it did.
+const STATES_LIMITS = Object.freeze(['--check', '--write-baseline', '--override']);
+const KIT_DEFAULT = '--kit-default';
+const LAYOUT = '--layout';
 
 const takeOption = (argv, flag) => {
   const at = argv.indexOf(flag);
@@ -268,33 +290,76 @@ const takeOption = (argv, flag) => {
   return { rest: [...argv.slice(0, at), ...argv.slice(at + 2)], value: argv[at + 1] };
 };
 
+// A number on the command line is plain decimal digits, read inside its grammar or refused.
+const numberOf = (flag, raw, min, max, what) => {
+  if (raw === undefined) return undefined;
+  const n = /^[0-9]+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(n) || n < min || n > max) throw usageFail(`${flag} must be ${what}, got ${JSON.stringify(raw)}`);
+  return n;
+};
+
+// Everything the argument list alone decides about --override: the id, the options' grammar and
+// their combination. The state refusals and the equality stop come later, in the run.
+const overrideOptions = ({ id, value, tolerance, kitDefault }) => {
+  if (!Object.hasOwn(KIT_LIMITS, id)) throw usageFail(`--override ${JSON.stringify(id)} names no kit limit — the kit's limits are ${Object.keys(KIT_LIMITS).join(', ')}`);
+  if (kitDefault && (value !== undefined || tolerance !== undefined)) throw usageFail(`${KIT_DEFAULT} returns to the kit's numbers, so it takes no --value or --tolerance`);
+  if (!kitDefault && value === undefined && tolerance === undefined) throw usageFail(`--override ${id} needs --value, --tolerance or ${KIT_DEFAULT}`);
+  if (value !== undefined && KIT_LIMITS[id].value === null) throw usageFail(`--override ${id} takes --tolerance only — its count is the one a project records`);
+  return {
+    id,
+    kitDefault,
+    value: numberOf('--value', value, 1, Number.MAX_SAFE_INTEGER, 'a positive integer'),
+    tolerance: numberOf('--tolerance', tolerance, 0, 100, 'an integer percent from 0 to 100'),
+  };
+};
+
 export const main = (argv, ctx = {}) => {
   try {
     if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
     const cwdOption = takeOption(argv, '--cwd');
     const reasonOption = takeOption(cwdOption.rest, '--reason');
+    const valueOption = takeOption(reasonOption.rest, '--value');
+    const toleranceOption = takeOption(valueOption.rest, '--tolerance');
+    const kitDefault = toleranceOption.rest.includes(KIT_DEFAULT);
+    const layout = toleranceOption.rest.includes(LAYOUT);
+    const rest = toleranceOption.rest.filter((arg) => arg !== KIT_DEFAULT && arg !== LAYOUT);
     // Resolved BEFORE the run and before anything is rendered: every path this run names is then
     // meaningful from any directory, not only from the one that invoked it.
     const cwd = resolve(ctx.cwd ?? process.cwd(), cwdOption.value ?? '.');
     // Counted over the ARGUMENTS, not over the mode list: filtering the list collapses repeats, so
     // `--adopt --adopt` read as exactly one mode and a WRITE ran under an argument list this very
     // guard had just called invalid.
-    const modes = reasonOption.rest.filter((arg) => MODES.includes(arg));
+    const modes = rest.filter((arg) => MODES.includes(arg));
     if (modes.length === 0) throw usageFail(`nothing to do — pass one of ${MODES.join(', ')} (see --help)`);
     if (modes.length > 1) throw usageFail(`pass exactly ONE mode, got: ${modes.join(', ')}`);
-    const unknown = reasonOption.rest.filter((arg) => !MODES.includes(arg));
+    const [mode] = modes;
+    const idOption = mode === '--override' ? takeOption(rest, '--override') : { rest, value: undefined };
+    const unknown = idOption.rest.filter((arg) => !MODES.includes(arg));
     if (unknown.length > 0) throw usageFail(`unknown argument: ${unknown[0]}`);
+    if (mode !== '--override') {
+      const stray = [['--value', valueOption.value], ['--tolerance', toleranceOption.value], [KIT_DEFAULT, kitDefault || undefined]]
+        .find(([, given]) => given !== undefined);
+      if (stray) throw usageFail(`${stray[0]} belongs to --override`);
+    }
+    if (layout && mode !== '--write-baseline') throw usageFail(`${LAYOUT} belongs to --write-baseline — it starts the layout record`);
     if (reasonOption.value !== undefined) {
-      if (modes[0] === '--check') throw usageFail('--reason belongs to --write-baseline and --adopt — a check records nothing');
+      if (mode === '--check') throw usageFail('--reason belongs to --write-baseline, --adopt and --override — a check records nothing');
       const defect = reasonDefect(reasonOption.value);
       if (defect) throw usageFail(defect);
+    } else if (mode === '--override') {
+      throw usageFail('--override needs --reason "<text>" — an override is a reasoned change of a kit number');
     }
+    const override = mode === '--override'
+      ? overrideOptions({ id: idOption.value, value: valueOption.value, tolerance: toleranceOption.value, kitDefault })
+      : {};
     const deps = ctx.deps ?? {};
-    const run = { '--check': runCheck, '--write-baseline': runWriteBaseline, '--adopt': runAdopt }[modes[0]];
-    const { code, lines } = run({ cwd, reason: reasonOption.value, deps });
-    return { code, stdout: lines.join('\n'), stderr: '' };
+    const { code, lines, config, judged } = RUNS[mode]({ cwd, reason: reasonOption.value, layout, deps, ...override });
+    const states = STATES_LIMITS.includes(mode) && config;
+    const limits = states ? statedLimitLines(config) : [];
+    const notJudged = states && judged ? notJudgedLines(cwd, { ...judged, config }) : [];
+    return { code, stdout: [...limits, ...notJudged, ...lines].join('\n'), stderr: '' };
   } catch (err) {
-    return { code: err.exitCode ?? 1, stdout: '', stderr: `source-size-check: ${err.message}` };
+    return { code: err.exitCode ?? 1, stdout: (err.lines ?? []).join('\n'), stderr: `source-size-check: ${err.message}` };
   }
 };
 

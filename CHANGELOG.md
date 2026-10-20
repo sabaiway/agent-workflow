@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-20 — AD-192: the size check judges every limit with a tolerance and counts layout, from one frozen kit table (kit 14.40.0 MINOR; engine 5.12.1, memory 8.2.1 and both bridges unchanged)
+
+**The kit's five size limits — lines per file, bytes per line, entries per directory, depth and files per root — live
+in one frozen table of the new pure module `agent-workflow-kit/tools/source-size/`, each with a tolerance: a value
+within its band warns on every run, and, on a present config, a stop is exactly a finding the regeneration would raise.** The config moves
+to schema 2 (scope, record, reasoned overrides; schema 1 is still read, stops `--check` and is moved by every write);
+`--override` changes one number on the user's yes; layout is counted over every tracked entry and the spec store and
+recorded under the machine key `layout`; an absent config is judged on layout alone. This repository records its
+existing piles under that ruling. Contracts: source-size revision 3, project-rules revision 4, init-project revision
+13. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-19 — AD-191: agents find the project rules from a Memory Map row, and `/agent-workflow-kit rules` changes them (kit 14.39.0 MINOR; engine 5.12.1 and memory 8.2.1 PATCH; both bridges unchanged)
 
 **The kit's reconcile keeps one Memory Map row per rules theme in `AGENTS.md`, linking its effective file, and the new

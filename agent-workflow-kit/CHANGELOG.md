@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.40.0 — the size check judges every limit with a tolerance, counts entries per directory, depth and files per root, and changes a kit number only through `--override` (AD-192)
+
+**`source-size-check.mjs` now judges five limits from one frozen kit table, each with a tolerance: a value over its
+limit but within its band, ceil(value × tolerance / 100), warns on every run and still exits 0, and only a value
+beyond the band stops, unless a record holds it.** The table: lines per file 400 (10%), bytes per line 1000 (0%), entries per directory 20 (10%), depth 5 (0%),
+files per root the recorded count (10%). On a present config, a finding stops exactly when `--write-baseline` would raise a record; a record
+above the tree, or one whose file is gone, now warns until the regeneration lowers or removes it.
+
+- **Layout.** Entries per directory, depth and files per root are counted over every tracked entry under each declared
+  root, and over `docs/ai/specs` walked from disk as one more root. Start it with
+  `source-size-check.mjs --write-baseline --layout --reason "<text>"`: the record goes under the new machine key
+  `layout`. Until then every run prints one line saying layout is not judged.
+- **No config.** `--check` on a project with no `docs/ai/source-size.json` judges layout alone under the kit's values,
+  says so, and writes nothing; `--write-baseline --reason "<text>"` writes the whole config in one write.
+- **Config schema 2.** `docs/ai/source-size.json` holds the scope, the record and reasoned overrides; the numbers live
+  in the kit. `--override <id> [--value <n>] [--tolerance <p>] --reason "<text>"` changes one limit and regenerates
+  the record in the same write; `--override <id> --kit-default --reason "<text>"` returns it to the kit's (files per
+  root takes a tolerance only). `/agent-workflow-kit rules` routes "change
+  a number" to that command and runs it on your yes. The root `.` covers the whole tree; a config declaring no
+  extension judges no file's lines and says so.
+- **Schema 1.** An old config is still read. `--check` stops on it and names the move; `--write-baseline` and
+  `--adopt` move it to schema 2 in their one write, keeping your scope and records. The advisor offers the move as
+  `source-size.schema-1`, and the gate fill does not offer the source-size gate over it.
+- **Everywhere it is read.** The gate matrix prints a green source-size check's warning lines under its row; the
+  practice block of every `procedures` render names the five limits with their tolerances, whether layout is
+  recorded and, on a schema-1 config, the move.
+
+**Upgrade note.** A deployment whose `docs/ai/source-size.json` is schema 1 has one step: the check stops on it, so
+say yes when the advisor shows `source-size.schema-1`, and it runs `--write-baseline` once to move the config (a raise
+riding the move asks for `--reason`). Every other deployment needs no step. A file of 401 to 440 lines now warns instead of stopping, and its record
+warns as obsolete until the next `--write-baseline` removes it. To judge layout, run
+`source-size-check.mjs --write-baseline --layout --reason "<text>"` once.
+
 ## 14.39.0 — agents find the project rules from a row in the entry file's Memory Map, and you change them through one command, `/agent-workflow-kit rules` (AD-191)
 
 **Every upgrade now keeps a Memory Map row in `AGENTS.md` that links `docs/ai/rules/effective/project-layout.md`, so an

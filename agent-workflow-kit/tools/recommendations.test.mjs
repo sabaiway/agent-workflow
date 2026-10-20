@@ -3587,6 +3587,18 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     assert.equal(minted.code, 0, minted.stdout + minted.stderr);
     runFixtureGit(vendoredRoot, ['add', '-A']);
     addBuilt(collect(vendoredRoot));
+    const schema1Root = makeRoot(t);
+    writeFileSync(join(schema1Root, 'docs', 'ai', 'source-size.json'), JSON.stringify({
+      _README: 'fixture',
+      schema: 1,
+      defaults: { ...SOURCE_SIZE_DEFAULTS },
+      roots: ['src'],
+      exclude: [],
+      extensions: ['.mjs'],
+      baseline: {},
+      aggregate: { src: { lines: 1, reason: 'fixture' } },
+    }));
+    addBuilt(collect(schema1Root));
     const { repoFactory, writeFence, stubs, line } = await import('./sandbox-masks-harness.test.mjs');
     const root = repoFactory('s54-mount', { 'docs/ai/.workflow-version': '4.0.0\n' })();
     writeFence(root, '.zshrc');

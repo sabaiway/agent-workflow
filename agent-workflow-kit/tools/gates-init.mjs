@@ -425,12 +425,12 @@ export const flowCheckCandidate = (cwd, deps = {}) => {
 };
 
 // The conditional SOURCE-SIZE candidate — keyed on the practice's own declaration rather than on a
-// recipe: the gate is offered ONLY over a MINTED docs/ai/source-size.json, because on any other
-// state the checker REFUSES by design (an absent config has no declared scope; an authored or
-// half-written one records nothing yet), and a declared gate that refuses is a matrix this preview
-// would have reddened on the user's behalf. The two states are told apart out loud: a project that
-// never declared the practice hears nothing (there is no offer to make), while one that authored it
-// and stopped short hears WHY the gate is not offered yet — the mint is the step it is missing.
+// recipe: the gate is offered ONLY over a MINTED schema-2 docs/ai/source-size.json. Over an authored
+// or half-written one the checker REFUSES by design, and a declared gate that refuses is a matrix
+// this preview would have reddened on the user's behalf; a minted schema-1 one is withheld naming its
+// --write-baseline move. A project that never declared the practice hears nothing here, while one
+// that authored it and stopped short hears WHY the gate is not offered yet — the mint is the step it
+// is missing.
 // A path is unrenderable when EITHER guard fires, and both are asked ONCE, before anything about
 // this candidate is printed. They are the same question wearing two coats: double-quoting cannot
 // survive a shell-active byte, and a line-unsafe byte cannot be printed at all — U+2028 quotes
@@ -441,8 +441,9 @@ const unrenderableToolPath = (text) => isLineUnsafe(text) || DQ_UNSAFE_PATH_PATT
 export const sourceSizeCandidate = (cwd, deps = {}) => {
   const toolPath = deps.sourceSizeTool ?? SOURCE_SIZE_TOOL_PATH;
   try {
-    const { state } = loadSourceSizeConfig(resolve(cwd), deps);
+    const { state, config } = loadSourceSizeConfig(resolve(cwd), deps);
     if (state === 'absent') return { candidate: null, note: null };
+    const schema1 = state === 'minted' && config.schema === 1;
     // Asked BEFORE the state branches: every branch below prints this path, so a check that only one
     // of them performs is a guard the other silently lacks.
     if (unrenderableToolPath(toolPath)) {
@@ -451,7 +452,7 @@ export const sourceSizeCandidate = (cwd, deps = {}) => {
       // The advice still follows the STATE: over an unminted record a hand-declared gate is red on
       // every run, so pointing there would hand the reader their next failure as the way out.
       const lane = state === 'minted'
-        ? 'declare the gate by hand'
+        ? `${schema1 ? 'move the record to schema 2 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then ' : ''}declare the gate by hand`
         : `mint the record first — run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project, then declare the gate by hand`;
       return {
         candidate: null,
@@ -477,6 +478,14 @@ export const sourceSizeCandidate = (cwd, deps = {}) => {
           `the source-size candidate was withheld: the declared practice is not yet MINTED (${state}) — ` +
           `the checker refuses until it records this tree, so declaring the gate now would red the matrix; ` +
           `${recovery}, then re-run this preview`,
+      };
+    }
+    // A minted schema-1 record stops the check until the writer moves it; the move takes no reason.
+    if (schema1) {
+      const project = resolve(cwd);
+      return {
+        candidate: null,
+        note: `the source-size candidate was withheld: the declared practice is schema 1, which the check stops on until it is moved — ${unrenderableToolPath(project) ? 'run source-size-check.mjs --write-baseline yourself, with the working directory set to this project (no command is printed: this project\'s path cannot be rendered into one)' : `run node "${toolPath}" --write-baseline --cwd "${project}"`}, then re-run this preview`,
       };
     }
     return {

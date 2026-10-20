@@ -183,6 +183,8 @@ export const SEVERITIES = Object.freeze({
   // acknowledgment. An id SQUATTER is the opposite: the id says adopted while nothing measures size.
   'source-size.adopted-elsewhere': SEVERITY_OPTIONAL,
   'source-size.id-squatter': SEVERITY_ATTENTION,
+  // A minted schema-1 config is a record the check stops on until the writer moves it.
+  'source-size.schema-1': SEVERITY_ATTENTION,
   'gate-hook': SEVERITY_OPTIONAL,
   // A placed hook that predates the marker key goes DARK on a marker-carrying declaration (unknown
   // key → auto-approval off), so a CONFIGURED capability silently stops working: attention, not an
@@ -278,7 +280,8 @@ export const WHATS = Object.freeze({
   'gates-inert.producer-unrecognized': 'the coverage checker ({id}) has NO producer declared and none offerable, on a tree the changed-line domain barely reaches',
   'gates-inert.coverage-domain-narrow': 'certification covers the assessable minority only — {ext} dominate(s) the tracked tree, and the changed-line domain excludes them',
   'source-size': 'no source-size gate — module size drifts unmeasured, and an over-cap file is invisible instead of recorded debt',
-  'source-size.unminted': 'the source-size gate is declared but its record ({state}) is not minted — the checker refuses, so this gate reds every run',
+  'source-size.unminted': 'the source-size gate is declared over an unminted record ({state}) — the check refuses it, or if absent judges layout alone, no line',
+  'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write',
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
   'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
@@ -830,10 +833,10 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
 };
 
 // The SOURCE-SIZE offer (baseline-practices Plan 1). This is the practice's ONE discovery lane: the
-// checker ships with the kit and refuses until a project declares its own scope, so without this
-// item a deployment would never learn the practice exists — the same OPT-IN-SHIPS-INVISIBLE failure
-// the capability registry was built for. New and existing deployments meet it identically, because
-// the advisor section is mandatory at every upgrade.
+// checker ships with the kit and, until a project declares its own scope, judges no file's lines, so
+// without this item a deployment would never learn the practice exists — the same
+// OPT-IN-SHIPS-INVISIBLE failure the capability registry was built for. New and existing deployments
+// meet it identically, because the advisor section is mandatory at every upgrade.
 //
 // The probe asks what each declared cmd CLAIMS about this checker, in the three named outcomes —
 // because the boolean it used to ask made a DELIBERATELY VENDORED copy read as "no source-size gate
@@ -845,11 +848,22 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
 //
 // Precedence over a MIXED declaration is pinned and deterministic: any canonical match answers the
 // practice question outright; else any tool-elsewhere claim; else the id collision; else the offer.
+// A MINTED schema-1 config is asked first, ahead of the gate arms: the check stops on it whatever is
+// declared. Its line carries no reason, since a pinned one would launder a raise; an unreadable
+// config keeps today's arms, which report it.
+const schema1Minted = (root, deps) => {
+  try { const { state, config } = loadSourceSizeConfig(root, deps); return state === 'minted' && config.schema === 1; } catch { return false; }
+};
+
 const probeSourceSize = ({ root, deps, add, skip }) => {
   try {
+    const tool = toolPath('source-size-check.mjs');
+    if (schema1Minted(root, deps)) {
+      add('source-size', fillTemplate(WHATS['source-size.schema-1'], {}), `node ${q(tool)} --write-baseline --cwd ${q(root)}`, 'source-size.schema-1');
+      return;
+    }
     const declaration = loadDeclaration(root, deps);
     const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
-    const tool = toolPath('source-size-check.mjs');
     // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
     // mint records, and a first mint records the whole tree — so "this is what the tree already
     // carried when the practice arrived" is the one sentence that is true of all of them.
@@ -858,11 +872,11 @@ const probeSourceSize = ({ root, deps, add, skip }) => {
     const canonical = claims.filter((c) => c.claim === CHECKER_CLAIM.CANONICAL);
     const elsewhere = claims.filter((c) => c.claim === CHECKER_CLAIM.ELSEWHERE);
     if (canonical.length > 0 || elsewhere.length > 0) {
-      // A DECLARED gate is not the same fact as a working one: the checker refuses on every config
-      // state but MINTED, so a gate declared over an absent or half-written record reds the matrix
-      // on every run. Reading the declaration alone would report that deployment as adopted and say
-      // nothing about the one thing that is wrong with it. The split changes NOTHING here — the
-      // outcome, its attention class and its immunity to every ack are the same whichever copy runs.
+      // A DECLARED gate is not the same fact as a working one: the checker refuses an authored or
+      // half-written record, so a gate declared over one reds the matrix on every run, and over an
+      // absent one it judges layout alone and no line. The declaration alone would report that deployment
+      // as adopted and say nothing about the one thing wrong with it. The split changes NOTHING here —
+      // the outcome, its attention class and its immunity to every ack are the same whichever copy runs.
       const { state } = loadSourceSizeConfig(root, deps);
       if (state !== 'minted') {
         // Only the way OUT differs. With the gate declared through another copy, `--adopt` would

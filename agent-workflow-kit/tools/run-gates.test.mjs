@@ -15,6 +15,7 @@ import {
   selectGates,
   composeSummaryLine,
   runCli,
+  runGates,
   BASH_PROBE_CMD,
   spawnGateViaBash,
   isFinalCapableDeclaration,
@@ -1891,5 +1892,34 @@ describe('run-gates — the coverage= summary field (Decision 8)', () => {
 
   it('the composed default is the honest unknown — a caller that states nothing claims nothing', () => {
     assert.ok(composeSummaryLine({ status: 'ok', results: [] }).endsWith(' coverage=unknown'), composeSummaryLine({ status: 'ok', results: [] }));
+  });
+});
+
+describe('runGates — a green source-size check echoes its warning lines and nothing else of its output (spec:source-size/S35)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'run-gates-source-size-'));
+  after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'source-size-check.mjs'), 'export {};\n');
+  const gateOf = (id, path) => ({ id, title: id, cmd: `node "${path}" --check` });
+  const KIT_PATH = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
+  const KIT = gateOf('kit', KIT_PATH);
+  const WARNINGS = ['source-size: WARNING — src/a.mjs: lines 440 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops', 'source-size: WARNING — src/c.mjs: lines 445 is under the recorded 450 — the regeneration lowers it'];
+  const STDOUT = ['source-size: limit lines-per-file 400, tolerance 10% — from kit', WARNINGS[0], '  source-size: WARNING — an indented line', WARNINGS[1], 'source-size: PASS with 2 warning(s) — 3 in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled', ''].join('\n');
+  const runLogged = (gates, outcomes = []) => {
+    const log = [];
+    runGates(gates, { cwd: dir, spawn: () => outcomes.shift() ?? { status: 0, stdout: STDOUT, stderr: '' }, now: () => 0, log: (line) => log.push(line) });
+    return log;
+  };
+  const passed = (id, echoed = []) => [`── ${id} — ${id}`, '   PASS (0.0s)', ...echoed];
+  it('the kit\'s own checker and a regular-file copy elsewhere echo exactly their warning lines after PASS', () => {
+    assert.deepEqual(runLogged([KIT]), passed('kit', WARNINGS));
+    assert.deepEqual(runLogged([gateOf('vendored', join(dir, 'source-size-check.mjs'))]), passed('vendored', WARNINGS));
+  });
+  it('a gate naming a missing copy and any other green gate printing a warning-prefixed line stay unechoed', () => {
+    const gates = [KIT, gateOf('missing', join(dir, 'gone', 'source-size-check.mjs')), { id: 'other', title: 'other', cmd: 'node --test x' }];
+    assert.deepEqual(runLogged(gates), [...passed('kit', WARNINGS), ...passed('missing'), ...passed('other')]);
+  });
+  it('a failing source-size gate keeps its whole output verbatim', () => {
+    const log = runLogged([KIT, gateOf('failing', KIT_PATH)], [null, { status: 1, stdout: STDOUT, stderr: 'boom\n' }]);
+    assert.deepEqual(log, [...passed('kit', WARNINGS), '── failing — failing', '   FAIL exit=1 (0.0s)', STDOUT.slice(0, -1), 'boom']);
   });
 });

@@ -9,6 +9,8 @@
 //   • source-size-scope.mjs    — which files are judged (D-6) and how big each one is (D-7)
 //   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher),
 //                                and which of the three tool claims it makes when it is not
+//   • source-size/index.mjs    — the door of the size check's module: the kit's limits and their
+//                                lines, the band and the layout count, and the recorded ratchet as data
 //
 // Re-export only: a consumer imports the practice, never a particular half, so a later split moves
 // code without touching a single call site.
@@ -16,6 +18,7 @@
 export {
   SOURCE_SIZE_CONFIG_REL,
   SOURCE_SIZE_STOP,
+  SOURCE_SIZE_WARNING_PREFIX,
   SOURCE_SIZE_WHY,
   configFail,
   configPathFor,
@@ -28,10 +31,12 @@ export {
 export {
   AUTHORED_KEYS,
   INITIAL_ADOPTION_REASON,
+  LAYOUT_KEY,
   MACHINE_KEYS,
   REASON_MAX_BYTES,
   SOURCE_SIZE_DEFAULTS,
   SOURCE_SIZE_SCHEMA,
+  assertNoStoreRoot,
   loadSourceSizeConfig,
   practiceFacts,
   reasonDefect,
@@ -45,6 +50,28 @@ export {
   measureFile,
   resolveScope,
 } from './source-size-scope.mjs';
+
+export {
+  KIT_LIMITS,
+  SCHEMA1_REASON,
+  SPEC_STORE_ROOT,
+  applyOverride,
+  bandOf,
+  changesFor,
+  isRaise,
+  layoutCounts,
+  layoutDefect,
+  limitLines,
+  limitsDefect,
+  materialize,
+  migrateSchema1,
+  ownEntry,
+  planRecord,
+  projectLayout,
+  resolveLimits,
+  serialize,
+  walkSpecStore,
+} from './source-size/index.mjs';
 
 export {
   SOURCE_SIZE_GATE_ID,

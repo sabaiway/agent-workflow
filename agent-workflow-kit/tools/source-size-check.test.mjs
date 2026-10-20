@@ -47,8 +47,7 @@ const agg = (lines) => ({ src: { lines, reason: 'initial adoption' } });
 
 const CONFIG = (over = {}) => ({
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -75,7 +74,7 @@ const out = (result) => `${result.stdout}\n${result.stderr}`;
 
 describe('source-size — declared scope (D-6)', () => {
   it('scope-tracked-only: an untracked file is invisible, the same file staged is judged', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) }, stage: false });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) }, stage: false });
     git(cwd, ['add', 'docs']);
     // The refusal must be the EMPTY-SCOPE one: a size violation would also exit 1, so an exit code
     // alone would stay green on a checker that wrongly judged the untracked file.
@@ -86,29 +85,26 @@ describe('source-size — declared scope (D-6)', () => {
     git(cwd, ['add', '-A']);
     const after = check(cwd);
     assert.equal(after.code, 1);
-    assert.match(after.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
+    assert.match(after.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)/);
   });
 
   it('scope-outside-roots-ignored: a file outside every declared root is never judged', () => {
-    const cwd = project({ files: { 'other/big.mjs': lines(401), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
+    const cwd = project({ files: { 'other/big.mjs': lines(441), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-excluded-prefix-ignored: a file under an excluded prefix is never judged', () => {
-    const cwd = project({
-      files: { 'src/vendor/big.mjs': lines(401), 'src/ok.mjs': lines(10) },
-      config: CONFIG({ exclude: ['src/vendor'], aggregate: agg(10) }),
-    });
+    const cwd = project({ files: { 'src/vendor/big.mjs': lines(441), 'src/ok.mjs': lines(10) }, config: CONFIG({ exclude: ['src/vendor'], aggregate: agg(10) }) });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-extension-filter: an undeclared extension is never judged', () => {
-    const cwd = project({ files: { 'src/big.txt': lines(401), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
+    const cwd = project({ files: { 'src/big.txt': lines(441), 'src/ok.mjs': lines(10) }, config: CONFIG({ aggregate: agg(10) }) });
     assert.equal(check(cwd).code, 0);
   });
 
   it('scope-symlink-skipped: a tracked symlink carrying a declared extension is skipped BY KIND', () => {
-    const cwd = project({ files: { 'src/ok.mjs': lines(10), 'target.txt': lines(401) }, config: CONFIG({ aggregate: agg(10) }), stage: false });
+    const cwd = project({ files: { 'src/ok.mjs': lines(10), 'target.txt': lines(441) }, config: CONFIG({ aggregate: agg(10) }), stage: false });
     symlinkSync('../target.txt', join(cwd, 'src', 'link.mjs'));
     git(cwd, ['add', '-A']);
     assert.equal(git(cwd, ['ls-files', '-s', 'src/link.mjs']).slice(0, 6), '120000');
@@ -152,13 +148,10 @@ describe('source-size — declared scope (D-6)', () => {
   });
 
   it('exclude-prefix-segment-boundary: an exclude prefix matches whole path segments only', () => {
-    const cwd = project({
-      files: { 'src/vendor-other/big.mjs': lines(401), 'src/vendor/skipped.mjs': lines(401) },
-      config: CONFIG({ exclude: ['src/vendor'] }),
-    });
+    const cwd = project({ files: { 'src/vendor-other/big.mjs': lines(441), 'src/vendor/skipped.mjs': lines(441) }, config: CONFIG({ exclude: ['src/vendor'] }) });
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/vendor-other\/big\.mjs: lines 401/);
+    assert.match(result.stdout, /src\/vendor-other\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band/);
     assert.doesNotMatch(result.stdout, /src\/vendor\/skipped\.mjs/);
   });
 
@@ -169,11 +162,11 @@ describe('source-size — declared scope (D-6)', () => {
     // the exact name.
     const tabbed = 'src/a\tb.mjs';
     const newlined = 'src/c\nd.mjs';
-    const cwd = project({ files: { [tabbed]: lines(401), [newlined]: lines(401) } });
+    const cwd = project({ files: { [tabbed]: lines(441), [newlined]: lines(441) } });
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/a\\u0009b\.mjs: lines 401/, 'the tab survives as its escape');
-    assert.match(result.stdout, /src\/c\\u000ad\.mjs: lines 401/, 'the newline survives as its escape');
+    assert.match(result.stdout, /src\/a\\u0009b\.mjs: lines 441 exceeds the declared default 400 beyond its band/, 'the tab survives as its escape');
+    assert.match(result.stdout, /src\/c\\u000ad\.mjs: lines 441 exceeds the declared default 400 beyond its band/, 'the newline survives as its escape');
     assert.ok(!result.stdout.includes(newlined), 'no raw newline reaches the report');
     // The PASTEABLE suggestion keeps JSON's own (equally lossless) escaping: it is bytes a human
     // copies into the config, where \\u000a would be a literally different key.
@@ -216,10 +209,10 @@ describe('source-size — declared scope (D-6)', () => {
 
   it('scope-index-worktree-divergence: the judged bytes are the WORKTREE bytes of an index-visible path', () => {
     const cwd = project({ files: { 'src/a.mjs': lines(10) } });
-    writeFileSync(join(cwd, 'src', 'a.mjs'), lines(401));
+    writeFileSync(join(cwd, 'src', 'a.mjs'), lines(441));
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/a\.mjs: lines 401/);
+    assert.match(result.stdout, /src\/a\.mjs: lines 441 exceeds the declared default 400 beyond its band/);
   });
 
   it('scope-empty-set-refused: a declared scope matching zero tracked files is refused, never an empty green', () => {
@@ -230,33 +223,33 @@ describe('source-size — declared scope (D-6)', () => {
   });
 
   it('cli-cwd-foreign-directory: --check judges the named project, not the invoking directory', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
     const foreign = project({ files: { 'src/ok.mjs': lines(10) } });
     const result = check(cwd, { cwd: foreign });
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401/);
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band/);
   });
 
   it('cli-project-path-with-spaces: the named config path survives a project path carrying spaces', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) }, suffix: ' with spaces' });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) }, suffix: ' with spaces' });
     const result = check(cwd);
     assert.equal(result.code, 1);
     assert.ok(result.stdout.includes(join(cwd, 'docs/ai/source-size.json')), `the config path must be named in full:\n${result.stdout}`);
   });
 
   it('cli-dq-unsafe-project-path-withheld: a project path that does not survive double-quoting still gets the FULL refusal — parameters and the servable lane', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) }, suffix: '-$dq' });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) }, suffix: '-$dq' });
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)/);
     assert.ok(result.stdout.includes(join(cwd, 'docs/ai/source-size.json')), `the config path must still be named:\n${result.stdout}`);
-    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 401/);
+    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 441/);
   });
 
   it('cli-relative-cwd-resolved-absolute: a relative --cwd is resolved before the check and before any rendering', () => {
     const cwd = project({ files: { 'src/ok.mjs': lines(10) }, config: null });
     const result = main(['--check', '--cwd', '.'], { cwd });
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, 'an absent config is judged under the kit\'s values, not refused');
     assert.ok(result.stdout.includes(join(cwd, 'docs/ai/source-size.json')), `the named path must be absolute:\n${result.stdout}`);
     assert.doesNotMatch(result.stdout, /(^|[^.])\.\/docs\/ai/m);
   });
@@ -307,19 +300,19 @@ describe('source-size — counting (D-7)', () => {
 
 describe('source-size — thresholds (D-1)', () => {
   it('threshold-new-file-over-400-fails: the refusal names file, actual and allowed', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/big\.mjs: lines 401 exceeds the declared default 400/);
+    assert.match(result.stdout, /src\/big\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)/);
   });
 
   it('refusal-names-only-servable-lane: the remedy is the regenerator this build implements plus the hand-authored entry — never a verb it does not have', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
     const result = check(cwd);
     assert.equal(result.code, 1);
     // Only the VIOLATING dimension is recorded: an entry pinning a 1-byte longest line would make
     // the ratchet refuse every later line-length change for no reason anyone chose.
-    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 401, "reason": "<why this size is accepted>" \}/);
+    assert.match(result.stdout, /"src\/big\.mjs": \{ "lines": 441, "reason": "<why this size is accepted>" \}/);
     assert.doesNotMatch(result.stdout, /"maxLineBytes"/);
     assert.match(result.stdout, /--write-baseline/);
     assert.doesNotMatch(result.stdout, /--adopt/, 'the adopt verb arrives with its own phase — a refusal never names it early');
@@ -342,10 +335,7 @@ describe('source-size — thresholds (D-1)', () => {
   });
 
   it('baseline-entry-does-not-suppress-fail-closed: a recorded file that is unverifiable still refuses (D-6 has no baseline exception)', () => {
-    const cwd = project({
-      files: { 'src/ok.mjs': lines(10), 'src/big.mjs': lines(401) },
-      config: CONFIG({ baseline: { 'src/big.mjs': { lines: 401, reason: 'initial adoption' } } }),
-    });
+    const cwd = project({ files: { 'src/ok.mjs': lines(10), 'src/big.mjs': lines(441) }, config: CONFIG({ baseline: { 'src/big.mjs': { lines: 441, reason: 'initial adoption' } } }) });
     chmodSync(join(cwd, 'src', 'big.mjs'), 0o000);
     const result = check(cwd);
     chmodSync(join(cwd, 'src', 'big.mjs'), 0o644);
@@ -360,29 +350,19 @@ describe('source-size — thresholds (D-1)', () => {
     assert.match(result.stdout, /src\/wide\.mjs: maxLineBytes 1001 exceeds the declared default 1000/);
   });
 
-  it('threshold-defaults-overridable: a project may declare its own defaults', () => {
-    const files = { 'src/a.mjs': lines(6) };
-    assert.equal(check(project({ files, config: CONFIG({ aggregate: agg(6) }) })).code, 0);
-    const tightened = project({ files, config: CONFIG({ defaults: { maxLines: 5, maxLineBytes: 1000 }, aggregate: agg(6) }) });
-    const result = check(tightened);
+  it('threshold-defaults-overridable: a project may override a kit limit with its reason, judged with its band', () => {
+    const limits = { 'lines-per-file': { value: 5, tolerance: 10, reason: 'tight modules' } };
+    const within = check(project({ files: { 'src/a.mjs': lines(6) }, config: CONFIG({ limits, aggregate: agg(6) }) }));
+    assert.equal(within.code, 0, `6 lines is within the band of the override 5 at 10%:\n${out(within)}`);
+    assert.match(within.stdout, /src\/a\.mjs: lines 6 is over the limit 5 but within its band \(up to 6\)/);
+    const result = check(project({ files: { 'src/a.mjs': lines(7) }, config: CONFIG({ limits, aggregate: agg(7) }) }));
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/a\.mjs: lines 6 exceeds the declared default 5/);
+    assert.match(result.stdout, /src\/a\.mjs: lines 7 exceeds the declared default 5 beyond its band \(up to 6\)/);
   });
 
   it('a file carrying a recorded baseline entry is recorded debt, not a defaults violation', () => {
-    const cwd = project({
-      files: { 'src/big.mjs': lines(401) },
-      config: CONFIG({ baseline: { 'src/big.mjs': { lines: 401, reason: 'initial adoption' } }, aggregate: agg(401) }),
-    });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) }, config: CONFIG({ baseline: { 'src/big.mjs': { lines: 441, reason: 'initial adoption' } }, aggregate: agg(441) }) });
     assert.equal(check(cwd).code, 0);
-  });
-
-  it('the printed authoring template is INERT — its placeholders are refused until replaced', () => {
-    const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
-    const result = check(cwd);
-    assert.equal(result.code, 1);
-    assert.match(result.stdout, /is absent, so the scope of this practice is undeclared/);
-    assert.throws(() => validateSourceSizeConfig(JSON.parse(authoringTemplate())), /authoring placeholder/);
   });
 
   it('phase1-plan-files-within-defaults: every file this plan has created is within the declared defaults', () => {
@@ -395,6 +375,24 @@ describe('source-size — thresholds (D-1)', () => {
       const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
       assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
       assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
+    }
+  });
+});
+
+describe('spec:source-size/S24 — the authoring template is schema 2 with no defaults key', () => {
+  it('the printed authoring template is INERT — its placeholders are refused until replaced', () => {
+    const template = JSON.parse(authoringTemplate());
+    assert.match(template._README, /Authored keys: schema, roots, exclude, extensions, limits\b.*Machine keys: baseline, aggregate, layout\b/);
+    assert.equal(template.schema, 2, 'the template is schema 2');
+    assert.ok(!Object.hasOwn(template, 'defaults'), 'the template carries no defaults key');
+    assert.ok([...template.roots, ...template.extensions].every((value) => /^<.+>$/.test(value)), 'the placeholders are kept');
+    assert.throws(() => validateSourceSizeConfig(template), /authoring placeholder/);
+    const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
+    for (const result of [main(['--override', 'lines-per-file', '--value', '300', '--reason', 'r', '--cwd', cwd]), main(['--adopt', '--cwd', cwd])]) {
+      assert.equal(result.code, 1);
+      assert.match(result.stdout, /source-size\.json is absent/);
+      assert.ok(result.stdout.includes(authoringTemplate()), 'the absent refusal prints the template');
+      assert.doesNotMatch(out(result), /default root list|ONE manual step/, out(result));
     }
   });
 });

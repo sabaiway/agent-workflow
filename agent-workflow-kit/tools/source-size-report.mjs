@@ -2,15 +2,12 @@
 // must name the file, the actual value, the allowed value AND a step the reader can perform against
 // THIS build — never a bare "too big" and never a command that does not exist yet.
 //
-// Two render contracts, honestly separated (D-3a):
-//   • TIGHTEN — the tree shrank below what is recorded. Shrinking is progress, so the regenerator is
-//     printed EXACTLY as it should be pasted; no reason is needed and none is asked for.
-//   • GROWTH — the regeneration would RAISE a recorded value. The checker cannot invent the human's
-//     reason, so the command is printed as a TEMPLATE carrying the placeholder, and the requirement
-//     is stated rather than implied.
-// The exception both share: on a project path that does not survive double-quoting, NO command is
-// rendered (a rendered one could run somewhere else) — the parameters, the reason requirement and
-// the manual lane are stated instead.
+// Two render contracts, honestly separated (D-3a): a TIGHTEN warns, the tree shrank below its
+// record, and prints the regenerator EXACTLY as it should be pasted, no reason asked; a GROWTH stops,
+// the regeneration would RAISE a value, and prints the command as a TEMPLATE carrying the reason
+// placeholder, the requirement stated. The exception both share: on a project path that does not
+// survive double-quoting, NO command is rendered (a rendered one could run somewhere else) — the
+// parameters, the reason requirement and the manual lane are stated instead.
 //
 // The standing echo (D-17 U4) rides the same two renders: a PASS states the practice in one line, so
 // the enforced path itself keeps the caps in front of the reader, and every refusal CLOSES with the
@@ -18,10 +15,11 @@
 //
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
-import { SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
-import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
+import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
+import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
-import { hasGrowth, hasLoweredRecord, isRaise } from './source-size-judge.mjs';
+import { hasLoweredRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
+import { isRaise, limitLines } from './source-size/index.mjs';
 
 // The project directory is project-controlled too, so the path every refusal names enters its line
 // escaped like any other such value. configPathFor itself stays literal — it also builds the real
@@ -30,16 +28,34 @@ const namedConfig = (cwd) => escapeForLine(configPathFor(cwd));
 
 export const GROWTH_REASON_PLACEHOLDER = '<why this size is accepted>';
 
+// The `_README` the kit's schema-1 template carried, frozen: the move replaces a `_README` byte-equal
+// to it with the schema-2 text and carries any other verbatim.
+export const SCHEMA1_TEMPLATE_README = 'Source-size practice: declared scope + thresholds + the recorded ratchet. Authored keys: schema, defaults, roots, exclude, extensions. Machine keys: baseline, aggregate — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+export const TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, aggregate, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+export const TEMPLATE_READMES = Object.freeze({ schema1: SCHEMA1_TEMPLATE_README, schema2: TEMPLATE_README });
+
 // The authoring template (D-5): GENERIC, and INERT by construction — its roots/extensions carry
 // placeholders the validator refuses, so it can never be pasted into an empty-green scope.
 export const authoringTemplate = () => JSON.stringify({
-  _README: 'Source-size practice: declared scope + thresholds + the recorded ratchet. Authored keys: schema, defaults, roots, exclude, extensions. Machine keys: baseline, aggregate — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.',
+  _README: TEMPLATE_README,
   schema: SOURCE_SIZE_SCHEMA,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
   roots: ['<a directory this practice covers>'],
   exclude: [],
   extensions: ['<.an-extension-this-practice-covers>'],
 }, null, 2);
+
+// The five limits every run that reaches a resolved config states, from the module's one function.
+export const statedLimitLines = (config) =>
+  limitLines(config.limits, { escape: escapeForLine, recorded: config.layout !== null }).map((line) => `source-size: ${line}`);
+
+// What a run does not judge is said once, before its warnings: no extension, no config, no layout.
+export const notJudgedLines = (cwd, { absent, config, layout }) => {
+  if (absent) return [`source-size: NOTE — ${namedConfig(cwd)} is absent, so the kit's values judge layout alone and no file is judged on lines or bytes`];
+  return [
+    ...(config.extensions.length === 0 ? [`source-size: NOTE — ${namedConfig(cwd)} declares no extension, so no file is judged on lines or bytes`] : []),
+    ...(layout ? [] : [`source-size: NOTE — ${namedConfig(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`]),
+  ];
+};
 
 // A rendered command carries the RESOLVED tool path and an explicit quoted --cwd, so it means the
 // same thing from any directory. It is WITHHELD on either of two grounds, and the render says WHICH
@@ -63,7 +79,7 @@ const rendered = (cwd, mode, reason) => {
   if (paths.some(dqUnsafePath)) return { command: null, withheld: WITHHELD_SHELL };
   return { command: `node "${SOURCE_SIZE_TOOL_PATH}" ${mode} --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`, withheld: null };
 };
-const regenerator = (cwd, reason) => rendered(cwd, '--write-baseline', reason);
+const regenerator = (cwd, reason, layout = false) => rendered(cwd, layout ? '--write-baseline --layout' : '--write-baseline', reason);
 
 const SPLIT_QUALITY_FOCUS = 'source-size: REVIEW FOCUS — a recorded size went DOWN or disappeared: check that this is real decomposition and not the same coupling spread across more files (paste this line into the review dispatch focus).';
 
@@ -75,18 +91,16 @@ const SPLIT_QUALITY_FOCUS = 'source-size: REVIEW FOCUS — a recorded size went 
 const WHY_LINE = `source-size: WHY — ${SOURCE_SIZE_WHY}`;
 const refusal = (lines) => [...lines, WHY_LINE];
 
-// The standing summary (D-17 U4) — one line, from the CONFIG alone. There is no headroom to report:
-// the ratchet refuses actual > recorded and actual < recorded alike, so a recorded aggregate is EXACT
-// by construction, and saying that is the honest form of "how much room is left". Reached only on a
-// MINTED config (a check refuses every other state before it renders anything).
+// The standing summary (D-17 U4) — one line, from the CONFIG alone, on a MINTED config only: an
+// absent one records nothing to summarize.
 const practiceLine = (config) => {
   const facts = practiceFacts(config);
-  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s), EXACT: growth takes a reasoned bump, never free headroom.`;
+  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s): growth past a record takes a reasoned bump, and a record above the tree or gone warns until the regeneration lowers or removes it.`;
 };
 
 export const absentRefusalLines = (cwd) => refusal([
   `source-size: REFUSED — ${namedConfig(cwd)} is absent, so the scope of this practice is undeclared.`,
-  'Scope is DECLARED, never guessed: the kit ships no default root list and no default file-type list, because a fixed one would silently exempt every unlisted language. Authoring this file is the ONE manual step of the practice.',
+  'Scope is DECLARED, never guessed: the kit ships no default file-type list, because a fixed one would silently exempt every unlisted language.',
   'Create it with this content, replacing every placeholder value:',
   authoringTemplate(),
 ]);
@@ -115,24 +129,47 @@ const lineSafeFinding = (finding) => ({
   ...finding,
   ...(finding.rel === undefined ? {} : { rel: escapeForLine(finding.rel) }),
   ...(finding.root === undefined ? {} : { root: escapeForLine(finding.root) }),
+  ...(finding.dir === undefined ? {} : { dir: escapeForLine(finding.dir) }),
 });
 
+const BAND = (f) => `over the limit ${f.allowed} but within its band (up to ${f.ceiling})`;
+
+// A stop: the regeneration would raise.
 const FINDING_LINE = Object.freeze({
-  'over-default': (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds the declared default ${f.allowed}`,
+  'over-default': (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds the declared default ${f.allowed} beyond its band (up to ${f.ceiling})`,
   grew: (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds its recorded baseline ${f.recorded} — recorded debt is not permission to grow`,
-  stale: (f) => `${f.rel}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the baseline is STALE, tighten it`,
-  'record-obsolete': (f) => `${f.rel}: ${f.dimension} ${f.actual} no longer exceeds the declared default ${f.allowed} — the record must go`,
-  'entry-gone': (f) => `${f.rel}: recorded in "baseline" but no longer in scope — split, renamed or deleted; the record must go`,
   'aggregate-grew': (f) => `${f.root}: aggregate lines ${f.actual} exceeds the recorded budget ${f.recorded} — splitting a file buys no aggregate headroom`,
-  'aggregate-stale': (f) => `${f.root}: aggregate lines ${f.actual} is under the recorded budget ${f.recorded} — the budget is STALE, tighten it`,
   'aggregate-unrecorded': (f) => `${f.root}: declared root carries NO recorded aggregate budget (${f.actual} lines measured) — the record must mirror the declared roots exactly`,
-  'aggregate-root-gone': (f) => `${f.root}: recorded in "aggregate" but no longer a declared root — the record must mirror the declared roots exactly`,
+  'root-unrecorded': (f) => `${f.root}: judged root carries NO recorded files count (${f.actual} files measured) — the layout record must mirror the judged roots exactly`,
+  'root-grew': (f) => `${f.root}: files ${f.actual} exceeds its recorded ${f.recorded} beyond its band (up to ${f.ceiling})`,
+  'dir-over': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds the limit ${f.allowed} beyond its band (up to ${f.ceiling})`,
+  'dir-grew': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds its recorded ${f.recorded} — recorded debt is not permission to grow`,
 });
+
+// A warning: printed on every run, exit 0, until the value or its record comes back within its limit.
+const WARNING_LINE = Object.freeze({
+  'within-band': (f) => `${f.rel}: ${f.dimension} ${f.actual} is ${BAND(f)} — no record is kept; past ${f.ceiling} it stops`,
+  stale: (f) => `${f.rel}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
+  'record-obsolete': (f) => `${f.rel}: ${f.dimension} ${f.actual} is within its band (up to ${f.ceiling}), so its record is obsolete — the regeneration removes it`,
+  'entry-gone': (f) => `${f.rel}: recorded in "baseline" but no longer in scope — split, renamed or deleted; the regeneration removes it`,
+  'aggregate-stale': (f) => `${f.root}: aggregate lines ${f.actual} is under the recorded budget ${f.recorded} — the regeneration lowers it`,
+  'aggregate-root-gone': (f) => `${f.root}: recorded in "aggregate" but no longer a declared root — the regeneration removes it`,
+  'root-band': (f) => `${f.root}: files ${f.actual} is over its recorded ${f.recorded} but within its band (up to ${f.ceiling}) — past ${f.ceiling} it stops`,
+  'root-stale': (f) => `${f.root}: files ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
+  'root-gone': (f) => `${f.root}: recorded in "layout"."roots" but no longer a judged root — the regeneration removes it`,
+  'dir-band': (f) => `${f.dir}: ${f.dimension} ${f.actual} is ${BAND(f)} — past ${f.ceiling} it stops`,
+  'dir-stale': (f) => `${f.dir}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
+  'dir-obsolete': (f) => (f.actual > f.ceiling ? `${f.dir}: its depth record ${f.recorded} no longer sits on the shallowest directory beyond the depth band — the regeneration removes it` : `${f.dir}: ${f.dimension} ${f.actual} is within its band (up to ${f.ceiling}), so its record is obsolete — the regeneration removes it`),
+  'dir-gone': (f) => `${f.dir}: recorded in "layout"."directories" but no directory the run judges — the regeneration removes it`,
+});
+
+export const warningLines = (findings) =>
+  findings.map((finding) => `${SOURCE_SIZE_WARNING_PREFIX}${WARNING_LINE[finding.kind](lineSafeFinding(finding))}`);
 
 // The suggested entry is the WHOLE projected record, not the dimensions that happen to have changed:
 // an entry printed from the findings alone would drop a recorded dimension that stayed put, and
 // pasting it would fail the very next check. The projection already carries exactly the dimensions
-// that violate the declared defaults and nothing else.
+// beyond their band and nothing else.
 const suggestedEntryLines = (verdict) => {
   const rels = [...new Set(verdict.findings.filter((f) => f.kind === 'over-default' || f.kind === 'grew').map((f) => f.rel))];
   return rels.map((rel) => {
@@ -141,32 +178,44 @@ const suggestedEntryLines = (verdict) => {
   });
 };
 
+// A stop is a raise, so its regeneration always takes the reason.
 const servableStep = (cwd, verdict) => {
-  const growth = hasGrowth(verdict.findings);
   const entries = suggestedEntryLines(verdict);
-  const { command, withheld } = regenerator(cwd, growth ? GROWTH_REASON_PLACEHOLDER : undefined);
+  const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER);
   const byHand = entries.length === 0 ? [] : ['Or record each size by hand under "baseline" — the validator accepts exactly these bytes:', ...entries];
   if (command === null) return [withheld, WITHHELD_LANE, ...entries];
   return [
-    growth
-      ? 'This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate:'
-      : 'Nothing here grows — regenerate the record (no reason needed; shrinking is progress):',
+    'This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate:',
     `  ${command}`,
     ...byHand,
   ];
 };
 
-export const checkReportLines = ({ cwd, config, verdict }) => {
+// A lowered or removed record warns with the paste-ready regeneration, which needs no reason.
+const tightenLine = (cwd) => {
+  const { command, withheld } = regenerator(cwd);
+  return `${SOURCE_SIZE_WARNING_PREFIX}a record above is lower or gone, so regenerating lowers or removes it with no reason: ${command ?? `${withheld} ${WITHHELD_LANE}`}`;
+};
+
+// The order every check prints: its notes, its warnings, then the green line or its stops.
+export const checkReportLines = ({ cwd, config, verdict, absent = false }) => {
   const lines = verdict.scope.emptyRoots.map(
     (rel) => `source-size: NOTE — the declared root "${escapeForLine(rel)}" matches no tracked file with a declared extension`);
-  if (verdict.findings.length === 0) {
-    lines.push(`source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`, practiceLine(config));
-    return lines;
+  const stops = stopsOf(verdict.findings);
+  const warnings = warningsOf(verdict.findings);
+  lines.push(...warningLines(warnings));
+  const lowered = hasLoweredRecord(warnings);
+  if (stops.length === 0) {
+    if (lowered) lines.push(tightenLine(cwd), SPLIT_QUALITY_FOCUS);
+    lines.push(warnings.length === 0
+      ? `source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`
+      : `source-size: PASS with ${warnings.length} warning(s) — ${verdict.scope.files.length} in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled`);
+    return absent ? lines : [...lines, practiceLine(config)];
   }
-  lines.push(`source-size: FAIL — ${verdict.findings.length} finding(s) against ${namedConfig(cwd)}:`);
-  for (const finding of verdict.findings) lines.push(`  ${FINDING_LINE[finding.kind](lineSafeFinding(finding))}`);
+  lines.push(`source-size: FAIL — ${stops.length} finding(s) ${absent ? `under the kit's values (${namedConfig(cwd)} is absent)` : `against ${namedConfig(cwd)}`}:`);
+  for (const finding of stops) lines.push(`  ${FINDING_LINE[finding.kind](lineSafeFinding(finding))}`);
   lines.push(...servableStep(cwd, verdict));
-  if (hasLoweredRecord(verdict.findings)) lines.push(SPLIT_QUALITY_FOCUS);
+  if (lowered) lines.push(SPLIT_QUALITY_FOCUS);
   return refusal(lines);
 };
 
@@ -178,8 +227,9 @@ export const deltaLines = (deltas) => deltas.map(
   ({ target, dimension, from, to }) =>
     `  ${escapeForLine(target)}: ${dimension} ${from ?? 'none'} → ${to ?? 'none'}${isRaise({ from, to }) ? ' (raise)' : ''}`);
 
-export const reasonRequiredLines = (cwd, deltas) => {
-  const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER);
+// A run that starts the layout record says so in the command it prints, or pasting it would not.
+export const reasonRequiredLines = (cwd, deltas, { layout = false } = {}) => {
+  const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER, layout);
   const raises = deltas.filter(isRaise).length;
   return refusal([
     `source-size: REFUSED — this regeneration RAISES ${raises} recorded value(s), and a raise takes a reason (it lands verbatim in the entry it raises, in the commit message and in the CHANGELOG). The whole old→new it would write:`,
@@ -188,20 +238,52 @@ export const reasonRequiredLines = (cwd, deltas) => {
   ]);
 };
 
+// ── schema 1 and --override ───────────────────────────────────────────────────────────────────────
+
+// The check no longer judges schema 1: it names the one move, which the writer makes in its one write.
+export const schema1StopLines = (cwd) => {
+  const { command, withheld } = regenerator(cwd);
+  return refusal([
+    `source-size: STOPPED — ${namedConfig(cwd)} is schema 1, which the check no longer judges; --write-baseline moves it to schema 2 in its one write (a raise riding it still takes --reason): ${command ?? `${withheld} Run source-size-check.mjs --write-baseline with the working directory set to this project.`}`,
+  ]);
+};
+
+// Claims only what holds of every written file.
+export const schema1MovedLines = (cwd) => [
+  `source-size: ${namedConfig(cwd)} moved from schema 1 to schema 2 in this write.`,
+];
+
+// The record must hold before an override is written, so its reason never lands on drift it did not
+// cause: the lead line says so, and the reason-required refusal names that drift's own lane.
+export const overrideOutgrownLines = (cwd, deltas) => [
+  `source-size: --override REFUSED — the record in ${namedConfig(cwd)} no longer holds for this tree before this change, so that drift takes --write-baseline --reason first; nothing was written.`,
+  ...reasonRequiredLines(cwd, deltas),
+];
+
+// Names the id and the reason, never a value or tolerance: the limit lines state what is judged.
+export const overrideWrittenLines = ({ cwd, id, removed, reason }) => [
+  removed
+    ? `source-size: ${id} follows the kit's numbers in ${namedConfig(cwd)} — reason: ${escapeForLine(reason)}`
+    : `source-size: override of ${id} written in ${namedConfig(cwd)} — reason: ${escapeForLine(reason)}`,
+];
+
+export const overrideUnchangedLines = (cwd, id) => [
+  `source-size: ${id} — ${namedConfig(cwd)} already holds this, so nothing was written`,
+];
+
 // ── --adopt (D-16) ────────────────────────────────────────────────────────────────────────────────
 // The verb touches TWO files, so it reports the two halves separately, ALWAYS. A failure in the
 // second must never read as a failure of the first: a reader told only "adopt failed" would re-run a
 // mint that already succeeded, or hand-write a record that is already on disk. Every line below
 // therefore names what WAS done before what was not.
 
-// ABSENT config. This says the one thing the check refusal need not: authoring the scope is the
-// EXPECTED first step of adoption, not a failure — the template and the WHY are the same ones the
-// check prints, because a second wording of the same refusal would be a second practice.
+// ABSENT config: authoring the scope is the EXPECTED first step of adoption, not a failure — the
+// template and the WHY are the ones the --override refusal prints, never a second wording.
 export const adoptAbsentRefusalLines = (cwd) => {
   const { command, withheld } = rendered(cwd, '--adopt', INITIAL_ADOPTION_REASON);
   return refusal([
     `source-size: --adopt REFUSED — ${namedConfig(cwd)} is absent, so this practice has no declared scope yet.`,
-    'Authoring that file is the ONE manual step of the practice, and reaching it here is EXPECTED, not a failure: the kit ships no default root list and no default file-type list, because a fixed one would silently exempt every unlisted language.',
+    'Reaching it here is EXPECTED, not a failure: adoption needs a declared scope, and the kit ships no default file-type list, because a fixed one would silently exempt every unlisted language.',
     'Create it with this content, replacing every placeholder value:',
     authoringTemplate(),
     'Then re-run this same verb — it mints the record and declares the gate in one step:',
@@ -252,3 +334,57 @@ export const writtenLines = ({ cwd, deltas, reason, changed }) => {
     ...(reason === undefined ? [] : [`reason: ${reason}`]),
   ];
 };
+
+// ── --help ────────────────────────────────────────────────────────────────────────────────────────
+
+export const HELP = `source-size-check — the declared source-size practice (agent-workflow family).
+
+Usage:
+  node source-size-check.mjs --check [--cwd <project-root>]
+  node source-size-check.mjs --write-baseline [--layout] [--reason "<text>"] [--cwd <project-root>]
+  node source-size-check.mjs --adopt [--reason "<text>"] [--cwd <project-root>]
+  node source-size-check.mjs --override <id> [--value <n>] [--tolerance <p>] --reason "<text>" [--cwd <project-root>]
+  node source-size-check.mjs --override <id> --kit-default --reason "<text>" [--cwd <project-root>]
+
+Judges every in-scope file against ${SOURCE_SIZE_CONFIG_REL} (schema ${SOURCE_SIZE_SCHEMA}): git-tracked files
+under a declared root carrying a declared extension, minus the excluded path-segment prefixes. An
+absent "roots" is the one root ".", every tracked path; a config declaring no extension judges no
+file, and every check says so. With the config absent the check judges layout alone under the
+kit's values. Symlinks and submodule gitlinks are skipped by kind; an unmerged index, a non-UTF-8
+in-scope path, an unverifiable in-scope file and an empty declared scope are refusals.
+
+Limits: the kit's own five, kept in its code, each with a tolerance; the config holds only a
+project's reasoned overrides under "limits". A value at or under its limit is clean, above it within
+the band ceil(value x tolerance / 100) a WARNING printed on every run (exit 0), and beyond the band a
+stop unless a record holds it. Every --check, --write-baseline and --override run that resolves the
+config and ends in no usage, config, enumeration or scope error states all five limits with value,
+tolerance and source, then what it does not judge, then its warnings, then its stops.
+
+Counting: lines, and the longest line in BYTES. A terminator never counts (the CR of a CRLF
+included); a last line with no final newline still counts; an empty file is 0 lines. Layout: the
+entries of each directory, its depth below its root, and the files of each root — every tracked
+entry under a declared root, plus the spec store docs/ai/specs walked from disk.
+
+A recorded entry is DEBT: a finding stops exactly when the regeneration would raise it, and a record
+above the tree or gone warns until the regeneration lowers or removes it. Each declared root carries
+the same exact ratchet over its summed lines.
+
+--write-baseline regenerates the machine keys (baseline, aggregate, and layout where it is judged)
+from the tree; on an absent config it writes a schema-2 one. --layout starts the layout record on a
+present config that has none. The authored keys keep their values and their order; the file is
+canonically serialized. A regeneration that RAISES any recorded value needs --reason; the string is
+recorded in the entry it raised. A pure tighten needs none. A schema-1 config is moved to schema 2 in
+the same write; --check stops on one until it is.
+
+--adopt is the ONE-line adoption: it mints the record and declares the source-size gate (and NOTHING
+else) in docs/ai/gates.json. It is idempotent on an already-adopted project. With the config absent
+it refuses with the exact file to author. A refused declaration exits nonzero and reports both
+halves: what was minted and what was not declared.
+
+--override writes one override of a kit limit (lines-per-file, bytes-per-line, entries-per-directory,
+depth: --value and/or --tolerance; files-per-root: --tolerance only), or with --kit-default removes
+it; an option left out keeps the limit's current value or tolerance, and --reason is mandatory. It
+runs only once regenerating the record under the current limits would raise nothing, and
+regenerates the record in the same write.
+
+Exit codes: 0 green, warnings included; 1 a stop or a refusal; 2 usage, config or enumeration error.`;

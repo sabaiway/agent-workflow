@@ -3,9 +3,10 @@
 // as one raised by the config reader:
 //   • exit 2 — the INPUTS are unusable (usage, a malformed config, a failed enumeration); the
 //     practice could not judge anything, and no step it could name would change that.
-//   • exit 1 — the practice REFUSED: a violation, a stale record, an unverifiable in-scope source
-//     file, or a declared state the reader must move on (an absent or unminted config). Every one of
-//     these carries a step the reader can perform.
+//   • exit 1 — the practice REFUSED: a stop (beyond a band with no record, a record that grew, an
+//     unrecorded root), an unverifiable in-scope source file, or a declared state the reader must move
+//     on (an unminted config, a schema-1 one at --check, an absent one under --adopt and --override).
+//     Every one of these carries a step the reader can perform.
 //   • every refusal names the config of the project it ACTUALLY judged, absolute: under a foreign or
 //     relative --cwd a repo-relative name points at whatever directory the reader happens to be in.
 //   • the WHY rides the RENDERED refusals only — the ones the report composes (absent / unminted /
@@ -26,6 +27,10 @@ export const SOURCE_SIZE_CONFIG_REL = 'docs/ai/source-size.json';
 // rendered refusals, the constraints row a grounded review payload carries. The checker's GREEN line
 // states the practice's FACTS instead — caps, recorded count, aggregate — and never this sentence.
 export const SOURCE_SIZE_WHY = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
+
+// Every warning the check prints is one line under this anchored prefix, so the gate runner can echo
+// a green check's warnings and nothing else of its output.
+export const SOURCE_SIZE_WARNING_PREFIX = 'source-size: WARNING — ';
 
 export const configPathFor = (cwd) => resolve(cwd, 'docs', 'ai', 'source-size.json');
 

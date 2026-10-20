@@ -411,6 +411,10 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/source-size-gate-cmd.mjs',
       'tools/source-size-judge.mjs',
       'tools/source-size-report.mjs',
+      'tools/source-size/index.mjs',
+      'tools/source-size/limits.mjs',
+      'tools/source-size/layout.mjs',
+      'tools/source-size/record.mjs',
       // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
       'tools/migrate-adr-store.mjs',
       'references/modes/migrate-adr-store.md',
@@ -894,8 +898,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 369 = 368 + references/advisor-writers.md - story S9 of BRIDGES-WORK-UNDER-THE-SANDBOX
     // 375 = 369 + the five tools/project-rules/ modules (themes, rules-check, rules-record, rules-cli, index) and references/rules/project-layout.md - story S1 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
     // 377 = 375 + tools/project-rules/rules-ensure.mjs (the upgrade op) and tools/project-rules/rules-priors.mjs (the prior catalog) - story S2 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
-    // 379 = 377 + tools/project-rules/memory-map-row.mjs (the Memory Map row leaf) and references/modes/rules.md (the rules mode) - story S3 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
-    assert.equal(packed.length, 379, `tarball file count drifted (${packed.length}\u2260 379)`);
+    // 379 = 377 + tools/project-rules/memory-map-row.mjs (the Memory Map row leaf) and references/modes/rules.md (the rules mode) - story S3 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING; 381 = 379 + tools/source-size/index.mjs (the size check's door) and tools/source-size/limits.mjs (the kit's limit table) - story S4 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
+    // 383 = 381 + tools/source-size/layout.mjs (the layout counts and the spec-store walk) and tools/source-size/record.mjs (the record planner) - story S5 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
+    assert.equal(packed.length, 383, `tarball file count drifted (${packed.length}\u2260 383)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

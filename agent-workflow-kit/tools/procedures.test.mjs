@@ -1177,7 +1177,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       assert.equal(r.code, 0, r.stderr);
       assert.ok(r.stdout.includes(DECLARED_PRACTICE_HEADER), `${activity} renders the declared practice`);
       assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./);
-      assert.match(r.stdout, /recorded: 1 file\(s\) carry a recorded size \(debt, not permission\) · aggregate 1240 line\(s\), EXACT — growth takes a reasoned bump, never free headroom\./);
+      assert.match(r.stdout, /recorded: 1 file\(s\) carry a recorded size \(debt, not permission\) · aggregate 1240 line\(s\) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it\./);
       // The plan-time layout is the planning canon's Module ledger — the advisor states facts only.
       assert.doesNotMatch(r.stdout, /at plan time:/, 'no advisor-side copy of the layout rung');
     }
@@ -1276,6 +1276,33 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.equal(SOURCE_SIZE_WHY, CANONICAL, 'the practice exports the canonical sentence');
     writePractice(MINTED);
     assert.ok(run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes(`  why: ${CANONICAL}`));
+  });
+});
+
+describe('procedures CLI — the declared practice names the limits and the layout record (spec:source-size/S38)', () => {
+  const SCHEMA2 = { _README: 'fixture', schema: 2, roots: ['src', 'scripts'], exclude: [], extensions: ['.mjs'], baseline: { 'src/big.mjs': { lines: 900, reason: 'initial adoption' } }, aggregate: { src: { lines: 1200, reason: 'initial adoption' }, scripts: { lines: 40, reason: 'initial adoption' } } };
+  const LIMITS = ['  limit lines-per-file 400, tolerance 10% — from kit', '  limit bytes-per-line 1000, tolerance 0% — from kit', '  limit entries-per-directory 20, tolerance 10% — from kit', '  limit depth 5, tolerance 0% — from kit'];
+  const filesPerRoot = (count) => `  limit files-per-root ${count}, tolerance 10% — from kit`;
+  const LAYOUT_NOT_RECORDED = '  layout: not recorded — `source-size-check.mjs --write-baseline --layout --reason "<text>"` starts it.';
+  const blockOf = (middle) => [DECLARED_PRACTICE_HEADER, '  caps: 400 lines · 1000 bytes per line, over 2 declared root(s).', ...middle, '  recorded: 1 file(s) carry a recorded size (debt, not permission) · aggregate 1240 line(s) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.', `  why: ${SOURCE_SIZE_WHY}`];
+  const writePractice = (value) => writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), JSON.stringify(value));
+  const renderBlock = (activity) => JSON.parse(run([activity, '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+  it('a minted schema-2 config without layout renders the caps, the five limits in table order and layout not recorded on every named activity; an absent config renders nothing', async () => {
+    const { ACTIVITIES } = await import('./recipes.mjs');
+    writePractice(SCHEMA2);
+    for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED]), activity);
+    rmSync(join(cwd, SOURCE_SIZE_CONFIG_REL));
+    for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), [], `${activity}: an absent config renders nothing`);
+  });
+  it('a layout record renders files-per-root as each judged root\'s recorded count and layout recorded; --json IS the human block', () => {
+    writePractice({ ...SCHEMA2, layout: { roots: { scripts: { files: 2, reason: 'layout starts' }, src: { files: 30, reason: 'layout starts' } }, directories: {} } });
+    const expected = blockOf([...LIMITS, filesPerRoot('each judged root\'s recorded count'), '  layout: recorded — entries per directory, depth and files per root are judged by the size check.']);
+    assert.deepEqual(renderBlock('plan-execution'), expected);
+    assert.ok(run(['plan-execution'], { codex: READY, agy: READY }).stdout.includes(expected.join('\n')), 'the human render carries the same lines, contiguously');
+  });
+  it('a minted schema-1 config names --write-baseline as the move, after the layout line and before the recorded line', () => {
+    writePractice({ ...SCHEMA2, schema: 1, defaults: { maxLines: 400, maxLineBytes: 1000 } });
+    assert.deepEqual(renderBlock('plan-authoring'), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED, '  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it to schema 2.']));
   });
 });
 

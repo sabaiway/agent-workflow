@@ -1,114 +1,180 @@
 // source-size-judge.mjs — the verdict as FACTS, never as words, and the ONE projection everything
-// else reads. Measures every in-scope file once, projects the record the regenerator WOULD write for
-// it, and states each difference against what is recorded today. The rendering half turns those
-// differences into words; the writer half turns the very same projection into the file — so the
-// checker can never demand something the regenerator would not do, nor pass a tree the regenerator
-// would rewrite.
+// else reads: every in-scope file and judged directory measured once, the record the regenerator
+// WOULD write projected, and each difference against today's record stated — so the checker can
+// never demand what the regenerator would not do, nor, on a present config, pass a tree whose regeneration would raise.
 //
-// The ratchet, stated once (D-3, D-4): a recorded size is DEBT, not permission. It may not grow
-// (that is a raise, and a raise is reasoned); it may not sit ABOVE what the tree measures (a stale
-// record is headroom nobody earned); it may not outlive the violation it records (a file back under
-// the cap keeps no record); and a record whose file is gone is an error, because that is what makes
-// a split or a rename visible instead of silent. The per-root budget rides the same rules over the
-// summed LINES of the root — splitting one file into six buys no headroom at all.
+// The ratchet (D-3, D-4): a recorded size is DEBT, not permission. Each limit is judged with its
+// band; a finding STOPS exactly when the regeneration would RAISE (beyond the band with no record, a
+// record that grew, an unrecorded root) and WARNS otherwise (within the band, a record above the
+// tree, no longer needed or gone). Each root's summed LINES ride the same ratchet with no band.
 //
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
-import { measureFile, resolveScope } from './source-size-scope.mjs';
+import { measureFile, resolveScope, specStoreEntries } from './source-size-scope.mjs';
+import { scopeFail } from './source-size-refusal.mjs';
+import { SPEC_STORE_ROOT, bandOf, changesFor, isRaise, layoutCounts, ownEntry, projectLayout } from './source-size/index.mjs';
 
 export const DIMENSIONS = Object.freeze(['lines', 'maxLineBytes']);
+const LAYOUT_DIMENSIONS = Object.freeze(['entries', 'depth']);
+export const STOP = 'stop';
+export const WARNING = 'warning';
 
-// The measured dimension names ARE the baseline-entry keys; `defaults` spells the line cap
-// differently, so the two vocabularies are bridged in exactly one place.
-export const DEFAULT_KEY = Object.freeze({ lines: 'maxLines', maxLineBytes: 'maxLineBytes' });
+// The kit limit each measured dimension is judged against.
+const LIMIT_OF = Object.freeze({ lines: 'lines-per-file', maxLineBytes: 'bytes-per-line', entries: 'entries-per-directory', depth: 'depth' });
+const ceilingOf = ({ value, tolerance }) => value + bandOf(value, tolerance);
+const withinBand = (value, limit) => value > limit.value && value <= ceilingOf(limit);
 
-// THE projection: a record exists for a dimension exactly while that dimension violates the declared
-// default. An entry pinning a dimension that was never over the cap would make the ratchet refuse
-// later changes nobody chose, so the entry appears with the violation and disappears with it.
-export const recordFor = (measured, defaults) => Object.fromEntries(
-  DIMENSIONS.filter((dimension) => measured[dimension] > defaults[DEFAULT_KEY[dimension]])
+// THE projection: a record exists for a dimension exactly while that dimension is beyond its band. A
+// value within the band warns and carries no record, so a record of one is obsolete.
+export const recordFor = (measured, limits) => Object.fromEntries(
+  DIMENSIONS.filter((dimension) => measured[dimension] > ceilingOf(limits[LIMIT_OF[dimension]]))
     .map((dimension) => [dimension, measured[dimension]]),
 );
 
-// A change is a RAISE when it puts a number where there was none, or a bigger one where there was a
-// smaller — the whole class a human's reason is required for. Everything else lowers or removes.
-export const isRaise = ({ from, to }) => to !== null && (from === null || to > from);
-
-// A recorded entry is read by OWN key only. A declared root may legitimately be named like an
-// Object.prototype member ("constructor", "toString"), and a plain lookup would then answer with an
-// INHERITED value — which reads as "already recorded", so the raise goes unnoticed and the entry is
-// written with no reason at all, producing a config this tool's own validator refuses.
-export const ownEntry = (map, key) => (Object.hasOwn(map, key) ? map[key] : undefined);
-
-// changesFor(target, projected, recorded) → the per-dimension old→new pairs that actually differ.
-// The refusal, the printed delta and the reason an entry ends up with all read THIS.
-export const changesFor = (target, projected, recorded) => DIMENSIONS
-  .map((dimension) => ({
-    target,
-    dimension,
-    from: recorded && Object.hasOwn(recorded, dimension) ? recorded[dimension] : null,
-    to: Object.hasOwn(projected, dimension) ? projected[dimension] : null,
-  }))
-  .filter(({ from, to }) => from !== to);
-
-const GROWTH_KINDS = new Set(['over-default', 'grew', 'aggregate-grew', 'aggregate-unrecorded']);
-
+const BAND_KINDS = new Set(['within-band', 'root-band', 'dir-band']);
 // D-9: the unmechanizable question — real decomposition, or the same coupling spread thinner? — is
 // asked exactly where a record went DOWN or disappeared, and the checker itself raises it there.
-const LOWERED_KINDS = new Set(['stale', 'record-obsolete', 'entry-gone']);
+const LOWERED_KINDS = new Set(['stale', 'record-obsolete', 'entry-gone', 'root-stale', 'root-gone', 'dir-stale', 'dir-obsolete', 'dir-gone']);
 
-export const hasGrowth = (findings) => findings.some((f) => GROWTH_KINDS.has(f.kind));
+export const stopsOf = (findings) => findings.filter((f) => f.severity === STOP);
+export const warningsOf = (findings) => findings.filter((f) => f.severity === WARNING);
+export const bandWarningsOf = (findings) => findings.filter((f) => BAND_KINDS.has(f.kind));
+// The warnings a write leaves standing: a value within its band, one whose obsolete record it drops included.
+const BAND_OF_OBSOLETE = Object.freeze({ 'record-obsolete': 'within-band', 'dir-obsolete': 'dir-band' });
+export const standingWarningsOf = (findings) => findings.flatMap((f) => {
+  if (BAND_KINDS.has(f.kind)) return [f];
+  const kind = BAND_OF_OBSOLETE[f.kind];
+  return kind && f.dimension !== 'depth' && f.actual > f.allowed && f.actual <= f.ceiling ? [{ ...f, kind }] : [];
+});
 export const hasLoweredRecord = (findings) => findings.some((f) => LOWERED_KINDS.has(f.kind));
 
-const findingOfChange = (rel, { dimension, from, to }, measured, defaults) => {
-  const allowed = defaults[DEFAULT_KEY[dimension]];
-  if (from === null) return { kind: 'over-default', rel, dimension, actual: to, allowed };
-  // `to === null` — the file is back under the cap, so the projection records nothing. The measured
-  // value is what the reader needs to see; the record is simply obsolete.
-  if (to === null) return { kind: 'record-obsolete', rel, dimension, actual: measured[dimension], allowed, recorded: from };
-  return to > from
-    ? { kind: 'grew', rel, dimension, actual: to, recorded: from }
-    : { kind: 'stale', rel, dimension, actual: to, recorded: from };
+// One rule for every recorded number: a raise stops, any other change warns. `kinds` names no record
+// yet, grew, lowered and no longer needed in the target's own vocabulary.
+const changeFinding = (target, { dimension, from, to }, actual, limits, kinds) => ({
+  kind: kinds[from === null ? 0 : to === null ? 3 : to > from ? 1 : 2], severity: isRaise({ from, to }) ? STOP : WARNING, ...target, dimension,
+  actual, allowed: limits[LIMIT_OF[dimension]].value, ceiling: ceilingOf(limits[LIMIT_OF[dimension]]), ...(from === null ? {} : { recorded: from }),
+});
+const bandFinding = (kind, target, dimension, actual, limit) => ({ kind, severity: WARNING, ...target, dimension, actual, allowed: limit.value, ceiling: ceilingOf(limit) });
+
+const FILE_KINDS = ['over-default', 'grew', 'stale', 'record-obsolete'];
+const DIR_KINDS = ['dir-over', 'dir-grew', 'dir-stale', 'dir-obsolete'];
+
+const fileFindings = (rel, measured, projected, recorded, limits) => {
+  const changes = changesFor(rel, projected, recorded);
+  return [
+    ...changes.map((change) => changeFinding({ rel }, change, measured[change.dimension], limits, FILE_KINDS)),
+    ...DIMENSIONS.filter((d) => withinBand(measured[d], limits[LIMIT_OF[d]]) && !changes.some((c) => c.dimension === d))
+      .map((d) => bandFinding('within-band', { rel }, d, measured[d], limits[LIMIT_OF[d]])),
+  ];
 };
 
 const judgeAggregate = (rootLines, aggregate) => {
   const findings = [];
   for (const [root, actual] of rootLines) {
-    if (!Object.hasOwn(aggregate, root)) {
-      findings.push({ kind: 'aggregate-unrecorded', root, actual });
-      continue;
-    }
-    const value = aggregate[root].lines;
-    if (actual > value) findings.push({ kind: 'aggregate-grew', root, actual, recorded: value });
-    else if (actual < value) findings.push({ kind: 'aggregate-stale', root, actual, recorded: value });
+    const recorded = ownEntry(aggregate, root)?.lines;
+    if (recorded === undefined) findings.push({ kind: 'aggregate-unrecorded', severity: STOP, root, actual });
+    else if (actual > recorded) findings.push({ kind: 'aggregate-grew', severity: STOP, root, actual, recorded });
+    else if (actual < recorded) findings.push({ kind: 'aggregate-stale', severity: WARNING, root, actual, recorded });
   }
-  // The recorded set must MIRROR the declared roots: a budget nobody declares any more is a leftover
-  // that hides its own root's disappearance, and deleting an entry must never be a way to disarm it.
+  // The recorded set must MIRROR the declared roots: a budget nobody declares any more warns until
+  // the writer drops it, and deleting an entry must never be a way to disarm it.
   for (const root of Object.keys(aggregate)) {
-    if (!rootLines.has(root)) findings.push({ kind: 'aggregate-root-gone', root, recorded: aggregate[root].lines });
+    if (!rootLines.has(root)) findings.push({ kind: 'aggregate-root-gone', severity: WARNING, root, recorded: aggregate[root].lines });
   }
   return findings;
 };
 
-// judgeTree(cwd, config) → { scope, measured, projected, rootLines, findings }. EVERY in-scope file
-// is measured, recorded or not: the fail-closed scope rule has no baseline exception, so an
-// unreadable or non-UTF-8 file refuses even when its size is recorded debt.
-export const judgeTree = (cwd, config, deps = {}) => {
+// A directory is keyed by its repo-relative path, a root's own by its declared name. A name that is
+// not lossless UTF-8 is counted, and refused only once a record would have to carry it.
+const measureLayout = (cwd, config, scope, deps) => {
+  const counted = config.roots.map((root) => [root, scope.layout.get(root)]);
+  const store = specStoreEntries(cwd, deps);
+  if (store !== null) counted.push([SPEC_STORE_ROOT, store]);
+  const roots = new Map();
+  const directories = new Map();
+  const undecodable = [];
+  for (const [root, entries] of counted) {
+    const counts = layoutCounts(entries);
+    roots.set(root, counts.files);
+    const base = Buffer.from(root, 'utf8').toString('latin1');
+    for (const [below, facts] of counts.directories) {
+      const bytes = Buffer.from(below === '' ? base : root === '.' ? below : `${base}/${below}`, 'latin1');
+      const key = bytes.toString('utf8');
+      if (Buffer.from(key, 'utf8').equals(bytes)) directories.set(key, facts);
+      else undecodable.push({ bytes, facts });
+    }
+  }
+  return { roots, directories, undecodable };
+};
+
+// The absent config records nothing, so the roots' files a first write would record are no findings.
+const rootFindings = (measured, projected, recorded, tolerance) => {
+  const findings = [];
+  for (const [root, actual] of measured.roots) {
+    const was = ownEntry(recorded.roots, root)?.files ?? null;
+    const ceiling = was === null ? undefined : was + bandOf(was, tolerance);
+    if (was === null) findings.push({ kind: 'root-unrecorded', severity: STOP, root, actual });
+    else if (projected.roots[root] > was) findings.push({ kind: 'root-grew', severity: STOP, root, actual, recorded: was, ceiling });
+    else if (projected.roots[root] < was) findings.push({ kind: 'root-stale', severity: WARNING, root, actual, recorded: was });
+    else if (actual > was) findings.push({ kind: 'root-band', severity: WARNING, root, actual, recorded: was, ceiling });
+  }
+  for (const [root, was] of Object.entries(recorded.roots)) {
+    if (!measured.roots.has(root)) findings.push({ kind: 'root-gone', severity: WARNING, root, recorded: was.files });
+  }
+  return findings;
+};
+
+// A recorded dimension is judged as a file's; within its band warns, depth one level past the value.
+const directoryFindings = (directories, projected, recorded, limits) => {
+  const findings = [];
+  for (const dir of Object.keys(recorded).filter((key) => !directories.has(key))) {
+    findings.push({ kind: 'dir-gone', severity: WARNING, dir, recorded: recorded[dir] });
+  }
+  for (const [dir, facts] of directories) {
+    const was = ownEntry(recorded, dir);
+    const changes = changesFor(dir, projected[dir] ?? {}, was, LAYOUT_DIMENSIONS);
+    const actual = { entries: facts.entries, depth: facts.reach };
+    findings.push(...changes.map((change) => changeFinding({ dir }, change, actual[change.dimension], limits, DIR_KINDS)));
+    const entries = limits['entries-per-directory'];
+    if (withinBand(facts.entries, entries) && !(was && Object.hasOwn(was, 'entries'))) findings.push(bandFinding('dir-band', { dir }, 'entries', facts.entries, entries));
+    if (facts.depth === limits.depth.value + 1 && withinBand(facts.reach, limits.depth)) findings.push(bandFinding('dir-band', { dir }, 'depth', facts.reach, limits.depth));
+  }
+  return findings;
+};
+
+const judgeLayout = (cwd, config, scope, deps, { absent }) => {
+  const measured = measureLayout(cwd, config, scope, deps);
+  const { limits } = config;
+  const unkeyable = measured.undecodable.find(({ facts }) => facts.entries > ceilingOf(limits['entries-per-directory']) || facts.depth === ceilingOf(limits.depth) + 1);
+  if (unkeyable) throw scopeFail(`a judged directory's NAME is not valid UTF-8 (bytes ${unkeyable.bytes.toString('hex')}) and it is beyond its band — its record could not be keyed losslessly, so nothing is judged; rename it`);
+  const recorded = config.layout ?? { roots: {}, directories: {} };
+  const projected = projectLayout(measured, config.layout, limits);
+  const lossy = new Map(measured.undecodable.map(({ bytes, facts }) => [bytes.toString('utf8'), facts]));
+  const findings = [
+    ...(absent ? [] : rootFindings(measured, projected, recorded, limits['files-per-root'].tolerance)),
+    ...directoryFindings(measured.directories, projected.directories, recorded.directories, limits),
+    ...directoryFindings(lossy, {}, {}, limits),
+  ];
+  return { measured, projected, findings };
+};
+
+// judgeTree(cwd, config, deps, { layout, absent }) → { scope, measured, projected, rootLines, layout,
+// findings }. EVERY in-scope file is measured, recorded or not: an unreadable or non-UTF-8 file
+// refuses even when its size is recorded debt. An absent config's aggregate is no finding.
+export const judgeTree = (cwd, config, deps = {}, { layout = false, absent = false } = {}) => {
   const scope = resolveScope(cwd, config, deps);
   const measured = new Map(scope.files.map((rel) => [rel, measureFile(cwd, rel, deps)]));
-  const projected = new Map(scope.files.map((rel) => [rel, recordFor(measured.get(rel), config.defaults)]));
+  const projected = new Map(scope.files.map((rel) => [rel, recordFor(measured.get(rel), config.limits)]));
   const baseline = config.baseline ?? {};
-  const findings = [];
-  for (const rel of scope.files) {
-    findings.push(...changesFor(rel, projected.get(rel), ownEntry(baseline, rel))
-      .map((change) => findingOfChange(rel, change, measured.get(rel), config.defaults)));
-  }
+  const findings = scope.files.flatMap((rel) => fileFindings(rel, measured.get(rel), projected.get(rel), ownEntry(baseline, rel), config.limits));
   for (const rel of Object.keys(baseline)) {
-    if (!measured.has(rel)) findings.push({ kind: 'entry-gone', rel, recorded: baseline[rel] });
+    if (!measured.has(rel)) findings.push({ kind: 'entry-gone', severity: WARNING, rel, recorded: baseline[rel] });
   }
   const rootLines = new Map(
     [...scope.perRoot].map(([root, files]) => [root, files.reduce((sum, rel) => sum + measured.get(rel).lines, 0)]),
   );
-  findings.push(...judgeAggregate(rootLines, config.aggregate ?? {}));
-  return { scope, measured, projected, rootLines, findings };
+  if (!absent) findings.push(...judgeAggregate(rootLines, config.aggregate ?? {}));
+  const judged = layout ? judgeLayout(cwd, config, scope, deps, { absent }) : null;
+  if (judged) findings.push(...judged.findings);
+  return { scope, measured, projected, rootLines, layout: judged, findings };
 };

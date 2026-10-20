@@ -1,7 +1,7 @@
 // source-size-aggregate.test.mjs — the per-root budget (D-4). Splitting 3000 lines into six files of
 // 500 buys ZERO aggregate headroom: the per-file cap alone would reward shredding a module into
 // pieces nobody reviews. The budget rides the same ratchet as a per-file record (grow → reasoned
-// bump, shrink → tighten, root gone → error) and it budgets ONE dimension, because summing per-file
+// bump, shrink or root gone → a warning until the writer settles it) and it budgets ONE dimension, because summing per-file
 // longest-line bytes has no physical meaning.
 
 import { describe, it, after } from 'node:test';
@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from './source-size-check.mjs';
-import { SOURCE_SIZE_DEFAULTS, validateSourceSizeConfig } from './source-size-core.mjs';
+import { validateSourceSizeConfig } from './source-size-core.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-aggregate-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -25,8 +25,7 @@ const lines = (n) => 'x\n'.repeat(n);
 
 const CONFIG = (over = {}) => ({
   _README: 'fixture',
-  schema: 1,
-  defaults: { ...SOURCE_SIZE_DEFAULTS },
+  schema: 2,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
@@ -83,28 +82,36 @@ describe('source-size — the aggregate budget (D-4)', () => {
     assert.equal(check(cwd).code, 0, 'the regenerated budget arms the ratchet again');
   });
 
-  it('aggregate-shrink-requires-tighten: a budget above the tree is headroom nobody earned', () => {
+  it('aggregate-stale-warns: a budget above the tree is headroom nobody earned, warned on every run until the regeneration lowers it', () => {
     const cwd = project({
       files: { 'src/a.mjs': lines(100) },
       config: CONFIG({ aggregate: { src: { lines: 500, reason: 'initial adoption' } } }),
     });
-    const result = check(cwd);
-    assert.equal(result.code, 1, `an unearned budget must refuse:\n${result.stdout}`);
-    assert.match(result.stdout, /src: aggregate lines 100 is under the recorded budget 500 — the budget is STALE/);
+    const runs = [check(cwd), check(cwd)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `an unearned budget warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, /^source-size: WARNING — src: aggregate lines 100 is under the recorded budget 500 — the regeneration lowers it$/m);
+    }
+    assert.equal(runs[1].stdout, runs[0].stdout, 'the warning repeats on every run');
 
     assert.equal(writeBaseline(cwd).code, 0, 'tightening needs no reason');
     assert.equal(configOf(cwd).aggregate.src.lines, 100);
     assert.equal(configOf(cwd).aggregate.src.reason, 'initial adoption', 'a tighten keeps the reason already recorded');
+    assert.doesNotMatch(check(cwd).stdout, /WARNING/, 'the lowered budget settles the warning');
   });
 
-  it('aggregate-root-gone-errors: a budget for a root nobody declares any more is surfaced, never ignored', () => {
+  it('aggregate-root-gone-warns: a budget for a root nobody declares any more is surfaced on every run, never ignored, until the writer drops it', () => {
     const cwd = project({
       files: { 'src/a.mjs': lines(10) },
       config: CONFIG({ aggregate: { src: { lines: 10, reason: 'r' }, dropped: { lines: 900, reason: 'r' } } }),
     });
-    const result = check(cwd);
-    assert.equal(result.code, 1, `a budget for an undeclared root must refuse:\n${result.stdout}`);
-    assert.match(result.stdout, /dropped: recorded in "aggregate" but no longer a declared root/);
+    const runs = [check(cwd), check(cwd)];
+    for (const result of runs) {
+      assert.equal(result.code, 0, `a budget for an undeclared root warns, exit 0:\n${result.stdout}`);
+      assert.match(result.stdout, /^source-size: WARNING — dropped: recorded in "aggregate" but no longer a declared root — the regeneration removes it$/m);
+    }
+    assert.equal(writeBaseline(cwd).code, 0, 'removing a budget needs no reason');
+    assert.deepEqual(configOf(cwd).aggregate, { src: { lines: 10, reason: 'r' } });
   });
 
   // spec:source-size/S6

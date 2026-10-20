@@ -14,16 +14,19 @@
 // Dependency-free, Node >= 22. No side effects on import; the only child process is a read-only git
 // query, so the read-graph purity suite stays true.
 
-import { readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { configFail, configPathFor, scopeFail } from './source-size-refusal.mjs';
+import { WHOLE_TREE_ROOT } from './source-size-config.mjs';
+import { SPEC_STORE_ROOT, walkSpecStore } from './source-size/index.mjs';
 import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';
 
 const LF = 0x0a;
 const CR = 0x0d;
 const SLASH = 0x2f;
 
+const SPEC_STORE = Buffer.from(SPEC_STORE_ROOT, 'utf8');
 const SYMLINK_MODE = '120000';
 const GITLINK_MODE = '160000';
 
@@ -69,9 +72,12 @@ export const enumerateIndex = (cwd, deps = {}) => {
   return parseIndexEntries(result.stdout);
 };
 
-// resolveScope(cwd, config) → { files: [rel…] sorted, perRoot: Map<root, [rel…]>, emptyRoots: [root…] }.
+// resolveScope(cwd, config) → { files: [rel…] sorted, perRoot: Map<root, [rel…]>, layout: Map<root,
+// [{ path, dir }…]>, emptyRoots: [root…] }; `layout` holds every entry under a root, of any mode, as
+// a binary string below the root.
 // Every exclusion is BY RULE (root / extension / exclude prefix) or BY KIND (symlink, gitlink); an
-// in-scope path that cannot be addressed losslessly is a refusal, never a quiet skip.
+// in-scope path that cannot be addressed losslessly is a refusal, never a quiet skip. The root "."
+// covers every tracked path.
 export const resolveScope = (cwd, config, deps = {}) => {
   const entries = enumerateIndex(cwd, deps);
   const unmerged = entries.filter((e) => e.stage !== 0);
@@ -82,12 +88,18 @@ export const resolveScope = (cwd, config, deps = {}) => {
   const excludes = config.exclude.map((rel) => Buffer.from(rel, 'utf8'));
   const extensions = config.extensions.map((ext) => Buffer.from(ext, 'utf8'));
   const perRoot = new Map(config.roots.map((rel) => [rel, []]));
+  const layout = new Map(config.roots.map((rel) => [rel, []]));
   const files = [];
   for (const entry of entries) {
-    const root = roots.find((r) => bufSegmentPrefix(entry.path, r.buf));
+    const root = roots.find((r) => r.rel === WHOLE_TREE_ROOT || bufSegmentPrefix(entry.path, r.buf));
     if (!root) continue;
-    if (!extensions.some((ext) => bufEndsWith(entry.path, ext))) continue;
     if (excludes.some((ex) => bufSegmentPrefix(entry.path, ex))) continue;
+    // Layout counts every entry of any mode, the spec store's aside: the store is a root of its own.
+    if (!bufSegmentPrefix(entry.path, SPEC_STORE)) {
+      const below = root.rel === WHOLE_TREE_ROOT ? entry.path : entry.path.subarray(root.buf.length + 1);
+      if (below.length > 0) layout.get(root.rel).push({ path: below.toString('latin1'), dir: false });
+    }
+    if (!extensions.some((ext) => bufEndsWith(entry.path, ext))) continue;
     if (entry.mode === SYMLINK_MODE || entry.mode === GITLINK_MODE) continue;
     const rel = decodeStrict(entry.path);
     if (rel === null) {
@@ -96,12 +108,25 @@ export const resolveScope = (cwd, config, deps = {}) => {
     files.push(rel);
     perRoot.get(root.rel).push(rel);
   }
+  // A config declaring no extension judges no file, and the check says so instead of refusing.
+  if (extensions.length === 0) return { files, perRoot, layout, emptyRoots: [] };
   if (files.length === 0) {
     throw scopeFail(`the declared scope matches ZERO tracked files (roots: ${config.roots.join(', ')}; extensions: ${config.extensions.join(', ')}) — an empty scope is a misdeclaration, never an empty green; either widen "roots" / "extensions" in ${configPathFor(cwd)}, or track a file the declared scope covers`);
   }
   files.sort();
   for (const list of perRoot.values()) list.sort();
-  return { files, perRoot, emptyRoots: [...perRoot].filter(([, list]) => list.length === 0).map(([rel]) => rel) };
+  return { files, perRoot, layout, emptyRoots: [...perRoot].filter(([, list]) => list.length === 0).map(([rel]) => rel) };
+};
+
+// specStoreEntries(cwd) → the spec store's entries walked from disk, or null where it is absent. A
+// store that is present but no directory, or that cannot be read, is a scope refusal naming the path.
+export const specStoreEntries = (cwd, deps = {}) => {
+  const walked = walkSpecStore(cwd, { readdir: deps.readdir ?? readdirSync, lstat: deps.lstat ?? lstatSync });
+  if (walked.state === 'absent') return null;
+  if (walked.state === 'refused') {
+    throw scopeFail(`${walked.path}: the spec store ${SPEC_STORE_ROOT} could not be walked (${walked.cause}) — layout counts it from disk, so nothing is judged; make it a readable directory, or remove it`);
+  }
+  return walked.entries;
 };
 
 // countBytes(buf) → { lines, maxLineBytes }. A terminator never counts (the CR of a CRLF included);
