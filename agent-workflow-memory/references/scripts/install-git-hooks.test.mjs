@@ -59,7 +59,7 @@ const markerFor = (name) => `# ${name}:install-git-hooks.mjs`;
 const readHook = (root) => readFileSync(join(hooksPathOf(root), 'pre-commit'), 'utf8');
 const stub = (root, rel) => (mkdirSync(dirname(join(root, rel)), { recursive: true }), writeFileSync(join(root, rel), '// a stand-in tool\n'), join(root, rel));
 
-// The hook the 4.0.0-8.2.1 installer body writes with no guard: the six docs and scripts lines.
+// The hook the 8.3.0 installer body writes with no guard: the six docs and scripts lines.
 const plainHook = (root) => `#!/usr/bin/env bash
 ${markerFor(basename(root))}
 # Auto-installed by scripts/install-git-hooks.mjs (run it from "prepare" or by hand).
@@ -75,6 +75,16 @@ node scripts/archive-issues.mjs --check
 node scripts/archive-decisions.mjs --check
 node --test scripts/*.test.mjs
 `;
+const LOCAL_LINE = 'if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi';
+// The plain hook every write carries: the 8.3.0 hook with, right after set -e, one `# ` comment naming
+// scripts/pre-commit.local (its wording is free, so it is read from the written hook) and the exact local line.
+const localHook = (root) => {
+  const lines = readHook(root).split('\n');
+  const comment = lines[lines.indexOf('set -e') + 1];
+  assert.ok(comment?.startsWith('# ') && comment.includes('scripts/pre-commit.local'), `right after set -e a # comment names scripts/pre-commit.local, got ${JSON.stringify(comment)}`);
+  assert.deepEqual(lines.filter((l) => l.includes('scripts/pre-commit.local')), [comment, LOCAL_LINE], 'the comment and the local line are the only lines naming scripts/pre-commit.local');
+  return plainHook(root).replace('set -e\n', `set -e\n${comment}\n${LOCAL_LINE}\n`);
+};
 const line = (path, role) => `node "${role ? shown(path) : path}" --check${role ? ` # ${role}` : ''}\n`;
 
 describe('install-git-hooks — beside no package.json, or a malformed one, the marker names the directory basename', () => {
@@ -148,8 +158,9 @@ describe('spec:init-project/S58 install-git-hooks — the rules-check and layout
     const [rules, layout, guard, guard2] = ['tools/rules-cli.mjs', 'tools/source-size-check.mjs', 'guard.mjs', 'g2/guard.mjs'].map((rel) => stub(root, rel));
     installs(root, ['--commit-guard', 'guard.mjs']);
     installs(root, ['--layout-check', 'tools/source-size-check.mjs']);
+    assert.equal(readHook(root), localHook(root) + line(layout, 'layout-check') + line(guard), 'the --layout-check run carried the guard line');
     installs(root, ['--rules-check', rules]);
-    const armed = plainHook(root) + line(rules, 'rules-check') + line(layout, 'layout-check');
+    const armed = localHook(root) + line(rules, 'rules-check') + line(layout, 'layout-check');
     assert.equal(readHook(root), armed + line(guard), 'each arming run carried the other armed lines');
     assert.match(installs(root).stdout, /already up to date/, 'a flagless re-run keeps all three');
     assert.equal(readHook(root), armed + line(guard));
@@ -163,7 +174,7 @@ describe('spec:init-project/S58 install-git-hooks — the rules-check and layout
     const [legacy, rules] = ['legacy/rules-cli.mjs', 'tools/rules-cli.mjs'].map((rel) => stub(root, rel));
     installs(root, ['--commit-guard', legacy]);
     installs(root, ['--rules-check', rules]);
-    const expected = plainHook(root) + line(rules, 'rules-check') + line(legacy);
+    const expected = localHook(root) + line(rules, 'rules-check') + line(legacy);
     assert.equal(readHook(root), expected);
     installs(root);
     assert.equal(readHook(root), expected, 'the flagless re-run keeps the legacy line as the guard');
@@ -183,11 +194,11 @@ describe('spec:init-project/S58 install-git-hooks — the rules-check and layout
     }
   }));
 
-  it('over a hook with no rules or layout line, a flagless and a --commit-guard run write the 4.0.0-8.2.1 bytes', inProject(({ root }) => {
+  it('over a hook with no rules or layout line, a flagless and a --commit-guard run write the plain hook with the comment line and the local line right after set -e', inProject(({ root }) => {
     installs(root);
-    assert.equal(readHook(root), plainHook(root));
+    assert.equal(readHook(root), localHook(root));
     installs(root, ['--commit-guard', 'guard.mjs']);
-    assert.equal(readHook(root), plainHook(root) + line(join(root, 'guard.mjs')));
+    assert.equal(readHook(root), localHook(root) + line(join(root, 'guard.mjs')));
   }));
 
   it('a wrong file name, a shell-active path or a missing value exits 2, a missing file exits 1, each writing nothing', inProject(({ root }) => {
@@ -220,11 +231,11 @@ describe('spec:init-project/S58 install-git-hooks — the rules-check and layout
     const armedAt = stub(root, 'a/b/rules-cli.mjs');
     if (process.platform !== 'win32') { // there the backslash is refused, writing nothing
       const posix = runInstaller(root, ['--rules-check', given]);
-      assert.deepEqual([posix.status, /a backslash, CR or LF/.test(posix.stderr), readHook(root)], [2, true, plainHook(root)], posix.stderr);
+      assert.deepEqual([posix.status, /a backslash, CR or LF/.test(posix.stderr), readHook(root)], [2, true, localHook(root)], posix.stderr);
     }
     installs(root, ['--rules-check', given], WIN32);
-    assert.equal(readHook(root), plainHook(root) + line(armedAt, 'rules-check'));
+    assert.equal(readHook(root), localHook(root) + line(armedAt, 'rules-check'));
     assert.match(installs(root).stdout, /already up to date/, 'the flagless re-run recognises the win32-armed line');
-    assert.equal(readHook(root), plainHook(root) + line(armedAt, 'rules-check'));
+    assert.equal(readHook(root), localHook(root) + line(armedAt, 'rules-check'));
   }));
 });

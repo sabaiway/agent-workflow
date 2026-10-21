@@ -6,6 +6,7 @@
 // suite, so docs files cannot drift over their declared `maxLines`, the auto-generated
 // `index.md` navigator cannot silently fall out of sync, stale archive entries never
 // reach a commit, and regressions to the scripts themselves are caught at commit time.
+// First after `set -e` it runs the project's own `scripts/pre-commit.local` with bash when present.
 //
 // The hooks location comes from git's OWN answer (`git rev-parse --git-path hooks`) — a linked
 // worktree resolves ITS OWN hooks path (its `.git` is a FILE; a hardcoded `.git/hooks` would
@@ -161,6 +162,8 @@ ${MAGIC_MARKER}
 # declared maxLines, the auto-generated index.md cannot silently go stale, stale
 # archive entries never reach a commit, and regressions to the scripts are caught.
 set -e
+# Your own commit checks go in scripts/pre-commit.local; it runs first, with bash, when present.
+if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi
 node scripts/check-docs-size.mjs
 node scripts/check-docs-size.mjs --check-index
 node scripts/archive-changelog.mjs --check

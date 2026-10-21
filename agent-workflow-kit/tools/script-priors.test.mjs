@@ -1,16 +1,22 @@
 // script-priors.test.mjs — the append-only catalog of shipped enforcement-script bodies, verified
 // EXHAUSTIVELY against the fixture bytes: every catalog digest is the sha256 of its fixture and every
 // fixture on disk has a catalog row, so neither side can drift behind the other. Then the three
-// classification arms over real bytes (the bundle, every fixture, one flipped byte).
+// classification arms over real bytes (the bundle, every fixture, one flipped byte), and the 8.3.0
+// installer set by proof: refreshed by ensureScripts, and its hook against the bundled one in a temp git project.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { hermeticGitEnv } from './git-env.mjs';
+
 const { SCRIPT_PRIORS, PRIOR_FILES, INSTALLER_SET, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
+const { ensureScripts } = await import('./ensure-ops.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
@@ -37,6 +43,9 @@ const FROZEN_PRIORS = [
   ['install-git-hooks.test.mjs', '4.0.0', '7.1.2', '9603c4dec823d4de8b7b603563d98acb836c0f430565ef8b56c31db4aea4829b'],
   ['install-git-hooks.test.mjs', '7.2.0', '8.2.1', 'b57d6b2004ef1967034d9ad8d1f1db0a3b4972c6284bb8c79dea6900dcec0b69'],
   ['install-git-hooks-repo-exec.test.mjs', '4.0.0', '8.2.1', 'f12584b062cfa337f09f21b8d4d096549eaecc08242ee264e6f0b98226605464'],
+  ['install-git-hooks.mjs', '8.3.0', '8.3.0', 'aa21b3dcbfc48ea1db7a33ed5a5c8cf30d911b266386b67159288cd12d28bc38'],
+  ['install-git-hooks.test.mjs', '8.3.0', '8.3.0', '058ac6de4dd5f83c4f09c8afd72ef2bfda365a9aea55bddd0089ce89a4e941e2'],
+  ['install-git-hooks-repo-exec.test.mjs', '8.3.0', '8.3.0', 'd5a3253fa0cd088733b927f2a7187c6484298f11dec48f6f63953e380b071c9a'],
 ];
 const CATALOG_ROWS = FROZEN_PRIORS.length;
 
@@ -135,15 +144,16 @@ describe('spec:docs-navigator/S3 the outgoing checker body is a prior, the deplo
 
 describe('spec:init-project/S59 the known-prior catalog carries the hook installer', () => {
   const INSTALLER = 'install-git-hooks.mjs';
-  const rowOf = (rows = (SCRIPT_PRIORS ?? []).filter((r) => r.file === INSTALLER)) => {
-    assert.equal(rows.length, 1, 'the installer has exactly one catalog row');
+  const rowOf = (rows = (SCRIPT_PRIORS ?? []).filter((r) => r.file === INSTALLER && r.firstShipped === '4.0.0')) => {
+    assert.equal(rows.length, 1, 'the installer has exactly one 4.0.0 catalog row');
     return rows[0];
   };
   const fixtureBytes = () => readFileSync(fixturePath(rowOf()));
-  it('PRIOR_FILES carries install-git-hooks.mjs and SCRIPT_PRIORS its one row, the thirteenth, 4.0.0 to 8.2.1', () => {
+  it('PRIOR_FILES carries install-git-hooks.mjs and SCRIPT_PRIORS its 4.0.0 row, the thirteenth, 4.0.0 to 8.2.1', () => {
     assert.ok(PRIOR_FILES.includes(INSTALLER), 'the installer is a refreshable script');
     const [file, firstShipped, lastShipped, digest] = FROZEN_PRIORS[12];
     assert.equal(SCRIPT_PRIORS.indexOf(rowOf()), 12);
+    assert.deepEqual([rowOf().firstShipped, rowOf().lastShipped], ['4.0.0', '8.2.1']);
     assert.deepEqual({ ...rowOf() }, { file, firstShipped, lastShipped, digest });
   });
   it("its digest is the sha256 of its fixture's raw bytes, which classify prior against the bundled installer", () => {
@@ -164,7 +174,28 @@ describe('spec:init-project/S59 the known-prior catalog carries the hook install
 
 describe('spec:init-project/S69 the catalog carries the installer set', () => {
   const SET = ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'];
-  const suiteRows = FROZEN_PRIORS.slice(13, 16).map(([file, firstShipped, lastShipped, digest]) => ({ file, firstShipped, lastShipped, digest }));
+  const rowsOf = (from, to) => FROZEN_PRIORS.slice(from, to).map(([file, firstShipped, lastShipped, digest]) => ({ file, firstShipped, lastShipped, digest }));
+  const [suiteRows, setRows] = [rowsOf(13, 16), rowsOf(16, 19)];
+  const SEEDS = ['archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs', 'markdown-blocks.test.mjs'];
+  const inTemp = (cell) => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'script-priors-'))); try { cell(dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
+  // Every child drops each inherited GIT_ variable and runs on the project's own hermetic config; one that
+  // never started or was killed fails the cell outright.
+  const spawnChecked = (command, args, cwd) => {
+    const r = spawnSync(command, args, { cwd, env: hermeticGitEnv(process.env, cwd), encoding: 'utf8' });
+    assert.ok(!r.error && r.signal === null, `${command} ${args.join(' ')} did not run to an exit (${r.error?.code ?? r.signal})`);
+    assert.equal(r.status, 0, `${command} ${args.join(' ')}: ${r.stdout}${r.stderr}`);
+    return r;
+  };
+  const LOCAL = 'if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi';
+  // The hook less its comment and local lines, once they are proven to sit right after `set -e`.
+  const lessLocal = (hook, label) => {
+    const lines = hook.split('\n');
+    const at = lines.indexOf('set -e');
+    const comments = lines.filter((l) => l.startsWith('# ') && l.includes('scripts/pre-commit.local'));
+    assert.deepEqual([at >= 0, comments.length, comments[0] === lines[at + 1], lines[at + 2]], [true, 1, true, LOCAL], `${label}: one comment line naming scripts/pre-commit.local, then the local line, right after set -e\n${hook}`);
+    lines.splice(at + 1, 2);
+    return lines.join('\n');
+  };
   it('INSTALLER_SET is frozen and names exactly the installer and its two suites in that order, each in PRIOR_FILES', () => {
     assert.ok(Object.isFrozen(INSTALLER_SET), 'INSTALLER_SET is a frozen export');
     assert.deepEqual([...INSTALLER_SET], SET);
@@ -183,4 +214,43 @@ describe('spec:init-project/S69 the catalog carries the installer set', () => {
     }
     for (const file of SET.slice(1)) assert.equal(classifyDeployedScript(bundleBytes(file), file, bundleBytes(file)), 'current', file);
   });
+  it("SCRIPT_PRIORS appends one 8.3.0 row per member in INSTALLER_SET order, each digest the sha256 of its fixture's raw bytes, which classify prior against the bundled member", () => {
+    assert.deepEqual(SCRIPT_PRIORS.slice(16, 19).map((row) => ({ ...row })), setRows);
+    assert.deepEqual(setRows.map((row) => row.file), [...INSTALLER_SET]);
+    for (const row of setRows) {
+      const body = readFileSync(fixturePath(row));
+      assert.ok(Buffer.isBuffer(body), 'the fixture is read as bytes, never decoded');
+      assert.equal(sha256(body), row.digest, fixturePath(row));
+      assert.equal(classifyDeployedScript(body, row.file, bundleBytes(row.file)), 'prior', fixturePath(row));
+    }
+  });
+  it('ensureScripts over a Node deployment carrying the three 8.3.0 bodies answers refreshed, each member then the bundled bytes', () => inTemp((dir) => {
+    writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}');
+    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+    mkdirSync(join(dir, 'scripts'));
+    for (const seed of SEEDS) writeFileSync(join(dir, 'scripts', seed), bundleBytes(seed));
+    for (const row of setRows) writeFileSync(join(dir, 'scripts', row.file), readFileSync(fixturePath(row)));
+    const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT });
+    assert.deepEqual({ token: r.token, failed: r.failed }, { token: 'refreshed', failed: false }, (r.lines ?? []).join('\n'));
+    for (const file of SET) assert.deepEqual(readFileSync(join(dir, 'scripts', file)), bundleBytes(file), `${file} holds the bundled bytes`);
+  }));
+  it('the 8.3.0 installer writes the bundled hook less the comment and local lines; the bundled one over its guarded hook keeps the guard and adds them', () => inTemp((root) => {
+    spawnChecked('git', ['init', '-q'], root);
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
+    const hook = join(resolve(root, spawnChecked('git', ['rev-parse', '--git-path', 'hooks'], root).stdout.trim()), 'pre-commit');
+    const install = (body, ...args) => {
+      writeFileSync(join(root, 'scripts', SET[0]), body);
+      spawnChecked(process.execPath, [join(root, 'scripts', SET[0]), ...args], root);
+      return readFileSync(hook, 'utf8');
+    };
+    const [fixture, bundled] = [readFileSync(fixturePath(setRows[0])), bundleBytes(SET[0])];
+    const [h0, g0] = [install(fixture), install(fixture, '--commit-guard', 'guard.mjs')];
+    rmSync(hook);
+    const [h1, g1] = [install(bundled), install(bundled, '--commit-guard', 'guard.mjs')];
+    assert.equal(lessLocal(h1, 'flagless'), h0, 'flagless: the bundled hook less the two lines is the 8.3.0 hook');
+    assert.equal(lessLocal(g1, '--commit-guard'), g0, '--commit-guard: the bundled hook less the two lines is the 8.3.0 hook');
+    writeFileSync(hook, g0);
+    assert.equal(install(bundled), g1, 'flagless over the 8.3.0 guarded hook keeps the guard line and adds the two lines');
+  }));
 });

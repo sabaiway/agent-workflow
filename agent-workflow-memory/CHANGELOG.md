@@ -4,6 +4,22 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.4.0 — the commit hook runs your own scripts/pre-commit.local first (AD-195)
+
+**Your own commit checks now have a place of their own: `scripts/pre-commit.local`.** Every hook that
+`references/scripts/install-git-hooks.mjs` writes carries, right after `set -e`, a comment line naming that file and
+`if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi`, so the file runs with bash before the
+docs and scripts lines.
+
+- A non-zero exit of the file stops the commit; with no such file the hook runs as before.
+- The installer never writes, reads or ships the file, and no flag turns the line off.
+- A hook this installer wrote gains the line the next time the installer runs (`prepare`, or by hand); a hook it
+  did not write is refused as before.
+- `install-git-hooks-repo-exec.test.mjs` proves it through real commits: the file runs before the docs check, an exit
+  1 stops the commit, and an absent file lets it through.
+
+MINOR: two new lines in every written hook.
+
 ## 8.3.0 — the hook installer arms the project-rules check and the layout check (AD-193)
 
 **`references/scripts/install-git-hooks.mjs` gains `--rules-check <path>` and `--layout-check <path>`.** Each writes

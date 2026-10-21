@@ -4,12 +4,13 @@
 // deploy-copy suite (install-git-hooks.test.mjs) keeps the consumer-shaped behavior pins. Every
 // branch of the installer runs from here: fresh install, the guard arm/carry/disable/conflict
 // lanes, the rules-check and layout-check arm/carry/duplicate/refusal lanes (win32 included), the
-// unmanaged refusal, the up-to-date short-circuit, and the not-a-git-checkout skip. Every child
+// unmanaged refusal, the up-to-date short-circuit, the not-a-git-checkout skip, and the S71
+// real-commit lane (real `git commit` through the written hook over stand-in scripts). Every child
 // runs with each inherited GIT_* variable stripped, so a hook's environment never leaks in.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,4 +130,56 @@ describe('install-git-hooks — the in-place installer under a GIT_DIR-pinned fi
     assert.equal(existsSync(join(nowhere, 'absent-git-dir')), false, 'nothing was created');
     rmSync(nowhere, { recursive: true, force: true });
   });
+});
+
+// The commit lane also drops NODE_TEST_CONTEXT: an inherited one makes the hook's nested `node --test` skip every file.
+const IDENTITY = { GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@e', GIT_COMMITTER_NAME: 'p', GIT_COMMITTER_EMAIL: 'p@e' };
+const bareAt = (home, extra = {}) => { const { NODE_TEST_CONTEXT: _, ...env } = envAt(home, { ...IDENTITY, ...extra }); return env; };
+const passes = (r) => (assert.equal(r.status, 0, r.stderr), r);
+
+// Passing stand-ins for every script the hook runs; check-docs-size.mjs, run right after the local line, records
+// whether the marker existed. The marker and the record live in a sibling dir, outside the work tree.
+const commitRepo = (root, side) => {
+  const [marker, record, local] = [join(side, 'marker'), join(side, 'record'), join(root, 'scripts', 'pre-commit.local')];
+  const git = (...args) => spawnChecked('git', args, { cwd: root, env: bareAt(root) });
+  mkdirSync(join(root, 'scripts'));
+  writeFileSync(join(root, 'scripts', 'check-docs-size.mjs'), `import { existsSync, writeFileSync } from 'node:fs';
+if (!process.argv.includes('--check-index')) writeFileSync(${JSON.stringify(record)}, String(existsSync(${JSON.stringify(marker)})));\n`);
+  for (const name of ['archive-changelog', 'archive-issues', 'archive-decisions']) writeFileSync(join(root, 'scripts', `${name}.mjs`), 'process.exit(0);\n');
+  writeFileSync(join(root, 'scripts', 'stand-in.test.mjs'), "import { test } from 'node:test';\ntest('a passing stand-in', () => {});\n");
+  for (const args of [['init', '-q'], ['add', '-A'], ['commit', '-qm', 'base']]) passes(git(...args));
+  passes(spawnChecked(process.execPath, [INSTALLER], { env: bareAt(root, { GIT_DIR: join(root, '.git') }) }));
+  const head = () => git('rev-parse', 'HEAD').stdout.trim();
+  const commit = (body) => {
+    if (body !== undefined) { writeFileSync(local, body); chmodSync(local, 0o644); assert.equal(statSync(local).mode & 0o111, 0, 'the local file is not executable'); }
+    writeFileSync(join(root, 'change.txt'), 'change\n');
+    passes(git('add', 'change.txt'));
+    return git('commit', '-qm', 'change');
+  };
+  return { marker, record, head, commit };
+};
+const inCommitRepo = (cell) => () => {
+  const dirs = ['hooks-commit-', 'hooks-commit-side-'].map((prefix) => realpathSync(mkdtempSync(join(tmpdir(), prefix))));
+  try { cell(commitRepo(...dirs)); } finally { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); }
+};
+
+describe('spec:init-project/S71 the local hook file through real commits over stand-ins', () => {
+  it('a local file that writes a marker runs before the docs check, and the commit exits 0', { timeout: 120_000 }, inCommitRepo((fx) => {
+    passes(fx.commit(`printf made > "${fx.marker}"\n`));
+    assert.ok(existsSync(fx.marker), 'the local file ran: its marker appeared');
+    assert.equal(readFileSync(fx.record, 'utf8'), 'true', 'the marker existed when check-docs-size.mjs ran');
+  }));
+
+  it('a local file that exits 1 stops the commit: non-zero, no new commit', { timeout: 120_000 }, inCommitRepo((fx) => {
+    const before = fx.head();
+    assert.notEqual(fx.commit('exit 1\n').status, 0, 'a local file exiting 1 stops the commit');
+    assert.equal(fx.head(), before, 'no new commit');
+  }));
+
+  it('with no local file the commit exits 0', { timeout: 120_000 }, inCommitRepo((fx) => {
+    const before = fx.head();
+    passes(fx.commit());
+    assert.notEqual(fx.head(), before, 'the commit landed');
+    assert.equal(readFileSync(fx.record, 'utf8'), 'false', 'the hook ran its stand-ins, with no marker');
+  }));
 });

@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-21 — AD-195: the commit hook runs your own scripts/pre-commit.local first, and the upgrade delivers that installer (kit 14.43.0 MINOR, memory 8.4.0 MINOR; engine 5.12.1 and both bridges unchanged)
+
+**A deployment's own commit checks now go in `scripts/pre-commit.local`.** Every hook the installer writes runs that
+file with bash first, right after `set -e`, when it is present; a non-zero exit stops the commit, and the kit never
+writes, reads or ships the file. The upgrade replaces an unedited 8.3.0 installer and its two suites with the new
+copies; the hook gains the line only when the new installer next runs. Contracts: init-project revision 16 (part git-hooks revision 13). Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-21 — AD-194: the upgrade refreshes the hook installer with its two suites, so a commit through the hook passes them again (kit 14.42.0 MINOR; memory 8.3.0, engine 5.12.1 and both bridges unchanged)
 
 **A deployment whose hook installer and its two suites carry a body a release shipped (memory 4.0.0 to 8.2.1) gets all

@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.43.0 — the commit hook runs your own scripts/pre-commit.local first, and the upgrade delivers that installer (AD-195)
+
+**A deployment's own commit checks now go in `scripts/pre-commit.local`, with no edit of a kit file.** The bundled hook
+installer (memory 8.4.0) writes, right after `set -e`, a comment line naming that file and
+`if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi`; the file runs with bash before the
+kit's lines, and a non-zero exit stops the commit. The kit never writes, reads or ships it.
+
+- **Delivered by the upgrade.** `script-priors.mjs` appends one 8.3.0 row per member of `INSTALLER_SET`, so the
+  enforcement-script ensure (op `scripts`) replaces an unedited 8.3.0 installer and its two suites with this kit's
+  copies, as it already did for 4.0.0-8.2.1. No ensure op, token or cause changes.
+- **The hook itself gains the line only when the new installer next runs**: a visible deployment's `prepare`, or the
+  apply of the `enforcement`, `commit-guard` or `hook-checks` item (`hook-checks` refreshes a known-prior installer
+  first; the other two run the installer in place). The upgrade replaces the installer file, not the hook.
+- Stated limit: where the 8.3.0 `install-git-hooks.test.mjs` stays beside the new installer — `hook-checks`
+  refreshing the installer alone (before the next upgrade, or while an edited member withholds the set), or a set
+  refresh stopped after the installer — that suite fails inside the hook and every commit stops: an unedited set or a
+  stopped refresh until the next upgrade refreshes the set, a withheld set until its edit is replaced.
+
+Contracts: init-project revision 16 (part git-hooks revision 13).
+
 ## 14.42.0 — the upgrade refreshes the hook installer with its two suites, so a commit through the hook passes them again (AD-194)
 
 **Where the hook installer and its two suites carry a body a release shipped (memory 4.0.0 to 8.2.1), the upgrade now
