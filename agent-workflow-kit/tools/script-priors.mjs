@@ -1,7 +1,7 @@
 // script-priors.mjs — the APPEND-ONLY catalog of every enforcement-script body this family has shipped
 // into a project's `scripts/`, as sha256 digests, and the ONE classifier a refresh asks before it
 // replaces a deployed script — the spec-layer ensure for its pairs, the `hook-checks` writer for the
-// hook installer: `current` (byte-equal to the bundled copy) · `prior` (a body a release shipped, never
+// hook installer alone and the upgrade's `scripts` ensure for the installer set: `current` (byte-equal to the bundled copy) · `prior` (a body a release shipped, never
 // edited since) · `custom` (anything else — preserved verbatim, replaced only by the replace run the
 // user's yes starts). The lens-region idiom (AD-041) over whole script bodies.
 //
@@ -16,11 +16,16 @@ import { createHash } from 'node:crypto';
 
 // The deployed scripts a refresh may REPLACE — the FULL refreshable catalog: the checker pair that
 // imports the reader and (since 2a) the reader pair itself, which the spec-layer ensure refreshes, and
-// the hook installer, which the `hook-checks` writer refreshes. Every other deployed script is outside
-// the refresh lane by design.
+// the installer set: the `hook-checks` writer refreshes the installer alone, the upgrade's `scripts`
+// ensure the installer with its two suites. Every other deployed script is outside the refresh lane by design.
 export const PRIOR_FILES = Object.freeze([
   'check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs', 'install-git-hooks.mjs',
+  'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs',
 ]);
+
+// The hook installer and the two suites that test it beside it — refreshed as ONE set, installer first,
+// so a stop partway never leaves a bundled suite beside a prior installer.
+export const INSTALLER_SET = Object.freeze(['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs']);
 
 const prior = (file, firstShipped, lastShipped, digest) => Object.freeze({ file, firstShipped, lastShipped, digest });
 
@@ -40,6 +45,9 @@ export const SCRIPT_PRIORS = Object.freeze([
   prior('spec-schema.test.mjs', '5.0.0', '7.2.1', '698564d7283281be1826019d214df475bb876687915de086818d8f5ece0e0336'),
   prior('check-docs-size.mjs', '7.0.0', '8.1.5', '0cf90ae2cbfc809847574a8c71a6b1322c783359740b08e0ff179f0d9d04dffc'),
   prior('install-git-hooks.mjs', '4.0.0', '8.2.1', '4c4010153cd3a9ca556f34d567d9985cff5c6e1b5ec3087ed7805e5c98f6f918'),
+  prior('install-git-hooks.test.mjs', '4.0.0', '7.1.2', '9603c4dec823d4de8b7b603563d98acb836c0f430565ef8b56c31db4aea4829b'),
+  prior('install-git-hooks.test.mjs', '7.2.0', '8.2.1', 'b57d6b2004ef1967034d9ad8d1f1db0a3b4972c6284bb8c79dea6900dcec0b69'),
+  prior('install-git-hooks-repo-exec.test.mjs', '4.0.0', '8.2.1', 'f12584b062cfa337f09f21b8d4d096549eaecc08242ee264e6f0b98226605464'),
 ]);
 
 export const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');

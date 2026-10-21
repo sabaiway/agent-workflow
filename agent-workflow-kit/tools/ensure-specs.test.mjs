@@ -12,9 +12,9 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
-import { PRIOR_FILES } from './script-priors.mjs';
 import { main } from './ensure-configs.mjs';
 
+const { PRIOR_FILES, INSTALLER_SET = [] } = await import('./script-priors.mjs');
 const { ensureSpecs, decideWrites, READER_PAIR, CHECKER_PAIR } = await import('./ensure-specs.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -281,10 +281,10 @@ describe('the state table — admitted writes and the run token', () => {
     assert.deepEqual(d, { writes: [], withheld: true });
   });
 
-  it('the refresh-lane pairs are the catalog domain but the hook installer (drift pin on the PRODUCTION constants)', () => {
+  it('the refresh-lane pairs are the catalog domain but the installer set (drift pin on the PRODUCTION constants)', () => {
     const pairs = [...READER_PAIR, ...CHECKER_PAIR];
     assert.equal(new Set(pairs).size, pairs.length, 'no file sits in both pairs');
-    assert.deepEqual([...pairs].sort(), PRIOR_FILES.filter((file) => file !== 'install-git-hooks.mjs').sort());
+    assert.deepEqual([...pairs].sort(), PRIOR_FILES.filter((file) => !INSTALLER_SET.includes(file)).sort());
     assert.deepEqual(READER_PAIR, READER);
     assert.deepEqual(CHECKER_PAIR, CHECKER);
   });

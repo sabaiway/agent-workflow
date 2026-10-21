@@ -6,7 +6,8 @@
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
 //   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
-//   scripts        scripts/<ADR enforcement>   seed-if-missing, ADR-layout detect FIRST
+//   scripts        scripts/<ADR enforcement>   the hook installer and its two suites refreshed as one set on a shipped
+//                  + the installer set         prior body (an edited member keeps all three); ADR seeds seed-if-missing, layout detect first
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
 //                                              user's yes; store root seeded behind a current checker
@@ -96,8 +97,10 @@ the project's own checker judges the navigator and a write it rejects is put bac
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
 body derived from docs/ai/vehicles.json is pending — the advisor's executor-vehicle.differing item
 changes it on your yes; an absent file is never placed here.
-The enforcement-script ensure detects an older ADR-store layout FIRST and instructs the opt-in
-migration instead of seeding.
+A fifth refreshes too: the enforcement-script ensure refreshes the hook installer with its two suites
+as one set on every Node deployment, whatever its ADR layout, only while each refreshed file is a body a
+release shipped (an edited member keeps all three; an absent one is never placed); then it detects an
+older ADR-store layout and instructs the opt-in migration instead of seeding the ADR files.
 
 Exit codes: 0 every op fine; 1 an op failed (its line says so) or there is no deployment here; 2 usage.`;
 

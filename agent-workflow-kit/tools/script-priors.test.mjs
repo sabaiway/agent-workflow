@@ -10,7 +10,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const { SCRIPT_PRIORS, PRIOR_FILES, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
+const { SCRIPT_PRIORS, PRIOR_FILES, INSTALLER_SET, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
@@ -34,6 +34,9 @@ const FROZEN_PRIORS = [
   ['spec-schema.test.mjs', '5.0.0', '7.2.1', '698564d7283281be1826019d214df475bb876687915de086818d8f5ece0e0336'],
   ['check-docs-size.mjs', '7.0.0', '8.1.5', '0cf90ae2cbfc809847574a8c71a6b1322c783359740b08e0ff179f0d9d04dffc'],
   ['install-git-hooks.mjs', '4.0.0', '8.2.1', '4c4010153cd3a9ca556f34d567d9985cff5c6e1b5ec3087ed7805e5c98f6f918'],
+  ['install-git-hooks.test.mjs', '4.0.0', '7.1.2', '9603c4dec823d4de8b7b603563d98acb836c0f430565ef8b56c31db4aea4829b'],
+  ['install-git-hooks.test.mjs', '7.2.0', '8.2.1', 'b57d6b2004ef1967034d9ad8d1f1db0a3b4972c6284bb8c79dea6900dcec0b69'],
+  ['install-git-hooks-repo-exec.test.mjs', '4.0.0', '8.2.1', 'f12584b062cfa337f09f21b8d4d096549eaecc08242ee264e6f0b98226605464'],
 ];
 const CATALOG_ROWS = FROZEN_PRIORS.length;
 
@@ -156,5 +159,28 @@ describe('spec:init-project/S59 the known-prior catalog carries the hook install
     for (const f of flips) assert.equal(classifyDeployedScript(f, INSTALLER, bundled), 'custom');
     assert.equal(flips[0].toString('utf8'), flips[1].toString('utf8'), 'both invalid bytes decode to the same U+FFFD text');
     assert.notEqual(digestOf(flips[0]), digestOf(flips[1]), 'the digests stay distinct over the bytes');
+  });
+});
+
+describe('spec:init-project/S69 the catalog carries the installer set', () => {
+  const SET = ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'];
+  const suiteRows = FROZEN_PRIORS.slice(13, 16).map(([file, firstShipped, lastShipped, digest]) => ({ file, firstShipped, lastShipped, digest }));
+  it('INSTALLER_SET is frozen and names exactly the installer and its two suites in that order, each in PRIOR_FILES', () => {
+    assert.ok(Object.isFrozen(INSTALLER_SET), 'INSTALLER_SET is a frozen export');
+    assert.deepEqual([...INSTALLER_SET], SET);
+    for (const file of SET) assert.ok(PRIOR_FILES.includes(file), `${file} is a refreshable script`);
+  });
+  it('SCRIPT_PRIORS appends the three suite rows right after the installer row', () => {
+    assert.equal(SCRIPT_PRIORS[12].file, 'install-git-hooks.mjs');
+    assert.deepEqual(SCRIPT_PRIORS.slice(13, 16).map((row) => ({ ...row })), suiteRows);
+  });
+  it("each digest is the sha256 of its fixture's raw bytes, which classify prior against the bundled suite; the bundled suites classify current", () => {
+    for (const row of suiteRows) {
+      const body = readFileSync(fixturePath(row));
+      assert.ok(Buffer.isBuffer(body), 'the fixture is read as bytes, never decoded');
+      assert.equal(sha256(body), row.digest, fixturePath(row));
+      assert.equal(classifyDeployedScript(body, row.file, bundleBytes(row.file)), 'prior', fixturePath(row));
+    }
+    for (const file of SET.slice(1)) assert.equal(classifyDeployedScript(bundleBytes(file), file, bundleBytes(file)), 'current', file);
   });
 });

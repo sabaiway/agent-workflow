@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.42.0 — the upgrade refreshes the hook installer with its two suites, so a commit through the hook passes them again (AD-194)
+
+**Where the hook installer and its two suites carry a body a release shipped (memory 4.0.0 to 8.2.1), the upgrade now
+replaces all three with this kit's copies.** The earlier `install-git-hooks.test.mjs` spawned git with the variables
+the hook inherits, so under a real `git commit` its linked-worktree test failed and the hook stopped every commit; after
+one upgrade a commit from the main worktree passes both suites.
+
+- **One set, one rule.** The enforcement-script ensure (`ensure-configs.mjs --reconcile`, op `scripts`) refreshes
+  `install-git-hooks.mjs`, `install-git-hooks.test.mjs` and `install-git-hooks-repo-exec.test.mjs` together on every
+  Node deployment, whatever its ADR layout, the installer first. An edited member keeps all three as they stand
+  (`customized-preserved`); an absent one is never placed; each member gets its own outcome line. A symlink, a
+  directory or an unreadable bundled member stops the op before any write; a write refused partway names the members
+  already replaced, none rolled back.
+- **The two ADR outcomes that seed nothing** — an older ADR layout and a layout the op cannot read — still refresh the
+  set, and their line now says the ADR files were not seeded instead of that nothing was written.
+- **The known-prior catalog.** `script-priors.mjs` exports `INSTALLER_SET` and appends three rows for the suites'
+  shipped bodies: `install-git-hooks.test.mjs` 4.0.0-7.1.2 and 7.2.0-8.2.1, `install-git-hooks-repo-exec.test.mjs`
+  4.0.0-8.2.1.
+- `hook-checks` is unchanged: it still refreshes the installer alone, and the next upgrade refreshes the suites beside it.
+- Stated limit: a commit from a linked worktree of a deployment still stops in the hook (debt row
+  LINKED-WORKTREE-COMMIT-STOPS-IN-THE-HOOK).
+
+Contracts: init-project revision 15 (part git-hooks revision 12).
+
 ## 14.41.0 — the commit hook runs the project-rules check and the layout check, set up by two advisor items on your yes (AD-193)
 
 **Two new advisor items set the checks up: `source-size.layout` records the directories already beyond the layout

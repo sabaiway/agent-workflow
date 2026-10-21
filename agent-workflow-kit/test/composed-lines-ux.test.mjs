@@ -193,7 +193,7 @@ ensureFx('unexpected-error-catch-all', failedOutcome('orchestration', new Error(
   ensureFx('scripts-would-seed', ensureScripts({ cwd: dir, kitRoot: KIT, dryRun: true, deps: {} }));
   ensureFx('scripts-seeded', ensureScripts({ cwd: dir, kitRoot: KIT, deps: {} }));
   ensureFx('scripts-already-present', ensureScripts({ cwd: dir, kitRoot: KIT, deps: {} }));
-  ensureFx('scripts-adr-layout-unverifiable', ensureScripts({ cwd: dir, kitRoot: KIT, deps: { statPath: () => { throw eacces(); } } }));
+  { const r = ensureScripts({ cwd: dir, kitRoot: KIT, deps: { statPath: () => { throw eacces(); } } }); assert.match(r.lines[0], /the ADR files were not seeded/); ensureFx('scripts-adr-layout-unverifiable', r); }
   const wrongKindDir = project();
   mkdirSync(join(wrongKindDir, 'scripts', 'archive-decisions.mjs'), { recursive: true });
   ensureFx('scripts-wrong-node-kind', ensureScripts({ cwd: wrongKindDir, kitRoot: KIT, deps: {} }));

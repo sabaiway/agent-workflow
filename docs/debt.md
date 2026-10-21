@@ -697,16 +697,41 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `source-size.layout` item in the same run) while its dry run has nothing to plan, exit 3, every run — harmless, a
   refusing check leaves the item pending. Narrow fix: that exit-3 line names the `source-size.layout` item as the step
   that comes first. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S6 spec review (lens, round 2).
+- **LINKED-WORKTREE-COMMIT-STOPS-IN-THE-HOOK** — invariant: a commit from a linked worktree passes the deployed hook.
+  Origin: measured 2026-10-20 on a deployment with the 8.3.0 bundle, a commit from a linked worktree stops at the hook's
+  docs index check; behind it, the deployed `migrate-gates.test.mjs:467-469,488-491` and
+  `migrate-gates-branches.test.mjs:134-135,291` run `git init` under the hook's inherited `GIT_DIR` and then write under
+  their temp root's `.git`. Narrow fix: each deployed suite strips the hook's inherited git variables, and the index check
+  is judged in the linked tree. Residual, live: every commit from a linked worktree of a deployment stops. Raised by the
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9 spec review (lens, round 1).
+- **INIT-PROJECT-S66-REFRESH-CELLS-NAME-NO-ADR-STATE** — invariant: every cell of init-project S66 that expects the
+  token `refreshed` names the ADR files' state that token needs. Origin: S66's `refreshed` cells (the mixed set and the
+  current installer beside prior suites) say nothing of the ADR files, while S67 shows a prior set beside absent ADR
+  files answers `seeded` by the token precedence. Narrow fix: those cells say "beside present ADR files", as S67 does.
+  Residual: a test written from S66 alone may pick absent ADR files and meet `seeded`; the token mismatch shows it at
+  once. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9 spec review (lens, the re-read of round 2).
+- **UPGRADE-SET-REFRESH-MAY-GROW-A-RECORDED-SIZE-UNSTATED** — invariant: every refresh the upgrade makes without a yes
+  states, where the size practice measures `scripts/`, that its growth may stop the next size check. Origin:
+  `agent-workflow-kit/references/modes/upgrade.md:46` (the enforcement-script paragraph) against the git-hooks part's
+  hook-checks bullet, whose risk note says this before its yes while the installer set's refresh asks none. Narrow fix:
+  one clause in that paragraph naming the growth and the reasoned `--write-baseline`. Residual, live: where the size
+  practice measures `scripts/` with a recorded size, the next size check after the upgrade — the hook's layout line or a
+  declared source-size gate — stops, printing that check's own reasoned `--write-baseline` remedy; not live for a
+  deployment whose size practice does not measure `scripts/`. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9
+  diff review (lens, round 1).
+
+## Closed
+
 - **INSTALLER-SUITE-FAILS-INSIDE-ITS-OWN-HOOK** — invariant: a suite the kit deploys into `scripts/` passes inside the
   pre-commit hook that runs it. Origin: the 4.0.0-8.2.1 `install-git-hooks.test.mjs` linked-worktree cell spawns git
   with the hook's inherited `GIT_*` variables; measured 2026-10-20, a `git commit` whose hook runs that suite fails the
   cell. Narrow fix shipped in memory 8.3.0: both installer suites strip every inherited git variable. Residual, live: a
   deployment keeps its older suite, since the enforcement copy is create-only and no refresh lane carries the tests;
   the generalization is a refresh lane for the deployed suites. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S6
-  live walk.
-
-## Closed
-
+  live walk. Closed in kit 14.42.0 (AD-194) on the narrowed invariant, the installer's two suites pass inside the hook
+  a commit from the main worktree runs: the upgrade's enforcement-script ensure refreshes the installer with its two
+  suites as one set on every Node deployment; a commit from a linked worktree stays debt row
+  LINKED-WORKTREE-COMMIT-STOPS-IN-THE-HOOK.
 - **LAYOUT-DECLINE-IS-UNDONE-BY-A-HAND-DELETE** — invariant: turning layout judging off takes a recorded, reasoned
   step. Origin: under source-size revision 3 a present config without the machine key `layout` is not judged on
   layout, and an absent config is judged on layout but on no line, so hand-deleting `layout` or the whole config

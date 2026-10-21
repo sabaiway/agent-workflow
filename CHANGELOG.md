@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-21 — AD-194: the upgrade refreshes the hook installer with its two suites, so a commit through the hook passes them again (kit 14.42.0 MINOR; memory 8.3.0, engine 5.12.1 and both bridges unchanged)
+
+**A deployment whose hook installer and its two suites carry a body a release shipped (memory 4.0.0 to 8.2.1) gets all
+three replaced by the kit's copies at its next upgrade, whatever its ADR layout.** The earlier installer suite spawned
+git with the variables the hook inherits, so the hook stopped every commit; after the upgrade a commit from the main
+worktree passes both suites. An edited member keeps all three as they stand, and an absent one is never placed.
+Contracts: init-project revision 15 (part git-hooks revision 12). Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-20 — AD-193: the commit hook runs the project-rules check and the layout check, set up by the advisor (kit 14.41.0 MINOR, memory 8.3.0 MINOR; engine 5.12.1 and both bridges unchanged)
 
 **Every deployment's pre-commit hook can now run the project-rules check and, once the existing piles are recorded,
