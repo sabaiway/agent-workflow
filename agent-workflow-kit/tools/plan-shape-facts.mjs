@@ -8,10 +8,10 @@ import { listStories } from './claim-relation.mjs';
 import { EPICS_REL, readEpicStore } from './epic-store.mjs';
 import { sweepSiblings } from './epic-shape-ledger.mjs';
 import { PIN_FILE } from './plan-shape-ownership.mjs';
+import { NEVER_WALKED } from './repo-lex.mjs';
 
 const SOURCE_SIZE_REL = 'docs/ai/source-size.json';
 const PACKAGE_FILE = 'package.json';
-const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules']);
 const NEGATED_CLASS = /\[[!^]/;
 const UNSUPPORTED_GLOB = /[()\\\u0000-\u001f]/;
 const STORE_REFUSED = 'refused';
@@ -38,7 +38,7 @@ const walkRegularFiles = (root, directory = root) => readdirSync(directory, { wi
   .flatMap((entry) => {
     const path = join(directory, entry.name);
     const rel = toPosix(relative(root, path));
-    if (entry.isDirectory() && !EXCLUDED_DIRECTORIES.has(entry.name)) return walkRegularFiles(root, path);
+    if (entry.isDirectory() && !NEVER_WALKED.includes(entry.name)) return walkRegularFiles(root, path);
     return entry.isFile() ? [rel] : [];
   });
 

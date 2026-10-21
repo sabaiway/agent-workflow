@@ -29,6 +29,7 @@ import {
   HARD_MAX_FILE_BYTES,
   HARD_MAX_TOTAL_BYTES as SEARCH_HARD_MAX_TOTAL_BYTES,
 } from './repo-search.mjs';
+import { NEVER_WALKED } from './repo-lex.mjs';
 
 export const SERVER_NAME = 'agent-workflow';
 const EXIT_OK = 0;
@@ -82,7 +83,7 @@ export const TOOLS = Object.freeze([
       required: ['pattern'],
       properties: {
         pattern: { type: 'string', minLength: 1, description: 'The literal bytes to find; multiline allowed.' },
-        paths: pathList('Project-relative search targets (default: the whole root).'),
+        paths: pathList(`Project-relative search targets (default: the whole root). The walk never enters ${NEVER_WALKED.join(', ')} at any depth unless that folder or a path inside it is named here; below a named target the rule applies again.`),
         max: count(HARD_MAX_RESULTS, 'Result ceiling.'),
         maxBytes: count(HARD_MAX_FILE_BYTES, 'Per-file byte ceiling.'),
         maxTotalBytes: count(SEARCH_HARD_MAX_TOTAL_BYTES, 'Whole-call byte ceiling.'),

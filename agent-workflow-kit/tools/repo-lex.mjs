@@ -18,6 +18,10 @@ export const lexicalRepoRelative = (rel) => {
   return { ok: true };
 };
 
+// ONE home of the family's reserved folder and of the names no repository walk enters (spec repo-search).
+export const RESERVED_DIR = '.agent-workflow';
+export const NEVER_WALKED = Object.freeze(['.git', 'node_modules', RESERVED_DIR]);
+
 // POSIX single-quote for pasteable command rendering (display only — never an execution boundary).
 export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 

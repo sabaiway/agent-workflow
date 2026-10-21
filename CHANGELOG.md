@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-21 — AD-197: the kit's search and plan checks no longer walk into the folder of kept-aside copies (kit 14.45.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
+
+**A kept-aside copy no longer shows up beside the live file.** The kit's literal search (the MCP `repo_search` tool)
+never walks into `.git`, `node_modules` or the reserved `.agent-workflow` folder, at any depth, unless that folder or a
+path inside it is named as a target, and the plan-shape checks never walk into them; one list in `tools/repo-lex.mjs`
+feeds both. `--help` is now read only at a flag position, so searching for the text `--help` searches. Contracts:
+repo-search revision 1 (new), plan-review-loop revision 12. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-21 — AD-196: before the upgrade replaces a spec-layer file you edited, it keeps your edit aside and names it, under one replace block (kit 14.44.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
 
 **An edited spec-layer script is no longer lost on the upgrade's yes.** The upgrade's configs step prints one replace

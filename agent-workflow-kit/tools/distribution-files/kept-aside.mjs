@@ -12,8 +12,8 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { lstatNoFollow, writeProjectFileCreateOnly } from '../atomic-write.mjs';
+import { RESERVED_DIR } from '../repo-lex.mjs';
 
-const RESERVED_DIR = '.agent-workflow';
 export const KEPT_ASIDE_DIR = `${RESERVED_DIR}/kept-aside`;
 const IGNORE_REL = `${RESERVED_DIR}/.gitignore`;
 const IGNORE_BODY = '*\n';

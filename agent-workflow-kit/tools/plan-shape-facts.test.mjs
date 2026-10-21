@@ -199,6 +199,34 @@ describe('plan-shape facts — filesystem-only evidence', () => {
     assert.deepEqual(facts.candidates('a.mjs', []), ['nested/src/a.mjs', 'src/a.mjs']);
   });
 
+  it('spec:plan-review-loop/S35 the repository walk never enters a NEVER_WALKED directory, at the top or nested', async (t) => {
+    const { buildFacts } = await loadFacts();
+    const root = makeTree();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    writeJson(root, 'package.json', { files: ['src/'] });
+    write(root, 'src/file.mjs', 'live\n');
+    write(root, '.agent-workflow-notes/file.mjs', 'near name\n');
+    const plant = (dir) => {
+      write(root, `${dir}/file.mjs`, 'copy\n');
+      write(root, `${dir}/test/package-content.test.mjs`, 'pin\n');
+    };
+    const walked = ['.agent-workflow-notes/file.mjs', 'src/file.mjs'];
+    const judge = (label) => {
+      const facts = buildFacts(root, { paths: ['src/file.mjs', '**/file.mjs'] });
+      assert.deepEqual([...facts.candidates('file.mjs', [])].sort(), walked, `no anchor candidate under ${label}`);
+      assert.deepEqual([...facts.expansions['**/file.mjs']].sort(), walked, `no sweep expansion under ${label}`);
+      assert.equal(facts.pathFacts['src/file.mjs'].pinTest, null, `no pin under ${label}`);
+    };
+    plant('.agent-workflow/kept-aside/0123456789abcdef');
+    judge('.agent-workflow');
+    const { NEVER_WALKED } = await import('./repo-lex.mjs');
+    for (const name of NEVER_WALKED) {
+      plant(name);
+      plant(`pkg/${name}`);
+    }
+    judge(NEVER_WALKED.join(', '));
+  });
+
   it('refuses an absent, symlinked, unreadable or malformed shipped robustness list as usage', async () => {
     const { buildFacts } = await loadFacts();
     const root = makeTree();

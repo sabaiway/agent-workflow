@@ -92,6 +92,14 @@ describe('mcp-server — the two tools and their schemas', () => {
     assert.deepEqual(stripDescriptions(m.TOOLS[1].inputSchema), REPO_SEARCH_SCHEMA);
   });
 
+  it('the repo_search paths description names every NEVER_WALKED entry, iterated from the export', async () => {
+    // spec:repo-search/S8
+    const description = (await api()).TOOLS.find((t) => t.name === 'repo_search').inputSchema.properties.paths.description;
+    assert.ok(description.includes('.agent-workflow'), 'the description names the reserved folder');
+    const { NEVER_WALKED } = await import('./repo-lex.mjs');
+    for (const name of NEVER_WALKED) assert.ok(description.includes(name), name);
+  });
+
   it('tools/list through the dispatcher returns the same public definitions and nothing private', async () => {
     const m = await api();
     const root = scratch();

@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.45.0 — the kit's search and plan checks no longer walk into the folder of kept-aside copies (AD-197)
+
+**A kept-aside copy no longer shows up beside the live file.** Since 14.44.0 the upgrade keeps a replaced edit at
+`.agent-workflow/kept-aside/<16 hex>/<path>`. The kit's literal search (`tools/repo-search.mjs`, the MCP `repo_search`
+tool) walked into that folder, so a project-wide search returned the stale copy next to the live file and an agent
+could read or edit the wrong one; the plan-shape check walked into it too, so a short anchor such as
+`check-docs-size.mjs` could match the copy as well as the live `scripts/check-docs-size.mjs`.
+
+- **The search's walk never enters `.git`, `node_modules` or `.agent-workflow`, at any depth**, unless that folder or a
+  path inside it is named as a target (`--path`, `--paths-file`, the MCP `paths` field); below a named target the rule
+  applies again. A regular file with one of those names is still searched, and a symlink the walk meets is still a
+  counted skip. `--help` and the MCP `repo_search` `paths` description name the three folders.
+- **The plan-shape checks never walk into those folders either**, for anchor candidates, the pin search and sweep
+  expansion; they have no named exemption.
+- **One list.** `tools/repo-lex.mjs` exports `RESERVED_DIR` and `NEVER_WALKED`; the search and the plan-shape walk
+  import `NEVER_WALKED`, and the kept-aside writer imports `RESERVED_DIR`.
+- **`--help` and `-h` are read only at a flag position.** Before, they were read anywhere in the arguments, so MCP
+  `repo_search {"pattern": "--help"}` answered with the help text and searched nothing; a pattern or a target spelled
+  `--help` is now searched. An unknown argument beside `--help` is a usage error.
+- Contracts: repo-search revision 1 (new; the search had none), plan-review-loop revision 12.
+
 ## 14.44.0 — before the upgrade replaces a spec-layer file you edited, it keeps your edit aside and names it, under one replace block (AD-196)
 
 **An edited spec-layer script is no longer lost on the upgrade's yes.** Before the bundled body replaces it, the

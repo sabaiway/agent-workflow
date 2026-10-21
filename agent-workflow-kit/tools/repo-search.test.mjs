@@ -49,6 +49,7 @@ const seed = (root, files) => {
 const run = (argv, cwd) => main(argv, { cwd });
 
 describe('repo-search — outcomes are distinguishable', () => {
+  // spec:repo-search/S2
   it('matches found → EXIT_OK and every hit is reported with file and line', () => {
     const root = seed(scratch(), { 'a.txt': 'alpha\nbeta\n', 'sub/b.txt': 'beta\n' });
     const r = run(['--pattern', 'beta', '--path', '.'], root);
@@ -98,6 +99,7 @@ describe('repo-search — outcomes are distinguishable', () => {
 });
 
 describe('repo-search — the pattern travels by file and is echoed as a digest', () => {
+  // spec:repo-search/S3
   it('--pattern-file carries shell-significant bytes the command string never sees', () => {
     const root = seed(scratch(), {
       'pat.txt': '$(x) > y && `z`\n',
@@ -160,6 +162,7 @@ describe('repo-search — the search is LITERAL, never a regex', () => {
 });
 
 describe('repo-search — containment and bounds (the council REWORK set)', () => {
+  // spec:repo-search/S4
   it('a symlinked ANCESTOR does not smuggle a path out of the root', () => {
     // The lexical `..` check passes here — the escape is in what the component RESOLVES to, which
     // is why containment has to be decided on the real path, not on the string.
@@ -372,6 +375,7 @@ describe('repo-search — the failure branches are exercised, not merely written
 // DIFFERENT object than the string denotes. This table IS the surface — an accepted case that should
 // be refused, or a refused case that should be accepted, goes red here rather than in round eleven.
 describe('the target acceptance predicate — the closed rule set, in one table', () => {
+  // spec:repo-search/S5
   const REFUSED = [
     ['empty', '', /must not be empty/u],
     ['a NUL byte', 'a\0b', /NUL/u],
@@ -532,6 +536,7 @@ describe('the target acceptance predicate — the closed rule set, in one table'
 });
 
 describe('repo-search — only regular files are read', () => {
+  // spec:repo-search/S6
   it('a symlink is never followed and is counted as skipped, not silently ignored', () => {
     const root = seed(scratch(), { 'real.txt': 'needle\n' });
     symlinkSync(join(root, 'real.txt'), join(root, 'link.txt'));
@@ -555,6 +560,7 @@ describe('repo-search — only regular files are read', () => {
 // the residual guard has nothing to scan. Without it a search may name a pattern it cannot spell but
 // not a PATH it cannot spell, and the promptless lane covers only half the arguments.
 describe('repo-search — --paths-file carries targets the command string cannot', () => {
+  // spec:repo-search/S7
   it('each line of the file becomes a target', () => {
     const root = seed(scratch(), { 'a/one.txt': 'needle\n', 'b/two.txt': 'needle\n', 'c/three.txt': 'needle\n' });
     writeFileSync(join(root, 'targets.lst'), 'a\nb\n');
@@ -689,5 +695,76 @@ describe('repo-search — --paths-file carries targets the command string cannot
 
   it('--help documents the target lane the way it documents the pattern lane', () => {
     assert.match(run(['--help'], process.cwd()).stdout, /--paths-file/u);
+  });
+});
+
+const KEPT = '.agent-workflow/kept-aside/0123456789abcdef';
+const hits = (r) => r.result.matches.map((m) => m.file).sort();
+
+describe('repo-search — the walk scope', () => {
+  // spec:repo-search/S1
+  it('every NEVER_WALKED entry is pruned from a root search at the top and nested; a near-name folder is walked', async () => {
+    const root = seed(scratch(), {
+      'scripts/a.mjs': 'needle', [`${KEPT}/scripts/a.mjs`]: 'needle', 'pkg/.agent-workflow/b.mjs': 'needle',
+      'pkg/node_modules/c.mjs': 'needle', '.git/d': 'needle', '.agent-workflow-notes/e.mjs': 'needle',
+    });
+    const kept = ['.agent-workflow-notes/e.mjs', 'scripts/a.mjs'];
+    assert.deepEqual(hits(run(['--pattern', 'needle'], root)), kept, 'a root search never walks into .agent-workflow');
+    const { NEVER_WALKED } = await import('./repo-lex.mjs');
+    for (const name of NEVER_WALKED) seed(root, { [`${name}/top.mjs`]: 'needle', [`deep/${name}/nested.mjs`]: 'needle' });
+    const r = run(['--pattern', 'needle'], root);
+    assert.deepEqual(hits(r), kept, `pruned at the top and nested: ${NEVER_WALKED.join(', ')}`);
+    assert.deepEqual(Object.values(r.result.skipped).filter((n) => n > 0), [], 'the prune is a scope, never a counted skip');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a named .agent-workflow, a --paths-file naming it and the copy itself return the copy; below a target the rule applies again', () => {
+    const copy = `${KEPT}/scripts/a.mjs`;
+    const root = seed(scratch(), {
+      [copy]: 'needle', [`${KEPT}/node_modules/f.mjs`]: 'needle', [`${KEPT}/pkg/.agent-workflow/g.mjs`]: 'needle', 'targets.lst': '.agent-workflow\n',
+    });
+    for (const lane of [['--path', '.agent-workflow'], ['--paths-file', 'targets.lst'], ['--path', copy]]) {
+      const r = run(['--pattern', 'needle', ...lane], root);
+      assert.deepEqual([r.code, hits(r)], [EXIT_OK, [copy]], lane.join(' '));
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('only real directories are pruned: a regular FILE of that name is searched, a symlink of that name is a counted skip', () => {
+    const root = seed(scratch(), { '.agent-workflow': 'needle', 'lib/.agent-workflow/x.mjs': 'needle', 'real/y.mjs': 'needle' });
+    mkdirSync(join(root, 'link'));
+    symlinkSync(join(root, 'real'), join(root, 'link/.agent-workflow'));
+    const r = run(['--pattern', 'needle'], root);
+    assert.deepEqual(hits(r), ['.agent-workflow', 'real/y.mjs'], 'the file is searched, the directory pruned, the symlink not traversed');
+    assert.equal(r.result.skipped.symlinks, 1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('--help names every NEVER_WALKED entry, iterated from the export', async () => {
+    const help = run(['--help'], process.cwd()).stdout;
+    assert.ok(help.includes('.agent-workflow'), 'the help names the reserved folder');
+    const { NEVER_WALKED } = await import('./repo-lex.mjs');
+    for (const name of NEVER_WALKED) assert.ok(help.includes(name), name);
+  });
+});
+
+describe('repo-search — --help is read only at a flag position', () => {
+  // spec:repo-search/S9
+  it('at a flag position it prints the help with no search; beside a refused argument it is usage; as a value it is searched', () => {
+    const root = seed(scratch(), { 'a.txt': 'run --help here\n', '-h': 'x\n' });
+    for (const argv of [['--help'], ['-h'], ['--pattern', 'x', '--help'], ['-h', '--pattern', ''], ['--path', 'nope', '--help']]) {
+      const r = run(argv, root);
+      assert.deepEqual([r.code, r.result, r.stdout.includes('--paths-file')], [EXIT_OK, null, true], argv.join(' '));
+    }
+    for (const argv of [['--bogus', '--help'], ['--help', '--bogus'], ['--help', '--max'], ['-h', '--max', 'x']]) {
+      assert.equal(run(argv, root).code, EXIT_USAGE, argv.join(' '));
+    }
+    const pattern = run(['--pattern', '--help'], root);
+    assert.deepEqual([pattern.code, hits(pattern)], [EXIT_OK, ['a.txt']], 'a pattern spelled --help is searched');
+    const target = run(['--pattern', 'x', '--path', '-h'], root);
+    assert.deepEqual([target.code, hits(target)], [EXIT_OK, ['-h']], 'a target spelled -h is searched');
+    const none = run(['--pattern', 'absent', '--path', '-h'], root);
+    assert.match(none.stdout, /no matches/u);
+    rmSync(root, { recursive: true, force: true });
   });
 });

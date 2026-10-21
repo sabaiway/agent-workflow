@@ -771,3 +771,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   reached outside the phase that raised it, then FOLDED in a later round of the same step: correcting
   the wrapper-link resolution base required touching both call sites anyway, and the check is no
   longer redundant there — it now decides whether the physical parent has to be resolved at all.
+- **PATH-INVENTORY-READS-A-FIELD-VALUE-AS-HELP** — invariant: a reader reached through the MCP lane never treats a
+  field value as a flag. Origin: `agent-workflow-kit/tools/path-inventory.mjs:470` answers `--help` or `-h` anywhere
+  in argv, so MCP `path_inventory {"paths":["--help"]}` returns the help as a success and inspects nothing. Narrow fix:
+  the search's own fix in story S8 of DISTRIBUTION-FILES-STAY-CURRENT (help read only at a flag position, spec
+  repo-search S9), repeated in path-inventory's parser with one cell naming `--help` as a path. Residual exposure, not
+  live for a file a project holds: a path literally named `--help` or `-h` cannot be inspected through the MCP lane.
+  Raised by the S8 spec review (lens).

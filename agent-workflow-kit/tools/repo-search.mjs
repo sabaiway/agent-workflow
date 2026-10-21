@@ -51,6 +51,7 @@ import { openSync, fstatSync, readSync, closeSync, opendirSync, realpathSync, ls
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { isDirectRun } from './direct-run.mjs';
+import { NEVER_WALKED } from './repo-lex.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_ERROR = 1;
@@ -80,7 +81,6 @@ const BINARY_SNIFF_BYTES = 8192;
 // cap the stored size per match is a constant, so no size of pattern or file can grow it.
 const SNIPPET_CONTEXT = 200;
 const SNIPPET_MAX = 512;
-const NEVER_WALKED = Object.freeze(['.git', 'node_modules']);
 // O_NOFOLLOW refuses a symlinked leaf at open time; O_NONBLOCK means a FIFO that slipped in returns
 // instead of hanging. Both are POSIX; on a platform lacking them the flags degrade to 0 and the
 // fstat check below is the remaining guard.
@@ -123,7 +123,7 @@ export const parseCount = (raw, flag, ceiling) => {
 };
 
 const parseArgs = (argv) => {
-  const opts = { pattern: null, patternFile: null, paths: [], pathsFile: null, max: DEFAULT_MAX_RESULTS, maxBytes: DEFAULT_MAX_FILE_BYTES, maxTotalBytes: DEFAULT_MAX_TOTAL_BYTES, json: false };
+  const opts = { help: false, pattern: null, patternFile: null, paths: [], pathsFile: null, max: DEFAULT_MAX_RESULTS, maxBytes: DEFAULT_MAX_FILE_BYTES, maxTotalBytes: DEFAULT_MAX_TOTAL_BYTES, json: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = () => {
@@ -139,8 +139,10 @@ const parseArgs = (argv) => {
     else if (arg === '--max-bytes') opts.maxBytes = parseCount(next(), '--max-bytes', HARD_MAX_FILE_BYTES);
     else if (arg === '--max-total-bytes') opts.maxTotalBytes = parseCount(next(), '--max-total-bytes', HARD_MAX_TOTAL_BYTES);
     else if (arg === '--json') opts.json = true;
+    else if (arg === '--help' || arg === '-h') opts.help = true;
     else throw new UsageError(`unknown argument: ${arg} (see --help)`);
   }
+  if (opts.help) return opts;
   if (opts.pattern !== null && opts.patternFile !== null) {
     throw new UsageError('--pattern and --pattern-file are mutually exclusive — the lane must be unambiguous');
   }
@@ -520,6 +522,9 @@ are done — this tool never writes. --paths-file format: one target per line, U
 lines ignored; duplicates collapse; no comment syntax and no escaping, so a filename containing a
 newline cannot be expressed by this lane. Both lane files are excluded from the search itself.
 
+The walk never enters a directory named ${NEVER_WALKED.join(', ')}, at any depth, unless that folder
+or a path inside it is named as a target; below a named target the rule applies again.
+
 LITERAL only, multiline patterns supported. Reads regular files only, opened no-follow. Skipped
 entries (symlinks, non-regular, binary, oversized, unreadable) are counted and reported, never
 dropped silently; an oversized file additionally makes the whole search INCOMPLETE.
@@ -529,9 +534,9 @@ Exit codes: 0 search completed (matches or an explicitly empty result) · 1 I/O 
 
 export const main = (argv, ctx = {}) => {
   try {
-    if (argv.includes('--help') || argv.includes('-h')) return { code: EXIT_OK, stdout: HELP, stderr: '', result: null };
-    const root = realpathSync(resolve(ctx.cwd ?? process.cwd()));
     const opts = parseArgs(argv);
+    if (opts.help) return { code: EXIT_OK, stdout: HELP, stderr: '', result: null };
+    const root = realpathSync(resolve(ctx.cwd ?? process.cwd()));
     const excludePaths = new Map();
     // ONE reader for both out-of-band lanes, so their failure classification cannot drift: a missing,
     // unreadable or non-regular lane file is an IoError (exit 1) for the pattern lane and for the
