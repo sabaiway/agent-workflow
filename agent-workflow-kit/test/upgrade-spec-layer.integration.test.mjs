@@ -169,7 +169,7 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
       for (const name of CHECKER) assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), '// my own checker\n', `${name} verbatim`);
       for (const name of READER) assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), bundle(name), `${name} seeded (create-only, nothing depends on it)`);
       assert.equal(existsSync(join(project, 'docs', 'ai', 'specs')), false, 'no store root, no store dir');
-      assert.match(r.stdout, /preserved verbatim/);
+      assert.match(r.stdout, /carries an edit — left as it stands until the user's yes keeps it aside and replaces it/);
       assert.match(r.stdout, /--replace-custom [0-9a-f]{64} --cwd /);
       assert.doesNotMatch(r.stdout, /by hand/);
       assert.match(r.stdout, /index\.md: not seeded/);
@@ -179,7 +179,7 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
   });
 });
 
-describe('spec:docs-navigator/S10 the hook commits after the route', () => {
+describe('spec:docs-navigator/S6 the hook commits after the route', () => {
   it('a project past 80 lines on a checker whose render differs is named, replaced on the yes and commits', () => {
     withDeployment({
       checkerBody: `${readPriorChecker()}// edited\n`,
@@ -188,7 +188,7 @@ describe('spec:docs-navigator/S10 the hook commits after the route', () => {
     }, (project) => {
       const r = reconcile(project);
       assert.equal(r.code, 0, r.stdout);
-      assert.match(r.stdout, /^.*scripts\/check-docs-size\.mjs: carries a body this kit did not ship.*$/m);
+      assert.match(r.stdout, /scripts\/check-docs-size\.mjs: carries an edit — left as it stands until the user's yes keeps it aside and replaces it/);
       const replaceLines = r.stdout.split('\n').filter((line) => line.includes('--replace-custom'));
       assert.equal(replaceLines.length, 1, r.stdout);
       const digest = replaceLines[0].match(/--replace-custom ([0-9a-f]{64}) --cwd /);
@@ -220,4 +220,33 @@ describe('spec:docs-navigator/S10 the hook commits after the route', () => {
       commitDeployment(project);
     });
   });
+});
+
+describe('spec:distribution-files/S12 the kept-aside copy stays out of git and the hook commits', () => {
+  const FOLDERS = [
+    ['absent before the upgrade', () => {}],
+    ['present without its ignore file', (project) => mkdirSync(join(project, '.agent-workflow'))],
+  ];
+  for (const [state, prepare] of FOLDERS) {
+    it(`.agent-workflow ${state}: the yes keeps the edited bytes aside, git lists nothing under it, the commit passes`, () => {
+      const edited = `${readPriorChecker()}// edited\n`;
+      withDeployment({ checkerBody: edited }, (project) => {
+        prepare(project);
+        const r = reconcile(project);
+        assert.equal(r.code, 0, r.stdout);
+        const kept = r.stdout.match(/scripts\/check-docs-size\.mjs: carries an edit — on the user's yes it is kept aside at (\.agent-workflow\/kept-aside\/[0-9a-f]{16}\/scripts\/check-docs-size\.mjs), then the bundled body replaces it/);
+        assert.ok(kept, r.stdout);
+        const digest = r.stdout.match(/--replace-custom ([0-9a-f]{64}) --cwd /);
+        assert.ok(digest, r.stdout);
+
+        const yes = main(['--reconcile', '--replace-custom', digest[1], '--cwd', project], { kitRoot: KIT_ROOT });
+        assert.equal(yes.code, 0, yes.stdout);
+        assert.equal(readFileSync(join(project, kept[1]), 'utf8'), edited, 'the copy holds exactly the edited bytes');
+        assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), bundle(CHECKER[0]));
+        const status = git(project, 'status', '--porcelain', '--untracked-files=all');
+        assert.equal(status.split('\n').some((line) => line.includes('.agent-workflow')), false, status);
+        commitDeployment(project);
+      });
+    });
+  }
 });

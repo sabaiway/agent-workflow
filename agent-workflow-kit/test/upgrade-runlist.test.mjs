@@ -33,7 +33,7 @@ const UPGRADE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md
 // without this test noticing — the ids are the future reconcile driver's item tokens.
 const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'tier', 'bridge-settings'];
 const SKILL_VAR = '${CLAUDE_SKILL_DIR}';
-const CONSENT = 'a specs replace line → ONE yes naming every file the custom lines name and saying their edits are overwritten, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.';
+const CONSENT = "a replace line → ONE yes naming every file its block names, each edit's kept-aside copy and that the bundled body replaces it, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.";
 const REPLACE_COMMAND = `node ${SKILL_VAR}/tools/ensure-configs.mjs --reconcile --replace-custom <digest> --cwd <project>`;
 
 // ── extraction helpers (anchored, non-vacuous: a missing anchor is red) ─────────────────────────
@@ -255,23 +255,45 @@ describe('spec:tier-offer/S14 the tier item runs the offer and puts its one ask'
   });
 });
 
-describe('spec:docs-navigator/S8 the upgrade asks the replace yes once and no line says copy by hand', () => {
-  it('the configs entry carries the one-yes sentence and the exact replace command', () => {
+// A clause a copy or refresh verb, a script, pair or scripts/ path and "by hand" share; comment lines are not shipped text.
+const CLAUSE_SPLIT = /\.(?=\s|$)|[;:—!?()→]/;
+const HAND_COPY = /\b(?:cop(?:y|ies|ied|ying)|refresh(?:es|ed|ing)?)\b.*(?:\b(?:scripts?|pairs?)\b|\bscripts\/).*\bby hand\b/i;
+const handCopyClauses = (line) => (/^\s*(?:\/\/|\/?\*)/.test(line) ? [] : line.split(CLAUSE_SPLIT).filter((clause) => HAND_COPY.test(clause)));
+
+describe('spec:distribution-files/S10 the upgrade asks one yes over the replace block and no line says copy by hand', () => {
+  it('the configs entry carries the one-yes sentence and the exact replace command; the upgrade.md row the sentence alone', () => {
     const { consent } = UPGRADE_RUNLIST.find((e) => e.id === 'configs');
-    assert.ok(typeof consent === 'string' && consent.startsWith(CONSENT), 'configs consent starts with the one-yes sentence');
-    assert.ok(consent.endsWith(REPLACE_COMMAND), 'configs consent ends with the exact replace command');
-  });
-  it('the upgrade.md configs row carries the sentence and no replace command', () => {
+    assert.equal(consent, `${CONSENT} The printed line: ${REPLACE_COMMAND}`);
     const row = rowsOf(step3()).find((r) => r.id === 'configs');
-    assert.ok(row, 'step 3 carries the configs checklist row');
-    assert.ok(row.line.includes(CONSENT), 'the configs row carries the one-yes sentence verbatim');
+    assert.ok(row?.line.includes(CONSENT), 'the configs row carries the one-yes sentence verbatim');
     assert.ok(!row.line.includes('--replace-custom'), 'the exact replace command belongs to the registry alone');
   });
-  it('the configs block has exactly one STOP sentence and it defers to the row 3 ask', () => {
+  it('the configs block has exactly one STOP sentence and it defers to the row 3 ask over a replace line', () => {
     const block = blockOf('configs').replaceAll('**', '');
     assert.equal((block.match(/STOP/g) ?? []).length, 1);
-    assert.ok(block.includes("A non-zero exit STOPs this upgrade — once row 3's replace ask is answered when a specs replace line printed, then as that ask says"));
+    assert.ok(block.includes("A non-zero exit STOPs this upgrade — once row 3's replace ask is answered when a replace line printed, then as that ask says"));
   });
+  it("the spec-layer paragraph keeps edits aside on row 3's yes; contracts.md names the family's reserved folder", () => {
+    const paragraph = step3().split('\n').find((line) => line.trim().startsWith('**What the spec-layer ensure does.**'));
+    assert.ok(paragraph?.includes("edited files are kept aside and replaced on row 3's yes"), paragraph);
+    const contracts = readFileSync(resolve(kitRoot, 'references', 'contracts.md'), 'utf8');
+    assert.ok(contracts.includes("`.agent-workflow/` is the family's reserved folder") && contracts.includes('`.agent-workflow/kept-aside/<16 hex>/<path>`'));
+  });
+  it('no shipped line says to copy or refresh a script by hand', () => {
+    const files = [resolve(kitRoot, 'tools'), resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap(listRegularFiles);
+    const matches = [...files, resolve(kitRoot, '..', 'agent-workflow-memory', 'SKILL.md')].filter((file) => !/\.test\.mjs$|\.test\//.test(file)).flatMap((file) =>
+      readFileSync(file, 'utf8').split('\n').flatMap((line, index) => (handCopyClauses(line).length > 0 ? [`${file}:${index + 1}: ${line}`] : [])));
+    assert.deepEqual(matches, [], matches.join('\n'));
+  });
+  it('the judge catches a hand copy of a pair or a scripts/ path and spares the No-Node pointer paragraph', () => {
+    assert.deepEqual(['copy the pair by hand, then re-run', 'refresh scripts/check-docs-size.mjs by hand', '// copy the pair by hand'].map((line) => handCopyClauses(line).length), [1, 1, 0]);
+    const noNode = step3().split('\n').find((line) => line.includes('**No-Node project:**'));
+    assert.ok(noNode?.includes('by hand') && /pair/.test(noNode) && /copy/.test(noNode), 'the spared paragraph names a pair, a copy and by hand');
+    assert.deepEqual(handCopyClauses(noNode), []);
+  });
+});
+
+describe('spec:docs-navigator/S4 the configs block and the spec-adoption item name the replace yes', () => {
   it('the index token list names customized-preserved', () => {
     assert.ok(blockOf('configs').includes('index → `regenerated` / `already-current` / `customized-preserved`'));
   });
@@ -284,13 +306,6 @@ describe('spec:docs-navigator/S8 the upgrade asks the replace yes once and no li
     assert.ok(rule.includes(replaceWords), 'rule 3 names the replace yes');
     assert.ok(posture?.includes(replaceWords), 'the spec-adoption posture names the replace yes');
     assert.ok(posture.split('Risk profile:')[1]?.includes('refreshes a script body a release shipped'), 'the risk profile names the prior refresh');
-  });
-  it('no shipped line says to copy or refresh a script by hand', () => {
-    const roots = [resolve(kitRoot, 'tools'), resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')];
-    const files = [...roots.flatMap(listRegularFiles), resolve(kitRoot, '..', 'agent-workflow-memory', 'SKILL.md')];
-    const matches = files.flatMap((file) => readFileSync(file, 'utf8').split('\n').flatMap((line, index) =>
-      /by hand, re-run|copy them by hand|refresh by hand/.test(line) ? [`${file}:${index + 1}: ${line}`] : []));
-    assert.deepEqual(matches, [], matches.join('\n'));
   });
 });
 

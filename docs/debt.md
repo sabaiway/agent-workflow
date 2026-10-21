@@ -727,6 +727,23 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   it just made does not read back, keeping the file at 0644 where the filesystem honours it. Residual, not live where
   the temp dir is a POSIX filesystem or Windows (which reports no exec bits). Raised by the
   DISTRIBUTION-FILES-STAY-CURRENT S1 diff review (lens, round 1).
+- **REPLACE-RUN-EMPTY-UNION-MISSES-A-NEW-EDIT** — invariant: no line of a replace run points at a block below, and a
+  file that turns edited during a replace run is reported so the upgrade asks again. Origin: the distribution-files
+  contract's empty-union branch runs the owning ops in their ordinary mode, while a replace run prints no block, so a
+  spec-layer file turned edited between the run's survey and the op's own survey gets the op's "the block below" line,
+  `customized-preserved`, exit 0, no ask (today's single survey reports it `race-unresolved` with a fresh line); and
+  scenario S7's "the race-unresolved outcome's lines name no block below" reads as one case where three are meant.
+  Narrow fix: the empty-union branch runs the owning ops under the replace with no bound entry, so the bound-entries
+  rule makes such a file `race-unresolved`; S7 says "each race-unresolved outcome's lines". Residual: a window of one
+  run between two surveys; the next plain run asks. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S2 spec review
+  (lens, the last-round re-read).
+- **SPECS-SEED-RACE-REPROOF-READS-OUTSIDE-A-TRY** — invariant: a seed that lost the create-only race is reported
+  `race-unresolved`, never thrown, whatever then stands at its path. Origin: `ensure-specs.mjs:232` `stoodCurrent` reads
+  the file that appeared with a plain `read`; a file removed or turned into a directory between the create-only
+  write's EEXIST and that read throws, so the CLI prints `unexpected-error` and the files already seeded go unnamed.
+  Narrow fix: the read failing counts as not current, as `movedSinceBind` does. Residual: a window inside one write,
+  the writer re-checking the node after EEXIST (`atomic-write.mjs`); no write decision changes. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S2 diff review (lens, the round-1 fold ask).
 
 ## Closed
 

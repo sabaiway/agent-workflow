@@ -44,6 +44,8 @@ diverge:
 
 The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, `.claude/settings.json` (hidden-only — visible mode commits it), and `.mcp.json` (the `mcp` mode's registration; hidden-only for the same reason, and it carries an absolute machine path) — is always a candidate in hidden mode.
 
+`.agent-workflow/` is the family's reserved folder. Before an upgrade replaces a kit file the user edited, it keeps the edit there, unchanged, at `.agent-workflow/kept-aside/<16 hex>/<path>`; the folder's own `.gitignore` (`*`) keeps git from seeing the copies in either visibility mode. The copies are the user's, outside the kit's own paths: no kit tool overwrites, deletes or hides them.
+
 Not in this version: a fully-external hidden mode (artifacts relocated outside the repo tree).
 Deferred to a later release + migration.
 

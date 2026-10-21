@@ -27,7 +27,10 @@
 //   • --dry-run reports `would-*` tokens and writes nothing — never a write token.
 //   • The ops run in a FIXED order and one op's failure NEVER skips the rest: every op reports its own
 //     token, and the exit is non-zero when any of them failed. The one exception is the replace run
-//     (--replace-custom <digest>): specs, then index only when specs did not fail.
+//     (--replace-custom <digest>), which distribution-files/ runs: each edit kept aside, then the
+//     owning ops (specs), then index only when none failed.
+//   • ONE replace block, after every op's lines and before the failure footer, over the entries of
+//     every op that ran: the files whose write waits for the user's yes, and the one command for it.
 //   • The deployment gate runs ONCE, before any op: an absent/symlinked docs/ai stops the whole run
 //     with the gate's own message rather than one copy of it per op.
 //
@@ -45,12 +48,15 @@ import { ensureExecutor } from './ensure-executor.mjs';
 import { ENSURE_OPS, OWN_IMPLEMENTATIONS, failedOutcome } from './ensure-ops.mjs';
 import { ensureSpecs } from './ensure-specs.mjs';
 import { ensureRules } from './project-rules/index.mjs';
+import { replaceBlock, runReplace } from './distribution-files/index.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The op table this CLI walks — name → implementation, in ENSURE_OPS order. Composed HERE (the one
 // consumer) because the executor, spec-layer and rules ensures import ensure-ops.mjs for their outcome door and probes.
 export const ENSURE_IMPLEMENTATIONS = Object.freeze({ ...OWN_IMPLEMENTATIONS, executor: ensureExecutor, specs: ensureSpecs, rules: ensureRules });
+// The ops whose writes wait for the user's yes and so own the replace run, in ENSURE_OPS order.
+const OWNING_OPS = ['specs'];
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
@@ -66,7 +72,6 @@ const EMPTY_REPLACE = '--replace-custom needs the digest its replace line printe
 const REPEATED_REPLACE = '--replace-custom was passed more than once — a replace run carries exactly ONE digest';
 const REPLACE_WITH_ONLY = '--replace-custom runs the spec layer and then the navigator, so it cannot be combined with --only — nothing was run';
 const REPLACE_WITH_DRY_RUN = "--replace-custom writes on the user's yes, so it cannot be combined with --dry-run — nothing was run";
-const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after the spec layer succeeds';
 
 const HELP = `ensure-configs — the nine stamp-independent upgrade ensures, as ONE command.
 
@@ -78,9 +83,9 @@ Usage:
   --dry-run     report what each ensure WOULD do; write nothing
   --only <op>   run EXACTLY ONE of them (an unknown, missing or repeated value is a usage error)
   --replace-custom <digest>
-                the replace run the specs ensure prints behind an edited spec-layer file, run only on
-                the user's yes: specs replaces every file its digest names, then index runs when
-                specs did not fail (not with --only or --dry-run; an empty value is a usage error)
+                the replace run the replace block prints, run only on the user's yes: every edit its
+                digest names is kept aside under .agent-workflow/kept-aside/, then replaced, then index
+                runs when nothing failed (not with --only or --dry-run; an empty value is a usage error)
   --cwd <dir>   the target project (default: the current directory)
   --help, -h    this help
 
@@ -89,7 +94,7 @@ refreshed in place. Four ops refresh instead: the orchestration onboarding note,
 matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer reader
 and checker pairs, only while a file's bytes are a body a release shipped (an edited file is
 preserved, the writes that depend on it — the spec store root included — are withheld behind it,
-and ONE printed replace line replaces every edited file only on the user's yes); the project rules
+and ONE printed replace block keeps every edit aside and replaces it only on the user's yes); the project rules
 kit file, only while its bytes are a body a release shipped (an edited one is kept), with the effective
 file rebuilt as its copy and recorded where no local file exists; and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale; where a module the project's hook loads is not the bundled one,
@@ -162,16 +167,20 @@ const runOne = (op, args) => {
 
 // Run every op in ENSURE_OPS order. A throw from one op becomes THAT op's failed outcome — the
 // remaining ops still run, because a project missing its gate declaration should not also be left
-// without its autonomy seed just because the first ensure hit an unreadable file. The replace run is
-// the one exception: index runs only after a specs op that did not fail, and otherwise says so.
+// without its autonomy seed just because the first ensure hit an unreadable file. → { outcomes, block }:
+// the block is the union of the entries of the ops that ran. The replace run is the one exception,
+// handed to runReplace: it keeps every edit aside, runs the owning ops, then index only when none
+// failed, and its block is non-empty only when the digest no longer matches.
 export const runEnsures = ({ cwd, kitRoot, dryRun, deps, only, replaceCustom }) => {
-  if (replaceCustom === undefined) return (only ? [only] : ENSURE_OPS).map((op) => runOne(op, { cwd, kitRoot, dryRun, deps }));
-  const specs = runOne('specs', { cwd, kitRoot, dryRun: false, deps, replaceCustom });
-  if (specs.failed) return [{ ...specs, lines: [...specs.lines, INDEX_NOT_RUN] }];
-  return [specs, runOne('index', { cwd, kitRoot, dryRun: false, deps })];
+  if (replaceCustom !== undefined) {
+    const owning = OWNING_OPS.map((op) => ({ op, run: (args) => runOne(op, args) }));
+    return runReplace({ cwd, kitRoot, digest: replaceCustom, owning, index: (args) => runOne('index', args), deps });
+  }
+  const outcomes = (only ? [only] : ENSURE_OPS).map((op) => runOne(op, { cwd, kitRoot, dryRun, deps }));
+  return { outcomes, block: outcomes.flatMap((o) => o.entries ?? []) };
 };
 
-const render = (outcomes, dryRun, only, replace) => {
+const render = ({ outcomes, block }, { dryRun, only, replace, kitRoot, cwd }) => {
   // The banner names the tool + the flag it ran under (both machine tokens the L2 rule exempts);
   // the failure footer is a user-grade sentence — the composed-lines guard scans both.
   const scope = only ? `, --only ${only}` : replace ? ', --replace-custom' : '';
@@ -180,6 +189,8 @@ const render = (outcomes, dryRun, only, replace) => {
     lines.push(`  ${o.op}: ${o.token}`);
     for (const detail of o.lines) lines.push(`      ${detail}`);
   }
+  const blockLines = replaceBlock(block, { kitRoot, cwd });
+  if (blockLines.length > 0) lines.push('', ...blockLines.map((line) => `  ${line}`));
   if (outcomes.some((o) => o.failed)) {
     // No blanket claim about what was written: an op that copies file by file can stop PARTWAY, and
     // its own lines are the only accurate account of what landed.
@@ -197,10 +208,11 @@ export const main = (argv = [], ctx = {}) => {
     // ONE deployment gate for the whole run (see the header): with no docs/ai there is nothing to
     // reconcile, and one identical STOP per op would read as that many separate problems.
     assertDocsAiDeployment(cwd, deps, { noun: 'the project configuration', rel: 'under docs/ai' });
-    const outcomes = runEnsures({ cwd, kitRoot: ctx.kitRoot ?? KIT_ROOT, dryRun: args.dryRun, deps, only: args.only, replaceCustom: args.replaceCustom });
+    const kitRoot = ctx.kitRoot ?? KIT_ROOT;
+    const run = runEnsures({ cwd, kitRoot, dryRun: args.dryRun, deps, only: args.only, replaceCustom: args.replaceCustom });
     return {
-      code: outcomes.some((o) => o.failed) ? EXIT_FAILED : EXIT_OK,
-      stdout: render(outcomes, args.dryRun, args.only, args.replaceCustom !== undefined),
+      code: run.outcomes.some((o) => o.failed) ? EXIT_FAILED : EXIT_OK,
+      stdout: render(run, { dryRun: args.dryRun, only: args.only, replace: args.replaceCustom !== undefined, kitRoot, cwd }),
       stderr: '',
     };
   } catch (err) {

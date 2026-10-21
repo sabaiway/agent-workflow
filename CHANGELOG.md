@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-21 — AD-196: before the upgrade replaces a spec-layer file you edited, it keeps your edit aside and names it, under one replace block (kit 14.44.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
+
+**An edited spec-layer script is no longer lost on the upgrade's yes.** The upgrade's configs step prints one replace
+block per run when an edited file waits for the yes, naming every file whose write waits for the yes and where its edit will be kept; on the yes each edit
+is copied unchanged to `.agent-workflow/kept-aside/<16 hex>/<path>` and proven before anything is replaced.
+`.agent-workflow/` is the family's reserved folder, and its own `.gitignore` keeps the copies out of git. Contracts:
+distribution-files revision 1 (new), docs-navigator revision 2. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-21 — AD-195: the commit hook runs your own scripts/pre-commit.local first, and the upgrade delivers that installer (kit 14.43.0 MINOR, memory 8.4.0 MINOR; engine 5.12.1 and both bridges unchanged)
 
 **A deployment's own commit checks now go in `scripts/pre-commit.local`.** Every hook the installer writes runs that

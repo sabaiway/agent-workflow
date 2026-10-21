@@ -6,13 +6,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
-import { main } from './ensure-configs.mjs';
 
 const { PRIOR_FILES, INSTALLER_SET = [] } = await import('./script-priors.mjs');
 const { ensureSpecs, decideWrites, READER_PAIR, CHECKER_PAIR } = await import('./ensure-specs.mjs').catch(() => ({}));
@@ -88,96 +87,97 @@ const storeSeeded = (dir) => {
   assert.match(body, new RegExp(`^lastUpdated: ${TODAY}$`, 'm'));
 };
 
-const digestOf = (files) => createHash('sha256').update([...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-  .map(([rel, bytes]) => `${rel} ${createHash('sha256').update(bytes).digest('hex')}`).join('\n')).digest('hex');
-const replaceLineOf = (lines) => lines.find((line) => line.startsWith('to replace the edited files named above'));
-const digestFrom = (lines) => replaceLineOf(lines)?.match(/--replace-custom ([a-f0-9]{64}) /)?.[1];
-const readCustomFiles = (dir, names) => names.map((name) => [`scripts/${name}`, readFileSync(join(dir, 'scripts', name))]);
+const CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
+const DIGEST = '0123456789abcdef'.repeat(4);
 const CUSTOM_CHECKER = { reader: ['current', 'current'], checker: ['custom', 'current'] };
-const assertPreview = (dir, result, name) => {
-  const rel = `scripts/${name}`;
-  assert.equal(result.token, 'customized-preserved');
-  assert.ok(result.lines.includes(`${rel}: carries a body this kit did not ship as current — preserved verbatim; the writes that depend on it wait until it is replaced on the user's yes (the replace line below)`));
-  assert.ok(result.lines.includes(`${STORE}: not seeded — it waits on the edited ${rel} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`));
-  assert.equal(result.lines.filter((line) => line.startsWith('to replace the edited files named above')).length, 1);
-  assert.equal(result.lines.at(-1), `to replace the edited files named above, run this only on the user's yes — the bundled bodies overwrite their edits: node ${KIT_ROOT}/tools/ensure-configs.mjs --reconcile --replace-custom ${digestOf(readCustomFiles(dir, [name]))} --cwd ${dir}`);
-  assert.doesNotMatch(result.lines.join('\n'), /by hand|copy them/);
+const entryOf = (name) => ({ rel: `scripts/${name}`, sha256: createHash('sha256').update(CUSTOM).digest('hex'), bytes: Buffer.from(CUSTOM), channel: CHANNEL });
+const keptPath = (rel) => `.agent-workflow/kept-aside/${DIGEST.slice(0, 16)}/${rel}`;
+const replacedLine = (rel) => `${rel}: carried an edit — kept aside at ${keptPath(rel)}, then replaced by the bundled body on the user's yes`;
+const bind = (dir) => ({ digest: DIGEST, entries: run(dir, { dryRun: true }).entries });
+const assertRace = (r, first) => {
+  assert.deepEqual([r.failed, r.token, r.lines[0]], [true, 'failed', first]);
+  assert.doesNotMatch(r.lines.join('\n'), /block below|--replace-custom/, 'a race names no block below');
 };
-const replaceArgv = (dir, digest) => ['--reconcile', '--replace-custom', digest, '--cwd', dir];
-const withReplaceRun = (fn) => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'custom'] }, (dir) => {
-  const before = snapshot(dir);
-  const preview = run(dir);
-  const expected = digestOf(readCustomFiles(dir, CHECKER));
-  const argv = replaceArgv(dir, digestFrom(preview.lines) ?? expected);
-  place(dir, READER[0], 'prior');
-  rmSync(join(dir, 'scripts', READER[1]), { force: true });
-  const result = main(argv, { kitRoot: KIT_ROOT });
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(digestFrom(preview.lines), expected);
-  return fn(dir, result, before, argv);
-});
-describe('spec:docs-navigator/S4 an edited spec-layer file is named under one replace line', () => {
+describe('spec:distribution-files/S6 a custom spec-layer file is an entry, and its line waits on the yes', () => {
   for (const [title, checker, name] of [
-    ['one custom checker: its line, the store-withheld line naming it, and exactly one replace line', ['custom', 'current'], CHECKER[0]],
-    ['a custom test file alone gets its line, the withheld line and the replace line', ['current', 'custom'], CHECKER[1]],
+    ['a custom checker: its entry, its waiting line and the store-withheld line naming it', ['custom', 'current'], CHECKER[0]],
+    ['a custom checker test alone: its entry, its waiting line and the store-withheld line naming it', ['current', 'custom'], CHECKER[1]],
   ]) {
-    it(title, () => withProject({ ...CUSTOM_CHECKER, checker }, (dir) => assertPreview(dir, run(dir), name)));
+    it(title, () => withProject({ ...CUSTOM_CHECKER, checker }, (dir, r = run(dir), rel = `scripts/${name}`) => {
+      assert.deepEqual([r.entries, r.token], [[entryOf(name)], 'customized-preserved']);
+      assert.ok(r.lines.includes(`${rel}: carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below); the writes that depend on it wait`), r.lines.join('\n'));
+      assert.ok(r.lines.includes(`${STORE}: not seeded — it waits on the edited ${rel} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`));
+      assert.doesNotMatch(r.lines.join('\n'), /--replace-custom|node /, 'the op prints no replace line');
+    }));
   }
-  it('the replace line shell-quotes a project path that needs it', () => withProject(CUSTOM_CHECKER, (dir) => {
-    assert.ok(replaceLineOf(run(dir).lines)?.endsWith(`--cwd '${dir}'`));
-  }, { prefix: 'ensure specs ' }));
-  it('the dry run prints the same lines and writes nothing', () => {
+  it('a failed outcome after a completed survey carries the entry; a survey refusal carries none', () => {
+    withProject({ reader: ['absent', 'current'], checker: ['custom', 'current'] }, (dir) => {
+      const r = run(dir, { deps: { today: TODAY, link: () => { throw Object.assign(new Error('EPERM: refused'), { code: 'EPERM' }); } } });
+      assert.match(r.lines[0], /^write-refused — scripts\/spec-schema\.mjs: /);
+      assert.deepEqual(r.entries, [entryOf(CHECKER[0])]);
+    });
+    for (const [table, kitRoot, cause] of [
+      [{ reader: ['wrong-kind', 'current'], checker: ['custom', 'current'] }, KIT_ROOT, 'wrong-node-kind'],
+      [CUSTOM_CHECKER, mkdtempSync(join(tmpdir(), 'ensure-specs-empty-')), 'bundle-unreadable'],
+    ]) {
+      withProject(table, (dir) => {
+        const r = run(dir, { kitRoot });
+        assert.match(r.lines[0], new RegExp(`^${cause} — `));
+        assert.equal('entries' in r, false);
+      });
+    }
+  });
+  it('the dry run gives the lines and entries of a real run of a twin, writes nothing, and stays customized-preserved', () => {
     withProject(CUSTOM_CHECKER, (dir) => withProject(CUSTOM_CHECKER, (other) => {
       const before = snapshot(dir);
-      const dry = run(dir, { dryRun: true });
-      const real = run(other);
+      const [dry, real] = [run(dir, { dryRun: true }), run(other)];
       assert.deepEqual(snapshot(dir), before);
-      assert.deepEqual(dry.lines.map((line) => line.replaceAll(dir, '<P>')), real.lines.map((line) => line.replaceAll(other, '<P>')));
-      assert.ok(replaceLineOf(dry.lines));
-      assertPreview(dir, dry, CHECKER[0]);
-      assertPreview(other, real, CHECKER[0]);
+      assert.deepEqual([dry.lines, dry.entries, dry.token], [real.lines, real.entries, real.token]);
+      assert.deepEqual([dry.entries, dry.token], [[entryOf(CHECKER[0])], 'customized-preserved']);
     }));
   });
 });
-describe('spec:docs-navigator/S5 the replace run writes what the yes named, then reindexes', () => {
-  it('the matching digest replaces every custom file, refreshes a prior, seeds an absent file and the store root, then runs the index op', () => withReplaceRun((dir, result, before) => {
-    const lines = result.stdout.split('\n');
-    const ops = lines.filter((line) => /^  \w+: /.test(line));
-    assert.equal(result.stderr, '');
-    assert.equal(ops.length, 2);
-    assert.equal(ops[0], '  specs: seeded');
-    assert.match(ops[1], /^  index: \S+$/);
-    for (const name of CHECKER) assert.ok(lines.map((line) => line.trim()).includes(`scripts/${name}: carried an edited body — replaced by the bundled one on the user's yes`));
+describe('spec:distribution-files/S7 under the bound entries the op replaces every custom file, or stops race-unresolved', () => {
+  it('every custom file becomes the bundled body by rename, a prior refreshes, an absent file and the store root seed', () => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'custom'] }, (dir) => {
+    const renamed = [];
+    const r = run(dir, { replace: bind(dir), deps: { today: TODAY, rename: (from, to) => { renamed.push(to); return renameSync(from, to); } } });
+    assert.equal(r.token, 'seeded', r.lines.join('\n'));
     allCurrent(dir);
-    assert.ok(existsSync(join(dir, STORE)));
-    assert.deepEqual(readdirSync(join(dir, 'scripts')).sort(), [...READER, ...CHECKER].sort());
-    assert.deepEqual([...snapshot(dir).keys()].filter((rel) => !before.has(rel)).sort(), ['docs/ai/index.md', STORE, 'scripts/spec-schema.test.mjs']);
-    assert.equal(replaceLineOf(lines.map((line) => line.trim())), undefined);
+    storeSeeded(dir);
+    for (const line of [`scripts/${READER[0]}: matches a body an earlier release shipped — refreshed to the bundled one`, `scripts/${READER[1]}: copied from the bundled scripts`]) assert.ok(r.lines.includes(line), line);
+    for (const rel of CHECKER.map((name) => `scripts/${name}`)) {
+      assert.ok(r.lines.includes(replacedLine(rel)), r.lines.join('\n'));
+      assert.ok(renamed.includes(join(dir, rel)), `${rel} is published by the atomic rename`);
+    }
   }));
-  it('with nothing to seed the replace run reports refreshed', () => withProject({ ...CUSTOM_CHECKER, store: 'present' }, (dir) => {
-    const result = main(replaceArgv(dir, digestOf(readCustomFiles(dir, [CHECKER[0]]))), { kitRoot: KIT_ROOT });
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /^  specs: refreshed$/m);
+  it('with nothing to seed the op reports refreshed', () => withProject({ ...CUSTOM_CHECKER, store: 'present' }, (dir) => {
+    assert.equal(run(dir, { replace: bind(dir) }).token, 'refreshed');
+    allCurrent(dir);
   }));
-  it('a second run of the same line changes nothing', () => withReplaceRun((dir, first, initial, argv) => {
-    const before = snapshot(dir);
-    const result = main(argv, { kitRoot: KIT_ROOT });
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /^  specs: already-present$/m);
-    assert.deepEqual(snapshot(dir), before);
-  }));
-  it('a file edited after the preview is race-unresolved with nothing written and a fresh replace line', () => withProject(CUSTOM_CHECKER, (dir) => {
-    const digest = digestFrom(run(dir).lines) ?? digestOf(readCustomFiles(dir, [CHECKER[0]]));
-    writeFileSync(join(dir, 'scripts', CHECKER[0]), '// edited again\n');
-    const before = snapshot(dir);
-    const result = run(dir, { replaceCustom: digest });
-    assert.equal(result.failed, true);
-    assert.equal(result.token, 'failed');
-    assert.match(result.lines[0], /^race-unresolved — the edited files changed since the replace line was printed/);
-    assert.deepEqual(snapshot(dir), before);
-    assert.notEqual(digestFrom(result.lines), digest);
-    assert.equal(digestFrom(result.lines), digestOf(readCustomFiles(dir, [CHECKER[0]])));
-  }));
+  for (const [title, name, bytes] of [
+    ['a file turned custom after the bind', CHECKER[1], CUSTOM],
+    ['a bound file whose bytes moved after the bind', CHECKER[0], '// edited again\n'],
+  ]) {
+    it(`${title} is race-unresolved with nothing written`, () => withProject(CUSTOM_CHECKER, (dir) => {
+      const replace = bind(dir);
+      writeFileSync(join(dir, 'scripts', name), bytes);
+      const before = snapshot(dir);
+      assertRace(run(dir, { replace }), 'race-unresolved — the edited spec-layer files are not the set the yes was given for (another set or other bytes), so nothing was written');
+      assert.deepEqual(snapshot(dir), before);
+    }));
+  }
+  for (const [moved, move, left] of [['changed', (p) => writeFileSync(p, '// moved\n'), '// moved\n'], ['removed', (p) => rmSync(p), null]]) {
+    it(`a bound file ${moved} before its own write call stops the op: the earlier replace stands and is reported`, () => withProject({ reader: ['current', 'current'], checker: ['custom', 'custom'] }, (dir) => {
+      const [first, second] = CHECKER.map((name) => `scripts/${name}`);
+      let calls = 0;
+      const writeFile = (p, body, opts) => { if (calls++ === 0) move(join(dir, second)); return writeFileSync(p, body, opts); };
+      const r = run(dir, { replace: bind(dir), deps: { today: TODAY, writeFile } });
+      assertRace(r, `race-unresolved — ${second}: changed after this run read it — left as it stands and nothing further written`);
+      assert.deepEqual([read(dir, first), read(dir, second)], [bundle(CHECKER[0]), left]);
+      for (const line of [replacedLine(first), `${second}: carries an edit — not replaced; its copy kept aside at ${keptPath(second)} stays`, 'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back']) assert.ok(r.lines.includes(line), line);
+      assert.equal(existsSync(join(dir, STORE)), false);
+    }));
+  }
 });
 
 // ── the table: one row per cell class, the token and the tree after ───────────────────────────────
@@ -233,7 +233,7 @@ describe('the state table — admitted writes and the run token', () => {
         const storePresent = row.table.store === 'present';
         assert.equal(existsSync(join(dir, STORE)), storePresent, 'no store root is seeded behind a withheld checker');
         const text = r.lines.join('\n');
-        assert.match(text, /preserved verbatim/);
+        assert.match(text, /left as it stands until the user's yes keeps it aside/);
         assert.equal(/not seeded/.test(text), !storePresent, 'the root line says withheld only when the root is absent');
         assert.equal(/already present — preserved/.test(text), storePresent);
         // The lines describe what HAPPENED: a prior file the withhold left alone is never called

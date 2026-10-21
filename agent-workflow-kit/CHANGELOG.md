@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.44.0 — before the upgrade replaces a spec-layer file you edited, it keeps your edit aside and names it, under one replace block (AD-196)
+
+**An edited spec-layer script is no longer lost on the upgrade's yes.** Before the bundled body replaces it, the
+upgrade copies the edit, unchanged, to `.agent-workflow/kept-aside/<16 hex>/<path>`, reads the copy back and proves its
+sha256; the replace block names that path before the ask, so the yes is given over the exact copy.
+
+- **One replace block per run.** `ensure-configs.mjs --reconcile` prints ONE block, when any file's write waits for
+  the yes, after every op's lines and before the failure footer, on a plain run, a `--dry-run` and an `--only` run alike: one line per file whose write waits for
+  the yes, naming its kept-aside path and where an edit meant to last belongs (for the spec layer: a script or suite of
+  your own under its own name in `scripts/`, or a config the script reads), then one command line. The specs op no
+  longer prints a replace line of its own. Over the files the specs op names the digest is the one it printed before,
+  so a digest an earlier release printed stays valid.
+- **The yes run** (`--replace-custom <digest>`) surveys first and writes nothing when files are still edited but
+  the set or its bytes changed since the block printed (`race-unresolved`, with a fresh block); otherwise it keeps every edit aside, proven, before
+  the first replace, then replaces, then regenerates the navigator only when nothing failed. Each bound file is
+  checked against its bound bytes again right before its own write. No token or cause is added.
+- **`.agent-workflow/` is the family's reserved folder** (`references/contracts.md`). Its own `.gitignore`, holding
+  exactly `*` and a line feed, keeps git from seeing a copy in either visibility mode, with no edit of your `.gitignore` or git's
+  exclude: it is written when absent and proven before the first copy, and one holding other bytes stops the run with
+  nothing copied or replaced. A link or a non-directory on the way, or a copy already there with other bytes, stops
+  the run too. The kit never overwrites or deletes a kept-aside copy.
+- The upgrade's row 3 and the `configs` run-list entry ask one yes naming every file the block names, each edit's
+  kept-aside copy and that the bundled body replaces it.
+- Recorded debt (`docs/debt.md`): REPLACE-RUN-EMPTY-UNION-MISSES-A-NEW-EDIT — when a replace run's survey finds no
+  edited spec-layer file, a file that turns edited before the op's own survey is reported `customized-preserved` with
+  no ask; the next plain run asks.
+
+Contracts: distribution-files revision 1 (new, under kit/install), docs-navigator revision 2.
+
 ## 14.43.0 — the commit hook runs your own scripts/pre-commit.local first, and the upgrade delivers that installer (AD-195)
 
 **A deployment's own commit checks now go in `scripts/pre-commit.local`, with no edit of a kit file.** The bundled hook

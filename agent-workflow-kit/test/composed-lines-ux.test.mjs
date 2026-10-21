@@ -268,9 +268,6 @@ if (ensureSpecs) {
   specsFx('specs-refreshed', dir);
   writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// mine\n');
   specsFx('specs-customized-preserved', dir);
-  const customDir = projectWithRejectingChecker();
-  specsFx('specs-custom-replace-line', customDir);
-  specsFx('specs-replace-race', customDir, { replaceCustom: REPLACE_DIGEST });
   specsFx('specs-skipped-no-node-evidence', project({ node: false }));
   const wrongKind = project();
   mkdirSync(join(wrongKind, 'scripts', 'spec-schema.mjs'), { recursive: true });
@@ -320,21 +317,24 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
   CLI_RUNS.failure = cliFx('failure-run', dir, true);
 }
 
-cliFx('cli-replace-index-not-run', projectWithRejectingChecker(), true, ['--replace-custom', REPLACE_DIGEST]);
-
-describe('spec:docs-navigator/S9 the replace and kept-checker lines are user-grade', () => {
-  it('each S5 fixture carries the line it witnesses', () => {
-    const witnesses = {
-      '--replace-custom': ['specs-custom-replace-line', 'specs-replace-race'],
-      "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'],
-      'the navigator was put back byte for byte': ['index-kept-put-back'],
-      'the navigator step did not run: a replace run runs it only after the spec layer succeeds': ['cli-replace-index-not-run'],
-    };
-    const missingWitnesses = Object.entries(witnesses).flatMap(([phrase, ids]) => ids
-      .filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase)))
-      .map((id) => `${id}: a line carries "${phrase}"`));
-    assert.deepEqual(missingWitnesses, [], 'each S5 fixture carries its witness');
-  });
+// The replace lines through the real CLI on REAL digests: each replace run follows a plain run (its block fixture); the absent line has no producer yet, so the door composes it.
+const { replaceBlock } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
+fx('replace-block', 'block-absent', false, replaceBlock?.([{ rel: 'scripts/c.mjs', absent: true }], { kitRoot: KIT, cwd: '/project' }) ?? []);
+const replaceFx = (id, abnormal, arrange = () => {}, alsoEdited) => {
+  const dir = projectWithScripts('check-docs-size.mjs'); if (alsoEdited) writeFileSync(join(dir, 'scripts', alsoEdited), '// mine\n');
+  const digest = cliFx(`${id}-block`, dir, false).result.stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1] ?? REPLACE_DIGEST; arrange(join(dir, '.agent-workflow'), join(dir, '.agent-workflow', 'kept-aside', digest.slice(0, 16), 'scripts'));
+  cliFx(id, dir, abnormal, ['--replace-custom', digest]);
+};
+replaceFx('cli-replaced', false);
+cliFx('cli-replace-race', projectWithRejectingChecker(), true, ['--replace-custom', REPLACE_DIGEST]);
+replaceFx('cli-keep-aside-ignore', true, (reserved) => { mkdirSync(reserved); writeFileSync(join(reserved, '.gitignore'), '!kept-aside/\n'); });
+replaceFx('cli-keep-aside-symlink', true, (reserved) => symlinkSync(tmp('clux-link-'), reserved));
+replaceFx('cli-keep-aside-copy', true, (_, kept) => { mkdirSync(kept, { recursive: true }); writeFileSync(join(kept, 'check-docs-size.test.mjs'), '// other bytes\n'); }, 'check-docs-size.test.mjs');
+const unwitnessed = (witnesses) => Object.entries(witnesses).flatMap(([phrase, ids]) => ids.filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase))).map((id) => `${id}: a line carries "${phrase}"`));
+describe('spec:docs-navigator/S5 the kept-checker index lines are user-grade', () => { it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'], 'the navigator was put back byte for byte': ['index-kept-put-back'] }), [], 'each S5 fixture carries its witness')); });
+describe('spec:distribution-files/S11 the replace block, race, keep-aside, specs and navigator lines are user-grade', () => {
+  it('each S11 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ 'then the bundled body replaces it; an edit meant to last goes in': ['cli-replaced-block'], ": absent — the user's yes places the bundled body": ['block-absent'], "only on the user's yes, keep aside and replace the files named above: node ": ['cli-replaced-block', 'block-absent'], 'the files to replace changed since the replace line was printed (another set or other bytes), so nothing was written': ['cli-replace-race'], '.agent-workflow/.gitignore: holds other bytes — it must hold exactly "*" and a line feed': ['cli-keep-aside-ignore'], '.agent-workflow: exists but is a symlink — nothing was kept aside or replaced': ['cli-keep-aside-symlink'],
+    "check-docs-size.test.mjs: a copy with other bytes is there — it is the user's to move or delete": ['cli-keep-aside-copy'], 'the edits already kept aside stay where they are: .agent-workflow/kept-aside/': ['cli-keep-aside-copy'], "carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below)": ['specs-customized-preserved', 'cli-replaced-block'], "then replaced by the bundled body on the user's yes": ['cli-replaced'], 'the navigator step did not run: a replace run runs it only after the spec layer succeeds': ['cli-replace-race', 'cli-keep-aside-ignore', 'cli-keep-aside-symlink', 'cli-keep-aside-copy'] }), [], 'each S11 fixture carries its witness'));
 });
 
 // ── the placed-bridge refresh lines (every REFRESH_LINES key + every parity verdict) ─

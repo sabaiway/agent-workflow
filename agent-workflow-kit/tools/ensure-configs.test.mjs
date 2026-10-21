@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,16 +53,16 @@ const tokensOf = (stdout) =>
 
 const BUNDLE = fileURLToPath(new URL('../references/scripts/', import.meta.url));
 const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after the spec layer succeeds';
-const withCustomChecker = (fn) => withProject((dir) => {
+// The spec layer at its bundled bodies, each name in `edited` holding an edit of its own instead.
+const edit = (name) => `// my own ${name}\n`;
+const withSpecLayer = (fn, edited = ['check-docs-size.mjs']) => withProject((dir) => {
   mkdirSync(join(dir, 'scripts'));
-  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs']) {
-    writeFileSync(join(dir, 'scripts', name), readFileSync(join(BUNDLE, name)));
-  }
-  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// my own checker\n');
-  const preview = main(['--reconcile', '--only', 'specs', '--cwd', dir]);
-  const digest = preview.stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
-  return fn(dir, digest);
+  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs']) writeFileSync(join(dir, 'scripts', name), edited.includes(name) ? edit(name) : readFileSync(join(BUNDLE, name)));
+  return fn(dir);
 });
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const DIGEST = sha256(`scripts/check-docs-size.mjs ${sha256(edit('check-docs-size.mjs'))}`);
+const digestOf = (stdout) => stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
 
 describe('usage — nothing writes without --reconcile', () => {
   it('a bare invocation is a usage error and leaves the tree alone', () => {
@@ -256,56 +257,55 @@ describe('--only <op> narrows the run to exactly one operation', () => {
   }
 });
 
-describe('spec:docs-navigator/S6 the replace run and its usage refusals', () => {
-  it('--replace-custom is refused with --only specs, --only index, --dry-run and an empty value, nothing run', () => {
-    withCustomChecker((dir, digest) => {
-      const before = snapshot(dir);
-      for (const [argv, message] of [
-        [['--replace-custom', digest, '--only', 'specs'], /cannot be combined/],
-        [['--replace-custom', digest, '--only', 'index'], /cannot be combined/],
-        [['--replace-custom', digest, '--dry-run'], /cannot be combined/],
-        [['--replace-custom', ''], /needs the digest/],
-        [['--replace-custom='], /needs the digest/],
-      ]) {
-        const result = main(['--reconcile', ...argv, '--cwd', dir]);
-        assert.equal(result.code, 2, result.stderr);
-        assert.equal(result.stdout, '');
-        assert.match(result.stderr, /^ensure-configs: /);
-        assert.match(result.stderr, /--replace-custom/);
-        assert.deepEqual(snapshot(dir), before);
-        assert.match(result.stderr, message);
-      }
-    });
-  });
-  it('the matching digest runs specs with it and then index, and no other op', () => {
-    withCustomChecker((dir, digest) => {
-      const result = main(['--reconcile', '--replace-custom', digest, '--cwd', dir]);
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(digest, /^[0-9a-f]{64}$/);
-      assert.deepEqual(tokensOf(result.stdout), [
-        { op: 'specs', token: 'seeded' },
-        { op: 'index', token: 'regenerated' },
-      ]);
-      assert.equal(result.stdout.split('\n')[0], 'ensure-configs (--reconcile, --replace-custom)');
-      assert.deepEqual(readFileSync(join(dir, 'scripts', 'check-docs-size.mjs')), readFileSync(join(BUNDLE, 'check-docs-size.mjs')));
-      assert.equal(existsSync(join(dir, CONFIG_REL)), false, 'the other ops never ran');
-    });
-  });
-  it('a refused digest leaves the whole tree byte-identical and runs no index op', () => {
-    withCustomChecker((dir) => {
-      const before = snapshot(dir);
-      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false);
-      const result = main(['--reconcile', '--replace-custom', 'f'.repeat(64), '--cwd', dir]);
-      assert.equal(result.code, 1, result.stderr);
-      assert.deepEqual(snapshot(dir), before);
-      assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false);
-      assert.match(result.stdout, /^ {2}specs: failed$/m);
-      assert.doesNotMatch(result.stdout, /^ {2}index:/m);
-      const specsBlock = result.stdout.split('\n\n')[0];
-      const details = specsBlock.split('\n').filter((line) => line.startsWith('      '));
-      assert.equal(details.at(-1), `      ${INDEX_NOT_RUN}`);
-    });
-  });
+describe('spec:distribution-files/S8 one replace block after every op line, and its usage refusals', () => {
+  for (const [label, flags, failing] of [['a plain run', [], false], ['a dry run', ['--dry-run'], false], ['an --only specs run', ['--only', 'specs'], false], ['a run with a failing op', [], true]]) {
+    it(`${label}: one block after every op line and before any failure footer, its digest binding the union; none over an empty union`, () => withSpecLayer((dir) => {
+      if (failing) symlinkSync(join(dir, 'elsewhere.json'), join(dir, 'docs', 'ai', 'gates.json'));
+      const r = main(['--reconcile', ...flags, '--cwd', dir]), lines = r.stdout.split('\n');
+      const at = lines.findLastIndex((l) => /^ {2}[a-z-]+: [a-z-]+$|^ {6}/.test(l)) + 1, end = (lines.indexOf('', at + 1) + 1 || lines.length + 1) - 1, [block, tail] = [lines.slice(at + 1, end), lines.slice(end)];
+      assert.deepEqual({ code: r.code, gap: lines[at], block: block.length, commands: lines.filter((l) => l.includes('--replace-custom')).length, tail: tail.length }, { code: failing ? 1 : 0, gap: '', block: 2, commands: 1, tail: failing ? 2 : 0 }, r.stdout);
+      assert.ok(block[0].startsWith("  scripts/check-docs-size.mjs: carries an edit — on the user's yes it is kept aside at "), r.stdout);
+      assert.ok(block[1].startsWith("  only on the user's yes, keep aside and replace the files named above: node ") && block[1].includes(` --replace-custom ${DIGEST} --cwd `), r.stdout);
+      if (failing) assert.match(tail[1], /^ {2}part of this configuration run did NOT complete/);
+      else withSpecLayer((current) => assert.deepEqual(main(['--reconcile', ...flags, '--cwd', current]).stdout.split('\n').filter((l) => /--replace-custom|carries an edit/.test(l)), [], 'every spec-layer script current: no block'), []);
+    }));
+  }
+  it('--replace-custom with --only, with --dry-run, with an empty value or given twice: usage exit 2, nothing run', () => withSpecLayer((dir) => {
+    const [before, R] = [snapshot(dir), '--replace-custom'];
+    for (const argv of [[R, DIGEST, '--only', 'specs'], [R, DIGEST, '--only', 'index'], [R, DIGEST, '--dry-run'], [R, ''], [`${R}=`], [R, DIGEST, `${R}=${DIGEST}`]]) {
+      const r = main(['--reconcile', ...argv, '--cwd', dir]);
+      assert.deepEqual({ code: r.code, stdout: r.stdout, opening: r.stderr.startsWith('ensure-configs: '), names: r.stderr.includes(R), tree: snapshot(dir) }, { code: 2, stdout: '', opening: true, names: true, tree: before }, argv.join(' '));
+    }
+  }));
+});
+
+describe('spec:distribution-files/S9 the replace run through the command', () => {
+  const run = (dir, digest, ctx) => main(['--reconcile', '--replace-custom', digest, '--cwd', dir], ctx);
+  const noReplace = (r) => assert.deepEqual(r.stdout.split('\n').filter((l) => /--replace-custom [0-9a-f]{64}|^\s*only on the user's yes|carries an edit — on the user's yes/.test(l)), [], r.stdout);
+  const failed = (r, opening) => { assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), opens: r.stdout.split('\n')[2]?.startsWith(`      ${opening}`) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], opens: true }, r.stdout); noReplace(r); };
+  it('a matching digest keeps the edit at its named path, replaces it and runs index; a second run of the line changes nothing', () => withSpecLayer((dir) => {
+    const plain = main(['--reconcile', '--dry-run', '--cwd', dir]).stdout, kept = plain.match(/kept aside at (\S+), then/)?.[1] ?? 'no kept-aside path', r = run(dir, digestOf(plain));
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), banner: r.stdout.split('\n')[0] }, { code: 0, tokens: [{ op: 'specs', token: 'seeded' }, { op: 'index', token: 'regenerated' }], banner: 'ensure-configs (--reconcile, --replace-custom)' }, r.stdout);
+    assert.deepEqual([readFileSync(join(dir, kept), 'utf8'), readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), existsSync(join(dir, CONFIG_REL))], [edit('check-docs-size.mjs'), readFileSync(join(BUNDLE, 'check-docs-size.mjs'), 'utf8'), false], 'the edit kept at its named path, the bundled body in place, no other op ran');
+    noReplace(r);
+    const after = snapshot(dir);
+    assert.deepEqual([run(dir, digestOf(plain)).code, snapshot(dir)], [0, after], 'a second run of the line changes nothing');
+  }));
+  it('a differing digest: the tree byte-identical, exit 1, no index line, the failed line ends on the navigator step, a fresh block', () => withSpecLayer((dir) => {
+    const [before, r] = [snapshot(dir), run(dir, 'f'.repeat(64))];
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), tree: snapshot(dir), digest: digestOf(r.stdout) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], tree: before, digest: DIGEST }, r.stdout);
+    assert.equal(r.stdout.split('\n\n')[0].split('\n').filter((l) => l.startsWith('      ')).at(-1), `      ${INDEX_NOT_RUN}`);
+  }));
+  it('a keep-aside failure: write-refused, the edit unchanged, no block and no replace command', () => withSpecLayer((dir) => {
+    mkdirSync(join(dir, '.agent-workflow')); writeFileSync(join(dir, '.agent-workflow', '.gitignore'), '!kept-aside/\n');
+    failed(run(dir, DIGEST), 'write-refused — .agent-workflow/.gitignore: holds other bytes');
+    assert.equal(readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), edit('check-docs-size.mjs'));
+  }));
+  it('a per-file failure: a bound file changed before its own write, race-unresolved, no block and no replace command', () => withSpecLayer((dir) => {
+    const [scripts, digest] = [join(dir, 'scripts'), digestOf(main(['--reconcile', '--dry-run', '--cwd', dir]).stdout)];
+    const writeFile = ((moved = false) => (p, body, opts) => { if (!moved && String(p).startsWith(scripts)) { moved = true; writeFileSync(join(scripts, 'check-docs-size.test.mjs'), '// changed\n'); } return writeFileSync(p, body, opts); })();
+    failed(run(dir, digest, { deps: { writeFile } }), 'race-unresolved — scripts/check-docs-size.test.mjs: changed after this run read it');
+  }, ['check-docs-size.mjs', 'check-docs-size.test.mjs']));
 });
 
 // The CLI entry itself: everything above calls main() in-process, so the guarded entry block — the
