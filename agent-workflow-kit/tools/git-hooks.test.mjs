@@ -24,6 +24,7 @@ const INSTALLER = 'scripts/install-git-hooks.mjs';
 const KEPT = 'scripts/markdown-blocks.test.mjs';
 const FOREIGN = Buffer.from('foreign bytes\n');
 const UNMANAGED = '#!/bin/sh\nexit 0\n';
+const ROUTE = "/agent-workflow-kit upgrade refreshes, with no question, an installer body it knows a release shipped, and on its one yes keeps any other installer aside and replaces it with the kit's current body; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
 const readBundle = (name) => readFileSync(join(BUNDLE, name));
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const put = (root, rel, bytes, options) => {
@@ -352,7 +353,7 @@ describe('spec:init-project/S52 commit-guard verifies the installed hook under o
     assert.equal(invoke([...flags, state === 'enforcement' ? '--enforcement' : '--commit-guard'], io), code);
     const hook = join(root, state === 'custom-hooks' ? 'custom-hooks' : '.git/hooks', 'pre-commit');
     const expected = state === 'directory' ? `${hook} is unreadable (EISDIR) after the installer exited 0`
-      : `${hook} carries no commit-guard line after the installer exited 0 — an installer older than the arm ignores --commit-guard; refreshing scripts/install-git-hooks.mjs from the kit's references/scripts/ copy is your own step`;
+      : `${hook} carries no commit-guard line after the installer exited 0 — ${ROUTE}`;
     assert.deepEqual(io.errors, code === 1 ? [expected] : []);
     if (state !== 'enforcement') {
       assert.deepEqual(outsideGit().filter(({ name }) => name !== 'custom-hooks'), before);
@@ -384,6 +385,11 @@ describe('spec:init-project/S52 commit-guard verifies the installed hook under o
     }
     assert.equal(need('resolveGitHooksPath').length, 1);
   });
+  it('exports UPGRADE_ROUTE as the literal route: the upgrade, then apply this item again', () => {
+    assert.equal(need('UPGRADE_ROUTE'), ROUTE);
+    assert.ok(ROUTE.includes('/agent-workflow-kit upgrade') && ROUTE.endsWith('then apply this item again'), ROUTE);
+    assert.doesNotMatch(ROUTE, /\b(?:custom|prior|classify)\b/u);
+  });
 });
 
 const [PRIOR, BUNDLED] = [readFileSync(join(TOOLS, '..', 'test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt')), readBundle('install-git-hooks.mjs')];
@@ -402,11 +408,10 @@ const deploy = (t, { installer = PRIOR, rules = true, hook } = {}) => {
   return { root, io, hookPath: join(root, '.git', 'hooks', 'pre-commit') };
 };
 const runsLine = (flags, bytes) => `runs: node ${INSTALLER} ${flags.join(' ')} sha256:${sha(bytes)}`;
-const REFRESH = `refresh: ${INSTALLER} sha256:${sha(BUNDLED)} — replaces sha256:${sha(PRIOR)}`;
 
 describe('spec:init-project/S60 the --hook-checks dry run by proof on a temp git project', () => {
   for (const [name, opts, code, expected] of [
-    ['a prior installer under two armable unarmed lines', {}, 0, () => [REFRESH, runsLine(BOTH, BUNDLED)]],
+    ['a prior installer under two armable unarmed lines', {}, 0, () => [runsLine(BOTH, PRIOR)]],
     ['a current installer', { installer: BUNDLED }, 0, () => [runsLine(BOTH, BUNDLED)]],
     ['a custom installer', { installer: FOREIGN }, 0, () => [runsLine(BOTH, FOREIGN)]],
     ['an armed rules line and a layout line on another path', { installer: BUNDLED, hook: managed(RULES_ON, LAYOUT_ELSEWHERE) }, 0, () => [runsLine(BOTH.slice(2), BUNDLED)]],
@@ -423,42 +428,28 @@ describe('spec:init-project/S60 the --hook-checks dry run by proof on a temp git
     const before = snapshot(root);
     assert.deepEqual([invoke(['--hook-checks'], { ...io, toolsDir: opts.toolsDir ?? TOOLS }), code === 0 ? io.lines : io.errors, snapshot(root), io.spawn.mock.callCount()], [code, expected(root), before, 0]);
   });
-  it('a minted layout record over scripts/: the refresh and the layout line, then --check stops on the grown aggregate until a reasoned write', (t) => {
-    const { root, io, hookPath } = deploy(t, { installer: BUNDLED });
-    const run = (...argv) => spawnSync(process.execPath, argv, { cwd: root, env: io.env, encoding: 'utf8' });
-    assert.equal(run(join(root, INSTALLER), '--rules-check', RULES_CLI).status, 0);
-    for (const [rel, bytes] of [['docs/ai/source-size.json', JSON.stringify({ schema: 2, roots: ['scripts'], exclude: [], extensions: ['.mjs'] })], [INSTALLER, PRIOR]]) put(root, rel, bytes);
-    assert.deepEqual([spawnSync('git', ['add', '-A'], { cwd: root, env: io.env }).status, run(SIZE_CLI, '--write-baseline', '--layout', '--reason', 'adopted').status], [0, 0]);
-    assert.deepEqual([invoke(['--hook-checks'], io), io.lines], [0, [REFRESH, runsLine(BOTH.slice(2), BUNDLED)]]);
-    assert.deepEqual([invoke(['--apply', '--hook-checks'], io), readFileSync(join(root, INSTALLER)), need('readPreCommitState')(root, { env: io.env })],
-      [0, BUNDLED, { state: 'managed', armed: false, rulesArmed: true, rulesForeign: false, layoutArmed: true, layoutForeign: false }]);
-    const [hook, stop] = [readFileSync(hookPath), run(SIZE_CLI, '--check')];
-    assert.ok(stop.status === 1 && /scripts: aggregate lines/.test(stop.stdout) && stop.stdout.includes(`--write-baseline --cwd "${root}" --reason`), stop.stdout);
-    assert.deepEqual([run(SIZE_CLI, '--write-baseline', '--reason', 'grown').status, run(SIZE_CLI, '--check').status, readFileSync(hookPath)], [0, 0, hook]);
-  });
 });
 
 describe('spec:init-project/S61 the --apply --hook-checks by proof', () => {
-  const keeps = (hook) => `${INSTALLER} keeps the refreshed bytes: ${hook} no longer holds what it held before the installer ran, or cannot be read, and the prior body would drop the new lines at its next run`;
+  const route = (hook) => [`${hook} carries no rules-check line after the installer exited 0 — ${ROUTE}`];
   const writes = (text, status) => (hook) => (put(dirname(hook), 'pre-commit', text), { status });
-  for (const [name, opts, act, code, errors, after] of [
-    ['a refresh then a success', {}, 'real', 0, () => [], BUNDLED],
-    ['a non-zero exit over an untouched hook', { hook: managed() }, () => ({ status: 1 }), 1, () => ['installer exited 1'], PRIOR],
-    ['an exit 0 arming nothing over an absent hook', {}, () => ({ status: 0 }), 1, (hook) => [`${hook} carries no rules-check line after the installer exited 0 — an installer older than the arm ignores --rules-check; refreshing ${INSTALLER} from the kit's references/scripts/ copy is your own step`], PRIOR],
-    ['a non-zero exit after the hook was written', {}, writes(managed(), 1), 1, (hook) => ['installer exited 1', keeps(hook)], BUNDLED],
-    ['an unreadable hook after exit 0', {}, (hook) => (mkdirSync(hook, { recursive: true }), { status: 0 }), 1, (hook) => [`${hook} is unreadable (EISDIR) after the installer exited 0`, keeps(hook)], BUNDLED],
-    ['a custom installer leaving a same-role line on another path', { installer: FOREIGN }, writes(managed(RULES_ELSEWHERE, RULES_ON, LAYOUT_ON), 0), 1, (hook) => [`${hook} still carries a rules-check line on a path other than this kit's after the installer exited 0`], FOREIGN],
-    ['a restore that cannot be made', { failRestore: true }, () => ({ status: 1 }), 1, () => ['installer exited 1', `not restored: ${INSTALLER} (disk gone)`], BUNDLED],
-    ['a no-hooks-dir answer', { noHooks: true }, 'real', 0, () => [], BUNDLED],
-  ]) it(`${name}: exit ${code}`, (t) => {
+  for (const [name, opts, act, code, errors] of [
+    ['a current installer arms both lines', { installer: BUNDLED }, 'real', 0, () => []],
+    ['a prior installer runs as it stands', {}, 'real', 1, route],
+    ['a non-zero exit over an untouched hook', { hook: managed() }, () => ({ status: 1 }), 1, () => ['installer exited 1']],
+    ['an exit 0 arming nothing over an absent hook', {}, () => ({ status: 0 }), 1, route],
+    ['a non-zero exit after the hook was written', {}, writes(managed(), 1), 1, () => ['installer exited 1']],
+    ['an unreadable hook after exit 0', {}, (hook) => (mkdirSync(hook, { recursive: true }), { status: 0 }), 1, (hook) => [`${hook} is unreadable (EISDIR) after the installer exited 0`]],
+    ['a custom installer leaving a same-role line on another path', { installer: FOREIGN }, writes(managed(RULES_ELSEWHERE, RULES_ON, LAYOUT_ON), 0), 1, (hook) => [`${hook} still carries a rules-check line on a path other than this kit's after the installer exited 0`]],
+    ['a no-hooks-dir answer', { noHooks: true }, 'real', 0, () => []],
+  ]) it(`${name}: exit ${code}, writing and restoring nothing`, (t) => {
     const { root, io, hookPath } = deploy(t, opts);
-    const [plan, before, env, seen, lines] = [need('planGitHooks')({ root, variant: 'hook-checks' }), existsSync(hookPath) ? readFileSync(hookPath) : null, opts.noHooks ? { ...io.env, GIT_DIR: join(root, 'missing') } : io.env, [], []];
+    const [plan, env, seen, lines] = [need('planGitHooks')({ root, variant: 'hook-checks' }), opts.noHooks ? { ...io.env, GIT_DIR: join(root, 'missing') } : io.env, [], []];
     const spawn = t.mock.fn((argv, options) => (seen.push(readFileSync(argv[1])), act === 'real' ? io.spawn(argv, options) : act(hookPath)));
-    const replaceFile = (dir, path, bytes) => { if (seen.length > 0) throw new Error('disk gone'); writeFileSync(path, bytes); };
-    assert.equal(need('applyGitHooks')(plan, { env, spawn, error: (line) => lines.push(line), ...(opts.failRestore ? { replaceFile } : {}) }), code);
+    const [replaceFile, writeFile] = ['replaceFile', 'writeFile'].map((seam) => () => assert.fail(`hook-checks must not call ${seam}`));
+    assert.equal(need('applyGitHooks')(plan, { env, spawn, error: (line) => lines.push(line), replaceFile, writeFile }), code);
     assert.deepEqual([lines, seen, readFileSync(join(root, INSTALLER)), spawn.mock.calls.map(({ arguments: [argv, options] }) => [argv, options.cwd, options.env])],
-      [errors(hookPath), [opts.installer ?? BUNDLED], after, [[['node', join(root, INSTALLER), ...BOTH], root, env]]]);
-    if (after === PRIOR) assert.deepEqual(existsSync(hookPath) ? readFileSync(hookPath) : null, before);
+      [errors(hookPath), [opts.installer ?? PRIOR], opts.installer ?? PRIOR, [[['node', join(root, INSTALLER), ...BOTH], root, env]]]);
     if (code === 0) assert.deepEqual(['state', 'rulesArmed', 'layoutArmed'].map((key) => need('readPreCommitState')(root, { env })[key]), opts.noHooks ? ['no-hooks-dir', false, false] : ['managed', true, true]);
   });
   it('readPreCommitState answers exactly its fields in every state, arming by the canonical lines and flagging a foreign one', (t) => {

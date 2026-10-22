@@ -1149,34 +1149,34 @@ describe('spec:init-project/S63 the danger check over hook-checks by proof', () 
     ({ code: unchanged(f, () => danger.main([...argvFor('hook-checks', f), ...argv], { ...cli.io, ...io })), ...cli });
   const schema1 = { config: JSON.stringify({ schema: 1, defaults: SOURCE_SIZE_DEFAULTS, roots: ['src'], exclude: [], extensions: ['.mjs'] }) };
   for (const [title, installer, opts, flags] of [['prior, both lines', prior, {}, [...rules, ...layout]], ['current, both lines', bundled, {}, [...rules, ...layout]],
-    ['current, the rules line alone', bundled, schema1, rules], ['prior, the layout line alone', prior, { theme: false }, layout]]) it(`${title}: writes and runs lines, scope within, the CLI accepts --variant hook-checks, edited after the yes exit 5`, (t) => {
+    ['current, the rules line alone', bundled, schema1, rules], ['prior, the layout line alone', prior, { theme: false }, layout]]) it(`${title}: the runs line alone, scope within, the CLI accepts --variant hook-checks, edited after the yes exit 5`, (t) => {
     const f = deployment(t, installer, opts);
     const result = unchanged(f, () => danger.checkApply('hook-checks', f));
-    assert.deepEqual(result.lines, [...installer === prior ? [`writes: ${INSTALLER} sha256:${sha(bundled)} — replaces sha256:${sha(prior)}`] : [], runs(flags), 'scope: within the declared scope of hook-checks', `digest: ${result.digest}`]);
+    assert.deepEqual(result.lines, [runs(flags, installer), 'scope: within the declared scope of hook-checks', `digest: ${result.digest}`]);
     const cli = main(f);
     assert.deepEqual([cli.code, cli.lines, cli.errors], [0, result.lines, []]);
     fs.appendFileSync(join(f.root, INSTALLER), '// edited after the yes\n');
     assert.equal(main(f, ['--apply', '--expect', result.digest]).code, 5);
   });
-  for (const [title, { flags = rules, path = INSTALLER, bytes = bundled, replaces = prior }, refused] of [
-    ['another flag', { flags: ['--commit-guard', join(TOOLS, 'commit-guard.mjs')] }, 'runs:'], ['another tool path', { flags: ['--rules-check', '/elsewhere/rules-cli.mjs'] }, 'runs:'],
-    ['the lines out of order', { flags: [...layout, ...rules] }, 'runs:'], ['a write of another path', { path: 'scripts/other.mjs' }, 'scripts/other.mjs'],
-    ['other bytes', { bytes: Buffer.concat([bundled, Buffer.from('\n')]) }, INSTALLER], ['a replaced body that is not prior', { replaces: Buffer.from('custom\n') }, INSTALLER]]) it(`refuses ${title}, exit 1, nothing spawned`, (t) => {
+  for (const [title, { flags = rules, write }] of [
+    ['another flag', { flags: ['--commit-guard', join(TOOLS, 'commit-guard.mjs')] }], ['another tool path', { flags: ['--rules-check', '/elsewhere/rules-cli.mjs'] }],
+    ['the lines out of order', { flags: [...layout, ...rules] }], ['a planted write of the installer', { write: INSTALLER }], ['a planted write of another path', { write: 'scripts/other.mjs' }]]) it(`refuses ${title}, exit 1, nothing spawned`, (t) => {
     const f = deployment(t, prior);
-    const plan = { root: f.root, variant: 'hook-checks', scriptsCreated: false, copies: [], roles: ['rules'], refresh: { path: join(f.root, path), bytes, replaces },
-      runs: { argv: ['node', join(f.root, INSTALLER), ...flags], shown: ['node', INSTALLER, ...flags], bytes } };
+    const plan = { root: f.root, variant: 'hook-checks', scriptsCreated: false, roles: ['rules'],
+      copies: write ? [{ name: basename(write), path: join(f.root, write), action: 'created', bytes: bundled }] : [],
+      runs: { argv: ['node', join(f.root, INSTALLER), ...flags], shown: ['node', INSTALLER, ...flags], bytes: prior } };
     const cli = main(f, [], { planGitHooks: () => plan });
-    assert.deepEqual([cli.code, cli.lines.filter((line) => line.startsWith('refused: ')).map((line) => line.startsWith(`refused: ${refused} `)), cli.lines.at(-2)], [1, [true], 'nothing written']);
-    assert.ok(cli.lines.includes(runs(flags, bytes)));
+    assert.deepEqual([cli.code, cli.lines.filter((line) => line.startsWith('refused: ')).map((line) => line.startsWith(`refused: ${write ?? 'runs:'} `)), cli.lines.at(-2)], [1, [true], 'nothing written']);
+    assert.ok(cli.lines.includes(runs(flags, prior)));
   });
-  it('the real apply writes exactly the printed writes and arms the printed lines; the next check is the leaf\'s refusal, exit 3', (t) => {
-    const f = deployment(t, prior);
+  it('the real apply over the current installer writes nothing the leaf placed and arms the printed lines; the next check is the leaf\'s refusal, exit 3', (t) => {
+    const f = deployment(t, bundled);
     const [result, earlier] = [unchanged(f, () => danger.checkApply('hook-checks', f)), snapshot(f)];
     assert.equal(danger.main([...argvFor('hook-checks', f), '--apply', '--expect', result.digest], capture(f).io), 0);
     const later = snapshot(f);
     assert.deepEqual(Object.keys(later).filter((path) => (!path.startsWith('.git/') || path === '.git/hooks/pre-commit')
-      && JSON.stringify(earlier[path]) !== JSON.stringify(later[path])).sort(), ['.git/hooks/pre-commit', INSTALLER]);
-    assert.equal(`writes: ${INSTALLER} sha256:${sha(fs.readFileSync(join(f.root, INSTALLER)))} — replaces sha256:${sha(prior)}`, result.lines[0]);
+      && JSON.stringify(earlier[path]) !== JSON.stringify(later[path])).sort(), ['.git/hooks/pre-commit']);
+    assert.equal(result.lines.some((line) => line.startsWith('writes: ')), false);
     const hook = fs.readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8').split('\n');
     for (const [flag, path] of [rules, layout]) assert.ok(hook.includes(`node "${path}" --check # ${flag.slice(2)}`), flag);
     const next = main(f);

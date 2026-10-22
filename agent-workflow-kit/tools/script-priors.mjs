@@ -1,10 +1,9 @@
 // script-priors.mjs — the APPEND-ONLY catalog of every enforcement-script body this family has shipped
 // into a project's `scripts/`, as sha256 digests, and the ONE classifier a refresh asks before it
-// replaces a deployed script — the spec-layer ensure for its pairs, the `hook-checks` writer for the
-// hook installer alone and the upgrade's `scripts` ensure for every other kit script: `current`
-// (byte-equal to the bundled copy) · `prior` (a body a release shipped, never edited since) · `custom`
-// (anything else — kept aside and replaced only by the replace run the user's yes starts). The
-// lens-region idiom (AD-041) over whole script bodies.
+// replaces a deployed script — the spec-layer ensure for its pairs and the upgrade's `scripts` ensure
+// for every other kit script: `current` (byte-equal to the bundled copy) · `prior` (a body a release
+// shipped, never edited since) · `custom` (anything else — kept aside and replaced only by the replace
+// run the user's yes starts). The lens-region idiom (AD-041) over whole script bodies.
 //
 // Append discipline: when a release changes one of PRIOR_FILES, append the OUTGOING body's row here
 // in the same release and copy its bytes to test/fixtures/script-priors/<firstShipped>/<file>.txt —

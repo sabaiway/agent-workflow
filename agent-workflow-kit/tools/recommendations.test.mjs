@@ -2698,7 +2698,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
 });
 
 describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', () => {
-  const whatOf = (checks) => `the pre-commit hook lacks this kit's ${checks} — the kit arms each line, refreshing a known-prior installer first`;
+  const whatOf = (checks) => `the pre-commit hook lacks this kit's ${checks} — the kit arms each line`;
   const NAMES = { rules: 'project-rules check', layout: 'layout check', both: 'project-rules and layout checks' };
   const CURRENT = { checkRules: () => [{ theme: 'project-layout', verdict: 'current' }] };
   const roleLine = (tool, role) => `node "${tool}" --check # ${role}\n`;

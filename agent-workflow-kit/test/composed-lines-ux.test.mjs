@@ -20,6 +20,7 @@ import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
 import { ensureExecutor } from '../tools/ensure-executor.mjs';
 import { EXECUTOR_VEHICLE_REL, executorTemplate, readExecutorPosture } from '../tools/cheap-agents-read.mjs';
 import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
+const [{ applyGitHooks, UPGRADE_ROUTE }, { hermeticGitEnv }] = await Promise.all(['../tools/git-hooks.mjs', '../tools/git-env.mjs'].map((path) => import(path)));
 // Loaded against the pre-fix tree too (red-first): absent, the specs and scripts fixtures below are
 // skipped and the completeness suite reds on the unwitnessed tokens.
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
@@ -217,6 +218,13 @@ const SCRIPTS_FX = [['scripts-not-placed', () => runScripts(project()), 'scripts
   ['scripts-node-evidence-unverifiable', () => runScripts(project({ node: false }), { deps: { lstat: () => { throw eacces(); } } }), 'scripts/: whether Node runs here could not be read (EACCES on package.json), so nothing was written — resolve it by hand, then re-run'],
 ];
 if (ensureScripts) { fx('replace-block', 'block-hook-run', false, replaceBlock(runScripts(pendingTree).entries, { kitRoot: KIT, cwd: '/project' })); for (const [id, build] of SCRIPTS_FX) ensureFx(id, build(), id === 'scripts-old-adr-layout' || undefined); }
+// The two git-hook re-read lines through the real leaf (an installer that exits 0 and writes no hook), each one line ending with the upgrade route.
+for (const [variant, roles] of [['commit-guard'], ['hook-checks', ['rules', 'layout']]]) {
+  const root = project(), env = hermeticGitEnv(process.env, root), errors = [];
+  spawnSync('git', ['init', '-q', root], { env });
+  applyGitHooks({ root, variant, copies: [], roles, runs: { argv: ['node', join(root, 'scripts', 'install-git-hooks.mjs')] } }, { env, spawn: () => ({ status: 0 }), error: (line) => errors.push(line) });
+  fx('git-hooks', `${variant}-unarmed`, true, () => (assert.deepEqual(errors.map((line) => line.endsWith(` — ${UPGRADE_ROUTE}`)), [true], errors.join('\n')), errors));
+}
 const scriptsUnwitnessed = () => SCRIPTS_FX.flatMap(([id, , ...lines]) => lines.filter((w) => !SURFACES.find((s) => s.id === id)?.lines.some((line) => line === w || line.startsWith(`${w} `))).map((w) => `${id}: ${w}`));
 {
   // The navigator ensure drives a SEPARATE process, so its causes split by how far that process

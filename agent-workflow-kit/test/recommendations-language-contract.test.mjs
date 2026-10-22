@@ -1075,10 +1075,10 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
       ['attribution', between(attribution, '## Rollback', '')], ['commit-guard', step4],
     ]) {
       assert.ok(text.includes(`\`${key}\``), key);
-      assert.doesNotMatch(text, /\b(?:create it as|if absent|STOP and merge|by hand|grep)\b/iu, key);
+      assert.doesNotMatch(text.replace(/\s+/gu, ' '), /\b(?:create it as|if absent|STOP and merge|by hand|grep|preserves existing scripts|cmp -s|your own step)\b/iu, key);
     }
     assert.ok(step5.replace(/\s+/gu, ' ').includes('"includeCoAuthoredBy": false already converges the item'));
-    assert.ok(step4.replace(/\s+/gu, ' ').includes("A cmp -s against the kit's references/scripts/ copy tells whether the project's copy is the current one; a differing copy may be an older deploy or the user's own edit, and refreshing it is the user's own step."));
+    assert.ok(['makes the apply exit 6 with one line naming the hook and the guard line the installer left out, ending with the upgrade route', '`/agent-workflow-kit upgrade`'].every((phrase) => step4.replace(/\s+/gu, ' ').includes(phrase)));
   });
 
   it('the trailer gotcha and the attribution and visibility contracts name the advisor items', () => {

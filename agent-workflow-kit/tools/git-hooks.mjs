@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // git-hooks.mjs — the thin writer of the three git-hook items (`enforcement`, `commit-guard`,
-// `hook-checks`): it copies the bundled scripts create-only, refreshes a known-prior installer, and
-// spawns the project's own scripts/install-git-hooks.mjs, which decides the hook at the write. The leaf
+// `hook-checks`): it copies the bundled scripts create-only and spawns the project's own
+// scripts/install-git-hooks.mjs as it stands, which decides the hook at the write. The leaf
 // decides nothing about the hook: the danger check binds the copies and the installer bytes this dry run
 // answers, never git's hooks dir. It is also the home of the one pre-commit reader, which the
 // commit-guard and hook-checks applies run after the installer to verify the arm.
@@ -10,12 +10,11 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
+import { writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, NODE_EVIDENCE_SCRIPTS, SCRIPTS_DIR } from './node-evidence.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { classifyDeployedScript } from './script-priors.mjs';
 import { checkRules } from './project-rules/index.mjs';
 import { readLayoutSetup } from './source-size-core.mjs';
 
@@ -34,6 +33,8 @@ const USAGE = 'usage: git-hooks (--enforcement | --commit-guard | --hook-checks)
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const usageError = (message) => Object.assign(new Error(message), { exitCode: EXIT_USAGE });
 const refusal = (message) => Object.assign(new Error(message), { exitCode: EXIT_REFUSED });
+// The one route the two re-read lines end with: an installer that left a passed line out is not the kit's current body.
+export const UPGRADE_ROUTE = "/agent-workflow-kit upgrade refreshes, with no question, an installer body it knows a release shipped, and on its one yes keeps any other installer aside and replaces it with the kit's current body; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
 
 const nodeAt = (path, lstat) => {
   try {
@@ -122,7 +123,7 @@ export const plannedRoles = (answers, hook) => ROLES.filter(({ key }) =>
 export const unsafeToolsPath = (toolsDir, platform) => (ROLES.some(({ tool }) => safeHookPath(tool(toolsDir), platform) === null)
   ? `the kit's tools path ${toolsDir} carries ", $, a backtick, a backslash, CR or LF — a hook line would not run the file it names` : null);
 
-// hook-checks: the lines it arms, from the two answers and the hook, and a refresh of a known-prior installer.
+// hook-checks: the lines it arms, from the two answers and the hook; the installer runs as it stands.
 const planHookChecks = ({ root, toolsDir, installer, scriptsNode, kinds, readFile, deps }) => {
   if (!isPlainDir(scriptsNode) || kinds.get(INSTALLER_NAME) !== 'file') throw refusal(`${installer} is absent — nothing here places the hook installer`);
   const unsafe = unsafeToolsPath(toolsDir, deps.platform);
@@ -135,12 +136,9 @@ const planHookChecks = ({ root, toolsDir, installer, scriptsNode, kinds, readFil
   if (roles.length === 0) {
     throw refusal(`nothing to plan — ${ROLES.map(({ key, role }) => `the ${role} line: ${hook[`${key}Armed`] ? 'armed' : `not armable (${answers[key].why})`}`).join('; ')}`);
   }
-  const deployed = readFile(installer);
-  const bundled = readFile(join(bundleDir(toolsDir), INSTALLER_NAME));
-  const refresh = classifyDeployedScript(deployed, INSTALLER_NAME, bundled) === 'prior' ? { path: installer, bytes: bundled, replaces: deployed } : null;
   const flags = roles.flatMap(({ flag, tool }) => [flag, tool(toolsDir)]);
-  return { root, variant: 'hook-checks', scriptsCreated: false, copies: [], refresh, roles: roles.map(({ key }) => key),
-    runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], bytes: refresh ? bundled : deployed } };
+  return { root, variant: 'hook-checks', scriptsCreated: false, copies: [], roles: roles.map(({ key }) => key),
+    runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], bytes: readFile(installer) } };
 };
 
 // The dry run: what the apply copies and the installer it runs, with the bytes of each.
@@ -177,7 +175,6 @@ export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSyn
 
 export const formatPlan = (plan) => [
   ...plan.copies.map(({ name, action, bytes }) => `copy: ${SCRIPTS_REL}/${name} ${action}${action === 'created' ? ` sha256:${sha(bytes)}` : ''}`),
-  ...(plan.refresh ? [`refresh: ${INSTALLER_REL} sha256:${sha(plan.refresh.bytes)} — replaces sha256:${sha(plan.refresh.replaces)}`] : []),
   `runs: ${plan.runs.shown.map(shellQuoteArg).join(' ')} sha256:${sha(plan.runs.bytes)}`,
 ];
 
@@ -219,58 +216,26 @@ const rollBack = (plan, created, io) => {
   return left;
 };
 
-// The hook's bytes, null when absent; undefined when it cannot be read, which never compares equal.
-const hookBytes = (path, readFile) => {
-  try {
-    return readFile(path);
-  } catch (error) {
-    return error?.code === 'ENOENT' ? null : undefined;
-  }
-};
-const sameHook = (left, right) => left !== undefined && right !== undefined && (left === null ? right === null : right !== null && left.equals(right));
-
-// hook-checks at the write: the refresh, the spawn, the re-read of every passed line; on a failed outcome
-// the prior installer comes back exactly when the hook still holds the bytes it held before the spawn.
+// hook-checks at the write: the spawn, then the re-read of every passed line; it writes and restores nothing.
 const applyHookChecks = (plan, resolved) => {
   const hooksDir = resolveGitHooksPath(plan.root, resolved.env);
   const preCommit = hooksDir === null ? null : join(hooksDir, 'pre-commit');
-  const before = preCommit === null ? null : hookBytes(preCommit, resolved.readFile);
-  const replace = (bytes) => resolved.replaceFile(plan.root, plan.runs.argv[1], bytes, {}, { label: INSTALLER_REL });
-  if (plan.refresh) {
-    try {
-      replace(plan.refresh.bytes);
-    } catch (error) {
-      resolved.error(error?.message ?? String(error));
-      return EXIT_INCOMPLETE;
-    }
-  }
   const child = resolved.spawn(plan.runs.argv, { cwd: plan.root, env: resolved.env, stdio: 'inherit' });
   const hook = readPreCommitState(plan.root, { env: resolved.env, toolsDir: resolved.toolsDir, platform: resolved.platform, gitHooksPath: () => hooksDir });
   const failure = child.status !== 0 ? `installer exited ${child.status ?? child.signal ?? child.error?.code}`
     : hook.state === 'no-hooks-dir' ? null
       : hook.state === 'unreadable' ? `${preCommit} is unreadable (${hook.code}) after the installer exited 0`
-        : ROLES.filter(({ key }) => plan.roles.includes(key)).map(({ key, role, flag }) => (!hook[`${key}Armed`]
-          ? `${preCommit} carries no ${role} line after the installer exited 0 — an installer older than the arm ignores ${flag}; refreshing ${INSTALLER_REL} from the kit's references/scripts/ copy is your own step`
+        : ROLES.filter(({ key }) => plan.roles.includes(key)).map(({ key, role }) => (!hook[`${key}Armed`]
+          ? `${preCommit} carries no ${role} line after the installer exited 0 — ${UPGRADE_ROUTE}`
           : hook[`${key}Foreign`] ? `${preCommit} still carries a ${role} line on a path other than this kit's after the installer exited 0` : null)).find(Boolean) ?? null;
   if (failure === null) return EXIT_OK;
   resolved.error(failure);
-  if (!plan.refresh) return EXIT_INCOMPLETE;
-  if (!sameHook(before, preCommit === null ? null : hookBytes(preCommit, resolved.readFile))) {
-    resolved.error(`${INSTALLER_REL} keeps the refreshed bytes: ${preCommit} no longer holds what it held before the installer ran, or cannot be read, and the prior body would drop the new lines at its next run`);
-    return EXIT_INCOMPLETE;
-  }
-  try {
-    replace(plan.refresh.replaces);
-  } catch (error) {
-    resolved.error(`not restored: ${INSTALLER_REL} (${error?.message ?? error})`);
-  }
   return EXIT_INCOMPLETE;
 };
 
 export const applyGitHooks = (plan, io = {}) => {
   const resolved = { lstat: lstatSync, unlink: unlinkSync, rmdir: rmdirSync, readdir: readdirSync, env: process.env,
-    log: console.log, error: console.error, writeFile: writeProjectFileCreateOnly, toolsDir: TOOLS, readFile: readFileSync,
-    replaceFile: writeContainedFileAtomic, platform: process.platform,
+    log: console.log, error: console.error, writeFile: writeProjectFileCreateOnly, toolsDir: TOOLS, platform: process.platform,
     spawn: (argv, options) => spawnSync(argv[0], argv.slice(1), options), ...io };
   if (plan.variant === 'hook-checks') return applyHookChecks(plan, resolved);
   const created = [];
@@ -308,7 +273,7 @@ export const applyGitHooks = (plan, io = {}) => {
   if (hook.state === 'no-hooks-dir' || hook.armed) return EXIT_OK;
   const path = join(hooksDir, 'pre-commit');
   resolved.error(hook.state === 'unreadable' ? `${path} is unreadable (${hook.code}) after the installer exited 0`
-    : `${path} carries no commit-guard line after the installer exited 0 — an installer older than the arm ignores --commit-guard; refreshing ${INSTALLER_REL} from the kit's references/scripts/ copy is your own step`);
+    : `${path} carries no commit-guard line after the installer exited 0 — ${UPGRADE_ROUTE}`);
   return EXIT_INCOMPLETE;
 };
 

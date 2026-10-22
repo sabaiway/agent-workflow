@@ -744,6 +744,24 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   as `unexpected-error`, without the lines naming the files already written. Narrow fix: both re-reads caught, the op
   failing `race-unresolved` with its lines and partial note. Residual: a window inside one write. Named by the
   DISTRIBUTION-FILES-STAY-CURRENT S3 plan, beside SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES.
+- **ENFORCEMENT-COPY-PLACES-AN-INSTALLER-BESIDE-A-KEPT-SUITE** — invariant: no git-hook writer places an installer
+  beside suites of another release. Origin: the `enforcement` copy is create-only per file
+  (`agent-workflow-kit/tools/git-hooks.mjs:161-162`), so a writer run over a `scripts/` holding an older
+  `install-git-hooks.test.mjs` and no Node-evidence script, the installer included (the suites are not Node evidence),
+  places the current installer beside the kept suite, which may fail inside the hook. Not folded in S9: since S9
+  `hook-checks` no longer writes the installer and cannot introduce this mismatch. Narrow fix: the `enforcement` dry
+  run refuses over a kept member of `INSTALLER_SET` and names the upgrade, whose scripts op makes the set current.
+  Proof: an `enforcement` cell over a `scripts/` holding only the 8.3.0 suite. Residual, not live through the advisor,
+  which offers the item only over a `scripts/` holding no bundled basename (`recommendations.mjs:1052-1055`): only a
+  direct `git-hooks --enforcement` run meets it. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S9 spec review.
+- **GIT-HOOK-INSTALLER-ABSENT-LINE-NAMES-NO-ROUTE** — invariant: every refusal of a git-hook writer names a route that
+  works. Origin: the `commit-guard` and `hook-checks` dry runs refuse with `<installer> is absent — nothing here places
+  the hook installer` (`agent-workflow-kit/tools/git-hooks.mjs:128,165`), naming no step. Narrow fix: end the line
+  with the upgrade route when `scripts/` holds a kit script, else name the `enforcement` item when `enforcementAdmits`
+  holds (`agent-workflow-kit/tools/recommendations.mjs:1061`), else the user's own step. Proof: one cell per arm over
+  an absent installer. Residual, not live through the advisor: its skip lines for both items already name the
+  `enforcement` item or the user's own step (`recommendations.mjs:984,1013`), so only a direct writer run meets the
+  bare line. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S9 spec review.
 
 ## Closed
 

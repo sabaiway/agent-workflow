@@ -297,7 +297,7 @@ export const WHATS = Object.freeze({
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'gate-hook.marker-stale': 'the declaration carries the lcovProducer key but the placed hook predates it — the hook goes dark and every gate prompts',
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
-  'hook-checks': 'the pre-commit hook lacks this kit\'s {checks} — the kit arms each line, refreshing a known-prior installer first',
+  'hook-checks': 'the pre-commit hook lacks this kit\'s {checks} — the kit arms each line',
   enforcement: ENFORCEMENT_WHAT,
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
   'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',

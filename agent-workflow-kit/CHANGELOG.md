@@ -4,6 +4,22 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.47.0 — the `hook-checks` item no longer replaces your hook installer; a hook line it left out names the upgrade (AD-199)
+
+**Applying `hook-checks` no longer replaces your hook installer.** Before, its apply first replaced a
+`scripts/install-git-hooks.mjs` an earlier release shipped with the kit's current one, and could put it in place
+beside older installer tests. Since 14.46.0 the upgrade keeps every kit script current, so that replace only repeated
+the upgrade's work, and it is gone:
+
+- **`hook-checks` runs your installer as it stands.** Its preview prints no `refresh:` line, the apply itself writes
+  and restores no file (the installer still writes the hook), and the check before the apply refuses any write for
+  this item. Its note in the Recommendations mode no longer warns that the replace may grow a recorded size.
+- **A hook line the installer left out names the upgrade.** When the installer exits 0 but the hook lacks a line the
+  `commit-guard` or `hook-checks` apply passed, the apply still exits 6, and its line now ends by naming
+  `/agent-workflow-kit upgrade`, which brings the installer to the kit's current body (a body a release shipped
+  refreshed with no question, any other kept aside and replaced on its one yes), then says to apply the item again. Before, the line called a refresh from the kit's copy your own step.
+- Migration note 3.0.0 step 4 says the same.
+
 ## 14.46.0 — every upgrade keeps all the kit's scripts in your `scripts/` current, an edit kept aside and replaced on the one yes (AD-198)
 
 **A kit script in `scripts/` no longer stays stale or missing forever.** Before, the upgrade's `scripts` step

@@ -7,6 +7,14 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-22 — AD-199: the `hook-checks` item no longer replaces your hook installer; a hook line it left out names the upgrade (kit 14.47.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
+
+**Applying `hook-checks` no longer replaces your hook installer.** It runs the project's hook installer as it stands,
+which writes the hook as before, with no `refresh:` line and no replace, since the upgrade already keeps every kit
+script current. When the installer exits 0 but leaves out a hook line the `commit-guard` or `hook-checks` apply
+passed, the apply's line now names `/agent-workflow-kit upgrade` instead of a refresh as your own step. Contracts: init-project revision 18. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-22 — AD-198: every upgrade keeps all the kit's scripts in your `scripts/` current, an edit kept aside and replaced on the one yes (kit 14.46.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
 
 **A kit script in `scripts/` no longer stays stale or missing forever.** Once a kit script stands in `scripts/`, the
