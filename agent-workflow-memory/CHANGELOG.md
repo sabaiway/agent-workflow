@@ -4,6 +4,40 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.5.0 — the decisions script brings your ADR store current in one command, and writes nothing when it already is (AD-200)
+
+**`references/scripts/archive-decisions.mjs` gains `--ensure-current`.** One command judges the ADR store before it
+writes anything, then brings it current:
+
+- A retired monolith (`docs/ai/history/decisions-archive.md` or `decisions-archive-early.md`) beside
+  `docs/ai/decisions.md` is migrated, after the
+  `--migrate` preflight in full and a snapshot in the git dir (else in the OS temp dir, when that lies outside the
+  project).
+- A `docs/ai/decisions.md` over its `maxLines` is rotated: its oldest entries become `adr/` records and the
+  `docs/ai` links to them follow.
+- The navigator `docs/ai/adr/log.md` is written only when it differs from its regeneration, so a current store never
+  gains a date-only diff.
+- Every refusal is decided before the first write, among them: a malformed heading, two records for one id, a
+  monolith with no `decisions.md` beside it, a dead ADR reference the moves would not cure, a HOT window whose newest
+  entry alone exceeds its cap. A project with no ADR files is
+  skipped, unless a `docs/ai` page links into one.
+- Exit 0 ends on the line `already-current` or `brought-current: <actions>` (`migrated`, `rotated`,
+  `navigator written`); 1 means no project file changed; 3 means one changed and the run then failed: after an
+  interrupted write a re-run completes the move, and after a failed closing check the message names the check's lines
+  and says the store was written and does not pass; 2 is a usage error, `--ensure-current` beside another mode flag included.
+
+**Every write to a project file replaces it whole, in every mode.** A record, a rewritten link, `decisions.md` and the navigator
+are each written to a temporary file beside the target, whose name never ends in `.md`, then renamed into place: an
+interrupted run leaves each file with its old bytes or its new ones, and the next run completes the move. A record
+under another slug for its id moves to its canonical name by one rename. A snapshot location that fails partway has
+its partial directory removed before the next is tried, and an OS temp dir inside the project root is no longer used
+for the snapshot.
+
+MINOR: one new mode. Every other mode keeps its output and exit codes, with these exceptions: the usage line names the
+new mode; `--migrate --apply` no longer writes its snapshot to an OS temp dir inside the project root, so with no usable
+git dir it then exits 1, and its snapshot refusal names each location that failed; a failed write may name its
+temporary file.
+
 ## 8.4.0 — the commit hook runs your own scripts/pre-commit.local first (AD-195)
 
 **Your own commit checks now have a place of their own: `scripts/pre-commit.local`.** Every hook that

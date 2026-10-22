@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-22 — AD-200: the decisions script brings your ADR store current in one command, and writes nothing when it already is (memory 8.5.0 MINOR, kit 14.48.0 MINOR; engine 5.12.1 and both bridges unchanged)
+
+**`archive-decisions.mjs --ensure-current` judges the ADR store before any write and brings it current**: a retired
+monolith migrated, a `decisions.md` over its cap rotated, the navigator written only when it differs. A current store
+gets no byte; the last line says `already-current` or `brought-current: <actions>`, and the exit code says whether a
+failed run changed a file. Every write the script makes to a project file, in every mode, now replaces that file whole
+through a temporary file and a rename. The kit ships the same script, and a copy of its previous body now refreshes on
+the upgrade with no question, unless the project is on an older ADR layout, where it stays held back, or its ADR
+layout cannot be read. Contracts: adr-navigator revision 2. Detail:
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-22 — AD-199: the `hook-checks` item no longer replaces your hook installer; a hook line it left out names the upgrade (kit 14.47.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
 
 **Applying `hook-checks` no longer replaces your hook installer.** It runs the project's hook installer as it stands,

@@ -4,6 +4,22 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.48.0 — the kit's decisions script brings an ADR store current in one command; a copy of its previous body is now a known earlier body (AD-200)
+
+**`references/scripts/archive-decisions.mjs` is memory 8.5.0's script, byte for byte.** Its new `--ensure-current`
+mode judges the ADR store before any write and brings it current (migrate, rotate, the navigator only when it
+differs), writing nothing when it already is; every write it makes to a project file, in every mode, replaces that
+file whole through a temporary file and a rename. Detail: memory's CHANGELOG, 8.5.0.
+
+- **The previous body is now a known earlier body.** A `scripts/archive-decisions.mjs` as memory 8.1.3 to 8.4.0
+  shipped it is refreshed by the upgrade's `scripts` step with no question, unless the project is on an older ADR
+  layout, where the decisions files stay held back, or its ADR layout cannot be read. Without this row the new bundled
+  body would make that copy read as an edit, named in the replace block and kept aside on the yes.
+- **Unchanged until a later release:** the upgrade does not run the new mode yet; its text, the `migrate-adr-store`
+  mode and the hold-back of the decisions files on an older ADR layout stay as they are.
+
+MINOR: the mirrored mode and one catalog row.
+
 ## 14.47.0 — the `hook-checks` item no longer replaces your hook installer; a hook line it left out names the upgrade (AD-199)
 
 **Applying `hook-checks` no longer replaces your hook installer.** Before, its apply first replaced a

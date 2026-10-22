@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 // Drift-guard: the memory substrate OWNS references/scripts/ (the enforcement scripts deployed
 // into a consumer's scripts/); the kit ships a BYTE-IDENTICAL fallback copy so the bundled-
@@ -48,5 +49,18 @@ describe('reference-scripts mirror — kit fallback copies stay byte-identical t
     for (const required of ['archive-decisions.mjs', 'archive-decisions.test.mjs']) {
       assert.ok(files.includes(required), `references/scripts must ship ${required}`);
     }
+  });
+
+  // memory's own --ensure-current suite ships in neither package, so it also runs here against the kit copy: the
+  // copy's lines execute under the gate's coverage, not only by byte equality.
+  it("memory's own archive-decisions-ensure suite passes against the kit copy", () => {
+    const suite = join(HERE, '..', '..', 'agent-workflow-memory', 'scripts', 'archive-decisions-ensure.test.mjs');
+    const env = { ...process.env, AW_ARCHIVE_DECISIONS: join(KIT_SCRIPTS, 'archive-decisions.mjs') };
+    delete env.NODE_TEST_CONTEXT; // a nested node --test that inherits it skips every test and exits 0
+    // Node 22 picks tap for a piped stdout, spec only for a TTY: name the reporter the asserts read.
+    const r = spawnSync(process.execPath, ['--test', '--test-reporter=spec', suite], { env, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, /^\u2139 pass [1-9]\d*$/m, r.stdout);
+    assert.match(r.stdout, /^\u2139 fail 0$/m, r.stdout);
   });
 });

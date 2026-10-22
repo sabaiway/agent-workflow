@@ -813,3 +813,53 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   repo-search S9), repeated in path-inventory's parser with one cell naming `--help` as a path. Residual exposure, not
   live for a file a project holds: a path literally named `--help` or `-h` cannot be inspected through the MCP lane.
   Raised by the S8 spec review (lens).
+- **MEMORY-HIDDEN-PLACED-SCRIPT-NEEDS-ITS-EXCLUDE-LINE** — invariant: in a hidden deployment a script the upgrade
+  places is git-ignored before the report. Origin: the hidden reconcile runs before the script ensure in upgrade step 2
+  and lists only "the `/scripts/*.mjs` you added" (`agent-workflow-memory/references/contracts.md:21`). Narrow fix:
+  each placed file's anchored `/scripts/<name>` line appended, append-only, after its write. Residual exposure, as for
+  the pair ensures today: the file shows in `git status` until the next upgrade. Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S4 spec review.
+- **SNAPSHOT-PARTIAL-DIR-LEFT-UNNAMED-WHEN-A-LATER-BASE-SUCCEEDS** — invariant: a partial snapshot directory the rotator
+  could not remove is named on every exit. Origin: `writeSnapshot` keeps the removal failure only in `failures`
+  (`agent-workflow-memory/references/scripts/archive-decisions.mjs:882`), printed only when no base succeeds; a later
+  base's success returns at :875 and drops it. Narrow fix: return the notes with the snapshot and log them. Proof: a
+  cell whose git-dir removal fails while the temp-dir base succeeds sees the note in the output. Residual
+  exposure: a leftover directory under the git dir, outside the work tree, after a failed removal there. Raised during
+  the DISTRIBUTION-FILES-STAY-CURRENT S11 diff review.
+- **ENSURE-EXIT-1-WITH-A-LEFTOVER-TEMPORARY-FILE** — invariant: `--ensure-current` exits 1 only when the work tree is
+  byte-identical. Origin: a failed write whose temporary-file cleanup also fails leaves the `.tmp` in the work tree
+  (`agent-workflow-memory/references/scripts/archive-decisions.mjs:577-584`), yet nothing marks a change, so :1370
+  returns 1. Narrow fix: the cleanup-failure branch marks the change, exit 3. Proof: a cell failing both the rename and
+  the removal sees exit 3. Residual exposure: two failures in a row; the leftover never ends in `.md`, so no reader takes
+  it for a document. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S11 diff review.
+- **ENSURE-COMBINATION-MESSAGE-ORDER** — invariant: the usage error for `--ensure-current` beside another mode flag
+  names `--ensure-current`. Origin: the `--migrate --apply --dry-run` check
+  (`agent-workflow-memory/references/scripts/archive-decisions.mjs:988`) runs first, so that combination with
+  `--ensure-current` names only the migrate flags. Narrow fix: the ensure check first. Proof: the S13 cell with all
+  four flags. Residual exposure: the exit code is 2 either way; only the message is short. Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S11 diff review.
+- **SNAPSHOT-INSIDE-CHECK-DOT-DOT-PREFIX** — invariant: a temp dir inside the project root is never a snapshot base.
+  Origin: `isInside` (`agent-workflow-memory/references/scripts/archive-decisions.mjs:846`) reads any relative path
+  starting with `..` as outside, so a TMPDIR at `<root>/..tmp` with no usable git dir takes the snapshot inside the
+  project. Narrow fix: `rel === '..' || rel.startsWith('..' + sep)`. Proof: an S9 cell with that TMPDIR exits 1.
+  Residual exposure: a TMPDIR named so inside the project, off git. Raised during the DISTRIBUTION-FILES-STAY-CURRENT
+  S11 diff review.
+- **ROTATOR-DIRECTORY-FSYNC-EBADF-ON-AIX** — invariant: once the rename is done, a directory sync the platform does not
+  support never changes the exit code. Origin: `DIRECTORY_FSYNC_UNSUPPORTED`
+  (`agent-workflow-memory/references/scripts/archive-decisions.mjs:564`) leaves out EBADF, which AIX returns for an
+  fsync on a read-only descriptor, the only kind a directory opens as. Narrow fix: add `'EBADF'`. Proof: a cell whose
+  injected `fsyncSync` throws EBADF on a directory fd exits 0. Residual exposure: AIX hosts only. Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S11 diff review.
+- **ROTATOR-TEMP-NAME-TEST-PLANTS-THE-OLD-FORM** — invariant: the suite fails when a run's temporary name stops being
+  fresh per run. Origin: the cell `a temporary file a killed run left under this pid never stops the re-run`
+  (`agent-workflow-memory/scripts/archive-decisions-ensure.test.mjs:427-435`) plants `<target>.<pid>.tmp`, so a fixed
+  per-pid name of another form stays green. Narrow fix: leave the leftover by a real interrupted run (rename and its
+  cleanup both failing), then re-run. Proof: the cell goes red with `randomBytes` dropped. Residual exposure: the code
+  draws a fresh name today; only a regression would go unseen. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S11
+  diff review.
+- **ROTATOR-TEMP-REOPEN-UNDER-A-NO-OWNER-WRITE-UMASK** — invariant: syncing the temporary file never fails where writing
+  it succeeded. Origin: the `'r+'` reopen (`agent-workflow-memory/references/scripts/archive-decisions.mjs:574`) needs
+  owner write, which a umask such as 0277 removes from the new file. Narrow fix: on EACCES from the `'r+'` open, sync
+  through `'r'` (POSIX accepts it; Windows has no umask). Proof: a cell creating the file 0400 exits 0. Residual
+  exposure: a non-root run under a umask that strips owner write. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S11
+  diff review.

@@ -44,7 +44,17 @@
 //                      earn a go-ahead without risking a partial write.
 //   --dry-run          print the planned rotation move-set + inbound-rewrite set (file:line, old
 //                      target → new target), change nothing.
+//   --ensure-current   bring the store current, alone: judge it before any write by the functions above
+//                      (migrate a monolith, rotate a HOT window over its cap, write the navigator only
+//                      when it differs, refuse a dead reference the moves would not cure), write, and
+//                      close with an in-process --check. Exit 0 (the last stdout line `already-current`
+//                      or `brought-current: <actions>`), 1 (no work-tree file changed), 3 (a file
+//                      changed, then the run failed), 2 (usage).
 //   --today=YYYY-MM-DD pin the lastUpdated stamp (tests / reproducible runs).
+//
+// Every project-file write replaces its file whole: a temporary file beside it (named after it, never ending
+// in .md), then one rename. The fs seams for tests: deps.writeFileSync (each file written), deps.renameSync
+// (each rename), deps.rmSync (each removal), deps.fsyncSync (each sync) — node:fs when absent.
 //
 // Reference-scan boundary + stated limitations: the inbound-link scan covers docs/ai/** ONLY (links
 // in README / agent entry points are out of scope); the ADR corpus surfaces themselves are NEVER
@@ -75,11 +85,11 @@
 //
 // Dependency-free, Node >= 22. Deployed into a consumer's scripts/ like its siblings.
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, realpathSync } from 'node:fs';
-import { dirname, resolve, join, posix } from 'node:path';
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, realpathSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { dirname, resolve, join, posix, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { tokenizeMarkdown } from './markdown-blocks.mjs';
 
@@ -520,7 +530,67 @@ export const verifyRewriteConservation = (plan) => {
 const summarizeRewrites = (plans) =>
   plans.flatMap((plan) => plan.rewrites.map((rw) => `${plan.rel}:${rw.line} ${rw.old} → ${rw.new}`));
 
-export const writeInboundRewrites = (root, plans) => {
+// ── whole-file writes (a temporary file beside the target, then one rename) ─────────────
+
+// The fs seams: every file the rotator writes goes through deps.writeFileSync, every rename through
+// deps.renameSync, every removal through deps.rmSync, every sync through deps.fsyncSync. onChange fires once a
+// project file has changed.
+const fsIo = (deps = {}, onChange = () => {}) => {
+  const rename = deps.renameSync ?? renameSync;
+  const remove = deps.rmSync ?? rmSync;
+  return {
+    write: deps.writeFileSync ?? writeFileSync,
+    fsync: deps.fsyncSync ?? fsyncSync,
+    remove,
+    rename: (from, to) => {
+      rename(from, to);
+      onChange();
+    },
+    removeFile: (path) => {
+      remove(path);
+      onChange();
+    },
+  };
+};
+
+const fsyncPath = (io, path, flags = 'r') => {
+  const fd = openSync(path, flags);
+  try {
+    io.fsync(fd);
+  } finally {
+    closeSync(fd);
+  }
+};
+const DIRECTORY_FSYNC_UNSUPPORTED = ['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EISDIR'];
+
+// An interruption leaves the target whole — its old bytes or its new ones: the temporary file, named per run
+// so no earlier run's leftover meets the exclusive create, is created exclusively, synced, then renamed over
+// the target. A failed write removes it, never a name another writer holds; its name never ends in .md, so no
+// reader of the store takes a leftover for a document.
+const writeWhole = (io, path, content) => {
+  const temp = `${path}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    io.write(temp, content, { encoding: 'utf8', flag: 'wx' });
+    fsyncPath(io, temp, 'r+'); // Windows flushes a file only through a handle open for writing
+    io.rename(temp, path);
+  } catch (err) {
+    if (err?.code !== 'EEXIST') {
+      try {
+        io.remove(temp, { force: true });
+      } catch (cleanupErr) {
+        err.message += ` (its temporary file ${temp} was left: ${cleanupErr.message})`;
+      }
+    }
+    throw err;
+  }
+  try {
+    fsyncPath(io, dirname(path));
+  } catch (err) {
+    if (!DIRECTORY_FSYNC_UNSUPPORTED.includes(err?.code)) throw err; // the rename is complete either way
+  }
+};
+
+export const writeInboundRewrites = (root, plans, io = fsIo()) => {
   // Two passes (the plan is computed pre-write, D4): verify the LIVE bytes of EVERY planned file
   // first, then write — a drift anywhere refuses with NOTHING written in the rewrite phase.
   for (const plan of plans) {
@@ -529,35 +599,48 @@ export const writeInboundRewrites = (root, plans) => {
     }
   }
   for (const plan of plans) {
-    writeFileSync(resolve(root, plan.rel), `${plan.frontmatter}${plan.afterLines.join('\n')}`, 'utf8');
+    writeWhole(io, resolve(root, plan.rel), `${plan.frontmatter}${plan.afterLines.join('\n')}`);
   }
+};
+
+// The unfenced lines of one markdown file, each with its file line and whether it sits in the preamble
+// (before the first `## ` heading).
+const liveLines = (rel, text) => {
+  const { frontLines, lines, fencedLines, headings } = tokenizeMarkdown(text, rel);
+  const first = headings.find((h) => h.level === 2 && h.text.startsWith('## '));
+  const blocksFrom = first ? first.index : lines.length;
+  return lines.flatMap((line, index) => (fencedLines.has(index) ? [] : [{ fileLine: frontLines + index + 1, line, inPreamble: index < blocksFrom }]));
 };
 
 // CHECK scope (read-only, wider): docs/ai/** including decisions.md (whole file) and the adr/
 // records, excluding only the generated navigator. (a) a `decisions.md#ad-NNN…` id outside the
 // CURRENT HOT window is dead (an archived id is stale, not resolving); (b) an `adr/AD-NNN-slug.md`
-// link must name an existing record FILE (exact filename, not id-presence).
-const collectReferenceViolations = (root, hotIds, archivedIds) => {
+// link must name an existing record FILE (exact filename, not id-presence). Neither rule reads the
+// linking file's own path, so a block is judged the same before and after it moves.
+const scanReferences = (docs, hotIds, archivedIds, recordExists) => {
   const violations = [];
-  for (const rel of walkDocsMarkdown(root).filter((r) => r !== NAV_REL)) {
-    const { frontLines, lines, fencedLines } = tokenizeMarkdown(readFileSync(resolve(root, rel), 'utf8'), rel);
-    for (let index = 0; index < lines.length; index += 1) {
-      if (fencedLines.has(index)) continue;
-      const fileLine = frontLines + index + 1;
-      for (const m of lines[index].matchAll(HOT_LINK_RE)) {
+  for (const [rel, live] of docs) {
+    for (const { fileLine, line } of live) {
+      for (const m of line.matchAll(HOT_LINK_RE)) {
         if (hotIds.has(m[2])) continue;
         const why = archivedIds.has(m[2]) ? `AD-${m[2]} is archived — repoint the link at ${ADR_DIR_REL}/` : `AD-${m[2]} is not in the current HOT window`;
         violations.push(`${rel}:${fileLine}: dead ADR anchor "${m[0]}" — ${why}`);
       }
-      for (const m of lines[index].matchAll(RECORD_LINK_RE)) {
-        if (!existsSync(resolve(root, ADR_DIR_REL, m[1]))) {
-          violations.push(`${rel}:${fileLine}: dead ADR record link "${m[0]}" — no record file ${ADR_DIR_REL}/${m[1]}`);
-        }
+      for (const m of line.matchAll(RECORD_LINK_RE)) {
+        if (!recordExists(m[1])) violations.push(`${rel}:${fileLine}: dead ADR record link "${m[0]}" — no record file ${ADR_DIR_REL}/${m[1]}`);
       }
     }
   }
   return violations;
 };
+
+const collectReferenceViolations = (root, hotIds, archivedIds) =>
+  scanReferences(
+    walkDocsMarkdown(root).filter((r) => r !== NAV_REL).map((rel) => [rel, liveLines(rel, readFileSync(resolve(root, rel), 'utf8'))]),
+    hotIds,
+    archivedIds,
+    (name) => existsSync(resolve(root, ADR_DIR_REL, name)),
+  );
 
 // ── tier / store IO ─────────────────────────────────────────────────────────────────────
 
@@ -646,8 +729,9 @@ const NEW_ARCHIVE_LINE = (oldestId) =>
 // A preamble that never mentioned the archive is left untouched (a consumer's own wording preserved).
 // Assumes the archive prose is one logical blockquote line (the shipped shape); a hand-wrapped
 // continuation line carrying NEITHER marker is left in place (a stated, benign residual).
+const isArchiveLine = (line) => /decisions-archive/.test(line) || /\*\*Archive:\*\*/.test(line);
+
 export const rewriteHotPreamble = (preamble, oldestId) => {
-  const isArchiveLine = (line) => /decisions-archive/.test(line) || /\*\*Archive:\*\*/.test(line);
   const out = [];
   let replaced = false;
   for (const line of preamble.split('\n')) {
@@ -759,29 +843,48 @@ const resolveGitDir = (root, spawn) => {
   return r && r.status === 0 && r.stdout ? r.stdout.trim() : null;
 };
 
+const isInside = (root, path) => {
+  const rel = relative(resolve(root), resolve(path));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+};
+
 // Snapshot the docs the migration is about to destroy (decisions.md + both monoliths) into the git
-// dir (uncommittable — never in the work tree, never stageable). Off git → a stated tmpdir fallback;
-// fails LOUD if neither base is writable. Returns { dir, base } for the caller to report.
+// dir (uncommittable — never in the work tree, never stageable). Off git → a stated tmpdir fallback,
+// refused when it lies inside the project root; a base whose write fails partway has its partial
+// directory removed before the next is tried; fails LOUD naming both when neither base is writable.
+// Returns { dir, base } for the caller to report.
 export const writeSnapshot = (root, files, deps = {}) => {
   const spawn = deps.spawnSync ?? spawnSync;
   const stamp = deps.stamp ?? `${new Date().toISOString().replace(/[:.]/g, '-')}`;
   const fallbackBase = deps.snapshotFallbackBase ?? tmpdir();
+  const io = fsIo(deps);
   const gitDir = resolveGitDir(root, spawn);
-  const bases = gitDir ? [gitDir, fallbackBase] : [fallbackBase];
-  let lastErr = null;
+  const failures = gitDir ? [] : ['no git dir'];
+  const bases = gitDir ? [gitDir] : [];
+  if (isInside(root, fallbackBase)) failures.push(`the temp dir ${fallbackBase} lies inside the project root`);
+  else bases.push(fallbackBase);
   for (const base of bases) {
     const dir = resolve(base, `${SNAPSHOT_PREFIX}-${stamp}`);
+    let made = false;
     try {
       mkdirSync(dir, { recursive: true });
+      made = true;
       for (const { rel, content } of files) {
-        writeFileSync(resolve(dir, rel.replace(/\//g, '__')), content, 'utf8');
+        io.write(resolve(dir, rel.replace(/\//g, '__')), content, 'utf8');
       }
       return { dir, base, viaGitDir: base === gitDir };
     } catch (err) {
-      lastErr = err;
+      failures.push(`${dir}: ${err.message}`);
+      if (made) {
+        try {
+          io.remove(dir, { recursive: true, force: true });
+        } catch (rmErr) {
+          failures.push(`its partial directory was left: ${rmErr.message}`);
+        }
+      }
     }
   }
-  throw fail(1, `refusing to migrate: no writable snapshot location (git dir + fallback both failed: ${lastErr && lastErr.message}) — a durable pre-delete snapshot is mandatory`);
+  throw fail(1, `refusing to migrate: no writable snapshot location (git dir + fallback both failed: ${failures.join('; ')}) — a durable pre-delete snapshot is mandatory`);
 };
 
 // ── index regeneration (item (h) — reuse the ONE generator in check-docs-size.mjs) ──────
@@ -805,12 +908,11 @@ export const defaultRegenerateIndex = (root, today, deps = {}) => {
 
 // ── shared store-write helpers ──────────────────────────────────────────────────────────
 
-const writeRecords = (root, records) => {
+const writeRecords = (root, records, io) => {
   const dir = resolve(root, ADR_DIR_REL);
   mkdirSync(dir, { recursive: true });
-  // Index the existing filenames by id ONCE (O(store), not O(records × store)) so a stale same-id
-  // file under a DIVERGENT slug (a retitled or prior-run remnant) can be pruned — exactly one file
-  // per id survives, the canonical slug wins.
+  // Index the existing filenames by id ONCE (O(store), not O(records × store)) so a same-id file
+  // under a DIVERGENT slug (a retitled or prior-run remnant) moves to its canonical name.
   const existingById = new Map();
   for (const name of readdirSync(dir)) {
     const m = name.match(RECORD_FILE_RE);
@@ -822,40 +924,53 @@ const writeRecords = (root, records) => {
   let written = 0;
   let skipped = 0;
   for (const record of records) {
-    for (const name of existingById.get(record.id) ?? []) {
-      if (name !== record.fileName) rmSync(resolve(dir, name));
-    }
     const path = resolve(dir, record.fileName);
+    // ONE rename, never a copy: no instant holds zero or two files for the id (the store loader
+    // refuses two); the body is then written whole, so either failure leaves one record a re-run completes.
+    const other = (existingById.get(record.id) ?? []).find((name) => name !== record.fileName);
+    if (other) io.rename(resolve(dir, other), path);
     const body = renderRecord(record);
     if (existsSync(path) && readFileSync(path, 'utf8') === body) {
       skipped += 1; // crash-resumable: a byte-identical record is left as is
       continue;
     }
-    writeFileSync(path, body, 'utf8');
+    writeWhole(io, path, body);
     written += 1;
   }
   return { written, skipped };
 };
 
-const writeNavigatorFile = (root, corpus, today) => {
+const writeNavigatorFile = (root, corpus, today, io) => {
   const dir = resolve(root, ADR_DIR_REL);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(resolve(root, NAV_REL), buildNavigator(corpus, today), 'utf8');
+  writeWhole(io, resolve(root, NAV_REL), buildNavigator(corpus, today));
 };
 
-const writeHot = (root, hot, retained, today) => {
+const writeHot = (root, hot, retained, today, io) => {
   const oldestId = retained.length > 0 ? retained[0].id : hot.entries.length > 0 ? hot.entries[0].id : '000';
   const preamble = rewriteHotPreamble(hot.preamble, oldestId);
   const frontmatter = stampLastUpdated(hot.frontmatter, today);
-  writeFileSync(hot.path, renderTier(frontmatter, preamble, retained), 'utf8');
+  writeWhole(io, hot.path, renderTier(frontmatter, preamble, retained));
+};
+
+// Pinned write order: records → inbound rewrites → navigator → HOT rewrite → monolith removal, so every
+// interrupted state re-runs to completion.
+const applyMoves = (root, plan, today, io, withNavigator = true) => {
+  writeRecords(root, plan.records, io);
+  writeInboundRewrites(root, plan.rewritePlans, io);
+  if (withNavigator) writeNavigatorFile(root, [...plan.retained, ...loadAdrStore(root)], today, io);
+  writeHot(root, plan.hot, plan.retained, today, io);
+  for (const rel of plan.present) io.removeFile(resolve(root, rel));
 };
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────────────
 
-const USAGE = 'Usage: archive-decisions.mjs [--check|--migrate [--apply]|--write-navigator|--dry-run] [--today=YYYY-MM-DD]';
+const USAGE = 'Usage: archive-decisions.mjs [--check|--migrate [--apply]|--write-navigator|--dry-run|--ensure-current] [--today=YYYY-MM-DD]';
+
+const MODE_FLAGS = [['--check', 'check'], ['--migrate', 'migrate'], ['--apply', 'apply'], ['--write-navigator', 'writeNavigator'], ['--dry-run', 'dryRun']];
 
 const parseArgs = (argv) => {
-  const flags = { check: false, migrate: false, apply: false, writeNavigator: false, dryRun: false, help: false };
+  const flags = { check: false, migrate: false, apply: false, writeNavigator: false, dryRun: false, ensureCurrent: false, help: false };
   let today = null;
   for (const arg of argv) {
     if (arg === '--check') flags.check = true;
@@ -863,6 +978,7 @@ const parseArgs = (argv) => {
     else if (arg === '--apply') flags.apply = true;
     else if (arg === '--write-navigator') flags.writeNavigator = true;
     else if (arg === '--dry-run') flags.dryRun = true;
+    else if (arg === '--ensure-current') flags.ensureCurrent = true;
     else if (arg === '--help' || arg === '-h') flags.help = true;
     else if (arg.startsWith('--today=')) today = arg.slice('--today='.length);
     else throw fail(2, `Unknown argument: ${arg}\n${USAGE}`);
@@ -870,6 +986,10 @@ const parseArgs = (argv) => {
   // Pre-fix, --apply silently won over --dry-run and wrote — a fail-closed contract cannot keep that.
   if (flags.migrate && flags.apply && flags.dryRun) {
     throw fail(2, `--migrate --apply --dry-run is contradictory — plain --migrate IS the dry run; drop --apply to preview or --dry-run to apply\n${USAGE}`);
+  }
+  const beside = MODE_FLAGS.filter(([, key]) => flags[key]).map(([flag]) => flag);
+  if (flags.ensureCurrent && beside.length > 0) {
+    throw fail(2, `--ensure-current ${beside.join(' ')} is a usage error — --ensure-current is one mode, run alone\n${USAGE}`);
   }
   return { flags, today };
 };
@@ -895,9 +1015,22 @@ const assertStoreIntegrity = (hotEntries, adrEntries) => {
   }
 };
 
+// A HOT window whose newest entry alone exceeds its cap cannot be brought under it by moving entries.
+const assertHotReducible = (hot, retained) => {
+  const rewrittenPreamble = rewriteHotPreamble(hot.preamble, retained.length > 0 ? retained[0].id : '000');
+  if (hot.cap !== null && lineCountOf(renderTier(hot.frontmatter, rewrittenPreamble, retained)) > hot.cap) {
+    throw fail(1, `${HOT_REL} is over its cap but cannot be reduced (the newest entry alone exceeds ${hot.cap} lines) — trim it or raise the cap (a maintainer decision; this script only moves entries).`);
+  }
+};
+
+const snapshotFilesOf = ({ hot, warm, cold }) => [
+  { rel: HOT_REL, content: hot.raw },
+  ...(warm.exists ? [{ rel: WARM_REL, content: warm.raw }] : []),
+  ...(cold.exists ? [{ rel: COLD_REL, content: cold.raw }] : []),
+];
+
 const runMigrate = (root, flags, today, deps, log, logError) => {
   const present = monolithsPresent(root);
-  const hasHot = existsSync(resolve(root, HOT_REL));
   if (present.length === 0) {
     if (existsSync(resolve(root, ADR_DIR_REL))) {
       log('[archive-decisions] already migrated — no legacy monolith present; nothing to do.');
@@ -906,7 +1039,44 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
     log('[archive-decisions] nothing to migrate — no legacy decisions-archive monolith found.');
     return 0;
   }
-  if (!hasHot) throw fail(1, `${HOT_REL} not found but a legacy monolith is present — a broken tree; restore ${HOT_REL} before migrating.`);
+  const plan = planMigration(root, today);
+  const { retained, records, rewritePlans, oldItems } = plan;
+  const summary = {
+    records: records.map((r) => r.fileName),
+    retainedHot: retained.map((e) => `AD-${e.id}`),
+    monolithsRetired: present,
+    inboundRewrites: summarizeRewrites(rewritePlans),
+    conservation: `${oldItems.length} corpus blocks → ${retained.length} retained-HOT + ${records.length} records (conserved)`,
+  };
+
+  if (!flags.apply) {
+    log('[archive-decisions] --migrate DRY-RUN — no files will be changed.');
+    log(JSON.stringify(summary, null, 2));
+    return 0;
+  }
+
+  const snapshot = writeSnapshot(root, snapshotFilesOf(plan), deps);
+  // Only after conservation passed AND the snapshot exists does applyMoves remove the monoliths.
+  applyMoves(root, plan, today, fsIo(deps));
+
+  const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
+  log('[archive-decisions] migrated the 3-tier cascade → one-file-per-ADR store:');
+  log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'})`);
+  log(`  records written: ${records.length} under ${ADR_DIR_REL}/`);
+  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${rewritePlans.length} file(s)`);
+  log(`  retained HOT: ${summary.retainedHot.join(', ') || '(none)'}`);
+  log(`  retired monoliths: ${present.join(', ')}`);
+  log(`  navigator: ${NAV_REL}`);
+  if (regen.ok) log('  regenerated docs/ai/index.md');
+  else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
+  return 0;
+};
+
+// The migration's whole preflight — the corpus union, conservation, store integrity and every link
+// check — with no write: --migrate and --ensure-current both run it.
+const planMigration = (root, today) => {
+  const present = monolithsPresent(root);
+  if (!existsSync(resolve(root, HOT_REL))) throw fail(1, `${HOT_REL} not found but a legacy monolith is present — a broken tree; restore ${HOT_REL} before migrating.`);
 
   const hot = loadHot(root);
   const warm = loadMonolith(root, WARM_REL);
@@ -973,48 +1143,7 @@ const runMigrate = (root, flags, today, deps, log, logError) => {
   ]);
   const rewritePlans = planInboundRewrites(root, movedById, true);
   for (const plan of rewritePlans) verifyRewriteConservation(plan);
-
-  const summary = {
-    records: records.map((r) => r.fileName),
-    retainedHot: retained.map((e) => `AD-${e.id}`),
-    monolithsRetired: present,
-    inboundRewrites: summarizeRewrites(rewritePlans),
-    conservation: `${oldItems.length} corpus blocks → ${retained.length} retained-HOT + ${records.length} records (conserved)`,
-  };
-
-  if (!flags.apply) {
-    log('[archive-decisions] --migrate DRY-RUN — no files will be changed.');
-    log(JSON.stringify(summary, null, 2));
-    return 0;
-  }
-
-  const snapshotFiles = [
-    { rel: HOT_REL, content: hot.raw },
-    ...(warm.exists ? [{ rel: WARM_REL, content: warm.raw }] : []),
-    ...(cold.exists ? [{ rel: COLD_REL, content: cold.raw }] : []),
-  ];
-  const snapshot = writeSnapshot(root, snapshotFiles, deps);
-
-  // Pinned write order: records → inbound rewrites → HOT rewrite / monolith removal.
-  writeRecords(root, records);
-  writeInboundRewrites(root, rewritePlans);
-  const corpus = [...retained, ...loadAdrStore(root)];
-  writeNavigatorFile(root, corpus, today);
-  writeHot(root, hot, retained, today);
-  // Only NOW — conservation passed AND the snapshot exists — remove the monoliths.
-  for (const rel of present) rmSync(resolve(root, rel));
-
-  const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
-  log('[archive-decisions] migrated the 3-tier cascade → one-file-per-ADR store:');
-  log(`  snapshot: ${snapshot.dir} (${snapshot.viaGitDir ? 'git dir' : 'out-of-tree fallback'})`);
-  log(`  records written: ${records.length} under ${ADR_DIR_REL}/`);
-  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${rewritePlans.length} file(s)`);
-  log(`  retained HOT: ${summary.retainedHot.join(', ') || '(none)'}`);
-  log(`  retired monoliths: ${present.join(', ')}`);
-  log(`  navigator: ${NAV_REL}`);
-  if (regen.ok) log('  regenerated docs/ai/index.md');
-  else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
-  return 0;
+  return { present, hot, warm, cold, existingStore, retained, toExplode, records, rewritePlans, oldItems };
 };
 
 const runWriteNavigator = (root, flags, today, deps, log, logError) => {
@@ -1036,7 +1165,7 @@ const runWriteNavigator = (root, flags, today, deps, log, logError) => {
     log(`[archive-decisions] --write-navigator DRY-RUN — no files will be changed; ${corpus.length} ADR(s) validated.`);
     return 0;
   }
-  writeNavigatorFile(root, corpus, today);
+  writeNavigatorFile(root, corpus, today, fsIo(deps));
   const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
   log(`[archive-decisions] wrote ${NAV_REL} (${corpus.length} ADRs in the corpus).`);
   if (regen.ok) log('  regenerated docs/ai/index.md');
@@ -1112,18 +1241,44 @@ const runRotate = (root, flags, today, deps, log, logError) => {
     logError(`[archive-decisions] FAIL: legacy monolith present (${present.join(', ')}) — the ADR store is half-migrated; run \`node scripts/archive-decisions.mjs --migrate --apply\` first (a default rotate never half-explodes).`);
     return 1;
   }
+  const plan = planRotation(root, today);
+  if (plan.idle) {
+    log(`[archive-decisions] nothing to rotate — HOT ${plan.hot.rawLines}/${plan.hot.cap}, ${plan.existingStore.length} archived record(s).`);
+    return 0;
+  }
+  const summary = {
+    explode: plan.records.map((r) => r.fileName),
+    retainedHot: plan.retained.map((e) => `AD-${e.id}`),
+    inboundRewrites: summarizeRewrites(plan.rewritePlans),
+  };
+  if (flags.dryRun) {
+    log('[archive-decisions] DRY-RUN — no files will be changed.');
+    log(JSON.stringify(summary, null, 2));
+    return 0;
+  }
+
+  applyMoves(root, plan, today, fsIo(deps));
+  const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
+  log('[archive-decisions] rotated:');
+  log(`  exploded to adr/: ${summary.explode.join(', ') || '(none)'}`);
+  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${plan.rewritePlans.length} file(s)`);
+  log(`  retained HOT: ${summary.retainedHot.join(', ')}`);
+  if (regen.ok) log('  regenerated docs/ai/index.md');
+  else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
+  return 0;
+};
+
+// The rotate's whole preflight with no write. `idle` when nothing moves: the default rotate idles while
+// no entry overflows and HOT is within its cap; --ensure-current (withinCap false) whenever HOT is within it.
+const planRotation = (root, today, rotateWithinCap = true) => {
   const hot = loadHot(root);
   const existingStore = loadAdrStore(root);
   const { retained, toExplode } = boundHot(hot.entries, hot.frontmatter, hot.preamble, hot.cap ?? Infinity);
-  if (toExplode.length === 0 && hot.rawLines <= (hot.cap ?? Infinity)) {
+  if (hot.rawLines <= (hot.cap ?? Infinity) && (toExplode.length === 0 || !rotateWithinCap)) {
     assertStoreIntegrity(hot.entries, existingStore); // a no-op still refuses a corrupt store (dup / partition)
-    log(`[archive-decisions] nothing to rotate — HOT ${hot.rawLines}/${hot.cap}, ${existingStore.length} archived record(s).`);
-    return 0;
+    return { idle: true, present: [], hot, existingStore, retained: hot.entries, toExplode: [], records: [], rewritePlans: [] };
   }
-  const rewrittenPreamble = rewriteHotPreamble(hot.preamble, retained.length > 0 ? retained[0].id : '000');
-  if (hot.cap !== null && lineCountOf(renderTier(hot.frontmatter, rewrittenPreamble, retained)) > hot.cap) {
-    throw fail(1, `${HOT_REL} is over its cap but cannot be reduced (the newest entry alone exceeds ${hot.cap} lines) — trim it or raise the cap (a maintainer decision; this script only moves entries).`);
-  }
+  assertHotReducible(hot, retained);
 
   const records = explode(toExplode, today);
   // Crash-resume (fold-induced): a record from a prior crashed rotate may already be on
@@ -1145,31 +1300,79 @@ const runRotate = (root, flags, today, deps, log, logError) => {
   assertMovingBlocksFreeOfRelativeAdrLinks(root, new Set(movedById.keys()), new Set(retained.map((e) => e.id)));
   const rewritePlans = planInboundRewrites(root, movedById, false);
   for (const plan of rewritePlans) verifyRewriteConservation(plan);
+  return { idle: false, present: [], hot, existingStore, retained, toExplode, records, rewritePlans };
+};
 
-  const summary = {
-    explode: records.map((r) => r.fileName),
-    retainedHot: retained.map((e) => `AD-${e.id}`),
-    inboundRewrites: summarizeRewrites(rewritePlans),
-  };
-  if (flags.dryRun) {
-    log('[archive-decisions] DRY-RUN — no files will be changed.');
-    log(JSON.stringify(summary, null, 2));
+// --ensure-current: every decision is judged before the first write, by the plans above and the check's
+// own collector over the store the planned moves leave; then the writes, the index, and a closing --check.
+const runEnsure = (root, today, deps, log, logError) => {
+  const present = monolithsPresent(root);
+  const hasHot = existsSync(resolve(root, HOT_REL));
+  if (present.length === 0 && !hasHot && !existsSync(resolve(root, ADR_DIR_REL))) {
+    const orphaned = collectReferenceViolations(root, new Set(), new Set());
+    if (orphaned.length > 0) throw fail(1, `no ADR substrate, yet ADR references point into one:\n  ${orphaned.join('\n  ')}`);
+    log(`[archive-decisions] SKIP — no ADR substrate (neither ${HOT_REL} nor ${ADR_DIR_REL}); nothing to bring current.`);
+    log('already-current');
+    return 0;
+  }
+  let plan;
+  if (present.length > 0) {
+    plan = planMigration(root, today);
+    assertHotReducible(plan.hot, plan.retained);
+  } else if (hasHot) plan = planRotation(root, today, false);
+  else plan = { idle: true, present: [], hot: null, existingStore: loadAdrStore(root), retained: [], toExplode: [], records: [], rewritePlans: [] };
+
+  // The store the planned moves leave: each moved id under its canonical record name, every other
+  // record name of a moved id pruned, the planned rewrites applied, the monoliths' preambles gone.
+  const moved = new Map(plan.records.map((r, i) => [r.id, { ...plan.toExplode[i], fileName: r.fileName }]));
+  const store = [...plan.existingStore.filter((e) => !moved.has(e.id)), ...moved.values()];
+  const corpus = [...plan.retained, ...store];
+  const recordNames = new Set([...plan.existingStore.filter((e) => !moved.has(e.id)).map((e) => e.fileName), ...plan.records.map((r) => r.fileName)]);
+  const rewrites = new Map(plan.rewritePlans.map((p) => [p.rel, p]));
+  const docs = walkDocsMarkdown(root).filter((rel) => rel !== NAV_REL).map((rel) => {
+    const rw = rewrites.get(rel);
+    const live = liveLines(rel, rw ? `${rw.frontmatter}${rw.afterLines.join('\n')}` : readFileSync(resolve(root, rel), 'utf8'));
+    if (plan.present.includes(rel)) return [rel, live.filter((l) => !l.inPreamble)];
+    if (rel === HOT_REL && !plan.idle) return [rel, live.filter((l) => !(l.inPreamble && isArchiveLine(l.line)))];
+    return [rel, live];
+  });
+  const dead = scanReferences(docs, new Set(plan.retained.map((e) => e.id)), new Set(store.map((e) => e.id)), (name) => recordNames.has(name));
+  if (dead.length > 0) throw fail(1, `refusing before any write — ADR references the planned moves would not cure:\n  ${dead.join('\n  ')}`);
+
+  const navPath = resolve(root, NAV_REL);
+  const navOnDisk = existsSync(navPath) ? readFileSync(navPath, 'utf8') : null;
+  const navStale = navOnDisk === null || buildNavigator(corpus, navLastUpdated(navOnDisk)) !== navOnDisk;
+  const actions = [present.length > 0 && 'migrated', present.length === 0 && !plan.idle && 'rotated', navStale && 'navigator written'].filter(Boolean);
+  if (actions.length === 0) {
+    log('already-current');
     return 0;
   }
 
-  // Pinned write order: records → inbound rewrites → HOT rewrite (crash-resume idempotency).
-  writeRecords(root, records);
-  writeInboundRewrites(root, rewritePlans);
-  const corpus = [...retained, ...loadAdrStore(root)];
-  writeNavigatorFile(root, corpus, today);
-  writeHot(root, hot, retained, today);
-  const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
-  log('[archive-decisions] rotated:');
-  log(`  exploded to adr/: ${summary.explode.join(', ') || '(none)'}`);
-  log(`  inbound links rewritten: ${summary.inboundRewrites.length} across ${rewritePlans.length} file(s)`);
-  log(`  retained HOT: ${summary.retainedHot.join(', ')}`);
-  if (regen.ok) log('  regenerated docs/ai/index.md');
-  else logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
+  let changed = false;
+  let written = false;
+  let snapshot = null;
+  try {
+    if (present.length > 0) snapshot = writeSnapshot(root, snapshotFilesOf(plan), deps);
+    const io = fsIo(deps, () => {
+      changed = true;
+    });
+    if (plan.idle) writeNavigatorFile(root, corpus, today, io);
+    else applyMoves(root, plan, today, io, navStale);
+    written = true;
+    const regen = (deps.regenerateIndex ?? defaultRegenerateIndex)(root, today);
+    if (!regen.ok) logError(`[archive-decisions] docs/ai/index.md NOT regenerated — ${regen.detail}`);
+    const checkLines = [];
+    if (runCheck(root, today, () => {}, (line) => checkLines.push(line)) !== 0) throw new Error(checkLines.join('\n  '));
+  } catch (err) {
+    if (written) logError(`[archive-decisions] the store was written and does not pass --check:\n  ${err.message}`);
+    else logError(`[archive-decisions] ${err.message}`);
+    if (snapshot) logError(`[archive-decisions] snapshot: ${snapshot.dir}`);
+    if (!changed) return 1;
+    if (!written) logError('[archive-decisions] a project file changed before the failure — a re-run completes the move.');
+    return 3;
+  }
+  if (snapshot) log(`snapshot: ${snapshot.dir}`);
+  log(`brought-current: ${actions.join(', ')}`);
   return 0;
 };
 
@@ -1183,6 +1386,7 @@ export const runCli = (argv, deps = {}) => {
     }
     const today = todayOpt ?? new Date().toISOString().slice(0, 10);
 
+    if (flags.ensureCurrent) return runEnsure(root, today, deps, log, logError);
     if (flags.migrate) return runMigrate(root, flags, today, deps, log, logError);
     if (flags.writeNavigator) return runWriteNavigator(root, flags, today, deps, log, logError);
     if (flags.check) return runCheck(root, today, log, logError);
