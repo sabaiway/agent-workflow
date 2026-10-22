@@ -9,16 +9,19 @@
 
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
-// root it seeds is a docs/ai file the navigator must count.
+// root it seeds is a docs/ai file the navigator must count. `scripts` and `specs` own the replace run,
+// in this order: each keeps its files current by the one rule, an edited or absent one written only
+// on the user's yes.
 // `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
 // `rules` follows `specs` and precedes `index`: the rules files it lays are docs/ai files the navigator counts.
 export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
-// ensure's pair refresh (reader or checker) or the scripts ensure's installer-set refresh — a deployed
-// script on a body a release shipped, rewritten to the bundled one; a custom body is rewritten only by
-// the replace run the user's yes starts (--replace-custom, the spec layer's), never by a plain run.
+// ensure's pair refresh (reader or checker) or the scripts ensure's refresh of a kit script — a deployed
+// script on a body a release shipped, rewritten to the bundled one; an edited body is replaced, and an
+// absent kit script placed, only by the replace run the user's yes starts (--replace-custom, over the
+// kit scripts and then the spec layer), never by a plain run.
 export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
 export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
 
@@ -90,13 +93,4 @@ export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'skipped-no-node-evidence',
   'old-adr-layout-migration-instructed',
   'failed',
-]);
-
-// The four files the enforcement-script ensure seeds (AD-051's ADR cascade + the tokenizer it needs).
-// Seed nothing else: the other tokenizer-era tests red beside an OLD archiver.
-export const SEED_SCRIPTS = Object.freeze([
-  'archive-decisions.mjs',
-  'archive-decisions.test.mjs',
-  'markdown-blocks.mjs',
-  'markdown-blocks.test.mjs',
 ]);

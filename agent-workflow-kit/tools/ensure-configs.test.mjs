@@ -7,7 +7,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -52,7 +52,7 @@ const tokensOf = (stdout) =>
     .map(([, op, token]) => ({ op, token }));
 
 const BUNDLE = fileURLToPath(new URL('../references/scripts/', import.meta.url));
-const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after the spec layer succeeds';
+const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after every step it re-runs succeeds';
 // The spec layer at its bundled bodies, each name in `edited` holding an edit of its own instead.
 const edit = (name) => `// my own ${name}\n`;
 const withSpecLayer = (fn, edited = ['check-docs-size.mjs']) => withProject((dir) => {
@@ -141,12 +141,13 @@ describe('the reconcile run', () => {
       assert.equal(first.code, 0);
       // The ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
       // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
       const second = main(['--reconcile'], { cwd: dir });
       assert.equal(second.code, 0);
+      assert.deepEqual(tokensOf(second.stdout)[5], { op: 'scripts', token: 'not-placed' }, 'no kit script stands in scripts/ on the second run either');
       for (const { op, token } of tokensOf(second.stdout)) {
         assert.equal(WRITE_TOKENS.includes(token), false, `${op} claimed "${token}" on an already-current tree`);
       }
@@ -270,11 +271,24 @@ describe('spec:distribution-files/S8 one replace block after every op line, and 
       else withSpecLayer((current) => assert.deepEqual(main(['--reconcile', ...flags, '--cwd', current]).stdout.split('\n').filter((l) => /--replace-custom|carries an edit/.test(l)), [], 'every spec-layer script current: no block'), []);
     }));
   }
-  it('--replace-custom with --only, with --dry-run, with an empty value or given twice: usage exit 2, nothing run', () => withSpecLayer((dir) => {
+  it('an owning op whose survey is refused, a throw included, adds no entry: the block prints over the other op\'s entries', () => {
+    const throwing = (dir) => ({ deps: { lstat: (p, ...rest) => { if (String(p) === join(dir, 'scripts')) throw Object.assign(new Error('EACCES: unreadable'), { code: 'EACCES' }); return lstatSync(p, ...rest); } } });
+    const linked = (dir) => { rmSync(join(dir, 'scripts', 'spec-schema.mjs')); symlinkSync(join(dir, 'package.json'), join(dir, 'scripts', 'spec-schema.mjs')); return {}; };
+    for (const [refused, other, opening, ctxOf, kept, gone] of [['specs', 'scripts', 'wrong-node-kind — scripts/spec-schema.mjs: exists but is a symlink', linked, 'archive-caps.mjs', 'check-docs-size.mjs'], ['scripts', 'specs', 'unexpected-error — scripts: EACCES: unreadable', throwing, 'check-docs-size.mjs', 'archive-caps.mjs']]) {
+      for (const flags of [[], ['--only', other]]) withSpecLayer((dir) => {
+        writeFileSync(join(dir, 'scripts', 'archive-caps.mjs'), edit('archive-caps.mjs'));
+        const r = main(['--reconcile', ...flags, '--cwd', dir], ctxOf(dir)), lines = r.stdout.split('\n');
+        const rels = lines.filter((l) => /^ {2}\S+: (carries an edit|absent) — /.test(l)).map((l) => l.slice(2, l.indexOf(': '))).sort(), bound = rels.map((rel) => `${rel} ${existsSync(join(dir, rel)) ? sha256(readFileSync(join(dir, rel))) : 'absent'}`);
+        assert.deepEqual({ code: r.code, refused: lines[lines.indexOf(`  ${refused}: failed`) + 1]?.startsWith(`      ${opening}`), kept: rels.includes(`scripts/${kept}`), gone: rels.includes(`scripts/${gone}`), digest: digestOf(r.stdout) }, { code: 1, refused: true, kept: true, gone: false, digest: sha256(bound.join('\n')) }, `${flags.join(' ')}\n${r.stdout}`);
+      });
+    }
+  });
+  it('--replace-custom with --only, with --dry-run, with an empty value or given twice: usage exit 2, nothing run; the --only refusal names the kit scripts, the spec layer and the navigator in that order', () => withSpecLayer((dir) => {
     const [before, R] = [snapshot(dir), '--replace-custom'];
     for (const argv of [[R, DIGEST, '--only', 'specs'], [R, DIGEST, '--only', 'index'], [R, DIGEST, '--dry-run'], [R, ''], [`${R}=`], [R, DIGEST, `${R}=${DIGEST}`]]) {
       const r = main(['--reconcile', ...argv, '--cwd', dir]);
       assert.deepEqual({ code: r.code, stdout: r.stdout, opening: r.stderr.startsWith('ensure-configs: '), names: r.stderr.includes(R), tree: snapshot(dir) }, { code: 2, stdout: '', opening: true, names: true, tree: before }, argv.join(' '));
+      if (argv.includes('--only')) assert.equal(r.stderr.trimEnd(), 'ensure-configs: --replace-custom runs the kit scripts, then the spec layer, then the navigator, so it cannot be combined with --only — nothing was run');
     }
   }));
 });
@@ -282,10 +296,10 @@ describe('spec:distribution-files/S8 one replace block after every op line, and 
 describe('spec:distribution-files/S9 the replace run through the command', () => {
   const run = (dir, digest, ctx) => main(['--reconcile', '--replace-custom', digest, '--cwd', dir], ctx);
   const noReplace = (r) => assert.deepEqual(r.stdout.split('\n').filter((l) => /--replace-custom [0-9a-f]{64}|^\s*only on the user's yes|carries an edit — on the user's yes/.test(l)), [], r.stdout);
-  const failed = (r, opening) => { assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), opens: r.stdout.split('\n')[2]?.startsWith(`      ${opening}`) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], opens: true }, r.stdout); noReplace(r); };
+  const failed = (r, tokens, opening) => { const lines = r.stdout.split('\n'), opens = lines[lines.findIndex((l) => /^ {2}[a-z-]+: failed$/.test(l)) + 1]?.startsWith(`      ${opening}`); assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), opens }, { code: 1, tokens, opens: true }, r.stdout); noReplace(r); };
   it('a matching digest keeps the edit at its named path, replaces it and runs index; a second run of the line changes nothing', () => withSpecLayer((dir) => {
     const plain = main(['--reconcile', '--dry-run', '--cwd', dir]).stdout, kept = plain.match(/kept aside at (\S+), then/)?.[1] ?? 'no kept-aside path', r = run(dir, digestOf(plain));
-    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), banner: r.stdout.split('\n')[0] }, { code: 0, tokens: [{ op: 'specs', token: 'seeded' }, { op: 'index', token: 'regenerated' }], banner: 'ensure-configs (--reconcile, --replace-custom)' }, r.stdout);
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), banner: r.stdout.split('\n')[0] }, { code: 0, tokens: [{ op: 'scripts', token: 'not-placed' }, { op: 'specs', token: 'seeded' }, { op: 'index', token: 'regenerated' }], banner: 'ensure-configs (--reconcile, --replace-custom)' }, r.stdout);
     assert.deepEqual([readFileSync(join(dir, kept), 'utf8'), readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), existsSync(join(dir, CONFIG_REL))], [edit('check-docs-size.mjs'), readFileSync(join(BUNDLE, 'check-docs-size.mjs'), 'utf8'), false], 'the edit kept at its named path, the bundled body in place, no other op ran');
     noReplace(r);
     const after = snapshot(dir);
@@ -293,18 +307,18 @@ describe('spec:distribution-files/S9 the replace run through the command', () =>
   }));
   it('a differing digest: the tree byte-identical, exit 1, no index line, the failed line ends on the navigator step, a fresh block', () => withSpecLayer((dir) => {
     const [before, r] = [snapshot(dir), run(dir, 'f'.repeat(64))];
-    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), tree: snapshot(dir), digest: digestOf(r.stdout) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], tree: before, digest: DIGEST }, r.stdout);
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), tree: snapshot(dir), digest: digestOf(r.stdout) }, { code: 1, tokens: [{ op: 'scripts', token: 'failed' }], tree: before, digest: DIGEST }, r.stdout);
     assert.equal(r.stdout.split('\n\n')[0].split('\n').filter((l) => l.startsWith('      ')).at(-1), `      ${INDEX_NOT_RUN}`);
   }));
   it('a keep-aside failure: write-refused, the edit unchanged, no block and no replace command', () => withSpecLayer((dir) => {
     mkdirSync(join(dir, '.agent-workflow')); writeFileSync(join(dir, '.agent-workflow', '.gitignore'), '!kept-aside/\n');
-    failed(run(dir, DIGEST), 'write-refused — .agent-workflow/.gitignore: holds other bytes');
+    failed(run(dir, DIGEST), [{ op: 'scripts', token: 'failed' }], 'write-refused — .agent-workflow/.gitignore: holds other bytes');
     assert.equal(readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), edit('check-docs-size.mjs'));
   }));
   it('a per-file failure: a bound file changed before its own write, race-unresolved, no block and no replace command', () => withSpecLayer((dir) => {
     const [scripts, digest] = [join(dir, 'scripts'), digestOf(main(['--reconcile', '--dry-run', '--cwd', dir]).stdout)];
     const writeFile = ((moved = false) => (p, body, opts) => { if (!moved && String(p).startsWith(scripts)) { moved = true; writeFileSync(join(scripts, 'check-docs-size.test.mjs'), '// changed\n'); } return writeFileSync(p, body, opts); })();
-    failed(run(dir, digest, { deps: { writeFile } }), 'race-unresolved — scripts/check-docs-size.test.mjs: changed after this run read it');
+    failed(run(dir, digest, { deps: { writeFile } }), [{ op: 'scripts', token: 'not-placed' }, { op: 'specs', token: 'failed' }], 'race-unresolved — scripts/check-docs-size.test.mjs: changed after this run read it');
   }, ['check-docs-size.mjs', 'check-docs-size.test.mjs']));
 });
 
@@ -350,141 +364,6 @@ describe('the CLI entry (a spawned process)', () => {
       assert.equal(r.status, 2);
       assert.match(r.stderr, /navigator/);
     });
-  });
-});
-
-// The installer set: the hook installer and its two suites, refreshed as one by the scripts op. Imported
-// dynamically, and the fixtures read lazily, so a tree without them fails each cell, never the load.
-const { INSTALLER_SET = [] } = await import('./script-priors.mjs');
-const KIT = fileURLToPath(new URL('../', import.meta.url));
-const PRIOR_AT = { 'install-git-hooks.mjs': '4.0.0', 'install-git-hooks.test.mjs': '7.2.0', 'install-git-hooks-repo-exec.test.mjs': '4.0.0' };
-const [SET, SEEDS] = [Object.keys(PRIOR_AT), ['archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs', 'markdown-blocks.test.mjs']];
-const [prior, bundled] = [(name) => readFileSync(join(KIT, 'test', 'fixtures', 'script-priors', PRIOR_AT[name], `${name}.txt`)), (name) => readFileSync(join(BUNDLE, name))];
-const setOf = (body, names = SET) => Object.fromEntries(names.map((name) => [name, body(name)]));
-const put = (dir, bodies) => { mkdirSync(join(dir, 'scripts'), { recursive: true }); for (const [name, body] of Object.entries(bodies)) writeFileSync(join(dir, 'scripts', name), body); };
-const scripts = (dir, ctx, ...flags) => main(['--reconcile', '--only', 'scripts', ...flags, '--cwd', dir], ctx);
-const [details, memberLines] = [(stdout) => stdout.split('\n').filter((l) => l.startsWith('      ')).map((l) => l.slice(6)), (stdout) => details(stdout).filter((l) => l.startsWith('scripts/install-git-hooks'))];
-const each = (text) => SET.map((name) => `scripts/${name}: ${text}`);
-const SHIPPED = 'matches a body an earlier release shipped';
-const [REFRESHED, CURRENT, WITHHELD] = [`${SHIPPED} — refreshed to the bundled one`, 'already the bundled body — nothing written', 'left as it stands because an edited member withholds the set'];
-const CUSTOM = 'carries an edited body — preserved verbatim; an edited member withholds the set, so none of the three is refreshed';
-const bytesAre = (dir, names, body) => { for (const n of names) assert.deepEqual(readFileSync(join(dir, 'scripts', n)), body(n), `${n} holds the expected body`); };
-// One cell: the members (beside the four ADR files unless adr is false), a setup, one run of the op, its check.
-const cell = (bodies, check, { adr = true, ctx, flags = [], setup = () => {}, node = true, same = false } = {}) => withProject((dir) => {
-  if (bodies) put(dir, { ...(adr ? setOf(bundled, SEEDS) : {}), ...bodies });
-  setup(dir);
-  const [before, r] = [snapshot(dir), scripts(dir, typeof ctx === 'function' ? ctx(dir) : ctx, ...flags)];
-  check(r, dir);
-  if (same) assert.deepEqual(snapshot(dir), before, 'the tree is byte-identical');
-}, { node });
-// The exit, the token and the member lines exactly; any member line means one per INSTALLER_SET member, in order.
-const expect = (r, token, code, members, label = '') => {
-  assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), members: memberLines(r.stdout) }, { code, tokens: [{ op: 'scripts', token }], members }, `${label}\n${r.stdout}`);
-  if (members.length) assert.deepEqual(members.map((l) => l.slice('scripts/'.length, l.indexOf(': '))), [...INSTALLER_SET], label);
-};
-const fails = (r, opening, members = []) => { expect(r, 'failed', 1, members); assert.ok(details(r.stdout)[0]?.startsWith(opening), r.stdout); };
-
-describe('spec:init-project/S65 the installer set refreshed and a real commit by proof', () => {
-  // The GIT_ variables a hook hands its children would aim git at the outer repository, and an inherited
-  // NODE_TEST_CONTEXT makes the hook's `node --test` skip every file and exit 0: every spawn drops them.
-  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^git_/i.test(k) && k !== 'NODE_TEST_CONTEXT' && k !== 'NODE_V8_COVERAGE')), GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
-  const run = (dir, cmd, ...args) => {
-    const r = spawnSync(cmd, args, { cwd: dir, env, encoding: 'utf8' }), out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-    assert.ok(!r.error && r.signal === null, `${cmd} ${args.join(' ')} did not run to an exit (${r.error?.code ?? r.signal}): ${out}`);
-    return { status: r.status, out };
-  };
-  const ok = (dir, ...cmd) => { const { status, out } = run(dir, ...cmd); assert.equal(status, 0, out); };
-  it('a prior set stops a real commit; the refresh makes the next one pass, both installer suites run', { timeout: 240_000 }, () => withProject((dir) => {
-    for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.com'], ['config', 'user.name', 'fixture']]) ok(dir, 'git', ...args);
-    put(dir, { ...setOf(bundled, readdirSync(BUNDLE).filter((n) => n.endsWith('.mjs'))), ...setOf(prior) });
-    for (const [rel, type, title] of [['changelog.md', 'log', 'Changelog'], ['known_issues.md', 'issues', 'Known issues']]) writeFileSync(join(dir, 'docs', 'ai', rel), `---\ntype: ${type}\nmaxLines: 200\n---\n\n# ${title}\n`);
-    for (const args of [['scripts/check-docs-size.mjs', '--write-index'], ['scripts/install-git-hooks.mjs']]) ok(dir, process.execPath, ...args);
-    ok(dir, 'git', 'add', '-A');
-    const one = run(dir, 'git', 'commit', '-q', '-m', 'one');
-    assert.ok(one.status !== 0 && /(?:✖|not ok \d+ -) a LINKED WORKTREE installs at ITS OWN git-path hooks/.test(one.out), one.out);
-    expect(scripts(dir), 'refreshed', 0, each(REFRESHED));
-    bytesAre(dir, SET, bundled);
-    ok(dir, 'git', 'add', '-A');
-    const two = run(dir, 'git', 'commit', '-q', '-m', 'two');
-    assert.equal(two.status, 0, two.out);
-    for (const re of [/(?:✔|(?<!not )ok \d+ -) a LINKED WORKTREE installs at ITS OWN git-path hooks/, /(?:✔|(?<!not )ok \d+ -) install-git-hooks — the in-place installer under a GIT_DIR-pinned fixture/, /(?:\u2139|#) fail 0(?!\d)/]) assert.match(two.out, re, two.out);
-    assert.doesNotMatch(two.out, /skipping running files/i);
-  }));
-});
-
-describe('spec:init-project/S66 the set rule by its cells', () => {
-  const unseeded = (r, dir) => { bytesAre(dir, SET, bundled); assert.deepEqual([SEEDS.filter((n) => existsSync(join(dir, 'scripts', n))), details(r.stdout).filter((l) => /nothing (was )?written/.test(l))], [[], []], 'no ADR file seeded, no line claims nothing was written'); };
-  it('each member edited in turn withholds the set: customized-preserved, nothing written', () => {
-    for (const edited of SET) cell({ ...setOf(prior), [edited]: '// my own\n' }, (r) => expect(r, 'customized-preserved', 0, SET.map((n) => `scripts/${n}: ${n === edited ? CUSTOM : WITHHELD}`), edited), { same: true });
-  });
-  it('a prior installer and one prior suite refresh; the absent suite stays absent, named on its line', () => cell(setOf(prior, SET.slice(0, 2)), (r, dir) => {
-    expect(r, 'refreshed', 0, [...each(REFRESHED).slice(0, 2), `scripts/${SET[2]}: absent — not placed by this op`]);
-    bytesAre(dir, SET.slice(0, 2), bundled);
-    assert.equal(existsSync(join(dir, 'scripts', SET[2])), false, 'the absent suite stays absent');
-  }));
-  it('a bundled installer beside two prior suites: the suites refresh, the installer is already bundled', () => cell({ ...setOf(prior), [SET[0]]: bundled(SET[0]) }, (r, dir) => {
-    expect(r, 'refreshed', 0, [each(CURRENT)[0], ...each(REFRESHED).slice(1)]);
-    bytesAre(dir, SET, bundled);
-  }));
-  it('a legacy ADR monolith: the set refreshes, no ADR file seeded, never "nothing written"', () => cell(setOf(prior), (r, dir) => {
-    expect(r, 'old-adr-layout-migration-instructed', 0, each(REFRESHED));
-    assert.ok(details(r.stdout).some((l) => l.startsWith('scripts/: this project is still on the older ADR layout (old) — the ADR files were not seeded.')), r.stdout);
-    unseeded(r, dir);
-  }, { adr: false, setup: (dir) => { mkdirSync(join(dir, 'docs', 'ai', 'history')); writeFileSync(join(dir, 'docs', 'ai', 'history', 'decisions-archive.md'), '# archive\n'); } }));
-  it('an unreadable ADR layout: failed, the set still refreshed with its lines, no ADR file seeded', () => cell(setOf(prior), (r, dir) => {
-    fails(r, 'adr-layout-unverifiable — scripts/: the ADR-store layout could not be read, so the ADR files were not seeded', each(REFRESHED));
-    assert.deepEqual(details(r.stdout).slice(1, 4), each(REFRESHED));
-    unseeded(r, dir);
-  }, { adr: false, ctx: { deps: { statPath: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } } } }));
-});
-
-describe('spec:init-project/S67 the dry run and the quiet cells', () => {
-  it('--dry-run beside a prior set: would-refresh per member, the tree byte-identical', () => cell(setOf(prior), (r) => expect(r, 'would-refresh', 0, each(`${SHIPPED} — would be refreshed to the bundled one`)), { flags: ['--dry-run'], same: true }));
-  it('a prior set beside absent ADR files: seeded, with the refreshed and the copied lines', () => cell(setOf(prior), (r) => {
-    expect(r, 'seeded', 0, each(REFRESHED));
-    assert.deepEqual(details(r.stdout).filter((l) => l.endsWith(': copied from the bundled scripts')), SEEDS.map((seed) => `scripts/${seed}: copied from the bundled scripts`));
-  }, { adr: false }));
-  it('a current set: already-present, one already-bundled line per member, nothing written', () => cell(setOf(bundled), (r) => expect(r, 'already-present', 0, each(CURRENT)), { same: true }));
-  const [paths, spy] = [[], { deps: { readFile: (p, ...rest) => { paths.push(String(p)); return readFileSync(p, ...rest); } } }];
-  it('no member present: no set line, and no bundled member is read', () => cell({}, (r) => {
-    expect(r, 'already-present', 0, []);
-    assert.deepEqual([r.stdout.includes('install-git-hooks'), paths.filter((p) => p.includes('install-git-hooks'))], [false, []], 'no line names a member, no member body was read');
-  }, { ctx: spy }));
-  it('no Node evidence: skipped-no-node-evidence, no set line, nothing written', () => cell(null, (r) => expect(r, 'skipped-no-node-evidence', 0, []), { node: false, same: true }));
-});
-
-describe('spec:init-project/S68 the failure cells', () => {
-  const LAST = `scripts/${SET[2]}`;
-  for (const [kind, place] of [['a symlink', (dir) => symlinkSync(join(dir, 'elsewhere.txt'), join(dir, LAST))], ['a directory', (dir) => mkdirSync(join(dir, LAST))]]) {
-    it(`the last member ${kind}: wrong-node-kind naming it, nothing written, a link target untouched`, () => cell(setOf(prior, SET.slice(0, 2)), (r, dir) => {
-      fails(r, `wrong-node-kind — ${LAST}: exists but is ${kind}`);
-      bytesAre(dir, SET.slice(0, 2), prior);
-    }, { same: true, setup: (dir) => { writeFileSync(join(dir, 'elsewhere.txt'), 'the link target\n'); place(dir); } }));
-  }
-  it('the last bundled member unreadable: bundle-unreadable naming it, nothing written', () => cell(setOf(prior), (r) => fails(r, `bundle-unreadable — ${LAST}: the bundled script could not be read`), { same: true, setup: (dir) => put(join(dir, 'kit', 'references'), setOf(bundled, SET.slice(0, 2))), ctx: (dir) => ({ kitRoot: join(dir, 'kit') }) }));
-  const refuseSecond = ((n = 0) => ({ deps: { rename: (from, to) => { n += 1; if (n === 2) throw Object.assign(new Error('EACCES: refused'), { code: 'EACCES' }); return renameSync(from, to); } } }))();
-  it('a write refused at the second replace: write-refused, the installer refreshed and not rolled back', () => cell(setOf(prior), (r, dir) => {
-    fails(r, `write-refused — scripts/${SET[1]}: EACCES: refused`, [each(REFRESHED)[0], each(`${SHIPPED} — not refreshed; its write was refused (above)`)[1], each(`${SHIPPED} — not refreshed; the run stopped before it`)[2]]);
-    bytesAre(dir, SET, (n) => (n === SET[0] ? bundled(n) : prior(n)));
-    assert.ok(details(r.stdout).includes('the copying stopped PARTWAY — the 1 file(s) named above were already copied and are NOT rolled back'), r.stdout);
-    assert.deepEqual(readdirSync(join(dir, 'scripts')).filter((n) => n.endsWith('.tmp')), [], 'no temp file left');
-  }, { ctx: refuseSecond }));
-});
-
-describe("spec:init-project/S70 shipped text of the set's refresh", () => {
-  const [text, header] = [(...rel) => readFileSync(join(KIT, ...rel), 'utf8'), (src) => src.slice(0, src.indexOf('\nimport '))];
-  const has = (body, yes, no = []) => { for (const p of yes) assert.ok(body.includes(p), `missing: ${p}`); for (const p of no) assert.equal(body.includes(p), false, `claims: ${p}`); };
-  it("upgrade.md: the scripts token list and the enforcement-script paragraph name the set's refresh", () => {
-    const doc = text('references', 'modes', 'upgrade.md'), at = doc.indexOf('**What the enforcement-script ensure does.**');
-    has(doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`refreshed`', '`customized-preserved`']);
-    has(at === -1 ? '' : doc.slice(at, doc.indexOf('\n', at)), ['the hook installer and its two suites are refreshed together', 'whatever its ADR layout', 'an edited member keeps all three', 'an absent one is never seeded',
-      'the `enforcement` check line and apply, by the consent route', 'no ADR file is seeded', 'no ADR file seeded', "the set's refresh lines stand"], ['writes NOTHING', 'writing nothing']);
-  });
-  it("the ensure-ops.mjs header names the set's refresh and claims no write-nothing", () => has(header(text('tools', 'ensure-ops.mjs')), ["installer set's refresh runs before and independent of that read"], ['writes NOTHING', 'wrote nothing']));
-  it("ensure-configs.mjs: its header table's scripts row and --help name the set's refresh", () => {
-    const rows = header(text('tools', 'ensure-configs.mjs')).split('\n'), at = rows.findIndex((l) => /^\/\/ {3}scripts /.test(l));
-    has(at === -1 ? '' : rows.slice(at, at + 2).join('\n'), ['the hook installer and its two suites refreshed as one set']);
-    has(main(['--help']).stdout, ['refreshes the hook installer with its two suites']);
   });
 });
 
@@ -535,17 +414,8 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens, [
-        { op: 'orchestration', token: 'malformed-preserved' },
-        { op: 'gates', token: 'seeded' },
-        { op: 'autonomy', token: 'seeded' },
-        { op: 'vehicles', token: 'seeded' },
-        { op: 'executor', token: 'not-placed' },
-        { op: 'scripts', token: 'seeded' },
-        { op: 'specs', token: 'seeded' },
-        { op: 'rules', token: 'seeded' },
-        { op: 'index', token: 'regenerated' },
-      ]);
+      const expected = ['malformed-preserved', 'seeded', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated'];
+      assert.deepEqual(tokens, ['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index'].map((op, i) => ({ op, token: expected[i] })));
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
       assert.doesNotMatch(r.stdout, /nothing was written for those/, 'the summary claims nothing about what landed — an op can stop partway');
       assert.equal(readFileSync(join(dir, CONFIG_REL), 'utf8'), '{ not json');
@@ -565,7 +435,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });

@@ -1,6 +1,7 @@
 // ensure-specs.mjs — the SIXTH upgrade ensure: the spec layer (memory 4.6.0, AD-112) delivered to an
-// EXISTING deployment on an equal-head upgrade. Four deployed scripts and one store root, written in
-// a FIXED order the measured coupling dictates:
+// EXISTING deployment on an equal-head upgrade. Four deployed scripts (the pairs script-priors.mjs
+// names; every other kit script is the scripts ensure's) and one store root, written in a FIXED order
+// the measured coupling dictates:
 //   1. the reader pair   scripts/spec-schema.mjs + .test.mjs      — created when absent; since 2a
 //      also REFRESHED when the deployed bytes are a body a release shipped (script-priors.mjs), a
 //      custom body preserved verbatim and reported as a replace entry (distribution-files/): the
@@ -26,9 +27,9 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { classifyDeployedScript, digestOf } from './script-priors.mjs';
+import { CHECKER_PAIR, READER_PAIR, classifyDeployedScript, digestOf } from './script-priors.mjs';
 import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
-import { keptAsidePath } from './distribution-files/index.mjs';
+import { SCRIPT_CHANNEL, keptAsidePath } from './distribution-files/index.mjs';
 
 const OP = 'specs';
 const SCRIPTS_DIR = 'scripts';
@@ -36,11 +37,6 @@ const BUNDLED_SCRIPTS = ['references', 'scripts'];
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
-const CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
-// Explicit pairs, deliberately NOT aliased to the catalog's PRIOR_FILES (which spans both): each
-// file is surveyed exactly once. Exported so the suite pins pairs-union === catalog domain.
-export const READER_PAIR = Object.freeze(['spec-schema.mjs', 'spec-schema.test.mjs']);
-export const CHECKER_PAIR = Object.freeze(['check-docs-size.mjs', 'check-docs-size.test.mjs']);
 
 const causeOf = (err) => String((err && err.message) || err);
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -191,7 +187,7 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {}, replace }
 
   // The survey completed: its entries ride every outcome from here on, a failed one included.
   const custom = [...reader, ...checker].filter((f) => f.state === 'custom');
-  const entries = custom.map((f) => ({ rel: f.rel, sha256: digestOf(f.bytes), bytes: f.bytes, channel: CHANNEL }));
+  const entries = custom.map((f) => ({ rel: f.rel, sha256: digestOf(f.bytes), bytes: f.bytes, channel: SCRIPT_CHANNEL }));
   const ok = (token, lines) => ({ ...composeOutcome(OP, token, lines, false), entries });
   const loud = (cause, ...lines) => ({ ...composeFailure(OP, cause, ...lines), entries });
   const bound = replace ? new Map(replace.entries.map((e) => [e.rel, e.sha256])) : null;

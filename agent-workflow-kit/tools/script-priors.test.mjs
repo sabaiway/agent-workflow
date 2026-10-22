@@ -14,9 +14,10 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hermeticGitEnv } from './git-env.mjs';
+import { BUNDLED_SCRIPT_NAMES } from './node-evidence.mjs';
 
-const { SCRIPT_PRIORS, PRIOR_FILES, INSTALLER_SET, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
-const { ensureScripts } = await import('./ensure-ops.mjs').catch(() => ({}));
+const { SCRIPT_PRIORS, PRIOR_FILES, READER_PAIR, CHECKER_PAIR, INSTALLER_SET, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
+const { ensureScripts } = await import('./distribution-files/index.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
@@ -172,11 +173,15 @@ describe('spec:init-project/S59 the known-prior catalog carries the hook install
   });
 });
 
-describe('spec:init-project/S69 the catalog carries the installer set', () => {
+describe('spec:distribution-files/S23 the catalog: every bundled name, the spec-layer pairs and the installer set', () => {
   const SET = ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'];
+  // The scripts family in its write order, as a literal independent of the module.
+  const FAMILY = [...SET, '_expect-shim.mjs', 'archive-caps.mjs', 'archive-caps.test.mjs', 'archive-changelog.mjs', 'archive-changelog.test.mjs',
+    'archive-conservation.test.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'archive-issues.mjs', 'archive-issues.test.mjs',
+    'archiver-structure.test.mjs', 'check-docs-size-cli.test.mjs', 'check-docs-size-ensure.test.mjs', 'markdown-blocks.mjs',
+    'markdown-blocks.test.mjs', 'migrate-gates-branches.test.mjs', 'migrate-gates.mjs', 'migrate-gates.test.mjs'];
   const rowsOf = (from, to) => FROZEN_PRIORS.slice(from, to).map(([file, firstShipped, lastShipped, digest]) => ({ file, firstShipped, lastShipped, digest }));
   const [suiteRows, setRows] = [rowsOf(13, 16), rowsOf(16, 19)];
-  const SEEDS = ['archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs', 'markdown-blocks.test.mjs'];
   const inTemp = (cell) => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'script-priors-'))); try { cell(dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
   // Every child drops each inherited GIT_ variable and runs on the project's own hermetic config; one that
   // never started or was killed fails the cell outright.
@@ -196,61 +201,58 @@ describe('spec:init-project/S69 the catalog carries the installer set', () => {
     lines.splice(at + 1, 2);
     return lines.join('\n');
   };
-  it('INSTALLER_SET is frozen and names exactly the installer and its two suites in that order, each in PRIOR_FILES', () => {
+  it("PRIOR_FILES is every bundled name, READER_PAIR and CHECKER_PAIR the bundled names outside the scripts family, INSTALLER_SET the installer then its two suites, each frozen; the six set rows carry their fixture's sha256 and classify prior, the bundled members current", () => {
+    assert.ok(Object.isFrozen(PRIOR_FILES), 'PRIOR_FILES is a frozen export');
+    assert.deepEqual([...PRIOR_FILES], [...BUNDLED_SCRIPT_NAMES], 'PRIOR_FILES is every bundled name');
+    for (const pair of [READER_PAIR, CHECKER_PAIR]) assert.ok(Array.isArray(pair) && Object.isFrozen(pair), 'each pair is a frozen export of script-priors.mjs');
+    assert.deepEqual([[...READER_PAIR], [...CHECKER_PAIR]], [['spec-schema.mjs', 'spec-schema.test.mjs'], ['check-docs-size.mjs', 'check-docs-size.test.mjs']]);
+    const pairs = [...READER_PAIR, ...CHECKER_PAIR];
+    for (const file of pairs) assert.ok(BUNDLED_SCRIPT_NAMES.includes(file), `${file} is bundled`);
+    assert.deepEqual(pairs.sort(), BUNDLED_SCRIPT_NAMES.filter((file) => !FAMILY.includes(file)), 'the pairs are the bundled names outside the scripts family');
     assert.ok(Object.isFrozen(INSTALLER_SET), 'INSTALLER_SET is a frozen export');
     assert.deepEqual([...INSTALLER_SET], SET);
-    for (const file of SET) assert.ok(PRIOR_FILES.includes(file), `${file} is a refreshable script`);
-  });
-  it('SCRIPT_PRIORS appends the three suite rows right after the installer row', () => {
     assert.equal(SCRIPT_PRIORS[12].file, 'install-git-hooks.mjs');
-    assert.deepEqual(SCRIPT_PRIORS.slice(13, 16).map((row) => ({ ...row })), suiteRows);
-  });
-  it("each digest is the sha256 of its fixture's raw bytes, which classify prior against the bundled suite; the bundled suites classify current", () => {
-    for (const row of suiteRows) {
-      const body = readFileSync(fixturePath(row));
-      assert.ok(Buffer.isBuffer(body), 'the fixture is read as bytes, never decoded');
-      assert.equal(sha256(body), row.digest, fixturePath(row));
-      assert.equal(classifyDeployedScript(body, row.file, bundleBytes(row.file)), 'prior', fixturePath(row));
-    }
-    for (const file of SET.slice(1)) assert.equal(classifyDeployedScript(bundleBytes(file), file, bundleBytes(file)), 'current', file);
-  });
-  it("SCRIPT_PRIORS appends one 8.3.0 row per member in INSTALLER_SET order, each digest the sha256 of its fixture's raw bytes, which classify prior against the bundled member", () => {
-    assert.deepEqual(SCRIPT_PRIORS.slice(16, 19).map((row) => ({ ...row })), setRows);
+    assert.deepEqual(SCRIPT_PRIORS.slice(13, 19).map((row) => ({ ...row })), [...suiteRows, ...setRows], 'the three suite rows, then one 8.3.0 row per member');
     assert.deepEqual(setRows.map((row) => row.file), [...INSTALLER_SET]);
-    for (const row of setRows) {
+    for (const row of [...suiteRows, ...setRows]) {
       const body = readFileSync(fixturePath(row));
       assert.ok(Buffer.isBuffer(body), 'the fixture is read as bytes, never decoded');
       assert.equal(sha256(body), row.digest, fixturePath(row));
       assert.equal(classifyDeployedScript(body, row.file, bundleBytes(row.file)), 'prior', fixturePath(row));
     }
+    for (const file of SET) assert.equal(classifyDeployedScript(bundleBytes(file), file, bundleBytes(file)), 'current', file);
   });
-  it('ensureScripts over a Node deployment carrying the three 8.3.0 bodies answers refreshed, each member then the bundled bytes', () => inTemp((dir) => {
-    writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}');
-    mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
-    mkdirSync(join(dir, 'scripts'));
-    for (const seed of SEEDS) writeFileSync(join(dir, 'scripts', seed), bundleBytes(seed));
-    for (const row of setRows) writeFileSync(join(dir, 'scripts', row.file), readFileSync(fixturePath(row)));
-    const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT });
-    assert.deepEqual({ token: r.token, failed: r.failed }, { token: 'refreshed', failed: false }, (r.lines ?? []).join('\n'));
-    for (const file of SET) assert.deepEqual(readFileSync(join(dir, 'scripts', file)), bundleBytes(file), `${file} holds the bundled bytes`);
-  }));
-  it('the 8.3.0 installer writes the bundled hook less the comment and local lines; the bundled one over its guarded hook keeps the guard and adds them', () => inTemp((root) => {
-    spawnChecked('git', ['init', '-q'], root);
-    mkdirSync(join(root, 'scripts'));
-    writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
-    const hook = join(resolve(root, spawnChecked('git', ['rev-parse', '--git-path', 'hooks'], root).stdout.trim()), 'pre-commit');
-    const install = (body, ...args) => {
-      writeFileSync(join(root, 'scripts', SET[0]), body);
-      spawnChecked(process.execPath, [join(root, 'scripts', SET[0]), ...args], root);
-      return readFileSync(hook, 'utf8');
-    };
-    const [fixture, bundled] = [readFileSync(fixturePath(setRows[0])), bundleBytes(SET[0])];
-    const [h0, g0] = [install(fixture), install(fixture, '--commit-guard', 'guard.mjs')];
-    rmSync(hook);
-    const [h1, g1] = [install(bundled), install(bundled, '--commit-guard', 'guard.mjs')];
-    assert.equal(lessLocal(h1, 'flagless'), h0, 'flagless: the bundled hook less the two lines is the 8.3.0 hook');
-    assert.equal(lessLocal(g1, '--commit-guard'), g0, '--commit-guard: the bundled hook less the two lines is the 8.3.0 hook');
-    writeFileSync(hook, g0);
-    assert.equal(install(bundled), g1, 'flagless over the 8.3.0 guarded hook keeps the guard line and adds the two lines');
-  }));
+  it('ensureScripts of the index refreshes a component carrying the three 8.3.0 bodies; the 8.3.0 installer writes the bundled hook less the comment and local lines, and the bundled one over its guarded hook keeps the guard and adds them', () => {
+    assert.equal(typeof ensureScripts, 'function', 'distribution-files/index.mjs exports ensureScripts');
+    inTemp((dir) => {
+      writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}');
+      mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
+      mkdirSync(join(dir, 'scripts'));
+      for (const row of setRows) writeFileSync(join(dir, 'scripts', row.file), readFileSync(fixturePath(row)));
+      const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT });
+      // The other family files are absent, so their entries make the run pending while the set is refreshed.
+      assert.deepEqual({ token: r.token, failed: r.failed }, { token: 'pending', failed: false }, (r.lines ?? []).join('\n'));
+      assert.deepEqual(r.lines.slice(0, 3), SET.map((file) => `scripts/${file}: matches a body an earlier release shipped — refreshed to the bundled one`));
+      for (const file of SET) assert.deepEqual(readFileSync(join(dir, 'scripts', file)), bundleBytes(file), `${file} holds the bundled bytes`);
+    });
+    inTemp((root) => {
+      spawnChecked('git', ['init', '-q'], root);
+      mkdirSync(join(root, 'scripts'));
+      writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
+      const hook = join(resolve(root, spawnChecked('git', ['rev-parse', '--git-path', 'hooks'], root).stdout.trim()), 'pre-commit');
+      const install = (body, ...args) => {
+        writeFileSync(join(root, 'scripts', SET[0]), body);
+        spawnChecked(process.execPath, [join(root, 'scripts', SET[0]), ...args], root);
+        return readFileSync(hook, 'utf8');
+      };
+      const [fixture, bundled] = [readFileSync(fixturePath(setRows[0])), bundleBytes(SET[0])];
+      const [h0, g0] = [install(fixture), install(fixture, '--commit-guard', 'guard.mjs')];
+      rmSync(hook);
+      const [h1, g1] = [install(bundled), install(bundled, '--commit-guard', 'guard.mjs')];
+      assert.equal(lessLocal(h1, 'flagless'), h0, 'flagless: the bundled hook less the two lines is the 8.3.0 hook');
+      assert.equal(lessLocal(g1, '--commit-guard'), g0, '--commit-guard: the bundled hook less the two lines is the 8.3.0 hook');
+      writeFileSync(hook, g0);
+      assert.equal(install(bundled), g1, 'flagless over the 8.3.0 guarded hook keeps the guard line and adds the two lines');
+    });
+  });
 });

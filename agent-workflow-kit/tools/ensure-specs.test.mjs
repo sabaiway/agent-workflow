@@ -13,8 +13,9 @@ import { fileURLToPath } from 'node:url';
 
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
 
-const { PRIOR_FILES, INSTALLER_SET = [] } = await import('./script-priors.mjs');
-const { ensureSpecs, decideWrites, READER_PAIR, CHECKER_PAIR } = await import('./ensure-specs.mjs').catch(() => ({}));
+const { PRIOR_FILES, READER_PAIR, CHECKER_PAIR } = await import('./script-priors.mjs');
+const { ensureSpecs, decideWrites } = await import('./ensure-specs.mjs').catch(() => ({}));
+const { SCRIPT_CHANNEL } = await import('./distribution-files/index.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
@@ -87,10 +88,9 @@ const storeSeeded = (dir) => {
   assert.match(body, new RegExp(`^lastUpdated: ${TODAY}$`, 'm'));
 };
 
-const CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
 const DIGEST = '0123456789abcdef'.repeat(4);
 const CUSTOM_CHECKER = { reader: ['current', 'current'], checker: ['custom', 'current'] };
-const entryOf = (name) => ({ rel: `scripts/${name}`, sha256: createHash('sha256').update(CUSTOM).digest('hex'), bytes: Buffer.from(CUSTOM), channel: CHANNEL });
+const entryOf = (name, body = CUSTOM) => ({ rel: `scripts/${name}`, sha256: createHash('sha256').update(body).digest('hex'), bytes: Buffer.from(body), channel: SCRIPT_CHANNEL });
 const keptPath = (rel) => `.agent-workflow/kept-aside/${DIGEST.slice(0, 16)}/${rel}`;
 const replacedLine = (rel) => `${rel}: carried an edit — kept aside at ${keptPath(rel)}, then replaced by the bundled body on the user's yes`;
 const bind = (dir) => ({ digest: DIGEST, entries: run(dir, { dryRun: true }).entries });
@@ -104,7 +104,7 @@ describe('spec:distribution-files/S6 a custom spec-layer file is an entry, and i
     ['a custom checker test alone: its entry, its waiting line and the store-withheld line naming it', ['current', 'custom'], CHECKER[1]],
   ]) {
     it(title, () => withProject({ ...CUSTOM_CHECKER, checker }, (dir, r = run(dir), rel = `scripts/${name}`) => {
-      assert.deepEqual([r.entries, r.token], [[entryOf(name)], 'customized-preserved']);
+      assert.deepEqual([r.entries, r.token, 'hookRun' in r.entries[0]], [[entryOf(name)], 'customized-preserved', false]);
       assert.ok(r.lines.includes(`${rel}: carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below); the writes that depend on it wait`), r.lines.join('\n'));
       assert.ok(r.lines.includes(`${STORE}: not seeded — it waits on the edited ${rel} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`));
       assert.doesNotMatch(r.lines.join('\n'), /--replace-custom|node /, 'the op prints no replace line');
@@ -154,16 +154,17 @@ describe('spec:distribution-files/S7 under the bound entries the op replaces eve
     assert.equal(run(dir, { replace: bind(dir) }).token, 'refreshed');
     allCurrent(dir);
   }));
-  for (const [title, name, bytes] of [
-    ['a file turned custom after the bind', CHECKER[1], CUSTOM],
-    ['a bound file whose bytes moved after the bind', CHECKER[0], '// edited again\n'],
+  for (const [title, name, bytes, entries, empty] of [
+    ['a file turned custom after the bind', CHECKER[1], CUSTOM, [entryOf(CHECKER[0]), entryOf(CHECKER[1])]],
+    ['a bound file whose bytes moved after the bind', CHECKER[0], '// edited again\n', [entryOf(CHECKER[0], '// edited again\n')]],
+    ['a file found custom under an empty bound list', CHECKER[0], CUSTOM, [entryOf(CHECKER[0])], true],
   ]) {
-    it(`${title} is race-unresolved with nothing written`, () => withProject(CUSTOM_CHECKER, (dir) => {
-      const replace = bind(dir);
+    it(`${title} is race-unresolved with nothing written, its surveyed entries carried`, () => withProject(CUSTOM_CHECKER, (dir, replace = empty ? { digest: DIGEST, entries: [] } : bind(dir)) => {
       writeFileSync(join(dir, 'scripts', name), bytes);
       const before = snapshot(dir);
-      assertRace(run(dir, { replace }), 'race-unresolved — the edited spec-layer files are not the set the yes was given for (another set or other bytes), so nothing was written');
-      assert.deepEqual(snapshot(dir), before);
+      const r = run(dir, { replace });
+      assertRace(r, 'race-unresolved — the edited spec-layer files are not the set the yes was given for (another set or other bytes), so nothing was written');
+      assert.deepEqual([snapshot(dir), r.entries], [before, entries]);
     }));
   }
   for (const [moved, move, left] of [['changed', (p) => writeFileSync(p, '// moved\n'), '// moved\n'], ['removed', (p) => rmSync(p), null]]) {
@@ -281,12 +282,10 @@ describe('the state table — admitted writes and the run token', () => {
     assert.deepEqual(d, { writes: [], withheld: true });
   });
 
-  it('the refresh-lane pairs are the catalog domain but the installer set (drift pin on the PRODUCTION constants)', () => {
-    const pairs = [...READER_PAIR, ...CHECKER_PAIR];
-    assert.equal(new Set(pairs).size, pairs.length, 'no file sits in both pairs');
-    assert.deepEqual([...pairs].sort(), PRIOR_FILES.filter((file) => !INSTALLER_SET.includes(file)).sort());
-    assert.deepEqual(READER_PAIR, READER);
-    assert.deepEqual(CHECKER_PAIR, CHECKER);
+  it("the spec-layer pairs are script-priors.mjs's READER_PAIR and CHECKER_PAIR: the catalog domain but the scripts family", () => {
+    const family = 'install-git-hooks.mjs install-git-hooks.test.mjs install-git-hooks-repo-exec.test.mjs _expect-shim.mjs archive-caps.mjs archive-caps.test.mjs archive-changelog.mjs archive-changelog.test.mjs archive-conservation.test.mjs archive-decisions.mjs archive-decisions.test.mjs archive-issues.mjs archive-issues.test.mjs archiver-structure.test.mjs check-docs-size-cli.test.mjs check-docs-size-ensure.test.mjs markdown-blocks.mjs markdown-blocks.test.mjs migrate-gates-branches.test.mjs migrate-gates.mjs migrate-gates.test.mjs'.split(' ');
+    assert.deepEqual([READER_PAIR, CHECKER_PAIR], [READER, CHECKER]);
+    assert.deepEqual([...READER_PAIR, ...CHECKER_PAIR].sort(), PRIOR_FILES.filter((file) => !family.includes(file)).sort());
   });
 });
 

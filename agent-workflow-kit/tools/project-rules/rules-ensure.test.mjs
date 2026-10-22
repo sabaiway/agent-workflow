@@ -95,13 +95,13 @@ const replaceRun = () => {
 const opsOf = (stdout) => stdout.split(NL).map((line) => line.match(/^ {2}([a-z-]+): ([a-z-]+)$/)).filter(Boolean).map(([, op]) => op);
 
 describe('spec:project-rules/S16 rules sits in ENSURE_OPS after specs and before index, the ensure command runs it through the project-rules index, and a replace run runs no rules op', () => {
-  it('nine ops with rules between specs and index, the op table holds the index ensureRules, and a replace run prints specs then index', async () => {
+  it('nine ops with rules between specs and index, the op table holds the index ensureRules, and a replace run prints scripts, specs, then index', async () => {
     assert.equal(ENSURE_OPS.length, 9);
     assert.deepEqual(ENSURE_OPS.slice(6), ['specs', 'rules', 'index']);
     assert.equal(ENSURE_IMPLEMENTATIONS.rules, need(await load('./index.mjs'), 'ensureRules'));
     const result = replaceRun();
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(opsOf(result.stdout), ['specs', 'index']);
+    assert.deepEqual(opsOf(result.stdout), ['scripts', 'specs', 'index']);
     assert.doesNotMatch(result.stdout, /^ {2}rules:/m);
   });
 });

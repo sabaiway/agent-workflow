@@ -1,9 +1,10 @@
 // script-priors.mjs — the APPEND-ONLY catalog of every enforcement-script body this family has shipped
 // into a project's `scripts/`, as sha256 digests, and the ONE classifier a refresh asks before it
 // replaces a deployed script — the spec-layer ensure for its pairs, the `hook-checks` writer for the
-// hook installer alone and the upgrade's `scripts` ensure for the installer set: `current` (byte-equal to the bundled copy) · `prior` (a body a release shipped, never
-// edited since) · `custom` (anything else — preserved verbatim, replaced only by the replace run the
-// user's yes starts). The lens-region idiom (AD-041) over whole script bodies.
+// hook installer alone and the upgrade's `scripts` ensure for every other kit script: `current`
+// (byte-equal to the bundled copy) · `prior` (a body a release shipped, never edited since) · `custom`
+// (anything else — kept aside and replaced only by the replace run the user's yes starts). The
+// lens-region idiom (AD-041) over whole script bodies.
 //
 // Append discipline: when a release changes one of PRIOR_FILES, append the OUTGOING body's row here
 // in the same release and copy its bytes to test/fixtures/script-priors/<firstShipped>/<file>.txt —
@@ -14,17 +15,24 @@
 
 import { createHash } from 'node:crypto';
 
-// The deployed scripts a refresh may REPLACE — the FULL refreshable catalog: the checker pair that
-// imports the reader and (since 2a) the reader pair itself, which the spec-layer ensure refreshes, and
-// the installer set: the `hook-checks` writer refreshes the installer alone, the upgrade's `scripts`
-// ensure the installer with its two suites. Every other deployed script is outside the refresh lane by design.
+// The deployed scripts a refresh may REPLACE: every bundled name (the suite pins it equal to the
+// bundle). A name with no row here classifies `custom` on any body but the bundled one.
 export const PRIOR_FILES = Object.freeze([
-  'check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs', 'install-git-hooks.mjs',
-  'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs',
+  '_expect-shim.mjs', 'archive-caps.mjs', 'archive-caps.test.mjs', 'archive-changelog.mjs', 'archive-changelog.test.mjs',
+  'archive-conservation.test.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'archive-issues.mjs',
+  'archive-issues.test.mjs', 'archiver-structure.test.mjs', 'check-docs-size-cli.test.mjs', 'check-docs-size-ensure.test.mjs',
+  'check-docs-size.mjs', 'check-docs-size.test.mjs', 'install-git-hooks-repo-exec.test.mjs', 'install-git-hooks.mjs',
+  'install-git-hooks.test.mjs', 'markdown-blocks.mjs', 'markdown-blocks.test.mjs', 'migrate-gates-branches.test.mjs',
+  'migrate-gates.mjs', 'migrate-gates.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs',
 ]);
 
-// The hook installer and the two suites that test it beside it — refreshed as ONE set, installer first,
-// so a stop partway never leaves a bundled suite beside a prior installer.
+// The spec-layer pairs the specs ensure owns — the reader and the checker that imports it; every other
+// name is the scripts ensure's. Here, in the pure leaf, so both ops import them and neither imports the other.
+export const READER_PAIR = Object.freeze(['spec-schema.mjs', 'spec-schema.test.mjs']);
+export const CHECKER_PAIR = Object.freeze(['check-docs-size.mjs', 'check-docs-size.test.mjs']);
+
+// The hook installer and the two suites that test it beside it — written first, installer first, so a
+// stop partway never leaves a bundled suite beside a prior installer.
 export const INSTALLER_SET = Object.freeze(['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs']);
 
 const prior = (file, firstShipped, lastShipped, digest) => Object.freeze({ file, firstShipped, lastShipped, digest });

@@ -17,10 +17,9 @@
 //     orchestration-config.mjs (refreshReadme / the known-prior canonical set) and writes through
 //     orchestration-write.mjs — the file's one writer. Nothing here re-derives either.
 //   • Every token names a state this run PROVED. `already-present` follows a probe; `skipped-no-node-evidence`
-//     names every Node probe that answered absent; an ADR-layout read that fails is `adr-layout-unverifiable` and
-//     seeds no ADR file (the STRICT survey, fail-closed — the lenient status wrapper reads an unreadable
-//     tree as `none`, which here would mean seeding a rotator beside a store nobody could inspect); the
-//     installer set's refresh runs before and independent of that read, and its lines stand either way.
+//     names every Node probe that answered absent (the refusal the kit-script and spec-layer ensures
+//     share, below; the kit scripts' rule — refresh a shipped prior, place or replace on the user's
+//     yes — lives in distribution-files/scripts.mjs).
 //   • A failed op is a non-zero signal, never a line that reads like success.
 //
 // Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.
@@ -30,14 +29,13 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { CANON_README, CONFIG_REL, SEED_CONFIG, loadConfig, normalizeCanonical, refreshReadme } from './orchestration-config.mjs';
 import { seedConfig, writeConfig } from './orchestration-write.mjs';
-import { lstatNoFollow, writeContainedFileAtomic, writeDocsAiFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
+import { lstatNoFollow, writeDocsAiFileAtomic } from './atomic-write.mjs';
 import { GATES_REL } from './gates-declaration.mjs';
 import { AUTONOMY_REL } from './autonomy-config.mjs';
 import { VEHICLES_REL } from './vehicle-settings.mjs';
-import { surveyAdrLayoutStrict } from './family-registry.mjs';
-import { ENSURE_TOKENS, FAILURE_CAUSES, SEED_SCRIPTS } from './ensure-vocabulary.mjs';
+import { ENSURE_TOKENS, FAILURE_CAUSES } from './ensure-vocabulary.mjs';
 import { NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
-import { INSTALLER_SET, classifyDeployedScript } from './script-priors.mjs';
+import { classifyDeployedScript } from './script-priors.mjs';
 import { parseFrontmatter } from '../references/scripts/check-docs-size.mjs';
 
 // The closed vocabulary lives in its own PURE leaf so the read-only doc-parity lint can bind the
@@ -50,7 +48,6 @@ export {
   FAILURE_CAUSES,
   RELAYED_ENSURE_TOKENS,
   RELAYED_FAILURE_CAUSES,
-  SEED_SCRIPTS,
   WRITE_TOKENS,
 } from './ensure-vocabulary.mjs';
 
@@ -212,7 +209,7 @@ export const ensureAutonomy = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
 export const ensureVehicles = ({ cwd, kitRoot, dryRun = false, deps = {} }) =>
   seedFromTemplate({ op: VEHICLES_OP, rel: VEHICLES_REL, template: VEHICLES_TEMPLATE, noun: VEHICLES_NOUN, cwd, kitRoot, dryRun, deps });
 
-// ── scripts/ — the ADR-cascade enforcement pairs, detect-first ──────────────────────────────────
+// ── scripts/ — the Node-evidence refusal the script-placing ensures share ─────────────────────────
 
 // The Node-evidence refusal every ensure that places Node scripts shares (contract: kit/node-evidence):
 // null when Node provably runs here, else the ONE outcome the caller returns — a stated skip naming the
@@ -226,123 +223,6 @@ export const nodeEvidenceRefusal = (op, cwd, lstat) => {
     return ok(op, 'skipped-no-node-evidence', `${SCRIPTS_DIR}/: no Node evidence in this tree — probed ${describeNodeProbes(evidence)}, no regular file present; the seeded pairs are Node enforcement, so nothing written`);
   }
   return null;
-};
-
-const OLD_ADR_LAYOUTS = new Set(['old', 'old-unrotated']);
-
-// The scripts ensure writes file by file, so a failure PARTWAY leaves earlier writes (refreshed set members,
-// copied seeds) in place. Saying so is the difference between a failure the reader can act on and one they
-// read as "nothing happened" — the CLI's summary claims nothing about writes; this line states the truth.
-const REFRESHED = ' — refreshed to the bundled one';
-const partialNote = (lines) => {
-  const copied = lines.filter((line) => line.includes(': copied from the bundled scripts') || line.endsWith(REFRESHED)).length;
-  return copied > 0 ? [`the copying stopped PARTWAY — the ${copied} file(s) named above were already copied and are NOT rolled back`] : [];
-};
-
-// ── the installer set: refreshed as ONE, before and independent of the ADR-layout read ──────────
-
-// The deployed suites test the installer beside them, so the three move together: an edited member withholds
-// all three, a prior one is replaced in INSTALLER_SET order (installer first), an absent one stays absent, and
-// with none present nothing is read. → { refusal } or { lines, refreshed, withheld }, each line what this run did.
-const WITHHELD = 'left as it stands because an edited member withholds the set';
-const PRIOR_FATES = { written: REFRESHED, would: ' — would be refreshed to the bundled one', stopped: ' — not refreshed; the run stopped before it', refused: ' — not refreshed; its write was refused (above)' };
-const SET_LINES = {
-  absent: () => 'absent — not placed by this op',
-  current: (withheld) => (withheld ? WITHHELD : 'already the bundled body — nothing written'),
-  custom: () => 'carries an edited body — preserved verbatim; an edited member withholds the set, so none of the three is refreshed',
-  prior: (withheld, fate) => (withheld ? WITHHELD : `matches a body an earlier release shipped${PRIOR_FATES[fate]}`),
-};
-const refreshInstallerSet = ({ cwd, kitRoot, dryRun, deps, read, lstat }) => {
-  const members = INSTALLER_SET.map((name) => ({ name, rel: `${SCRIPTS_DIR}/${name}`, state: 'absent', probe: probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat) }));
-  if (!members.some((m) => m.probe.present)) return { lines: [], refreshed: false, withheld: false };
-  const wrong = members.find((m) => m.probe.wrongKind);
-  if (wrong) return { refusal: loud('scripts', 'wrong-node-kind', `${wrong.rel}: exists but is ${wrong.probe.wrongKind} — nothing was read or written; resolve it by hand, then re-run`) };
-  for (const m of members.filter((f) => f.probe.present)) {
-    try {
-      m.bundle = read(join(kitRoot, 'references', 'scripts', m.name));
-    } catch (err) {
-      return { refusal: loud('scripts', 'bundle-unreadable', `${m.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
-    }
-    m.state = classifyDeployedScript(read(join(cwd, m.rel)), m.name, m.bundle);
-  }
-  const withheld = members.some((m) => m.state === 'custom');
-  const priors = withheld ? [] : members.filter((m) => m.state === 'prior');
-  const fates = new Map();
-  const notes = [];
-  const linesNow = () => [...members.map((m) => `${m.rel}: ${SET_LINES[m.state](withheld, fates.get(m.rel) ?? (dryRun ? 'would' : 'stopped'))}`), ...notes];
-  for (const m of dryRun ? [] : priors) {
-    try {
-      notes.push(...tmpNote(m.rel, writeContainedFileAtomic(cwd, join(cwd, m.rel), m.bundle, deps, { label: m.rel }).tmpLeftBehind));
-    } catch (err) {
-      fates.set(m.rel, 'refused');
-      const lines = linesNow();
-      return { refusal: loud('scripts', 'write-refused', `${m.rel}: ${causeOf(err)}`, ...lines, ...partialNote(lines)) };
-    }
-    fates.set(m.rel, 'written');
-  }
-  return { lines: linesNow(), refreshed: priors.length > 0, withheld };
-};
-
-// The op's ONE token after the instructed migration: a seed, then the set's refresh, then an edited set kept.
-const scriptsToken = (seeded, set, dryRun) => {
-  if (seeded) return dryRun ? 'would-seed' : 'seeded';
-  if (set.refreshed) return dryRun ? 'would-refresh' : 'refreshed';
-  return set.withheld ? 'customized-preserved' : 'already-present';
-};
-
-export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
-  const lstat = deps.lstat ?? lstatSync;
-  const read = deps.readFile ?? readFileSync;
-  const refusal = nodeEvidenceRefusal('scripts', cwd, lstat);
-  if (refusal) return refusal;
-  const set = refreshInstallerSet({ cwd, kitRoot, dryRun, deps, read, lstat });
-  if (set.refusal) return set.refusal;
-  let layout;
-  try {
-    layout = surveyAdrLayoutStrict(cwd, deps);
-  } catch (err) {
-    return loud('scripts', 'adr-layout-unverifiable', `${SCRIPTS_DIR}/: the ADR-store layout could not be read, so the ADR files were not seeded — a rotator seeded beside an un-migrated store reds the ADR gate. ${causeOf(err)}`, ...set.lines, ...partialNote(set.lines));
-  }
-  if (OLD_ADR_LAYOUTS.has(layout)) {
-    return ok('scripts', 'old-adr-layout-migration-instructed', ...set.lines, `${SCRIPTS_DIR}/: this project is still on the older ADR layout (${layout}) — the ADR files were not seeded. Run the opt-in /agent-workflow-kit migrate-adr-store (it previews, and never commits); the seed lands on the next upgrade.`);
-  }
-  const lines = [...set.lines];
-  let anyCreated = false;
-  for (const name of SEED_SCRIPTS) {
-    const rel = `${SCRIPTS_DIR}/${name}`;
-    const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat);
-    if (probe.wrongKind) {
-      return loud('scripts', 'wrong-node-kind', `${rel}: exists but is ${probe.wrongKind} — that is not the enforcement script this run places`, ...lines, ...partialNote(lines));
-    }
-    if (probe.present) {
-      lines.push(`${rel}: already present — preserved, never overwritten`);
-      continue;
-    }
-    if (dryRun) {
-      lines.push(`${rel}: absent — would be copied from the bundled scripts`);
-      continue;
-    }
-    let body;
-    try {
-      body = String(read(join(kitRoot, 'references', 'scripts', name), 'utf8'));
-    } catch (err) {
-      return loud('scripts', 'bundle-unreadable', `${rel}: the bundled script could not be read — reinstall the kit. ${causeOf(err)}`, ...lines, ...partialNote(lines));
-    }
-    // The WRITE is caught here, not by the CLI's catch-all: a throw that escapes this loop would take
-    // the accumulated lines with it, and the run would report a failure without saying which files it
-    // had already copied.
-    let result;
-    try {
-      result = writeProjectFileCreateOnly(cwd, rel, body, deps, { noun: 'a seeded enforcement script' });
-    } catch (err) {
-      return loud('scripts', 'write-refused', `${rel}: ${causeOf(err)}`, ...lines, ...partialNote(lines));
-    }
-    anyCreated = anyCreated || result.created;
-    lines.push(result.created ? `${rel}: copied from the bundled scripts` : `${rel}: appeared while this run was seeding it — the existing file stands`);
-    lines.push(...tmpNote(rel, result.tmpLeftBehind));
-  }
-  const seeded = dryRun ? lines.some((line) => line.includes('would be copied')) : anyCreated;
-  return outcome('scripts', scriptsToken(seeded, set, dryRun), lines, false);
 };
 
 // ── docs/ai/index.md — the GENERATED navigator, regenerated when missing or stale ───────────────
@@ -516,6 +396,5 @@ export const OWN_IMPLEMENTATIONS = Object.freeze({
   gates: ensureGates,
   autonomy: ensureAutonomy,
   vehicles: ensureVehicles,
-  scripts: ensureScripts,
   index: ensureIndex,
 });

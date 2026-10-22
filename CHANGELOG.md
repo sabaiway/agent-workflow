@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-22 — AD-198: every upgrade keeps all the kit's scripts in your `scripts/` current, an edit kept aside and replaced on the one yes (kit 14.46.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
+
+**A kit script in `scripts/` no longer stays stale or missing forever.** Once a kit script stands in `scripts/`, the
+upgrade judges every kit script the bundle ships but the spec-layer pairs: a body an earlier release shipped is refreshed with no question, and
+an edited or absent one is named in the one replace block, then kept aside and replaced, or placed, only on the yes.
+An edited member of the hook installer set no longer holds back the other two; on an older ADR layout the decisions
+files are held back with the migration named; a project with only a `package.json` no longer gets the ADR files
+seeded. Contracts: distribution-files revision 2, init-project revision 17, vehicle-settings revision 4,
+node-evidence revision 6, docs-navigator revision 3. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-21 — AD-197: the kit's search and plan checks no longer walk into the folder of kept-aside copies (kit 14.45.0 MINOR; memory 8.4.0, engine 5.12.1 and both bridges unchanged)
 
 **A kept-aside copy no longer shows up beside the live file.** The kit's literal search (the MCP `repo_search` tool)

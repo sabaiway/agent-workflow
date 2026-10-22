@@ -704,21 +704,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   their temp root's `.git`. Narrow fix: each deployed suite strips the hook's inherited git variables, and the index check
   is judged in the linked tree. Residual, live: every commit from a linked worktree of a deployment stops. Raised by the
   EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9 spec review (lens, round 1).
-- **INIT-PROJECT-S66-REFRESH-CELLS-NAME-NO-ADR-STATE** — invariant: every cell of init-project S66 that expects the
-  token `refreshed` names the ADR files' state that token needs. Origin: S66's `refreshed` cells (the mixed set and the
-  current installer beside prior suites) say nothing of the ADR files, while S67 shows a prior set beside absent ADR
-  files answers `seeded` by the token precedence. Narrow fix: those cells say "beside present ADR files", as S67 does.
-  Residual: a test written from S66 alone may pick absent ADR files and meet `seeded`; the token mismatch shows it at
-  once. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9 spec review (lens, the re-read of round 2).
-- **UPGRADE-SET-REFRESH-MAY-GROW-A-RECORDED-SIZE-UNSTATED** — invariant: every refresh the upgrade makes without a yes
-  states, where the size practice measures `scripts/`, that its growth may stop the next size check. Origin:
-  `agent-workflow-kit/references/modes/upgrade.md:46` (the enforcement-script paragraph) against the git-hooks part's
-  hook-checks bullet, whose risk note says this before its yes while the installer set's refresh asks none. Narrow fix:
-  one clause in that paragraph naming the growth and the reasoned `--write-baseline`. Residual, live: where the size
-  practice measures `scripts/` with a recorded size, the next size check after the upgrade — the hook's layout line or a
-  declared source-size gate — stops, printing that check's own reasoned `--write-baseline` remedy; not live for a
-  deployment whose size practice does not measure `scripts/`. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9
-  diff review (lens, round 1).
 - **S71-MODE-CHECK-FAILS-WHERE-CHMOD-IS-IGNORED** — invariant: the installer's deployed suites pass inside the hook on
   every filesystem a temp dir can sit on. Origin: the S71 commit helper asserts the local file it wrote with mode 0644
   carries no executable bit (`agent-workflow-memory/references/scripts/install-git-hooks-repo-exec.test.mjs:154`); on a
@@ -727,16 +712,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   it just made does not read back, keeping the file at 0644 where the filesystem honours it. Residual, not live where
   the temp dir is a POSIX filesystem or Windows (which reports no exec bits). Raised by the
   DISTRIBUTION-FILES-STAY-CURRENT S1 diff review (lens, round 1).
-- **REPLACE-RUN-EMPTY-UNION-MISSES-A-NEW-EDIT** — invariant: no line of a replace run points at a block below, and a
-  file that turns edited during a replace run is reported so the upgrade asks again. Origin: the distribution-files
-  contract's empty-union branch runs the owning ops in their ordinary mode, while a replace run prints no block, so a
-  spec-layer file turned edited between the run's survey and the op's own survey gets the op's "the block below" line,
-  `customized-preserved`, exit 0, no ask (today's single survey reports it `race-unresolved` with a fresh line); and
-  scenario S7's "the race-unresolved outcome's lines name no block below" reads as one case where three are meant.
-  Narrow fix: the empty-union branch runs the owning ops under the replace with no bound entry, so the bound-entries
-  rule makes such a file `race-unresolved`; S7 says "each race-unresolved outcome's lines". Residual: a window of one
-  run between two surveys; the next plain run asks. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S2 spec review
-  (lens, the last-round re-read).
 - **SPECS-SEED-RACE-REPROOF-READS-OUTSIDE-A-TRY** — invariant: a seed that lost the create-only race is reported
   `race-unresolved`, never thrown, whatever then stands at its path. Origin: `ensure-specs.mjs:232` `stoodCurrent` reads
   the file that appeared with a plain `read`; a file removed or turned into a directory between the create-only
@@ -744,8 +719,50 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Narrow fix: the read failing counts as not current, as `movedSinceBind` does. Residual: a window inside one write,
   the writer re-checking the node after EEXIST (`atomic-write.mjs`); no write decision changes. Raised by the
   DISTRIBUTION-FILES-STAY-CURRENT S2 diff review (lens, the round-1 fold ask).
+- **RECOMMENDATIONS-SPEC-ADOPTION-NOTE-NAMES-ONLY-THE-SPEC-LAYER** — invariant: an advisor item's note names every
+  file its apply line may write or ask a yes for. Origin: `agent-workflow-kit/references/modes/recommendations.md:20`
+  and `:46` describe `spec-adoption`'s `ensure-configs --reconcile --only specs` as the spec layer's seed, while since
+  kit 14.46.0 an `--only specs` run also surveys the kit scripts, so an absent kit script alone brings out the replace
+  line, and a refused scripts survey makes that apply exit 1. Narrow fix: both notes say the block may name kit scripts
+  and that a refused scripts survey fails the apply. Residual: the block names each file and takes its own yes, so no
+  file is written unasked. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (lens, round 1).
+- **INDEX-ROUTE-NAMES-A-REPLACE-LINE-NO-RUN-PRINTS** — invariant: a route a line names is one the same run printed.
+  Origin: the `route` sentence of `ensureKeptIndex` in `agent-workflow-kit/tools/ensure-ops.mjs` names "the replace line
+  printed for the spec layer" whenever a spec-layer file is custom, while a refused specs survey beside a custom hook
+  module adds no entry, so no line for that file prints. Narrow fix: the route names the replace line only when the
+  specs outcome carries entries, else the specs failure above. Residual: exists since kit 14.44.0; the specs failure
+  line stands above it. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (codex and lens, round 2).
+- **SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES** — invariant: an owning op whose survey completed reports its entries on
+  every outcome. Origin: `agent-workflow-kit/tools/ensure-specs.mjs:228` `stoodCurrent` re-reads a file after the
+  survey with a plain `read`; a throw there reaches the CLI as `unexpected-error` with no entries, so the block drops
+  the op's files and the upgrade costs one more ask. Narrow fix: that re-read caught, the op failing `race-unresolved`
+  with its entries. Residual: a window inside one write; the next plain run asks. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (lens, round 2).
+- **SCRIPTS-REREAD-THROW-DROPS-THE-PARTIAL-NOTE** — invariant: a scripts op that stops partway names every file it
+  already wrote. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:102` (a bound edit re-proven before
+  its replace) and `:116` (a bound absent file that appeared) re-read with a plain `read`; a throw there reaches the CLI
+  as `unexpected-error`, without the lines naming the files already written. Narrow fix: both re-reads caught, the op
+  failing `race-unresolved` with its lines and partial note. Residual: a window inside one write. Named by the
+  DISTRIBUTION-FILES-STAY-CURRENT S3 plan, beside SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES.
 
 ## Closed
+
+- **INIT-PROJECT-S66-REFRESH-CELLS-NAME-NO-ADR-STATE** — invariant: every cell of init-project S66 that expects the
+  token `refreshed` names the ADR files' state that token needs. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9
+  spec review (lens, the re-read of round 2). Closed in kit 14.46.0 (AD-198): S66 retired with S65-S70; the scripts
+  op's scenarios moved to spec distribution-files (its S14 among them), whose part scripts says a plain run never
+  seeds, so no `refreshed` cell can meet `seeded`.
+- **UPGRADE-SET-REFRESH-MAY-GROW-A-RECORDED-SIZE-UNSTATED** — invariant: every refresh the upgrade makes without a yes
+  states, where the size practice measures `scripts/`, that its growth may stop the next size check. Raised by the
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9 diff review (lens, round 1). Closed in kit 14.46.0 (AD-198): the
+  enforcement-script paragraph of `references/modes/upgrade.md` names the growth and the size check's own reasoned
+  `--write-baseline`.
+- **REPLACE-RUN-EMPTY-UNION-MISSES-A-NEW-EDIT** — invariant: no line of a replace run points at a block below, and a
+  file that turns edited during a replace run is reported so the upgrade asks again. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S2 spec review (lens, the last-round re-read). Closed in kit 14.46.0 (AD-198):
+  `runReplace` runs each owning op under the replace even on an empty union, so a file found edited there is
+  `race-unresolved`, and each owning op's race-unresolved lines under the replace name no block below (only the
+  digest-mismatch line, which a fresh block follows, points at one).
 
 - **INSTALLER-SUITE-FAILS-INSIDE-ITS-OWN-HOOK** — invariant: a suite the kit deploys into `scripts/` passes inside the
   pre-commit hook that runs it. Origin: the 4.0.0-8.2.1 `install-git-hooks.test.mjs` linked-worktree cell spawns git

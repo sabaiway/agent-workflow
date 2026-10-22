@@ -8,23 +8,22 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 import { ENSURE_OPS, ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
-import {
-  composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, ensureScripts, failedOutcome,
-} from '../tools/ensure-ops.mjs';
+import { composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, failedOutcome } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
 import { ensureExecutor } from '../tools/ensure-executor.mjs';
 import { EXECUTOR_VEHICLE_REL, executorTemplate, readExecutorPosture } from '../tools/cheap-agents-read.mjs';
 import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
-// Loaded against the pre-fix tree too (red-first): absent, the specs fixtures below are skipped and
-// the completeness suite reds on the unwitnessed tokens.
+// Loaded against the pre-fix tree too (red-first): absent, the specs and scripts fixtures below are
+// skipped and the completeness suite reds on the unwitnessed tokens.
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
+const { ensureScripts, replaceBlock } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-parity.mjs';
 import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-backends.mjs';
@@ -188,35 +187,37 @@ ensureFx('unexpected-error-catch-all', failedOutcome('orchestration', new Error(
   ensureFx('gates-template-unreadable', ensureGates({ cwd: project(), kitRoot: tmp('clux-empty-'), deps: {} }));
   ensureFx('autonomy-seeded', ensureAutonomy({ cwd: dir, kitRoot: KIT, deps: {} }));
 }
-{
-  const dir = project();
-  ensureFx('scripts-would-seed', ensureScripts({ cwd: dir, kitRoot: KIT, dryRun: true, deps: {} }));
-  ensureFx('scripts-seeded', ensureScripts({ cwd: dir, kitRoot: KIT, deps: {} }));
-  ensureFx('scripts-already-present', ensureScripts({ cwd: dir, kitRoot: KIT, deps: {} }));
-  { const r = ensureScripts({ cwd: dir, kitRoot: KIT, deps: { statPath: () => { throw eacces(); } } }); assert.match(r.lines[0], /the ADR files were not seeded/); ensureFx('scripts-adr-layout-unverifiable', r); }
-  const wrongKindDir = project();
-  mkdirSync(join(wrongKindDir, 'scripts', 'archive-decisions.mjs'), { recursive: true });
-  ensureFx('scripts-wrong-node-kind', ensureScripts({ cwd: wrongKindDir, kitRoot: KIT, deps: {} }));
-}
-ensureFx('scripts-skipped-no-node-evidence', ensureScripts({ cwd: project({ node: false }), kitRoot: KIT, deps: {} }));
-ensureFx('scripts-node-evidence-unverifiable', ensureScripts({ cwd: project({ node: false }), kitRoot: KIT, deps: { lstat: () => { throw eacces(); } } }));
-{
-  const dir = project();
-  mkdirSync(join(dir, 'docs', 'ai', 'history'), { recursive: true });
-  writeFileSync(join(dir, 'docs', 'ai', 'history', 'decisions-archive.md'), '# old monolith\n');
-  ensureFx('scripts-old-adr-layout', ensureScripts({ cwd: dir, kitRoot: KIT, deps: {} }), true);
-}
-{
-  // A bundle readable for file 1 and missing file 2 → the op stops PARTWAY and says so.
-  const partialKit = tmp('clux-partial-');
-  mkdirSync(join(partialKit, 'references', 'scripts'), { recursive: true });
-  writeFileSync(join(partialKit, 'references', 'scripts', 'archive-decisions.mjs'), '// bundled\n');
-  ensureFx('scripts-bundle-unreadable-partway', ensureScripts({ cwd: project(), kitRoot: partialKit, deps: {} }));
-}
-{
-  const dir = project();
-  ensureFx('scripts-write-refused', ensureScripts({ cwd: dir, kitRoot: KIT, deps: { link: () => { throw eacces(); } } }));
-}
+// The scripts op: every line form of its rule through the real op, each fixture with the exact lines it witnesses (a failure's first line after its cause; a line may run on past a witness at a space).
+const bundled = (name) => readFileSync(join(KIT, 'references', 'scripts', name)), prior = (version, name) => readFileSync(join(KIT, 'test', 'fixtures', 'script-priors', version, `${name}.txt`));
+const scriptsTree = (over = {}, dir = project()) => { mkdirSync(join(dir, 'scripts')); for (const name of readdirSync(join(KIT, 'references', 'scripts'))) if (over[name] !== null) writeFileSync(join(dir, 'scripts', name), over[name] ?? bundled(name)); return dir; };
+const runScripts = (dir, extra = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, deps: {}, ...extra });
+const replaceScripts = (dir, deps = {}) => runScripts(dir, { deps, replace: { digest: REPLACE_DIGEST, entries: runScripts(dir, { dryRun: true }).entries } });
+const appearing = (body) => ({ link: (_tmp, dst) => { writeFileSync(dst, body); throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' }); } });
+const [HOOKS, MINE, KEPT, SHIPPED] = ['install-git-hooks.mjs', '// mine\n', `.agent-workflow/kept-aside/${REPLACE_DIGEST.slice(0, 16)}/scripts/`, ': matches a body an earlier release shipped — '];
+const oldHooks = { [HOOKS]: prior('4.0.0', HOOKS) }, oldSet = { ...oldHooks, 'install-git-hooks.test.mjs': prior('7.2.0', 'install-git-hooks.test.mjs'), 'install-git-hooks-repo-exec.test.mjs': prior('4.0.0', 'install-git-hooks-repo-exec.test.mjs') };
+const [refreshing, pendingTree] = [scriptsTree(oldHooks), scriptsTree({ [HOOKS]: MINE, 'migrate-gates.mjs': null })];
+const SCRIPTS_FX = [['scripts-not-placed', () => runScripts(project()), 'scripts/: no kit script stands in it, so none is placed'],
+  ['scripts-would-refresh', () => runScripts(refreshing, { dryRun: true }), `scripts/${HOOKS}${SHIPPED}would be refreshed to the bundled one`],
+  ['scripts-refreshed', () => runScripts(refreshing), `scripts/${HOOKS}${SHIPPED}refreshed to the bundled one`],
+  ['scripts-already-present', () => runScripts(refreshing), 'scripts/: 21 other kit scripts are already the bundled body — nothing written'],
+  ['scripts-pending', () => runScripts(pendingTree), `scripts/${HOOKS}: differs from every body this kit knows it shipped — left as it stands until the user's yes keeps it aside and replaces it (the block below)`, "scripts/migrate-gates.mjs: absent — the user's yes places the bundled body (the block below)"],
+  ['scripts-set-race', () => runScripts(pendingTree, { replace: { digest: REPLACE_DIGEST, entries: [] } }), 'the kit scripts to place or replace are not the set the yes was given for (another set or other bytes), so nothing was written', `scripts/${HOOKS}: carries an edit — not replaced`, 'scripts/migrate-gates.mjs: absent — not placed'],
+  ['scripts-seeded', () => replaceScripts(pendingTree), `scripts/${HOOKS}: carried an edit — kept aside at ${KEPT}${HOOKS}, then replaced by the bundled body on the user's yes`, "scripts/migrate-gates.mjs: placed from the bundled scripts on the user's yes"],
+  ['scripts-appeared', () => replaceScripts(scriptsTree({ 'migrate-gates.mjs': null }), appearing(bundled('migrate-gates.mjs'))), 'scripts/migrate-gates.mjs: appeared while this run was placing it — the bundled body stands, nothing written'],
+  ['scripts-appeared-race', () => replaceScripts(scriptsTree({ 'migrate-gates.mjs': null }), appearing('// other\n')), 'scripts/migrate-gates.mjs: appeared while this run was placing it and does not carry the bundled body — nothing further written, re-run when the tree is settled'],
+  ['scripts-write-refused', (renames = 0) => replaceScripts(scriptsTree({ ...oldSet, 'archive-caps.mjs': MINE, 'migrate-gates.mjs': null }), { rename: (from, to) => { if (++renames === 2) throw eacces('EACCES: refused'); renameSync(from, to); } }), 'scripts/install-git-hooks.test.mjs: EACCES: refused', `scripts/install-git-hooks.test.mjs${SHIPPED}not refreshed; its write was refused (above)`,
+    `scripts/install-git-hooks-repo-exec.test.mjs${SHIPPED}not refreshed; the run stopped before it`, `scripts/archive-caps.mjs: carries an edit — not replaced; its copy kept aside at ${KEPT}archive-caps.mjs stays`, 'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back'],
+  ['scripts-edit-race', (reads = 0, at = scriptsTree({ 'archive-caps.mjs': MINE })) => replaceScripts(at, { readFile: (path, ...rest) => (path === join(at, 'scripts', 'archive-caps.mjs') && ++reads === 2 ? Buffer.from('// moved\n') : readFileSync(path, ...rest)) }), 'scripts/archive-caps.mjs: changed after this run read it — left as it stands and nothing further written'],
+  ['scripts-old-adr-layout', (at = scriptsTree()) => (mkdirSync(join(at, 'docs', 'ai', 'history')), writeFileSync(join(at, 'docs', 'ai', 'history', 'decisions-archive.md'), '# old monolith\n'), runScripts(at)), 'scripts/: archive-decisions.mjs, archive-decisions.test.mjs and archiver-structure.test.mjs are held back while this project is on the older ADR layout (old) — run the opt-in /agent-workflow-kit migrate-adr-store (it previews, and never commits); the next upgrade judges them'],
+  ['scripts-adr-layout-unverifiable', () => runScripts(scriptsTree({ ...oldHooks, 'install-git-hooks.test.mjs': MINE, 'install-git-hooks-repo-exec.test.mjs': null }), { deps: { statPath: () => { throw eacces('EACCES: denied'); } } }), 'scripts/: the ADR-store layout could not be read (EACCES: denied), so the other kit scripts wait for the layout', "scripts/install-git-hooks-repo-exec.test.mjs: left as it stands; the user's yes is asked once the ADR-store layout reads"],
+  ['scripts-wrong-node-kind', (at = project()) => (writeFileSync(join(at, 'scripts'), ''), runScripts(at)), 'scripts/: exists but is a regular file — nothing was read or written; resolve it by hand, then re-run'],
+  ['scripts-wrong-node-kind-family', (at = project()) => (mkdirSync(join(at, 'scripts', 'archive-decisions.mjs'), { recursive: true }), runScripts(at)), 'scripts/archive-decisions.mjs: exists but is a directory — nothing was read or written; resolve it by hand, then re-run'],
+  ['scripts-bundle-unreadable', () => runScripts(scriptsTree(), { kitRoot: tmp('clux-empty-') }), 'scripts/install-git-hooks.mjs: the bundled script could not be read, so nothing was written — reinstall the kit.'],
+  ['scripts-skipped-no-node-evidence', () => runScripts(project({ node: false })), 'scripts/: no Node evidence in this tree — probed package.json and the kit-seeded scripts/ files'],
+  ['scripts-node-evidence-unverifiable', () => runScripts(project({ node: false }), { deps: { lstat: () => { throw eacces(); } } }), 'scripts/: whether Node runs here could not be read (EACCES on package.json), so nothing was written — resolve it by hand, then re-run'],
+];
+if (ensureScripts) { fx('replace-block', 'block-hook-run', false, replaceBlock(runScripts(pendingTree).entries, { kitRoot: KIT, cwd: '/project' })); for (const [id, build] of SCRIPTS_FX) ensureFx(id, build(), id === 'scripts-old-adr-layout' || undefined); }
+const scriptsUnwitnessed = () => SCRIPTS_FX.flatMap(([id, , ...lines]) => lines.filter((w) => !SURFACES.find((s) => s.id === id)?.lines.some((line) => line === w || line.startsWith(`${w} `))).map((w) => `${id}: ${w}`));
 {
   // The navigator ensure drives a SEPARATE process, so its causes split by how far that process
   // got — every one witnessed through the real op, never a hand-composed line.
@@ -317,9 +318,7 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
   CLI_RUNS.failure = cliFx('failure-run', dir, true);
 }
 
-// The replace lines through the real CLI on REAL digests: each replace run follows a plain run (its block fixture); the absent line has no producer yet, so the door composes it.
-const { replaceBlock } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
-fx('replace-block', 'block-absent', false, replaceBlock?.([{ rel: 'scripts/c.mjs', absent: true }], { kitRoot: KIT, cwd: '/project' }) ?? []);
+// The replace lines through the real CLI on REAL digests: each replace run follows a plain run (its block fixture).
 const replaceFx = (id, abnormal, arrange = () => {}, alsoEdited) => {
   const dir = projectWithScripts('check-docs-size.mjs'); if (alsoEdited) writeFileSync(join(dir, 'scripts', alsoEdited), '// mine\n');
   const digest = cliFx(`${id}-block`, dir, false).result.stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1] ?? REPLACE_DIGEST; arrange(join(dir, '.agent-workflow'), join(dir, '.agent-workflow', 'kept-aside', digest.slice(0, 16), 'scripts'));
@@ -333,8 +332,8 @@ replaceFx('cli-keep-aside-copy', true, (_, kept) => { mkdirSync(kept, { recursiv
 const unwitnessed = (witnesses) => Object.entries(witnesses).flatMap(([phrase, ids]) => ids.filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase))).map((id) => `${id}: a line carries "${phrase}"`));
 describe('spec:docs-navigator/S5 the kept-checker index lines are user-grade', () => { it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'], 'the navigator was put back byte for byte': ['index-kept-put-back'] }), [], 'each S5 fixture carries its witness')); });
 describe('spec:distribution-files/S11 the replace block, race, keep-aside, specs and navigator lines are user-grade', () => {
-  it('each S11 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ 'then the bundled body replaces it; an edit meant to last goes in': ['cli-replaced-block'], ": absent — the user's yes places the bundled body": ['block-absent'], "only on the user's yes, keep aside and replace the files named above: node ": ['cli-replaced-block', 'block-absent'], 'the files to replace changed since the replace line was printed (another set or other bytes), so nothing was written': ['cli-replace-race'], '.agent-workflow/.gitignore: holds other bytes — it must hold exactly "*" and a line feed': ['cli-keep-aside-ignore'], '.agent-workflow: exists but is a symlink — nothing was kept aside or replaced': ['cli-keep-aside-symlink'],
-    "check-docs-size.test.mjs: a copy with other bytes is there — it is the user's to move or delete": ['cli-keep-aside-copy'], 'the edits already kept aside stay where they are: .agent-workflow/kept-aside/': ['cli-keep-aside-copy'], "carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below)": ['specs-customized-preserved', 'cli-replaced-block'], "then replaced by the bundled body on the user's yes": ['cli-replaced'], 'the navigator step did not run: a replace run runs it only after the spec layer succeeds': ['cli-replace-race', 'cli-keep-aside-ignore', 'cli-keep-aside-symlink', 'cli-keep-aside-copy'] }), [], 'each S11 fixture carries its witness'));
+  it('each S11 fixture carries the line it witnesses', () => assert.deepEqual([...scriptsUnwitnessed(), ...unwitnessed({ 'then the bundled body replaces it; an edit meant to last goes in': ['cli-replaced-block'], 'which the commit hook runs first; the commit hook runs it, so it may stop the next commit': ['block-hook-run'], "absent — the user's yes places the bundled body; the commit hook runs it, so it may stop the next commit": ['block-hook-run'], "only on the user's yes, keep aside and replace the files named above: node ": ['cli-replaced-block', 'block-hook-run'], 'the files to replace changed since the replace line was printed (another set or other bytes), so nothing was written': ['cli-replace-race'], '.agent-workflow/.gitignore: holds other bytes — it must hold exactly "*" and a line feed': ['cli-keep-aside-ignore'], '.agent-workflow: exists but is a symlink — nothing was kept aside or replaced': ['cli-keep-aside-symlink'],
+    "check-docs-size.test.mjs: a copy with other bytes is there — it is the user's to move or delete": ['cli-keep-aside-copy'], 'the edits already kept aside stay where they are: .agent-workflow/kept-aside/': ['cli-keep-aside-copy'], "carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below)": ['specs-customized-preserved', 'cli-replaced-block'], "then replaced by the bundled body on the user's yes": ['cli-replaced'], 'the navigator step did not run: a replace run runs it only after every step it re-runs succeeds': ['cli-replace-race', 'cli-keep-aside-ignore', 'cli-keep-aside-symlink', 'cli-keep-aside-copy'] })], [], 'each S11 fixture carries its witness'));
 });
 
 // ── the placed-bridge refresh lines (every REFRESH_LINES key + every parity verdict) ─

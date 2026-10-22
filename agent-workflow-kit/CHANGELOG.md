@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.46.0 — every upgrade keeps all the kit's scripts in your `scripts/` current, an edit kept aside and replaced on the one yes (AD-198)
+
+**A kit script in `scripts/` no longer stays stale or missing forever.** Before, the upgrade's `scripts` step
+refreshed only the hook installer and its two suites, seeded the four ADR files once and then never touched them, and
+left every other kit script outside the spec layer as it was deployed. Now the upgrade's `scripts` step judges every kit script the bundle ships (all of
+`references/scripts/*.mjs` but the spec-layer files, which the `specs` step keeps), each by proof:
+
+- **A body an earlier release shipped is refreshed** to the bundled one with no question; the current body is left.
+- **An edited or an absent file waits for the upgrade's one yes.** It is named in the one replace block, each line
+  adding that the commit hook runs it, so it may stop the next commit; on the yes an edit is first kept aside under
+  `.agent-workflow/kept-aside/`, then replaced, and an absent file is placed. On a no nothing edited is replaced and
+  nothing absent is placed; the next upgrade asks again. An edit to the hook installer belongs in
+  `scripts/pre-commit.local`; any other in a script or suite of your own under its own name in `scripts/`, or in a
+  config the script reads.
+- **Only where you took the kit's scripts.** The step works once at least one kit script stands in `scripts/`;
+  otherwise it places nothing and reports `not-placed`. A project with only a `package.json` no longer gets the four
+  ADR files seeded.
+- **No file waits on another.** An edited member of the installer set no longer holds back the other two; the
+  installer and its two suites are still written first.
+- **On an older ADR layout** `archive-decisions.mjs`, `archive-decisions.test.mjs` and `archiver-structure.test.mjs`
+  are held back, with the opt-in `/agent-workflow-kit migrate-adr-store` named; a layout that cannot be read keeps the
+  installer set current and fails the step.
+- **The step's outcomes:** `refreshed`, `pending` (a file waits for the yes), `already-present`, `not-placed`,
+  `old-adr-layout-migration-instructed`, `skipped-no-node-evidence`, and `seeded` on the replace run;
+  `customized-preserved` no longer comes from this step.
+- **The replace run** (`ensure-configs --reconcile --replace-custom <digest>`) keeps every edit aside, then runs the
+  kit scripts, then the spec layer, then the navigator when nothing failed. A step whose survey was refused takes no
+  part, and each step runs under the replace even when nothing was edited, so a file edited after the block printed is
+  reported, not replaced. An `--only scripts` or `--only specs` run also surveys the other step, without a write, so
+  its block names every file waiting for the yes.
+- `references/modes/upgrade.md` says where a refresh or a placement may grow a recorded size and that the size check
+  names its own reasoned `--write-baseline`.
+- Stated limit: an older body of a script the kit has no record of reads as edited, so it costs one kept-aside copy.
+- Contracts: distribution-files revision 2 (parts scripts and replace-set), init-project revision 17 (git-hooks 14),
+  vehicle-settings revision 4, node-evidence revision 6, docs-navigator revision 3.
+
 ## 14.45.0 — the kit's search and plan checks no longer walk into the folder of kept-aside copies (AD-197)
 
 **A kept-aside copy no longer shows up beside the live file.** Since 14.44.0 the upgrade keeps a replaced edit at

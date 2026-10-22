@@ -6,8 +6,8 @@
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
 //   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
-//   scripts        scripts/<ADR enforcement>   the hook installer and its two suites refreshed as one set on a shipped
-//                  + the installer set         prior body (an edited member keeps all three); ADR seeds seed-if-missing, layout detect first
+//   scripts        scripts/<every kit script>  one rule per file once a kit script stands there: a shipped prior refreshed,
+//                  + the installer set         an absent or edited one placed or replaced on the user's yes; installer set first
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
 //                                              user's yes; store root seeded behind a current checker
@@ -28,9 +28,10 @@
 //   • The ops run in a FIXED order and one op's failure NEVER skips the rest: every op reports its own
 //     token, and the exit is non-zero when any of them failed. The one exception is the replace run
 //     (--replace-custom <digest>), which distribution-files/ runs: each edit kept aside, then the
-//     owning ops (specs), then index only when none failed.
-//   • ONE replace block, after every op's lines and before the failure footer, over the entries of
-//     every op that ran: the files whose write waits for the user's yes, and the one command for it.
+//     owning ops (scripts, then specs), then index only when none failed.
+//   • ONE replace block, after every op's lines and before the failure footer, over the union the
+//     replace run recomputes: the files whose write waits for the user's yes, and the one command for
+//     it. An --only run of an owning op surveys the other owning op without a write for it.
 //   • The deployment gate runs ONCE, before any op: an absent/symlinked docs/ai stops the whole run
 //     with the gate's own message rather than one copy of it per op.
 //
@@ -48,15 +49,15 @@ import { ensureExecutor } from './ensure-executor.mjs';
 import { ENSURE_OPS, OWN_IMPLEMENTATIONS, failedOutcome } from './ensure-ops.mjs';
 import { ensureSpecs } from './ensure-specs.mjs';
 import { ensureRules } from './project-rules/index.mjs';
-import { replaceBlock, runReplace } from './distribution-files/index.mjs';
+import { ensureScripts, replaceBlock, runReplace } from './distribution-files/index.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 // The op table this CLI walks — name → implementation, in ENSURE_OPS order. Composed HERE (the one
-// consumer) because the executor, spec-layer and rules ensures import ensure-ops.mjs for their outcome door and probes.
-export const ENSURE_IMPLEMENTATIONS = Object.freeze({ ...OWN_IMPLEMENTATIONS, executor: ensureExecutor, specs: ensureSpecs, rules: ensureRules });
+// consumer) because the executor, scripts, spec-layer and rules ensures import ensure-ops.mjs for their outcome door and probes.
+export const ENSURE_IMPLEMENTATIONS = Object.freeze({ ...OWN_IMPLEMENTATIONS, executor: ensureExecutor, scripts: ensureScripts, specs: ensureSpecs, rules: ensureRules });
 // The ops whose writes wait for the user's yes and so own the replace run, in ENSURE_OPS order.
-const OWNING_OPS = ['specs'];
+const OWNING_OPS = ['scripts', 'specs'];
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
@@ -70,7 +71,7 @@ const REPEATED_ONLY = '--only was passed more than once — this selector names 
 const unknownOp = (value) => `--only ${value}: no such operation (${ENSURE_OPS.join(' | ')}) — nothing was run`;
 const EMPTY_REPLACE = '--replace-custom needs the digest its replace line printed — an empty value names no file to replace';
 const REPEATED_REPLACE = '--replace-custom was passed more than once — a replace run carries exactly ONE digest';
-const REPLACE_WITH_ONLY = '--replace-custom runs the spec layer and then the navigator, so it cannot be combined with --only — nothing was run';
+const REPLACE_WITH_ONLY = '--replace-custom runs the kit scripts, then the spec layer, then the navigator, so it cannot be combined with --only — nothing was run';
 const REPLACE_WITH_DRY_RUN = "--replace-custom writes on the user's yes, so it cannot be combined with --dry-run — nothing was run";
 
 const HELP = `ensure-configs — the nine stamp-independent upgrade ensures, as ONE command.
@@ -81,11 +82,13 @@ Usage:
 
   --reconcile   required — run the nine ensures (${ENSURE_OPS.join(', ')})
   --dry-run     report what each ensure WOULD do; write nothing
-  --only <op>   run EXACTLY ONE of them (an unknown, missing or repeated value is a usage error)
+  --only <op>   run EXACTLY ONE of them (an unknown, missing or repeated value is a usage error); for
+                scripts or specs, a write-free survey of the other owning op feeds the replace block
   --replace-custom <digest>
                 the replace run the replace block prints, run only on the user's yes: every edit its
-                digest names is kept aside under .agent-workflow/kept-aside/, then replaced, then index
-                runs when nothing failed (not with --only or --dry-run; an empty value is a usage error)
+                digest names is kept aside under .agent-workflow/kept-aside/, then the kit scripts and the
+                spec layer replace and place their files, then index runs when nothing failed (not with
+                --only or --dry-run; an empty value is a usage error)
   --cwd <dir>   the target project (default: the current directory)
   --help, -h    this help
 
@@ -102,10 +105,10 @@ the project's own checker judges the navigator and a write it rejects is put bac
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
 body derived from docs/ai/vehicles.json is pending — the advisor's executor-vehicle.differing item
 changes it on your yes; an absent file is never placed here.
-A fifth refreshes too: the enforcement-script ensure refreshes the hook installer with its two suites
-as one set on every Node deployment, whatever its ADR layout, only while each refreshed file is a body a
-release shipped (an edited member keeps all three; an absent one is never placed); then it detects an
-older ADR-store layout and instructs the opt-in migration instead of seeding the ADR files.
+A fifth refreshes too: once a kit script stands in scripts/, the enforcement-script ensure judges every
+kit script, the hook installer and its two suites first: a body a release shipped is refreshed, an edited
+or absent one is named in the replace block, kept aside and replaced or placed only on the user's yes;
+on an older ADR-store layout the decisions files are held back and the opt-in migration is named.
 
 Exit codes: 0 every op fine; 1 an op failed (its line says so) or there is no deployment here; 2 usage.`;
 
@@ -168,16 +171,19 @@ const runOne = (op, args) => {
 // Run every op in ENSURE_OPS order. A throw from one op becomes THAT op's failed outcome — the
 // remaining ops still run, because a project missing its gate declaration should not also be left
 // without its autonomy seed just because the first ensure hit an unreadable file. → { outcomes, block }:
-// the block is the union of the entries of the ops that ran. The replace run is the one exception,
-// handed to runReplace: it keeps every edit aside, runs the owning ops, then index only when none
-// failed, and its block is non-empty only when the digest no longer matches.
+// the block is the union the replace run recomputes — an --only run of an owning op adds the entries of
+// a write-free survey of every other owning op, printing that survey only when it failed. The replace
+// run is the one exception, handed to runReplace: it keeps every edit aside, runs the owning ops, then
+// index only when none failed, and its block is non-empty only when the digest no longer matches.
 export const runEnsures = ({ cwd, kitRoot, dryRun, deps, only, replaceCustom }) => {
   if (replaceCustom !== undefined) {
     const owning = OWNING_OPS.map((op) => ({ op, run: (args) => runOne(op, args) }));
     return runReplace({ cwd, kitRoot, digest: replaceCustom, owning, index: (args) => runOne('index', args), deps });
   }
   const outcomes = (only ? [only] : ENSURE_OPS).map((op) => runOne(op, { cwd, kitRoot, dryRun, deps }));
-  return { outcomes, block: outcomes.flatMap((o) => o.entries ?? []) };
+  const surveys = OWNING_OPS.includes(only) ? OWNING_OPS.filter((op) => op !== only).map((op) => runOne(op, { cwd, kitRoot, dryRun: true, deps })) : [];
+  const shown = [...outcomes, ...surveys.filter((o) => o.failed)].sort((a, b) => ENSURE_OPS.indexOf(a.op) - ENSURE_OPS.indexOf(b.op));
+  return { outcomes: shown, block: [...outcomes, ...surveys].flatMap((o) => o.entries ?? []) };
 };
 
 const render = ({ outcomes, block }, { dryRun, only, replace, kitRoot, cwd }) => {

@@ -3,3 +3,4 @@
 // imports a leaf directly.
 
 export { keptAsidePath, replaceBlock, runReplace } from './replace-set.mjs';
+export { SCRIPT_CHANNEL, ensureScripts } from './scripts.mjs';
