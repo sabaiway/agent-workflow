@@ -18,7 +18,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { UPGRADE_RUNLIST } from '../tools/upgrade-runlist.mjs';
@@ -28,12 +28,13 @@ import { PARITY } from '../tools/refresh-parity.mjs';
 
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const UPGRADE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8');
+const CONTRACTS = readFileSync(resolve(kitRoot, 'references', 'contracts.md'), 'utf8');
 
 // The L1 lock, restated here on purpose: the registry cannot re-order or rename an operation
 // without this test noticing — the ids are the future reconcile driver's item tokens.
 const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'tier', 'bridge-settings'];
 const SKILL_VAR = '${CLAUDE_SKILL_DIR}';
-const CONSENT = "a replace line → ONE yes naming every file its block names, each edit's kept-aside copy and that the bundled body replaces it, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.";
+const CONSENT = "a replace line → ONE yes naming every spec-layer file its block names, each edit's kept-aside copy and that the bundled body replaces it, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.";
 const REPLACE_COMMAND = `node ${SKILL_VAR}/tools/ensure-configs.mjs --reconcile --replace-custom <digest> --cwd <project>`;
 
 // ── extraction helpers (anchored, non-vacuous: a missing anchor is red) ─────────────────────────
@@ -276,8 +277,7 @@ describe('spec:distribution-files/S10 the upgrade asks one yes over the replace 
   it("the spec-layer paragraph keeps edits aside on row 3's yes; contracts.md names the family's reserved folder", () => {
     const paragraph = step3().split('\n').find((line) => line.trim().startsWith('**What the spec-layer ensure does.**'));
     assert.ok(paragraph?.includes("edited files are kept aside and replaced on row 3's yes"), paragraph);
-    const contracts = readFileSync(resolve(kitRoot, 'references', 'contracts.md'), 'utf8');
-    assert.ok(contracts.includes("`.agent-workflow/` is the family's reserved folder") && contracts.includes('`.agent-workflow/kept-aside/<16 hex>/<path>`'));
+    assert.ok(CONTRACTS.includes("`.agent-workflow/` is the family's reserved folder") && CONTRACTS.includes('`.agent-workflow/kept-aside/<16 hex>/<path>`'));
   });
   it('no shipped line says to copy or refresh a script by hand', () => {
     const files = [resolve(kitRoot, 'tools'), resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap(listRegularFiles);
@@ -290,6 +290,26 @@ describe('spec:distribution-files/S10 the upgrade asks one yes over the replace 
     const noNode = step3().split('\n').find((line) => line.includes('**No-Node project:**'));
     assert.ok(noNode?.includes('by hand') && /pair/.test(noNode) && /copy/.test(noNode), 'the spared paragraph names a pair, a copy and by hand');
     assert.deepEqual(handCopyClauses(noNode), []);
+  });
+});
+
+const PAIR_FILES = ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'];
+const keepAsideClauses = (text) => text.split(/;|[.?!](?=\s|$)/).filter((clause) => /kept aside|keeps the edit|\.agent-workflow\/kept-aside\//.test(clause));
+const hasLocalPart = (path) => path.split(/[\\/]/).some((segment) => segment.split('.').includes('local'));
+describe('spec:distribution-files/S26 the guide names the reserved names and channels, and no bundled name takes the local form', () => {
+  it("the opening paragraph names the section, which names the kit's names, the five channels and the name form with its two exceptions", () => {
+    assert.ok(between(CONTRACTS, '# Setup contracts\n\n', '\n\n', 'contracts.md').includes('*Reserved names and channels*'), 'the opening paragraph names the section');
+    const section = (CONTRACTS.split('\n## Reserved names and channels\n')[1] ?? '').replace(/\s+/g, ' ');
+    assert.deepEqual(["Every name the kit bundles and writes over on an upgrade is the kit's", 'written over by the next upgrade with no question and no copy kept', 'A declaration seeded once from a template', "is the user's own file", 'one of five channels', '`scripts/pre-commit.local`', 'go in `scripts/` under names of your own', 'a config a script reads', '`docs/ai/rules/local/<theme>.md`', '`docs/ai/vehicles.json`', 'No path segment of a file the kit bundles and places as its own has a dot-separated part exactly `local`', '`.claude/settings.local.json`', "which the agent writes only on the user's own request"].filter((words) => !section.includes(words)), []);
+    assert.ok(CONTRACTS.includes('Before an upgrade replaces a spec-layer file the user edited (`scripts/spec-schema.mjs`') && CONTRACTS.includes('every other kit script is written over with no copy kept'), 'the reserved folder keeps only spec-layer edits');
+  });
+  it('every clause that keeps an edit aside has the spec layer or a pair file as its subject and names no other script, the installer set or scripts/ whole', () => {
+    assert.deepEqual(keepAsideClauses(CONTRACTS).filter((clause) => !(/spec[ -]layer/.test(clause) || PAIR_FILES.some((path) => clause.includes(path))) || (clause.match(/scripts\/[\w.<>-]*/g) ?? []).some((path) => !PAIR_FILES.includes(path)) || /installer|\bkit scripts?\b/i.test(clause)), []);
+  });
+  it('no file under the kit and memory references trees takes the reserved name form; the judge catches it and spares localize.mjs', () => {
+    const named = [resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap((root) => listRegularFiles(root).map((file) => relative(root, file)));
+    assert.deepEqual(named.filter(hasLocalPart), []);
+    assert.deepEqual(['scripts/pre-commit.local', 'docs/ai/rules/local/x.md', 'x.local.test.mjs', 'localize.mjs'].map(hasLocalPart), [true, true, true, false]);
   });
 });
 

@@ -18,8 +18,8 @@
 //     orchestration-write.mjs — the file's one writer. Nothing here re-derives either.
 //   • Every token names a state this run PROVED. `already-present` follows a probe; `skipped-no-node-evidence`
 //     names every Node probe that answered absent (the refusal the kit-script and spec-layer ensures
-//     share, below; the kit scripts' rule — refresh a shipped prior, place or replace on the user's
-//     yes — lives in distribution-files/scripts.mjs).
+//     share, below; the kit scripts' rule — every kit script written with no question and no copy
+//     kept — lives in distribution-files/scripts.mjs).
 //   • A failed op is a non-zero signal, never a line that reads like success.
 //
 // Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.

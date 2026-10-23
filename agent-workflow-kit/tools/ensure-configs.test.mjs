@@ -53,16 +53,18 @@ const tokensOf = (stdout) =>
 
 const BUNDLE = fileURLToPath(new URL('../references/scripts/', import.meta.url));
 const INDEX_NOT_RUN = 'the navigator step did not run: a replace run runs it only after every step it re-runs succeeds';
-// The spec layer at its bundled bodies, each name in `edited` holding an edit of its own instead.
+// The spec layer at its bundled bodies, each name in `edited` holding an edit of its own instead, beside an edited kit script.
 const edit = (name) => `// my own ${name}\n`;
+const CAPS = join('scripts', 'archive-caps.mjs');
 const withSpecLayer = (fn, edited = ['check-docs-size.mjs']) => withProject((dir) => {
   mkdirSync(join(dir, 'scripts'));
-  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs']) writeFileSync(join(dir, 'scripts', name), edited.includes(name) ? edit(name) : readFileSync(join(BUNDLE, name)));
+  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs', 'archive-caps.mjs']) writeFileSync(join(dir, 'scripts', name), [...edited, 'archive-caps.mjs'].includes(name) ? edit(name) : readFileSync(join(BUNDLE, name)));
   return fn(dir);
 });
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const DIGEST = sha256(`scripts/check-docs-size.mjs ${sha256(edit('check-docs-size.mjs'))}`);
 const digestOf = (stdout) => stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
+const blockOf = (stdout) => stdout.split('\n').filter((l) => /^ {2}\S/.test(l) && !/^ {2}(?:[a-z-]+: [a-z-]+$|part of this configuration run did NOT complete)/.test(l));
 
 describe('usage — nothing writes without --reconcile', () => {
   it('a bare invocation is a usage error and leaves the tree alone', () => {
@@ -97,11 +99,11 @@ describe('usage — nothing writes without --reconcile', () => {
     });
   }
 
-  it('--help exits 0 and states the required flag', () => {
+  it('--help exits 0, states the required flag and the scripts op on a declined project', () => {
     const r = main(['--help']);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /--reconcile/);
-    assert.match(r.stdout, /CREATE-ONLY/);
+    for (const re of [/CREATE-ONLY/, /declined the enforcement offer, its standing seed files are kept current/]) assert.match(r.stdout, re);
   });
 });
 
@@ -258,67 +260,65 @@ describe('--only <op> narrows the run to exactly one operation', () => {
   }
 });
 
-describe('spec:distribution-files/S8 one replace block after every op line, and its usage refusals', () => {
-  for (const [label, flags, failing] of [['a plain run', [], false], ['a dry run', ['--dry-run'], false], ['an --only specs run', ['--only', 'specs'], false], ['a run with a failing op', [], true]]) {
-    it(`${label}: one block after every op line and before any failure footer, its digest binding the union; none over an empty union`, () => withSpecLayer((dir) => {
-      if (failing) symlinkSync(join(dir, 'elsewhere.json'), join(dir, 'docs', 'ai', 'gates.json'));
-      const r = main(['--reconcile', ...flags, '--cwd', dir]), lines = r.stdout.split('\n');
+describe('spec:distribution-files/S8 one replace block over the specs entries after every op line, and its usage refusals', () => {
+  const refusing = (dir) => ({ deps: { writeFile: (p, ...rest) => { if (String(p).startsWith(join(dir, 'scripts'))) throw Object.assign(new Error('EACCES: refused'), { code: 'EACCES' }); return writeFileSync(p, ...rest); } } });
+  for (const [label, flags, failing] of [['a plain run', [], false], ['a dry run', ['--dry-run'], false], ['an --only specs run', ['--only', 'specs'], false], ['a run whose scripts op fails', [], true]]) {
+    it(`${label}: one block after every op line and before any failure footer, its digest binding the specs entries, the edited kit script no line of it; none over empty entries`, () => withSpecLayer((dir) => {
+      const r = main(['--reconcile', ...flags, '--cwd', dir], failing ? refusing(dir) : {}), lines = r.stdout.split('\n');
       const at = lines.findLastIndex((l) => /^ {2}[a-z-]+: [a-z-]+$|^ {6}/.test(l)) + 1, end = (lines.indexOf('', at + 1) + 1 || lines.length + 1) - 1, [block, tail] = [lines.slice(at + 1, end), lines.slice(end)];
-      assert.deepEqual({ code: r.code, gap: lines[at], block: block.length, commands: lines.filter((l) => l.includes('--replace-custom')).length, tail: tail.length }, { code: failing ? 1 : 0, gap: '', block: 2, commands: 1, tail: failing ? 2 : 0 }, r.stdout);
-      assert.ok(block[0].startsWith("  scripts/check-docs-size.mjs: carries an edit — on the user's yes it is kept aside at "), r.stdout);
-      assert.ok(block[1].startsWith("  only on the user's yes, keep aside and replace the files named above: node ") && block[1].includes(` --replace-custom ${DIGEST} --cwd `), r.stdout);
-      if (failing) assert.match(tail[1], /^ {2}part of this configuration run did NOT complete/);
-      else withSpecLayer((current) => assert.deepEqual(main(['--reconcile', ...flags, '--cwd', current]).stdout.split('\n').filter((l) => /--replace-custom|carries an edit/.test(l)), [], 'every spec-layer script current: no block'), []);
+      assert.deepEqual({ code: r.code, gap: lines[at], block: block.length, commands: lines.filter((l) => l.includes('--replace-custom')).length, tail: tail.length, footer: tail[1]?.startsWith('  part of this configuration run did NOT complete'), scripts: tokensOf(r.stdout).find((t) => t.op === 'scripts')?.token }, { code: failing ? 1 : 0, gap: '', block: 2, commands: 1, tail: failing ? 2 : 0, footer: failing || undefined, scripts: failing ? 'failed' : flags.length === 0 ? 'seeded' : flags[0] === '--dry-run' ? 'would-seed' : undefined }, r.stdout);
+      assert.deepEqual([block[0].startsWith("  scripts/check-docs-size.mjs: carries an edit — on the user's yes it is kept aside at "), block[1].startsWith("  only on the user's yes, keep aside and replace the files named above: node ") && block[1].includes(` --replace-custom ${DIGEST} --cwd `), readFileSync(join(dir, CAPS), 'utf8')], [true, true, label === 'a plain run' ? readFileSync(join(BUNDLE, 'archive-caps.mjs'), 'utf8') : edit('archive-caps.mjs')], `the block over the specs entry; the scripts op writes the edited kit script, a dry, --only specs or failed run leaves it\n${r.stdout}`);
+      if (!failing) withSpecLayer((current) => assert.deepEqual(blockOf(main(['--reconcile', ...flags, '--cwd', current]).stdout), [], 'every spec-layer script current, a kit script edited: no block'), []);
     }));
   }
-  it('an owning op whose survey is refused, a throw included, adds no entry: the block prints over the other op\'s entries', () => {
-    const throwing = (dir) => ({ deps: { lstat: (p, ...rest) => { if (String(p) === join(dir, 'scripts')) throw Object.assign(new Error('EACCES: unreadable'), { code: 'EACCES' }); return lstatSync(p, ...rest); } } });
+  it('a refused specs survey, a throw included, adds no entry and prints no block, on a plain and an --only specs run', () => {
+    const throwing = (dir) => ({ deps: { lstat: (p, ...rest) => { if (String(p) === join(dir, 'scripts', 'spec-schema.mjs')) throw Object.assign(new Error('EACCES: unreadable'), { code: 'EACCES' }); return lstatSync(p, ...rest); } } });
     const linked = (dir) => { rmSync(join(dir, 'scripts', 'spec-schema.mjs')); symlinkSync(join(dir, 'package.json'), join(dir, 'scripts', 'spec-schema.mjs')); return {}; };
-    for (const [refused, other, opening, ctxOf, kept, gone] of [['specs', 'scripts', 'wrong-node-kind — scripts/spec-schema.mjs: exists but is a symlink', linked, 'archive-caps.mjs', 'check-docs-size.mjs'], ['scripts', 'specs', 'unexpected-error — scripts: EACCES: unreadable', throwing, 'check-docs-size.mjs', 'archive-caps.mjs']]) {
-      for (const flags of [[], ['--only', other]]) withSpecLayer((dir) => {
-        writeFileSync(join(dir, 'scripts', 'archive-caps.mjs'), edit('archive-caps.mjs'));
+    for (const [opening, ctxOf] of [['wrong-node-kind — scripts/spec-schema.mjs: exists but is a symlink', linked], ['unexpected-error — specs: EACCES: unreadable', throwing]]) {
+      for (const flags of [[], ['--only', 'specs']]) withSpecLayer((dir) => {
         const r = main(['--reconcile', ...flags, '--cwd', dir], ctxOf(dir)), lines = r.stdout.split('\n');
-        const rels = lines.filter((l) => /^ {2}\S+: (carries an edit|absent) — /.test(l)).map((l) => l.slice(2, l.indexOf(': '))).sort(), bound = rels.map((rel) => `${rel} ${existsSync(join(dir, rel)) ? sha256(readFileSync(join(dir, rel))) : 'absent'}`);
-        assert.deepEqual({ code: r.code, refused: lines[lines.indexOf(`  ${refused}: failed`) + 1]?.startsWith(`      ${opening}`), kept: rels.includes(`scripts/${kept}`), gone: rels.includes(`scripts/${gone}`), digest: digestOf(r.stdout) }, { code: 1, refused: true, kept: true, gone: false, digest: sha256(bound.join('\n')) }, `${flags.join(' ')}\n${r.stdout}`);
+        assert.deepEqual({ code: r.code, refused: lines[lines.indexOf('  specs: failed') + 1]?.startsWith(`      ${opening}`), block: blockOf(r.stdout) }, { code: 1, refused: true, block: [] }, `${flags.join(' ')}\n${r.stdout}`);
       });
     }
   });
-  it('--replace-custom with --only, with --dry-run, with an empty value or given twice: usage exit 2, nothing run; the --only refusal names the kit scripts, the spec layer and the navigator in that order', () => withSpecLayer((dir) => {
+  it('--only scripts prints no block: the scripts op writes the edited kit script and the specs op is not surveyed', () => withSpecLayer((dir) => {
+    const r = main(['--reconcile', '--only', 'scripts', '--cwd', dir]);
+    assert.deepEqual({ code: r.code, ops: tokensOf(r.stdout).map((t) => t.op), block: blockOf(r.stdout), caps: readFileSync(join(dir, CAPS), 'utf8') }, { code: 0, ops: ['scripts'], block: [], caps: readFileSync(join(BUNDLE, 'archive-caps.mjs'), 'utf8') }, r.stdout);
+  }));
+  it('--replace-custom with --only, with --dry-run, with an empty value or given twice: usage exit 2, nothing run; the --only refusal names the spec layer, then the navigator', () => withSpecLayer((dir) => {
     const [before, R] = [snapshot(dir), '--replace-custom'];
-    for (const argv of [[R, DIGEST, '--only', 'specs'], [R, DIGEST, '--only', 'index'], [R, DIGEST, '--dry-run'], [R, ''], [`${R}=`], [R, DIGEST, `${R}=${DIGEST}`]]) {
+    for (const argv of [[R, DIGEST, '--only', 'specs'], [R, DIGEST, '--only', 'scripts'], [R, DIGEST, '--dry-run'], [R, ''], [`${R}=`], [R, DIGEST, `${R}=${DIGEST}`]]) {
       const r = main(['--reconcile', ...argv, '--cwd', dir]);
       assert.deepEqual({ code: r.code, stdout: r.stdout, opening: r.stderr.startsWith('ensure-configs: '), names: r.stderr.includes(R), tree: snapshot(dir) }, { code: 2, stdout: '', opening: true, names: true, tree: before }, argv.join(' '));
-      if (argv.includes('--only')) assert.equal(r.stderr.trimEnd(), 'ensure-configs: --replace-custom runs the kit scripts, then the spec layer, then the navigator, so it cannot be combined with --only — nothing was run');
+      if (argv.includes('--only')) assert.equal(r.stderr.trimEnd(), 'ensure-configs: --replace-custom runs the spec layer, then the navigator, so it cannot be combined with --only — nothing was run');
     }
   }));
 });
 
 describe('spec:distribution-files/S9 the replace run through the command', () => {
   const run = (dir, digest, ctx) => main(['--reconcile', '--replace-custom', digest, '--cwd', dir], ctx);
-  const noReplace = (r) => assert.deepEqual(r.stdout.split('\n').filter((l) => /--replace-custom [0-9a-f]{64}|^\s*only on the user's yes|carries an edit — on the user's yes/.test(l)), [], r.stdout);
-  const failed = (r, tokens, opening) => { const lines = r.stdout.split('\n'), opens = lines[lines.findIndex((l) => /^ {2}[a-z-]+: failed$/.test(l)) + 1]?.startsWith(`      ${opening}`); assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), opens }, { code: 1, tokens, opens: true }, r.stdout); noReplace(r); };
-  it('a matching digest keeps the edit at its named path, replaces it and runs index; a second run of the line changes nothing', () => withSpecLayer((dir) => {
-    const plain = main(['--reconcile', '--dry-run', '--cwd', dir]).stdout, kept = plain.match(/kept aside at (\S+), then/)?.[1] ?? 'no kept-aside path', r = run(dir, digestOf(plain));
-    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), banner: r.stdout.split('\n')[0] }, { code: 0, tokens: [{ op: 'scripts', token: 'not-placed' }, { op: 'specs', token: 'seeded' }, { op: 'index', token: 'regenerated' }], banner: 'ensure-configs (--reconcile, --replace-custom)' }, r.stdout);
-    assert.deepEqual([readFileSync(join(dir, kept), 'utf8'), readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), existsSync(join(dir, CONFIG_REL))], [edit('check-docs-size.mjs'), readFileSync(join(BUNDLE, 'check-docs-size.mjs'), 'utf8'), false], 'the edit kept at its named path, the bundled body in place, no other op ran');
-    noReplace(r);
+  const failed = (r, opening) => { const lines = r.stdout.split('\n'); assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), opens: lines[lines.indexOf('  specs: failed') + 1]?.startsWith(`      ${opening}`), block: blockOf(r.stdout) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], opens: true, block: [] }, r.stdout); };
+  it('a matching digest keeps each edit at its named path with its bytes, replaces it and runs index: specs, then index, no scripts line, no block; a second run of the line changes nothing', () => withSpecLayer((dir) => {
+    const plain = main(['--reconcile', '--dry-run', '--cwd', dir]).stdout, kept = [...plain.matchAll(/^ {2}(\S+): carries an edit — on the user's yes it is kept aside at (\S+), then/gm)], r = run(dir, digestOf(plain));
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), banner: r.stdout.split('\n')[0], block: blockOf(r.stdout), caps: readFileSync(join(dir, CAPS), 'utf8'), config: existsSync(join(dir, CONFIG_REL)) }, { code: 0, tokens: [{ op: 'specs', token: 'seeded' }, { op: 'index', token: 'regenerated' }], banner: 'ensure-configs (--reconcile, --replace-custom)', block: [], caps: edit('archive-caps.mjs'), config: false }, r.stdout);
+    assert.deepEqual(kept.map(([, rel, at]) => [rel, readFileSync(join(dir, at), 'utf8'), readFileSync(join(dir, rel), 'utf8')]), ['check-docs-size.mjs', 'spec-schema.mjs'].map((name) => [`scripts/${name}`, edit(name), readFileSync(join(BUNDLE, name), 'utf8')]), 'each edit kept at its named path with its bytes, the bundled body in place');
     const after = snapshot(dir);
     assert.deepEqual([run(dir, digestOf(plain)).code, snapshot(dir)], [0, after], 'a second run of the line changes nothing');
-  }));
-  it('a differing digest: the tree byte-identical, exit 1, no index line, the failed line ends on the navigator step, a fresh block', () => withSpecLayer((dir) => {
+  }, ['check-docs-size.mjs', 'spec-schema.mjs']));
+  it('a differing digest: the tree byte-identical, exit 1, no index line, the failed specs line ends on the navigator step, a fresh block', () => withSpecLayer((dir) => {
     const [before, r] = [snapshot(dir), run(dir, 'f'.repeat(64))];
-    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), tree: snapshot(dir), digest: digestOf(r.stdout) }, { code: 1, tokens: [{ op: 'scripts', token: 'failed' }], tree: before, digest: DIGEST }, r.stdout);
-    assert.equal(r.stdout.split('\n\n')[0].split('\n').filter((l) => l.startsWith('      ')).at(-1), `      ${INDEX_NOT_RUN}`);
+    assert.deepEqual({ code: r.code, tokens: tokensOf(r.stdout), tree: snapshot(dir), digest: digestOf(r.stdout), block: blockOf(r.stdout).length, last: r.stdout.split('\n\n')[0].split('\n').filter((l) => l.startsWith('      ')).at(-1) }, { code: 1, tokens: [{ op: 'specs', token: 'failed' }], tree: before, digest: DIGEST, block: 2, last: `      ${INDEX_NOT_RUN}` }, r.stdout);
   }));
   it('a keep-aside failure: write-refused, the edit unchanged, no block and no replace command', () => withSpecLayer((dir) => {
-    mkdirSync(join(dir, '.agent-workflow')); writeFileSync(join(dir, '.agent-workflow', '.gitignore'), '!kept-aside/\n');
-    failed(run(dir, DIGEST), [{ op: 'scripts', token: 'failed' }], 'write-refused — .agent-workflow/.gitignore: holds other bytes');
+    mkdirSync(join(dir, '.agent-workflow'));
+    writeFileSync(join(dir, '.agent-workflow', '.gitignore'), '!kept-aside/\n');
+    failed(run(dir, DIGEST), 'write-refused — .agent-workflow/.gitignore: holds other bytes');
     assert.equal(readFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), 'utf8'), edit('check-docs-size.mjs'));
   }));
   it('a per-file failure: a bound file changed before its own write, race-unresolved, no block and no replace command', () => withSpecLayer((dir) => {
     const [scripts, digest] = [join(dir, 'scripts'), digestOf(main(['--reconcile', '--dry-run', '--cwd', dir]).stdout)];
     const writeFile = ((moved = false) => (p, body, opts) => { if (!moved && String(p).startsWith(scripts)) { moved = true; writeFileSync(join(scripts, 'check-docs-size.test.mjs'), '// changed\n'); } return writeFileSync(p, body, opts); })();
-    failed(run(dir, digest, { deps: { writeFile } }), [{ op: 'scripts', token: 'not-placed' }, { op: 'specs', token: 'failed' }], 'race-unresolved — scripts/check-docs-size.test.mjs: changed after this run read it');
+    failed(run(dir, digest, { deps: { writeFile } }), 'race-unresolved — scripts/check-docs-size.test.mjs: changed after this run read it');
   }, ['check-docs-size.mjs', 'check-docs-size.test.mjs']));
 });
 

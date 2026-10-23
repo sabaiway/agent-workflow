@@ -1,7 +1,8 @@
 # Setup contracts
 
 The three choices the bootstrap makes with the user — **visibility**, **conversational
-language**, and **agent attribution** — each have a contract below. `SKILL.md` links here so the
+language**, and **agent attribution** — each have a contract below, and the names the kit bundles
+and writes have theirs beside them, under *Reserved names and channels*. `SKILL.md` links here so the
 main procedure stays lean; load this file when you need the full rule for a contract (e.g. while
 filling the matching `AGENTS.md` block, or when an `upgrade` migration touches it).
 
@@ -44,7 +45,7 @@ diverge:
 
 The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, `.claude/settings.json` (hidden-only — visible mode commits it), and `.mcp.json` (the `mcp` mode's registration; hidden-only for the same reason, and it carries an absolute machine path) — is always a candidate in hidden mode.
 
-`.agent-workflow/` is the family's reserved folder. Before an upgrade replaces a kit file the user edited, it keeps the edit there, unchanged, at `.agent-workflow/kept-aside/<16 hex>/<path>`; the folder's own `.gitignore` (`*`) keeps git from seeing the copies in either visibility mode. The copies are the user's, outside the kit's own paths: no kit tool overwrites, deletes or hides them. The kit's literal search never walks into the reserved `.agent-workflow` folder, at any depth, unless that folder or a path inside it is named as a target, and the plan-shape checks never walk into it, so an unnamed kept-aside copy never stands beside the live file in their results.
+`.agent-workflow/` is the family's reserved folder. Before an upgrade replaces a spec-layer file the user edited (`scripts/spec-schema.mjs`, `scripts/spec-schema.test.mjs`, `scripts/check-docs-size.mjs`, `scripts/check-docs-size.test.mjs`), it keeps the edit there, unchanged, at `.agent-workflow/kept-aside/<16 hex>/<path>`; every other kit script is written over with no copy kept. The folder's own `.gitignore` (`*`) keeps git from seeing the copies in either visibility mode. The copies are the user's, outside the kit's own paths: no kit tool overwrites, deletes or hides them. The kit's literal search never walks into the reserved `.agent-workflow` folder, at any depth, unless that folder or a path inside it is named as a target, and the plan-shape checks never walk into it, so an unnamed kept-aside copy never stands beside the live file in their results.
 
 Not in this version: a fully-external hidden mode (artifacts relocated outside the repo tree).
 Deferred to a later release + migration.
@@ -87,3 +88,27 @@ block is about *attribution*, not authorship of the actual changes — quality, 
 before commit" rule are unchanged either way.
 
 On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, defaulting to `off`).
+
+---
+
+## Reserved names and channels
+
+Every name the kit bundles and writes over on an upgrade is the kit's, and an edit there is never a
+customization: the kit's scripts outside the spec layer and the hook installer set are written over
+by the next upgrade with no question and no copy kept. The spec layer's pair files are replaced on
+the upgrade's one yes, the edit kept aside first. A declaration seeded once from a template and never
+replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
+user's own file. A customization goes into one of five channels instead:
+
+- **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed
+  pre-commit hook runs it first, once the installer has run.
+- **Your own scripts and suites** go in `scripts/` under names of your own.
+- **A setting** goes in a config a script reads.
+- **Your own rules** go in the local rules file `docs/ai/rules/local/<theme>.md`.
+- **An agent's model** goes in the vehicle settings `docs/ai/vehicles.json`.
+
+No path segment of a file the kit bundles and places as its own has a dot-separated part exactly
+`local`; a path of that form is the user's, and no kit tool writes one on its own. Outside that rule:
+`.claude/settings.local.json`, the host's local settings file, into which the kit only merges keys on
+a consented item (the `--worktrees` grant), and `docs/ai/rules/local/<theme>.md`, which the agent
+writes only on the user's own request.

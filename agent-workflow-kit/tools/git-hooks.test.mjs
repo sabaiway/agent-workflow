@@ -24,7 +24,7 @@ const INSTALLER = 'scripts/install-git-hooks.mjs';
 const KEPT = 'scripts/markdown-blocks.test.mjs';
 const FOREIGN = Buffer.from('foreign bytes\n');
 const UNMANAGED = '#!/bin/sh\nexit 0\n';
-const ROUTE = "/agent-workflow-kit upgrade refreshes, with no question, an installer body it knows a release shipped, and on its one yes keeps any other installer aside and replaces it with the kit's current body; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
+const ROUTE = "/agent-workflow-kit upgrade writes the kit's current installer over any other installer body, with no question; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
 const readBundle = (name) => readFileSync(join(BUNDLE, name));
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const put = (root, rel, bytes, options) => {

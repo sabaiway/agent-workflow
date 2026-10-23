@@ -34,7 +34,7 @@ const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const usageError = (message) => Object.assign(new Error(message), { exitCode: EXIT_USAGE });
 const refusal = (message) => Object.assign(new Error(message), { exitCode: EXIT_REFUSED });
 // The one route the two re-read lines end with: an installer that left a passed line out is not the kit's current body.
-export const UPGRADE_ROUTE = "/agent-workflow-kit upgrade refreshes, with no question, an installer body it knows a release shipped, and on its one yes keeps any other installer aside and replaces it with the kit's current body; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
+export const UPGRADE_ROUTE = "/agent-workflow-kit upgrade writes the kit's current installer over any other installer body, with no question; if it stops on another cause, resolve the cause it names and run it again; then apply this item again";
 
 const nodeAt = (path, lstat) => {
   try {

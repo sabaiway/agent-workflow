@@ -4,6 +4,39 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.49.0 — the upgrade writes the kit's current scripts and hook installer with no question and no kept-aside copy (AD-202)
+
+**`/agent-workflow-kit upgrade` no longer asks about its own scripts.** Before, an edited or absent kit script in
+`scripts/` waited for the upgrade's one yes, and an edit was kept aside under `.agent-workflow/kept-aside/` first. Now
+the upgrade's `scripts` step writes every kit script that is not the bundled body, the hook installer and its two
+suites first, with no question and no copy kept:
+
+- **Each file by proof.** A body an earlier release shipped is refreshed, an edited body replaced in place, an absent
+  file placed; the current body is left. The line of an edited file names where an edit meant to last goes:
+  `scripts/pre-commit.local` for the installer, a script or suite of your own under its own name in `scripts/`, or a
+  config the script reads, for the rest. One closing line says the commit hook runs the files written, so they may
+  stop the next commit.
+- **Only where you took the kit's scripts.** The step works once a kit script other than the four that memory also
+  places on its own (`archive-decisions.mjs`, its suite, and the `markdown-blocks.mjs` and `_expect-shim.mjs` that
+  memory's copied files import) stands in `scripts/`. A
+  project that declined the enforcement offer keeps those standing copies current, with an absent one they import
+  placed, gets no other kit script, and one line says so.
+- **The one yes is the spec layer's alone.** The replace block and its yes now name only the four spec-layer files,
+  whose edit is still kept aside first. The `--only scripts` run no longer surveys the spec layer, and the step's
+  tokens are `seeded`, `refreshed`, `already-present`, `not-placed`, `old-adr-layout-migration-instructed` and
+  `skipped-no-node-evidence` (a dry run: `would-seed`, `would-refresh`); it never prints `pending`.
+- **The hook line names the plain upgrade.** When the `commit-guard` or `hook-checks` apply finds a hook line the
+  installer left out, its line says the upgrade writes the kit's current installer over any other body with no
+  question; migration note 3.0.0 step 4 says the same.
+- **The guide names the reserved names.** `references/contracts.md` gains *Reserved names and channels*: the names
+  the kit writes over are its own, a declaration seeded once is yours, five places hold your own checks, scripts,
+  settings, rules and an agent's model, and no path the kit bundles and places as its own has a dot-separated part
+  exactly `local`, so a name like `scripts/pre-commit.local` is yours (the section names its two exceptions).
+- **Unchanged:** the hold-back of the decisions files on an older ADR layout, the unreadable layout keeping the
+  installer set current, and the upgrade never running the installer.
+
+MINOR: no question for the kit's scripts, and a new guide section.
+
 ## 14.48.0 — the kit's decisions script brings an ADR store current in one command; a copy of its previous body is now a known earlier body (AD-200)
 
 **`references/scripts/archive-decisions.mjs` is memory 8.5.0's script, byte for byte.** Its new `--ensure-current`

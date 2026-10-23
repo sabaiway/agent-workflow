@@ -9,19 +9,19 @@
 
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
-// root it seeds is a docs/ai file the navigator must count. `scripts` and `specs` own the replace run,
-// in this order: each keeps its files current by the one rule, an edited or absent one written only
-// on the user's yes.
+// root it seeds is a docs/ai file the navigator must count. `specs` alone owns the replace run: its
+// edited files are written only on the user's yes, while `scripts` writes every kit script with no
+// question.
 // `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
 // `rules` follows `specs` and precedes `index`: the rules files it lays are docs/ai files the navigator counts.
 export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
-// ensure's pair refresh (reader or checker) or the scripts ensure's refresh of a kit script — a deployed
-// script on a body a release shipped, rewritten to the bundled one; an edited body is replaced, and an
-// absent kit script placed, only by the replace run the user's yes starts (--replace-custom, over the
-// kit scripts and then the spec layer), never by a plain run.
+// ensure's pair refresh (reader or checker) or the scripts ensure's write of a kit script — a deployed
+// script on a body a release shipped, or an edited one, rewritten to the bundled one on a plain run, an
+// absent kit script placed (`seeded`); an edited spec-layer file is replaced only by the replace run the
+// user's yes starts (--replace-custom, over the spec layer).
 export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
 export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
 

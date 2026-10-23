@@ -739,11 +739,11 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   with its entries. Residual: a window inside one write; the next plain run asks. Raised by the
   DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (lens, round 2).
 - **SCRIPTS-REREAD-THROW-DROPS-THE-PARTIAL-NOTE** — invariant: a scripts op that stops partway names every file it
-  already wrote. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:102` (a bound edit re-proven before
-  its replace) and `:116` (a bound absent file that appeared) re-read with a plain `read`; a throw there reaches the CLI
-  as `unexpected-error`, without the lines naming the files already written. Narrow fix: both re-reads caught, the op
-  failing `race-unresolved` with its lines and partial note. Residual: a window inside one write. Named by the
-  DISTRIBUTION-FILES-STAY-CURRENT S3 plan, beside SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES.
+  already wrote. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:121` (an absent file that appeared
+  before its create-only write) re-reads with a plain `read`; a throw there reaches the CLI as `unexpected-error`,
+  without the lines naming the files already written. Narrow fix: the re-read caught, the op failing `race-unresolved`
+  with its lines and partial note. Residual: a window inside one write. Named by the DISTRIBUTION-FILES-STAY-CURRENT
+  S3 plan, beside SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES; S12 retired the bound-edit re-read.
 - **ENFORCEMENT-COPY-PLACES-AN-INSTALLER-BESIDE-A-KEPT-SUITE** — invariant: no git-hook writer places an installer
   beside suites of another release. Origin: the `enforcement` copy is create-only per file
   (`agent-workflow-kit/tools/git-hooks.mjs:161-162`), so a writer run over a `scripts/` holding an older
@@ -879,3 +879,35 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   through `'r'` (POSIX accepts it; Windows has no umask). Proof: a cell creating the file 0400 exits 0. Residual
   exposure: a non-root run under a umask that strips owner write. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S11
   diff review.
+- **UNCATALOGED-FAMILY-NAMES-AN-OLD-BODY-WITH-A-ROUTE** — invariant: a kit file on an unchanged older kit body is never
+  named as a customization. Origin: the agent files writer and the gate hook writer keep no catalog of earlier bodies
+  (`agent-workflow-kit/tools/cheap-agents.mjs:221`, `agent-workflow-kit/tools/gate-hook.mjs:112`), so under the
+  no-question rule an older body and a differing one read alike and both get the route line. Narrow fix: for a family
+  with no catalog, the line stays neutral ("differs from the bundled body — written; a customization belongs in …").
+  Carried by stories S6 and S7 when they write those families. Raised at the epic revision (2026-10-23).
+- **HELD-LINE-NAMES-AN-ABSENT-GROUP-FILE** — invariant: the held line names only files the project holds. Origin: on a
+  declined project the scripts op's held line names all three decisions-group files, `archiver-structure.test.mjs`
+  among them, though that file is never placed there. Narrow fix: the held line names the standing group files only.
+  Raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 spec review (2026-10-23).
+- **PAIRS-ONLY-TREE-LACKS-THE-SHIM** — invariant: every suite the kit leaves in `scripts/` loads. Origin: a tree where
+  the specs op seeded the spec-layer pairs and the component is not accepted (the pairs-only tree and a declined one
+  alike) has no `_expect-shim.mjs`, so its two pair suites fail at import (`spec-schema.test.mjs:2`,
+  `check-docs-size.test.mjs:2`), and the not-placed line calls the pair files no kit script. Narrow fix: the specs op
+  places the modules its pairs import, and the line says "no kit script outside the spec layer". Pre-existing on
+  HEAD; raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 spec review (2026-10-23).
+- **A-RED-BUFFER-DEEPEQUAL-EXHAUSTS-THE-HOST** — invariant: a red cell fails in bounded memory. Origin: Node 24's
+  `assert.deepEqual` builds its diff on failure even with a message, printing a Buffer one byte per line, and its
+  line diff takes memory of order N·D: one failed compare of a 20 KB Buffer against `null` peaks at 3.2 GB RSS,
+  almost all of it outside the V8 heap (measured 2026-10-23). Red-first S12 suites compared script bodies as Buffers,
+  and their HEAD run took down the 8 GB WSL host three times; S12's suites now compare sha256 digests. Still open: raw
+  byte compares by `deepEqual` in older suites, e.g. `agent-workflow-kit/tools/git-hooks.test.mjs:112`,
+  `:185`, `:202`, `:451` (35 suites match `deepEqual(readFileSync(`, the utf8 ones harmless). Narrow fix: a
+  test-hygiene check refusing a `deepEqual` over a Buffer-valued operand, the compares moved to digests.
+- **DECLINED-HOLD-BACK-HAS-NO-CELL** — invariant: on an old or old-unrotated ADR layout no decisions-group file is
+  written, the component accepted or not. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:163`
+  (`held`) is judged by no cell on a declined tree: `const held = accepted && …` stays green. Narrow fix: one S13 cell
+  in `scripts-component.test.mjs` — the pairs and an edited `archive-decisions.test.mjs` on `oldLayout`: token
+  `old-adr-layout-migration-instructed`, the suite byte-identical, `archive-decisions.mjs` not placed, the held line;
+  `markdown-blocks.mjs`, reached through the held rotator, is still placed, so the conditional hook-run line and the
+  not-accepted line stand (the held token wins over `seeded`). Proof: the cell red on that mutant. Residual: none
+  live — the code holds the group today. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 diff review (2026-10-23).

@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-23 — AD-202: the kit's upgrade writes its current scripts and hook installer with no question and no kept-aside copy (kit 14.49.0 MINOR; memory 8.6.0, engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-kit upgrade` now overwrites a differing kit script and places an absent one** with the body it
+bundles, the hook installer and its two suites first, with no question and no copy kept; the line of an edited file
+names where an edit meant to last goes. It works once a kit script other than the four memory also places on its own
+(`archive-decisions.mjs`, its suite, `markdown-blocks.mjs` and `_expect-shim.mjs`) stands in `scripts/`; a project that declined the enforcement offer keeps those copies current and gets no other kit script.
+The upgrade's replace yes now names only the spec layer's four files. The guide gains *Reserved names and channels*.
+Contracts: distribution-files revision 3, node-evidence revision 7, init-project revision 19. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-23 — AD-201: memory's upgrade keeps every deployed script current with no question, and brings your ADR store current (memory 8.6.0 MINOR; kit 14.48.0, engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-memory upgrade` on its own now overwrites a differing script and places an absent one** with the

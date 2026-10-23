@@ -223,7 +223,7 @@ describe('spec:distribution-files/S23 the catalog: every bundled name, the spec-
     }
     for (const file of SET) assert.equal(classifyDeployedScript(bundleBytes(file), file, bundleBytes(file)), 'current', file);
   });
-  it('ensureScripts of the index refreshes a component carrying the three 8.3.0 bodies; the 8.3.0 installer writes the bundled hook less the comment and local lines, and the bundled one over its guarded hook keeps the guard and adds them', () => {
+  it('ensureScripts of the index refreshes a component carrying the three 8.3.0 bodies and places every absent family file, token seeded; the 8.3.0 installer writes the bundled hook less the comment and local lines, and the bundled one over its guarded hook keeps the guard and adds them', () => {
     assert.equal(typeof ensureScripts, 'function', 'distribution-files/index.mjs exports ensureScripts');
     inTemp((dir) => {
       writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}');
@@ -231,10 +231,11 @@ describe('spec:distribution-files/S23 the catalog: every bundled name, the spec-
       mkdirSync(join(dir, 'scripts'));
       for (const row of setRows) writeFileSync(join(dir, 'scripts', row.file), readFileSync(fixturePath(row)));
       const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT });
-      // The other family files are absent, so their entries make the run pending while the set is refreshed.
-      assert.deepEqual({ token: r.token, failed: r.failed }, { token: 'pending', failed: false }, (r.lines ?? []).join('\n'));
+      // The other family files are absent, so the one plain run places them beside the refreshed set.
+      assert.deepEqual({ token: r.token, failed: r.failed, entries: 'entries' in r }, { token: 'seeded', failed: false, entries: false }, (r.lines ?? []).join('\n'));
       assert.deepEqual(r.lines.slice(0, 3), SET.map((file) => `scripts/${file}: matches a body an earlier release shipped — refreshed to the bundled one`));
-      for (const file of SET) assert.deepEqual(readFileSync(join(dir, 'scripts', file)), bundleBytes(file), `${file} holds the bundled bytes`);
+      // By digest: a failed deepEqual of two Buffers diffs them byte per line and takes gigabytes.
+      for (const file of FAMILY) assert.equal(sha256(readFileSync(join(dir, 'scripts', file))), sha256(bundleBytes(file)), `${file} holds the bundled bytes`);
     });
     inTemp((root) => {
       spawnChecked('git', ['init', '-q'], root);

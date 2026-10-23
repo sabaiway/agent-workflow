@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,11 +114,12 @@ describe('spec:node-evidence/S6 the scripts ensure proceeds on a deployed script
     assert.deepEqual([r?.token, r?.failed, existsSync(join(dir, 'scripts'))], ['skipped-no-node-evidence', false, false]);
     assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files \(archive-caps\.mjs, .*spec-schema\.mjs\), no regular file present/);
   }, { node: false }));
-  it('a deployed kit script without a package.json is Node evidence: the op judges the family, each absent kit script an entry for the yes', () => withProject((dir) => {
+  it('a deployed kit script without a package.json is Node evidence: the op places every other kit script, token seeded, no entries field', () => withProject((dir) => {
+    const [bundle, at] = [join(KIT_ROOT, 'references', 'scripts'), (n) => join(dir, 'scripts', n)];
     mkdirSync(join(dir, 'scripts'));
-    writeFileSync(join(dir, 'scripts', 'archive-caps.mjs'), readFileSync(join(KIT_ROOT, 'references', 'scripts', 'archive-caps.mjs')));
-    const r = run(dir);
-    assert.deepEqual([r?.token, r?.failed, r?.entries?.length, r?.entries?.every((e) => e.absent)], ['pending', false, 20, true], r?.lines?.join('\n'));
+    writeFileSync(at('archive-caps.mjs'), readFileSync(join(bundle, 'archive-caps.mjs')));
+    const [r, family] = [run(dir), readdirSync(bundle).filter((n) => n.endsWith('.mjs') && !/^(?:spec-schema|check-docs-size)(?:\.test)?\.mjs$/.test(n))];
+    assert.deepEqual([r?.token, r?.failed, 'entries' in (r ?? {}), family.filter((n) => !existsSync(at(n)) || !readFileSync(at(n)).equals(readFileSync(join(bundle, n))))], ['seeded', false, false, []], r?.lines?.join('\n'));
   }, { node: false }));
   it('an unreadable Node probe fails closed: node-evidence-unverifiable, nothing written', () => withProject((dir) => {
     const r = run(dir, { lstat: (p) => { if (p.endsWith('package.json')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return lstatSync(p); } });
