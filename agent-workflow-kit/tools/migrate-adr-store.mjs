@@ -2,9 +2,9 @@
 // migrate-adr-store.mjs — the consent-gated, opt-in migration of an EXISTING consumer's docs/ai from
 // the retired 3-tier ADR cascade (HOT decisions.md → WARM/COLD monoliths) to the one-file-per-ADR
 // store (HOT decisions.md + docs/ai/adr/AD-NNN-slug.md records + the docs/ai/adr/log.md navigator).
-// Reached ONLY through the `migrate-adr-store` mode (SKILL.md), NEVER auto: a normal upgrade never
-// installs the new-scheme rotator into an un-migrated consumer — the new rotator arrives ONLY here,
-// which migrates in the same step (AD-051, Decision 13).
+// Reached through the opt-in `migrate-adr-store` mode (SKILL.md): the upgrade moves an older layout
+// itself wherever scripts/ holds the kit's rotator, so after a full upgrade this mode does nothing; it
+// stays for a project whose scripts/ holds no kit script.
 //
 // What it does (in order, on --apply):
 //   1. GATE  — docs/ai must be deployed, and the tree must be on the OLD layout. That is TWO shapes:

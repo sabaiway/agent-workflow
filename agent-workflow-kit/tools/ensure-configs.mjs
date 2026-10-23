@@ -8,7 +8,8 @@
 //   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
 //   scripts        scripts/<every kit script>  once a kit script outside the seed names stands there, every file not current
 //                  + the installer set         written with no question and no copy kept; installer set first; on a
-//                                              declined offer only the standing seed files and the modules they import
+//                                              declined offer only the standing seed files and the modules they import;
+//                                              then the project's rotator brings the ADR store current (--ensure-current)
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
 //                                              user's yes; store root seeded behind a current checker
@@ -110,8 +111,8 @@ ensure writes every kit script that is not the bundled body, the hook installer 
 first, with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced
 (its line names where an edit meant to last goes) and an absent one placed; on a project that
 declined the enforcement offer, its standing seed files are kept current the same way, with an
-absent module they import placed, and no other kit script is placed; on an older ADR-store layout
-the decisions files are held back and the opt-in migration is named.
+absent module they import placed, and no other kit script is placed; after the writes the project's
+scripts/archive-decisions.mjs --ensure-current brings the ADR store current, an older layout moved.
 
 Exit codes: 0 every op fine; 1 an op failed (its line says so) or there is no deployment here; 2 usage.`;
 

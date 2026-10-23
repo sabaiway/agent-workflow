@@ -885,10 +885,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   no-question rule an older body and a differing one read alike and both get the route line. Narrow fix: for a family
   with no catalog, the line stays neutral ("differs from the bundled body — written; a customization belongs in …").
   Carried by stories S6 and S7 when they write those families. Raised at the epic revision (2026-10-23).
-- **HELD-LINE-NAMES-AN-ABSENT-GROUP-FILE** — invariant: the held line names only files the project holds. Origin: on a
-  declined project the scripts op's held line names all three decisions-group files, `archiver-structure.test.mjs`
-  among them, though that file is never placed there. Narrow fix: the held line names the standing group files only.
-  Raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 spec review (2026-10-23).
 - **PAIRS-ONLY-TREE-LACKS-THE-SHIM** — invariant: every suite the kit leaves in `scripts/` loads. Origin: a tree where
   the specs op seeded the spec-layer pairs and the component is not accepted (the pairs-only tree and a declined one
   alike) has no `_expect-shim.mjs`, so its two pair suites fail at import (`spec-schema.test.mjs:2`,
@@ -903,11 +899,24 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   byte compares by `deepEqual` in older suites, e.g. `agent-workflow-kit/tools/git-hooks.test.mjs:112`,
   `:185`, `:202`, `:451` (35 suites match `deepEqual(readFileSync(`, the utf8 ones harmless). Narrow fix: a
   test-hygiene check refusing a `deepEqual` over a Buffer-valued operand, the compares moved to digests.
-- **DECLINED-HOLD-BACK-HAS-NO-CELL** — invariant: on an old or old-unrotated ADR layout no decisions-group file is
-  written, the component accepted or not. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:163`
-  (`held`) is judged by no cell on a declined tree: `const held = accepted && …` stays green. Narrow fix: one S13 cell
-  in `scripts-component.test.mjs` — the pairs and an edited `archive-decisions.test.mjs` on `oldLayout`: token
-  `old-adr-layout-migration-instructed`, the suite byte-identical, `archive-decisions.mjs` not placed, the held line;
-  `markdown-blocks.mjs`, reached through the held rotator, is still placed, so the conditional hook-run line and the
-  not-accepted line stand (the held token wins over `seeded`). Proof: the cell red on that mutant. Residual: none
-  live — the code holds the group today. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 diff review (2026-10-23).
+- **MIGRATE-MODE-NO-OP-SCOPE-UNPINNED** — invariant: the shipped `migrate-adr-store` text says the mode does nothing
+  after a full upgrade only where `scripts/` holds the kit's rotator. Origin: distribution-files part scripts' shipped-
+  text clause and root S24 pin "the mode does nothing after a full upgrade" without that scope; a project with no kit
+  script and a `decisions-archive*.md` monolith is `not-placed` by the scripts op, and the mode still migrates it
+  (`agent-workflow-kit/tools/migrate-adr-store.mjs:425-475`). Narrow fix: S24 pins the scoped sentence. Residual: none
+  once story S13 retires the mode. Raised by the review lens after the last round of the S10 spec review (2026-10-23).
+- **DRY-STORE-LINE-NAMES-WRITES-AND-NO-REFUSAL** — invariant: the scripts op's dry store line claims only writes that
+  exist and names the refusal outcome. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:140`
+  (`WOULD_STORE`) says the run "would run after the writes" on a dry run with nothing due, and promises "bringing the
+  store current or writing nothing" where the plain run would fail `adr-store-not-current`. Narrow fix: the line reads
+  `ADR store: scripts/archive-decisions.mjs --ensure-current would run last; it brings the store current, writes nothing
+  when it already is, or fails this step when it refuses`, with the part and its cells. Residual: preview only; the
+  upgrade never runs the dry run. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S10 diff review (2026-10-23).
+- **UPGRADE-STORE-RUN-TEXT-OMITS-SNAPSHOT-AND-QUIET-RELAY** — invariant: `upgrade.md` names every write of the scripts
+  op's store run and says its lines are relayed only where they are. Origin:
+  `agent-workflow-kit/references/modes/upgrade.md:36` lists the store run's writes without the migration snapshot (the git dir, or the OS temp dir off git), and `:46`
+  says "its lines are relayed" while an `already-current` exit relays no standard output line. Narrow fix: `:36` adds
+  "and snapshots the moved files into the git dir (the OS temp dir off git)"; `:46` reads "when it moves the store, its
+  lines are relayed under `ADR store: `"; the byte pin in `recommendations-language-contract.test.mjs` follows.
+  Residual: an omission in the agent-facing doc; the op's own lines are true. Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S10 diff review (2026-10-23).

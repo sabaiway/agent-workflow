@@ -2,18 +2,18 @@
 // included, kept current by the one rule. Each family file is surveyed by proof before any write:
 // absent, current, prior (a body SCRIPT_PRIORS catalogs for its name) or edited. On every plain run a
 // prior is refreshed, an edited one replaced in place and an absent one placed create-only, with no
-// question and no copy kept; a current one is left. The installer set is written first; on an older
-// ADR layout the decisions group is held back, the migration named. It never imports ensure-specs.mjs
-// or ensure-configs.mjs: the CLI composes this op from the module's index, and ensure-specs.mjs takes
-// its channel from there.
+// question and no copy kept; a current one is left. The installer set is written first; after the last
+// write the project's own rotator brings the ADR store current (`--ensure-current`). It never imports
+// ensure-specs.mjs or ensure-configs.mjs: the CLI composes this op from the module's index, and
+// ensure-specs.mjs takes its channel from there.
 //
-// Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.
+// Dependency-free, Node >= 22. Every fs primitive and the spawn are injectable (deps.*). No side effects on import.
 
+import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
 import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
-import { surveyAdrLayoutStrict } from '../family-registry.mjs';
 import { BUNDLED_SCRIPT_NAMES } from '../node-evidence.mjs';
 import { CHECKER_PAIR, INSTALLER_SET, READER_PAIR, SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
 
@@ -23,11 +23,9 @@ const BUNDLED = ['references', 'scripts'];
 // Where an edit meant to last goes: the installer's in the local hook file, every other file's beside it.
 export const SCRIPT_CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
 export const LOCAL_HOOK_CHANNEL = 'the local hook file scripts/pre-commit.local, which the commit hook runs first';
-// The family files whose bytes import or read archive-decisions.mjs, plus that file (the suite derives it).
-export const DECISIONS_GROUP = Object.freeze(['archive-decisions.mjs', 'archive-decisions.test.mjs', 'archiver-structure.test.mjs']);
 // The family files memory copies on Node evidence alone, accepted or not (the suite derives them).
 export const SEED_NAMES = Object.freeze(['_expect-shim.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs']);
-const OLD_ADR_LAYOUTS = new Set(['old', 'old-unrotated']);
+const ROTATOR = 'archive-decisions.mjs';
 const PAIRS = new Set([...READER_PAIR, ...CHECKER_PAIR]);
 // The family in write order: the installer set, then every other bundled name in code-unit order.
 const FAMILY = Object.freeze([...INSTALLER_SET, ...BUNDLED_SCRIPT_NAMES.filter((name) => !PAIRS.has(name) && !INSTALLER_SET.includes(name)).sort()]);
@@ -48,8 +46,8 @@ const seedClosure = (standing, bundleOf) => {
   return reached;
 };
 
-// → { refusal } | { notPlaced } | { files, accepted, layout, layoutError }. A family path of another node
-// kind is judged before the component, so a linked family file never reads as not-placed.
+// → { refusal } | { notPlaced } | { files, accepted }. A family path of another node kind is judged
+// before the component, so a linked family file never reads as not-placed.
 const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
   const dir = lstatNoFollow(join(cwd, SCRIPTS_DIR), lstat);
   if (dir === null) return { notPlaced: true };
@@ -72,11 +70,7 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
     const bytes = probe.present ? read(join(cwd, rel)) : undefined;
     return { name, rel, bundle: bundles.get(name), state: probe.present ? classifyDeployedScript(bytes, name, bundles.get(name), deps.priors ?? SCRIPT_PRIORS) : 'absent' };
   });
-  try {
-    return { files, accepted, layout: surveyAdrLayoutStrict(cwd, deps) };
-  } catch (err) {
-    return { files, accepted, layoutError: causeOf(err) };
-  }
+  return { files, accepted };
 };
 
 // ── the lines (composed from what HAPPENED: each file's state and the fate of its write) ─────────
@@ -91,7 +85,6 @@ const fileLine = (f, fate, dryRun) => {
   const tail = fate === 'written' ? done : dryRun ? `would be ${done}` : `not ${verb}; ${fate === 'refused' ? 'its write was refused (above)' : 'the run stopped before it'}`;
   return `${f.rel}: ${HEADS[f.state]} — ${tail}${f.state === 'custom' ? `; an edit meant to last goes in ${f.name === INSTALLER_SET[0] ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL}` : ''}`;
 };
-const heldLine = (layout) => `${SCRIPTS_DIR}/: ${DECISIONS_GROUP.slice(0, -1).join(', ')} and ${DECISIONS_GROUP.at(-1)} are held back while this project is on the older ADR layout (${layout}) — run the opt-in /agent-workflow-kit migrate-adr-store (it previews, and never commits); the next upgrade judges them`;
 const NOT_ACCEPTED = `${SCRIPTS_DIR}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
 // The hook-run line, once after the file lines of a run that wrote (or, dry, would write) a file.
 const hookLine = (accepted, dryRun) => (accepted
@@ -138,6 +131,24 @@ const writeRun = ({ cwd, files, accepted, dryRun, deps, read }) => {
   return { due, fates, failure, written, lines: due.map((f) => fileLine(f, fates.get(f.rel), dryRun)), tail: [...hook, ...notes, ...(failure ? partialNote(written.length) : [])] };
 };
 
+// ── the ADR store, after the writes ───────────────────────────────────────────────────────────────
+
+// The rotator the run just left on the bundled body brings the store current; its output is relayed
+// keyed on its contracted summary, the last standard output line.
+const STORE = 'ADR store: ';
+const ENSURE = `${SCRIPTS_DIR}/${ROTATOR} --ensure-current`;
+const WOULD_STORE = `${STORE}${ENSURE} would run after the writes, bringing the store current or writing nothing when it already is`;
+const outputLines = (text) => String(text ?? '').split(/\r?\n/).filter((line) => line !== '');
+// → { brought, lines, failure? }
+const runStore = (cwd, deps) => {
+  const r = (deps.spawnSync ?? spawnSync)(process.execPath, [join(cwd, SCRIPTS_DIR, ROTATOR), '--ensure-current'], { cwd, encoding: 'utf8' });
+  const [out, err] = [outputLines(r.stdout), outputLines(r.stderr)];
+  const ended = r.error ? `ended with an error (${causeOf(r.error)})` : r.signal ? `was killed by signal ${r.signal}` : r.status !== 0 ? `exited with code ${r.status}` : null;
+  if (ended) return { failure: `${ENSURE} ${ended} — the ADR store is not current`, lines: [...err, ...out].map((line) => STORE + line) };
+  const brought = (out.at(-1) ?? '').startsWith('brought-current:');
+  return { brought, lines: [...(brought ? out : []), ...err].map((line) => STORE + line) };
+};
+
 // ── the op ────────────────────────────────────────────────────────────────────────────────────────
 
 export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
@@ -149,26 +160,15 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   if (found.refusal) return found.refusal;
   if (found.notPlaced) return composeOutcome(OP, 'not-placed', [`${SCRIPTS_DIR}/: no kit script stands in it, so none is placed`], false);
   const { files, accepted } = found;
-  const declined = accepted ? [] : [NOT_ACCEPTED];
-
-  // An unreadable layout: on an accepted component the installer set alone is kept current.
-  if (found.layoutError !== undefined) {
-    const layoutLine = `${SCRIPTS_DIR}/: the ADR-store layout could not be read (${found.layoutError}), so the other kit scripts wait for the layout`;
-    const set = accepted ? files.filter((f) => INSTALLER_SET.includes(f.name)) : [];
-    const r = writeRun({ cwd, files: set, accepted, dryRun, deps, read });
-    if (r.failure) return composeFailure(OP, r.failure[0], r.failure[1], ...r.lines, layoutLine, ...r.tail);
-    return composeFailure(OP, 'adr-layout-unverifiable', layoutLine, ...r.lines, ...r.tail);
-  }
-
-  const held = OLD_ADR_LAYOUTS.has(found.layout);
-  const live = files.filter((f) => !(held && DECISIONS_GROUP.includes(f.name)));
-  const current = live.filter((f) => f.state === 'current').length;
-  const r = writeRun({ cwd, files: live, accepted, dryRun, deps, read });
-  const body = [...r.lines, ...(current > 0 ? [`${SCRIPTS_DIR}/: ${current} other kit scripts are already the bundled body — nothing written`] : []), ...(held ? [heldLine(found.layout)] : []), ...declined];
+  const current = files.filter((f) => f.state === 'current').length;
+  const r = writeRun({ cwd, files, accepted, dryRun, deps, read });
+  const body = [...r.lines, ...(current > 0 ? [`${SCRIPTS_DIR}/: ${current} other kit scripts are already the bundled body — nothing written`] : []), ...(accepted ? [] : [NOT_ACCEPTED])];
   if (r.failure) return composeFailure(OP, r.failure[0], r.failure[1], ...body, ...r.tail);
+  const rotator = files.some((f) => f.name === ROTATOR);
+  const store = !rotator ? { lines: [] } : dryRun ? { lines: [WOULD_STORE] } : runStore(cwd, deps);
+  if (store.failure) return composeFailure(OP, 'adr-store-not-current', store.failure, ...body, ...r.tail, ...store.lines);
   const landed = (state) => (dryRun ? r.due : r.written).some((f) => f.state === state);
-  const token = held ? 'old-adr-layout-migration-instructed'
-    : landed('absent') ? (dryRun ? 'would-seed' : 'seeded')
-      : landed('prior') || landed('custom') ? (dryRun ? 'would-refresh' : 'refreshed') : 'already-present';
-  return composeOutcome(OP, token, [...body, ...r.tail], false);
+  const token = landed('absent') ? (dryRun ? 'would-seed' : 'seeded')
+    : landed('prior') || landed('custom') || store.brought ? (dryRun ? 'would-refresh' : 'refreshed') : 'already-present';
+  return composeOutcome(OP, token, [...body, ...r.tail, ...store.lines], false);
 };

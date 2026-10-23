@@ -11,7 +11,7 @@
 // `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
 // root it seeds is a docs/ai file the navigator must count. `specs` alone owns the replace run: its
 // edited files are written only on the user's yes, while `scripts` writes every kit script with no
-// question.
+// question and then runs the project's rotator (`--ensure-current`), which brings the ADR store current.
 // `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
 // `rules` follows `specs` and precedes `index`: the rules files it lays are docs/ai files the navigator counts.
 export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index']);
@@ -20,7 +20,7 @@ export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', '
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer
 // ensure's pair refresh (reader or checker) or the scripts ensure's write of a kit script — a deployed
 // script on a body a release shipped, or an edited one, rewritten to the bundled one on a plain run, an
-// absent kit script placed (`seeded`); an edited spec-layer file is replaced only by the replace run the
+// absent kit script placed (`seeded`), or the ADR store the rotator brought current; an edited spec-layer file is replaced only by the replace run the
 // user's yes starts (--replace-custom, over the spec layer).
 export const WRITE_TOKENS = Object.freeze(['seeded', 'note-refreshed', 'refreshed', 'regenerated']);
 export const DRY_RUN_TOKENS = Object.freeze(['would-seed', 'would-refresh-note', 'would-refresh', 'would-regenerate']);
@@ -40,7 +40,6 @@ export const ENSURE_TOKENS = Object.freeze([
   'customized-preserved',
   'malformed-preserved',
   'skipped-no-node-evidence',
-  'old-adr-layout-migration-instructed',
   'failed',
 ]);
 
@@ -51,7 +50,8 @@ export const FAILURE_CAUSES = Object.freeze([
   'race-unresolved',
   'template-unreadable',
   'bundle-unreadable',
-  'adr-layout-unverifiable',
+  // The scripts op's store run: the rotator ended with an error, a signal or a non-zero exit.
+  'adr-store-not-current',
   // A Node probe (package.json, a kit-seeded script) failed with anything but ENOENT: whether Node runs
   // here is unproven, so the ensures that place Node scripts write nothing (contract: kit/node-evidence).
   'node-evidence-unverifiable',
@@ -91,6 +91,5 @@ export const RELAYED_ENSURE_TOKENS = Object.freeze([
   'already-present',
   'not-placed',
   'skipped-no-node-evidence',
-  'old-adr-layout-migration-instructed',
   'failed',
 ]);

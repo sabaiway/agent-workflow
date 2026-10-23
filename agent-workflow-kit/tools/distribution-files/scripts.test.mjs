@@ -15,7 +15,7 @@ import { hermeticGitEnv } from '../git-env.mjs';
 import { BUNDLED_SCRIPT_NAMES } from '../node-evidence.mjs';
 import { INSTALLER_SET, SCRIPT_PRIORS } from '../script-priors.mjs';
 
-const { ensureScripts, SCRIPT_CHANNEL, LOCAL_HOOK_CHANNEL, DECISIONS_GROUP } = await import('./scripts.mjs').catch(() => ({}));
+const { ensureScripts, SCRIPT_CHANNEL, LOCAL_HOOK_CHANNEL } = await import('./scripts.mjs').catch(() => ({}));
 
 const KIT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT, 'references', 'scripts');
@@ -45,12 +45,12 @@ const SHIPPED = 'matches a body an earlier release shipped';
 const DIFFERS = 'differs from every body this kit knows it shipped';
 const HOOK = 'the commit hook runs the files written above, so they may stop the next commit';
 const DRY_HOOK = 'the commit hook runs the files named above, so writing them may stop the next commit';
+const WOULD = 'ADR store: scripts/archive-decisions.mjs --ensure-current would run after the writes, bringing the store current or writing nothing when it already is';
 const L = {
   refreshed: (n) => `${rel(n)}: ${SHIPPED} — refreshed to the bundled one`,
   replaced: (n) => `${rel(n)}: ${DIFFERS} — replaced by the bundled body; an edit meant to last goes in ${channelOf(n)}`,
   placed: (n) => `${rel(n)}: absent — placed from the bundled scripts`,
   count: (k) => `scripts/: ${k} other kit scripts are already the bundled body — nothing written`,
-  group: (layout) => `scripts/: archive-decisions.mjs, archive-decisions.test.mjs and archiver-structure.test.mjs are held back while this project is on the older ADR layout (${layout}) — run the opt-in /agent-workflow-kit migrate-adr-store (it previews, and never commits); the next upgrade judges them`,
   partway: (k) => `the writes stopped PARTWAY — the ${k} file(s) named above were already written and are NOT rolled back`,
 };
 const FORBIDDEN = /withheld|customized|preserved|kept aside|the user's yes|the block below|you edited|user edited|edited it/i;
@@ -81,12 +81,13 @@ const holds = (dir, want) => { for (const [n, body] of Object.entries(want)) ass
 const isFileLine = (l) => /^scripts\/[^:]/.test(l);
 // The S16 invariant, asserted on every run below: a run that completed a publish (an atomic rename or a
 // create-only link), failed or not, prints the hook-run line once after its file lines, one that
-// completed none prints none; a dry run prints the would-be form once exactly when a file line would write.
+// completed none prints none; a dry run prints the would-be form once exactly when a file line would write,
+// and, every tree here judging the rotator, ends with the store's would line.
 const assertHookRun = (r, wrote, dryRun) => {
   const hooks = r.lines.flatMap((l, i) => (/commit hook runs the files/.test(l) ? [i] : []));
   const due = dryRun ? r.lines.some((l) => isFileLine(l) && l.includes(' — would be ')) : wrote > 0;
   const [last, word] = [r.lines.findLastIndex(isFileLine), dryRun ? 'files named above' : 'files written above'];
-  assert.deepEqual([hooks.length, hooks.every((i) => i > last && r.lines[i].includes(word))], [due ? 1 : 0, true], `the hook-run line:\n${r.lines.join('\n')}`);
+  assert.deepEqual([hooks.length, hooks.every((i) => i > last && r.lines[i].includes(word)), dryRun ? r.lines.at(-1) : WOULD], [due ? 1 : 0, true, WOULD], `the hook-run line, then the would line:\n${r.lines.join('\n')}`);
 };
 const run = (dir, opts = {}) => {
   const [deps, done] = [opts.deps ?? {}, []];
@@ -100,8 +101,6 @@ const run = (dir, opts = {}) => {
   return r;
 };
 const spy = (paths) => (p, ...rest) => { paths.push(String(p)); return readFileSync(p, ...rest); };
-const oldLayout = (dir) => { mkdirSync(join(dir, 'docs', 'ai', 'history')); writeFileSync(join(dir, 'docs', 'ai', 'history', 'decisions-archive.md'), '# archive\n'); };
-const unrotated = (dir) => mkdirSync(join(dir, 'docs', 'ai', 'adr'));
 // A recording writer: each atomic publish (rename) and create-only publish (link) records its target name,
 // the `refuseAt`-th one throws EACCES before it touches the tree.
 const recorder = (dir, { refuseAt = 0 } = {}, order = []) => {
@@ -154,27 +153,22 @@ describe('spec:distribution-files/S14 the rule by its cells over an accepted com
 
 describe('spec:distribution-files/S15 the dry run and the quiet cells', () => {
   const wouldBe = (l) => (l === HOOK ? DRY_HOOK : l.replace(/— (refreshed|replaced|placed) /, '— would be $1 '));
-  it("a dry run gives a plain run's lines in their would-be forms, writes nothing, would-seed beside an absent file, else would-refresh", () => {
+  it("a dry run gives a plain run's lines in their would-be forms and the store's would line, writes nothing, would-seed beside an absent file, else would-refresh", () => {
     const rows = [[{ ...PRIORS, 'archive-caps.mjs': EDIT('archive-caps.mjs') }, 'would-refresh', 'refreshed'], [{ ...PRIORS, [SET[0]]: EDIT(SET[0]), 'migrate-gates.mjs': null }, 'would-seed', 'seeded']];
     for (const [bodies, dryToken, token] of rows) {
       const real = withTree(bodies, (dir) => run(dir));
       withTree(bodies, (dir) => {
         const [before, dry] = [snapshot(dir), run(dir, { dryRun: true })];
-        assert.deepEqual([dry.token, real.token, 'entries' in dry, dry.lines], [dryToken, token, false, real.lines.map(wouldBe)]);
+        assert.deepEqual([dry.token, real.token, 'entries' in dry, dry.lines], [dryToken, token, false, [...real.lines.map(wouldBe), WOULD]]);
         assert.deepEqual(snapshot(dir), before);
       });
     }
   });
-  it('a fully current family: already-present, the one count line, no hook-run line, nothing written', () => withTree({}, (dir) => {
+  it('a fully current family over a current store: already-present, the one count line, no hook-run line, no store line, nothing written', () => withTree({}, (dir) => {
     const before = snapshot(dir);
     assert.deepEqual(run(dir), { op: 'scripts', token: 'already-present', failed: false, lines: [L.count(21)] });
     assert.deepEqual(snapshot(dir), before);
   }));
-  it('a current family beside the old ADR layout: old-adr-layout-migration-instructed, nothing written', () => withTree({}, (dir) => {
-    const before = snapshot(dir);
-    assert.deepEqual(run(dir), { op: 'scripts', token: 'old-adr-layout-migration-instructed', failed: false, lines: [L.count(18), L.group('old')] });
-    assert.deepEqual(snapshot(dir), before);
-  }, { setup: oldLayout }));
 });
 
 describe('spec:distribution-files/S16 the failure cells and the hook-run line', () => {
@@ -214,42 +208,11 @@ describe('spec:distribution-files/S16 the failure cells and the hook-run line', 
   });
 });
 
-describe('spec:distribution-files/S17 the decisions layout gate', () => {
-  it('the group derived from the bundled bytes equals the frozen DECISIONS_GROUP', () => {
-    const reads = ORDER.filter((n) => /(['"])(?:\.\/)?archive-decisions\.mjs\1/.test(readFileSync(join(BUNDLE, n), 'utf8')));
-    assert.deepEqual([[...DECISIONS_GROUP], Object.isFrozen(DECISIONS_GROUP)], [[...new Set([...reads, 'archive-decisions.mjs'])].sort(), true]);
-  });
-  const GROUP = { 'archive-decisions.mjs': OLD('archive-decisions.mjs'), 'archive-decisions.test.mjs': EDIT('archive-decisions.test.mjs'), 'archiver-structure.test.mjs': null };
-  const REST = { [SET[0]]: prior(SET[0]), 'archive-caps.mjs': EDIT('archive-caps.mjs'), 'migrate-gates.mjs': null };
-  for (const [layout, setup] of [['old', oldLayout], ['old-unrotated', unrotated]]) it(`on ${layout}: the group stays as found under its one line; every other file follows the rule`, () => withTree({ ...GROUP, ...REST }, (dir) => {
-    const r = run(dir, { deps: { priors: priorsWith('archive-decisions.mjs') } });
-    assert.deepEqual(r, { op: 'scripts', token: 'old-adr-layout-migration-instructed', failed: false,
-      lines: [L.refreshed(SET[0]), L.replaced('archive-caps.mjs'), L.placed('migrate-gates.mjs'), L.count(15), L.group(layout), HOOK] });
-    holds(dir, { ...GROUP, ...Object.fromEntries(Object.keys(REST).map((n) => [n, bundled(n)])) });
-  }, { setup }));
-  const denied = { statPath: () => { throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' }); } };
-  const deps = { ...denied, priors: priorsWith('markdown-blocks.mjs', 'archive-decisions.mjs') };
-  const UNREAD = { [SET[0]]: prior(SET[0]), [SET[1]]: EDIT(SET[1]), [SET[2]]: null, 'markdown-blocks.mjs': OLD('markdown-blocks.mjs'), ...GROUP };
-  const UNVERIFIABLE = 'adr-layout-unverifiable — scripts/: the ADR-store layout could not be read (EACCES: denied), so the other kit scripts wait for the layout';
-  const SET_LINES = [UNVERIFIABLE, L.refreshed(SET[0]), L.replaced(SET[1]), L.placed(SET[2]), HOOK];
-  const pairs = (dir) => put(dir, { ...PAIR_BODIES, 'check-docs-size.mjs': EDIT('check-docs-size.mjs') });
-  it('an unreadable layout: failed, a prior, an edited and an absent installer-set member written, every other file byte-identical', () => withTree(UNREAD, (dir) => {
-    const before = snapshot(dir), r = run(dir, { deps });
-    assert.deepEqual(r, { op: 'scripts', token: 'failed', failed: true, lines: SET_LINES });
-    assert.deepEqual(snapshot(dir), { ...before, ...Object.fromEntries(SET.map((n) => [join('scripts', n), bundled(n).toString('base64')])) });
-  }, { setup: pairs }));
-  it("through main: the scripts op failed with the installer set written, the block over the specs op's entries alone", () => withTree(UNREAD, (dir) => {
-    const out = cli(dir, [], { deps }).stdout;
-    assert.deepEqual([tokensOf(out).filter((t) => t.startsWith('scripts:')), detailsOf(out, 'scripts'), blockRels(out)], [['scripts: failed'], SET_LINES, ['scripts/check-docs-size.mjs']], out);
-  }, { setup: pairs }));
-});
-
 describe('spec:distribution-files/S18 one token precedence over the plain and dry runs', () => {
-  it('adjacent cells, one table: failed, old-adr…, seeded, refreshed, already-present; would-seed and would-refresh on a dry run', () => {
+  it('adjacent cells, one table: failed, seeded, refreshed, already-present; would-seed and would-refresh on a dry run; never pending or customized-preserved', () => {
     const [plain, dry, caps, installer, absent] = [() => ({}), () => ({ dryRun: true }), { 'archive-caps.mjs': EDIT('archive-caps.mjs') }, { [SET[0]]: prior(SET[0]) }, { 'migrate-gates.mjs': null }];
     const rows = [
-      ['failed over old-adr-layout-migration-instructed', installer, oldLayout, (dir) => ({ deps: recorder(dir, { refuseAt: 1 }).deps }), 'failed'],
-      ['old-adr-layout-migration-instructed over seeded', { ...installer, ...absent }, oldLayout, plain, 'old-adr-layout-migration-instructed'],
+      ['failed over seeded: the placement refused after the installer was refreshed', { ...installer, ...absent }, undefined, (dir) => ({ deps: recorder(dir, { refuseAt: 2 }).deps }), 'failed'],
       ['seeded over refreshed: an absent file placed beside a replaced edit', { ...caps, ...absent }, undefined, plain, 'seeded'],
       ['refreshed by a replaced edit alone', caps, undefined, plain, 'refreshed'],
       ['refreshed over already-present', installer, undefined, plain, 'refreshed'],
@@ -358,25 +321,32 @@ describe('spec:distribution-files/S22 the replace run without the scripts op', (
   });
 });
 
-describe('spec:distribution-files/S24 shipped text of the one rule', () => {
+describe('spec:distribution-files/S24 shipped text of the one rule and the store run', () => {
   const [text, header] = [(...p) => readFileSync(join(KIT, ...p), 'utf8'), (src) => src.slice(0, src.indexOf('\nimport '))];
   const has = (body, yes, no = []) => assert.deepEqual([yes.filter((p) => !body.includes(p)), no.filter((p) => body.includes(p))], [[], []], 'missing phrases, then claimed ones');
-  it('upgrade.md: the scripts token arm and the enforcement-script paragraph state the one rule', () => {
+  const [RETIRED, STORE_RUN] = [['old-adr-layout-migration-instructed', 'adr-layout-unverifiable'], 'archive-decisions.mjs --ensure-current'];
+  it('upgrade.md: the scripts token arm, the enforcement-script paragraph and the owns sentence state the one rule and the store run', () => {
     const doc = text('references', 'modes', 'upgrade.md'), at = doc.indexOf('**What the enforcement-script ensure does.**');
-    has(doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`seeded`', '`refreshed`', '`already-present`', '`not-placed`', '`old-adr-layout-migration-instructed`', '`skipped-no-node-evidence`'], ['`pending`', 'customized-preserved']);
+    has(doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`seeded`', '`refreshed`', '`already-present`', '`not-placed`', '`skipped-no-node-evidence`'], ['`pending`', 'customized-preserved']);
     has(at === -1 ? '' : doc.slice(at, doc.indexOf('\n', at)), ['a kit script outside the seed names', 'no question and no copy kept', 'where a lasting edit goes', 'the commit hook runs the files written',
-      'keeps the standing seed files current with the modules they import', 'places no other kit script', 'hook-run line as a condition', 'migrate-adr-store', '`--write-baseline`',
-      'the `enforcement` check line and apply, by the consent route'], ['withheld', 'customized', 'preserved', 'kept aside', 'one yes', 'replace block']);
+      'keeps the standing seed files current with the modules they import', 'places no other kit script', 'hook-run line as a condition', `\`scripts/${STORE_RUN}\``, 'after the writes', 'its refusal stops the upgrade', '`--write-baseline`',
+      'the `enforcement` check line and apply, by the consent route'], ['withheld', 'customized', 'preserved', 'kept aside', 'held back', 'one yes', 'replace block', 'migrate-adr-store']);
+    has(doc, ["rewrites only what it owns, and the scripts op's store run moves ADR entries, rewrites their inbound links"], [...RETIRED, 'never auto-migrated', 'legacy-ADR', 'cannot READ', 'the layout it read']);
+    has(text('tools', 'upgrade-runlist.mjs'), [], RETIRED);
   });
-  it('the ensure-ops.mjs header and the ensure-vocabulary.mjs comments name the leaf, the rule and no replace run for a kit script', () => {
+  it('the ensure-ops.mjs header and the ensure-vocabulary.mjs comments name the leaf, the rule, the store run and no replace run for a kit script', () => {
     has(header(text('tools', 'ensure-ops.mjs')), ['distribution-files/scripts.mjs', 'no question and no copy'], ['SEED_SCRIPTS']);
-    has(text('tools', 'ensure-vocabulary.mjs'), ['`specs` alone owns the replace run'], ['SEED_SCRIPTS', 'over the kit scripts']);
+    has(text('tools', 'ensure-vocabulary.mjs'), ['`specs` alone owns the replace run', "runs the project's rotator (`--ensure-current`)"], ['SEED_SCRIPTS', 'over the kit scripts', 'held back', ...RETIRED]);
   });
-  it('ensure-configs.mjs: its header row and --help name the rule, no survey of another op and no yes for a kit script', () => {
+  it('ensure-configs.mjs: its header row and --help name the rule and the store run, no survey of another op and no yes for a kit script', () => {
     const rows = header(text('tools', 'ensure-configs.mjs')).split('\n'), at = rows.findIndex((l) => /^\/\/ {3}scripts /.test(l));
-    has(at === -1 ? '' : rows.slice(at, at + 2).join('\n'), ['with no question and no copy kept']);
+    has(at === -1 ? '' : rows.slice(at, at + 4).join('\n'), ['with no question and no copy kept', 'brings the ADR store current (--ensure-current)'], ['held back']);
     const help = main(['--help']).stdout, from = help.indexOf('\n  --only <op>'), fifth = help.indexOf('A fifth');
     has(help.slice(from, help.indexOf('\n  --replace-custom', from)), [], ['survey']);
-    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept'], ['yes']);
+    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
+  });
+  it('migrate-adr-store.md and its tool header: the upgrade moves an older layout itself, the mode does nothing after a full upgrade', () => {
+    for (const body of [text('references', 'modes', 'migrate-adr-store.md'), header(text('tools', 'migrate-adr-store.mjs'))]) has(body.replace(/`/g, '').replace(/\n\/\/ /g, ' '),
+      ["the upgrade moves an older layout itself wherever scripts/ holds the kit's rotator", 'after a full upgrade this mode does nothing'], ['never installs', 'arrives ONLY']);
   });
 });

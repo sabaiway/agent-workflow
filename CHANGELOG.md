@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-23 — AD-203: the kit's upgrade moves an older ADR layout itself (kit 14.50.0 MINOR; memory 8.6.0, engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-kit upgrade` no longer holds back the decisions script on an older ADR layout.** It writes every
+kit script with its current body whatever the layout, then runs the project's `scripts/archive-decisions.mjs
+--ensure-current` with no question, which moves a retired layout into the one-file-per-ADR store, rotates a HOT window
+over its cap and rewrites a stale navigator, as needed, or writes nothing when the store is already current; its lines are relayed under `ADR store: `, and a refusal fails the step with
+`adr-store-not-current` and stops the upgrade. The token `old-adr-layout-migration-instructed` and the cause
+`adr-layout-unverifiable` retire. Contracts: distribution-files revision 4, adr-navigator revision 3, vehicle-settings
+revision 5. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-23 — AD-202: the kit's upgrade writes its current scripts and hook installer with no question and no kept-aside copy (kit 14.49.0 MINOR; memory 8.6.0, engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-kit upgrade` now overwrites a differing kit script and places an absent one** with the body it

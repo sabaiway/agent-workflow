@@ -5,8 +5,8 @@
 // deployed pre-commit hook (the refreshed checker + --check-index + the deployed test suite) lets a
 // seeded valid spec commit, and the navigator carries ONE collapsed specs/ row. Three variants pin
 // the decided edges: a 4.6.x deployment's reader pair (2a: on the 4.6.0 bodies, checker current)
-// refreshes and the store then seeds, the legacy ADR layout still seeds (D-G), a custom checker is
-// preserved with no store root (D-E).
+// refreshes and the store then seeds, a legacy ADR layout is moved by the scripts ensure and still seeds
+// (D-G; the deployment's git init and installer and the op's spawns GIT_-stripped, so a hook's GIT_DIR never takes the snapshot), a custom checker is preserved with no store root (D-E).
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from '../tools/git-env.mjs';
 
 const { main } = await import('../tools/ensure-configs.mjs').catch(() => ({}));
 
@@ -72,8 +73,8 @@ const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false, check
     const body = name === CHECKER[0] ? checkerBody : name === CHECKER[1] ? checkerTestBody : undefined;
     writeFileSync(join(scripts, name), body ?? (CHECKER.includes(name) ? (checker === 'prior' ? prior(name) : checker === 'current' ? bundle(name) : '// my own checker\n') : bundle(name)));
   }
-  git(project, 'init', '-q');
-  execFileSync(process.execPath, [join(scripts, 'install-git-hooks.mjs')], { cwd: project, stdio: 'pipe' });
+  execFileSync('git', ['init', '-q'], { cwd: project, stdio: 'pipe', env: stripGitLocationEnv(process.env) });
+  execFileSync(process.execPath, [join(scripts, 'install-git-hooks.mjs')], { cwd: project, stdio: 'pipe', env: stripGitLocationEnv(process.env) });
   return project;
 };
 const withDeployment = (opts, fn) => {
@@ -86,6 +87,7 @@ const withDeployment = (opts, fn) => {
 };
 const tokensOf = (stdout) => Object.fromEntries(stdout.split('\n').map((l) => l.match(/^ {2}([a-z]+): ([a-z-]+)$/)).filter(Boolean).map(([, op, token]) => [op, token]));
 const reconcile = (project) => main(['--reconcile', '--cwd', project], { kitRoot: KIT_ROOT });
+const seam = (cmd, args, options) => spawnSync(cmd, args, { ...options, env: stripGitLocationEnv(process.env) });
 const checkDeployedDocs = (project, ...args) => {
   const result = spawnSync(process.execPath, ['scripts/check-docs-size.mjs', ...args], { cwd: project, encoding: 'utf8' });
   assert.equal(result.status, 0, `the deployed checker ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`);
@@ -149,12 +151,12 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
     });
   });
 
-  it('the legacy ADR layout instructs the scripts ensure but still gains the spec layer (D-G: no ADR-layout dependency)', () => {
+  it('a legacy ADR layout: the scripts ensure refreshes and moves the store, and the spec layer still seeds (D-G: no ADR-layout dependency)', () => {
     withDeployment({ legacyAdr: true }, (project) => {
-      const r = reconcile(project);
+      const r = main(['--reconcile', '--cwd', project], { kitRoot: KIT_ROOT, deps: { spawnSync: seam } });
       const tokens = tokensOf(r.stdout);
-      assert.equal(tokens.scripts, 'old-adr-layout-migration-instructed');
-      assert.equal(tokens.specs, 'seeded', r.stdout);
+      assert.deepEqual([r.code, tokens.scripts, tokens.specs, r.stdout.includes('ADR store: brought-current: migrated')], [0, 'refreshed', 'seeded', true], r.stdout);
+      assert.deepEqual([existsSync(join(project, 'docs', 'ai', 'history', 'decisions-archive.md')), seam(process.execPath, ['scripts/archive-decisions.mjs', '--check'], { cwd: project }).status, readdirSync(join(project, '.git')).some((name) => name.startsWith('agent-workflow-adr-migration-snapshot-'))], [false, 0, true], r.stdout);
       assert.ok(existsSync(join(project, STORE)));
       assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), bundle(CHECKER[0]));
     });

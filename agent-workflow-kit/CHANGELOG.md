@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 14.50.0 — the upgrade moves an older ADR layout itself, with no question (AD-203)
+
+**`/agent-workflow-kit upgrade` now brings your ADR store current in the same run.** Before, on a project still on the
+retired three-tier ADR layout (a `docs/ai/history/decisions-archive*.md` monolith, or a decisions script older than the
+one-file-per-ADR store), the upgrade held back `archive-decisions.mjs`, its suite and `archiver-structure.test.mjs`,
+reported `old-adr-layout-migration-instructed` and named the opt-in `/agent-workflow-kit migrate-adr-store`. Now:
+
+- **Every kit script follows the one rule, whatever the layout.** The decisions script and its two suites are
+  refreshed, replaced or placed like every other kit script; the `scripts` step reads no ADR layout.
+- **Then the store run.** After the last write, the step runs your project's `scripts/archive-decisions.mjs
+  --ensure-current` with no question. It moves a retired monolith into `docs/ai/adr/` records, rotates a HOT window over
+  its cap and writes the navigator, as needed, or writes nothing when the store is already current. When it brought
+  the store current, its lines follow the step's other lines, each under `ADR store: ` (for example `ADR store:
+  brought-current: migrated, navigator written`), and the step reports `refreshed`, or `seeded` when it also placed a
+  kit script. It runs wherever the step judged
+  the decisions script: always where you took the kit's scripts, and on a project that declined the enforcement offer
+  when that script or its suite stands in `scripts/`. It never runs after a write that failed.
+- **A refusal stops the upgrade.** When the decisions script ends with an error, a signal or a non-zero exit, the step
+  reports `failed` with the cause `adr-store-not-current`, relays the script's own lines under `ADR store: `, and the
+  upgrade stops; the kit scripts written before it stay as written.
+- **A dry run** spawns nothing and, where it judged the decisions script, ends with one line saying the store run
+  would follow the writes.
+- **Retired:** the token `old-adr-layout-migration-instructed` and the cause `adr-layout-unverifiable`. The step's
+  tokens are `seeded`, `refreshed`, `already-present`, `not-placed` and `skipped-no-node-evidence`.
+- **The opt-in `migrate-adr-store` mode** has nothing left to do after an upgrade where `scripts/` holds the decisions
+  script; it stays for a project whose `scripts/` holds no kit script.
+
+MINOR: the upgrade gains the store run and one failure cause.
+
 ## 14.49.0 — the upgrade writes the kit's current scripts and hook installer with no question and no kept-aside copy (AD-202)
 
 **`/agent-workflow-kit upgrade` no longer asks about its own scripts.** Before, an edited or absent kit script in

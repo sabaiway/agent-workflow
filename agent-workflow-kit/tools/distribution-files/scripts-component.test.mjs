@@ -53,10 +53,6 @@ const NOT_PLACED = 'scripts/: no kit script stands in it, so none is placed';
 const NOT_ACCEPTED = 'scripts/: the enforcement scripts were not accepted in this project, so no other kit script is placed';
 const HOOK_IF = 'if a commit hook runs the files written above, they may stop the next commit';
 const HOOK_ACCEPTED = 'the commit hook runs the files written above, so they may stop the next commit';
-const UNVERIFIABLE = 'adr-layout-unverifiable — scripts/: the ADR-store layout could not be read (EACCES: denied), so the other kit scripts wait for the layout';
-const denied = () => {
-  throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' });
-};
 
 const put = (dir, bodies) => {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
@@ -141,18 +137,13 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
       const at = `standing ${standing.join(', ')}`;
       assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines }, { token: placed.length > 0 ? 'seeded' : 'refreshed', failed: false, lines: [...reached.map(fileLine), NOT_ACCEPTED, HOOK_IF] }, at);
       assert.equal('entries' in r, false, at);
-      assert.deepEqual([r.lines.filter((l) => l === HOOK_IF).length, r.lines.includes(HOOK_ACCEPTED)], [1, false], at);
+      // A run over a current store (no ADR substrate here) prints no store line, the rotator judged or not.
+      assert.deepEqual([r.lines.filter((l) => l === HOOK_IF).length, r.lines.includes(HOOK_ACCEPTED), r.lines.filter((l) => l.startsWith('ADR store: '))], [1, false, []], at);
       for (const n of reached) assert.equal(digestOf(bytesOf(dir, n)), sha(bundled(n)), `${at}: ${n} holds the bundled bytes`);
       for (const n of listing(dir).filter((f) => SEEDS.includes(f))) for (const dep of importsOf(n)) assert.ok(existsSync(join(dir, 'scripts', dep)), `${at}: ${n} imports ./${dep}, present`);
       assert.deepEqual(listing(dir), [...new Set([...before, ...reached])].sort(), `${at}: no other absent family file written`);
     });
   });
-
-  it('a declined tree with an unreadable layout: byte-identical, failed adr-layout-unverifiable, exactly one line', () => withTree((dir) => put(dir, { ...PAIR_BODIES, [ROTATOR[1]]: EDIT(ROTATOR[1]) }), (dir) => {
-    const before = snapshot(dir);
-    assert.deepEqual(run(dir, { statPath: denied, priors: PRIORS }), failedWith(UNVERIFIABLE));
-    assert.deepEqual(snapshot(dir), before);
-  }));
 
   it('one family file outside SEED_NAMES standing accepts the component: every other family file placed create-only, seeded, one hook-run line', () => {
     const outside = FAMILY.filter((n) => !SEEDS.includes(n)).sort()[0];
