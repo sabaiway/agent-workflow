@@ -1,7 +1,8 @@
 # Setup contracts
 
 The three choices the bootstrap makes with the user — **visibility**, **conversational
-language**, and **agent attribution** — each have a contract below. `SKILL.md` links here so the
+language**, and **agent attribution** — each have a contract below, and the scripts the substrate
+deploys have theirs beside them, under *Reserved names and channels*. `SKILL.md` links here so the
 main procedure stays lean; load this file when you need the full rule for a contract (e.g. while
 filling the matching `AGENTS.md` block, or when an `upgrade` migration touches it).
 
@@ -63,3 +64,22 @@ block is about *attribution*, not authorship of the actual changes — quality, 
 before commit" rule are unchanged either way.
 
 On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, defaulting to `off`).
+
+---
+
+## Reserved names and channels
+
+Every bundled name of `references/scripts/` deployed in the project's `scripts/` is the
+substrate's: an edit there is never a customization, and the next upgrade overwrites it with the
+body this substrate bundles, with no question and no copy of the old file kept. A customization
+goes into one of three channels instead:
+
+- **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed
+  pre-commit hook runs it first, with bash, when present (memory 8.4.0), once the installer has
+  run (bootstrap step 9's command, or a visible deployment's `prepare`).
+- **Your own scripts and suites** go in `scripts/` under names of your own.
+- **A setting** goes in a config a script reads.
+
+The substrate never writes `scripts/pre-commit.local` or a script of your own.
+`.agent-workflow/` is reserved for the agent-workflow family's own files; the substrate writes
+nothing there.

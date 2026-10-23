@@ -4,6 +4,43 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.6.0 — the upgrade keeps every deployed script current with no question, and brings your ADR store current (AD-201)
+
+**`/agent-workflow-memory upgrade` on its own now writes the scripts this package bundles into your `scripts/`.**
+Upgrade step 2 gains a script ensure, before the ADR-store and spec-layer ensures:
+
+- A script `cmp` finds different from the bundled body is overwritten, and an absent one is placed, with no preview,
+  no question and no copy of the old file kept. The hook installer and its two suites are written first.
+- Where you accepted the enforcement offer, every bundled script is kept current; where you declined it, the scripts
+  already standing and the modules they import are, and a missing ADR or spec-reader pair is still placed where the
+  project shows Node evidence.
+- A `scripts` that stands as a link or a file, a bundled name that stands as a link or a directory, or a probe that
+  cannot be read stops the upgrade before any script is written. A failure partway names every file already written.
+- The upgrade does not run the hook installer: a new installer reaches the hook the next time it runs.
+- In a hidden deployment a script this upgrade places shows in `git status` until the next upgrade adds its ignore
+  line; leave it out of your commits.
+
+**The ADR store is brought current on every run.** Whenever `scripts/archive-decisions.mjs` and
+`scripts/markdown-blocks.mjs` match the bundled bodies, the upgrade runs `node scripts/archive-decisions.mjs
+--ensure-current` (8.5.0) with no question and relays its line. The old asked-for migration of a retired monolith, and
+its rollback, are gone. A non-zero exit stops the upgrade with its message; nothing is put back.
+
+**Your customizations have their own place.** `references/contracts.md` gains *Reserved names and channels*: a
+bundled name in `scripts/` belongs to the substrate and the next upgrade overwrites an edit to it; your own commit
+checks go in `scripts/pre-commit.local`, your own scripts under your own names, a setting in a config a script reads.
+Bootstrap step 8's preview now names each file the copy overwrites. A `scripts` that stands as a link or a file, or a
+bundled name that stands as a link or a directory, is named and nothing is copied: the bootstrap goes on as if you had
+declined, with no hook.
+
+When the kit drives the upgrade, the kit keeps the scripts current and this ensure does not run. The memory step still
+brings the ADR store current once `scripts/archive-decisions.mjs` and `scripts/markdown-blocks.mjs` match the bodies
+this package bundles (it copies a missing decisions script with the module it imports); until then it names the file
+and leaves the store as it is. On an old ADR layout the kit still holds back its decisions script, and its upgrade
+guide still says that layout is never migrated on its own (the kit's `references/modes/upgrade.md:46`); a later kit
+release brings that text in line.
+
+MINOR: the upgrade writes scripts it used to leave alone; no script body changes.
+
 ## 8.5.0 — the decisions script brings your ADR store current in one command, and writes nothing when it already is (AD-200)
 
 **`references/scripts/archive-decisions.mjs` gains `--ensure-current`.** One command judges the ADR store before it

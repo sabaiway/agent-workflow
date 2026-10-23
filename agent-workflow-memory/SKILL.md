@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '8.5.0'
+  version: '8.6.0'
 ---
 
 # agent-workflow-memory
@@ -127,9 +127,13 @@ bootstrapping over a live system, but the user makes the final call.
 8. **Offer enforcement on every project, preview-first.** Explain in one line that the
    dependency-free Node scripts are available because the agent host already runs the skill-home
    navigator; the only skip condition is that the agent host cannot run them. Preview the source
-   and destination list and ask; on a yes copy
-   `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs` (+ `*.test.mjs`) into the project's `scripts/`.
-   On a no, skip the hook in step 9 and say so; the docs command slots then name no project-local
+   and destination list, naming each file already standing in `scripts/` at a bundled name (the copy
+   overwrites it, with no copy of it kept), and ask; on a yes copy
+   `${CLAUDE_SKILL_DIR}/references/scripts/*.mjs` (+ `*.test.mjs`) into the project's `scripts/`,
+   created when absent. It probes as upgrade step 2's script ensure does: `scripts` standing as
+   anything other than a plain directory (a link, dangling or not, or a file), or a bundled name
+   holding any node other than a regular file, is named, nothing is copied, and the run continues
+   as on a no. On a no, skip the hook in step 9 and say so; the docs command slots then name no project-local
    command — fill `env_commands.md` and the `Docs caps + index freshness` row of `AGENTS.md` with
    the same note: the caps + index gate run from the agent's own skill copy (the step-7
    `--root=<target>` form) and the archive rotations need the scripts deployed. Never write the
@@ -219,41 +223,83 @@ Fill strategy:
    content, seed-or-preserve only.) This is why an equal-head (`4.0.0`) deployment still gains the
    config seeds **without a lineage-head bump or a migration file** (the
    stamp-independent-reconcile precedent — like the pointer slots + the hidden-mode footprint).
-   **Same gate, also stamp-independent: ensure the ADR-store enforcement pair** — copy
-   `archive-decisions.mjs` + `archive-decisions.test.mjs` from
-   `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing**
-   (preserve an existing file byte-for-byte; skip ONLY when no Node evidence exists — no
+   **Same gate, also stamp-independent — ensure the SCRIPTS** (before the two pair ensures below,
+   so the spec layer's byte-equality test reads the written files). Its bundled names are every
+   `*.mjs` of `${CLAUDE_SKILL_DIR}/references/scripts/`, the suites and `_expect-shim.mjs` included;
+   its seed names are the four the pair ensures below copy on Node evidence alone
+   (`archive-decisions.mjs`, `archive-decisions.test.mjs`, `spec-schema.mjs`, `spec-schema.test.mjs`)
+   and the bundled modules they import (`markdown-blocks.mjs`, `_expect-shim.mjs`, as their import
+   lines name them). **Its first survey runs whatever the Node evidence, before any write to
+   `scripts/`:** `ls -ld scripts` first, with no trailing slash, then every bundled name by the same
+   non-following `ls -ld scripts/<name>`, never a test that follows a link. A name the probe lists
+   is judged by its type; a path is absent only when the probe proves it does not exist (ENOENT);
+   any other failed probe is named with its error, nothing is written and the reconcile STOPs.
+   `scripts` standing as anything other than a plain directory (a link, dangling or not, or a
+   file), or a bundled name holding any node other than a regular file (a link, dangling or not,
+   or a directory) → named, this ensure writes nothing, and the reconcile STOPs like any other
+   failed ensure of this step. An absent `scripts` holds no bundled name: the component is not
+   accepted and this ensure writes nothing. **The component, judged once** by that
+   survey, the answer every later clause of this upgrade reads: it is accepted when a bundled name
+   outside the seed names stands in `scripts/` as any node the probe lists. Accepted → this ensure
+   owns every bundled name, standing or absent, and the pair ensures copy nothing. Not accepted (a
+   project that declined the enforcement offer) → it writes every standing bundled name and every
+   bundled module a standing one imports, and places nothing else. **The write, with no question:**
+   no preview and no yes precede it, and no copy of an overwritten file is kept. A regular file
+   `cmp` finds equal to the bundled body is left; one `cmp` finds different is overwritten in place;
+   an absent name the component selects is written create-only. One order over every file it
+   writes: `install-git-hooks.mjs` first, then its two suites (`install-git-hooks.test.mjs`,
+   `install-git-hooks-repo-exec.test.mjs`), then every other file by name; each written file is
+   compared with `cmp` to the bundled body. A failure partway names every file already written,
+   STOPs, writes nothing further and rolls nothing back. This substrate keeps no record of earlier
+   bodies, so a line says a file differed from the body this substrate bundles, never that the
+   user edited it; a script a newer release delivered is overwritten by this bundle the same way,
+   and the next upgrade from the newer package writes it back. This ensure runs no hook installer:
+   a written `install-git-hooks.mjs` reaches the deployed hook when it next runs, and the local
+   hook file `scripts/pre-commit.local` runs once the installer has run. After a run that
+   reaches the report, every script the project holds is the bundled body. In delegated mode this
+   ensure does not run and judges no component: the composition root driving the upgrade keeps
+   the scripts current.
+   **Same gate, also stamp-independent: ensure the ADR-store enforcement pair** — unless the
+   component is accepted (delegated mode judges none), copy a missing `archive-decisions.mjs` or
+   `archive-decisions.test.mjs` from `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's
+   `scripts/` with the bundled modules it imports; an existing file is the script ensure's (in
+   delegated mode, the composition root's). Skip ONLY when no Node evidence exists — no
    regular `package.json` at the root and none of the kit-seeded `scripts/*.mjs` present; a
-   probe that cannot be read is a stated failure, never a skip). **Legacy-monolith
-   gate:** if a retired `docs/ai/history/decisions-archive*.md` monolith is still on disk, do
-   **NOT** copy the pair as a silent ensure — the new-scheme rotator must **never sit beside
-   un-migrated monoliths** (its default/`--check` runs refuse such a tree). Instead ASK the
-   user; with their explicit consent copy the pair AND run the one-time conservation-checked
-   migration in the same step (`node scripts/archive-decisions.mjs --migrate` preview, then
-   `--migrate --apply` — it writes a durable pre-delete snapshot first); if the preview or the
-   apply FAILS, remove the just-copied pair (the pair was copied only because it was missing, so
-   removal restores the exact pre-ensure state) and report — the forbidden state (the new-scheme
-   rotator beside un-migrated monoliths) must never persist; without consent leave
-   the tree untouched and report the pending migration. The deployed pre-commit
+   probe that cannot be read is a stated failure, never a skip. The deployed pre-commit
    hook gains its `archive-decisions.mjs --check` line only when the hook is next refreshed via
    `node scripts/install-git-hooks.mjs`; an old hook without the line stays consistent-safe (the
-   decisions gate is simply not enforced yet — never a broken hook). **Same gate, also
+   decisions gate is simply not enforced yet — never a broken hook). **Then the ADR store, current
+   after every run:** whenever `scripts/archive-decisions.mjs` and `scripts/markdown-blocks.mjs`
+   stand after the writes as regular files `cmp` finds equal to their bundled bodies (always after
+   the script ensure wrote them, and after this ensure copied a missing pair with the modules it
+   imports; in delegated mode, also when the composition root kept them current), run
+   `node scripts/archive-decisions.mjs --ensure-current` with no question and relay its summary
+   line. Exit 0 is a current store, the report naming the move when the line says
+   `brought-current`; a non-zero exit (1: refused, no file of the work tree changed; 3: failed
+   after a write, its message saying whether a re-run completes the move or the closing check
+   failed) names the rotator's message and STOPs, every written script kept and nothing put back.
+   In delegated mode an absent rotator or `markdown-blocks.mjs`, or one `cmp` finds different, is
+   named, its line saying the composition root's upgrade owns that file, and nothing of the store
+   is touched until the first run that finds both current. Stated limit: a project with no
+   `scripts/archive-decisions.mjs` and no Node evidence keeps a retired
+   `docs/ai/history/decisions-archive.md` or `decisions-archive-early.md` (the rotator runs only
+   from the project's own `scripts/`), its line naming the pending move. **Same gate, also
    stamp-independent — ensure the SPEC LAYER (skip only on the same absence of Node evidence as
-   the pair above — a deployed kit script is evidence enough):** copy `spec-schema.mjs` +
-   `spec-schema.test.mjs` from
-   `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` **if missing** (preserve
-   an existing file byte-for-byte). Then seed `docs/ai/specs/index.md` **if missing** from
+   the pair above — a deployed kit script is evidence enough):** unless the component is accepted
+   (delegated mode judges none), copy a missing `spec-schema.mjs` or `spec-schema.test.mjs` from
+   `${CLAUDE_SKILL_DIR}/references/scripts/` into the project's `scripts/` with the bundled modules
+   it imports; an existing file is the script ensure's (in delegated mode, the composition root's).
+   Then seed `docs/ai/specs/index.md` **if missing** from
    `${CLAUDE_SKILL_DIR}/references/templates/specs/` (date filled; an existing root is preserved
    byte-for-byte) **ONLY if BOTH pairs** — that reader pair AND `check-docs-size.mjs` +
    `check-docs-size.test.mjs` — are regular files (probe with `ls -l`, never a follow-the-link
    test: a symlink, dangling or not, or a directory at any of the five paths means NOTHING is
    written) **byte-equal** to this skill's bundled copies (compare with `cmp`): the deployed checker
    is what the pre-commit hook runs, and an older or edited one renders the store row by row and
-   reds its own index check. Otherwise seed NO store root and report which file differs: a
-   file of either pair still on a body a release shipped is refreshed by the composition root's own upgrade
-   (it carries the catalog of shipped bodies), and an edited one is named by that upgrade and replaced
-   only on the user's yes — this
-   substrate carries no such catalog and never overwrites a deployed script. **Same gate, also
+   reds its own index check. Otherwise seed NO store root and name the file: a pair file that
+   still differs, in delegated mode only, keeps the store root unseeded, its line naming the file
+   and the composition root's upgrade as its owner; a checker pair absent in a project that
+   declined the offer keeps it unseeded, its line saying the checker is not deployed. **Same gate, also
    stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry
    point declares always-loaded, so a deployment that never had one must gain it even at head — run
    `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
@@ -262,8 +308,9 @@ Fill strategy:
    `probe-failed` (the tree could not be read) line names the offending path and STOPs this
    reconcile like any other failed ensure. **Then**, if the stamp **equals** the head → the substrate is
    current (no structure migration is due), and stop after reporting. Report **in the user's
-   conversational language**: if step 2's reconcile just **changed something** (a footprint move /
-   config seed), say **what changed** in plain terms and ask before committing; if **nothing changed at
+   conversational language**: if step 2's reconcile just **changed something** (a footprint move,
+   config seed, written script or ADR move), say **what changed** in plain terms, naming each
+   written script and the move, and ask before committing; if **nothing changed at
    all**, say their **settings are already current — no update is required**. Either way, show **no**
    structure number, stamp filename, or internal versioning vocabulary on this happy-path exit — the
    number is inert here and belongs to *Version disclosure* (below).
@@ -276,7 +323,8 @@ Fill strategy:
    "Ask the user" step is the standalone fallback); a single missing block keeps its single ask
    (step 5). Then apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**,
    only those newer than the stamp. Migrations are **idempotent**.
-5. Reconcile drift: add any substrate files/scripts the project is missing; **never clobber
+5. Reconcile drift: add any substrate files the project is missing (never a file of
+   `references/scripts/`: step 2's ensures own those, in delegated mode too); **never clobber
    project-authored content** (their `decisions.md`, `known_issues.md`, page specs stay). For a
    pre-1.1.0 deployment with no *Communication language* block, ask + insert
    (`migrations/1.1.0-communication-language.md`); pre-1.2.0 with no *Attribution* block, ask +
@@ -293,7 +341,8 @@ Fill strategy:
    `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
    once more (idempotent — an untouched tree reports `already-current`) and relay its outcome line.
 7. **Re-stamp** `docs/ai/.memory-version` to the lineage head (atomic write — mechanics unchanged).
-   Report changes **in plain human terms** (which parts of the deployment are now different);
+   Report changes **in plain human terms** (which parts of the deployment are now different,
+   naming each file step 2 wrote and the ADR move);
    **omit the raw structure number**, and do not recite the two-axes note here (it belongs to
    *Version disclosure*). **Ask before committing** — **except in delegated mode** (see the *Delegated
    mode* note above), where the composition root owns the single gate and this step raises none.
@@ -347,6 +396,9 @@ memory substrate has none, so it relies on the STOP + the explicit ask — never
 - **Never overwrite an existing entry point or hook.** Stop and ask to merge vs replace.
 - **Enforcement is offered on every project.** See step 8 for the preview, the agent-host
   criterion, and the committer-node residual.
+- **The deployed scripts are the substrate's.** An edit of a bundled name in `scripts/` is
+  overwritten by the next upgrade; a customization goes where
+  [Reserved names and channels](references/contracts.md#reserved-names-and-channels) says.
 - **Never auto-commit.** Report quality-gate results and wait for explicit approval — both modes.
 
 ---
@@ -361,7 +413,8 @@ The three setup choices each have a full contract in
 
 ## References
 
-- [`references/contracts.md`](references/contracts.md) — the three setup contracts in full.
+- [`references/contracts.md`](references/contracts.md) — the three setup contracts in full, and
+  the reserved names and channels.
 - [`references/templates/`](references/templates/) — stack-agnostic `AGENTS.md` (with the three empty
   pointer slots — methodology + orchestration + autonomy), `agent_rules.md`, the seeded user-editable
   `orchestration.json` + `autonomy.json` configs, the `adr-record.md` ADR authoring reference + the

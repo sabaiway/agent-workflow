@@ -433,13 +433,13 @@ describe('standalone bootstrap — the navigator the entry point declares always
     assert.ok(gotcha.includes(STEP_EIGHT_REFERENCE), 'the enforcement gotcha points at step 8');
   });
 
-  it('the upgrade flow documents the spec-layer ensure (reader pair if missing; store root only behind bundle-equal pairs) BEFORE the navigator ensure', () => {
+  it('spec:standalone-scripts/S6 the upgrade flow documents the spec-layer ensure (reader pair if missing; store root only behind bundle-equal pairs) BEFORE the navigator ensure', () => {
     const upgrade = SKILL_MD.slice(SKILL_MD.indexOf(UPGRADE_HEADING));
     const specLayer = upgrade.indexOf('ensure the SPEC LAYER');
     const navigator = upgrade.indexOf('ensure the NAVIGATOR');
     assert.ok(specLayer > 0 && specLayer < navigator && navigator < upgrade.indexOf(EQUAL_HEAD_ANCHOR), 'spec layer -> navigator -> equal-head exit');
     const block = upgrade.slice(specLayer, navigator);
-    for (const token of [...READER_PAIR, ...CHECKER_PAIR, 'regular files', 'dangling', 'byte-equal', 'index.md` **if missing**', 'date filled', 'Node evidence', 'never overwrites a deployed script']) assert.ok(block.includes(token), token);
+    for (const token of [...READER_PAIR, ...CHECKER_PAIR, 'regular files', 'dangling', 'byte-equal', 'index.md` **if missing**', 'date filled', 'Node evidence', 'in delegated mode only', "the composition root's upgrade as its owner", 'the checker is not deployed']) assert.ok(block.includes(token), token);
   });
 
   it('the upgrade flow documents the finalizer at BOTH positions the deploy needs it', () => {

@@ -819,6 +819,22 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   each placed file's anchored `/scripts/<name>` line appended, append-only, after its write. Residual exposure, as for
   the pair ensures today: the file shows in `git status` until the next upgrade. Raised during the
   DISTRIBUTION-FILES-STAY-CURRENT S4 spec review.
+- **MEMORY-DELEGATED-STORE-RUN-THROUGH-A-LINKED-SCRIPTS** — invariant: in delegated mode the pair copy and the ADR
+  store run never write through a `scripts` that is not a plain directory. Origin: no survey runs in delegated mode,
+  `ls -l` resolves through a linked `scripts` (`agent-workflow-memory/SKILL.md:262-277`), and the rotator's
+  `DEFAULT_ROOT` is the link target's parent (`agent-workflow-memory/references/scripts/archive-decisions.mjs:97`).
+  Narrow fix: the store run's condition opens with "`ls -ld scripts` shows a plain directory", and in delegated mode a
+  `scripts` that is not one is named, its line saying the composition root's upgrade owns it, with nothing copied into
+  it and nothing of the store touched. Proof: an S3 token cell. Residual exposure, not live for a deployment whose
+  `scripts` is a plain directory: a linked `scripts` in a kit-driven upgrade. Raised during the S4 diff review (lens).
+- **MEMORY-SKILL-CONTRACT-ARMS-PINNED-WITHOUT-LABELS** — invariant: each component arm and each pair-ensure copy
+  condition is pinned with its label. Origin: `agent-workflow-memory/scripts/skill-contract.test.mjs:53-55` and
+  `:82-96` pin the arms and miss the copy condition. Narrow fix: the tokens "Accepted → this ensure owns every bundled
+  name, standing or absent, and the pair ensures copy nothing", "Not accepted (a project that declined the enforcement
+  offer) → it writes every standing bundled name", and in both the pair and the spec-layer ensure "unless the
+  component is accepted (delegated mode judges none), copy a missing". Proof: the label-swap and the "where the
+  component is accepted" mutants go red. Residual exposure, not live in the shipped text: a later edit could swap the
+  arms with the suite green. Raised during the S4 diff review (lens).
 - **SNAPSHOT-PARTIAL-DIR-LEFT-UNNAMED-WHEN-A-LATER-BASE-SUCCEEDS** — invariant: a partial snapshot directory the rotator
   could not remove is named on every exit. Origin: `writeSnapshot` keeps the removal failure only in `failures`
   (`agent-workflow-memory/references/scripts/archive-decisions.mjs:882`), printed only when no base succeeds; a later

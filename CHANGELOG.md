@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-23 — AD-201: memory's upgrade keeps every deployed script current with no question, and brings your ADR store current (memory 8.6.0 MINOR; kit 14.48.0, engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-memory upgrade` on its own now overwrites a differing script and places an absent one** with the
+body it bundles, with no question and no copy kept, the hook installer first; a declined enforcement offer keeps current
+the scripts already standing and places a module they import when it is absent; beyond them, only a missing ADR pair
+or spec-reader pair is placed, now with the modules it imports, where the project shows Node evidence. Whenever the decisions script and the
+module it imports match the bundled bodies, the upgrade runs its `--ensure-current` mode, which replaces the old
+asked-for migration of a retired monolith. The guide names where your
+own commit checks, scripts and settings go instead. Contracts: standalone-scripts revision 1, docs-navigator revision
+4. Detail: [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-22 — AD-200: the decisions script brings your ADR store current in one command, and writes nothing when it already is (memory 8.5.0 MINOR, kit 14.48.0 MINOR; engine 5.12.1 and both bridges unchanged)
 
 **`archive-decisions.mjs --ensure-current` judges the ADR store before any write and brings it current**: a retired
