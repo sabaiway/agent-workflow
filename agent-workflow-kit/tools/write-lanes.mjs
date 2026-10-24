@@ -11,6 +11,7 @@ import { GATES_REL } from './gates-declaration.mjs';
 export const LANE_CHAT = 'chat';
 export const LANE_HARNESS = 'harness';
 export const LANE_USER = 'user';
+export const LANE_KIT = 'kit';
 
 export const VARIANT_LANES = Object.freeze({
   'velocity-core': LANE_HARNESS,
@@ -46,7 +47,7 @@ export const VARIANT_LANES = Object.freeze({
   'mcp-channel.differing': LANE_HARNESS,
   agents: LANE_HARNESS,
   'executor-vehicle': LANE_HARNESS,
-  'executor-vehicle.differing': LANE_HARNESS,
+  'executor-vehicle.differing': LANE_KIT,
   attribution: LANE_HARNESS,
   'footprint-global': LANE_HARNESS,
   'family-freshness': LANE_USER,
@@ -161,7 +162,8 @@ const FORMS = Object.freeze({
     ['--replace', '--cwd', '<root>'], ['--replace', '--apply', '--cwd', '<root>'], MCP_WRITES),
   agents: AGENT_FORM,
   'executor-vehicle': AGENT_FORM,
-  'executor-vehicle.differing': AGENT_FORM,
+  'executor-vehicle.differing': createForm('cheap-agents.mjs',
+    ['--executor', '--cwd', '<root>'], ['--apply', '--executor', '--cwd', '<root>'], [join('.claude', 'agents', 'executor.md')]),
   attribution: createForm('attribution.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], SETTINGS_WRITES),
   'footprint-global': createForm('hide-footprint.mjs',
     ['--remove-global', '--dry-run', '--dir', '<root>'], ['--remove-global', '--dir', '<root>'], [], false, null, true),
@@ -246,7 +248,7 @@ export const isRejudged = (variant) => {
 export const applySlot = (variant, facts) => {
   const lane = laneOf(variant);
   const form = FORMS[variant];
-  if (lane === LANE_HARNESS) {
+  if (lane === LANE_HARNESS || lane === LANE_KIT) {
     const args = ['node', join(facts.toolsDir, 'apply-danger-check.mjs'), '--variant', variant, '--cwd', facts.root];
     const skillArgs = form === SKILL_FORM ? form.preview.map((arg) => resolveArgument(arg, facts)) : [];
     const check = formatCommand([...args, ...skillArgs]);

@@ -29,6 +29,9 @@ const CUSTOM = '---\nname: executor\ntools: Read, Bash\n---\nHand edit\n';
 const INVALID = 'Hand edit without frontmatter\n';
 const LENS_NAME = 'review-lens-opus-xhigh.md';
 const REVIEW = { 'plan-execution': { review: ['review-lens:opus:xhigh'] } };
+const derivedLine = (verb) => `.claude/agents/executor.md: differs from the body derived from the vehicle settings — ${verb} with that body; its model and effort are set in docs/ai/vehicles.json`;
+const DERIVED = { written: derivedLine('written'), dry: derivedLine('would be written') };
+const { fileLine } = await import('./distribution-files/index.mjs');
 const roots = [];
 const makeProject = (settings, review = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'cheap-agents-executor-'));
@@ -202,18 +205,20 @@ it('spec:executor-vehicle/S3 places and re-derives executor while preserving oth
       assert.equal(dryRun.wrote, false);
       assert.equal(readExecutor(root), content);
       const previewLines = formatResult(dryRun).split('\n');
-      assertWords(previewLines.find((line) => line.startsWith(`  - ${EXECUTOR_VEHICLE_REL}:`)), 'would re-derive');
+      assert.equal(previewLines.find((line) => line.startsWith(`  - ${EXECUTOR_VEHICLE_REL}:`)), `  - ${DERIVED.dry}`);
       assert.ok(previewLines.some((line) => /^to apply, run exactly: node\b/u.test(line)));
       assert.ok(dryRun.plan.filter((item) => item.name !== EXECUTOR_NAME).every((item) => item.action === 'already-current'));
       const rewritten = writeCheapAgents({ cwd: root, dryRun: false });
       assert.equal(findExecutor(rewritten).action, 're-derive');
       assert.equal(rewritten.wrote, true);
       assert.equal(readExecutor(root), template.content);
-      const reportLine = formatResult(rewritten).split('\n').find((line) => line.startsWith(`  - ${EXECUTOR_VEHICLE_REL}:`));
-      assertWords(reportLine, 're-derived hand edit replaced');
-      assertSettingsReason(reportLine, 'set model');
+      const report = formatResult(rewritten);
+      assert.equal(report.split('\n').find((line) => line.startsWith(`  - ${EXECUTOR_VEHICLE_REL}:`)), `  - ${DERIVED.written}`);
+      assert.doesNotMatch(`${report}\n${previewLines.join('\n')}`, /hand edit|\b(?:you|user) edited\b/iu);
     }
   }
+  const derivedFile = { rel: EXECUTOR_VEHICLE_REL, name: EXECUTOR_NAME, state: 'derived' };
+  assert.deepEqual([fileLine(derivedFile, 'written', false), fileLine(derivedFile, undefined, true)], [DERIVED.written, DERIVED.dry], 'fileLine of the index');
   const root = makeProject(SETTINGS, REVIEW);
   const { posture } = readExecutorPosture(root);
   const seeded = writeCheapAgents({ cwd: root, dryRun: false });
@@ -273,6 +278,40 @@ it('spec:executor-vehicle/S3 places and re-derives executor while preserving oth
       else assert.equal(kind === 'symlink' ? lstatSync(target).isSymbolicLink() : lstatSync(target).isDirectory(), true);
     }
   }
+  const executorOnly = (project, apply, deps) => {
+    const run = runMain([...(apply ? ['--apply'] : []), '--executor', '--cwd', project], deps);
+    assert.deepEqual([run.exit, run.errors], [0, []]);
+    return run.output.join('\n').split('\n');
+  };
+  // --executor, one project walked through: an edited lens, then a linked lens target, a rejected config, a stale stamp.
+  const solo = makeProject(SETTINGS, REVIEW);
+  const derivedBody = executorTemplate(readExecutorPosture(solo).posture).content;
+  const listing = () => readdirSync(join(solo, AGENTS_DIR)).sort().map((name) => [name, lstatSync(join(solo, AGENTS_DIR, name)).isSymbolicLink() ? 'link' : readFileSync(join(solo, AGENTS_DIR, name), 'utf8')]);
+  placeExecutor(solo, CUSTOM);
+  writeFileSync(join(solo, AGENTS_DIR, 'review-lens.md'), 'Edited lens\n');
+  const dry = executorOnly(solo, false);
+  assert.deepEqual([dry.length, dry[0], dry[1], /^executor posture: /u.test(dry[2]), /^to apply, run exactly: node \S.* --executor\b/u.test(dry[3])], [4, 'agent-workflow subagent vehicles — DRY RUN (no changes)', `  - ${DERIVED.dry}`, true, true]);
+  assert.deepEqual(listing(), [['executor.md', CUSTOM], ['review-lens.md', 'Edited lens\n']]);
+  const applied = executorOnly(solo, true);
+  assert.deepEqual([applied.length, applied[0], applied[1], /^executor posture: /u.test(applied[2])], [3, 'agent-workflow subagent vehicles — APPLY', `  - ${DERIVED.written}`, true]);
+  assert.deepEqual(listing(), [['executor.md', derivedBody], ['review-lens.md', 'Edited lens\n']]);
+  placeExecutor(solo, CUSTOM);
+  symlinkSync(join(solo, CONFIG_REL), join(solo, AGENTS_DIR, LENS_NAME));
+  for (const dryRun of [true, false]) assert.throws(() => writeCheapAgents({ cwd: solo, dryRun }), { code: CHEAP_AGENTS_SYMLINK });
+  assert.deepEqual([executorOnly(solo, false)[1], executorOnly(solo, true)[1]], [`  - ${DERIVED.dry}`, `  - ${DERIVED.written}`]);
+  assert.deepEqual(listing(), [['executor.md', derivedBody], [LENS_NAME, 'link'], ['review-lens.md', 'Edited lens\n']]);
+  writeFileSync(join(solo, CONFIG_REL), MALFORMED);
+  for (const apply of [false, true]) {
+    placeExecutor(solo, CUSTOM);
+    const { events, deps } = traceReads();
+    assert.equal(executorOnly(solo, apply, deps)[1], `  - ${apply ? DERIVED.written : DERIVED.dry}`);
+    assert.equal(events.includes(`read:${join(solo, CONFIG_REL)}`), false, events.join('\n'));
+  }
+  writeFileSync(join(solo, WORKFLOW_STAMP), '0.0.1\n');
+  placeExecutor(solo, CUSTOM);
+  const stale = executorOnly(solo, false);
+  assert.deepEqual([stale.length, stale[1], stale[2].startsWith('note: ')], [5, `  - ${DERIVED.dry}`, true]);
+  assert.match(runMain(['--help']).output.join('\n'), /--executor\b/u);
 });
 
 it('spec:executor-vehicle/S4 refuses unreadable settings before any placement', () => {

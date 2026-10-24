@@ -19,7 +19,7 @@
 //     (the lens from its review-lens section, opus and high by default), replacing the earlier body;
 //     an identical file is `already current` (idempotent re-run);
 //   • writes ONLY under .claude/agents/ — never settings.json / settings.local.json, never
-//     commits.
+//     commits; `--executor` plans and writes the executor alone (the advisor's kit item).
 //
 // Claude-Code-specific (like velocity): .claude/agents/ is a Claude Code surface; other agent
 // hosts ignore it. In a HIDDEN-mode deployment, run the hide-footprint reconcile after apply so
@@ -42,6 +42,7 @@ import { deriveLensTemplate, lensVehicleSpec } from './review-roster-resolve.mjs
 import { loadVehicles, resolveExecutor, resolveReviewLens } from './vehicle-settings.mjs';
 import { safeLine } from './carriers.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
+import { fileLine } from './distribution-files/index.mjs';
 // The READ core, never a second copy: the bundle, the placement plan and the executor survey live
 // there so the read-only advisor graph can reach them without reaching this writer.
 import {
@@ -56,7 +57,6 @@ import {
   CHEAP_AGENTS_CONFIG,
   CHEAP_AGENTS_VEHICLES,
   EXECUTOR_VEHICLE,
-  REVIEW_LENS_VEHICLE,
   executorTemplate,
   reviewLensTemplate,
   makeCheapAgentsError,
@@ -99,7 +99,7 @@ const EXIT_USAGE = 2;
 // never silent).
 export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-only review opinion, not a replacement for your plan or diff review recipe.';
 
-const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
+const USAGE = `usage: cheap-agents [--dry-run | --apply] [--executor] [--cwd <dir>] [--help]
 
 Places the bundled subagent definitions into the project's ${AGENTS_DIR}/. Four vehicles grant NO
 shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps, changelog
@@ -112,7 +112,9 @@ Configured derived review lenses are planned and placed beside the bundled vehic
 An existing file with DIFFERENT content is preserved and reported, never overwritten, except the executor
 and the review lens. The executor's model and effort come from docs/ai/vehicles.json, the review lens's
 from its review-lens section there (opus and high by default), and a placed executor or review-lens.md
-whose bytes differ from its derived body is re-derived on --apply (the earlier body is replaced, never preserved).`;
+whose bytes differ from its derived body is re-derived on --apply (the earlier body is replaced, never preserved).
+--executor plans the executor alone and reads no orchestration config, so its --apply writes
+${AGENTS_DIR}/executor.md and no other file.`;
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
 
@@ -132,11 +134,12 @@ const refuseSymlinkedRoot = (projectDir, deps) => {
   if (stat.isSymbolicLink()) throw makeCheapAgentsError(CHEAP_AGENTS_SYMLINK, `the project root ${root} is a symlink — refusing to write through it`);
 };
 
-export const preflightCheapAgents = ({ cwd, derived = [] }, deps = {}) => {
+// alone: plan the derived templates only (the --executor form), no bundled vehicle beside them.
+export const preflightCheapAgents = ({ cwd, derived = [], alone = false }, deps = {}) => {
   const fs = readFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
   refuseSymlinkedRoot(projectDir, deps);
-  const templatesByName = new Map(readBundledAgents(deps).map((template) => [template.name, template]));
+  const templatesByName = new Map(alone ? [] : readBundledAgents(deps).map((template) => [template.name, template]));
   for (const template of derived) templatesByName.set(template.name, template);
   const templates = [...templatesByName.values()];
   const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
@@ -178,20 +181,21 @@ const configuredDerivedTemplates = (cwd, deps) => {
   return [...templates.values()];
 };
 
-export const applyCheapAgentsCommand = (root) =>
-  `node ${shellQuoteArg(fileURLToPath(import.meta.url))} --apply --cwd ${shellQuoteArg(root)}`;
+export const applyCheapAgentsCommand = (root, executorOnly = false) =>
+  `node ${shellQuoteArg(fileURLToPath(import.meta.url))} --apply${executorOnly ? ' --executor' : ''} --cwd ${shellQuoteArg(root)}`;
 
 // ── the writer ────────────────────────────────────────────────────────────────────────
 
-export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
+// executorOnly (--executor): the executor template alone, no orchestration config read.
+export const writeCheapAgents = ({ cwd, dryRun = true, executorOnly = false } = {}, deps = {}) => {
   const fs = writeFsDeps(deps);
   const projectDir = cwd ?? process.cwd();
   refuseSymlinkedRoot(projectDir, deps);
   const { posture, lensPosture } = loadPosturesOrStop(projectDir, deps);
-  const derived = [
+  const derived = executorOnly ? [executorTemplate(posture, deps)] : [
     executorTemplate(posture, deps), reviewLensTemplate(lensPosture, deps), ...configuredDerivedTemplates(projectDir, deps),
   ];
-  const preflight = preflightCheapAgents({ cwd: projectDir, derived }, deps);
+  const preflight = { executorOnly, ...preflightCheapAgents({ cwd: projectDir, derived, alone: executorOnly }, deps) };
   if (dryRun) return { wrote: false, dryRun: true, posture, lensPosture, ...preflight };
 
   if (!preflight.stampOk) {
@@ -217,12 +221,19 @@ export const writeCheapAgents = ({ cwd, dryRun = true } = {}, deps = {}) => {
 const ACTION_LABEL = {
   place: 'place',
   'already-current': 'already current',
-  're-derive': 're-derived — a hand edit was replaced; set the model in docs/ai/vehicles.json',
   'customized-preserved': 'customized — preserved (delete the file to reseed from the bundle)',
 };
 const LENS_REDERIVE_LABEL = 're-derived — the earlier body was replaced; set its model and effort in docs/ai/vehicles.json';
-const labelOf = (item) =>
-  (item.action === 're-derive' && item.name === REVIEW_LENS_VEHICLE ? LENS_REDERIVE_LABEL : ACTION_LABEL[item.action]);
+// The executor's re-derive line is the distribution-files composer's, over the state `derived`.
+const rowLine = (item, dryRun) => {
+  if (item.action === 're-derive' && item.name === EXECUTOR_VEHICLE) {
+    return fileLine({ rel: item.rel, name: item.name, state: 'derived' }, dryRun ? undefined : 'written', dryRun);
+  }
+  const verb = dryRun && item.action === 'place' ? 'would place'
+    : dryRun && item.action === 're-derive' ? 'would re-derive'
+      : item.action === 're-derive' ? LENS_REDERIVE_LABEL : ACTION_LABEL[item.action];
+  return `${item.rel}: ${verb}`;
+};
 
 export const formatResult = (result) => {
   const { posture, lensPosture } = result;
@@ -231,29 +242,29 @@ export const formatResult = (result) => {
       ? 'agent-workflow subagent vehicles — DRY RUN (no changes)'
       : 'agent-workflow subagent vehicles — APPLY',
   ];
-  for (const item of result.plan) {
-    const verb = result.dryRun && item.action === 'place' ? 'would place'
-      : result.dryRun && item.action === 're-derive' ? 'would re-derive' : labelOf(item);
-    lines.push(`  - ${item.rel}: ${verb}`);
-  }
+  for (const item of result.plan) lines.push(`  - ${rowLine(item, result.dryRun)}`);
   if (!result.stampOk) {
     lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
   }
-  const readOnlyCount = result.plan.filter((item) => item.name !== EXECUTOR_VEHICLE).length;
-  lines.push(
-    `${readOnlyCount} vehicles are Claude Code subagents with READ-ONLY tools and NO shell as bundled or derived (a customized file keeps whatever it grants) — so a fan-out on the shipped templates can never turn into a wave of approval prompts.`,
-    `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
-    'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
-    `executor posture: model=${safeLine(posture.model)} effort=${safeLine(posture.effort)} fallback=${safeLine(posture.fallback)} (source: ${safeLine(posture.source)}) — set in docs/ai/vehicles.json`,
-    `review-lens posture: model=${safeLine(lensPosture.model)} effort=${safeLine(lensPosture.effort)} (source: ${safeLine(lensPosture.source)}) — set in docs/ai/vehicles.json`,
-  );
+  if (!result.executorOnly) {
+    const readOnlyCount = result.plan.filter((item) => item.name !== EXECUTOR_VEHICLE).length;
+    lines.push(
+      `${readOnlyCount} vehicles are Claude Code subagents with READ-ONLY tools and NO shell as bundled or derived (a customized file keeps whatever it grants) — so a fan-out on the shipped templates can never turn into a wave of approval prompts.`,
+      `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
+      'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
+    );
+  }
+  lines.push(`executor posture: model=${safeLine(posture.model)} effort=${safeLine(posture.effort)} fallback=${safeLine(posture.fallback)} (source: ${safeLine(posture.source)}) — set in docs/ai/vehicles.json`);
+  if (!result.executorOnly) {
+    lines.push(`review-lens posture: model=${safeLine(lensPosture.model)} effort=${safeLine(lensPosture.effort)} (source: ${safeLine(lensPosture.source)}) — set in docs/ai/vehicles.json`);
+  }
   // A preview must print the EXACT command that applies it. The advisor renders this dry-run as an
   // item's one-liner, and that flow's contract is "run the printed command, no improvisation" — a
   // bare "re-run with --apply" would leave the caller to reconstruct --cwd and its quoting.
   if (result.dryRun && result.plan.some((item) => item.action === 'place' || item.action === 're-derive')) {
-    lines.push(`to apply, run exactly: ${applyCheapAgentsCommand(result.projectDir)}`);
+    lines.push(`to apply, run exactly: ${applyCheapAgentsCommand(result.projectDir, result.executorOnly)}`);
   }
-  if (!result.dryRun && result.wrote) {
+  if (!result.dryRun && result.wrote && !result.executorOnly) {
     lines.push('hidden-mode note: if this deployment is hidden, run the hide-footprint reconcile so the placed files stay out of `git status`.');
   }
   return lines.join('\n');
@@ -262,12 +273,13 @@ export const formatResult = (result) => {
 // ── CLI ───────────────────────────────────────────────────────────────────────────────
 
 export const parseArgs = (argv) => {
-  const opts = { dryRunFlag: false, apply: false, cwd: undefined, help: false };
+  const opts = { dryRunFlag: false, apply: false, executorOnly: false, cwd: undefined, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') opts.help = true;
     else if (arg === '--dry-run') opts.dryRunFlag = true;
     else if (arg === '--apply') opts.apply = true;
+    else if (arg === '--executor') opts.executorOnly = true;
     else if (arg === '--cwd') {
       i += 1;
       if (argv[i] === undefined || argv[i].startsWith('-')) throw fail(EXIT_USAGE, '--cwd needs a directory argument');
@@ -277,7 +289,7 @@ export const parseArgs = (argv) => {
     }
   }
   if (opts.dryRunFlag && opts.apply) throw fail(EXIT_USAGE, '--dry-run and --apply cannot be used together');
-  return { help: opts.help, dryRun: !opts.apply, cwd: opts.cwd };
+  return { help: opts.help, dryRun: !opts.apply, executorOnly: opts.executorOnly, cwd: opts.cwd };
 };
 
 export const main = (argv = process.argv.slice(2), deps = {}) => {
@@ -289,7 +301,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       log(USAGE);
       return EXIT_OK;
     }
-    const result = writeCheapAgents({ cwd: args.cwd ?? process.cwd(), dryRun: args.dryRun }, deps);
+    const result = writeCheapAgents({ cwd: args.cwd ?? process.cwd(), dryRun: args.dryRun, executorOnly: args.executorOnly }, deps);
     log(formatResult(result));
     return EXIT_OK;
   } catch (err) {

@@ -19,7 +19,7 @@ import { HOOK_FILE_REL, HOOKS_DIR, buildHookSettingsEntry, mergeHookEntry, write
 import { STATE_BLOCK_HOOK_FILE_REL, buildStopHookEntry, mergeStopEntry, writeStateBlockHook } from './state-block-hook.mjs';
 import { writeMcp } from './mcp.mjs';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, allowRulesFor, buildServerEntry } from './mcp-registration.mjs';
-import { AGENTS_DIR, writeCheapAgents } from './cheap-agents.mjs';
+import { AGENTS_DIR, EXECUTOR_VEHICLE_REL, writeCheapAgents } from './cheap-agents.mjs';
 import { planFor } from './jev-skill.mjs';
 import { SKILL_FILES, claudeDirOf, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
@@ -37,13 +37,13 @@ const RESEED_VARIANTS = ['gate-hook.marker-stale', 'read-lane.stale'];
 const HOOK_VARIANTS = ['gate-hook', 'read-lane.missing', ...RESEED_VARIANTS];
 const STOP = 'state-block';
 const MCP_VARIANTS = ['mcp-channel', 'mcp-channel.differing'];
-const AGENT_VARIANTS = ['agents', 'executor-vehicle', 'executor-vehicle.differing'];
+const EXECUTOR_KIT = 'executor-vehicle.differing';
+const AGENT_VARIANTS = ['agents', 'executor-vehicle', EXECUTOR_KIT];
 const GIT_VARIANTS = ['enforcement', 'commit-guard', 'hook-checks'];
 const WORKTREES = 'worktrees-dir';
 const ATTRIBUTION = 'attribution';
 const FOOTPRINT = 'footprint-global';
-const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS,
-  ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES, ATTRIBUTION, FOOTPRINT];
+const VARIANTS = [...VELOCITY_VARIANTS, 'autonomy-render', ...HOOK_VARIANTS, STOP, ...MCP_VARIANTS, ...AGENT_VARIANTS, ...SKILL_VARIANTS, ...GIT_VARIANTS, WORKTREES, ATTRIBUTION, FOOTPRINT];
 const HOOK_KEYS = ['hooks.PreToolUse', 'hooks.Stop'];
 const CREDENTIALS = 'sandbox.credentials.envVars';
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -236,8 +236,8 @@ export const scopeOf = (variant, facts, deps = {}) => {
         || (VELOCITY_VARIANTS.includes(variant) && key === 'permissions.ask');
       return correctFile && (!gains || change === 'added') && !(key === ATTRIBUTION_KEY && change === 'removed') && Boolean(allowed[key]?.(value));
     },
-    admitsPath: (path, directory = false) => directory ? directories.includes(path)
-      : filePaths.includes(path) || (AGENT_VARIANTS.includes(variant) && covers(join(facts.root, AGENTS_DIR), path)),
+    admitsPath: (path, directory = false) => directory ? directories.includes(path) : filePaths.includes(path)
+      || (variant === EXECUTOR_KIT ? path === join(facts.root, EXECUTOR_VEHICLE_REL) : AGENT_VARIANTS.includes(variant) && covers(join(facts.root, AGENTS_DIR), path)),
   };
 };
 
@@ -300,7 +300,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
       if (plan.writeMcpJson) addFile(MCP_JSON_REL, registration.mcpJson.data, JSON.parse(plan.mcpBody));
       if (plan.writeSettings) addFile(SETTINGS_FILE, registration.settings.data, JSON.parse(plan.settingsBody));
     } else if (AGENT_VARIANTS.includes(variant)) {
-      const plan = writeCheapAgents({ cwd: facts.root, dryRun: true }, writerDeps);
+      const plan = writeCheapAgents({ cwd: facts.root, dryRun: true, executorOnly: variant === EXECUTOR_KIT }, writerDeps);
       for (const item of plan.plan.filter(({ action }) => ['place', 're-derive'].includes(action))) {
         writes.push({ path: item.abs, bytes: item.content });
       }

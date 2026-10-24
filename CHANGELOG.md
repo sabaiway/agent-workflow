@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-24 — AD-207: the agent writes a differing executor vehicle with no question (kit 16.1.0 MINOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**A placed `.claude/agents/executor.md` that differs from the body derived from `docs/ai/vehicles.json` is now written
+back with no question**, through a fourth advisor lane, `kit`: the agent runs the item's check in the sandbox, shows
+the result, then runs its apply once outside the sandbox, where the harness's own dialog is the only ask. Before, the
+item waited for a pick and a yes. Its new form `cheap-agents.mjs --executor` writes that one file and no other, and
+its line names `docs/ai/vehicles.json` as where the model and effort are set. Contracts: init-project revision 21,
+executor-vehicle revision 7, distribution-files revision 8. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-24 — AD-206: the upgrade writes the spec layer current with no question; `--replace-custom` retires (kit 16.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-kit upgrade` now writes the four spec-layer files** (`scripts/spec-schema.mjs`,

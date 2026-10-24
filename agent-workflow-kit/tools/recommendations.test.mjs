@@ -691,10 +691,10 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     for (const item of [...items, ...parsed.items]) {
       const lines = formatRecommendations({ items: [item], skips: [] }).split('\n');
       assert.equal(item.lane, laneOf(item.variant));
-      assert.ok(['chat', 'harness', 'user'].includes(item.lane), item.variant);
+      assert.ok(['chat', 'harness', 'kit', 'user'].includes(item.lane), item.variant);
       assert.equal(lines[lines.indexOf(`   benefit: ${item.benefit}`) + 1], `   lane: ${item.lane}`);
       assert.equal(Object.hasOwn(item, 'check'), true, item.variant);
-      if (item.lane !== 'harness') {
+      if (['chat', 'user'].includes(item.lane)) {
         assert.equal(item.check, null, item.variant);
         assert.ok(!lines.some((line) => line.startsWith('   check: ')), item.variant);
       }
@@ -703,6 +703,13 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     for (const entry of parsed.items) {
       assert.deepEqual(Object.keys(entry).sort(), ['apply', 'benefit', 'check', 'detail', 'key', 'lane', 'severity', 'variant', 'what']);
     }
+  });
+
+  it('a kit item counts in neither verdict class: alone it opens with nothing is broken and is listed as optional; beside one optional harness item the count is 1', () => {
+    const kit = { key: 'executor-vehicle', variant: 'executor-vehicle.differing', severity: SEVERITY_OPTIONAL, lane: 'kit', what: 'w', benefit: 'b', detail: null, check: 'c', apply: 'a' };
+    assert.deepEqual(formatRecommendations({ items: [kit], skips: [] }).split('\n').slice(2, 8), [VERDICT_NOTHING_BROKEN, '', `1. ${SEVERITY_LABELS[SEVERITY_OPTIONAL]}: w`, '   benefit: b', '   lane: kit', '   check: c']);
+    const beside = { items: [kit, { ...kit, key: 'agents', variant: 'agents', lane: 'harness' }], skips: [] };
+    assert.equal(formatRecommendations(beside).split('\n')[2], `${VERDICT_NOTHING_BROKEN} — ${fillCount(VERDICT_OPTIONAL_TEMPLATE, 1)}`);
   });
 
   it('harness items render applySlot check before apply and carry the same check in --json', () => {
@@ -1093,13 +1100,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; still twenty-two harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; twenty-one harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
   });
 });
 
@@ -1208,9 +1215,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains twenty-two harness variants', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
-  });
+  it('VARIANT_LANES contains twenty-one harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
 });
 
 // This item exists because its ABSENCE fired: kit 3.14.0 shipped the state-block detector with a mode
@@ -2801,9 +2806,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
-  it('the harness variant count is twenty-two', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
-  });
+  it('the harness variant count is twenty-one', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
   const makeHarnessProject = () => {
     const root = makeProject();
     const dir = join(root, 'farm');
@@ -3356,13 +3359,14 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
     const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { planGlobalRemoval: () => null, ...extra }) });
     return { items: built.items.filter((item) => item.key === key), skips: built.skips.filter((skip) => skip.key === key) };
   };
-  const assertHarnessItem = async (root, built, variant, severity) => {
+  const [DIFFERING_WHAT, DIFFERING_BENEFIT] = ['the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — the derived body is written with no question', 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names'];
+  const assertHarnessItem = async (root, built, variant, severity, lane = 'harness') => {
     assert.equal(built.items.length, 1);
     assert.deepEqual(built.skips, []);
     const [item] = built.items;
     assert.equal(item.variant, variant);
     assert.equal(item.severity, severity);
-    assert.equal(item.lane, 'harness');
+    assert.equal(item.lane, lane);
     const slot = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
     assert.deepEqual({ check: item.check, apply: item.apply }, slot);
     const benefits = variant === 'executor-vehicle.differing' ? need(await import('./recommendations.mjs'), 'VARIANT_BENEFITS') : BENEFITS;
@@ -3451,7 +3455,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
     ['missing, no slot', 'missing', false, 'silent'],
     ['missing, configured slot', 'missing', true, 'base'],
     ['symlinked agents, no slot', 'symlink', false, /\.claude\/agents is a symlink/u],
-    ['configured derived lens directory', 'lens-directory', false, /review-lens-opus-high\.md exists but is not a regular file/u],
+    ['configured derived lens whose target is a symlink', 'lens-symlink', false, 'differing'],
     ['stale stamp, differing executor', 'stale-differing', false, /run \/agent-workflow-kit upgrade first/u],
     ['stale stamp, current executor', 'stale-current', false, 'silent'],
   ];
@@ -3462,7 +3466,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       const reader = await import('./cheap-agents-read.mjs');
       const { writeCheapAgents } = await import('./cheap-agents.mjs');
       const config = { routine: { carrier: configured ? 'subagent' : 'solo' } };
-      if (state === 'lens-directory') config['plan-execution'] = { review: ['review-lens:opus:high'] };
+      if (state === 'lens-symlink') config['plan-execution'] = { review: ['review-lens:opus:high'] };
       writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
       if (state.startsWith('stale-')) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
       const dir = join(root, '.claude', 'agents');
@@ -3477,16 +3481,14 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       const body = state === 'placed' || state === 'stale-current' ? current
         : state === 'unusable' ? '---\nname: executor\ntools: Read\n---\nbody\n' : `${current}\ncustom\n`;
       if (state !== 'missing') writeFileSync(join(dir, 'executor.md'), body);
-      if (state === 'lens-directory') mkdirSync(join(dir, 'review-lens-opus-high.md'));
+      if (state === 'lens-symlink') symlinkSync(join(root, 'docs', 'ai', 'orchestration.json'), join(dir, 'review-lens-opus-high.md'));
       const built = collect(root, 'executor-vehicle');
       const executorBodyDiffers = need(reader, 'executorBodyDiffers');
       assert.equal(executorBodyDiffers(root), !['missing', 'placed', 'stale-current'].includes(state));
       if (expected === 'differing') {
-        assert.equal(writeCheapAgents({ cwd: root, dryRun: true }).stampOk, true);
-        const item = await assertHarnessItem(root, built, 'executor-vehicle.differing', SEVERITY_OPTIONAL);
-        assert.equal(item.what, WHATS['executor-vehicle.differing']);
-        assert.match(item.detail, /hidden-mode deployments only:.*--reconcile/u);
-        assert.ok(formatRecommendations(built).split('\n').includes(`   recipe: ${item.detail}`));
+        const item = await assertHarnessItem(root, built, 'executor-vehicle.differing', SEVERITY_OPTIONAL, 'kit');
+        assert.deepEqual([item.what, item.benefit, item.detail ?? null], [DIFFERING_WHAT, DIFFERING_BENEFIT, null]);
+        assert.ok(!formatRecommendations(built).split('\n').some((line) => line.startsWith('   recipe: ')));
       } else if (expected === 'base') {
         const item = await assertHarnessItem(root, built, 'executor-vehicle', SEVERITY_ATTENTION);
         assert.match(item.what, new RegExp(`1 slot\\(s\\) configured subagent but the executor vehicle is ${state}`));
@@ -3504,9 +3506,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }
-  it('the harness variant count is twenty-two', () => {
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 22);
-  });
+  it('the harness variant count is twenty-one', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
 });
 
 describe('spec:init-project/S54 the advisor arms by their tables', () => {

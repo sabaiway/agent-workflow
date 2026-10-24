@@ -1820,7 +1820,7 @@ describe('spec:velocity-profile/S23 — the apply ask rule: one byte-form, glob 
   it('every harness apply line matches; no plain check line does', (t) => {
     const toolsDir = join(makeTempProject(t), "kit dir's", 'tools');
     const variants = Object.keys(VARIANT_LANES).filter((v) => VARIANT_LANES[v] === 'harness');
-    assert.equal(variants.length, 22);
+    assert.equal(variants.length, 21);
     const rule = askRule();
     for (const platform of ['linux', 'win32']) for (const variant of variants) {
       const slot = applySlot(variant, { toolsDir, root: '/project', home: '/home/example', env: {}, platform });

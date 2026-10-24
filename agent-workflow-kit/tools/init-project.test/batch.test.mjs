@@ -142,10 +142,10 @@ describe('spec:init-project/S11 previews and one terminal y', () => {
   });
 });
 
-describe('spec:init-project/S24 danger check beside each harness preview', () => {
+describe('spec:init-project/S24 danger check beside each harness and each kit preview', () => {
   it('selects by argv presence, prints each check after its preview, and removes refused or throwing checks before one y', async (t) => {
     for (const mode of ['within', 'refused', 'throw']) await t.test(mode, async (t) => {
-      const queue = [...HARNESS_VARIANTS.map((variant) => ({ ...item(variant), lane: 'harness' })), item('sandbox-provision.installable'), item('review-recipe')];
+      const queue = [...HARNESS_VARIANTS.map((variant) => ({ ...item(variant), lane: 'harness' })), { ...item('executor-vehicle.differing'), lane: 'kit' }, item('sandbox-provision.installable'), item('review-recipe')];
       const f = fixture(t, queue, ['y', '']);
       const checked = [];
       const refused = mode === 'within' ? [] : ['bridge-tier'];
@@ -161,12 +161,12 @@ describe('spec:init-project/S24 danger check beside each harness preview', () =>
           refused: mode === 'refused' && variant === 'bridge-tier' ? keys.map((key) => ({ path: '.claude/settings.json', key, reason: `beyond the declared scope of ${variant}` })) : [] };
       };
       assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
-      assert.deepEqual(checked, HARNESS_VARIANTS);
-      for (const variant of HARNESS_VARIANTS.filter((variant) => mode !== 'throw' || variant !== 'bridge-tier')) {
+      assert.deepEqual(checked, [...HARNESS_VARIANTS, 'executor-vehicle.differing']);
+      for (const variant of [...HARNESS_VARIANTS, 'executor-vehicle.differing'].filter((variant) => mode !== 'throw' || variant !== 'bridge-tier')) {
         const start = f.printed.indexOf(`preview: ${variant}`);
         assert.deepEqual(f.printed.slice(start + 2, start + 4), [`CHECK: ${variant}`, `digest: ${CHECK_DIGEST}`]);
       }
-      assert.deepEqual(applies(f).map(({ argv }) => argv), HARNESS_VARIANTS.filter((variant) => !refused.includes(variant)).map((variant) => need(lanes, 'consoleArgv')(variant, facts(f)).apply));
+      assert.deepEqual(applies(f).map(({ argv }) => argv), [...HARNESS_VARIANTS.filter((variant) => !refused.includes(variant)).map((variant) => need(lanes, 'consoleArgv')(variant, facts(f)).apply), ['node', join(TOOLS, 'cheap-agents.mjs'), '--apply', '--executor', '--cwd', f.root]]);
       assert.deepEqual(f.questions, [APPLY, SUDO]);
       assert.ok(f.printed.includes('listed, not applied here: review-recipe — review-recipe'));
       if (mode !== 'within') {

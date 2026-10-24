@@ -81,10 +81,10 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('names the consoleArgv apply file for every harness row', () => {
+  it('names the consoleArgv apply file for every harness or kit row', () => {
     const rows = readRows(readTable());
     const consoleArgv = need(lanes, 'consoleArgv');
-    for (const row of rows.filter(({ lane }) => lane === 'harness')) {
+    for (const row of rows.filter(({ lane }) => ['harness', 'kit'].includes(lane))) {
       assert.equal(row.writer, basename(consoleArgv(row.variant, facts).apply[1]), row.variant);
     }
   });
@@ -109,10 +109,11 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, sixteen chat and twenty-two harness rows: forty-seven keys', () => {
+  it('counts nine user, sixteen chat, twenty-one harness and one kit row: forty-seven keys', () => {
     const rows = readRows(readTable());
-    assert.deepEqual([rows.length, ...['user', 'chat', 'harness'].map((lane) => rows.filter((row) => row.lane === lane).length)], [47, 9, 16, 22], 'row count, then user, chat and harness rows');
-    assert.deepEqual(['hook-checks', 'source-size.layout'].map((v) => rows.find(({ variant }) => variant === v)), [
-      { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' }]);
+    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [47, 9, 16, 21, 1], 'row count, then user, chat, harness and kit rows');
+    assert.deepEqual(['hook-checks', 'source-size.layout', 'executor-vehicle.differing'].map((v) => rows.find(({ variant }) => variant === v)), [
+      { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' },
+      { variant: 'executor-vehicle.differing', lane: 'kit', writer: 'cheap-agents.mjs' }]);
   });
 });

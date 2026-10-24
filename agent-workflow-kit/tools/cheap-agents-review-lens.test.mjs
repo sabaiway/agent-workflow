@@ -31,7 +31,7 @@ const CONFIG_REL = 'docs/ai/orchestration.json';
 const REVIEW = { 'plan-execution': { review: ['review-lens:opus:xhigh'] } };
 const CUSTOM_EXECUTOR = '---\nname: executor\ntools: Read, Bash\n---\nHand edit\n';
 const LENS_LABEL = 're-derived — the earlier body was replaced; set its model and effort in docs/ai/vehicles.json';
-const EXECUTOR_LABEL = 're-derived — a hand edit was replaced; set the model in docs/ai/vehicles.json';
+const executorLine = (verb) => `differs from the body derived from the vehicle settings — ${verb} with that body; its model and effort are set in docs/ai/vehicles.json`;
 const PLACE_ONLY_WHAT = '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first';
 const settingsWith = (lens) => JSON.stringify({
   executor: { model: 'sonnet', effort: 'medium', fallback: 'opus' }, ...(lens ? { 'review-lens': lens } : {}),
@@ -125,7 +125,7 @@ it('re-derives a differing placed lens, keeps every other customized vehicle and
       assert.deepEqual(result.lensPosture, posture);
       assertPostureLine(result, posture);
       assert.equal(rowLine(result, LENS), `  - ${LENS_REL}: ${dryRun ? 'would re-derive' : LENS_LABEL}`);
-      assert.equal(rowLine(result, EXECUTOR), `  - ${AGENTS_DIR}/${EXECUTOR}: ${dryRun ? 'would re-derive' : EXECUTOR_LABEL}`);
+      assert.equal(rowLine(result, EXECUTOR), `  - ${AGENTS_DIR}/${EXECUTOR}: ${executorLine(dryRun ? 'would be written' : 'written')}`);
       const expected = dryRun ? STALE : withPosture(BUNDLED, posture.model, posture.effort);
       assert.equal(readFileSync(agentPath(root, LENS), 'utf8'), expected);
       for (const [name, body] of Object.entries(kept)) assert.equal(readFileSync(agentPath(root, name), 'utf8'), body);

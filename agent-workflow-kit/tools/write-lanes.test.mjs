@@ -35,8 +35,9 @@ const HARNESS = [
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard', 'hook-checks',
   'worktrees-dir',
-  'attribution', 'footprint-global', 'executor-vehicle.differing',
+  'attribution', 'footprint-global',
 ];
+const KIT = ['executor-vehicle.differing'];
 const USER = [
   'jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home',
   'gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe',
@@ -80,7 +81,7 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['worktrees-dir', 'velocity-profile.mjs', ['--worktrees', '--cwd', ROOT], ['--apply', '--worktrees', '--cwd', ROOT]],
     ['attribution', 'attribution.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['footprint-global', 'hide-footprint.mjs', ['--remove-global', '--dry-run', '--dir', ROOT], ['--remove-global', '--dir', ROOT]],
-    ['executor-vehicle.differing', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
+    ['executor-vehicle.differing', 'cheap-agents.mjs', ['--executor', '--cwd', ROOT], ['--apply', '--executor', '--cwd', ROOT]],
   ];
   return Object.fromEntries(table.map(([variant, file, preview, apply]) => [variant, {
     preview: ['node', join(TOOLS, file), ...preview],
@@ -88,13 +89,14 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
   }]));
 };
 
-describe('spec:init-project/S1 every severity key has one of the three lanes and environment dependence is exact', () => {
+describe('spec:init-project/S1 every severity key has one of the four lanes and environment dependence is exact', () => {
   it('every severity key has a frozen lane, laneOf agrees, masked is retired, and retired exports are absent', () => {
     const keys = Object.keys(SEVERITIES).sort();
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const chatLane = need(lanes, 'LANE_CHAT');
     const harnessLane = need(lanes, 'LANE_HARNESS');
     const userLane = need(lanes, 'LANE_USER');
+    const kitLane = need(lanes, 'LANE_KIT');
     const laneOf = need(lanes, 'laneOf');
     assert.equal(Object.isFrozen(variantLanes), true);
     assert.equal(Object.getPrototypeOf(variantLanes), Object.prototype);
@@ -103,28 +105,25 @@ describe('spec:init-project/S1 every severity key has one of the three lanes and
     assert.equal(Object.hasOwn(SEVERITIES, 'sandbox-provision.installable'), true);
     assert.equal(Object.hasOwn(variantLanes, 'mcp-channel.masked'), false);
     assert.equal(Object.hasOwn(SEVERITIES, 'mcp-channel.masked'), false);
-    assert.equal(chatLane, 'chat');
-    assert.equal(harnessLane, 'harness');
-    assert.equal(userLane, 'user');
+    assert.deepEqual([chatLane, harnessLane, userLane, kitLane], ['chat', 'harness', 'user', 'kit']);
     assert.equal(Object.hasOwn(lanes, 'LANE_CONSOLE'), false);
     assert.equal(Object.hasOwn(lanes, 'routeLine'), false);
     for (const variant of keys) {
-      assert.ok([chatLane, harnessLane, userLane].includes(variantLanes[variant]), variant);
+      assert.ok([chatLane, harnessLane, userLane, kitLane].includes(variantLanes[variant]), variant);
       assert.equal(laneOf(variant), variantLanes[variant], variant);
     }
   });
 
-  it('the harness and user sets are exact and every other key, including the named exceptions, is chat', () => {
+  it('the harness, kit and user sets are exact and every other key, including the named exceptions, is chat', () => {
     const keys = Object.keys(SEVERITIES);
     const variantLanes = need(lanes, 'VARIANT_LANES');
     assert.deepEqual(keys.filter((v) => variantLanes[v] === 'harness').sort(), [...HARNESS].sort());
+    assert.deepEqual(keys.filter((v) => variantLanes[v] === 'kit').sort(), KIT);
     assert.deepEqual(keys.filter((v) => variantLanes[v] === 'user').sort(), [...USER].sort());
-    for (const variant of keys.filter((v) => !HARNESS.includes(v) && !USER.includes(v))) {
+    for (const variant of keys.filter((v) => ![...HARNESS, ...KIT, ...USER].includes(v))) {
       assert.equal(variantLanes[variant], 'chat', variant);
     }
-    for (const variant of ['read-lane', 'sandbox-masks']) {
-      assert.equal(variantLanes[variant], 'chat', variant);
-    }
+    for (const variant of ['read-lane', 'sandbox-masks']) assert.equal(variantLanes[variant], 'chat', variant);
   });
 
   it('isEnvDependent is true for exactly five variants and unregistered laneOf and consoleArgv throw', (t) => {
@@ -292,7 +291,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'worktrees-dir': [join(ROOT, '.claude', 'settings.local.json')],
       attribution: settings,
       'footprint-global': [],
-      'executor-vehicle.differing': agents,
+      'executor-vehicle.differing': [join(ROOT, '.claude', 'agents', 'executor.md')],
     };
     const nullVariants = [...new Set([...FORM_C, ...Object.keys(SEVERITIES).filter((v) => !WITH_FORMS.includes(v))])];
     const writesOf = need(lanes, 'writesOf');
@@ -338,7 +337,7 @@ const assertSlotLines = (slot, variant) => {
 };
 
 describe('spec:init-project/S20 apply slots use the danger check or the user step by proof', () => {
-  it('every harness slot quotes the check and appends the literal digest suffix, including both Jev claude dirs on win32', (t) => {
+  it('every harness and kit slot quotes the check and appends the literal digest suffix, including both Jev claude dirs on win32', (t) => {
     const base = createFacts(t);
     const fixtures = [
       { ...base, platform: 'win32' },
@@ -346,8 +345,9 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
       { ...base, platform: 'win32', env: { CLAUDE_CONFIG_DIR: 'relative' } },
     ];
     const applySlot = need(lanes, 'applySlot');
+    assert.deepEqual(KIT.map((variant) => need(lanes, 'laneOf')(variant)), ['kit']);
     for (const facts of fixtures) {
-      for (const variant of HARNESS) {
+      for (const variant of [...HARNESS, ...KIT]) {
         const check = expectedCheck(variant, facts);
         const slot = applySlot(variant, facts);
         assert.deepEqual(slot, { check, apply: `${check} --apply --expect <digest>` }, variant);
@@ -378,7 +378,7 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
 
   it('every chat variant returns no slot on win32', (t) => {
     const facts = { ...createFacts(t), platform: 'win32' };
-    const chat = Object.keys(SEVERITIES).filter((variant) => !HARNESS.includes(variant) && !USER.includes(variant));
+    const chat = Object.keys(SEVERITIES).filter((variant) => ![...HARNESS, ...KIT, ...USER].includes(variant));
     const applySlot = need(lanes, 'applySlot');
     for (const variant of chat) {
       assert.equal(applySlot(variant, facts), null, variant);
@@ -387,12 +387,12 @@ describe('spec:init-project/S20 apply slots use the danger check or the user ste
 });
 
 describe('spec:init-project/S38 — worktrees-dir is a harness variant and worktrees-dir.home a user one', () => {
-  it('the worktrees variants have their lanes among exactly twenty-two harness severity keys', () => {
+  it('the worktrees variants have their lanes among exactly twenty-one harness severity keys', () => {
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const keys = Object.keys(SEVERITIES);
     assert.equal(variantLanes['worktrees-dir'], 'harness');
     assert.equal(variantLanes['worktrees-dir.home'], 'user');
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 22);
+    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 21);
   });
 
   it('worktrees-dir uses the local settings form and quoted danger-check slot on win32 without changing the five env-dependent variants', (t) => {
@@ -441,7 +441,7 @@ describe('spec:init-project/S38 — worktrees-dir is a harness variant and workt
 describe('spec:init-project/S53 the four user variants of revision 11 by proof', () => {
   const variants = ['gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe'];
 
-  it('the four variants are user among nine user, twenty-two harness and sixteen chat keys, with no HAND-APPLY in any slot', (t) => {
+  it('the four variants are user among nine user, twenty-one harness, one kit and sixteen chat keys, with no HAND-APPLY in any slot', (t) => {
     const facts = createFacts(t);
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const applySlot = need(lanes, 'applySlot');
@@ -449,9 +449,8 @@ describe('spec:init-project/S53 the four user variants of revision 11 by proof',
     for (const variant of variants) {
       assert.equal(variantLanes[variant], 'user', variant);
     }
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'user').length, 9);
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'harness').length, 22);
-    assert.equal(keys.filter((variant) => variantLanes[variant] === 'chat').length, 16);
+    const count = (lane) => keys.filter((variant) => variantLanes[variant] === lane).length;
+    assert.deepEqual(['user', 'harness', 'kit', 'chat'].map(count), [9, 21, 1, 16]);
     for (const variant of keys) {
       const slot = applySlot(variant, facts);
       for (const line of [slot?.check, slot?.apply].filter((line) => line != null)) {

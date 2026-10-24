@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 16.1.0 — the agent writes a differing executor vehicle with no question: a new advisor lane `kit` (AD-207)
+
+**A placed `.claude/agents/executor.md` that differs from the body derived from `docs/ai/vehicles.json` is now
+written back with no question.** Before, the advisor's `executor-vehicle.differing` item waited for your pick and
+your yes, and its apply ran the whole agents writer. Now it is the first item of a fourth lane, `lane: kit`: the agent
+runs its check line in the sandbox, shows the result, and at once runs its apply line once outside the sandbox. The
+harness's own dialog there is the only ask. The item reads `the placed executor vehicle differs from the body derived
+from docs/ai/vehicles.json — the derived body is written with no question`.
+
+- **One file, one form.** The item's form is the new `cheap-agents.mjs --executor`: it plans the executor alone and
+  reads no orchestration config, so its `--apply` writes `.claude/agents/executor.md` and no other file. The advisor,
+  the danger check and the apply judge the same dry run, and the check admits only that file. The other vehicles are
+  left byte for byte.
+- **The executor's line names where to change it:** `.claude/agents/executor.md: differs from the body derived from the
+  vehicle settings — written with that body; its model and effort are set in docs/ai/vehicles.json` (on a dry run,
+  `would be written with that body`).
+- **The verdict line counts a kit item in neither class.** With only kit items and no skipped check, it reads
+  `nothing is broken`.
+- **`init` checks and applies the item on its one y**, as it does a harness item.
+- **The texts say the same:** the executor ensure's `pending` line and the `ensure-configs.mjs` help, the advisor's
+  help, `references/advisor-writers.md`, the recommendations, upgrade and agents modes, and the README's
+  recommendations and velocity rows.
+
 ## 16.0.0 — the upgrade writes the spec layer current with no question; `--replace-custom` and the kept-aside copy retire (AD-206)
 
 **MAJOR: the `--replace-custom` flag is removed, and the upgrade no longer asks a yes before it writes a spec-layer

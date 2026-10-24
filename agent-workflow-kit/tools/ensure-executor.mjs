@@ -1,7 +1,7 @@
 // ensure-executor.mjs — the EIGHTH upgrade ensure, fifth in the fixed order right after `vehicles`:
 // the placed executor vehicle (.claude/agents/executor.md) judged against the body derived from
 // docs/ai/vehicles.json. It never writes: the agents writer PLACES the vehicle on consent, and a placed
-// body that differs is reported `pending` — the advisor's executor-vehicle.differing item re-derives it.
+// body that differs is reported `pending` — the advisor's executor-vehicle.differing item writes it.
 //
 // The state table, in the order the cells are proven:
 // | cell | .claude, .claude/agents | placed path | docs/ai/vehicles.json | answer | read before answering |
@@ -66,5 +66,5 @@ export const ensureExecutor = ({ cwd, kitRoot, deps = {} }) => {
   if (!executorBodyDiffers(cwd, bundleDeps)) {
     return ok('already-current', [`${EXECUTOR_VEHICLE_REL}: the body derived from ${VEHICLES_REL} (model=${posture.model}, effort=${posture.effort}, source ${posture.source}) — nothing written`]);
   }
-  return ok('pending', [`${EXECUTOR_VEHICLE_REL}: differs from the body derived from ${VEHICLES_REL} — nothing written; the advisor's executor-vehicle.differing item re-derives it on your yes`]);
+  return ok('pending', [`${EXECUTOR_VEHICLE_REL}: differs from the body derived from ${VEHICLES_REL} — nothing written; the advisor's executor-vehicle.differing item, which the agent applies with no question, writes the derived body`]);
 };

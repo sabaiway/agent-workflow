@@ -16,6 +16,7 @@ import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } f
 import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
 import { BUNDLED_SCRIPT_NAMES } from '../node-evidence.mjs';
 import { CHECKER_PAIR, INSTALLER_SET, READER_PAIR, SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
+import { VEHICLES_REL } from '../vehicle-settings.mjs';
 
 const OP = 'scripts';
 const SCRIPTS_DIR = 'scripts';
@@ -23,6 +24,7 @@ const BUNDLED = ['references', 'scripts'];
 // Where an edit meant to last goes: the installer's in the local hook file, every other file's beside it.
 export const SCRIPT_CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
 export const LOCAL_HOOK_CHANNEL = 'the local hook file scripts/pre-commit.local, which the commit hook runs first';
+export const VEHICLE_CHANNEL = VEHICLES_REL;
 // The family files memory copies on Node evidence alone, accepted or not (the suite derives them).
 export const SEED_NAMES = Object.freeze(['_expect-shim.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs']);
 const ROTATOR = 'archive-decisions.mjs';
@@ -78,13 +80,15 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
 // A fate is `written`, `stood` (an absent file that appeared with the bundled body), `refused` (its
 // write failed), or none: the run stopped before it, or, dry, would write it. The spec layer's pair
 // lines are these too, through the module's index.
-const VERBS = { prior: ['refreshed', 'refreshed to the bundled one'], custom: ['replaced', 'replaced by the bundled body'], absent: ['placed', 'placed from the bundled scripts'] };
-const HEADS = { prior: 'matches a body an earlier release shipped', custom: 'differs from every body this kit knows it shipped', absent: 'absent' };
+const VERBS = { prior: ['refreshed', 'refreshed to the bundled one'], custom: ['replaced', 'replaced by the bundled body'], absent: ['placed', 'placed from the bundled scripts'], derived: ['written', 'written with that body'] };
+const HEADS = { prior: 'matches a body an earlier release shipped', custom: 'differs from every body this kit knows it shipped', absent: 'absent', derived: 'differs from the body derived from the vehicle settings' };
+const channelOf = (f) => (f.state === 'derived' ? `; its model and effort are set in ${VEHICLE_CHANNEL}`
+  : f.state === 'custom' ? `; an edit meant to last goes in ${f.name === INSTALLER_SET[0] ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL}` : '');
 export const fileLine = (f, fate, dryRun) => {
   if (fate === 'stood') return `${f.rel}: appeared while this run was placing it — the bundled body stands, nothing written`;
   const [verb, done] = VERBS[f.state];
   const tail = fate === 'written' ? done : dryRun ? `would be ${done}` : `not ${verb}; ${fate === 'refused' ? 'its write was refused (above)' : 'the run stopped before it'}`;
-  return `${f.rel}: ${HEADS[f.state]} — ${tail}${f.state === 'custom' ? `; an edit meant to last goes in ${f.name === INSTALLER_SET[0] ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL}` : ''}`;
+  return `${f.rel}: ${HEADS[f.state]} — ${tail}${channelOf(f)}`;
 };
 const NOT_ACCEPTED = `${SCRIPTS_DIR}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
 // The hook-run line, once after the file lines of a run that wrote (or, dry, would write) a file.

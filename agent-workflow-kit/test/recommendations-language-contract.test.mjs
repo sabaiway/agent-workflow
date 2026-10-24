@@ -412,7 +412,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39919, 'df81cf827553cf1d19a10401aeedec7a00f664a3c559b838833940dcee210650'], 'the bytes after distribution-files story S14 (the spec layer written with no question)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40214, '349e6c5eea25558623e3ad5d513789fcc5820119d1efbab9e84717614bbea164'], 'the bytes after distribution-files story S6 (the kit route)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -507,6 +507,8 @@ const CONSENT_ROUTE_LITERALS = Object.freeze([
   'a no, a harness refusal and any other failure', 'leave the item pending with its output shown',
   'a chat item is never retried outside the sandbox', 'every failure of a chat step is a stop',
   "user's own step", 'handed over as worded',
+  'the kit route', 'for no pick', "kit item's `check:` line in the sandbox", 'then at once run', 'with its new digest',
+  'still with no question', 'every other outcome', '`lane: kit`',
 ]);
 const RETIRED_ROUTE_LITERALS = Object.freeze([
   'in the sandbox first', 'a write the os refuses on a protected file', 'mcp masked report',
@@ -549,11 +551,12 @@ describe('spec:init-project/S6 — apply slots and posture notes permit the chec
 });
 
 describe('spec:init-project/S7 — consent route, doc pointers and optional console init', () => {
-  it('recommendations.md states the revised route: apply once outside at once, a velocity pick first, the one plain step, no retired arm', () => {
+  it('recommendations.md states the revised route and the kit route: apply once outside at once, a velocity pick first, the one plain step, no retired arm', () => {
     const doc = MODE_DOC.replace(/\s+/gu, ' ').toLowerCase();
     for (const literal of CONSENT_ROUTE_LITERALS) {
       assert.ok(doc.includes(literal), `recommendations.md states: ${literal}`);
     }
+    for (const re of [/\bkit item[^.]*\bneither\b[^.]*\bclass/u, /\bonly kit items\b[^.]*\bno skip[^.]*`nothing is broken` alone/u]) assert.match(between(MODE_DOC, '2. **Verdict first', '\n3.'), re);
     for (const literal of RETIRED_ROUTE_LITERALS) {
       assert.ok(!doc.includes(literal), `recommendations.md retires: ${literal}`);
     }
@@ -571,6 +574,8 @@ describe('spec:init-project/S7 — consent route, doc pointers and optional cons
     assert.doesNotMatch(applyLane, /family-freshness/);
     assert.match(applyLane, /spec-adoption[^.]*ensure-configs --reconcile --only specs/);
     assert.equal(lanes.laneOf('spec-adoption'), 'chat');
+    for (const step of [between(UPGRADE_DOC, '- **Render the mandatory Recommendations section', '\n'), between(UPGRADE_DOC, '8. Re-stamp', '\n')]) assert.match(step, /\beach kit item\b[^.]*\bkit route\b[^]*OFFER the consent route/u);
+    assert.ok(['chat', 'harness', 'kit', 'user'].every((lane) => between(UPGRADE_DOC, '- **Recommendations lanes', '\n').includes(`\`${lane}\``)));
   });
 
   it('the mode docs, README and mcp.md retire every never-run, only-init, route and restart sentence', () => {
@@ -606,7 +611,7 @@ describe('spec:velocity-profile/S24 — the ask rule is named by its purpose: al
     const row = README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`'));
     for (const [name, text] of [['velocity.md', VELOCITY_DOC], ['README velocity row', row]]) {
       const doc = text.replace(/\s+/gu, ' ').toLowerCase();
-      for (const phrase of ['so all work can stay in auto mode', 'auto mode refuses a harness apply', 'the rule allows nothing']) assert.ok(doc.includes(phrase), name);
+      for (const phrase of ['so all work can stay in auto mode', 'auto mode refuses a harness', 'the rule allows nothing']) assert.ok(doc.includes(phrase), name);
       assert.doesNotMatch(doc, /ask rule[^.|]*\b(?:removes|silences|stops)\b[^.|]*\bprompt/, name);
     }
   });
@@ -1039,6 +1044,7 @@ describe("spec:init-project/S44 — the worktrees grant's shipped text", () => {
 });
 
 describe('spec:init-project/S50 — shipped text of the five writes', () => {
+  const namesNoQuestion = (name, text, flat = text.replace(/\s+/gu, ' ')) => assert.ok(/executor-vehicle\.differing`? (?:item|arm)\b[^.;]*\bwith no question\b/u.test(flat) && !/executor-vehicle\.differing[^.;]*\byes\b/u.test(flat), name);
   it('bootstrap declares both capabilities and routes steps 4 and 9 through their items without hand steps', () => {
     for (const key of ['attribution', 'footprint-global']) {
       assert.ok(BOOTSTRAP_DOC.includes(`<!-- opt-in-capability: ${key} -->`), key);
@@ -1061,7 +1067,7 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
       assert.ok(text.includes('`pending`'));
       assert.doesNotMatch(text, /\b(?:re-derived|would-re-derive)\b/u);
     }
-    assert.ok(executor.includes("the advisor's `executor-vehicle.differing` item re-derives it on the user's yes"));
+    namesNoQuestion('upgrade.md', executor);
     assert.ok(between(read('references/shared/composition-handoff.md'), '- **Delegated**', '- **Fallback**')
       .includes('memory is told to skip its step-4 settings write; the `attribution` item of step 11 sets it'));
   });
@@ -1101,7 +1107,7 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
     }
     assert.ok(between(notes, '- `footprint-global` — ', POSTURE_NOTE_BOUNDARY).includes("Another of the user's repositories may rely on the same lines"));
     const executor = between(MODE_DOC, '**The `executor-vehicle` item', '\n\n');
-    assert.ok(executor.includes('the optional `executor-vehicle.differing` arm, re-derived on the chat yes after the check'));
+    namesNoQuestion('recommendations.md', executor);
     assert.ok(executor.includes('**`placed` renders NOTHING**'));
     assert.doesNotMatch(executor, /\bcustomized\b[^.;\n]*\brenders? NOTHING\b/iu);
   });
@@ -1112,6 +1118,13 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
     const help = between(read('tools/ensure-configs.mjs'), 'Usage:', '`;');
     assert.ok(help.includes("is pending — the advisor's executor-vehicle.differing item"));
     assert.doesNotMatch(help, /\bre-derive(?:d)?\b/iu);
+    namesNoQuestion('ensure-configs help', between(help, 'The executor ensure writes nothing', 'A fifth writes too'));
+    const pending = read('tools/ensure-executor.mjs').split('\n').filter((line) => line.includes('executor-vehicle.differing') && !line.trim().startsWith('//'));
+    for (const line of pending.length > 0 ? pending : ['(no pending line)']) namesNoQuestion('ensure-executor pending line', line);
+    const agents = read('references/modes/agents.md');
+    assert.ok(agents.includes('differs from the body derived from the vehicle settings') && agents.includes('--executor'));
+    assert.ok(readmeRow.includes("; a kit item it applies with no question, its check line first, the harness's own dialog the only ask, or the one plain step where auto mode refuses its check or apply"));
+    assert.ok(README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`')).includes('a harness or kit apply (the `apply:` line of each harness or kit item'));
   });
 });
 

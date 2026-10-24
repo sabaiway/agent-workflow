@@ -13,7 +13,7 @@ import { preflightInit } from './init-preflight.mjs';
 import { buildRecommendations, hostFacts } from './recommendations.mjs';
 import { compareSemver } from './semver-lite.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
-import { LANE_HARNESS, VARIANT_LANES, consoleArgv, isEnvDependent, isProtectedPath, isRejudged, laneOf, writesOf } from './write-lanes.mjs';
+import { LANE_HARNESS, LANE_KIT, VARIANT_LANES, consoleArgv, isEnvDependent, isProtectedPath, isRejudged, laneOf, writesOf } from './write-lanes.mjs';
 
 const INSIDE_LINE = 'you are inside an agent; run this in your own terminal';
 const APPLY_PROMPT = 'apply? y/N: ';
@@ -218,7 +218,7 @@ const previewQueue = async (context, queue) => {
     const tuple = result.stdout.match(/--apply\s+(\S+)/)?.[1];
     const facts = { ...context.facts, env: context.spawnEnv, tuple };
     let checkDigest = null;
-    if (laneOf(item.variant) === LANE_HARNESS) {
+    if ([LANE_HARNESS, LANE_KIT].includes(laneOf(item.variant))) {
       try {
         const { lines, refused, digest } = context.checkApply(item.variant, facts, {});
         for (const line of lines) context.print(line);

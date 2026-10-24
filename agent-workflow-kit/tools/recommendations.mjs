@@ -46,7 +46,7 @@ import {
 } from './velocity-profile.mjs';
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
-import { laneOf, applySlot, consoleArgv } from './write-lanes.mjs';
+import { LANE_KIT, laneOf, applySlot, consoleArgv } from './write-lanes.mjs';
 import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired } from './state-block-hook.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -212,8 +212,8 @@ export const SEVERITIES = Object.freeze({
   // names the subagent carrier over a vehicle that cannot carry it — a configured declaration that
   // is broken, which is what attention means.
   'executor-vehicle': SEVERITY_ATTENTION,
-  // A hand edit of the placed executor is not a broken declaration — the vehicle still carries — so
-  // re-deriving it is an offer.
+  // A hand edit of the placed executor is not a broken declaration — the vehicle still carries — so it is optional;
+  // its lane is kit, so the agent writes it with no pick and the verdict counts it in neither class.
   'executor-vehicle.differing': SEVERITY_OPTIONAL,
   // The AGENTS.md block is a configured choice the harness does not honour.
   attribution: SEVERITY_ATTENTION,
@@ -249,16 +249,15 @@ const fillTemplate = (template, values) => template.replace(/\{([A-Za-z]+)\}/g, 
 // composeVerdict(counts) → the ONE verdict line, or null for the optimal state (D1 state matrix).
 // attention>0 leads; the "nothing is broken" wording renders ONLY when attention==0 AND skipped==0
 // (a skipped probe could hide an attention-class problem, so the claim would overreach; it renders
-// only as the lead-in to the optional offer, never in a skips-only state); the skips part is
-// appended last.
-export const composeVerdict = ({ attention, optional, skipped }) => {
-  if (attention === 0 && optional === 0 && skipped === 0) return null;
+// as the lead-in to the optional offer, or alone beside kit items only, which count in neither class:
+// the agent applies them with no pick); the skips part is appended last.
+export const composeVerdict = ({ attention, optional, skipped, kit = 0 }) => {
+  if (attention === 0 && optional === 0 && skipped === 0 && kit === 0) return null;
   const parts = [];
   if (attention > 0) parts.push(fillTemplate(VERDICT_ATTENTION_TEMPLATE, { K: attention }));
-  if (optional > 0) {
-    const offer = fillTemplate(VERDICT_OPTIONAL_TEMPLATE, { N: optional });
-    parts.push(attention === 0 && skipped === 0 ? `${VERDICT_NOTHING_BROKEN} — ${offer}` : offer);
-  }
+  const offer = optional > 0 ? fillTemplate(VERDICT_OPTIONAL_TEMPLATE, { N: optional }) : null;
+  if (attention === 0 && skipped === 0) parts.push(offer ? `${VERDICT_NOTHING_BROKEN} — ${offer}` : VERDICT_NOTHING_BROKEN);
+  else if (offer) parts.push(offer);
   if (skipped > 0) parts.push(fillTemplate(VERDICT_SKIPS_TEMPLATE, { M: skipped }));
   return parts.join('; ');
 };
@@ -307,7 +306,7 @@ export const WHATS = Object.freeze({
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
   'agents.lens-rederive': 'the placed review-lens.md differs from its body derived from docs/ai/vehicles.json; {n} vehicle(s) to place ({ro} read-only, {ex} executor)',
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
-  'executor-vehicle.differing': 'the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — a hand edit stands until it is re-derived',
+  'executor-vehicle.differing': 'the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — the derived body is written with no question',
   attribution: 'AGENTS.md says attribution off but .claude/settings.json does not hide the harness trailer and PR text',
   'footprint-global': 'legacy kit ignore line(s) sit in {file} — they ignore kit paths in every repository here',
   'family-freshness': '{parts}',
@@ -387,7 +386,7 @@ export const BENEFITS = Object.freeze({
 });
 // The one arm whose gain differs from its base item's (BENEFITS stays keyed by item key).
 export const VARIANT_BENEFITS = Object.freeze({
-  'executor-vehicle.differing': 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names, not a hand edit',
+  'executor-vehicle.differing': 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names',
   'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
 });
 
@@ -1208,10 +1207,10 @@ const probeExecutorVehicle = ({ root, deps, add, skip }) => {
   if (renderBrokenExecutor({ root, deps, add, skip })) return;
   try {
     if (!executorBodyDiffers(root, deps)) return;
-    const plan = writeCheapAgents({ cwd: root, dryRun: true }, deps);
+    // The executor-only dry run: the call the check makes, so the arm, the check and the apply judge one plan.
+    const plan = writeCheapAgents({ cwd: root, dryRun: true, executorOnly: true }, deps);
     if (!plan.stampOk) throw new Error(`run /agent-workflow-kit upgrade first (deployment stamp ${plan.stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`);
-    add('executor-vehicle', WHATS['executor-vehicle.differing'], formsApply('executor-vehicle.differing', root),
-      'executor-vehicle.differing', HIDDEN_AGENTS_FOLLOW_UP(root));
+    add('executor-vehicle', WHATS['executor-vehicle.differing'], formsApply('executor-vehicle.differing', root), 'executor-vehicle.differing');
   } catch (err) {
     skip('executor-vehicle', err);
   }
@@ -1761,8 +1760,8 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
 // facts/counts complete, commands byte-exact; the raw block on request) ─────────────────────────
 export const formatRecommendations = ({ items, skips }) => {
   const lines = [RECOMMENDATIONS_SECTION_HEADER, ''];
-  const attention = items.filter((i) => i.severity === SEVERITY_ATTENTION).length;
-  const verdict = composeVerdict({ attention, optional: items.length - attention, skipped: skips.length });
+  const [kit, attention] = [items.filter((i) => i.lane === LANE_KIT).length, items.filter((i) => i.lane !== LANE_KIT && i.severity === SEVERITY_ATTENTION).length];
+  const verdict = composeVerdict({ attention, optional: items.length - attention - kit, skipped: skips.length, kit });
   if (verdict == null) {
     // The flow-optimal claim renders ONLY when every probe ran and none fired — an empty item
     // list beside skipped checks would falsely attest optimality (Segment B).
@@ -1800,7 +1799,7 @@ Computes the deterministic Recommendations section every kit upgrade ends with �
 one composed verdict line opens every non-optimal render, then per item {severity · what is
 sub-optimal · the benefit in one plain line · the lane · an optional \`recipe:\` line (an item's own
 facts or its alternative, such as the bridge-tier missing-entries line or
-the worktrees-dir ack fallback) · the harness check line · the exact consent-gated apply one-liner}. --cwd is
+the worktrees-dir ack fallback) · the harness or kit check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
 stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
@@ -1811,7 +1810,7 @@ allow rules, <wrapper> * exclusions (codex-exec * where an execute slot delegate
 sandbox.network.allowedDomains and state dirs in sandbox.filesystem.allowWrite. Where the host
 honors the settings sandbox keys, an excluded wrapper runs outside the sandbox, every sandboxed
 command of the project can reach each host, and every sandboxed command can write each state dir;
-plan/diff review modes and delegated execution keep their prompt.
+plan/diff review modes and delegated execution keep their prompt. A kit item the agent applies with no question, after its check.
 A user item stays the user's own step.
 
 Read-only: never writes, never commits, never runs a subscription CLI. Exit codes: 0 report

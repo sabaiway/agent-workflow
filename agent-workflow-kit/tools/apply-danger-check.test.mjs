@@ -1556,23 +1556,23 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
       });
     });
   }
-  it('executor-vehicle.differing: re-derive writes the derived digest within the agents scope', (t) => {
-    const f = fixture(t);
-    const path = '.claude/agents/executor.md';
-    put(join(f.root, path), 'differing body\n');
-    const digest = unchanged(f, () => {
-      const plan = writeCheapAgents({ cwd: f.root, dryRun: true });
-      const executor = plan.plan.find((item) => item.rel === path);
-      assert.equal(executor.action, 're-derive');
-      assert.notEqual(executor.content, fs.readFileSync(join(f.root, path), 'utf8'));
+  it('executor-vehicle.differing: the one executor write beside absent vehicles, an edited or linked lens and a rejected config; scope admits it alone', (t) => {
+    const [f, path, config] = [fixture(t), '.claude/agents/executor.md', 'docs/ai/orchestration.json'];
+    for (const [rel, body] of [[path, 'differing body\n'], [config, JSON.stringify({ 'plan-execution': { review: ['review-lens:opus:xhigh'] } })], ['.claude/agents/review-lens.md', 'edited lens\n']]) put(join(f.root, rel), body);
+    const derived = writeCheapAgents({ cwd: f.root, dryRun: true }).plan.find((item) => item.rel === path && item.action === 're-derive').content;
+    const judge = () => unchanged(f, () => {
       const result = danger.checkApply('executor-vehicle.differing', f);
-      assertPreview('executor-vehicle.differing', f, result, expectedPlan('executor-vehicle', f));
-      assert.ok(result.lines.includes(`writes: ${path} sha256:${sha(executor.content)} — replaces sha256:${sha('differing body\n')}`));
-      assert.ok(result.lines.includes('scope: within the declared scope of executor-vehicle.differing'));
+      assert.deepEqual([result.lines.filter((line) => line.startsWith('writes: ')), result.refused, result.lines.includes('scope: within the declared scope of executor-vehicle.differing')], [[`writes: ${path} sha256:${sha(derived)} — replaces sha256:${sha('differing body\n')}`], [], true]);
+      const cli = capture(f, () => { throw new Error('CLI preview spawned'); });
+      assert.deepEqual([danger.main(argvFor('executor-vehicle.differing', f), cli.io), cli.lines], [0, result.lines]);
       return result.digest;
     });
-    put(join(f.root, path), 'another body\n');
-    assert.notEqual(unchanged(f, () => danger.checkApply('executor-vehicle.differing', f).digest), digest);
+    const digest = judge();
+    for (const mutate of [() => fs.symlinkSync(join(f.root, config), join(f.root, '.claude/agents/review-lens-opus-xhigh.md')), () => put(join(f.root, config), '{ not json')]) {
+      mutate();
+      assert.equal(judge(), digest, 'the executor-only plan reads neither the lens nor the config');
+    }
+    assert.deepEqual(['executor.md', 'mechanical-sweep.md', 'review-lens.md', 'review-lens-opus-xhigh.md'].map((name) => danger.scopeOf('executor-vehicle.differing', f).admitsPath(join(f.root, '.claude/agents', name))), [true, false, false, false]);
   });
   for (const variant of ['attribution', 'footprint-global', 'executor-vehicle.differing']) it(`CLI accepts --variant ${variant}`, (t) => {
     const f = variant === 'footprint-global' ? configureGlobal(fixture(t)) : fixture(t);

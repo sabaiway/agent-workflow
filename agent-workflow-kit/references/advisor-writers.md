@@ -1,6 +1,6 @@
 # Advisor writers
 
-`tools/write-lanes.mjs` is the one source of the advisor's variant set and lanes; each row below names a variant's lane and its writer — a harness form's file, a chat apply's writers or writer mode — or `user step`.
+`tools/write-lanes.mjs` is the one source of the advisor's variant set and lanes; each row below names a variant's lane and its writer — a harness or kit form's file, a chat apply's writers or writer mode — or `user step`.
 
 | variant | lane | writer |
 | --- | --- | --- |
@@ -37,7 +37,7 @@
 | mcp-channel.differing | harness | mcp.mjs |
 | agents | harness | cheap-agents.mjs |
 | executor-vehicle | harness | cheap-agents.mjs |
-| executor-vehicle.differing | harness | cheap-agents.mjs |
+| executor-vehicle.differing | kit | cheap-agents.mjs |
 | attribution | harness | attribution.mjs |
 | footprint-global | harness | hide-footprint.mjs |
 | family-freshness | user | user step |
