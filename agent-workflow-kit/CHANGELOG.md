@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 15.1.0 — the upgrade writes the kit rules file current with no question; the rules mode no longer moves an edit (AD-205)
+
+**`/agent-workflow-kit upgrade` now puts the kit's rules file back to the kit's template, whatever it holds.** Before,
+a `docs/ai/rules/<theme>.md` that differed from every body a release shipped was kept byte for byte and the kit's
+updates to that file waited; a file with no frontmatter was kept and nothing else was written for its theme. Now any
+such body (an edit, a body this kit does not know, a file with no frontmatter) is replaced by the bundled template
+with no question and no copy kept, and the step reports `refreshed`.
+Its line reads `differs from every body this kit knows it shipped — replaced by the bundled template; a rule meant to
+last goes in docs/ai/rules/local/<theme>.md, where it wins`.
+
+- **Your own rules live in the local file.** `docs/ai/rules/local/<theme>.md` is never written by the upgrade, and its
+  rules win over the kit's. If you edited the kit file, move the edit there before you upgrade.
+- **With a local file, the record is judged against the template.** When the record already holds the merge built
+  from the template, replacing an edited kit file writes only that file; otherwise the step reports `pending`, and the
+  record command it prints carries the template's digest.
+- **`/agent-workflow-kit rules` offers three routes:** change a rule, drop your local rules, or change a number. The
+  route that moved an edit of the kit file into the local file is gone, with the README row's clause about it.
+- **The texts say the same.** The upgrade mode's project-rules paragraph and its `rules` token list (no
+  `customized-preserved`), the header and `--help` of `tools/ensure-configs.mjs`, and the guide's *Reserved names and
+  channels*, which now names the kit rules files among the files the next upgrade writes over.
+
 ## 15.0.0 — the opt-in ADR migration mode retires; status names the upgrade for an older ADR layout (AD-204)
 
 **MAJOR: `/agent-workflow-kit migrate-adr-store` is gone, with no alias.** Since 14.50.0 the upgrade moves an older

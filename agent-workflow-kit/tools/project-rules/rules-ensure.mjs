@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { writeDocsAiFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
 import { composeFailure, composeOutcome, tmpNote } from '../ensure-ops.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
-import { parseFrontmatter } from '../../references/scripts/check-docs-size.mjs';
 import { digestOf, readRecord, readUnder } from './rules-check.mjs';
 import { writeRecord } from './rules-record.mjs';
 import { RULES_PRIORS, isKnownPrior } from './rules-priors.mjs';
@@ -58,24 +57,22 @@ const survey = ({ themes, cwd, kitRoot, readFile, deps }) => {
 const classifyKit = (name, kit, template, priors) => {
   if (kit.outcome === 'absent') return 'absent';
   if (kit.bytes.equals(template)) return 'current';
-  return isKnownPrior(name, kit.bytes, priors) ? 'prior' : 'custom';
+  return isKnownPrior(name, kit.bytes, priors) ? 'prior' : 'other';
 };
 
 const planTheme = ({ theme, paths, template, reads }, record, priors) => {
   const { kit, local, effective } = reads;
   const kitState = classifyKit(theme.name, kit, template, priors);
-  const kitBytes = kitState === 'absent' || kitState === 'prior' ? template : kit.bytes;
-  const kitWrite = { absent: 'seed', prior: 'refresh' }[kitState] ?? null;
+  const kitWrite = { absent: 'seed', prior: 'refresh', other: 'refresh' }[kitState] ?? null;
   const entry = record.ok ? record.themes[theme.name] : undefined;
-  const base = { name: theme.name, paths, kitState, kitBytes, kitWrite, effectiveWrite: null, recordWrite: false };
+  const base = { name: theme.name, paths, kitState, kitBytes: template, kitWrite, effectiveWrite: null, recordWrite: false };
   if (local.outcome === 'ok') {
-    const merged = entry !== undefined && effective.outcome === 'ok' && entry.kit === digestOf(kitBytes)
+    const merged = entry !== undefined && effective.outcome === 'ok' && entry.kit === digestOf(template)
       && entry.local === digestOf(local.bytes) && entry.effective === digestOf(effective.bytes);
     return { ...base, mode: merged ? 'merged' : 'pending', localDigest: digestOf(local.bytes) };
   }
-  if (kitState === 'custom' && parseFrontmatter(kitBytes.toString('utf8')) === null) return { ...base, mode: 'unvouched' };
-  const effectiveWrite = effective.outcome === 'absent' ? 'seed' : effective.bytes.equals(kitBytes) ? null : 'rebuild';
-  const passed = { kit: digestOf(kitBytes), local: 'absent', effective: digestOf(kitBytes) };
+  const effectiveWrite = effective.outcome === 'absent' ? 'seed' : effective.bytes.equals(template) ? null : 'rebuild';
+  const passed = { kit: digestOf(template), local: 'absent', effective: digestOf(template) };
   const recorded = entry !== undefined && entry.kit === passed.kit && entry.local === 'absent' && entry.effective === passed.effective;
   const droppedEdit = effectiveWrite === 'rebuild' && entry !== undefined && entry.effective !== digestOf(effective.bytes);
   return { ...base, mode: 'copy', effectiveWrite, recordWrite: effectiveWrite !== null || !recorded, passed, droppedEdit };
@@ -86,13 +83,13 @@ const planTheme = ({ theme, paths, template, reads }, record, priors) => {
 const KIT_LINES = {
   absent: { written: 'created from the bundled template', stood: 'appeared while this run was creating it and holds the bundled template — it stands', would: 'absent — would be created from the bundled template' },
   prior: { written: 'held the body an earlier release shipped — refreshed to the bundled template', would: 'holds the body an earlier release shipped — would be refreshed to the bundled template' },
+  other: { written: 'differs from every body this kit knows it shipped — replaced by the bundled template', would: 'differs from every body this kit knows it shipped — would be replaced by the bundled template' },
 };
 const kitLine = (plan, fate) => {
   const { kit, local } = plan.paths;
   if (plan.kitState === 'current') return `${kit}: already the bundled template — nothing written`;
-  if (plan.mode === 'unvouched') return `${kit}: carries your edit with no frontmatter — kept byte for byte, and nothing else was written for this theme, because the record writer cannot vouch for a file without frontmatter; your own rules belong in ${local}, where they win`;
-  if (plan.kitState === 'custom') return `${kit}: carries your edit — kept byte for byte; your own rules belong in ${local}, where they win, and the kit's updates to this file wait while it carries the edit`;
-  return `${kit}: ${KIT_LINES[plan.kitState][fate]}`;
+  const lasting = plan.kitState === 'other' ? `; a rule meant to last goes in ${local}, where it wins` : '';
+  return `${kit}: ${KIT_LINES[plan.kitState][fate]}${lasting}`;
 };
 
 const effectiveLine = (plan, fate) => {
@@ -141,7 +138,7 @@ const tokenOf = (plans, wrote, dryRun) => {
   if (plans.some((plan) => plan.kitWrite === 'seed' && wrote(plan, 'kit'))) return token('seeded');
   if (plans.some((plan) => plan.kitWrite === 'refresh' && wrote(plan, 'kit'))) return token('refreshed');
   if (plans.some((plan) => wrote(plan, 'effective') || wrote(plan, 'record'))) return token('regenerated');
-  return plans.some((plan) => plan.kitState === 'custom') ? 'customized-preserved' : 'already-current';
+  return 'already-current';
 };
 
 // ── the writes, in order; the first that fails stops the run ─────────────────────────────────────

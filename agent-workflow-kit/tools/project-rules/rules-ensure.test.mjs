@@ -17,8 +17,10 @@ import { EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, RECORD, entry
 
 const NL = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
+const TAB = String.fromCharCode(9);
 const THEME = 'project-layout';
 const EDITED = `${KIT_TEXT}My own rule.${NL}`;
+const NO_FRONTMATTER = [['plain text', `# Project layout${NL}${NL}My own layout.${NL}`], ['a CRLF fence', ['---', 'type: rules', '---', '', '# Project layout', ''].join(`${CR}${NL}`)], ['an unclosed fence', ['---', 'type: rules', '', '# Project layout', ''].join(NL)]];
 const PRIOR = ['---', 'type: rules', '---', '', '# Project layout', '', 'The body an earlier release shipped.', ''].join(NL);
 const PRIORS = Object.freeze([Object.freeze({ theme: THEME, release: '14.0.0', sha256: sha(PRIOR) })]);
 const NOT_JSON = `{ not json${NL}`;
@@ -58,7 +60,8 @@ const UNRECORDED = { [LOCAL]: LOCAL_TEXT, [EFFECTIVE]: MERGED_TEXT };
 const withPriors = () => ({ priors: PRIORS });
 
 const outcomes = [];
-// runEnsure({ files?, prep?, cwd?, kitRoot?, dryRun?, deps? }) → the outcome, its tree, a reader and a no-change assert.
+const movedPaths = (before, after) => [...new Set([...before.filter((line) => !after.includes(line)), ...after.filter((line) => !before.includes(line))].map((line) => line.split(TAB)[0]))].sort();
+// runEnsure({ files?, prep?, cwd?, kitRoot?, dryRun?, deps? }) → the outcome, its tree, a reader, the moved paths and a no-change assert.
 const runEnsure = async ({ files = {}, prep, cwd, kitRoot = makeKit(), dryRun = false, deps = () => ({}) } = {}) => {
   const ensureRules = need(await load('./rules-ensure.mjs'), 'ensureRules');
   const root = cwd ?? makeTree('rules project ', { 'docs/ai/.keep': '', ...files });
@@ -67,7 +70,8 @@ const runEnsure = async ({ files = {}, prep, cwd, kitRoot = makeKit(), dryRun = 
   const outcome = ensureRules({ cwd: root, kitRoot, dryRun, deps: deps(root) });
   outcomes.push(outcome);
   const text = (rel) => readFileSync(join(root, rel), 'utf8');
-  return { ...outcome, root, kitRoot, text, unchanged: () => assert.deepEqual(snapshot(root), before) };
+  const changed = () => movedPaths(before, snapshot(root));
+  return { ...outcome, root, kitRoot, text, changed, unchanged: () => assert.deepEqual(snapshot(root), before) };
 };
 const isAbsent = (run, rel) => assert.equal(existsSync(join(run.root, rel)), false, rel);
 const assertFailed = (run, first) => {
@@ -77,32 +81,36 @@ const assertFailed = (run, first) => {
 };
 
 const KIT_EQUAL = `${KIT}: already the bundled template — nothing written`;
-const KIT_EDITED = `${KIT}: carries your edit — kept byte for byte; your own rules belong in ${LOCAL}, where they win, and the kit's updates to this file wait while it carries the edit`;
-const UNVOUCHED = `${KIT}: carries your edit with no frontmatter — kept byte for byte, and nothing else was written for this theme, because the record writer cannot vouch for a file without frontmatter; your own rules belong in ${LOCAL}, where they win`;
+const REPLACED = `${KIT}: differs from every body this kit knows it shipped — replaced by the bundled template; a rule meant to last goes in ${LOCAL}, where it wins`;
+const WOULD_REPLACE = `${KIT}: differs from every body this kit knows it shipped — would be replaced by the bundled template; a rule meant to last goes in ${LOCAL}, where it wins`;
+const NEVER_SAID = ['carries your edit', 'your edit', 'kept byte for byte', 'preserved', 'withheld', 'kept aside', "the user's yes"];
 const EFFECTIVE_EQUAL = `${EFFECTIVE}: already the copy of ${KIT} — nothing written`;
 const RECORD_CURRENT = `${RECORD}: already records what ${EFFECTIVE} was built from — nothing written`;
 const REBUILT = `${EFFECTIVE}: rebuilt from ${KIT}`;
 const DROPPED = `${EFFECTIVE}: rebuilt as a copy of ${KIT}, dropping an edit made to it; edits belong in ${LOCAL}`;
 
-const BUNDLE = fileURLToPath(new URL('../../references/scripts/', import.meta.url));
-const replaceRun = () => {
-  const dir = track(makeProject({ 'package.json': `{"name":"fixture"}${NL}` }));
-  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs']) place(dir, `scripts/${name}`, readFileSync(join(BUNDLE, name)));
-  place(dir, 'scripts/check-docs-size.mjs', `// my own checker${NL}`);
-  const digest = main(['--reconcile', '--only', 'specs', '--cwd', dir]).stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
-  return main(['--reconcile', '--replace-custom', digest, '--cwd', dir]);
+const ENSURE_CLI = fileURLToPath(new URL('../ensure-configs.mjs', import.meta.url));
+const fold = (text) => text.replace(/\s+/g, ' ').trim();
+const headerRow = () => {
+  const lines = readFileSync(ENSURE_CLI, 'utf8').split(NL);
+  const start = lines.findIndex((line) => line.startsWith('//   rules '));
+  const end = lines.findIndex((line, index) => index > start && /^\/\/ {3}\S/.test(line));
+  return fold(lines.slice(start, end).map((line) => line.slice(lines[start].search(/(?<=<theme>\.md +)\S/))).join(' '));
 };
-const opsOf = (stdout) => stdout.split(NL).map((line) => line.match(/^ {2}([a-z-]+): ([a-z-]+)$/)).filter(Boolean).map(([, op]) => op);
+const helpClause = () => fold(main(['--help']).stdout).match(/project rules kit file[^;]*/)?.[0] ?? '';
 
-describe('spec:project-rules/S16 rules sits in ENSURE_OPS after specs and before index, the ensure command runs it through the project-rules index, and a replace run runs no rules op', () => {
-  it('nine ops with rules between specs and index, the op table holds the index ensureRules, and a replace run prints specs, then index', async () => {
+describe('spec:project-rules/S16 rules sits in ENSURE_OPS after specs and before index, the ensure command runs it through the project-rules index, and the header row and the --help clause say any other body is replaced with no question and no copy kept', () => {
+  it('nine ops with rules between specs and index, and the op table holds the index ensureRules', async () => {
     assert.equal(ENSURE_OPS.length, 9);
     assert.deepEqual(ENSURE_OPS.slice(6), ['specs', 'rules', 'index']);
     assert.equal(ENSURE_IMPLEMENTATIONS.rules, need(await load('./index.mjs'), 'ensureRules'));
-    const result = replaceRun();
-    assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(opsOf(result.stdout), ['specs', 'index']);
-    assert.doesNotMatch(result.stdout, /^ {2}(?:rules|scripts):/m);
+  });
+  it('the header row of the op and the --help clause naming the project rules kit file say any other body is replaced with no question and no copy kept, never that an edited one is kept', () => {
+    for (const text of [headerRow(), helpClause()]) {
+      assert.match(text, /any other (?:kit-file )?body[^;]*replaced/, text);
+      assert.ok(text.includes('no question and no copy kept'), text);
+      assert.doesNotMatch(text, /edited one is kept|carries your edit|preserved/, text);
+    }
   });
 });
 
@@ -110,20 +118,28 @@ const KIT_CLASSES = [
   ['absent: seeded with the template bytes', {}, `${KIT}: created from the bundled template`, 'seeded', KIT_TEXT],
   ['equal to the template: kept, nothing written', { files: copyOf(KIT_TEXT) }, KIT_EQUAL, 'already-current', KIT_TEXT],
   ['a prior of the injected catalog: refreshed to the template', { files: copyOf(PRIOR), deps: withPriors }, `${KIT}: held the body an earlier release shipped — refreshed to the bundled template`, 'refreshed', KIT_TEXT],
-  ['the same body outside the given catalog: kept byte for byte as an edit', { files: copyOf(PRIOR) }, KIT_EDITED, 'customized-preserved', PRIOR],
-  ['other bytes on a converged tree: kept byte for byte, the line naming the local file', { files: copyOf(EDITED) }, KIT_EDITED, 'customized-preserved', EDITED],
+  ['a prior body outside the given catalog: replaced by the template', { files: copyOf(PRIOR) }, REPLACED, 'refreshed', KIT_TEXT],
+  ['an edit on a converged tree: replaced by the template', { files: copyOf(EDITED) }, REPLACED, 'refreshed', KIT_TEXT],
+  ['a body with no frontmatter: replaced by the template', { files: { [KIT]: NO_FRONTMATTER[0][1] } }, REPLACED, 'refreshed', KIT_TEXT],
+  ['a dry run over an edit: the bytes left, the would be replaced line', { files: copyOf(EDITED), dryRun: true }, WOULD_REPLACE, 'would-refresh', EDITED],
 ];
 
-describe('spec:project-rules/S17 the kit file absent is seeded, equal is kept, a prior of an injected catalog is refreshed, and other bytes are kept as customized-preserved', () => {
+describe('spec:project-rules/S17 the kit file absent is seeded, equal is kept, a prior of an injected catalog is refreshed, and other bytes end as the template, token refreshed, with no copy and no line about an edit kept', () => {
   for (const [label, opts, line, token, kitAfter] of KIT_CLASSES) {
     it(label, async () => {
       const run = await runEnsure(opts);
+      assert.deepEqual(NEVER_SAID.filter((said) => run.lines.some((one) => one.toLowerCase().includes(said))), [], run.lines.join(NL));
       assert.equal(run.lines[0], line);
       assert.equal(run.token, token);
       assert.equal(run.text(KIT), kitAfter);
-      if (['already-current', 'customized-preserved'].includes(token)) run.unchanged();
+      if (token === 'already-current' || opts.dryRun) run.unchanged();
     });
   }
+  it('replacing an edited kit file on a converged tree with no local file changes only the kit, effective and record files', async () => {
+    const run = await runEnsure({ files: copyOf(EDITED) });
+    assert.deepEqual(run.lines, [REPLACED, REBUILT, `${RECORD}: records what ${EFFECTIVE} was built from`]);
+    assert.deepEqual(run.changed(), [KIT, EFFECTIVE, RECORD].sort());
+  });
 });
 
 const wrongKind = (rel, reason) => `wrong-node-kind — ${rel}: ${reason} — nothing was read or written; resolve it by hand, then re-run`;
@@ -166,36 +182,31 @@ const REBUILDS = [
   ['an unreadable record and a differing effective file: rebuilt from the kit file', { [KIT]: KIT_TEXT, [EFFECTIVE]: EDITED, [RECORD]: NOT_JSON }, {}, REBUILT],
   ['a kit file refreshed from a prior, the entry matching the old effective: rebuilt from the kit file', copyOf(PRIOR), { deps: withPriors }, REBUILT],
   ['an unreadable record beside an equal effective file: replaced, its line naming the reason', { ...copyOf(KIT_TEXT), [RECORD]: NOT_JSON }, {}, EFFECTIVE_EQUAL],
-];
-const UNWRITTEN = [
-  ['a kit file without frontmatter (plain text), customized-preserved with its single line',`# Project layout${NL}${NL}My own layout.${NL}`, [UNVOUCHED], 'customized-preserved'],
-  ['a kit file without frontmatter (a CRLF fence)', ['---', 'type: rules', '---', '', '# Project layout', ''].join(`${CR}${NL}`), [UNVOUCHED], 'customized-preserved'],
-  ['a kit file without frontmatter (an unclosed fence)', ['---', 'type: rules', '', '# Project layout', ''].join(NL), [UNVOUCHED], 'customized-preserved'],
-  ['equal bytes and a matching entry', KIT_TEXT, [KIT_EQUAL, EFFECTIVE_EQUAL, RECORD_CURRENT], 'already-current'],
+  ...NO_FRONTMATTER.map(([kind, body]) => [`a kit file with no frontmatter (${kind}): replaced, its copy created and its entry written`, { [KIT]: body }, {}, `${EFFECTIVE}: created as a copy of ${KIT}`]),
 ];
 
-describe('spec:project-rules/S19 with no local file the effective file becomes the kit file copy and its entry is recorded', () => {
+describe('spec:project-rules/S19 with no local file the effective file becomes the kit file copy and its entry is recorded, a kit file with no frontmatter replaced rather than skipped', () => {
   for (const [label, files, opts, line] of REBUILDS) {
     it(label, async () => {
       const run = await runEnsure({ files, ...opts });
       assert.deepEqual(run.lines.slice(1), [line, `${RECORD}: ${files[RECORD] === NOT_JSON ? 'was unreadable (not JSON) — replaced by a record of what' : 'records what'} ${EFFECTIVE} was built from`]);
+      assert.equal(run.text(KIT), KIT_TEXT);
       assert.equal(run.text(EFFECTIVE), KIT_TEXT);
       assert.equal(run.text(RECORD), recordOf(COPY_ENTRY));
     });
   }
-  for (const [label, body, lines, token] of UNWRITTEN) {
-    it(`${label}: nothing written`, async () => {
-      const run = await runEnsure({ files: body === KIT_TEXT ? copyOf(KIT_TEXT) : { [KIT]: body } });
-      assert.deepEqual(run.lines, lines);
-      assert.equal(run.token, token);
-      run.unchanged();
-    });
-  }
+  it('equal bytes and a matching entry: nothing written', async () => {
+    const run = await runEnsure({ files: copyOf(KIT_TEXT) });
+    assert.deepEqual([run.lines, run.token], [[KIT_EQUAL, EFFECTIVE_EQUAL, RECORD_CURRENT], 'already-current']);
+    run.unchanged();
+  });
 });
 
 const HOLDS = ` — this command holds once the real run has written ${KIT}`;
 const mergeLine = (run, kitText, tail) => `merge needed — merge ${KIT} and ${LOCAL} into ${EFFECTIVE}: by meaning, the local file wins a conflict, each rule appears once, only the final meaning is written, with no mark of where a rule came from, the frontmatter is kept, and the user is shown what changed; then record it: node ${shellQuoteArg(join(run.kitRoot, 'tools', 'project-rules', 'rules-cli.mjs'))} --record --theme ${THEME} --kit ${sha(kitText)} --local ${sha(LOCAL_TEXT)} --effective <the sha256 of the merged file> --cwd ${shellQuoteArg(run.root)}${tail}`;
 const withEntry = (change) => ({ ...MERGED, [RECORD]: recordOf({ ...MERGE_ENTRY, ...change }) });
+const EDITED_UNDER_ITS_DIGEST = { ...withEntry({ kit: sha(EDITED) }), [KIT]: EDITED };
+const RECORDED_MERGE = `${EFFECTIVE}: already the recorded merge of ${KIT} and ${LOCAL} — nothing written`;
 const PENDING = [
   ['no record', { [KIT]: KIT_TEXT, ...UNRECORDED }, {}, KIT_TEXT, ''],
   ['an unreadable record', { ...MERGED, [RECORD]: NOT_JSON }, {}, KIT_TEXT, ''],
@@ -203,20 +214,24 @@ const PENDING = [
   ['an entry with a moved local digest', withEntry({ local: sha('another local') }), {}, KIT_TEXT, ''],
   ['an entry with a moved effective digest', withEntry({ effective: sha('another effective') }), {}, KIT_TEXT, ''],
   ['the effective file absent under a matching entry', { [KIT]: KIT_TEXT, [LOCAL]: LOCAL_TEXT, [RECORD]: recordOf(MERGE_ENTRY) }, {}, KIT_TEXT, ''],
-  ['an edited kit file: the kit digest of that file', { ...MERGED, [KIT]: EDITED }, {}, EDITED, ''],
+  ['an edited kit file under an entry recording the edited digest: the template digest', EDITED_UNDER_ITS_DIGEST, {}, KIT_TEXT, ''],
+  ['a dry run that would replace an edited kit file: the template digest and the holds tail', EDITED_UNDER_ITS_DIGEST, { dryRun: true }, KIT_TEXT, HOLDS],
   ['the kit file absent, seeded this run: the template digest', UNRECORDED, {}, KIT_TEXT, ''],
   ['a dry run that would seed the kit file: the template digest and the holds tail', UNRECORDED, { dryRun: true }, KIT_TEXT, HOLDS],
   ['a prior kit file refreshed this run: the template digest', { [KIT]: PRIOR, ...UNRECORDED }, { deps: withPriors }, KIT_TEXT, ''],
   ['a dry run that would refresh the kit file: the template digest and the holds tail', { [KIT]: PRIOR, ...UNRECORDED }, { dryRun: true, deps: withPriors }, KIT_TEXT, HOLDS],
 ];
 
-describe('spec:project-rules/S20 with a local file a recorded merge writes nothing and every other state is pending with one merge-needed line and the exact record command', () => {
-  it('a matching entry and a present effective file: nothing written', async () => {
-    const run = await runEnsure({ files: MERGED });
-    assert.deepEqual(run.lines, [KIT_EQUAL, `${EFFECTIVE}: already the recorded merge of ${KIT} and ${LOCAL} — nothing written`]);
-    assert.equal(run.token, 'already-current');
-    run.unchanged();
-  });
+describe('spec:project-rules/S20 with a local file a recorded merge, judged against the kit file as the run leaves it, writes no more than the kit file, and every other state is pending with one merge-needed line and the exact record command', () => {
+  for (const [label, files, first, token, moved] of [
+    ['a matching entry and a present effective file: nothing written', MERGED, KIT_EQUAL, 'already-current', []],
+    ['an edited kit file under an entry recording the template digest is the recorded merge: only the kit file written, token refreshed', { ...MERGED, [KIT]: EDITED }, REPLACED, 'refreshed', [KIT]],
+  ]) {
+    it(label, async () => {
+      const run = await runEnsure({ files });
+      assert.deepEqual([run.lines, run.token, run.text(KIT), run.changed()], [[first, RECORDED_MERGE], token, KIT_TEXT, moved]);
+    });
+  }
   for (const [label, files, opts, kitText, tail] of PENDING) {
     it(`pending: ${label}`, async () => {
       const run = await runEnsure({ files, ...opts });
@@ -224,10 +239,8 @@ describe('spec:project-rules/S20 with a local file a recorded merge writes nothi
       assert.deepEqual(run.lines.filter((line) => line.startsWith('merge needed — ')), [mergeLine(run, kitText, tail)]);
       assert.equal(run.lines.length, 2);
       assert.ok(shellQuoteArg(run.root).startsWith("'") && shellQuoteArg(run.kitRoot).startsWith("'"));
-      assert.equal(run.text(LOCAL), LOCAL_TEXT);
-      if (files[EFFECTIVE] === undefined) isAbsent(run, EFFECTIVE);
-      else assert.equal(run.text(EFFECTIVE), files[EFFECTIVE]);
       if (opts.dryRun) run.unchanged();
+      else assert.ok(run.text(KIT) === KIT_TEXT && run.changed().every((path) => path === KIT), run.changed().join(', '));
       assert.equal(run.lines.some((line) => line.includes('/agent-workflow-kit rules')), false);
     });
   }
@@ -291,8 +304,9 @@ const TOKENS = [
   ['refreshed', { files: copyOf(PRIOR), deps: withPriors }, 'refreshed'],
   ['regenerated for an effective and record write', { files: { [KIT]: KIT_TEXT } }, 'regenerated'],
   ['regenerated for a record write only', { files: { ...copyOf(KIT_TEXT), [RECORD]: recordText({}) } }, 'regenerated'],
-  ['customized-preserved on a converged edited kit file', { files: copyOf(EDITED) }, 'customized-preserved'],
-  ['regenerated outranks the edited-kit report when the effective file is written', { files: { [KIT]: EDITED } }, 'regenerated'],
+  ['refreshed on a converged edited kit file', { files: copyOf(EDITED) }, 'refreshed'],
+  ['refreshed outranks regenerated when an edited kit file is replaced beside an absent copy', { files: { [KIT]: EDITED } }, 'refreshed'],
+  ['a dry run over a converged edited kit file answers would-refresh, nothing written', { files: copyOf(EDITED), dryRun: true }, 'would-refresh'],
   ['already-current', { files: copyOf(KIT_TEXT) }, 'already-current'],
   ['a dry run answers would-seed, nothing written', { dryRun: true }, 'would-seed'],
   ['a dry run answers would-refresh, nothing written', { files: copyOf(PRIOR), deps: withPriors, dryRun: true }, 'would-refresh'],
@@ -300,7 +314,7 @@ const TOKENS = [
 ];
 const alarmsIn = (line) => ALARM_WORDS.filter((word) => line.toLowerCase().split(/[^a-z]+/).includes(word.toLowerCase()));
 
-describe('spec:project-rules/S22 one token per run by the precedence, a dry run writing nothing with the would- counterpart, a second converged run writing nothing, and every composed line user-grade', () => {
+describe('spec:project-rules/S22 one token per run by the precedence, an edited kit file refreshed and no run customized-preserved, a dry run writing nothing with the would- counterpart, a second converged run writing nothing, and every composed line user-grade', () => {
   for (const [label, opts, token] of TOKENS) {
     it(`token: ${label}`, async () => {
       const run = await runEnsure(opts);
@@ -324,6 +338,7 @@ describe('spec:project-rules/S22 one token per run by the precedence, a dry run 
   it('every composed line of the cells above passes the composed-lines scanner', async () => {
     need(await load('./rules-ensure.mjs'), 'ensureRules');
     assert.ok(outcomes.length > 50, `${outcomes.length} outcomes collected`);
+    assert.equal(outcomes.filter(({ token }) => token === 'customized-preserved').length, 0, 'no run answers customized-preserved');
     for (const { failed, lines } of outcomes) {
       for (const [index, raw] of lines.entries()) {
         const cause = raw.split(' — ')[0];
@@ -337,7 +352,6 @@ describe('spec:project-rules/S22 one token per run by the precedence, a dry run 
   });
 });
 
-const ENSURE_CLI = fileURLToPath(new URL('../ensure-configs.mjs', import.meta.url));
 const RULES_CLI = fileURLToPath(new URL('./rules-cli.mjs', import.meta.url));
 const spawnNode = (...args) => spawnSync(process.execPath, args, { encoding: 'utf8' });
 

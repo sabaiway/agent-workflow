@@ -40,18 +40,18 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
     ], 'the change step');
   });
 
-  it('moves a kit-file edit whose line says carries your edit, whatever the token, then deletes the kit file; drops the local file on request', () => {
-    assertPhrases(readRules(), [
-      'When an ensure line for the kit file says it `carries your edit`, whatever token the run printed',
-      'compare `docs/ai/rules/<theme>.md` with the bundled `${CLAUDE_SKILL_DIR}/references/rules/<theme>.md`',
-      "write the user's changes, by meaning, into the local file (shown first, written on the yes), then delete the kit file.",
-      "**Drop the local rules.** On the user's request, delete the local file",
-    ], 'the move and drop steps');
+  it('drops the local file on request, and neither the mode doc nor the README rules row offers a move of a kit-file edit or names carries your edit', () => {
+    const rules = readRules();
+    const row = findLine(readDoc('README.md'), '| `/agent-workflow-kit rules` |');
+    const moves = (text) => ['carries your edit', 'Move an edit', 'moves an edit', 'delete the kit file'].filter((phrase) => text.includes(phrase));
+    assert.deepEqual([moves(rules), moves(row)], [[], []], 'no move offered in the mode doc, then the README rules row');
+    assertPhrases(rules, ["**Drop the local rules.** On the user's request, delete the local file"], 'the drop step');
+    assertPhrases(row, ['and checks it is current. It also drops your local rules on request.'], 'the README rules row');
   });
 
   it('merges and records on pending, and stops with nothing further written on failed or a non-zero record command', () => {
     assertPhrases(readRules(), [
-      '**3. After each of the three rules routes, run the ensure again.** On `pending`, do the merge its line states, show the user what changed in the final rules, then run the record command the line prints with the sha256 of the merged file',
+      '**3. After each of the two rules routes, run the ensure again.** On `pending`, do the merge its line states, show the user what changed in the final rules, then run the record command the line prints with the sha256 of the merged file',
       'When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop: write, delete and record nothing further, and run no closing check as if the change held.',
     ], 'the pending and refusal steps');
   });
@@ -59,7 +59,7 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
   it('ends with the --only index run and the --check run answering current, and states what it never does', () => {
     assertPhrases(readRules(), [
       'Run `node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --only index --cwd <project>`, then `node ${CLAUDE_SKILL_DIR}/tools/project-rules/rules-cli.mjs --check --cwd <project>`, which answers `current` for every theme',
-      "It never writes the effective file except with the merge a `pending` line states, never changes the kit file's text (the move deletes the file whole and the ensure seeds it again), and never writes a local file without the user's request.",
+      "It never writes the effective file except with the merge a `pending` line states, never changes the kit file's text, and never writes a local file without the user's request.",
     ], 'the closing checks and the never sentence');
   });
 });
@@ -79,23 +79,30 @@ describe('spec:project-rules/S34 the rules mode routes a number to the size chec
     ], 'the end of the number route');
   });
 
-  it('counts four routes in step 2, names the three rules routes in step 3, and stops on a non-zero --override', () => {
+  it('counts three routes in step 2, names the two rules routes in step 3, and stops on a non-zero --override', () => {
     assertPhrases(readRules(), [
-      '\n**2. Do what the user asks — one of four.**\n',
-      '\n**3. After each of the three rules routes, run the ensure again.**',
+      '\n**2. Do what the user asks — one of three.**\n',
+      '\n**3. After each of the two rules routes, run the ensure again.**',
       '**It stops on a refusal.** When an ensure run answers `failed`, the record command exits non-zero, or the `--override` command exits non-zero, relay the line and stop',
     ], 'the step headers and the stop');
   });
 });
 
-describe('spec:project-rules/S32 upgrade.md offers the rules mode and relays the Memory Map rows', () => {
-  it('the project-rules paragraph offers the mode on a carries-your-edit line and names the line words, not the token', () => {
-    const paragraph = findLine(readUpgrade(), '**What the project-rules ensure does.**');
-    assertPhrases(paragraph, [
-      "A kit-file line saying it carries your edit, whatever the run's token, is offered `/agent-workflow-kit rules` to move the edit into the local file.",
-      '(an edit is kept, its line saying it carries your edit)',
-    ], 'the project-rules paragraph');
-    assert.ok(!paragraph.includes('(an edit is kept → `customized-preserved`)'), 'the parenthetical no longer names the token');
+const PROJECT_RULES_PARAGRAPH = "**What the project-rules ensure does.** Each theme's kit file `docs/ai/rules/<theme>.md` is seeded, refreshed from a body a release shipped, and any other body replaced by the template with no question and no copy kept, its line naming the local rules file `docs/ai/rules/local/<theme>.md` for a rule meant to last; with no local file its effective copy and record are rebuilt. With a local file it writes neither: `pending` prints the merge to do and its record command — do the merge, show the user what changed, then run that command.";
+const RULES_TOKEN_ARM = '; rules → `seeded` / `refreshed` / `regenerated` / `pending` / `already-current`; index → ';
+const WRITTEN_OVER = 'written over by the next upgrade with no question and no copy kept';
+
+describe('spec:project-rules/S32 upgrade.md states the project-rules words, contracts.md names the kit rules files as written over, and both relay the Memory Map rows', () => {
+  it('the project-rules paragraph is exactly the words rules-ensure states, and the rules token arm names no customized-preserved', () => {
+    const text = readUpgrade();
+    assert.deepEqual([findLine(text, '**What the project-rules ensure does.**').trimStart(), text.includes(RULES_TOKEN_ARM)], [PROJECT_RULES_PARAGRAPH, true]);
+  });
+
+  it("contracts.md's Reserved names and channels names docs/ai/rules/<theme>.md in its written-over sentence", () => {
+    const contracts = readDoc('references/contracts.md');
+    const section = contracts.slice(contracts.indexOf('## Reserved names and channels')).split('\n## ')[0].replace(/\s+/g, ' ');
+    const sentence = section.split('. ').find((one) => one.includes(WRITTEN_OVER)) ?? '';
+    assert.ok(sentence.includes('docs/ai/rules/<theme>.md'), sentence);
   });
 
   it('the pointers row and paragraph keep one Memory Map row per theme, the zero-diff clause asking the rows present', () => {

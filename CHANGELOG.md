@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-24 — AD-205: the upgrade writes the kit rules file current with no question (kit 15.1.0 MINOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-kit upgrade` now replaces a kit rules file `docs/ai/rules/<theme>.md` holding any body other than
+the template or a body a release shipped** (an edit, an unknown body, a file with no frontmatter) with the bundled
+template, with no question and no copy kept, and reports `refreshed`; its line names `docs/ai/rules/local/<theme>.md`
+for a rule meant to last. Before, such a file was kept. `/agent-workflow-kit rules`
+no longer moves an edit of the kit file into the local file. Contracts: project-rules revision 6, distribution-files
+revision 6. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-24 — AD-204: the opt-in ADR migration mode retires; status names the upgrade for an older layout (kit 15.0.0 MAJOR, memory 8.6.1 PATCH; engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-kit migrate-adr-store` is removed, with no alias**, with its tool, its suite and the advisor item

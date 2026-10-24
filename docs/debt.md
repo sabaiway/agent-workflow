@@ -634,8 +634,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   in S5: a read door beside the op entry. Raised by the S2 spec review (lens).
 - **RULES-TEMPLATE-EDIT-WITHOUT-ITS-PRIOR-UNPINNED** — invariant: a release that changes a theme template appends the
   outgoing body to the prior catalog. Origin: nothing reds when `agent-workflow-kit/references/rules/project-layout.md`
-  changes without a catalog entry, so every deployment of the previous release would read as edited, and the rules
-  mode (story S3) would then offer to move the previous body into the local file, where it wins. Narrow fix: the
+  changes without a catalog entry, so the upgrade of every deployment of the previous release would print the
+  replaced line for an unknown body, naming the local file as the route for a rule nobody wrote. Narrow fix: the
   priors suite pins the current template's sha256; it lands before any change of a theme template. Raised by the S2
   spec review (lens).
 - **BOOTSTRAP-RULES-FAILED-LINE-UNSTATED** — invariant: every command a deploy step runs says what its failure means
@@ -914,3 +914,17 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   lines are relayed under `ADR store: `"; the byte pin in `recommendations-language-contract.test.mjs` follows.
   Residual: an omission in the agent-facing doc; the op's own lines are true. Raised during the
   DISTRIBUTION-FILES-STAY-CURRENT S10 diff review (2026-10-23).
+- **RULES-RECORDED-MERGE-ENTRY-HAS-NO-DRY-RUN-READING** — invariant: a dry run judges a recorded-merge entry as the real
+  run over the same tree does. Origin: `docs/ai/specs/kit/project-rules/rules-ensure.md` ("With a local file" bullet)
+  and project-rules S20 judge the entry against "the kit file as this run leaves it", which read literally on a dry run
+  is the edited bytes, while `planTheme` (`rules-ensure.mjs:69-72`) uses the template on both runs. Narrow fix: both
+  read "as this run leaves it or, on a dry run, would leave it", and a dry-run cell beside each S20 recorded-merge cell.
+  Residual: the code is right; only a cell written from the words could pin the wrong dry run. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S5 spec review (round 2).
+- **RULES-PENDING-REPLACE-NO-OTHER-PATH-UNPINNED** — invariant: a replaced kit file leaves no copy in any state. Origin:
+  project-rules S17 states "creates no other path" only with no local file, and S20's words forbid only the local and
+  effective writes, so they let a copy stand beside the kit file in the `pending` branch (an edited kit file, a local
+  file, an entry recording the edited digest). Narrow fix: S20's pending-replace clause adds "the kit file the only path
+  written or created". Residual: no code writes a copy, and the S20 pending cells already assert that the kit file is
+  the only path changed (`rules-ensure.test.mjs:243`). Raised by the DISTRIBUTION-FILES-STAY-CURRENT S5 spec review
+  (round 2).

@@ -94,8 +94,9 @@ On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, def
 ## Reserved names and channels
 
 Every name the kit bundles and writes over on an upgrade is the kit's, and an edit there is never a
-customization: the kit's scripts outside the spec layer and the hook installer set are written over
-by the next upgrade with no question and no copy kept. The spec layer's pair files are replaced on
+customization: the kit's scripts outside the spec layer, the hook installer set and the kit rules
+files `docs/ai/rules/<theme>.md` are written over by the next upgrade with no question and no copy
+kept. The spec layer's pair files are replaced on
 the upgrade's one yes, the edit kept aside first. A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
 user's own file. A customization goes into one of five channels instead:

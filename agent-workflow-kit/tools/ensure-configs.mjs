@@ -13,9 +13,10 @@
 //   specs          scripts/<spec layer>        reader + checker pairs seeded when absent, refreshed only on
 //                  + docs/ai/specs/index.md    a shipped prior body, an edited one replaced only on the
 //                                              user's yes; store root seeded behind a current checker
-//   rules          docs/ai/rules/<theme>.md    the kit file seeded, or refreshed on a shipped prior body; with
-//                  + effective/ + sources.json no local file the effective copy and its record rebuilt; with
-//                                              one the merge an agent does is named, never done
+//   rules          docs/ai/rules/<theme>.md    the kit file seeded, refreshed on a shipped prior body, or any
+//                  + effective/ + sources.json other body replaced, with no question and no copy kept; with no
+//                                              local file the effective copy and its record rebuilt; with one
+//                                              the merge an agent does is named, never done
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact); under
 //                                              a project hook module that is not the bundled one, a write
 //                                              the project's own checker rejects is put back
@@ -99,8 +100,9 @@ matches a canonical the kit shipped (your own wording is preserved verbatim); th
 and checker pairs, only while a file's bytes are a body a release shipped (an edited file is
 preserved, the writes that depend on it — the spec store root included — are withheld behind it,
 and ONE printed replace block keeps every edit aside and replaces it only on the user's yes); the project rules
-kit file, only while its bytes are a body a release shipped (an edited one is kept), with the effective
-file rebuilt as its copy and recorded where no local file exists; and the navigator index — a GENERATED artifact, regenerated
+kit file, refreshed while its bytes are a body a release shipped and any other body replaced by the template,
+with no question and no copy kept, the effective file rebuilt as its copy and recorded where no local file
+exists; and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale; where a module the project's hook loads is not the bundled one,
 the project's own checker judges the navigator and a write it rejects is put back byte for byte.
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
