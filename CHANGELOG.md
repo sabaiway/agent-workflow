@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-24 — AD-204: the opt-in ADR migration mode retires; status names the upgrade for an older layout (kit 15.0.0 MAJOR, memory 8.6.1 PATCH; engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-kit migrate-adr-store` is removed, with no alias**, with its tool, its suite and the advisor item
+`adr-store-migration`: since kit 14.50.0 the upgrade moves an older ADR layout itself wherever `scripts/` holds the
+kit's decisions script. Status's `ADR store` line for an older layout now names `/agent-workflow-kit upgrade`, its
+condition and the rotator's refusal; the upgrade's store-run failure detail ends `— the ADR store was not confirmed
+current`. Memory's install note names the next upgrade instead of a migration command. Contracts: distribution-files
+revision 5, init-project revision 20, adr-navigator revision 4. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-23 — AD-203: the kit's upgrade moves an older ADR layout itself (kit 14.50.0 MINOR; memory 8.6.0, engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-kit upgrade` no longer holds back the decisions script on an older ADR layout.** It writes every

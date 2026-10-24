@@ -343,9 +343,9 @@ const hasHiddenFence = (projectDir, deps = {}) => {
   }
 };
 
-// The retired 3-tier ADR monoliths (AD-051): their presence is the old-layout signal a consumer must
-// migrate away from via the opt-in `migrate-adr-store` mode. Stable relative paths (a status probe
-// never imports the rotator).
+// The retired 3-tier ADR monoliths (AD-051): their presence is the old-layout signal the status
+// view reports; the upgrade's run of the kit's rotator moves it. Stable relative paths (a status
+// probe never imports the rotator).
 // The ADR-layout probe's paths. LOCAL literals, not an import: this module backs the read-only
 // `status` view and importing the rotator would drag child_process + crypto into a status read. A
 // drift guard in family-registry.test.mjs pins each literal to the rotator's exported constant —
@@ -362,14 +362,13 @@ export const ADR_LAYOUT_PATHS = Object.freeze({
 });
 const ENOENT = 'ENOENT';
 
-// The ADR-store layout axis: 'old' (a retired decisions-archive monolith is still on disk — needs
-// the opt-in migration), 'migrated' (the one-file-per-ADR adr/ store is in place), or 'none' (no ADR
-// substrate at all). Keys on the monolith presence, NOT on the stamp/head (Decision 6/13).
+// The ADR-store layout axis: 'old' (a retired decisions-archive monolith is on disk), 'migrated' (the
+// adr/ store is in place) or 'none' (no ADR substrate); keyed on the monolith, NOT the stamp (Decision 6/13).
 // The STRICT core. Absence is ENOENT and nothing else: existsSync collapses EVERY failure to false
 // (EACCES included), so a strict policy layered on it would be vacuous in production and observable
 // only through injected deps — and ENOTDIR means a file where a directory belongs, i.e. corruption,
-// not "not there". Everything else propagates, so the advisor can degrade to a STATED SKIP instead
-// of printing "flow optimal" over a layout it could not read.
+// not "not there". Everything else propagates, so a strict caller can state the failure instead of
+// reading an absence over a layout it could not read.
 export const PATH_DIR = 'dir';
 export const PATH_FILE = 'file';
 export const PATH_OTHER = 'other';
@@ -422,7 +421,7 @@ export const surveyAdrLayoutStrict = (dir, deps = {}) => {
 };
 
 // The LENIENT wrapper — the read-only status view must never crash, so any failure reads `none`.
-// One implementation, two stated policies; the advisor uses the strict core deliberately.
+// One implementation, two stated policies.
 const surveyAdrLayout = (dir, deps) => {
   try {
     return surveyAdrLayoutStrict(dir, deps);

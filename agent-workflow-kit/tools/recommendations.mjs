@@ -51,7 +51,7 @@ import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired } f
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
-import { surveyFamily, surveyGateHook, surveyAdrLayoutStrict } from './family-registry.mjs';
+import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
@@ -219,7 +219,6 @@ export const SEVERITIES = Object.freeze({
   attribution: SEVERITY_ATTENTION,
   'footprint-global': SEVERITY_OPTIONAL,
   'family-freshness': SEVERITY_ATTENTION,
-  'adr-store-migration': SEVERITY_ATTENTION,
   'sandbox-masks': SEVERITY_OPTIONAL,
   'sandbox-masks.unfenced-mount': SEVERITY_ATTENTION,
   'worktrees-dir': SEVERITY_OPTIONAL,
@@ -312,7 +311,6 @@ export const WHATS = Object.freeze({
   attribution: 'AGENTS.md says attribution off but .claude/settings.json does not hide the harness trailer and PR text',
   'footprint-global': 'legacy kit ignore line(s) sit in {file} — they ignore kit paths in every repository here',
   'family-freshness': '{parts}',
-  'adr-store-migration': 'still on the retired 3-tier ADR layout — {shape}',
   'sandbox-masks': '{n} sandbox mask(s) clutter git status — the managed exclude block is absent or stale',
   'sandbox-masks.stale-real': '{n} sandbox mask(s) clutter git status — the exclude block is stale; {m} fenced entr(ies) are REAL paths (a fresh apply drops them)',
   'worktrees-dir': 'write access to the worktrees parent dir {dir} is not confirmed — provision may still stop',
@@ -380,7 +378,6 @@ export const BENEFITS = Object.freeze({
   attribution: 'attribution — the harness adds no Co-Authored-By trailer, PR text or session link, as your AGENTS.md block requires',
   'footprint-global': 'hygiene — the legacy machine-global excludes stop ignoring kit paths in every other repository on this host',
   'family-freshness': 'currency — placed family members carry the latest shipped fixes and features',
-  'adr-store-migration': 'durability — every decision becomes its own file with a generated navigator, instead of one hand-rotated pile',
   'sandbox-masks': 'zero clutter — a mask git ignores through the block leaves git status; a mount-only one leaves git add -A and the review fingerprint too',
   'worktrees-dir': 'parallel features — the host-specific write allowance or terminal fallback is surfaced before provision',
   'spec-adoption': 'contracts — a plan names the contract it builds to, and a change to a governed slice is visible at review instead of after it',
@@ -443,7 +440,6 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   { id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' },
   { id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
   { id: 'jev-skill', mode: 'jev', advisorKey: 'jev-skill' },
-  { id: 'adr-store-migration', mode: 'migrate-adr-store', advisorKey: 'adr-store-migration' },
   { id: 'review-recipe', mode: 'set-recipe', advisorKey: 'review-recipe' },
   // The execute slot is a DISTINCT opt-in from the review slot, and the same probe reports both —
   // which is why the review-recipe benefit is worded for either slot rather than for review alone.
@@ -1412,7 +1408,7 @@ const readReadLaneToggle = (root, deps) => {
 // D3: the risk-marked keys — every key here has a per-item posture note in the mode doc, surfaced
 // at the consent moment; the static contract test asserts EXACT bidirectional coverage
 // (risk-marked keys == mode-doc note keys — a dropped note goes red, not silent).
-export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'adr-store-migration', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'hook-checks', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
+export const RISK_NOTED_KEYS = Object.freeze(['bridge-tier', 'read-lane', 'worktrees-dir', 'gates-inert', 'source-size', 'gate-hook', 'mcp-channel', 'spec-adoption', 'enforcement', 'hook-checks', 'profile-gap', 'jev-connect', 'jev-skill', 'attribution', 'footprint-global']);
 
 // The feature-spec layer's adoption state (contract: kit/spec-adoption). The canon lets a plan cite
 // zero governing specs while a project adopts the layer, and nothing ever said whether adoption had
@@ -1533,39 +1529,6 @@ const probeWorktreesDir = ({ root, deps, add, skip }) => {
       hostSignal === false ? null : `${WORKTREES_ACK_FALLBACK}${ack}`);
   } catch (err) {
     skip('worktrees-dir', err);
-  }
-};
-
-// The ADR-store crossing. Until now this mode declared it had NO advisor capability, on the argument
-// that status and upgrade already report the old layout — but they only reported the MONOLITH shape,
-// so a project whose deployed rotator merely predates the store was told nothing by anything.
-//
-// Honest scope: the advisor is the deterministic section every `upgrade` run ends with, so this is
-// NOT a new door for someone who never runs status or upgrade — it MECHANIZES the upgrade door.
-//
-// It reads the STRICT layout survey deliberately: the lenient one turns every fs failure into
-// "no ADR layout here", which would print «flow optimal» over a layout the probe could not read. A
-// failure must become a STATED SKIP, never an absence.
-// Each shape states a fact about THIS tree that holds whether or not a store directory exists —
-// `old-unrotated` also covers a tree whose store is already there but whose rotation script is not,
-// and saying "the store is not in place" there would be false.
-const ADR_LAYOUT_SHAPES = Object.freeze({
-  old: 'a legacy archive file is still on disk and must be exploded into the per-file store',
-  'old-unrotated': 'the deployed rotation script predates the store and keeps writing the retired layout',
-});
-export const probeAdrStore = ({ root, deps, add, skip }) => {
-  try {
-    const shape = ADR_LAYOUT_SHAPES[surveyAdrLayoutStrict(root, deps)];
-    if (!shape) return; // migrated, or no ADR substrate at all — nothing to offer
-    // The apply is the bare dry run: consent takes two steps, as profile-gap's does — the first yes
-    // runs it and the plan is relayed, the same line with --apply runs only on a second yes over it.
-    add(
-      'adr-store-migration',
-      fillTemplate(WHATS['adr-store-migration'], { shape }),
-      `node ${q(toolPath('migrate-adr-store.mjs'))} --dry-run --cwd ${q(root)}`,
-    );
-  } catch (err) {
-    skip('adr-store-migration', err);
   }
 };
 
@@ -1719,7 +1682,6 @@ const PROBES = Object.freeze([
   probeCheapAgents,
   probeExecutorVehicle,
   probeFamilyFreshness,
-  probeAdrStore,
   probeMasksItem,
   probeFootprintGlobal,
   probeWorktreesDir,

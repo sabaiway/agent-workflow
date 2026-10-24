@@ -70,15 +70,6 @@ describe('commands catalog — drift-guard vs SKILL.md ### Mode: headers', () =>
     assert.match(section, /never commits/i, 'the mode file states the writer never commits');
   });
 
-  it('the migrate-adr-store mode file carries the runnable dispatch line + the guarded dry-run→apply contract', () => {
-    const section = readFileSync(join(MODES_DIR, 'migrate-adr-store.md'), 'utf8');
-    assert.match(section, /node \$\{CLAUDE_SKILL_DIR\}\/tools\/migrate-adr-store\.mjs/, 'the mode file must carry the runnable dispatch line');
-    assert.match(section, /--dry-run/, 'the mode file documents the dry-run-first preview');
-    assert.match(section, /--apply/, 'the mode file documents the --apply flag');
-    assert.match(section, /never commits/i, 'the mode file states the writer never commits');
-    assert.match(section, /snapshot/i, 'the mode file states the pre-migration snapshot');
-  });
-
   // AD-044 Plan 2: the guarded privileged provisioner — header presence ≠ runnable; pin the
   // dispatch line + the preview/apply consent contract + the stated D8 stamp exemption.
   it('the autonomy-doctor mode file carries the runnable dispatch line + the consent contract + the stamp exemption', () => {

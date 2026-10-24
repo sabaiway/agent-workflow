@@ -29,7 +29,6 @@ import {
   LANES_FILE,
   RISK_NOTED_KEYS,
   OPT_IN_CAPABILITIES,
-  probeAdrStore,
 } from './recommendations.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { quoteArg } from './jev-facts.mjs';
@@ -417,76 +416,6 @@ describe('recommendations — shape is contract (D2 static registry gate)', () =
     assert.deepEqual([...baseKeys].sort(), Object.keys(BENEFITS).sort(), 'WHATS bases == BENEFITS keys');
     for (const key of Object.keys(BENEFITS)) assert.ok(key in WHATS, `${key} has a base WHAT template`);
     assert.ok(!('mcp-channel.masked' in WHATS));
-  });
-});
-
-// ── the ADR-store crossing item ───────────────────────────────────────────────────
-// This mode used to declare it had NO advisor capability, so `upgrade` ended with "flow optimal" for
-// a project sitting on the retired layout. The probe reads the STRICT layout survey on purpose: the
-// lenient one turns an unreadable tree into "nothing here", the one answer a failure must never give.
-
-describe('recommendations — the ADR-store crossing offer', () => {
-  // The probe reads the survey, so drive it through the survey's own dep shape: a tree whose files
-  // are declared by the fixture. Simpler and truer than stubbing the survey itself.
-  // A tree is declared as {suffix: contents}; a null value declares a DIRECTORY.
-  const treeDeps = (files) => ({
-    probes: [probeAdrStore],
-    statPath: (p) => {
-      const hit = Object.keys(files).find((k) => p.endsWith(k));
-      if (hit === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      return files[hit] === null ? 'dir' : 'file';
-    },
-    readFile: (p) => {
-      const hit = Object.keys(files).find((k) => p.endsWith(k));
-      if (hit === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      return files[hit];
-    },
-  });
-  const itemsFor = (files) => buildRecommendations({ cwd: HERE, deps: treeDeps(files) });
-
-  const OLD_ROTATOR = "export const HOT_REL = 'docs/ai/decisions.md';\n";
-  const NEW_ROTATOR = `${OLD_ROTATOR}export const ADR_DIR_REL = 'docs/ai/adr';\n`;
-
-  it('fires on a legacy archive file still on disk', () => {
-    const { items } = itemsFor({ 'docs/ai/history/decisions-archive.md': '' });
-    assert.equal(items.length, 1);
-    assert.equal(items[0].key, 'adr-store-migration');
-    assert.match(items[0].what, /legacy archive file is still on disk/);
-  });
-
-  it('fires on a deployed rotation script that predates the store', () => {
-    const { items } = itemsFor({ 'docs/ai/decisions.md': '', 'scripts/archive-decisions.mjs': OLD_ROTATOR });
-    assert.equal(items.length, 1);
-    assert.match(items[0].what, /predates the store/);
-  });
-
-  it('is SILENT once migrated', () => {
-    const { items, skips } = itemsFor({ 'docs/ai/decisions.md': '', 'docs/ai/adr': null, 'scripts/archive-decisions.mjs': NEW_ROTATOR });
-    assert.deepEqual([items.length, skips.length], [0, 0]);
-  });
-
-  it('is SILENT for a project whose NEW rotator already reds its own gate, and for one with no rotator', () => {
-    assert.equal(itemsFor({ 'docs/ai/decisions.md': '', 'scripts/archive-decisions.mjs': NEW_ROTATOR }).items.length, 0);
-    assert.equal(itemsFor({ 'docs/ai/decisions.md': '' }).items.length, 0);
-  });
-
-  it('an UNREADABLE layout becomes a stated skip — never silence, and the verdict withholds the optimality claim', () => {
-    const { items, skips } = buildRecommendations({
-      cwd: HERE,
-      deps: { probes: [probeAdrStore], statPath: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); } },
-    });
-    assert.equal(items.length, 0);
-    assert.equal(skips.length, 1, 'the failure is REPORTED, not swallowed into "nothing here"');
-    assert.equal(skips[0].key, 'adr-store-migration');
-    assert.match(formatRecommendations({ items, skips }), /NOT attested/, 'optimality is not claimed over a probe that could not run');
-  });
-
-  it('the chat crossing takes two-step consent over the dry-run plan', () => {
-    const { items } = itemsFor({ 'docs/ai/history/decisions-archive.md': '' });
-    assert.equal(items[0].apply, `node ${shellQuoteArg(join(HERE, 'migrate-adr-store.mjs'))} --dry-run --cwd ${shellQuoteArg(HERE)}`);
-    assert.equal(items[0].lane, 'chat');
-    assert.equal(items[0].detail, null);
-    assert.doesNotMatch(items[0].apply, /HAND-APPLY|--apply/u);
   });
 });
 
@@ -3777,18 +3706,10 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     assert.equal(squatterItems[0].detail, null);
   });
 
-  it('4 — the inventory legacy archive renders the bare ADR dry run in chat', () => {
-    const inventory = buildInventoryFixtures();
-    const items = inventory.flatMap((built) => built.items);
+  it('4 — the inventory legacy archive renders no ADR migration item', () => {
+    const items = buildInventoryFixtures().flatMap((built) => built.items);
     builtItems.push(...items);
-    const migrations = items.filter((item) => item.key === 'adr-store-migration');
-    assert.equal(migrations.length, 1);
-    const [item] = migrations;
-    const { root } = inventory.find((built) => built.items.includes(item));
-    assert.equal(item.apply, `node ${shellQuoteArg(join(HERE, 'migrate-adr-store.mjs'))} --dry-run --cwd ${shellQuoteArg(root)}`);
-    assert.equal(item.lane, 'chat');
-    assert.equal(item.detail, null);
-    assert.doesNotMatch(item.apply, /HAND-APPLY|--apply/u);
+    assert.deepEqual(items.filter((item) => item.key === 'adr-store-migration' || /migrate-adr-store/u.test(item.apply)), []);
   });
 
   it('5 — decline recipes keep their ack lines and the Jev place, untouched and config-note prefixes', async (t) => {
@@ -3890,11 +3811,11 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     assert.deepEqual(judgeChatWriters(table, items), []);
     const missing = table.map((row) => row.variant === 'profile-gap' ? { ...row, writers: row.writers.filter((writer) => writer !== 'tier-preview.mjs') } : row);
     const unrelated = table.map((row) => row.variant === 'gates-declaration' ? { ...row, writers: [...row.writers, 'ack-write.mjs'] } : row);
-    const wrong = table.map((row) => row.variant === 'adr-store-migration' ? { ...row, writers: ['ensure-configs.mjs'] } : row);
+    const wrong = table.map((row) => row.variant === 'sandbox-masks' ? { ...row, writers: ['ensure-configs.mjs'] } : row);
     assert.ok(judgeChatWriters(missing, items).some((message) => message.includes('profile-gap: apply writer tier-preview.mjs')));
     assert.ok(judgeChatWriters(unrelated, items).some((message) => message.includes('gates-declaration: row writer ack-write.mjs')));
-    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('adr-store-migration: apply writer migrate-adr-store.mjs')));
-    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('adr-store-migration: row writer ensure-configs.mjs')));
+    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('sandbox-masks: apply writer sandbox-masks.mjs')));
+    assert.ok(judgeChatWriters(wrong, items).some((message) => message.includes('sandbox-masks: row writer ensure-configs.mjs')));
   });
 
   it('9 — no built item, inventory render or help line carries the retired marker', async (t) => {

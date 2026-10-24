@@ -899,12 +899,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   byte compares by `deepEqual` in older suites, e.g. `agent-workflow-kit/tools/git-hooks.test.mjs:112`,
   `:185`, `:202`, `:451` (35 suites match `deepEqual(readFileSync(`, the utf8 ones harmless). Narrow fix: a
   test-hygiene check refusing a `deepEqual` over a Buffer-valued operand, the compares moved to digests.
-- **MIGRATE-MODE-NO-OP-SCOPE-UNPINNED** — invariant: the shipped `migrate-adr-store` text says the mode does nothing
-  after a full upgrade only where `scripts/` holds the kit's rotator. Origin: distribution-files part scripts' shipped-
-  text clause and root S24 pin "the mode does nothing after a full upgrade" without that scope; a project with no kit
-  script and a `decisions-archive*.md` monolith is `not-placed` by the scripts op, and the mode still migrates it
-  (`agent-workflow-kit/tools/migrate-adr-store.mjs:425-475`). Narrow fix: S24 pins the scoped sentence. Residual: none
-  once story S13 retires the mode. Raised by the review lens after the last round of the S10 spec review (2026-10-23).
 - **DRY-STORE-LINE-NAMES-WRITES-AND-NO-REFUSAL** — invariant: the scripts op's dry store line claims only writes that
   exist and names the refusal outcome. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:140`
   (`WOULD_STORE`) says the run "would run after the writes" on a dry run with nothing due, and promises "bringing the

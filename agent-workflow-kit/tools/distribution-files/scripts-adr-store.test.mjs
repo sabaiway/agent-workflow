@@ -50,7 +50,7 @@ const L = {
 };
 const S = 'ADR store: ';
 const WOULD = `${S}scripts/archive-decisions.mjs --ensure-current would run after the writes, bringing the store current or writing nothing when it already is`;
-const FAIL = (how) => `adr-store-not-current — scripts/archive-decisions.mjs --ensure-current ${how} — the ADR store is not current`;
+const FAIL = (how) => `adr-store-not-current — scripts/archive-decisions.mjs --ensure-current ${how} — the ADR store was not confirmed current`;
 const SKIP = '[archive-decisions] SKIP — no ADR substrate (neither docs/ai/decisions.md nor docs/ai/adr); nothing to bring current.';
 const NOTE = `${S}[archive-decisions] docs/ai/index.md NOT regenerated — the index generator is not beside this script — run ` + '`node scripts/check-docs-size.mjs --write-index`' + ' to refresh docs/ai/index.md';
 const [MIGRATED, NAVIGATOR] = [`${S}brought-current: migrated, navigator written`, `${S}brought-current: navigator written`];

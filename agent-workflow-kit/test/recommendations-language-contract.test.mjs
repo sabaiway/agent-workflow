@@ -430,11 +430,11 @@ const JEV_NOTE_LITERALS = Object.freeze([
   'plain text', 'typesafe-api-key.fish', 'user environment variable', 'enterprise', 'BEFORE the confirmation', 'jevConnectAck', 'docs/ai/acks.json',
 ]);
 const PROBE_ORDER = Object.freeze(['probeVelocityItems', 'probeAttribution', 'probeAutonomyItems', 'probeSandboxProvision', 'probeReviewRecipe', 'probeGates', 'probeGatesInert', 'probeSourceSize',
-  'probeCommitGuard', 'probeHookChecks', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness', 'probeAdrStore',
+  'probeCommitGuard', 'probeHookChecks', 'probeEnforcement', 'probeReadLane', 'probeStateBlockHook', 'probeCheapAgents', 'probeExecutorVehicle', 'probeFamilyFreshness',
   'probeMasksItem', 'probeFootprintGlobal', 'probeWorktreesDir', 'probeMcpChannel', 'probeSpecAdoption', 'probeProfileGaps']);
 
 describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked apply', () => {
-  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
+  const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes').trimEnd();
   it('the two opt-in rows, the jev.md declarations on lines 3 and 4 and the two RISK_NOTED_KEYS entries', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ mode }) => mode === 'jev'), [{ id: 'jev-connect', mode: 'jev', advisorKey: 'jev-connect' },
       { id: 'jev-skill', mode: 'jev', advisorKey: 'jev-skill' }]);
@@ -534,7 +534,7 @@ describe('spec:init-project/S6 — apply slots and posture notes permit the chec
     const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
     const lane = between(MODE_DOC, '3. **The apply-through-agent lane', '**Per-item posture notes');
     assert.doesNotMatch(lane, INABILITY_TOKEN, 'the lane paragraph');
-    assert.doesNotMatch(notes, INABILITY_TOKEN, 'all notes, including gates-inert and adr-store-migration');
+    assert.doesNotMatch(notes, INABILITY_TOKEN, 'all notes, including gates-inert');
     for (const key of HARNESS_POSTURE_KEYS) {
       const start = `- \`${key}\` —`;
       assert.ok(notes.includes(start), `the ${key} posture note exists`);
@@ -1147,8 +1147,8 @@ describe('spec:init-project/S57 shipped text of revision 11', () => {
     assert.ok(lane.includes("A user item is the user's own step, handed over as worded"), 'the lane names the user item as the user\'s own step');
     assert.ok(lane.includes('(e.g. `source-size.id-squatter`)'), 'the lane keeps the user-item example');
     assert.doesNotMatch(lane, /maintainer territory/iu);
-    const followUp = 'you run that printed follow-up command — no second ask, no improvisation (each writer keeps its own consent semantics: previews, `--apply` flags, refusals) — except profile-gap and adr-store-migration, whose apply line runs with --apply (appended, or in place of --dry-run) only on a second yes over the relayed preview.';
-    assert.ok(lane.includes(followUp), 'the printed-follow-up sentence itself carries both second-yes exceptions');
+    const followUp = 'you run that printed follow-up command — no second ask, no improvisation (each writer keeps its own consent semantics: previews, `--apply` flags, refusals) — except profile-gap, whose apply line runs with --apply appended only on a second yes over the relayed preview.';
+    assert.ok(lane.includes(followUp), 'the printed-follow-up sentence itself carries the profile-gap second-yes exception alone');
   });
 
   it('the recipe descriptions name user facts and alternatives and the README points to the writers table', () => {
@@ -1162,7 +1162,7 @@ describe('spec:init-project/S57 shipped text of revision 11', () => {
       'the README advisor row names the follow-up commands, the recorded decline and the second yes');
   });
 
-  it('the posture notes name user steps, two-step migration consent and recorded declines without dropping a risk key', () => {
+  it('the posture notes name user steps and recorded declines, keep no adr-store-migration note and drop no risk key', () => {
     const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
     const bullets = notes.split(POSTURE_NOTE_BOUNDARY);
     const gatesNote = bullets.find((note) => note.startsWith('`gates-inert` —'));
@@ -1172,9 +1172,7 @@ describe('spec:init-project/S57 shipped text of revision 11', () => {
       const note = bullets.find((entry) => entry.startsWith(start));
       assert.ok(note?.includes("the user's own step"), `${start} names the user's own step`);
     }
-    const migration = bullets.find((note) => note.startsWith('`adr-store-migration` —'));
-    assert.ok(migration?.includes('the first yes runs the dry run'), 'the migration note runs the dry run on the first yes');
-    assert.ok(migration.includes('runs only on a SECOND yes given over that plan'), 'the migration apply waits for the second yes over the plan');
+    assert.equal(bullets.find((note) => note.startsWith('`adr-store-migration` —')), undefined, 'no adr-store-migration note remains');
     for (const key of ['spec-adoption', 'jev-connect', 'jev-skill']) {
       const note = bullets.find((entry) => entry.startsWith(`\`${key}\` —`));
       assert.ok(note?.includes('the agent records'), `${key} names the decline the agent records`);

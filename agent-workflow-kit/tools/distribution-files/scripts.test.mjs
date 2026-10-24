@@ -345,8 +345,16 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
     has(help.slice(from, help.indexOf('\n  --replace-custom', from)), [], ['survey']);
     has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
   });
-  it('migrate-adr-store.md and its tool header: the upgrade moves an older layout itself, the mode does nothing after a full upgrade', () => {
-    for (const body of [text('references', 'modes', 'migrate-adr-store.md'), header(text('tools', 'migrate-adr-store.mjs'))]) has(body.replace(/`/g, '').replace(/\n\/\/ /g, ' '),
-      ["the upgrade moves an older layout itself wherever scripts/ holds the kit's rotator", 'after a full upgrade this mode does nothing'], ['never installs', 'arrives ONLY']);
+  it('no shipped file but a test names migrate-adr-store; renderers.mjs and status.md name the upgrade for an older layout', () => {
+    const isTest = (path) => path.split(/[\\/]/).some((segment) => /\.test(\.mjs)?$/.test(segment));
+    const shipped = ['tools', 'references'].flatMap((root) => readdirSync(join(KIT, root), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile()).map((entry) => relative(KIT, join(entry.parentPath, entry.name))).filter((path) => !isTest(path)));
+    assert.deepEqual([...shipped, 'SKILL.md', 'README.md'].filter((path) => text(path).includes('migrate-adr-store')), []);
+    const LINE = "/agent-workflow-kit upgrade moves it where scripts/ holds the kit's decisions rotator, or prints the rotator's refusal";
+    has(text('tools', 'renderers.mjs'), [`old layout — ${LINE}`]);
+    const status = text('references', 'modes', 'status.md'), at = status.indexOf('When `project.adrLayout`');
+    const note = at === -1 ? '' : status.slice(at, status.indexOf('need no note', at));
+    has(note, [`${LINE}.`]);
+    assert.deepEqual([...new Set([...note.matchAll(/\/agent-workflow-kit ([a-z-]+)/g)].map((match) => match[1]))], ['upgrade'], note);
   });
 });

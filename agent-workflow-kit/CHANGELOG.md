@@ -4,6 +4,26 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 15.0.0 — the opt-in ADR migration mode retires; status names the upgrade for an older ADR layout (AD-204)
+
+**MAJOR: `/agent-workflow-kit migrate-adr-store` is gone, with no alias.** Since 14.50.0 the upgrade moves an older
+ADR layout itself wherever `scripts/` holds the kit's decisions script, so the opt-in mode had nothing left to do
+there. The mode, `tools/migrate-adr-store.mjs` and its suite are deleted, with the mode's catalog entry and its
+`SKILL.md` section; the invocation now falls to `help`, like any unknown mode. No migration note is owed.
+
+- **The advisor stops offering `adr-store-migration`.** The item is retired with no replacement, with its lane, its
+  row in `references/advisor-writers.md` and its posture note in `references/modes/recommendations.md`. The writers
+  table holds sixteen chat variants.
+- **Status names the upgrade.** For a project on an older ADR layout (a retired archive file on disk, or a decisions
+  script older than the store), the `ADR store` line now reads `old layout — /agent-workflow-kit upgrade moves it where
+  scripts/ holds the kit's decisions rotator, or prints the rotator's refusal`, and the status mode's note carries the
+  same text.
+- **The store run's failure says what it knows.** When the upgrade's run of `scripts/archive-decisions.mjs
+  --ensure-current` fails, its detail now ends `— the ADR store was not confirmed current` instead of `— the ADR store
+  is not current`; the cause `adr-store-not-current` is unchanged.
+
+Where `scripts/` holds no kit script, nothing in the kit moves an older layout any more.
+
 ## 14.50.0 — the upgrade moves an older ADR layout itself, with no question (AD-203)
 
 **`/agent-workflow-kit upgrade` now brings your ADR store current in the same run.** Before, on a project still on the

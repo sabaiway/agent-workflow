@@ -144,7 +144,7 @@ const runStore = (cwd, deps) => {
   const r = (deps.spawnSync ?? spawnSync)(process.execPath, [join(cwd, SCRIPTS_DIR, ROTATOR), '--ensure-current'], { cwd, encoding: 'utf8' });
   const [out, err] = [outputLines(r.stdout), outputLines(r.stderr)];
   const ended = r.error ? `ended with an error (${causeOf(r.error)})` : r.signal ? `was killed by signal ${r.signal}` : r.status !== 0 ? `exited with code ${r.status}` : null;
-  if (ended) return { failure: `${ENSURE} ${ended} — the ADR store is not current`, lines: [...err, ...out].map((line) => STORE + line) };
+  if (ended) return { failure: `${ENSURE} ${ended} — the ADR store was not confirmed current`, lines: [...err, ...out].map((line) => STORE + line) };
   const brought = (out.at(-1) ?? '').startsWith('brought-current:');
   return { brought, lines: [...(brought ? out : []), ...err].map((line) => STORE + line) };
 };

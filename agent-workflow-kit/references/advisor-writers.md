@@ -41,7 +41,6 @@
 | attribution | harness | attribution.mjs |
 | footprint-global | harness | hide-footprint.mjs |
 | family-freshness | user | user step |
-| adr-store-migration | chat | migrate-adr-store.mjs |
 | sandbox-masks | chat | sandbox-masks.mjs |
 | sandbox-masks.unfenced-mount | chat | sandbox-masks.mjs |
 | worktrees-dir | harness | velocity-profile.mjs |

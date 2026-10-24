@@ -416,9 +416,6 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/source-size/layout.mjs',
       'tools/source-size/record.mjs',
       'tools/source-size/setup.mjs',
-      // the opt-in one-file-per-ADR store migration writer + its mode + the seeded templates (AD-051)
-      'tools/migrate-adr-store.mjs',
-      'references/modes/migrate-adr-store.md',
       // the parallel-feature worktrees tool + its mode contract (AD-060)
       'tools/worktrees.mjs',
       'references/modes/worktrees.md',
@@ -902,7 +899,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 379 = 377 + tools/project-rules/memory-map-row.mjs (the Memory Map row leaf) and references/modes/rules.md (the rules mode) - story S3 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING; 381 = 379 + tools/source-size/index.mjs (the size check's door) and tools/source-size/limits.mjs (the kit's limit table) - story S4 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
     // 383 = 381 + tools/source-size/layout.mjs (the layout counts and the spec-store walk) and tools/source-size/record.mjs (the record planner) - story S5 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
     // 384 = 383 + tools/source-size/setup.mjs (the layout setup) - story S6 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING; 387 = 384 + tools/distribution-files/{index,replace-set,kept-aside}.mjs - story S2 of DISTRIBUTION-FILES-STAY-CURRENT; 388 = 387 + tools/distribution-files/scripts.mjs - story S3 of it (spec:distribution-files/S25)
-    assert.equal(packed.length, 388, `tarball file count drifted (${packed.length}\u2260 388)`);
+    // 386 = 388 - tools/migrate-adr-store.mjs and references/modes/migrate-adr-store.md, the retired opt-in mode - story S13 of DISTRIBUTION-FILES-STAY-CURRENT
+    assert.equal(packed.length, 386, `tarball file count drifted (${packed.length}\u2260 386)`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

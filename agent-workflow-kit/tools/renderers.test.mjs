@@ -157,9 +157,12 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
     assert.match(out, /no agent-workflow deployment detected here/);
   });
 
-  it('an OLD ADR layout renders the migration line; migrated/none render nothing (AD-051)', () => {
+  const OLD_LAYOUT = "old layout — /agent-workflow-kit upgrade moves it where scripts/ holds the kit's decisions rotator, or prints the rotator's refusal";
+  const adrLines = (out) => out.split('\n').filter((line) => /ADR store|migrate-adr-store/.test(line)).map((line) => line.trim().replace(/^ADR store\s+/, ''));
+
+  it('an OLD ADR layout renders the one upgrade line; migrated/none render nothing (AD-051)', () => {
     const old = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'old', deployStamps: [] } });
-    assert.match(old, /ADR store\s+old layout — run \/agent-workflow-kit migrate-adr-store/);
+    assert.deepEqual(adrLines(old), [OLD_LAYOUT], old);
     const migrated = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'migrated', deployStamps: [] } });
     assert.doesNotMatch(migrated, /ADR store/, 'a migrated store shows no note');
     const none = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'none', deployStamps: [] } });
@@ -171,7 +174,7 @@ describe('renderers — branch coverage (every replaced-function branch)', () =>
   // same line, never a second wording for the same instruction.
   it('an OLD-UNROTATED layout renders the SAME actionable line as old', () => {
     const unrotated = renderPlain({ installed: [], project: { dir: '/p', deployed: true, adrLayout: 'old-unrotated', deployStamps: [] } });
-    assert.match(unrotated, /ADR store\s+old layout — run \/agent-workflow-kit migrate-adr-store/);
+    assert.deepEqual(adrLines(unrotated), [OLD_LAYOUT], unrotated);
   });
 
   it('the specs line renders per adoption state, the decline and the ack read error', () => {

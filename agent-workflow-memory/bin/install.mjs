@@ -77,9 +77,9 @@ const ADR_STORE_MAJOR = 2;
 // A GENERIC, project-agnostic advisory is printed exactly once — when this runner crosses UP through
 // the ADR-store major (installed below it → runner at or above it). The memory installer targets the
 // GLOBAL skill dir and knows nothing about any project (the knows-nobody DAG), so it can never DETECT
-// an old-layout deployment and must NEVER name a sibling package or a kit command — the kit's
-// project-dir-aware surfaces (status / upgrade / the migration mode) own detection + the concrete
-// command. A fresh install (installed === null) advises nothing (no prior deployment to migrate).
+// an old-layout deployment and must NEVER name a sibling package or a kit command — the project's
+// next upgrade moves the layout through the decisions rotator in its scripts/, and the kit's
+// project-dir-aware status names it. A fresh install (installed === null) advises nothing.
 export const shouldAdviseAdrMigration = (installedVersion, runnerVersion) => {
   const from = parseSemver(installedVersion);
   const to = parseSemver(runnerVersion);
@@ -88,12 +88,12 @@ export const shouldAdviseAdrMigration = (installedVersion, runnerVersion) => {
 };
 
 // The advisory text is GENERIC and names NO sibling package or kit command (the knows-nobody DAG);
-// the kit's project-aware surfaces own old-layout detection + the concrete migration command.
+// it names memory's own upgrade and the toolkit's only generically, never a migration command.
 const ADR_MIGRATION_ADVISORY =
   `[agent-workflow-memory] note: this major retired the 3-tier ADR archive for a one-file-per-ADR store.\n` +
-  `  A project you already deployed on the OLDER decisions-archive layout must be migrated before its\n` +
-  `  ADR rotation works again — run your workflow toolkit's ADR-store migration command in that project\n` +
-  `  (its status/upgrade points you at it). New deployments already seed the new store.`;
+  `  In a project deployed on the OLDER layout, the next upgrade (/agent-workflow-memory upgrade, or your\n` +
+  `  workflow toolkit's where one manages it) moves it where the project's scripts/ holds the decisions\n` +
+  `  rotator, or prints the rotator's refusal. New deployments already seed the new store.`;
 
 // Print the advisory exactly on a major-crossing update (AD-051). Pure over an injectable log so the
 // crossing path is unit-testable in-process (main runs only as a subprocess).

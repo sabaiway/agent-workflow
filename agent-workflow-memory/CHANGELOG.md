@@ -4,6 +4,14 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.6.1 — the install note for an older ADR layout names the next upgrade, never a migration command (AD-204)
+
+**The note `npx @sabaiway/agent-workflow-memory@latest init` prints when it updates an install from below 2.0.0** no longer tells
+you to run your workflow toolkit's ADR-store migration command, which kit 15.0.0 removes. It now says that in a
+project deployed on the older layout, the next upgrade (`/agent-workflow-memory upgrade`, or your workflow toolkit's
+where one manages it) moves it where the project's `scripts/` holds the decisions rotator, or prints the rotator's
+refusal. PATCH: a copy fix; no behaviour changes.
+
 ## 8.6.0 — the upgrade keeps every deployed script current with no question, and brings your ADR store current (AD-201)
 
 **`/agent-workflow-memory upgrade` on its own now writes the scripts this package bundles into your `scripts/`.**

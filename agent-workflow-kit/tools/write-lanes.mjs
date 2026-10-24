@@ -50,7 +50,6 @@ export const VARIANT_LANES = Object.freeze({
   attribution: LANE_HARNESS,
   'footprint-global': LANE_HARNESS,
   'family-freshness': LANE_USER,
-  'adr-store-migration': LANE_CHAT,
   'sandbox-masks': LANE_CHAT,
   'sandbox-masks.unfenced-mount': LANE_CHAT,
   'worktrees-dir': LANE_HARNESS,

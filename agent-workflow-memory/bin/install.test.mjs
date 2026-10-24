@@ -117,13 +117,13 @@ describe('memory installer — Issue-004 regressions (exported helpers, in-proce
     assert.equal(shouldAdviseAdrMigration(null, '2.0.0'), false, 'a fresh install (no prior version) never advises');
   });
 
-  it('maybeAdviseAdrMigration prints the GENERIC advisory on a major crossing, and NEVER names a kit command', () => {
+  it('maybeAdviseAdrMigration names the next upgrade on a major crossing, the refusal, and NEVER a kit or migration command', () => {
     const logs = [];
     maybeAdviseAdrMigration('1.12.0', '2.0.0', (m) => logs.push(m));
     assert.equal(logs.length, 1, 'a major crossing prints exactly one advisory');
-    assert.match(logs[0], /retired the 3-tier ADR archive/);
-    assert.match(logs[0], /your workflow toolkit/, 'the advisory uses the generic "workflow toolkit" phrasing');
-    assert.doesNotMatch(logs[0], /migrate-adr-store/, 'the memory advisory never names the concrete kit command (knows-nobody DAG)');
+    const advisory = logs[0].replace(/\s+/g, ' ');
+    for (const phrase of ['retired the 3-tier ADR archive', '/agent-workflow-memory upgrade', 'your workflow toolkit', 'scripts/', 'refusal']) assert.ok(advisory.includes(phrase), `the advisory names: ${phrase}`);
+    assert.doesNotMatch(advisory, /migrate-adr-store|agent-workflow-(?!memory\b)|migration command/, 'the memory advisory names no sibling package and no migration command (knows-nobody DAG)');
     logs.length = 0;
     maybeAdviseAdrMigration('2.0.0', '2.1.0', (m) => logs.push(m));
     assert.equal(logs.length, 0, 'a same-major update advises nothing');

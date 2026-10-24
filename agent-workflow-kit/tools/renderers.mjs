@@ -99,7 +99,7 @@ const renderProject = (vm, { color }) => {
   // actionable tokens render the SAME line: 'old' (a monolith on disk) and 'old-unrotated' (an
   // old-scheme rotator that never rotated) differ only in the discriminator, never in the remedy.
   if (ACTIONABLE_ADR_LAYOUTS.includes(p.adrLayout)) {
-    lines.push(`  ${pad('ADR store', STAMP_COL)}old layout — run /agent-workflow-kit migrate-adr-store`);
+    lines.push(`  ${pad('ADR store', STAMP_COL)}old layout — /agent-workflow-kit upgrade moves it where scripts/ holds the kit's decisions rotator, or prints the rotator's refusal`);
   }
   // Every state renders — an owner opens this surface deliberately, so "not adopted" is the one line
   // that must never be missing; an envelope without the field says so rather than inventing a state.
