@@ -5,7 +5,7 @@
 // question and no copy kept; a current one is left. The installer set is written first; after the last
 // write the project's own rotator brings the ADR store current (`--ensure-current`). It never imports
 // ensure-specs.mjs or ensure-configs.mjs: the CLI composes this op from the module's index, and
-// ensure-specs.mjs takes its channel from there.
+// ensure-specs.mjs takes its channel and its lines from there.
 //
 // Dependency-free, Node >= 22. Every fs primitive and the spawn are injectable (deps.*). No side effects on import.
 
@@ -76,10 +76,11 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
 // ── the lines (composed from what HAPPENED: each file's state and the fate of its write) ─────────
 
 // A fate is `written`, `stood` (an absent file that appeared with the bundled body), `refused` (its
-// write failed), or none: the run stopped before it, or, dry, would write it.
+// write failed), or none: the run stopped before it, or, dry, would write it. The spec layer's pair
+// lines are these too, through the module's index.
 const VERBS = { prior: ['refreshed', 'refreshed to the bundled one'], custom: ['replaced', 'replaced by the bundled body'], absent: ['placed', 'placed from the bundled scripts'] };
 const HEADS = { prior: 'matches a body an earlier release shipped', custom: 'differs from every body this kit knows it shipped', absent: 'absent' };
-const fileLine = (f, fate, dryRun) => {
+export const fileLine = (f, fate, dryRun) => {
   if (fate === 'stood') return `${f.rel}: appeared while this run was placing it — the bundled body stands, nothing written`;
   const [verb, done] = VERBS[f.state];
   const tail = fate === 'written' ? done : dryRun ? `would be ${done}` : `not ${verb}; ${fate === 'refused' ? 'its write was refused (above)' : 'the run stopped before it'}`;
@@ -87,7 +88,7 @@ const fileLine = (f, fate, dryRun) => {
 };
 const NOT_ACCEPTED = `${SCRIPTS_DIR}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
 // The hook-run line, once after the file lines of a run that wrote (or, dry, would write) a file.
-const hookLine = (accepted, dryRun) => (accepted
+export const hookLine = (accepted, dryRun) => (accepted
   ? (dryRun ? 'the commit hook runs the files named above, so writing them may stop the next commit' : 'the commit hook runs the files written above, so they may stop the next commit')
   : (dryRun ? 'if a commit hook runs the files named above, writing them may stop the next commit' : 'if a commit hook runs the files written above, they may stop the next commit'));
 const partialNote = (count) => (count > 0 ? [`the writes stopped PARTWAY — the ${count} file(s) named above were already written and are NOT rolled back`] : []);

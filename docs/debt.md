@@ -392,12 +392,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   tier skips it), while `resolveWritableDir` reads it under the home. Before S2 the same path resolved against the
   process cwd and failed alike. Narrow fix: expand a literal `~`/`~/…` override against the home before the probe.
   Raised by the S2 diff review (codex round 2).
-- **UPGRADE-REPORT-RELAYS-THE-PRE-REPLACE-SPECS-LINE** — invariant: the upgrade report relays the last outcome of each
-  ensure. Origin: steps 4 and 8 relay "the nine … lines exactly as the one ensure run composed them"
-  (`agent-workflow-kit/references/modes/upgrade.md:116`, `:126`); after the yes to the specs replace (story S5 of
-  BRIDGES-WORK-UNDER-THE-SANDBOX) that is the step-3 specs line, which says the edited files were left as written,
-  over files the replace run overwrote. Narrow fix: as for the late `--only index` line, the report relays the replace
-  run's specs line when it ran. Raised by the S5 spec review (lens, final check).
 - **RESEED-PRINTS-NO-CLASS-FOR-RE-ARMED-APPROVAL** — invariant: a check result names what a write turns back on. Origin:
   the S6 reseed of a wired gate hook prints only a `writes:` line, no class, though the replaced hook turns gate
   auto-approval (marker-stale) or the read-lane compounds (read-lane.stale) back on; the same form as revision 6's
@@ -712,38 +706,27 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   it just made does not read back, keeping the file at 0644 where the filesystem honours it. Residual, not live where
   the temp dir is a POSIX filesystem or Windows (which reports no exec bits). Raised by the
   DISTRIBUTION-FILES-STAY-CURRENT S1 diff review (lens, round 1).
-- **SPECS-SEED-RACE-REPROOF-READS-OUTSIDE-A-TRY** — invariant: a seed that lost the create-only race is reported
-  `race-unresolved`, never thrown, whatever then stands at its path. Origin: `ensure-specs.mjs:232` `stoodCurrent` reads
-  the file that appeared with a plain `read`; a file removed or turned into a directory between the create-only
-  write's EEXIST and that read throws, so the CLI prints `unexpected-error` and the files already seeded go unnamed.
-  Narrow fix: the read failing counts as not current, as `movedSinceBind` does. Residual: a window inside one write,
-  the writer re-checking the node after EEXIST (`atomic-write.mjs`); no write decision changes. Raised by the
-  DISTRIBUTION-FILES-STAY-CURRENT S2 diff review (lens, the round-1 fold ask).
-- **RECOMMENDATIONS-SPEC-ADOPTION-NOTE-NAMES-ONLY-THE-SPEC-LAYER** — invariant: an advisor item's note names every
-  file its apply line may write or ask a yes for. Origin: `agent-workflow-kit/references/modes/recommendations.md:20`
-  and `:46` describe `spec-adoption`'s `ensure-configs --reconcile --only specs` as the spec layer's seed, while since
-  kit 14.46.0 an `--only specs` run also surveys the kit scripts, so an absent kit script alone brings out the replace
-  line, and a refused scripts survey makes that apply exit 1. Narrow fix: both notes say the block may name kit scripts
-  and that a refused scripts survey fails the apply. Residual: the block names each file and takes its own yes, so no
-  file is written unasked. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (lens, round 1).
-- **INDEX-ROUTE-NAMES-A-REPLACE-LINE-NO-RUN-PRINTS** — invariant: a route a line names is one the same run printed.
-  Origin: the `route` sentence of `ensureKeptIndex` in `agent-workflow-kit/tools/ensure-ops.mjs` names "the replace line
-  printed for the spec layer" whenever a spec-layer file is custom, while a refused specs survey beside a custom hook
-  module adds no entry, so no line for that file prints. Narrow fix: the route names the replace line only when the
-  specs outcome carries entries, else the specs failure above. Residual: exists since kit 14.44.0; the specs failure
-  line stands above it. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (codex and lens, round 2).
-- **SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES** — invariant: an owning op whose survey completed reports its entries on
-  every outcome. Origin: `agent-workflow-kit/tools/ensure-specs.mjs:228` `stoodCurrent` re-reads a file after the
-  survey with a plain `read`; a throw there reaches the CLI as `unexpected-error` with no entries, so the block drops
-  the op's files and the upgrade costs one more ask. Narrow fix: that re-read caught, the op failing `race-unresolved`
-  with its entries. Residual: a window inside one write; the next plain run asks. Raised by the
-  DISTRIBUTION-FILES-STAY-CURRENT S3 spec review (lens, round 2).
-- **SCRIPTS-REREAD-THROW-DROPS-THE-PARTIAL-NOTE** — invariant: a scripts op that stops partway names every file it
-  already wrote. Origin: `agent-workflow-kit/tools/distribution-files/scripts.mjs:121` (an absent file that appeared
-  before its create-only write) re-reads with a plain `read`; a throw there reaches the CLI as `unexpected-error`,
-  without the lines naming the files already written. Narrow fix: the re-read caught, the op failing `race-unresolved`
-  with its lines and partial note. Residual: a window inside one write. Named by the DISTRIBUTION-FILES-STAY-CURRENT
-  S3 plan, beside SPECS-POST-SURVEY-THROW-DROPS-ITS-ENTRIES; S12 retired the bound-edit re-read.
+- **SCRIPTS-REREAD-THROW-DROPS-THE-PARTIAL-NOTE** — invariant: a scripts or specs op that stops partway names every
+  file it already wrote. Origin: an absent file that appeared before its create-only write is re-read with a plain
+  `read` in both ops (`agent-workflow-kit/tools/distribution-files/scripts.mjs:115`,
+  `agent-workflow-kit/tools/ensure-specs.mjs:109`); a file removed or turned into a directory in between throws, which
+  reaches the CLI as `unexpected-error` without the lines naming the files already written. Narrow fix: each re-read
+  caught, the op failing `race-unresolved` with its lines and partial note. Residual: a window inside one write, the
+  writer re-checking the node after EEXIST (`atomic-write.mjs`); no write decision changes. Named by the
+  DISTRIBUTION-FILES-STAY-CURRENT S3 plan; S14 moved the specs op's re-read here when it took the scripts op's rule.
+- **FOREIGN-SPECS-NAME-THE-RETIRED-REPLACE-STEP** — invariant: no live spec sentence names a retired module or step.
+  Origin: `docs/ai/specs/kit/repo-search.md:27` says the kept-aside writer imports `RESERVED_DIR`, and
+  `docs/ai/specs/memory/standalone-scripts.md:118` names the composition root's "one yes", both retired by story S14
+  of DISTRIBUTION-FILES-STAY-CURRENT (`kept-aside.mjs` deleted, no upgrade yes for a kit file). Narrow fix: each
+  owning spec's next revision drops the clause. Residual, not live: no code or shipped text follows either sentence.
+  Named by the DISTRIBUTION-FILES-STAY-CURRENT S14 plan.
+- **SPECS-WRITE-LOOP-REPEATS-THE-SCRIPTS-LOOP** — invariant: one write loop and one partial note serve both ops that
+  write kit files by the one rule. Origin: `agent-workflow-kit/tools/ensure-specs.mjs:78` (`partialNote`) and `:93`
+  (`writeAll`) repeat `agent-workflow-kit/tools/distribution-files/scripts.mjs:94` and `:100` but for the store root's
+  create-only branch, while distribution-files revision 7 limits the index to four exports. Narrow fix: a revision of
+  distribution-files exports the loop and the note through the index, the store root handed in as one more create-only
+  target. Proof: S1, S2 and S7 of that spec pass unchanged over the shared loop. Residual, not live: both copies compose
+  the same lines from the same fates, so no write decision differs. Raised by the S14 diff review (self-review).
 - **ENFORCEMENT-COPY-PLACES-AN-INSTALLER-BESIDE-A-KEPT-SUITE** — invariant: no git-hook writer places an installer
   beside suites of another release. Origin: the `enforcement` copy is create-only per file
   (`agent-workflow-kit/tools/git-hooks.mjs:161-162`), so a writer run over a `scripts/` holding an older

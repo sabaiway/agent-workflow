@@ -6,7 +6,8 @@
 // seeded valid spec commit, and the navigator carries ONE collapsed specs/ row. Three variants pin
 // the decided edges: a 4.6.x deployment's reader pair (2a: on the 4.6.0 bodies, checker current)
 // refreshes and the store then seeds, a legacy ADR layout is moved by the scripts ensure and still seeds
-// (D-G; the deployment's git init and installer and the op's spawns GIT_-stripped, so a hook's GIT_DIR never takes the snapshot), a custom checker is preserved with no store root (D-E).
+// (D-G; the deployment's git init and installer and the op's spawns GIT_-stripped, so a hook's GIT_DIR never takes the snapshot), a custom checker
+// is replaced by the bundled body on the same plain run, the store root seeded behind it.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,6 +32,8 @@ const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md
 const VALID_SPEC = '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n';
 
 const bundle = (name) => readFileSync(join(BUNDLE, name), 'utf8');
+// Compared as a boolean: a failed equality of two whole script bodies prints both.
+const isBundled = (project, name) => readFileSync(join(project, 'scripts', name), 'utf8') === bundle(name);
 const PRIOR_DIR = {
   'check-docs-size.mjs': '4.5.1',
   'check-docs-size.test.mjs': '4.0.0',
@@ -162,27 +165,23 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
     });
   });
 
-  it('a custom checker is preserved verbatim, the reader pair still lands (so the token is seeded), and NO store root is seeded behind it (D-E)', () => {
+  it('a custom checker pair is replaced by the bundled bodies on the plain run, its lines naming where an edit meant to last goes, and the store root is seeded behind it', () => {
     withDeployment({ checker: 'custom' }, (project) => {
       const r = reconcile(project);
       assert.equal(r.code, 0, r.stdout);
-      const tokens = tokensOf(r.stdout);
-      assert.equal(tokens.specs, 'seeded', r.stdout);
-      for (const name of CHECKER) assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), '// my own checker\n', `${name} verbatim`);
-      for (const name of READER) assert.equal(readFileSync(join(project, 'scripts', name), 'utf8'), bundle(name), `${name} seeded (create-only, nothing depends on it)`);
-      assert.equal(existsSync(join(project, 'docs', 'ai', 'specs')), false, 'no store root, no store dir');
-      assert.match(r.stdout, /carries an edit — left as it stands until the user's yes keeps it aside and replaces it/);
-      assert.match(r.stdout, /--replace-custom [0-9a-f]{64} --cwd /);
-      assert.doesNotMatch(r.stdout, /by hand/);
-      assert.match(r.stdout, /index\.md: not seeded/);
-      // The second run writes nothing behind the custom pair: now the token says so.
-      assert.equal(tokensOf(reconcile(project).stdout).specs, 'customized-preserved');
+      assert.equal(tokensOf(r.stdout).specs, 'seeded', r.stdout);
+      assert.deepEqual([...READER, ...CHECKER].filter((name) => !isBundled(project, name)), [], 'every pair file is the bundled body');
+      assert.ok(existsSync(join(project, STORE)), 'the store root is seeded');
+      for (const name of CHECKER) assert.ok(r.stdout.includes(`scripts/${name}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in `), name);
+      assert.doesNotMatch(r.stdout, /by hand|--replace-custom|user's yes/);
+      // The second run writes nothing: the pairs are current.
+      assert.equal(tokensOf(reconcile(project).stdout).specs, 'already-present');
     });
   });
 });
 
-describe('spec:docs-navigator/S6 the hook commits after the route', () => {
-  it('a project past 80 lines on a checker whose render differs is named, replaced on the yes and commits', () => {
+describe('spec:docs-navigator/S6 the hook commits after one plain run', () => {
+  it('a project past 80 lines on a checker whose render differs is written current by one plain run and commits', () => {
     withDeployment({
       checkerBody: `${readPriorChecker()}// edited\n`,
       checkerTestBody: bundle(CHECKER[1]),
@@ -190,18 +189,7 @@ describe('spec:docs-navigator/S6 the hook commits after the route', () => {
     }, (project) => {
       const r = reconcile(project);
       assert.equal(r.code, 0, r.stdout);
-      assert.match(r.stdout, /scripts\/check-docs-size\.mjs: carries an edit — left as it stands until the user's yes keeps it aside and replaces it/);
-      const replaceLines = r.stdout.split('\n').filter((line) => line.includes('--replace-custom'));
-      assert.equal(replaceLines.length, 1, r.stdout);
-      const digest = replaceLines[0].match(/--replace-custom ([0-9a-f]{64}) --cwd /);
-      assert.ok(digest, replaceLines[0]);
-      assert.equal(tokensOf(r.stdout).index, 'customized-preserved', r.stdout);
-
-      const yes = main(['--reconcile', '--replace-custom', digest[1], '--cwd', project], { kitRoot: KIT_ROOT });
-      assert.equal(yes.code, 0, yes.stdout);
-      assert.ok(['refreshed', 'seeded'].includes(tokensOf(yes.stdout).specs), yes.stdout);
-      assert.equal(tokensOf(yes.stdout).index, 'regenerated', yes.stdout);
-      assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), bundle(CHECKER[0]));
+      assert.deepEqual([tokensOf(r.stdout).index, isBundled(project, CHECKER[0]), r.stdout.includes('--replace-custom')], ['regenerated', true, false], r.stdout);
       const navigator = readFileSync(join(project, 'docs', 'ai', 'index.md'), 'utf8');
       assert.ok(navigator.trimEnd().split('\n').length > 80, 'the navigator exercises the cap past 80 lines');
       checkDeployedDocs(project);
@@ -210,45 +198,34 @@ describe('spec:docs-navigator/S6 the hook commits after the route', () => {
     });
   });
 
-  it('a prior checker behind a custom test file whose docs change in the upgrade commits on a no', () => {
-    const checkerBody = readPriorChecker();
-    withDeployment({ reader: 'current', checkerBody, checkerTestBody: `${bundle(CHECKER[1])}// mine\n` }, (project) => {
+  it('a prior checker beside a custom test file whose docs change in the upgrade commits after one plain run', () => {
+    withDeployment({ reader: 'current', checkerBody: readPriorChecker(), checkerTestBody: `${bundle(CHECKER[1])}// mine\n` }, (project) => {
       checkDeployedDocs(project, '--write-index');
       writeDoc(project, 'added');
       const r = reconcile(project);
       assert.equal(r.code, 0, r.stdout);
-      assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), checkerBody);
+      assert.deepEqual(CHECKER.filter((name) => !isBundled(project, name)), [], 'the checker pair is the bundled bodies');
       checkDeployedDocs(project, '--check-index');
       commitDeployment(project);
     });
   });
 });
 
-describe('spec:distribution-files/S12 the kept-aside copy stays out of git and the hook commits', () => {
-  const FOLDERS = [
-    ['absent before the upgrade', () => {}],
-    ['present without its ignore file', (project) => mkdirSync(join(project, '.agent-workflow'))],
-  ];
-  for (const [state, prepare] of FOLDERS) {
-    it(`.agent-workflow ${state}: the yes keeps the edited bytes aside, git lists nothing under it, the commit passes`, () => {
-      const edited = `${readPriorChecker()}// edited\n`;
-      withDeployment({ checkerBody: edited }, (project) => {
-        prepare(project);
-        const r = reconcile(project);
-        assert.equal(r.code, 0, r.stdout);
-        const kept = r.stdout.match(/scripts\/check-docs-size\.mjs: carries an edit — on the user's yes it is kept aside at (\.agent-workflow\/kept-aside\/[0-9a-f]{16}\/scripts\/check-docs-size\.mjs), then the bundled body replaces it/);
-        assert.ok(kept, r.stdout);
-        const digest = r.stdout.match(/--replace-custom ([0-9a-f]{64}) --cwd /);
-        assert.ok(digest, r.stdout);
-
-        const yes = main(['--reconcile', '--replace-custom', digest[1], '--cwd', project], { kitRoot: KIT_ROOT });
-        assert.equal(yes.code, 0, yes.stdout);
-        assert.equal(readFileSync(join(project, kept[1]), 'utf8'), edited, 'the copy holds exactly the edited bytes');
-        assert.equal(readFileSync(join(project, 'scripts', CHECKER[0]), 'utf8'), bundle(CHECKER[0]));
-        const status = git(project, 'status', '--porcelain', '--untracked-files=all');
-        assert.equal(status.split('\n').some((line) => line.includes('.agent-workflow')), false, status);
-        commitDeployment(project);
-      });
+describe("spec:distribution-files/S12 an earlier release's kept-aside folder stays out of git and the hook commits", () => {
+  it('edited pair files beside the folder and its ignore file: one plain run writes them to the bundled bytes, git lists nothing under the folder, it stays byte-identical, the commit passes', () => {
+    withDeployment({ checkerBody: `${readPriorChecker()}// edited\n`, checkerTestBody: `${bundle(CHECKER[1])}// mine\n` }, (project) => {
+      const reserved = join(project, '.agent-workflow');
+      mkdirSync(join(reserved, 'kept-aside', '0123456789abcdef', 'scripts'), { recursive: true });
+      writeFileSync(join(reserved, '.gitignore'), '*\n');
+      writeFileSync(join(reserved, 'kept-aside', '0123456789abcdef', 'scripts', CHECKER[0]), '// an edit an earlier release kept aside\n');
+      const folder = () => readdirSync(reserved, { recursive: true, withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => [join(entry.parentPath, entry.name), readFileSync(join(entry.parentPath, entry.name), 'utf8')]).sort();
+      const before = folder();
+      const r = reconcile(project);
+      assert.equal(r.code, 0, r.stdout);
+      assert.deepEqual(CHECKER.filter((name) => !isBundled(project, name)), [], 'the checker pair is the bundled bodies');
+      const status = git(project, 'status', '--porcelain', '--untracked-files=all');
+      assert.deepEqual([status.split('\n').some((line) => line.includes('.agent-workflow')), folder()], [false, before], status);
+      commitDeployment(project);
     });
-  }
+  });
 });

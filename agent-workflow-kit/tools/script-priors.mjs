@@ -2,8 +2,8 @@
 // into a project's `scripts/`, as sha256 digests, and the ONE classifier a refresh asks before it
 // replaces a deployed script — the spec-layer ensure for its pairs and the upgrade's `scripts` ensure
 // for every other kit script: `current` (byte-equal to the bundled copy) · `prior` (a body a release
-// shipped, never edited since) · `custom` (anything else — replaced on the plain run by the scripts op,
-// and by the user's yes for the spec-layer pairs alone). The lens-region idiom (AD-041) over whole
+// shipped, never edited since) · `custom` (anything else — replaced on the plain run, the spec-layer
+// pairs included, with no question). The lens-region idiom (AD-041) over whole
 // script bodies.
 //
 // Append discipline: when a release changes one of PRIOR_FILES, append the OUTGOING body's row here

@@ -22,6 +22,7 @@ import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { UPGRADE_RUNLIST } from '../tools/upgrade-runlist.mjs';
+import { main } from '../tools/ensure-configs.mjs';
 import { RELAYED_ENSURE_TOKENS } from '../tools/ensure-vocabulary.mjs';
 import { SKIPPED_READONLY } from '../tools/setup-backends.mjs';
 import { PARITY } from '../tools/refresh-parity.mjs';
@@ -34,8 +35,6 @@ const CONTRACTS = readFileSync(resolve(kitRoot, 'references', 'contracts.md'), '
 // without this test noticing — the ids are the future reconcile driver's item tokens.
 const L1_IDS = ['pointers', 'footprint', 'configs', 'gates-migration', 'bridges', 'lens', 'tier', 'bridge-settings'];
 const SKILL_VAR = '${CLAUDE_SKILL_DIR}';
-const CONSENT = "a replace line → ONE yes naming every spec-layer file its block names, each edit's kept-aside copy and that the bundled body replaces it, asked even on a non-zero exit; on the yes run the printed line, then STOP if that run fails or an op it does not re-run failed; on a no STOP on any failed op.";
-const REPLACE_COMMAND = `node ${SKILL_VAR}/tools/ensure-configs.mjs --reconcile --replace-custom <digest> --cwd <project>`;
 
 // ── extraction helpers (anchored, non-vacuous: a missing anchor is red) ─────────────────────────
 const between = (text, from, to, where) => {
@@ -129,13 +128,11 @@ describe('upgrade-runlist registry — the L1 eight, in order', () => {
     }
   });
 
-  it('consent marks exactly the four L1 operations: footprint, configs, gates-migration and tier', () => {
+  it('consent marks exactly the three L1 operations: footprint, gates-migration and tier', () => {
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'footprint') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--dry-run'),
           'footprint consent gates the non-dry-run re-run');
-      } else if (e.id === 'configs') {
-        assert.equal(e.consent, `${CONSENT} The printed line: ${REPLACE_COMMAND}`);
       } else if (e.id === 'gates-migration') {
         assert.ok(typeof e.consent === 'string' && e.consent.includes('--apply'),
           'gates-migration consent gates the --apply re-run');
@@ -261,23 +258,18 @@ const CLAUSE_SPLIT = /\.(?=\s|$)|[;:—!?()→]/;
 const HAND_COPY = /\b(?:cop(?:y|ies|ied|ying)|refresh(?:es|ed|ing)?)\b.*(?:\b(?:scripts?|pairs?)\b|\bscripts\/).*\bby hand\b/i;
 const handCopyClauses = (line) => (/^\s*(?:\/\/|\/?\*)/.test(line) ? [] : line.split(CLAUSE_SPLIT).filter((clause) => HAND_COPY.test(clause)));
 
-describe('spec:distribution-files/S10 the upgrade asks one yes over the replace block and no line says copy by hand', () => {
-  it('the configs entry carries the one-yes sentence and the exact replace command; the upgrade.md row the sentence alone', () => {
-    const { consent } = UPGRADE_RUNLIST.find((e) => e.id === 'configs');
-    assert.equal(consent, `${CONSENT} The printed line: ${REPLACE_COMMAND}`);
-    const row = rowsOf(step3()).find((r) => r.id === 'configs');
-    assert.ok(row?.line.includes(CONSENT), 'the configs row carries the one-yes sentence verbatim');
-    assert.ok(!row.line.includes('--replace-custom'), 'the exact replace command belongs to the registry alone');
+describe('spec:distribution-files/S10 the upgrade asks no yes for the spec layer and no line says copy by hand', () => {
+  it('the configs entry and its upgrade.md row carry no consent, as the rows with none read', () => {
+    assert.deepEqual([UPGRADE_RUNLIST.find((e) => e.id === 'configs').consent, /consent|\byes\b|replace/i.test(rowsOf(step3()).find((r) => r.id === 'configs')?.line ?? 'consent')], [null, false]);
   });
-  it('the configs block has exactly one STOP sentence and it defers to the row 3 ask over a replace line', () => {
-    const block = blockOf('configs').replaceAll('**', '');
-    assert.equal((block.match(/STOP/g) ?? []).length, 1);
-    assert.ok(block.includes("A non-zero exit STOPs this upgrade — once row 3's replace ask is answered when a replace line printed, then as that ask says"));
+  it('the configs block has exactly one STOP sentence and it names no replace ask', () => {
+    const block = blockOf('configs').replaceAll('**', ''), stops = block.split(/(?<=\.)\s+/).filter((sentence) => sentence.includes('STOP'));
+    assert.deepEqual([(block.match(/STOP/g) ?? []).length, stops.length, stops.filter((sentence) => /replace|\byes\b|row 3/i.test(sentence))], [1, 1, []], stops.join('\n'));
+    assert.ok(stops[0].includes('A non-zero exit STOPs this upgrade'), stops[0]);
   });
-  it("the spec-layer paragraph keeps edits aside on row 3's yes; contracts.md names the family's reserved folder", () => {
-    const paragraph = step3().split('\n').find((line) => line.trim().startsWith('**What the spec-layer ensure does.**'));
-    assert.ok(paragraph?.includes("edited files are kept aside and replaced on row 3's yes"), paragraph);
-    assert.ok(CONTRACTS.includes("`.agent-workflow/` is the family's reserved folder") && CONTRACTS.includes('`.agent-workflow/kept-aside/<16 hex>/<path>`'));
+  it("contracts.md names .agent-workflow/ the family's reserved folder and the copies an earlier release kept there the user's", () => {
+    const flat = CONTRACTS.replace(/\s+/g, ' ').toLowerCase();
+    assert.deepEqual(["`.agent-workflow/` is the family's reserved folder", "the copies an earlier release kept there are the user's"].filter((words) => !flat.includes(words.toLowerCase())), []);
   });
   it('no shipped line says to copy or refresh a script by hand', () => {
     const files = [resolve(kitRoot, 'tools'), resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap(listRegularFiles);
@@ -294,17 +286,19 @@ describe('spec:distribution-files/S10 the upgrade asks one yes over the replace 
 });
 
 const PAIR_FILES = ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'];
-const keepAsideClauses = (text) => text.split(/;|[.?!](?=\s|$)/).filter((clause) => /kept aside|keeps the edit|\.agent-workflow\/kept-aside\//.test(clause));
+// A clause (split at ; and a sentence end) that says an upgrade keeps an edit aside, or names where a kept-aside copy is.
+const keepAsideClauses = (text) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)/).filter((clause) => !/an earlier release/i.test(clause) && ((/\b(?:keeps?|kept|keeping)\b.*\baside\b/i.test(clause) && /upgrade|\bedit/i.test(clause)) || /\.agent-workflow\/kept-aside\//.test(clause)));
 const hasLocalPart = (path) => path.split(/[\\/]/).some((segment) => segment.split('.').includes('local'));
 describe('spec:distribution-files/S26 the guide names the reserved names and channels, and no bundled name takes the local form', () => {
   it("the opening paragraph names the section, which names the kit's names, the five channels and the name form with its two exceptions", () => {
     assert.ok(between(CONTRACTS, '# Setup contracts\n\n', '\n\n', 'contracts.md').includes('*Reserved names and channels*'), 'the opening paragraph names the section');
     const section = (CONTRACTS.split('\n## Reserved names and channels\n')[1] ?? '').replace(/\s+/g, ' ');
     assert.deepEqual(["Every name the kit bundles and writes over on an upgrade is the kit's", 'written over by the next upgrade with no question and no copy kept', 'A declaration seeded once from a template', "is the user's own file", 'one of five channels', '`scripts/pre-commit.local`', 'go in `scripts/` under names of your own', 'a config a script reads', '`docs/ai/rules/local/<theme>.md`', '`docs/ai/vehicles.json`', 'No path segment of a file the kit bundles and places as its own has a dot-separated part exactly `local`', '`.claude/settings.local.json`', "which the agent writes only on the user's own request"].filter((words) => !section.includes(words)), []);
-    assert.ok(CONTRACTS.includes('Before an upgrade replaces a spec-layer file the user edited (`scripts/spec-schema.mjs`') && CONTRACTS.includes('every other kit script is written over with no copy kept'), 'the reserved folder keeps only spec-layer edits');
+    assert.deepEqual(PAIR_FILES.filter((path) => !section.includes(path)), [], 'every kit script written over, the four spec-layer pair files included');
   });
-  it('every clause that keeps an edit aside has the spec layer or a pair file as its subject and names no other script, the installer set or scripts/ whole', () => {
-    assert.deepEqual(keepAsideClauses(CONTRACTS).filter((clause) => !(/spec[ -]layer/.test(clause) || PAIR_FILES.some((path) => clause.includes(path))) || (clause.match(/scripts\/[\w.<>-]*/g) ?? []).some((path) => !PAIR_FILES.includes(path)) || /installer|\bkit scripts?\b/i.test(clause)), []);
+  it('no clause of contracts.md says an upgrade keeps an edit aside or names a current kept-aside copy', () => {
+    assert.deepEqual(keepAsideClauses(CONTRACTS), []);
+    assert.deepEqual(['Before an upgrade replaces a file, it keeps the edit aside', 'it is kept at `.agent-workflow/kept-aside/<16 hex>/<path>`', "the copies an earlier release kept aside there are the user's"].map((text) => keepAsideClauses(text).length), [1, 1, 0], 'the judge catches both forms and spares the earlier copies');
   });
   it('no file under the kit and memory references trees takes the reserved name form; the judge catches it and spares localize.mjs', () => {
     const named = [resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap((root) => listRegularFiles(root).map((file) => relative(root, file)));
@@ -313,19 +307,45 @@ describe('spec:distribution-files/S26 the guide names the reserved names and cha
   });
 });
 
-describe('spec:docs-navigator/S4 the configs block and the spec-adoption item name the replace yes', () => {
+describe('spec:docs-navigator/S4 the configs block and the spec-adoption item name the no-question write', () => {
   it('the index token list names customized-preserved', () => {
     assert.ok(blockOf('configs').includes('index → `regenerated` / `already-current` / `customized-preserved`'));
   });
-  it('the spec-adoption example and risk text name the replace yes', () => {
+  it('the spec-adoption example and risk text name the edited spec-layer file written with no question and its line, the risk text the prior refresh; neither a replace line, a replace block or a yes', () => {
     const lines = readFileSync(resolve(kitRoot, 'references', 'modes', 'recommendations.md'), 'utf8').split('\n');
-    const rule = lines.find((line) => line.startsWith('3. '));
-    const posture = lines.find((line) => line.startsWith('- `spec-adoption` — '));
-    const replaceWords = 'prints a replace line that takes its own yes';
-    assert.ok(rule?.includes("`spec-adoption`'s `ensure-configs --reconcile --only specs`"), 'rule 3 carries the spec-adoption example');
-    assert.ok(rule.includes(replaceWords), 'rule 3 names the replace yes');
-    assert.ok(posture?.includes(replaceWords), 'the spec-adoption posture names the replace yes');
-    assert.ok(posture.split('Risk profile:')[1]?.includes('refreshes a script body a release shipped'), 'the risk profile names the prior refresh');
+    const example = (lines.find((line) => line.startsWith('3. ')) ?? '').split(/(?<=\.)\s+/).find((sentence) => sentence.includes("`spec-adoption`'s `ensure-configs --reconcile --only specs`")) ?? '';
+    const risk = lines.find((line) => line.startsWith('- `spec-adoption` — '))?.split('Risk profile:')[1] ?? '';
+    const words = 'writes an edited spec-layer file with the bundled body with no question, its line naming where an edit meant to last goes';
+    assert.deepEqual([example.includes(words), risk.includes(words), risk.includes('refreshes a script body a release shipped')], [true, true, true], `${example}\n${risk}`);
+    assert.deepEqual([example, risk].filter((text) => /replace (?:line|block)|\byes\b/i.test(text)), []);
+  });
+});
+
+// The spec-layer clauses of the shipped text, split at ; and at a sentence end; the retired words judged by stems.
+const SPEC_LAYER_RETIRED = /replace (?:run|block|line|ask)|\baside\b|withh|\byes\b|--replace-custom|customized-preserved/i;
+const clausesOf = (text) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)/), commentsOf = (source) => source.split('\n').filter((line) => line.trimStart().startsWith('//')).map((line) => line.replace(/^\s*\/\/ ?/, '')).join('\n');
+describe('spec:distribution-files/S4 the shipped text of the spec layer states the rule', () => {
+  const RULE = 'no question and no copy kept';
+  const tool = (name) => readFileSync(resolve(kitRoot, 'tools', name), 'utf8'), headerOf = (source) => commentsOf(source.slice(0, source.indexOf('\nimport ')));
+  const configsHeader = headerOf(tool('ensure-configs.mjs'));
+  const parts = {
+    arm: (blockOf('configs').split('specs → ')[1] ?? '').split(';')[0],
+    paragraph: step3().split('\n').find((line) => line.trim().startsWith('**What the spec-layer ensure does.**')) ?? '',
+    'ensure-specs.mjs header': headerOf(tool('ensure-specs.mjs')),
+    'ensure-configs.mjs specs row': configsHeader.slice(configsHeader.search(/^ {2}specs /m), configsHeader.search(/^ {2}rules /m)),
+    'ensure-configs.mjs --help': clausesOf(main(['--help']).stdout).filter((clause) => /spec[- ]layer/i.test(clause)).join(';'),
+    'ensure-vocabulary.mjs specs comments': clausesOf(commentsOf(tool('ensure-vocabulary.mjs'))).filter((clause) => /`specs`|spec[- ]layer/i.test(clause)).join(';'),
+    'script-priors.mjs header': headerOf(tool('script-priors.mjs')),
+  };
+  it('upgrade.md: the specs token arm names seeded, refreshed, already-present and skipped-no-node-evidence and not customized-preserved', () => {
+    assert.deepEqual([['`seeded`', '`refreshed`', '`already-present`', '`skipped-no-node-evidence`'].filter((token) => !parts.arm.includes(token)), parts.arm.includes('customized-preserved')], [[], false], parts.arm);
+  });
+  it('the spec-layer paragraph, the ensure-specs.mjs header, the ensure-configs.mjs specs row and --help sentence and the ensure-vocabulary.mjs comments describe the rule', () => {
+    const missing = ['paragraph', 'ensure-specs.mjs header', 'ensure-configs.mjs specs row', 'ensure-configs.mjs --help'].filter((part) => !parts[part].replace(/\s+/g, ' ').includes(RULE));
+    assert.deepEqual([missing, clausesOf(parts['ensure-vocabulary.mjs specs comments']).some((clause) => clause.includes('`specs`') && clause.includes('no question'))], [[], true], JSON.stringify(parts, null, 1));
+  });
+  it("no spec-layer clause of them names a replace run, a replace block, kept aside, withheld, the user's yes, one yes or --replace-custom", () => {
+    assert.deepEqual(Object.entries(parts).flatMap(([part, text]) => clausesOf(text).filter((clause) => SPEC_LAYER_RETIRED.test(clause)).map((clause) => `${part}: ${clause.trim()}`)), []);
   });
 });
 

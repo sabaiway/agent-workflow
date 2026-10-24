@@ -7,7 +7,7 @@ import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rea
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main } from '../ensure-configs.mjs';
@@ -120,8 +120,8 @@ const detailsOf = (out, op) => {
   const end = rest.findIndex((l) => !l.startsWith('      '));
   return rest.slice(0, end === -1 ? rest.length : end).map((l) => l.slice(6));
 };
-const digestOf = (out) => out.match(/--replace-custom ([0-9a-f]{64})/)?.[1];
-const blockRels = (out) => [...out.matchAll(/^ {2}(\S+): (?:carries an edit — on the user's yes|absent — the user's yes places)/gm)].map((m) => m[1]);
+// What the retired replace step printed: its block and its command.
+const REPLACE_STEP = /user's yes|--replace-custom/;
 
 describe('spec:distribution-files/S14 the rule by its cells over an accepted component', () => {
   const check = (dir, r, token, lines) => {
@@ -282,7 +282,7 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
   };
   const plainRun = (dir) => {
     const { code, stdout } = cli(dir, ['--only', 'scripts']);
-    assert.deepEqual([code, blockRels(stdout), digestOf(stdout), existsSync(join(dir, '.agent-workflow'))], [0, [], undefined, false], stdout);
+    assert.deepEqual([code, REPLACE_STEP.test(stdout), existsSync(join(dir, '.agent-workflow'))], [0, false, false], stdout);
     return { tokens: tokensOf(stdout), details: detailsOf(stdout, 'scripts') };
   };
   it('a prior set stops a commit until one plain run; an edited installer is replaced by the next; an absent suite placed with no command', { timeout: 240_000 }, () => withTree(PRIORS, (dir) => {
@@ -306,17 +306,17 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
   }, { setup: (dir) => put(dir, PAIR_BODIES) }));
 });
 
-describe('spec:distribution-files/S22 the replace run without the scripts op', () => {
+describe('spec:distribution-files/S22 --only specs and --only scripts each write their own files', () => {
   const tree = (fn) => withTree({ 'archive-caps.mjs': EDIT('archive-caps.mjs') }, fn, { setup: (dir) => put(dir, { ...PAIR_BODIES, 'check-docs-size.mjs': EDIT('check-docs-size.mjs') }) });
-  it("--only specs: the spec-layer file alone under a full run's digest; --only scripts replaces the kit script, no block; --only gates none; the replace runs specs, then index", () => {
-    const full = tree((dir) => digestOf(cli(dir, []).stdout)) ?? 'a full plain run prints a digest';
+  it('--only specs replaces the edited spec-layer file alone, no scripts line; --only scripts replaces the kit script alone, no specs line; neither prints a replace block or command', () => {
     tree((dir) => {
-      const [specs, scripts, gates] = [['--only', 'specs'], ['--only', 'scripts'], ['--only', 'gates']].map((flags) => cli(dir, flags).stdout);
-      assert.deepEqual([blockRels(specs), digestOf(specs), opsOf(specs), detailsOf(specs, 'specs').filter((l) => /archive-caps|other kit scripts/.test(l))], [['scripts/check-docs-size.mjs'], full, ['specs'], []], specs);
-      assert.deepEqual([blockRels(scripts), digestOf(scripts), opsOf(scripts), detailsOf(scripts, 'scripts')], [[], undefined, ['scripts'], [L.replaced('archive-caps.mjs'), L.count(20), HOOK]], scripts);
-      assert.deepEqual([blockRels(gates), digestOf(gates)], [[], undefined], gates);
-      const replace = cli(dir, ['--replace-custom', full]);
-      assert.deepEqual([replace.code, opsOf(replace.stdout), shaOf(bytesOf(dir, 'check-docs-size.mjs')), shaOf(bytesOf(dir, 'archive-caps.mjs'))], [0, ['specs', 'index'], sha(bundled('check-docs-size.mjs')), sha(bundled('archive-caps.mjs'))], replace.stdout);
+      const specs = cli(dir, ['--only', 'specs']).stdout;
+      assert.deepEqual([opsOf(specs), detailsOf(specs, 'specs').includes(`scripts/check-docs-size.mjs: ${DIFFERS} — replaced by the bundled body; an edit meant to last goes in ${SCRIPT_CHANNEL}`), REPLACE_STEP.test(specs), shaOf(bytesOf(dir, 'check-docs-size.mjs')), shaOf(bytesOf(dir, 'archive-caps.mjs'))],
+        [['specs'], true, false, sha(bundled('check-docs-size.mjs')), sha(EDIT('archive-caps.mjs'))], specs);
+    });
+    tree((dir) => {
+      const scripts = cli(dir, ['--only', 'scripts']).stdout;
+      assert.deepEqual([opsOf(scripts), detailsOf(scripts, 'scripts'), REPLACE_STEP.test(scripts), shaOf(bytesOf(dir, 'check-docs-size.mjs'))], [['scripts'], [L.replaced('archive-caps.mjs'), L.count(20), HOOK], false, sha(EDIT('check-docs-size.mjs'))], scripts);
     });
   });
 });
@@ -336,13 +336,13 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
   });
   it('the ensure-ops.mjs header and the ensure-vocabulary.mjs comments name the leaf, the rule, the store run and no replace run for a kit script', () => {
     has(header(text('tools', 'ensure-ops.mjs')), ['distribution-files/scripts.mjs', 'no question and no copy'], ['SEED_SCRIPTS']);
-    has(text('tools', 'ensure-vocabulary.mjs'), ['`specs` alone owns the replace run', "runs the project's rotator (`--ensure-current`)"], ['SEED_SCRIPTS', 'over the kit scripts', 'held back', ...RETIRED]);
+    has(text('tools', 'ensure-vocabulary.mjs'), ["runs the project's rotator (`--ensure-current`)"], ['SEED_SCRIPTS', 'over the kit scripts', 'held back', ...RETIRED]);
   });
   it('ensure-configs.mjs: its header row and --help name the rule and the store run, no survey of another op and no yes for a kit script', () => {
     const rows = header(text('tools', 'ensure-configs.mjs')).split('\n'), at = rows.findIndex((l) => /^\/\/ {3}scripts /.test(l));
     has(at === -1 ? '' : rows.slice(at, at + 4).join('\n'), ['with no question and no copy kept', 'brings the ADR store current (--ensure-current)'], ['held back']);
     const help = main(['--help']).stdout, from = help.indexOf('\n  --only <op>'), fifth = help.indexOf('A fifth');
-    has(help.slice(from, help.indexOf('\n  --replace-custom', from)), [], ['survey']);
+    has(help.slice(from, help.indexOf('\n  --cwd', from)), [], ['survey']);
     has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
   });
   it('no shipped file but a test names migrate-adr-store; renderers.mjs and status.md name the upgrade for an older layout', () => {
@@ -356,5 +356,24 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
     const note = at === -1 ? '' : status.slice(at, status.indexOf('need no note', at));
     has(note, [`${LINE}.`]);
     assert.deepEqual([...new Set([...note.matchAll(/\/agent-workflow-kit ([a-z-]+)/g)].map((match) => match[1]))], ['upgrade'], note);
+  });
+});
+
+describe('spec:distribution-files/S5 one directory, one door', () => {
+  const HERE = join(KIT, 'tools', 'distribution-files'), DIR = HERE + sep;
+  const specifiers = (source) => [...source.matchAll(/\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1] ?? m[2]);
+  const kitModules = (at) => readdirSync(at, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (join(at, e.name) + sep === DIR ? [] : kitModules(join(at, e.name))) : e.isFile() && e.name.endsWith('.mjs') ? [join(at, e.name)] : []));
+  it('the index exports exactly ensureScripts, SCRIPT_CHANNEL, fileLine and hookLine, each the very export of scripts.mjs; replace-set.mjs and kept-aside.mjs are absent', async () => {
+    const [door, leaf] = await Promise.all(['./index.mjs', './scripts.mjs'].map((path) => import(path).catch(() => ({}))));
+    assert.deepEqual(Object.keys(door).sort(), ['SCRIPT_CHANNEL', 'ensureScripts', 'fileLine', 'hookLine']);
+    assert.deepEqual(Object.keys(door).filter((name) => door[name] !== leaf[name]), []);
+    assert.deepEqual(['replace-set.mjs', 'kept-aside.mjs'].filter((name) => existsSync(join(HERE, name))), []);
+  });
+  it('no kit module outside the directory imports a file of it but the index; no file of it imports ensure-specs.mjs or ensure-configs.mjs', () => {
+    const consumers = ['ensure-configs.mjs', 'ensure-specs.mjs'].map((name) => join(KIT, 'tools', name));
+    const offenders = kitModules(KIT).flatMap((file) => specifiers(readFileSync(file, 'utf8')).filter((spec) => spec.startsWith('.')).map((spec) => resolve(dirname(file), spec))
+      .filter((target) => target.startsWith(DIR) && target !== join(HERE, 'index.mjs')).map((target) => `${relative(KIT, file)} → ${relative(KIT, target)}`));
+    const inward = readdirSync(HERE).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs')).flatMap((name) => specifiers(readFileSync(join(HERE, name), 'utf8')).filter((spec) => consumers.includes(resolve(HERE, spec))).map((spec) => `${name} → ${spec}`));
+    assert.deepEqual([offenders, inward], [[], []]);
   });
 });

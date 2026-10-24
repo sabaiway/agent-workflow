@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 16.0.0 — the upgrade writes the spec layer current with no question; `--replace-custom` and the kept-aside copy retire (AD-206)
+
+**MAJOR: the `--replace-custom` flag is removed, and the upgrade no longer asks a yes before it writes a spec-layer
+file.** Before, an edited `scripts/spec-schema.mjs`, `scripts/check-docs-size.mjs` or one of their suites was left as
+it stood, the writes that depended on it waited, and the upgrade asked one yes before it kept the edit under
+`.agent-workflow/kept-aside/` and replaced it. Now the four files follow the rule every other kit script follows: on
+every plain run a body an earlier release shipped is refreshed, any other body is replaced in place and an absent file
+is placed, with no question and no copy kept. An edited file's line reads `differs from every body this kit knows it
+shipped — replaced by the bundled body; an edit meant to last goes in a script or suite of your own under its own name
+in scripts/, or a config the script reads`.
+
+- **The order stays.** The reader pair, then the checker pair, then the spec store root `docs/ai/specs/index.md`,
+  seeded create-only. A write that fails stops every later one, and the step names the files already written.
+- **Nothing waits behind an edit.** The checker pair and the store root no longer wait for a current reader pair or
+  checker. The step never reports `customized-preserved`.
+- **One closing line** after a run that wrote a file: `if a commit hook runs the files written above, they may stop
+  the next commit`.
+- **`--replace-custom` is gone, with no alias.** `ensure-configs.mjs --reconcile --replace-custom …` now stops with
+  `unknown argument`, exit 2, nothing run. The replace block, its command and the upgrade's row 3 yes are gone with it.
+  No migration note is owed: the flag only ever ran as the line the kit printed.
+- **`.agent-workflow/` stays reserved.** No kit tool writes there any more; copies an earlier release kept there are
+  yours, and nothing deletes them.
+- **The texts say the same.** The upgrade mode's spec-layer paragraph and `specs` token list, the `spec-adoption` notes
+  in `references/modes/recommendations.md`, the guide's *Reserved names and channels* (the four spec-layer files now
+  among the files written over), and the header and `--help` of `tools/ensure-configs.mjs`. When the navigator ensure
+  puts back a navigator the project's own checker rejected, its route now reads `the spec layer's write of the bundled
+  modules the project's hook loads, then this step again`.
+
 ## 15.1.0 — the upgrade writes the kit rules file current with no question; the rules mode no longer moves an edit (AD-205)
 
 **`/agent-workflow-kit upgrade` now puts the kit's rules file back to the kit's template, whatever it holds.** Before,

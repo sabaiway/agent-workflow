@@ -1,12 +1,13 @@
-// ensure-specs.test.mjs — the spec-layer ensure as its STATE TABLE: every cell of (reader pair ×
-// checker pair × store root) the op classifies, the ONE conjunction each write admits through, the
-// single run token by precedence, and every fail-closed arm writing nothing (or saying exactly what
-// it had already written). Real temp projects; the fixture bytes are the shipped prior bodies.
+// ensure-specs.test.mjs — the spec-layer ensure by its cells: every plain run writes the four pair files
+// and the store root by the part scripts' rule (a prior refreshed, an edit replaced in place, an absent
+// file placed, the store root seeded create-only) in the write order reader pair, checker pair, store
+// root, with the part's lines and the one hook-run line; the single run token by precedence; and every
+// fail-closed arm writing nothing (or saying exactly what it had already written). Real temp projects;
+// the fixture bytes are the shipped prior bodies.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { WRITE_TOKENS } from './ensure-vocabulary.mjs';
 
 const { PRIOR_FILES, READER_PAIR, CHECKER_PAIR } = await import('./script-priors.mjs');
-const { ensureSpecs, decideWrites } = await import('./ensure-specs.mjs').catch(() => ({}));
-const { SCRIPT_CHANNEL } = await import('./distribution-files/index.mjs').catch(() => ({}));
+const { ensureSpecs } = await import('./ensure-specs.mjs').catch(() => ({}));
+const { SCRIPT_CHANNEL, fileLine, hookLine } = await import('./distribution-files/index.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
@@ -37,8 +38,8 @@ const PRIOR_DIR = {
 };
 const prior = (name) => readFileSync(join(FIXTURES, PRIOR_DIR[name], `${name}.txt`), 'utf8');
 
-// deploy(dir, table) materializes one row of the state table: each script current | prior | custom |
-// absent | wrong-kind, the store root present | absent | wrong-kind.
+// withProject(table, fn) materializes one cell: each script current | prior | custom | absent |
+// wrong-kind, the store root present | absent | wrong-kind.
 const place = (dir, name, state) => {
   const path = join(dir, 'scripts', name);
   if (state === 'absent') return;
@@ -88,97 +89,217 @@ const storeSeeded = (dir) => {
   assert.match(body, new RegExp(`^lastUpdated: ${TODAY}$`, 'm'));
 };
 
-const DIGEST = '0123456789abcdef'.repeat(4);
-const CUSTOM_CHECKER = { reader: ['current', 'current'], checker: ['custom', 'current'] };
-const entryOf = (name, body = CUSTOM) => ({ rel: `scripts/${name}`, sha256: createHash('sha256').update(body).digest('hex'), bytes: Buffer.from(body), channel: SCRIPT_CHANNEL });
-const keptPath = (rel) => `.agent-workflow/kept-aside/${DIGEST.slice(0, 16)}/${rel}`;
-const replacedLine = (rel) => `${rel}: carried an edit — kept aside at ${keptPath(rel)}, then replaced by the bundled body on the user's yes`;
-const bind = (dir) => ({ digest: DIGEST, entries: run(dir, { dryRun: true }).entries });
-const assertRace = (r, first) => {
-  assert.deepEqual([r.failed, r.token, r.lines[0]], [true, 'failed', first]);
-  assert.doesNotMatch(r.lines.join('\n'), /block below|--replace-custom/, 'a race names no block below');
+// The part scripts' lines, written out: a pair file that is not current, the current line, the store
+// root's lines and the conditional (not-accepted) hook-run line.
+const CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
+const SHIPPED = 'matches a body an earlier release shipped';
+const DIFFERS = 'differs from every body this kit knows it shipped';
+const HOOK = 'if a commit hook runs the files written above, they may stop the next commit';
+const DRY_HOOK = 'if a commit hook runs the files named above, writing them may stop the next commit';
+const PARTWAY = 'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back';
+const HEADS = { prior: SHIPPED, custom: DIFFERS, absent: 'absent' };
+const DONE = { prior: ['refreshed', 'refreshed to the bundled one'], custom: ['replaced', 'replaced by the bundled body'], absent: ['placed', 'placed from the bundled scripts'] };
+// tail: 'written' | 'would' | 'refused' | 'stopped'
+const pairLine = (name, state, tail = 'written') => {
+  if (state === 'current') return `scripts/${name}: already the bundled body — nothing written`;
+  const [verb, done] = DONE[state];
+  const end = { written: done, would: `would be ${done}`, refused: `not ${verb}; its write was refused (above)`, stopped: `not ${verb}; the run stopped before it` }[tail];
+  return `scripts/${name}: ${HEADS[state]} — ${end}${state === 'custom' ? `; an edit meant to last goes in ${CHANNEL}` : ''}`;
 };
-describe('spec:distribution-files/S6 a custom spec-layer file is an entry, and its line waits on the yes', () => {
-  for (const [title, checker, name] of [
-    ['a custom checker: its entry, its waiting line and the store-withheld line naming it', ['custom', 'current'], CHECKER[0]],
-    ['a custom checker test alone: its entry, its waiting line and the store-withheld line naming it', ['current', 'custom'], CHECKER[1]],
-  ]) {
-    it(title, () => withProject({ ...CUSTOM_CHECKER, checker }, (dir, r = run(dir), rel = `scripts/${name}`) => {
-      assert.deepEqual([r.entries, r.token, 'hookRun' in r.entries[0]], [[entryOf(name)], 'customized-preserved', false]);
-      assert.ok(r.lines.includes(`${rel}: carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below); the writes that depend on it wait`), r.lines.join('\n'));
-      assert.ok(r.lines.includes(`${STORE}: not seeded — it waits on the edited ${rel} (a body this kit did not ship): an older or edited checker renders the spec store row by row and reds the hook's index check, so the store root waits for a current checker pair`));
-      assert.doesNotMatch(r.lines.join('\n'), /--replace-custom|node /, 'the op prints no replace line');
-    }));
-  }
-  it('a failed outcome after a completed survey carries the entry; a survey refusal carries none', () => {
-    withProject({ reader: ['absent', 'current'], checker: ['custom', 'current'] }, (dir) => {
-      const r = run(dir, { deps: { today: TODAY, link: () => { throw Object.assign(new Error('EPERM: refused'), { code: 'EPERM' }); } } });
-      assert.match(r.lines[0], /^write-refused — scripts\/spec-schema\.mjs: /);
-      assert.deepEqual(r.entries, [entryOf(CHECKER[0])]);
-    });
-    for (const [table, kitRoot, cause] of [
-      [{ reader: ['wrong-kind', 'current'], checker: ['custom', 'current'] }, KIT_ROOT, 'wrong-node-kind'],
-      [CUSTOM_CHECKER, mkdtempSync(join(tmpdir(), 'ensure-specs-empty-')), 'bundle-unreadable'],
-    ]) {
-      withProject(table, (dir) => {
-        const r = run(dir, { kitRoot });
-        assert.match(r.lines[0], new RegExp(`^${cause} — `));
-        assert.equal('entries' in r, false);
-      });
-    }
-  });
-  it('the dry run gives the lines and entries of a real run of a twin, writes nothing, and stays customized-preserved', () => {
-    withProject(CUSTOM_CHECKER, (dir) => withProject(CUSTOM_CHECKER, (other) => {
-      const before = snapshot(dir);
-      const [dry, real] = [run(dir, { dryRun: true }), run(other)];
-      assert.deepEqual(snapshot(dir), before);
-      assert.deepEqual([dry.lines, dry.entries, dry.token], [real.lines, real.entries, real.token]);
-      assert.deepEqual([dry.entries, dry.token], [[entryOf(CHECKER[0])], 'customized-preserved']);
-    }));
-  });
+const STORE_LINES = {
+  present: `${STORE}: already present — preserved byte-for-byte, nothing written`,
+  written: `${STORE}: created from the bundled template (today's date rendered)`,
+  would: `${STORE}: absent — would be created from the bundled template`,
+  stopped: `${STORE}: absent — not created`,
+};
+const statesOf = (table) => [...READER.map((n, i) => [n, table.reader?.[i] ?? 'absent']), ...CHECKER.map((n, i) => [n, table.checker?.[i] ?? 'absent'])];
+// Every line of a run over `table` that lands every write (or, dry, would).
+const linesFor = (table, dry = false) => {
+  const states = statesOf(table);
+  const writes = states.some(([, s]) => s !== 'current') || table.store !== 'present';
+  return [...states.map(([n, s]) => pairLine(n, s, dry ? 'would' : 'written')), STORE_LINES[table.store === 'present' ? 'present' : dry ? 'would' : 'written'], ...(writes ? [dry ? DRY_HOOK : HOOK] : [])];
+};
+const tokenFor = (table, dry = false) => {
+  const states = statesOf(table).map(([, s]) => s);
+  if (states.includes('absent') || table.store !== 'present') return dry ? 'would-seed' : 'seeded';
+  return states.some((s) => s !== 'current') ? (dry ? 'would-refresh' : 'refreshed') : 'already-present';
+};
+// The retired words, judged by stems: no line says withheld, customized, kept aside, the user's yes,
+// the block below or that the user edited a file; no pair line says preserved.
+const RETIRED = /withh|customi|aside|\byes\b|\bblock\b|\bedited\b|carr(?:ies|ied) an edit/i;
+const assertNoRetired = (r) => {
+  assert.deepEqual(r.lines.filter((l) => RETIRED.test(l) || (l.startsWith('scripts/') && /preserv/i.test(l))), [], r.lines.join('\n'));
+  assert.equal('entries' in r, false, 'no outcome carries an entries field');
+};
+
+// A recording writer: every write's temp file passes through writeFile, so its target is recorded in
+// order; the `refuseAt`-th throws EACCES before it touches the tree, and `before` runs ahead of each.
+const recorder = (dir, { refuseAt = 0, before = () => {} } = {}, order = []) => ({ order, deps: {
+  today: TODAY,
+  writeFile: (p, body, opts) => {
+    if (order.push(relative(dir, String(p)).replace(/\.[0-9a-f]+\.tmp$/, '')) === refuseAt) throw Object.assign(new Error('EACCES: refused'), { code: 'EACCES' });
+    before(order.length);
+    return writeFileSync(p, body, opts);
+  },
+} });
+// The create-only link finds `name` already there with `bytes`.
+const appearing = (name, bytes) => ({
+  today: TODAY,
+  link: (from, to) => {
+    if (!String(to).endsWith(name)) return linkSync(from, to);
+    writeFileSync(to, bytes);
+    throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+  },
 });
-describe('spec:distribution-files/S7 under the bound entries the op replaces every custom file, or stops race-unresolved', () => {
-  it('every custom file becomes the bundled body by rename, a prior refreshes, an absent file and the store root seed', () => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'custom'] }, (dir) => {
-    const renamed = [];
-    const r = run(dir, { replace: bind(dir), deps: { today: TODAY, rename: (from, to) => { renamed.push(to); return renameSync(from, to); } } });
-    assert.equal(r.token, 'seeded', r.lines.join('\n'));
+const isFileLine = (l) => l.startsWith('scripts/') || l.startsWith(`${STORE}:`);
+
+describe('spec:distribution-files/S1 the write order and the failures of one plain run', () => {
+  it('prior, edited and absent pair files and an absent store root: the reader pair, then the checker pair, then the store root', () => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'prior'] }, (dir) => {
+    const { order, deps } = recorder(dir);
+    const r = run(dir, { deps });
+    assert.deepEqual([order, r.token], [[...READER, ...CHECKER].map((n) => `scripts/${n}`).concat(STORE), 'seeded'], r.lines.join('\n'));
     allCurrent(dir);
     storeSeeded(dir);
-    for (const line of [`scripts/${READER[0]}: matches a body an earlier release shipped — refreshed to the bundled one`, `scripts/${READER[1]}: copied from the bundled scripts`]) assert.ok(r.lines.includes(line), line);
-    for (const rel of CHECKER.map((name) => `scripts/${name}`)) {
-      assert.ok(r.lines.includes(replacedLine(rel)), r.lines.join('\n'));
-      assert.ok(renamed.includes(join(dir, rel)), `${rel} is published by the atomic rename`);
+  }));
+  it('a write refused at the second file: write-refused, the first written and kept, PARTWAY counting it, every later file not refreshed, replaced or placed, no store root', () => withProject({ reader: ['prior', 'absent'], checker: ['custom', 'prior'] }, (dir) => {
+    const r = run(dir, { deps: recorder(dir, { refuseAt: 2 }).deps });
+    assert.deepEqual({ token: r.token, lines: r.lines }, { token: 'failed', lines: [`write-refused — scripts/${READER[1]}: EACCES: refused`, pairLine(READER[0], 'prior'), pairLine(READER[1], 'absent', 'refused'),
+      pairLine(CHECKER[0], 'custom', 'stopped'), pairLine(CHECKER[1], 'prior', 'stopped'), STORE_LINES.stopped, HOOK, PARTWAY] });
+    assert.deepEqual([read(dir, `scripts/${READER[0]}`), read(dir, `scripts/${READER[1]}`), read(dir, `scripts/${CHECKER[0]}`), read(dir, `scripts/${CHECKER[1]}`), existsSync(join(dir, STORE))], [bundle(READER[0]), null, CUSTOM, prior(CHECKER[1]), false]);
+    assertNoRetired(r);
+  }));
+  it('a write refused at the store root: write-refused naming it, the pair file written and kept, the store line claims no reason, the hook-run line and PARTWAY', () => withProject({ reader: ['prior', 'current'], checker: ['current', 'current'] }, (dir) => {
+    const r = run(dir, { deps: recorder(dir, { refuseAt: 2 }).deps });
+    assert.deepEqual({ token: r.token, lines: r.lines }, { token: 'failed', lines: [`write-refused — ${STORE}: EACCES: refused`, pairLine(READER[0], 'prior'), pairLine(READER[1], 'current'), pairLine(CHECKER[0], 'current'), pairLine(CHECKER[1], 'current'), STORE_LINES.stopped, HOOK, PARTWAY] });
+    assert.deepEqual([read(dir, `scripts/${READER[0]}`), existsSync(join(dir, STORE))], [bundle(READER[0]), false]);
+    assertNoRetired(r);
+  }));
+  it('beside the absent store root, an unreadable store template is template-unreadable with nothing written, the due pair files included', () => withProject({ reader: ['prior', 'custom'], checker: ['absent', 'prior'] }, (dir) => {
+    const kit = mkdtempSync(join(tmpdir(), 'ensure-specs-kit-'));
+    try {
+      mkdirSync(join(kit, 'references', 'scripts'), { recursive: true });
+      mkdirSync(join(kit, 'references', 'templates', 'specs'), { recursive: true });
+      for (const name of [...READER, ...CHECKER]) writeFileSync(join(kit, 'references', 'scripts', name), bundle(name));
+      writeFileSync(join(kit, 'references', 'templates', 'specs', 'index.md'), '---\nowner: {{OWNER}}\n---\n');
+      const before = snapshot(dir);
+      const r = run(dir, { kitRoot: kit });
+      assert.match(r.lines[0] ?? '', /^template-unreadable — docs\/ai\/specs\/index\.md: /, r.lines.join('\n'));
+      assert.deepEqual([r.token, snapshot(dir), r.lines.filter((l) => l === HOOK)], ['failed', before, []]);
+    } finally {
+      rmSync(kit, { recursive: true, force: true });
     }
   }));
-  it('with nothing to seed the op reports refreshed', () => withProject({ ...CUSTOM_CHECKER, store: 'present' }, (dir) => {
-    assert.equal(run(dir, { replace: bind(dir) }).token, 'refreshed');
+  it('an edited or prior pair file changed after the survey and before its own write still ends the bundled bytes (last writer wins)', () => withProject({ reader: ['custom', 'prior'], checker: ['prior', 'custom'], store: 'present' }, (dir) => {
+    const before = (n) => { if (n === 1) for (const name of [READER[1], CHECKER[1]]) writeFileSync(join(dir, 'scripts', name), '// changed after the survey\n'); };
+    const r = run(dir, { deps: recorder(dir, { before }).deps });
+    assert.deepEqual([r.token, r.failed], ['refreshed', false], r.lines.join('\n'));
     allCurrent(dir);
   }));
-  for (const [title, name, bytes, entries, empty] of [
-    ['a file turned custom after the bind', CHECKER[1], CUSTOM, [entryOf(CHECKER[0]), entryOf(CHECKER[1])]],
-    ['a bound file whose bytes moved after the bind', CHECKER[0], '// edited again\n', [entryOf(CHECKER[0], '// edited again\n')]],
-    ['a file found custom under an empty bound list', CHECKER[0], CUSTOM, [entryOf(CHECKER[0])], true],
-  ]) {
-    it(`${title} is race-unresolved with nothing written, its surveyed entries carried`, () => withProject(CUSTOM_CHECKER, (dir, replace = empty ? { digest: DIGEST, entries: [] } : bind(dir)) => {
-      writeFileSync(join(dir, 'scripts', name), bytes);
+  it('an absent pair file that appears with the bundled body before its create-only write stands, and the later writes proceed', () => withProject({ checker: ['prior', 'prior'] }, (dir) => {
+    const r = run(dir, { deps: appearing(READER[0], bundle(READER[0])) });
+    assert.equal(r.token, 'seeded', r.lines.join('\n'));
+    assert.ok(r.lines.includes(`scripts/${READER[0]}: appeared while this run was placing it — the bundled body stands, nothing written`), r.lines.join('\n'));
+    allCurrent(dir);
+    storeSeeded(dir);
+  }));
+  it('one that appears with other bytes is race-unresolved: it stands, nothing further written, the later files named not placed, not refreshed and not created', () => withProject({ checker: ['prior', 'prior'] }, (dir) => {
+    const r = run(dir, { deps: appearing(READER[0], CUSTOM) });
+    assert.match(r.lines[0], /^race-unresolved — scripts\/spec-schema\.mjs: /);
+    assert.deepEqual([r.token, read(dir, `scripts/${READER[0]}`), read(dir, `scripts/${READER[1]}`), read(dir, `scripts/${CHECKER[0]}`), existsSync(join(dir, STORE))], ['failed', CUSTOM, null, prior(CHECKER[0]), false]);
+    for (const line of [pairLine(READER[1], 'absent', 'stopped'), pairLine(CHECKER[0], 'prior', 'stopped'), pairLine(CHECKER[1], 'prior', 'stopped'), STORE_LINES.stopped]) assert.ok(r.lines.includes(line), `${line}\n${r.lines.join('\n')}`);
+    assert.doesNotMatch(r.lines.join('\n'), /— (refreshed|placed|created) /, 'no line claims a write that did not happen');
+  }));
+});
+
+describe('spec:distribution-files/S2 the hook-run line and the lines of the part scripts', () => {
+  const CONVERGED = { reader: ['current', 'current'], checker: ['current', 'current'], store: 'present' };
+  // → [the plain form's count, the dry form's count], each after every file line.
+  const hookCounts = (r) => {
+    const last = r.lines.findLastIndex(isFileLine);
+    const at = r.lines.flatMap((l, i) => (l === HOOK || l === DRY_HOOK ? [i] : []));
+    assert.ok(at.every((i) => i > last), `the hook-run line follows every file line:\n${r.lines.join('\n')}`);
+    return [HOOK, DRY_HOOK].map((form) => r.lines.filter((l) => l === form).length);
+  };
+  it('once on a run that wrote, the store root alone included, failed or not; none on one that wrote none; the would-be form once on a dry run that would write', () => {
+    const rows = [
+      ['a plain run that wrote a pair file', { ...CONVERGED, reader: ['prior', 'current'] }, () => ({}), [1, 0]],
+      ['a plain run that wrote the store root alone', { ...CONVERGED, store: 'absent' }, () => ({}), [1, 0]],
+      ['a failed run after one write', { ...CONVERGED, reader: ['prior', 'absent'] }, (dir) => ({ deps: recorder(dir, { refuseAt: 2 }).deps }), [1, 0]],
+      ['a failed run before any write', { ...CONVERGED, reader: ['prior', 'absent'] }, (dir) => ({ deps: recorder(dir, { refuseAt: 1 }).deps }), [0, 0]],
+      ['a plain run whose one placement found the store root standing', { ...CONVERGED, store: 'absent' }, () => ({ deps: appearing('index.md', '# theirs\n') }), [0, 0]],
+      ['a plain run that wrote none', CONVERGED, () => ({}), [0, 0]],
+      ['a dry run that would write', { ...CONVERGED, checker: ['custom', 'current'] }, () => ({ dryRun: true }), [0, 1]],
+      ['a dry run that would write none', CONVERGED, () => ({ dryRun: true }), [0, 0]],
+    ];
+    const got = rows.map(([label, table, extra]) => [label, withProject(table, (dir) => hookCounts(run(dir, extra(dir))))]);
+    assert.deepEqual(got, rows.map(([label, , , want]) => [label, want]));
+  });
+  it("every line of a pair file that is not current is the index's fileLine, an edited one naming SCRIPT_CHANNEL, and the hook-run line is the index's hookLine", () => {
+    const table = { reader: ['prior', 'absent'], checker: ['custom', 'current'], store: 'present' };
+    const file = (name, state) => ({ rel: `scripts/${name}`, name, state });
+    for (const dryRun of [false, true]) withProject(table, (dir) => {
+      const fate = dryRun ? undefined : 'written';
+      assert.deepEqual(run(dir, { dryRun }).lines, [fileLine(file(READER[0], 'prior'), fate, dryRun), fileLine(file(READER[1], 'absent'), fate, dryRun), fileLine(file(CHECKER[0], 'custom'), fate, dryRun),
+        pairLine(CHECKER[1], 'current'), STORE_LINES.present, hookLine(false, dryRun)]);
+    });
+    assert.deepEqual([hookLine(false, false), hookLine(false, true), SCRIPT_CHANNEL, fileLine(file(CHECKER[0], 'custom'), 'written', false).endsWith(`; an edit meant to last goes in ${SCRIPT_CHANNEL}`)], [HOOK, DRY_HOOK, CHANNEL, true]);
+  });
+});
+
+// The five cells a custom file once withheld: the rule writes every one of them on one plain run.
+const FORMERLY_WITHHELD = [
+  ['a custom checker .mjs beside a prior test', { reader: ['current', 'current'], checker: ['custom', 'prior'] }],
+  ['a custom reader .mjs before a prior checker pair', { reader: ['custom', 'current'], checker: ['prior', 'prior'] }],
+  ['a custom reader test beside an absent reader .mjs', { reader: ['absent', 'custom'], checker: ['absent', 'prior'] }],
+  ['a custom checker beside a present store root', { reader: ['current', 'current'], checker: ['custom', 'current'], store: 'present' }],
+  ['a custom reader test beside a prior reader .mjs', { reader: ['prior', 'custom'], checker: ['prior', 'prior'] }],
+];
+describe('spec:distribution-files/S6 the rule over every cell a custom file once withheld', () => {
+  for (const [label, table] of FORMERLY_WITHHELD) {
+    it(`${label}: one plain run leaves every pair file the bundled bytes, the edit's line naming its channel, the store root seeded where absent`, () => withProject(table, (dir) => {
+      const r = run(dir);
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines }, { token: tokenFor(table), failed: false, lines: linesFor(table) });
+      allCurrent(dir);
+      if (table.store === 'present') assert.equal(read(dir, STORE), '---\nkind: index\n---\n# mine\n', 'a present store root stands byte for byte');
+      else storeSeeded(dir);
+      assertNoRetired(r);
+    }));
+  }
+});
+
+describe('spec:distribution-files/S7 the dry run, the quiet cells and the token', () => {
+  const DRY = [{}, ...FORMERLY_WITHHELD.map(([, table]) => table), { reader: ['prior', 'prior'], checker: ['current', 'current'], store: 'present' }, { reader: ['current', 'current'], checker: ['current', 'current'] }];
+  for (const table of DRY) {
+    it(`${JSON.stringify(table)}: the dry run gives the plain run's lines in their would-be forms and writes nothing`, () => withProject(table, (dir) => withProject(table, (twin) => {
       const before = snapshot(dir);
-      const r = run(dir, { replace });
-      assertRace(r, 'race-unresolved — the edited spec-layer files are not the set the yes was given for (another set or other bytes), so nothing was written');
-      assert.deepEqual([snapshot(dir), r.entries], [before, entries]);
-    }));
+      const [dry, real] = [run(dir, { dryRun: true }), run(twin)];
+      assert.deepEqual([dry.token, dry.lines, real.lines], [tokenFor(table, true), linesFor(table, true), linesFor(table)]);
+      assert.equal(WRITE_TOKENS.includes(dry.token), false);
+      assert.deepEqual(snapshot(dir), before);
+      assertNoRetired(dry);
+    })));
   }
-  for (const [moved, move, left] of [['changed', (p) => writeFileSync(p, '// moved\n'), '// moved\n'], ['removed', (p) => rmSync(p), null]]) {
-    it(`a bound file ${moved} before its own write call stops the op: the earlier replace stands and is reported`, () => withProject({ reader: ['current', 'current'], checker: ['custom', 'custom'] }, (dir) => {
-      const [first, second] = CHECKER.map((name) => `scripts/${name}`);
-      let calls = 0;
-      const writeFile = (p, body, opts) => { if (calls++ === 0) move(join(dir, second)); return writeFileSync(p, body, opts); };
-      const r = run(dir, { replace: bind(dir), deps: { today: TODAY, writeFile } });
-      assertRace(r, `race-unresolved — ${second}: changed after this run read it — left as it stands and nothing further written`);
-      assert.deepEqual([read(dir, first), read(dir, second)], [bundle(CHECKER[0]), left]);
-      for (const line of [replacedLine(first), `${second}: carries an edit — not replaced; its copy kept aside at ${keptPath(second)} stays`, 'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back']) assert.ok(r.lines.includes(line), line);
-      assert.equal(existsSync(join(dir, STORE)), false);
-    }));
-  }
+  it('a converged tree: already-present, nothing written, no hook-run line', () => withProject({ reader: ['current', 'current'], checker: ['current', 'current'], store: 'present' }, (dir) => {
+    const before = snapshot(dir);
+    for (const dryRun of [false, true]) assert.deepEqual(run(dir, { dryRun }), { op: 'specs', token: 'already-present', failed: false, lines: [...[...READER, ...CHECKER].map((n) => pairLine(n, 'current')), STORE_LINES.present] });
+    assert.deepEqual(snapshot(dir), before);
+  }));
+  it('one token by adjacent cells: failed over seeded, seeded over refreshed, refreshed over already-present, the dry forms, skipped-no-node-evidence unchanged; never customized-preserved', () => {
+    const present = { reader: ['current', 'current'], checker: ['current', 'current'], store: 'present' };
+    const rows = [
+      ['failed over seeded: a placement refused after a refresh', { ...present, reader: ['prior', 'absent'] }, (dir) => ({ deps: recorder(dir, { refuseAt: 2 }).deps }), 'failed'],
+      ['seeded over refreshed: an absent file placed beside a replaced edit', { ...present, reader: ['current', 'absent'], checker: ['custom', 'current'] }, () => ({}), 'seeded'],
+      ['seeded by the store root alone', { ...present, store: 'absent' }, () => ({}), 'seeded'],
+      ['refreshed by a replaced edit alone', { ...present, checker: ['custom', 'current'] }, () => ({}), 'refreshed'],
+      ['refreshed over already-present', { ...present, reader: ['prior', 'current'] }, () => ({}), 'refreshed'],
+      ['already-present', present, () => ({}), 'already-present'],
+      ['would-seed in the place of seeded', { ...present, reader: ['current', 'absent'], checker: ['custom', 'current'] }, () => ({ dryRun: true }), 'would-seed'],
+      ['would-refresh in the place of refreshed', { ...present, checker: ['custom', 'current'] }, () => ({ dryRun: true }), 'would-refresh'],
+    ];
+    const got = rows.map(([label, table, extra]) => [label, withProject(table, (dir) => run(dir, extra(dir)).token)]);
+    assert.deepEqual(got, rows.map(([label, , , token]) => [label, token]));
+    assert.equal(withProject({}, (dir) => run(dir).token, { node: false }), 'skipped-no-node-evidence');
+  });
 });
 
 // ── the table: one row per cell class, the token and the tree after ───────────────────────────────
@@ -192,18 +313,8 @@ const ROWS = [
   { label: 'the 4.6.x deployment: reader pair on the 4.6.0 bodies, checker current, store present', table: { reader: ['prior', 'prior'], checker: ['current', 'current'], store: 'present' }, token: 'refreshed', after: allCurrent },
   { label: 'reader prior + checker prior + store absent: the whole chain refreshes, then the store seeds', table: { reader: ['prior', 'prior'], checker: ['prior', 'prior'] }, token: 'seeded', after: (dir) => { allCurrent(dir); storeSeeded(dir); } },
 ];
-// The withheld cells: a custom file preserves itself and withholds every write that depends on it.
-// The token still follows the ONE precedence — a seed that was admitted (nothing depends on it) is
-// `seeded`; only a run that wrote nothing behind a custom file is `customized-preserved`.
-const WITHHELD_ROWS = [
-  { label: 'a custom checker .mjs beside a prior test: the pair is preserved, the prior test is NOT refreshed, no store root', table: { reader: ['current', 'current'], checker: ['custom', 'prior'] }, token: 'customized-preserved', seeded: [], leftAsIs: ['scripts/check-docs-size.test.mjs'] },
-  { label: 'a custom reader .mjs: the checker refresh and the store wait', table: { reader: ['custom', 'current'], checker: ['prior', 'prior'] }, token: 'customized-preserved', seeded: [], leftAsIs: ['scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'] },
-  { label: 'a custom reader test beside an absent reader .mjs: the .mjs is still seeded (create-only), so the token is seeded', table: { reader: ['absent', 'custom'], checker: ['absent', 'prior'] }, token: 'seeded', seeded: ['scripts/spec-schema.mjs'], leftAsIs: ['scripts/check-docs-size.test.mjs'], notCopied: ['scripts/check-docs-size.mjs'] },
-  { label: 'a custom checker beside a store root that already exists: both preserved, the root line says present, not withheld', table: { reader: ['current', 'current'], checker: ['custom', 'current'], store: 'present' }, token: 'customized-preserved', seeded: [], leftAsIs: [] },
-  { label: 'a custom reader test beside a PRIOR reader .mjs: the pair is preserved whole, every refresh and the store wait', table: { reader: ['prior', 'custom'], checker: ['prior', 'prior'] }, token: 'customized-preserved', seeded: [], leftAsIs: ['scripts/spec-schema.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'] },
-];
 
-describe('the state table — admitted writes and the run token', () => {
+describe('the state table — the writes and the run token', () => {
   for (const row of ROWS) {
     it(row.label, () => {
       withProject(row.table, (dir) => {
@@ -218,136 +329,10 @@ describe('the state table — admitted writes and the run token', () => {
     });
   }
 
-  for (const row of WITHHELD_ROWS) {
-    it(row.label, () => {
-      withProject(row.table, (dir) => {
-        const before = snapshot(dir);
-        const r = run(dir);
-        assert.equal(r.token, row.token, r.lines.join('\n'));
-        assert.equal(r.failed, false);
-        // Everything but the admitted seeds is byte-identical: the custom body, the prior checker
-        // that was NOT refreshed behind it, and no store root at all.
-        const after = snapshot(dir);
-        for (const [rel, bytes] of before) assert.equal(after.get(rel), bytes, `${rel} preserved`);
-        assert.deepEqual([...after.keys()].filter((rel) => !before.has(rel)).sort(), row.seeded, 'exactly the admitted seeds landed');
-        for (const rel of row.seeded) assert.equal(after.get(rel), bundle(rel.split('/').pop()), `${rel} is the bundled body`);
-        const storePresent = row.table.store === 'present';
-        assert.equal(existsSync(join(dir, STORE)), storePresent, 'no store root is seeded behind a withheld checker');
-        const text = r.lines.join('\n');
-        assert.match(text, /left as it stands until the user's yes keeps it aside/);
-        assert.equal(/not seeded/.test(text), !storePresent, 'the root line says withheld only when the root is absent');
-        assert.equal(/already present — preserved/.test(text), storePresent);
-        // The lines describe what HAPPENED: a prior file the withhold left alone is never called
-        // refreshed, an absent file it left alone is never called copied.
-        for (const rel of row.leftAsIs) assert.match(text, new RegExp(`^${rel}: matches a body an earlier release shipped — left as is`, 'm'));
-        for (const rel of row.notCopied ?? []) assert.match(text, new RegExp(`^${rel}: absent — not copied this run`, 'm'));
-        assert.equal(/refreshed to the bundled one/.test(text), false, 'no line claims a refresh that did not happen');
-        assert.equal(r.lines.filter((l) => /: copied from the bundled scripts/.test(l)).length, row.seeded.length);
-      });
-    });
-  }
-
-  it('the pure decision: a PRIOR reader refreshes ahead of the checker pair, and the store then seeds', () => {
-    const reader = [{ state: 'prior' }, { state: 'current' }];
-    const checker = [{ state: 'prior' }, { state: 'prior' }];
-    const d = decideWrites({ reader, checker, store: { state: 'absent' } });
-    assert.deepEqual(d, {
-      writes: [
-        { kind: 'refresh', file: reader[0] },
-        { kind: 'refresh', file: checker[0] },
-        { kind: 'refresh', file: checker[1] },
-        { kind: 'store' },
-      ],
-      withheld: false,
-    });
-  });
-
-  it('the withhold is DIRECTIONAL: a PRIOR reader refreshes beside a custom checker, which holds back only its own pair and the store', () => {
-    withProject({ reader: ['prior', 'prior'], checker: ['custom', 'prior'] }, (dir) => {
-      const r = run(dir);
-      assert.equal(r.token, 'refreshed', r.lines.join('\n'));
-      for (const name of READER) assert.equal(read(dir, `scripts/${name}`), bundle(name), `${name} refreshed`);
-      assert.equal(read(dir, 'scripts/check-docs-size.mjs'), CUSTOM, 'the custom checker is preserved');
-      assert.equal(read(dir, 'scripts/check-docs-size.test.mjs'), prior('check-docs-size.test.mjs'), 'the prior checker test is NOT refreshed behind it');
-      assert.equal(existsSync(join(dir, STORE)), false, 'no store root behind a withheld checker');
-    });
-  });
-
-  it('the pure decision: a custom reader test withholds even the PRIOR reader .mjs refresh (pair discipline)', () => {
-    const d = decideWrites({
-      reader: [{ state: 'prior' }, { state: 'custom' }],
-      checker: [{ state: 'absent' }, { state: 'prior' }],
-      store: { state: 'absent' },
-    });
-    assert.deepEqual(d, { writes: [], withheld: true });
-  });
-
   it("the spec-layer pairs are script-priors.mjs's READER_PAIR and CHECKER_PAIR: the catalog domain but the scripts family", () => {
     const family = 'install-git-hooks.mjs install-git-hooks.test.mjs install-git-hooks-repo-exec.test.mjs _expect-shim.mjs archive-caps.mjs archive-caps.test.mjs archive-changelog.mjs archive-changelog.test.mjs archive-conservation.test.mjs archive-decisions.mjs archive-decisions.test.mjs archive-issues.mjs archive-issues.test.mjs archiver-structure.test.mjs check-docs-size-cli.test.mjs check-docs-size-ensure.test.mjs markdown-blocks.mjs markdown-blocks.test.mjs migrate-gates-branches.test.mjs migrate-gates.mjs migrate-gates.test.mjs'.split(' ');
     assert.deepEqual([READER_PAIR, CHECKER_PAIR], [READER, CHECKER]);
     assert.deepEqual([...READER_PAIR, ...CHECKER_PAIR].sort(), PRIOR_FILES.filter((file) => !family.includes(file)).sort());
-  });
-});
-
-describe('--dry-run — only would-* tokens, a byte-identical tree', () => {
-  const DRY = [
-    [{}, 'would-seed'],
-    [{ reader: ['current', 'current'], checker: ['prior', 'prior'], store: 'present' }, 'would-refresh'],
-    [{ reader: ['prior', 'prior'], checker: ['current', 'current'], store: 'present' }, 'would-refresh'],
-    [{ reader: ['prior', 'prior'], checker: ['custom', 'current'] }, 'would-refresh'],
-    [{ reader: ['current', 'current'], checker: ['custom', 'prior'] }, 'customized-preserved'],
-    [{ reader: ['absent', 'custom'], checker: ['prior', 'prior'] }, 'would-seed'],
-    [{ reader: ['current', 'current'], checker: ['current', 'current'], store: 'present' }, 'already-present'],
-  ];
-  for (const [table, token] of DRY) {
-    it(`${JSON.stringify(table)} -> ${token}`, () => {
-      withProject(table, (dir) => {
-        const before = snapshot(dir);
-        const r = run(dir, { dryRun: true });
-        assert.equal(r.token, token, r.lines.join('\n'));
-        assert.equal(WRITE_TOKENS.includes(r.token), false);
-        assert.deepEqual(snapshot(dir), before);
-        assert.doesNotMatch(r.lines.join('\n'), /— (copied|refreshed|created) /, 'no line claims a write');
-        if (token === 'would-seed' && table.checker) {
-          assert.match(r.lines.join('\n'), /spec-schema\.mjs: absent — would be copied/);
-          assert.match(r.lines.join('\n'), /check-docs-size\.mjs: matches a body an earlier release shipped — left as is/, 'a withheld refresh is not promised');
-        }
-      });
-    });
-  }
-});
-
-describe('the create-only race — a file that appears under the seed is re-proven before anything depends on it', () => {
-  const appearing = (name, bytes) => ({
-    today: TODAY,
-    link: (from, to) => {
-      if (!String(to).endsWith(name)) return linkSync(from, to);
-      writeFileSync(to, bytes);
-      throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
-    },
-  });
-
-  it('a reader that appears with the bundled body stands, and the dependent writes proceed', () => {
-    withProject({ checker: ['prior', 'prior'] }, (dir) => {
-      const r = ensureSpecs({ cwd: dir, kitRoot: KIT_ROOT, deps: appearing('spec-schema.mjs', bundle('spec-schema.mjs')) });
-      assert.equal(r.token, 'seeded', r.lines.join('\n'));
-      assert.match(r.lines.join('\n'), /spec-schema\.mjs: appeared while this run was seeding it — the bundled body stands/);
-      allCurrent(dir);
-      storeSeeded(dir);
-    });
-  });
-
-  it('a reader that appears with OTHER bytes is race-unresolved: the checker is left alone, no store root, nothing claimed', () => {
-    withProject({ checker: ['prior', 'prior'] }, (dir) => {
-      const r = ensureSpecs({ cwd: dir, kitRoot: KIT_ROOT, deps: appearing('spec-schema.mjs', CUSTOM) });
-      assert.equal(r.token, 'failed');
-      assert.match(r.lines[0], /^race-unresolved — scripts\/spec-schema\.mjs: appeared while this run was seeding it and does not carry the bundled body/);
-      assert.equal(read(dir, 'scripts/spec-schema.mjs'), CUSTOM, 'the appeared file is never overwritten');
-      assert.equal(read(dir, 'scripts/check-docs-size.mjs'), prior('check-docs-size.mjs'), 'the checker refresh did not run behind it');
-      assert.equal(existsSync(join(dir, STORE)), false);
-      assert.match(r.lines.join('\n'), /check-docs-size\.mjs: matches a body an earlier release shipped — left as is; the run stopped before it/);
-      assert.doesNotMatch(r.lines.join('\n'), /— (copied|refreshed|created) /, 'no line claims a write that did not happen');
-    });
   });
 });
 
@@ -451,26 +436,6 @@ describe('fail-closed arms', () => {
       });
     });
   }
-
-  it('a write refused partway keeps the lines it had, names what landed, and the re-run converges', () => {
-    withProject({ checker: ['prior', 'prior'] }, (dir) => {
-      let links = 0;
-      const deps = { today: TODAY, link: (from, to) => { if (links++ === 0) return linkSync(from, to); throw Object.assign(new Error('EPERM: refused'), { code: 'EPERM' }); } };
-      const r = ensureSpecs({ cwd: dir, kitRoot: KIT_ROOT, deps });
-      assert.equal(r.token, 'failed');
-      assert.match(r.lines[0], /^write-refused — scripts\/spec-schema\.test\.mjs: /);
-      assert.equal(read(dir, 'scripts/spec-schema.mjs'), bundle('spec-schema.mjs'), 'the first seed really landed');
-      assert.equal(read(dir, 'scripts/check-docs-size.mjs'), prior('check-docs-size.mjs'), 'the checker was not touched after the stop');
-      assert.match(r.lines.join('\n'), /stopped PARTWAY — the 1 file\(s\) named above/);
-      assert.match(r.lines.join('\n'), /spec-schema\.mjs: copied from the bundled scripts/, 'the landed seed is named');
-      assert.match(r.lines.join('\n'), /check-docs-size\.mjs: matches a body an earlier release shipped — left as is; the run stopped before it/);
-      assert.match(r.lines.join('\n'), /index\.md: absent — not created; the run stopped before it/);
-      const again = run(dir);
-      assert.equal(again.token, 'seeded', again.lines.join('\n'));
-      allCurrent(dir);
-      storeSeeded(dir);
-    });
-  });
 
   it('a refresh refused by the atomic core is write-refused with nothing else claimed', () => {
     withProject({ reader: ['current', 'current'], checker: ['prior', 'prior'], store: 'present' }, (dir) => {

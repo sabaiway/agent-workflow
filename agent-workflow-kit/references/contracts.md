@@ -45,7 +45,7 @@ diverge:
 
 The kit's OWN footprint (`KIT_OWN_PATHS`) — `AGENTS.md`, `CLAUDE.md`, `docs/ai/` (subsumes the stamp), the added `scripts/*.mjs`, `docs/plans/`, `.claude/settings.local.json`, `.claude/settings.json` (hidden-only — visible mode commits it), and `.mcp.json` (the `mcp` mode's registration; hidden-only for the same reason, and it carries an absolute machine path) — is always a candidate in hidden mode.
 
-`.agent-workflow/` is the family's reserved folder. Before an upgrade replaces a spec-layer file the user edited (`scripts/spec-schema.mjs`, `scripts/spec-schema.test.mjs`, `scripts/check-docs-size.mjs`, `scripts/check-docs-size.test.mjs`), it keeps the edit there, unchanged, at `.agent-workflow/kept-aside/<16 hex>/<path>`; every other kit script is written over with no copy kept. The folder's own `.gitignore` (`*`) keeps git from seeing the copies in either visibility mode. The copies are the user's, outside the kit's own paths: no kit tool overwrites, deletes or hides them. The kit's literal search never walks into the reserved `.agent-workflow` folder, at any depth, unless that folder or a path inside it is named as a target, and the plan-shape checks never walk into it, so an unnamed kept-aside copy never stands beside the live file in their results.
+`.agent-workflow/` is the family's reserved folder. No kit tool writes there: every kit script, the spec layer's four pair files included, is written over with no copy kept. The copies an earlier release kept there are the user's, outside the kit's own paths: no kit tool overwrites, deletes or hides them, and the folder's own `.gitignore` (`*`) an earlier release wrote keeps git from seeing them in either visibility mode. The kit's literal search never walks into the reserved `.agent-workflow` folder, at any depth, unless that folder or a path inside it is named as a target, and the plan-shape checks never walk into it, so an unnamed copy there never stands beside the live file in their results.
 
 Not in this version: a fully-external hidden mode (artifacts relocated outside the repo tree).
 Deferred to a later release + migration.
@@ -94,10 +94,10 @@ On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, def
 ## Reserved names and channels
 
 Every name the kit bundles and writes over on an upgrade is the kit's, and an edit there is never a
-customization: the kit's scripts outside the spec layer, the hook installer set and the kit rules
-files `docs/ai/rules/<theme>.md` are written over by the next upgrade with no question and no copy
-kept. The spec layer's pair files are replaced on
-the upgrade's one yes, the edit kept aside first. A declaration seeded once from a template and never
+customization: every kit script, the spec layer's four pair files (`scripts/spec-schema.mjs`,
+`scripts/spec-schema.test.mjs`, `scripts/check-docs-size.mjs`, `scripts/check-docs-size.test.mjs`)
+included, the hook installer set and the kit rules files `docs/ai/rules/<theme>.md` are written
+over by the next upgrade with no question and no copy kept. A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
 user's own file. A customization goes into one of five channels instead:
 

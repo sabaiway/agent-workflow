@@ -253,6 +253,7 @@ const describeExitWithOutput = (result, subject = 'it') => `${subject} exited ${
 const HOOK_MODULES = ['check-docs-size.mjs', 'spec-schema.mjs'];
 const KEPT_JUDGE = `the project's own checker (${SCRIPTS_DIR}/check-docs-size.mjs --check-index)`;
 const KEPT_FITS = `in sync under ${KEPT_JUDGE} and within the maxLines it stamps`;
+const KEPT_ROUTE = "the spec layer's write of the bundled modules the project's hook loads, then this step again";
 const KEPT_PROBE_TIMEOUT_MS = 30_000;
 const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const readStampedCap = (text) => { const value = parseFrontmatter(text)?.maxLines; const cap = value ? Number(value) : NaN; return Number.isNaN(cap) ? undefined : cap; };
@@ -298,14 +299,12 @@ const putBackIndex = (cwd, found, deps) => {
   return null;
 };
 
-const ensureKeptIndex = ({ cwd, kitRoot, drive, spawn, read, lstat, deps, hook }) => {
+const ensureKeptIndex = ({ cwd, drive, spawn, read, lstat, deps }) => {
   const judge = () => judgeKept({ cwd, spawn, read, lstat, deps });
   const reportUnanswered = (verdict, after) => loud('index', 'index-probe-failed', `${INDEX_REL}: ${KEPT_JUDGE} could not be launched or did not answer in time (${verdict.error}) — ${after}`);
   const first = judge();
   if (first.error) return reportUnanswered(first, 'nothing was written');
   if (first.accepted) return ok('index', 'already-current', `${INDEX_REL}: ${KEPT_FITS} — nothing written`);
-  const custom = [...hook, ...['check-docs-size.test.mjs', 'spec-schema.test.mjs'].map((name) => surveyHookModule(cwd, kitRoot, name, read, lstat))].filter((entry) => entry.state === 'custom').map((entry) => entry.rel).sort();
-  const route = custom.length > 0 ? `the replace line printed for the spec layer (${custom.join(', ')}), run on the user's yes` : "the spec layer's refresh of the modules the project's hook loads, then this step again";
   const found = lstatNoFollow(join(cwd, INDEX_REL), lstat) === null ? null : read(join(cwd, INDEX_REL));
   const restored = found === null ? 'the navigator was put back: found absent, it was removed again' : 'the navigator was put back byte for byte';
   const restoreThen = (failure, compose) => {
@@ -323,7 +322,7 @@ const ensureKeptIndex = ({ cwd, kitRoot, drive, spawn, read, lstat, deps, hook }
   try { second = judge(); } catch (err) { return restoreThen(`the navigator could not be read back (${causeOf(err)})`, () => loud('index', 'unexpected-error', `${INDEX_REL}: the navigator could not be read back after the bundled write (${causeOf(err)}) — ${restored}`)); }
   if (second.error) return restoreThen(`${KEPT_JUDGE} could not answer (${second.error})`, () => reportUnanswered(second, restored));
   if (second.accepted) return ok('index', 'regenerated', `${INDEX_REL}: written by the bundled generator — ${KEPT_FITS}`);
-  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX_REL}: ${KEPT_JUDGE} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${route}`));
+  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX_REL}: ${KEPT_JUDGE} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${KEPT_ROUTE}`));
 };
 
 const buildKeptDryRunNote = (hook) =>
@@ -348,7 +347,7 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const kept = hook[0].state !== 'absent' && !hook.every((entry) => entry.state === 'current');
   const unreadable = kept && hook.find((entry) => entry.state === 'bundle-unreadable');
   if (unreadable) return loud('index', 'bundle-unreadable', `${unreadable.rel}: the bundled module could not be read, so nothing was written — reinstall the kit. ${unreadable.error}`);
-  if (kept && !dryRun) return ensureKeptIndex({ cwd, kitRoot, drive, spawn, read, lstat, deps, hook });
+  if (kept && !dryRun) return ensureKeptIndex({ cwd, drive, spawn, read, lstat, deps });
   const dryNote = kept ? [buildKeptDryRunNote(hook)] : [];
   if (dryRun) {
     const check = drive('--check-index');

@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-24 — AD-206: the upgrade writes the spec layer current with no question; `--replace-custom` retires (kit 16.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**`/agent-workflow-kit upgrade` now writes the four spec-layer files** (`scripts/spec-schema.mjs`,
+`scripts/check-docs-size.mjs` and their suites) **like every other kit script**: a body a release shipped refreshed,
+any other body replaced in place, an absent file placed, with no question and no copy kept. Before, an edited one was
+left, the writes behind it waited, and one yes kept the edit under `.agent-workflow/kept-aside/` before replacing it.
+`ensure-configs.mjs --replace-custom` is removed with no alias (`unknown argument`, exit 2), with the replace block and
+the upgrade's row 3 yes; no kit tool writes under `.agent-workflow/` any more. Contracts: distribution-files revision 7
+(the part replace-set retired), docs-navigator revision 5. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-24 — AD-205: the upgrade writes the kit rules file current with no question (kit 15.1.0 MINOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **`/agent-workflow-kit upgrade` now replaces a kit rules file `docs/ai/rules/<theme>.md` holding any body other than

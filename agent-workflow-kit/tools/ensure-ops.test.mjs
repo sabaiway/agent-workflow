@@ -56,7 +56,7 @@ const runIndex = (dir, extra = {}) => ensureOps.ensureIndex({ cwd: dir, kitRoot:
 
 const GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'check-docs-size.mjs');
 const KJ = "the project's own checker (scripts/check-docs-size.mjs --check-index)";
-const FOUND_BYTES = 'found bytes\n';
+const [FOUND_BYTES, ROUTE] = ['found bytes\n', "the spec layer's write of the bundled modules the project's hook loads, then this step again"];
 const REJECTING_CHECKER = '// rejects every navigator\nprocess.exit(1);\n';
 const ACCEPTING_CHECKER = '// accepts every navigator\n';
 const TRAPPING_CHECKER = "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 20000);\n";
@@ -147,10 +147,10 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
       assert.equal(r.token, 'customized-preserved');
       assert.equal(r.failed, false);
       assert.equal(readFileSync(join(dir, INDEX_REL), 'utf8'), FOUND_BYTES);
-      assert.equal(r.lines[0], `docs/ai/index.md: ${KJ} rejected the bundled render on its index check (it exited with code 1), and the navigator as found did not pass it either (its index check) — the navigator was put back byte for byte. The route: the replace line printed for the spec layer (scripts/check-docs-size.mjs), run on the user's yes`);
+      assert.equal(r.lines[0], `docs/ai/index.md: ${KJ} rejected the bundled render on its index check (it exited with code 1), and the navigator as found did not pass it either (its index check) — the navigator was put back byte for byte. The route: ${ROUTE}`);
     });
   });
-  it('an absent navigator is removed again; a prior checker\'s route is the refresh, or the replace behind an edited file', () => {
+  it('an absent navigator is removed again; beside a prior checker, with or without an edited test file, the route is the one route', () => {
     for (const edited of [false, true]) {
       withKept((dir) => {
         writeChecker(dir, readPriorChecker());
@@ -161,7 +161,7 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
         assert.equal(r.token, 'customized-preserved');
         assert.equal(existsSync(join(dir, INDEX_REL)), false);
         assert.match(r.lines[0], /found absent, it was removed again/);
-        assert.ok(r.lines[0].endsWith(edited ? "The route: the replace line printed for the spec layer (scripts/check-docs-size.test.mjs), run on the user's yes" : "The route: the spec layer's refresh of the modules the project's hook loads, then this step again"), edited);
+        assert.ok(r.lines[0].endsWith(`The route: ${ROUTE}`), `${edited}\n${r.lines[0]}`);
       });
     }
   });

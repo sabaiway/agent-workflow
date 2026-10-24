@@ -24,7 +24,7 @@ const [{ applyGitHooks, UPGRADE_ROUTE }, { hermeticGitEnv }] = await Promise.all
 // Loaded against the pre-fix tree too (red-first): absent, the specs and scripts fixtures below are
 // skipped and the completeness suite reds on the unwitnessed tokens.
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
-const { ensureScripts, replaceBlock } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
+const { ensureScripts } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-parity.mjs';
 import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-backends.mjs';
@@ -71,7 +71,6 @@ const project = ({ node = true } = {}) => {
   if (node) writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}\n');
   return dir;
 };
-const REPLACE_DIGEST = 'f'.repeat(64);
 const projectWithScripts = (customName, customBody) => {
   const dir = project();
   mkdirSync(join(dir, 'scripts'));
@@ -216,7 +215,7 @@ const SCRIPTS_FX = [['scripts-not-placed', () => runScripts(project()), 'scripts
   ['scripts-bundle-unreadable', () => runScripts(scriptsTree(), { kitRoot: tmp('clux-empty-') }), 'scripts/install-git-hooks.mjs: the bundled script could not be read, so nothing was written — reinstall the kit.'],
   ['scripts-skipped-no-node-evidence', () => runScripts(project({ node: false })), 'scripts/: no Node evidence in this tree — probed package.json and the kit-seeded scripts/ files'],
   ['scripts-node-evidence-unverifiable', () => runScripts(project({ node: false }), { deps: { lstat: () => { throw eacces(); } } }), 'scripts/: whether Node runs here could not be read (EACCES on package.json), so nothing was written — resolve it by hand, then re-run']];
-if (ensureScripts) { fx('replace-block', 'block-hook-run', false, replaceBlock([{ rel: `scripts/${HOOKS}`, sha256: REPLACE_DIGEST, bytes: Buffer.from(MINE), channel: HOOK_CHANNEL, hookRun: true }, { rel: 'scripts/migrate-gates.mjs', absent: true, channel: OWN_CHANNEL, hookRun: true }], { kitRoot: KIT, cwd: '/project' })); for (const [id, build] of SCRIPTS_FX) ensureFx(id, build(), id === 'scripts-index-regeneration-failed' || undefined); }
+if (ensureScripts) for (const [id, build] of SCRIPTS_FX) ensureFx(id, build(), id === 'scripts-index-regeneration-failed' || undefined);
 // The two git-hook re-read lines through the real leaf (an installer that exits 0 and writes no hook), each one line ending with the upgrade route.
 for (const [variant, roles] of [['commit-guard'], ['hook-checks', ['rules', 'layout']]]) {
   const root = project(), env = hermeticGitEnv(process.env, root), errors = [];
@@ -224,7 +223,7 @@ for (const [variant, roles] of [['commit-guard'], ['hook-checks', ['rules', 'lay
   applyGitHooks({ root, variant, copies: [], roles, runs: { argv: ['node', join(root, 'scripts', 'install-git-hooks.mjs')] } }, { env, spawn: () => ({ status: 0 }), error: (line) => errors.push(line) });
   fx('git-hooks', `${variant}-unarmed`, true, () => (assert.deepEqual(errors.map((line) => line.endsWith(` — ${UPGRADE_ROUTE}`)), [true], errors.join('\n')), errors));
 }
-const scriptsUnwitnessed = () => SCRIPTS_FX.flatMap(([id, , ...lines]) => lines.filter((w) => !SURFACES.find((s) => s.id === id)?.lines.some((line) => line === w || line.startsWith(`${w} `))).map((w) => `${id}: ${w}`));
+const fxUnwitnessed = (table) => table.flatMap(([id, , ...lines]) => lines.filter((w) => !SURFACES.find((s) => s.id === id)?.lines.some((line) => line === w || line.startsWith(`${w} `))).map((w) => `${id}: ${w}`));
 {
   // The navigator ensure drives a SEPARATE process, so its causes split by how far that process
   // got — every one witnessed through the real op, never a hand-composed line.
@@ -262,32 +261,36 @@ const scriptsUnwitnessed = () => SCRIPTS_FX.flatMap(([id, , ...lines]) => lines.
   keptIndexFx('dry-note', projectWithRejectingChecker(), { dryRun: true });
 }
 
-if (ensureSpecs) {
-  // The spec-layer ensure: every token through the real op — seed, prior refresh, custom preserved,
-  // the no-Node-evidence skip — and its four failure causes (bundle, node kind, write, template).
-  const PRIOR_CHECKER = join(KIT, 'test', 'fixtures', 'script-priors', '4.5.1', 'check-docs-size.mjs.txt');
-  const specsFx = (id, dir, extra = {}) => ensureFx(id, ensureSpecs({ cwd: dir, kitRoot: KIT, deps: {}, ...extra }));
-  const dir = project();
-  specsFx('specs-would-seed', dir, { dryRun: true });
-  specsFx('specs-seeded', dir);
-  specsFx('specs-already-present', dir);
-  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), readFileSync(PRIOR_CHECKER));
-  specsFx('specs-would-refresh', dir, { dryRun: true });
-  specsFx('specs-refreshed', dir);
-  writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), '// mine\n');
-  specsFx('specs-customized-preserved', dir);
-  specsFx('specs-skipped-no-node-evidence', project({ node: false }));
-  const wrongKind = project();
-  mkdirSync(join(wrongKind, 'scripts', 'spec-schema.mjs'), { recursive: true });
-  specsFx('specs-wrong-node-kind', wrongKind);
-  specsFx('specs-bundle-unreadable', project(), { kitRoot: tmp('clux-empty-') });
-  specsFx('specs-write-refused', project(), { deps: { link: () => { throw eacces(); } } });
-  const badTemplateKit = tmp('clux-kit-');
-  mkdirSync(join(badTemplateKit, 'references', 'templates', 'specs'), { recursive: true });
-  symlinkSync(join(KIT, 'references', 'scripts'), join(badTemplateKit, 'references', 'scripts'));
-  writeFileSync(join(badTemplateKit, 'references', 'templates', 'specs', 'index.md'), 'owner: {{OWNER}}\n');
-  specsFx('specs-template-unreadable', project(), { kitRoot: badTemplateKit });
-}
+// The specs op: every line form of the part scripts' rule through the real op on a plain or dry run, each fixture with the exact lines it witnesses (a failure's first line after its cause; a line may run on past a witness at a space).
+const PAIRS = ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs'];
+const [IF_WROTE, IF_WOULD, SPEC_STORE] = ['if a commit hook runs the files written above, they may stop the next commit', 'if a commit hook runs the files named above, writing them may stop the next commit', 'docs/ai/specs/index.md'];
+const specsTree = (over = {}, store = true, dir = project()) => { mkdirSync(join(dir, 'scripts')); for (const name of PAIRS) if (over[name] !== null) writeFileSync(join(dir, 'scripts', name), over[name] ?? bundled(name)); if (store) { mkdirSync(join(dir, 'docs', 'ai', 'specs')); writeFileSync(join(dir, SPEC_STORE), '---\nkind: index\n---\n'); } return dir; };
+const runSpecs = (dir, extra = {}) => ensureSpecs({ cwd: dir, kitRoot: KIT, deps: {}, ...extra });
+const refusingAt = (at, writes = 0) => ({ writeFile: (path, body, options) => { if (++writes === at) throw eacces('EACCES: refused'); writeFileSync(path, body, options); } });
+const [specsDue, priorChecker] = [{ 'spec-schema.mjs': prior('4.6.0', 'spec-schema.mjs'), 'spec-schema.test.mjs': null, 'check-docs-size.mjs': MINE, 'check-docs-size.test.mjs': prior('4.0.0', 'check-docs-size.test.mjs') }, { 'check-docs-size.mjs': prior('4.5.1', 'check-docs-size.mjs') }];
+const badTemplateKit = tmp('clux-kit-');
+mkdirSync(join(badTemplateKit, 'references', 'templates', 'specs'), { recursive: true });
+symlinkSync(join(KIT, 'references', 'scripts'), join(badTemplateKit, 'references', 'scripts'));
+writeFileSync(join(badTemplateKit, 'references', 'templates', 'specs', 'index.md'), 'owner: {{OWNER}}\n');
+const SPECS_FX = [['specs-would-seed', () => runSpecs(specsTree(specsDue, false), { dryRun: true }), `scripts/spec-schema.mjs${SHIPPED}would be refreshed to the bundled one`, 'scripts/spec-schema.test.mjs: absent — would be placed from the bundled scripts',
+    `scripts/check-docs-size.mjs${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`, `${SPEC_STORE}: absent — would be created from the bundled template`, IF_WOULD],
+  ['specs-seeded', () => runSpecs(specsTree(specsDue, false)), `scripts/spec-schema.mjs${SHIPPED}refreshed to the bundled one`, 'scripts/spec-schema.test.mjs: absent — placed from the bundled scripts',
+    `scripts/check-docs-size.mjs${EDITED}replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`, `${SPEC_STORE}: created from the bundled template (today's date rendered)`, IF_WROTE],
+  ['specs-already-present', () => runSpecs(specsTree()), 'scripts/spec-schema.mjs: already the bundled body — nothing written', `${SPEC_STORE}: already present — preserved byte-for-byte, nothing written`],
+  ['specs-would-refresh', () => runSpecs(specsTree(priorChecker), { dryRun: true }), `scripts/check-docs-size.mjs${SHIPPED}would be refreshed to the bundled one`, IF_WOULD],
+  ['specs-refreshed', () => runSpecs(specsTree(priorChecker)), `scripts/check-docs-size.mjs${SHIPPED}refreshed to the bundled one`, IF_WROTE],
+  ['specs-appeared', () => runSpecs(specsTree({ 'spec-schema.mjs': null }), { deps: appearing(bundled('spec-schema.mjs')) }), 'scripts/spec-schema.mjs: appeared while this run was placing it — the bundled body stands, nothing written'],
+  ['specs-store-stood', () => runSpecs(specsTree({}, false), { deps: appearing('---\nkind: index\n---\n') }), `${SPEC_STORE}: appeared while this run was seeding it — the existing file stands`],
+  ['specs-write-refused', () => runSpecs(specsTree(specsDue, false), { deps: refusingAt(2) }), 'scripts/spec-schema.test.mjs: EACCES: refused', `scripts/spec-schema.mjs${SHIPPED}refreshed to the bundled one`, 'scripts/spec-schema.test.mjs: absent — not placed; its write was refused (above)',
+    `scripts/check-docs-size.mjs${EDITED}not replaced; the run stopped before it; an edit meant to last goes in ${OWN_CHANNEL}`, `scripts/check-docs-size.test.mjs${SHIPPED}not refreshed; the run stopped before it`, `${SPEC_STORE}: absent — not created`, IF_WROTE,
+    'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back'],
+  ['specs-write-refused-first', () => runSpecs(specsTree({ 'spec-schema.mjs': MINE, 'spec-schema.test.mjs': null }), { deps: refusingAt(1) }), 'scripts/spec-schema.mjs: EACCES: refused',
+    `scripts/spec-schema.mjs${EDITED}not replaced; its write was refused (above); an edit meant to last goes in ${OWN_CHANNEL}`, 'scripts/spec-schema.test.mjs: absent — not placed; the run stopped before it'],
+  ['specs-skipped-no-node-evidence', () => runSpecs(project({ node: false })), 'scripts/: no Node evidence in this tree — probed package.json and the kit-seeded scripts/ files'],
+  ['specs-wrong-node-kind', (at = project()) => (mkdirSync(join(at, 'scripts', 'spec-schema.mjs'), { recursive: true }), runSpecs(at)), 'scripts/spec-schema.mjs: exists but is a directory — nothing was read or written; resolve it by hand, then re-run'],
+  ['specs-bundle-unreadable', () => runSpecs(project(), { kitRoot: tmp('clux-empty-') }), 'scripts/spec-schema.mjs: the bundled script could not be read, so nothing was written — reinstall the kit.'],
+  ['specs-template-unreadable', () => runSpecs(project(), { kitRoot: badTemplateKit }), `${SPEC_STORE}: the bundled template carries a placeholder this kit cannot render — reinstall the kit`]];
+if (ensureSpecs) for (const [id, build] of SPECS_FX) ensureFx(id, build());
 
 {
   // The executor ensure: every token and its one cause through the real op on a temp project (the writer places the file on consent, never this ensure, so the placed file is written by hand).
@@ -325,23 +328,11 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
   CLI_RUNS.failure = cliFx('failure-run', dir, true);
 }
 
-// The replace lines through the real CLI on REAL digests: each replace run follows a plain run (its block fixture).
-const replaceFx = (id, abnormal, arrange = () => {}, alsoEdited) => {
-  const dir = projectWithScripts('check-docs-size.mjs'); if (alsoEdited) writeFileSync(join(dir, 'scripts', alsoEdited), '// mine\n');
-  const digest = cliFx(`${id}-block`, dir, false).result.stdout.match(/--replace-custom ([0-9a-f]{64})/)?.[1] ?? REPLACE_DIGEST; arrange(join(dir, '.agent-workflow'), join(dir, '.agent-workflow', 'kept-aside', digest.slice(0, 16), 'scripts'));
-  cliFx(id, dir, abnormal, ['--replace-custom', digest]);
-};
-replaceFx('cli-replaced', false);
-cliFx('cli-replace-race', projectWithRejectingChecker(), true, ['--replace-custom', REPLACE_DIGEST]);
-replaceFx('cli-keep-aside-ignore', true, (reserved) => { mkdirSync(reserved); writeFileSync(join(reserved, '.gitignore'), '!kept-aside/\n'); });
-replaceFx('cli-keep-aside-symlink', true, (reserved) => symlinkSync(tmp('clux-link-'), reserved));
-replaceFx('cli-keep-aside-copy', true, (_, kept) => { mkdirSync(kept, { recursive: true }); writeFileSync(join(kept, 'check-docs-size.test.mjs'), '// other bytes\n'); }, 'check-docs-size.test.mjs');
 const unwitnessed = (witnesses) => Object.entries(witnesses).flatMap(([phrase, ids]) => ids.filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase))).map((id) => `${id}: a line carries "${phrase}"`));
 describe('spec:docs-navigator/S5 the kept-checker index lines are user-grade', () => { it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'], 'the navigator was put back byte for byte': ['index-kept-put-back'] }), [], 'each S5 fixture carries its witness')); });
-describe('spec:distribution-files/S11 the replace block, race, keep-aside, specs and navigator lines are user-grade', () => {
-  it('each S11 fixture carries the line it witnesses', () => assert.deepEqual([...scriptsUnwitnessed(), ...unwitnessed({ 'then the bundled body replaces it; an edit meant to last goes in': ['cli-replaced-block'], 'which the commit hook runs first; the commit hook runs it, so it may stop the next commit': ['block-hook-run'], "absent — the user's yes places the bundled body; the commit hook runs it, so it may stop the next commit": ['block-hook-run'], "only on the user's yes, keep aside and replace the files named above: node ": ['cli-replaced-block', 'block-hook-run'], 'the files to replace changed since the replace line was printed (another set or other bytes), so nothing was written': ['cli-replace-race'], '.agent-workflow/.gitignore: holds other bytes — it must hold exactly "*" and a line feed': ['cli-keep-aside-ignore'], '.agent-workflow: exists but is a symlink — nothing was kept aside or replaced': ['cli-keep-aside-symlink'],
-    "check-docs-size.test.mjs: a copy with other bytes is there — it is the user's to move or delete": ['cli-keep-aside-copy'], 'the edits already kept aside stay where they are: .agent-workflow/kept-aside/': ['cli-keep-aside-copy'], "carries an edit — left as it stands until the user's yes keeps it aside and replaces it (the block below)": ['specs-customized-preserved', 'cli-replaced-block'], "then replaced by the bundled body on the user's yes": ['cli-replaced'], 'the navigator step did not run: a replace run runs it only after every step it re-runs succeeds': ['cli-replace-race', 'cli-keep-aside-ignore', 'cli-keep-aside-symlink', 'cli-keep-aside-copy'] })], [], 'each S11 fixture carries its witness'));
-  it("no line of the scripts op waits for the user's yes", () => assert.deepEqual(SCRIPTS_FX.flatMap(([id]) => (SURFACES.find((s) => s.id === id)?.lines ?? []).filter((line) => line.includes("the user's yes")).map((line) => `${id}: ${line}`)), []));
+describe('spec:distribution-files/S11 every line form of the specs and scripts ops is user-grade', () => {
+  it('each S11 fixture carries the line it witnesses', () => assert.deepEqual([...fxUnwitnessed(SCRIPTS_FX), ...fxUnwitnessed(SPECS_FX)], [], 'each S11 fixture carries its witness'));
+  it("no line of the scripts or specs op waits for the user's yes", () => assert.deepEqual([...SCRIPTS_FX, ...SPECS_FX].flatMap(([id]) => (SURFACES.find((s) => s.id === id)?.lines ?? []).filter((line) => line.includes("the user's yes")).map((line) => `${id}: ${line}`)), []));
 });
 
 // ── the placed-bridge refresh lines (every REFRESH_LINES key + every parity verdict) ─
