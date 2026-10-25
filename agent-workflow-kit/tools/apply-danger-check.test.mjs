@@ -39,7 +39,7 @@ const danger = await import('./apply-danger-check.mjs').catch((cause) => new Pro
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SETTINGS = '.claude/settings.json';
 const VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
-  'read-lane.missing', 'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle',
+  'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle',
   'jev-skill', 'jev-skill.earlier', 'worktrees-dir'];
 const CLASSES = ['hosts reachable', 'paths writable', 'commands outside the sandbox', 'prompts removed',
   'commands the harness runs', 'nothing widened'];
@@ -152,15 +152,12 @@ const expectedPlan = (variant, f, deps = {}) => {
   } else if (variant === 'autonomy-render') {
     const render = velocity.writeAutonomyProfile({ cwd: f.root, apply: false }, writerDeps(f));
     addFile(SETTINGS, velocity.mergeAutonomySettings(json(join(f.root, SETTINGS)), render));
-  } else if (['gate-hook', 'read-lane.missing'].includes(variant)) {
+  } else if (variant === 'gate-hook') {
     const p = hook.writeGateHook({ cwd: f.root, dryRun: true });
     if (p.wirePlanned) addFile(SETTINGS, hook.mergeHookEntry(p.projectSettings.data));
-    if (p.placePlanned) writes.push({ path: join(f.root, hook.HOOK_FILE_REL), bytes: p.bundleContent });
-  } else if (['gate-hook.marker-stale', 'read-lane.stale'].includes(variant)) {
-    const p = hook.writeGateHook({ cwd: f.root, dryRun: true, reseed: true });
-    if (p.wirePlanned) addFile(SETTINGS, hook.mergeHookEntry(p.projectSettings.data));
     const path = join(f.root, hook.HOOK_FILE_REL);
-    if (p.reseedPlanned) writes.push({ path, bytes: p.bundleContent, replaces: fs.readFileSync(path) });
+    if (p.placePlanned) writes.push({ path, bytes: p.bundleContent });
+    if (p.replacePlanned) writes.push({ path, bytes: p.bundleContent, replaces: fs.readFileSync(path) });
   } else if (variant === 'state-block') {
     const p = need('writeStateBlockHook')({ cwd: f.root, dryRun: true });
     if (p.mergePlanned) addFile(SETTINGS, need('mergeStopEntry')(p.projectSettings.data));
@@ -842,21 +839,27 @@ describe('spec:init-project/S29 the danger check over the three writers by proof
     });
     assert.deepEqual(hashes(f), originalHashes, 'original retained while copy applied');
   };
-  for (const variant of ['gate-hook.marker-stale', 'read-lane.stale']) {
-    for (const wired of [true, false]) it(`${variant}: diverged ${wired ? 'wired' : 'unwired'} hook, replaces preview, copy apply and already applied`, (t) => {
-      const f = fixture(t);
-      put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
-      put(join(f.root, SETTINGS), JSON.stringify(wired ? hook.mergeHookEntry({}) : {}));
-      const bundle = fs.readFileSync(join(TOOLS, '../references/hooks/gate-approve.mjs'));
-      exerciseWriter(t, variant, f, (result) => {
-        assert.ok(result.lines.includes(`writes: ${hook.HOOK_FILE_REL} sha256:${sha(bundle)} — replaces sha256:${sha(oldBytes)}`));
-        assert.equal(result.lines.includes(`${SETTINGS}:`), !wired);
-        assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), wired ? [] : [
-          lineOf({ key: 'hooks.PreToolUse', change: 'added', value: hook.buildHookSettingsEntry(), class: CLASSES[4] }),
-        ]);
-      });
+  it('gate-hook: a differing unwired hook prints the replaces form and the entry, copy apply and already applied', (t) => {
+    const f = fixture(t);
+    put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
+    put(join(f.root, SETTINGS), '{}');
+    const bundle = fs.readFileSync(join(TOOLS, '../references/hooks/gate-approve.mjs'));
+    exerciseWriter(t, 'gate-hook', f, (result) => {
+      assert.ok(result.lines.includes(`writes: ${hook.HOOK_FILE_REL} sha256:${sha(bundle)} — replaces sha256:${sha(oldBytes)}`));
+      assert.deepEqual(result.lines.filter((line) => line.startsWith('  ')), [
+        lineOf({ key: 'hooks.PreToolUse', change: 'added', value: hook.buildHookSettingsEntry(), class: CLASSES[4] }),
+      ]);
     });
-  }
+  });
+  it('--variant gate-hook.marker-stale, read-lane.stale and read-lane.missing each exit 2', (t) => {
+    const f = fixture(t);
+    unchanged(f, () => {
+      for (const variant of ['gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing']) {
+        const cli = capture(f, () => { throw new Error('retired variant spawned'); });
+        assert.equal(danger.main(argvFor(variant, f), cli.io), 2, variant);
+      }
+    });
+  });
   for (const placement of ['fresh', 'append', 'replace']) it(`state-block: ${placement}, real preview, copy apply and already applied`, (t) => {
     const f = fixture(t);
     if (placement === 'append') put(join(f.root, SETTINGS), JSON.stringify({
@@ -917,10 +920,10 @@ describe('spec:init-project/S29 the danger check over the three writers by proof
         error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([writerMessage]));
     });
   });
-  for (const variant of ['state-block', 'gate-hook.marker-stale']) it(`${variant}: character-device settings mask exits 3 before judgement, never spawning`, (t) => {
+  for (const variant of ['state-block', 'gate-hook']) it(`${variant}: character-device settings mask exits 3 before judgement, never spawning`, (t) => {
     const f = fixture(t);
     put(join(f.root, SETTINGS), '{}');
-    if (variant === 'gate-hook.marker-stale') put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
+    if (variant === 'gate-hook') put(join(f.root, hook.HOOK_FILE_REL), oldBytes);
     unchanged(f, () => {
       const original = fs.lstatSync;
       const mocked = t.mock.method(fs, 'lstatSync', (path, ...args) => path === join(f.root, SETTINGS)
@@ -943,27 +946,7 @@ describe('spec:init-project/S29 the danger check over the three writers by proof
       }
     });
   });
-  it('read-lane.stale: an absent gate hook prints the writer refusal at exit 3, never spawning', (t) => {
-    const f = fixture(t);
-    unchanged(f, () => {
-      const spawn = t.mock.fn(() => { throw new Error('absent hook spawned'); });
-      const cli = capture(f, spawn);
-      const code = danger.main(argvFor('read-lane.stale', f), cli.io);
-      assert.equal(spawn.mock.callCount(), 0);
-      assert.equal(code, 3);
-      assert.match(cli.lines.join('\n'), /is not placed/);
-      assert.deepEqual(cli.errors, []);
-      let writerMessage;
-      assert.throws(() => hook.writeGateHook({ cwd: f.root, dryRun: true, reseed: true }), (error) => {
-        writerMessage = error.message;
-        return error.code === 'GATE_HOOK_STALE' && error.message.includes('is not placed');
-      });
-      assert.deepEqual(cli.lines, [writerMessage]);
-      assert.throws(() => danger.checkApply('read-lane.stale', f), (error) =>
-        error.code === 'CHECK_HALTED' && JSON.stringify(error.lines) === JSON.stringify([writerMessage]));
-    });
-  });
-  for (const variant of ['gate-hook.marker-stale', 'state-block']) it(`${variant}: hook bytes changed after the check print the new result at exit 5, never spawning`, (t) => {
+  for (const variant of ['gate-hook', 'state-block']) it(`${variant}: hook bytes changed after the check print the new result at exit 5, never spawning`, (t) => {
     const f = fixture(t);
     const path = variant === 'state-block' ? stopPath : hook.HOOK_FILE_REL;
     put(join(f.root, path), oldBytes);
@@ -1597,6 +1580,134 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
       assert.deepEqual(cli.lines, danger.checkApply(variant, f).lines);
       assert.deepEqual(cli.errors, []);
     });
+  });
+});
+
+describe('spec:init-project/S73 the danger check over the two kit hook variants by proof', () => {
+  const OLD = '// an earlier kit hook body\n';
+  const LOCAL = '.claude/settings.local.json';
+  const STOP_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"';
+  const KITS = [
+    { variant: 'gate-hook.not-current', rel: hook.HOOK_FILE_REL, other: '.claude/hooks/state-block-guard.mjs', key: 'hooks.PreToolUse',
+      bundle: 'gate-approve.mjs', writer: 'writeGateHook', entry: hook.buildHookSettingsEntry(), bare: { matcher: 'Bash', hooks: [{ type: 'command', command: hook.HOOK_COMMAND }] } },
+    { variant: 'state-block.not-current', rel: '.claude/hooks/state-block-guard.mjs', other: hook.HOOK_FILE_REL, key: 'hooks.Stop',
+      bundle: 'state-block-guard.mjs', writer: 'writeStateBlockHook', entry: { hooks: [{ type: 'command', command: STOP_COMMAND, timeout: 10 }] }, bare: { hooks: [{ type: 'command', command: STOP_COMMAND }] } },
+  ];
+  const tree = (t, kit, { wired = SETTINGS, hookBytes = OLD, entry = kit.entry } = {}) => {
+    const f = fixture(t);
+    put(join(f.root, SETTINGS), JSON.stringify(wired === SETTINGS ? atKey(kit.key, [entry]) : {}));
+    if (wired === LOCAL) put(join(f.root, LOCAL), JSON.stringify(atKey(kit.key, [entry])));
+    if (hookBytes !== null) put(join(f.root, kit.rel), hookBytes);
+    return f;
+  };
+  const bundleOf = (kit) => fs.readFileSync(join(TOOLS, '../references/hooks', kit.bundle));
+  const within = (kit) => `scope: within the declared scope of ${kit.variant}`;
+  const refusedWrite = (kit, rel) => `refused: ${rel} ${rel} — beyond the declared scope of ${kit.variant}`;
+  const run = (f, kit) => {
+    const cli = capture(f, () => { throw new Error('preview spawned'); });
+    return { code: danger.main(argvFor(kit.variant, f), cli.io), lines: cli.lines };
+  };
+  const asDevice = (t, path, body) => {
+    const original = fs.lstatSync;
+    const mocked = t.mock.method(fs, 'lstatSync', (file, ...args) => file === path ? Object.assign(Object.create(original(file)),
+      { isCharacterDevice: () => true, isFile: () => false, isDirectory: () => false, isSymbolicLink: () => false }) : original(file, ...args));
+    syncBuiltinESMExports();
+    try {
+      return body();
+    } finally {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+    }
+  };
+  const assertRefusedUnwired = (kit, { code, lines }, title) => {
+    assert.equal(code, 1, `${title}: ${lines.join('\n')}`);
+    assert.ok(lines.includes(refusedWrite(kit, kit.rel)), `${title}: ${lines.join('\n')}`);
+    assert.ok(lines.some((line) => line.startsWith(`refused: ${SETTINGS} ${kit.key} — `)), `${title}: ${lines.join('\n')}`);
+    assert.deepEqual([lines.at(-2), lines.filter((line) => line.startsWith('masked:'))], ['nothing written', []], title);
+  };
+  for (const kit of KITS) it(`${kit.variant} over a wired hook: a differing file replaces, an absent one creates, a current one has nothing to change`, (t) => {
+    for (const [state, hookBytes] of [['differing', OLD], ['absent', null], ['current', bundleOf(kit)]]) {
+      const f = tree(t, kit, { hookBytes });
+      const writes = `writes: ${kit.rel} sha256:${sha(bundleOf(kit))}${state === 'differing' ? ` — replaces sha256:${sha(OLD)}` : ''}`;
+      const expected = state === 'current' ? [`nothing to change: ${kit.variant} is already applied`]
+        : [writes, ...(state === 'absent' ? ['writes: .claude/hooks/ created'] : []), within(kit)];
+      const { code, lines } = unchanged(f, () => run(f, kit));
+      assert.deepEqual([code, lines.slice(0, -1)], [0, expected], state);
+    }
+  });
+  for (const kit of KITS) it(`${kit.variant} over an unwired hook refuses each planned write and the planned entry at exit 1`, (t) => {
+    const cases = [['differing', OLD, null], ['absent', null, null], ...(kit.key === 'hooks.PreToolUse' ? [['another matcher', OLD, { ...kit.bare, matcher: 'Write' }]] : [])];
+    for (const [title, hookBytes, entry] of cases) {
+      const f = tree(t, kit, { wired: entry ? SETTINGS : null, hookBytes, entry: entry ?? kit.entry });
+      unchanged(f, () => {
+        const result = run(f, kit);
+        assertRefusedUnwired(kit, result, title);
+        if (hookBytes === null) assert.ok(result.lines.includes(refusedWrite(kit, '.claude/hooks')), title);
+      });
+    }
+  });
+  for (const kit of KITS) it(`${kit.variant}: a link or a device at the kit hook path, or a device at .claude/hooks, is the writer's refusal at exit 3`, (t) => {
+    for (const [title, rel] of [['link', kit.rel], ['device', kit.rel], ['device', '.claude/hooks']]) {
+      const f = tree(t, kit, { hookBytes: title === 'link' ? null : '' });
+      if (title === 'link') {
+        fs.mkdirSync(join(f.root, '.claude/hooks'), { recursive: true });
+        fs.symlinkSync(join(f.root, 'docs/ai/autonomy.json'), join(f.root, kit.rel));
+      }
+      const result = unchanged(f, () => title === 'link' ? run(f, kit) : asDevice(t, join(f.root, rel), () => run(f, kit)));
+      assert.equal(result.code, 3, `${title} ${rel}: ${result.lines.join('\n')}`);
+      assert.ok(result.lines.some((line) => line.includes(rel)), `${title} ${rel}`);
+      assert.deepEqual(result.lines.filter((line) => line.startsWith('masked:')), [], `${title} ${rel}`);
+    }
+  });
+  for (const kit of KITS) it(`${kit.variant}: a masked local file beside a wired project file is within scope; a masked project file reads as unwired`, (t) => {
+    const wired = tree(t, kit);
+    put(join(wired.root, LOCAL), '');
+    const admitted = unchanged(wired, () => asDevice(t, join(wired.root, LOCAL), () => run(wired, kit)));
+    assert.deepEqual([admitted.code, admitted.lines.at(-2), admitted.lines.filter((line) => line.startsWith('masked:'))], [0, within(kit), []], admitted.lines.join('\n'));
+    const masked = tree(t, kit, { wired: null });
+    put(join(masked.root, SETTINGS), '');
+    put(join(masked.root, LOCAL), '{}');
+    assertRefusedUnwired(kit, unchanged(masked, () => asDevice(t, join(masked.root, SETTINGS), () => run(masked, kit))), 'masked project file');
+  });
+  it('each variant wired only in settings.local.json, and state-block.not-current under another copy of the runtime, is admitted within scope', (t) => {
+    for (const kit of KITS) {
+      const f = tree(t, kit, { wired: LOCAL, entry: kit.bare });
+      unchanged(f, () => assert.deepEqual(((r) => [r.code, r.lines.at(-2)])(run(f, kit)), [0, within(kit)], kit.variant));
+    }
+    const kit = KITS[1];
+    const copy = { hooks: [{ type: 'command', command: 'node agent-workflow-kit/references/hooks/state-block-guard.mjs --require-block' }] };
+    const f = tree(t, kit, { hookBytes: null, entry: copy });
+    const result = unchanged(f, () => run(f, kit));
+    assert.deepEqual([result.code, result.lines[0], result.lines.at(-2)], [0, `writes: ${kit.rel} sha256:${sha(bundleOf(kit))}`, within(kit)], result.lines.join('\n'));
+  });
+  for (const kit of KITS) it(`${kit.variant}: the real apply on a copy writes exactly the hook file, and a file edited after the yes is exit 5`, (t) => {
+    const f = tree(t, kit);
+    put(join(f.root, LOCAL), '{"otherLocal":"kept"}\n');
+    const copy = copyFixture(t, f);
+    const before = snapshot(copy);
+    const settingsBytes = [SETTINGS, LOCAL].map((rel) => fs.readFileSync(join(copy.root, rel)));
+    const result = unchanged(copy, () => danger.checkApply(kit.variant, copy));
+    const cli = capture(copy);
+    assert.equal(danger.main([...argvFor(kit.variant, copy), '--apply', '--expect', result.digest], cli.io), 0, cli.errors.join('\n'));
+    assert.deepEqual(fs.readFileSync(join(copy.root, kit.rel)), bundleOf(kit));
+    assert.deepEqual([SETTINGS, LOCAL].map((rel) => fs.readFileSync(join(copy.root, rel))), settingsBytes);
+    assertAppliedPaths(copy, before, result, []);
+    const first = unchanged(f, () => danger.checkApply(kit.variant, f));
+    put(join(f.root, kit.rel), '// edited after the yes\n');
+    const edited = capture(f, () => { throw new Error('edited hook spawned'); });
+    assert.equal(danger.main([...argvFor(kit.variant, f), '--apply', '--expect', first.digest], edited.io), 5);
+  });
+  for (const kit of KITS) it(`${kit.variant}: a planted path or entry over a wired hook, and an injected writer answer over unwired settings, is refused`, (t) => {
+    const f = tree(t, kit);
+    const scope = danger.scopeOf(kit.variant, f);
+    assert.deepEqual([kit.rel, kit.other, '.claude/hooks/x.local.mjs'].map((rel) => scope.admitsPath(join(f.root, rel))), [true, false, false]);
+    const planted = danger.judgeChange({ variant: kit.variant, files: [{ path: SETTINGS, before: {}, after: atKey(kit.key, [kit.entry]) }], scope });
+    assert.deepEqual(planted.refused.map(({ path, key }) => ({ path, key })), [{ path: SETTINGS, key: kit.key }]);
+    const unwired = tree(t, kit, { wired: null, hookBytes: null });
+    const real = (kit.writer === 'writeGateHook' ? hook.writeGateHook : need('writeStateBlockHook'))({ cwd: unwired.root, dryRun: true });
+    const answer = { ...real, wirePlanned: false, mergePlanned: false, wiredInProject: true };
+    const result = unchanged(unwired, () => danger.checkApply(kit.variant, unwired, { [kit.writer]: () => answer }));
+    assert.deepEqual([result.lines.includes(refusedWrite(kit, kit.rel)), result.lines.at(-2)], [true, 'nothing written'], result.lines.join('\n'));
   });
 });
 

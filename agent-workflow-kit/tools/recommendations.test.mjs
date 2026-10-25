@@ -521,10 +521,10 @@ describe('recommendations — the add() runtime backstop (D2)', () => {
   it('the VARIANT identifier is the machine-readable outcome — a per-site arm reports its own, not the base key', () => {
     // The human render says which ITEM fired; only this field says which ARM did. A consumer asserting
     // an exact outcome (the pre-publish smoke) would else pattern-match prose the registry may reword.
-    const { items } = run(({ add }) => add('read-lane', 'w', 'HAND-APPLY: x', 'read-lane.stale'));
-    assert.equal(items[0].key, 'read-lane', 'the base key still names the item');
-    assert.equal(items[0].variant, 'read-lane.stale', 'and the variant names the arm');
-    assert.equal(items[0].severity, SEVERITIES['read-lane.stale'], 'severity still resolves through the variant');
+    const { items } = run(({ add }) => add('mcp-channel', 'w', 'HAND-APPLY: x', 'mcp-channel.differing'));
+    assert.equal(items[0].key, 'mcp-channel', 'the base key still names the item');
+    assert.equal(items[0].variant, 'mcp-channel.differing', 'and the variant names the arm');
+    assert.equal(items[0].severity, SEVERITIES['mcp-channel.differing'], 'severity still resolves through the variant');
   });
 
   it('a multi-line recipe detail is a stated shape violation (the backstop covers the recipe line too)', () => {
@@ -844,7 +844,7 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     }
   });
 
-  it('device masks on the placed gate hook and the pre-commit hook read as absent', () => {
+  it('a device mask on the placed gate hook is read as the node it is, the pre-commit hook mask as absent', () => {
     const root = makeProject();
     const hook = join('.claude', 'hooks', 'agent-workflow-gates.mjs');
     const preCommit = join('hooks', 'pre-commit');
@@ -860,7 +860,9 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     const deps = { ...maskingDeps(root, [hook, preCommit]), gitHooksPath: () => join(root, 'hooks') };
     const { items, skips } = buildRecommendations({ cwd: root, deps });
     rmSync(root, { recursive: true, force: true });
-    assert.equal(items.find((item) => item.key === 'read-lane')?.variant, 'read-lane.missing');
+    assert.equal(items.find((item) => item.key === 'read-lane')?.variant, 'read-lane');
+    assert.ok(!items.some((item) => item.key === 'gate-hook'));
+    assert.ok(skips.find((skip) => skip.key === 'gate-hook')?.reason.includes(`${hook} exists but is not a regular file`), JSON.stringify(skips));
     assert.ok(items.some((item) => item.key === 'commit-guard'), 'a masked pre-commit hook reads as absent: the installer offer');
     assert.ok(!skips.some((skip) => skip.key === 'commit-guard' || skip.key === 'read-lane'));
   });
@@ -1100,39 +1102,42 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; twenty-one harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; eighteen harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
   });
 });
 
 describe('spec:init-project/S31 the three render as harness items', () => {
-  const buildHookItem = (variant) => {
+  // wired: the gate hook wired over an older placed body, the gate marked lcovProducer, the read-lane toggle on.
+  const buildHookItem = (variant, { wired = false } = {}) => {
     const root = makeProject();
-    if (variant !== 'state-block') {
-      mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
-      writeFileSync(join(root, '.claude', 'hooks', 'agent-workflow-gates.mjs'), '// an old placed hook\n');
-      writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ hooks: {
-        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"' }] }],
-      } }));
-      writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{
-        id: 'suite',
-        title: 'suite',
-        ...(variant === 'gate-hook.marker-stale' ? { lcovProducer: true } : {}),
-        cmd: 'vitest run --coverage',
-      }] }));
-    }
-    if (variant === 'read-lane.stale') writeFileSync(join(root, LANES_FILE), JSON.stringify({ readLane: true }));
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'hooks', 'agent-workflow-gates.mjs'), '// an old placed hook\n');
+    if (wired) writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ hooks: {
+      PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"' }] }],
+    } }));
+    if (wired) writeFileSync(join(root, LANES_FILE), JSON.stringify({ readLane: true }));
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{
+      id: 'suite', title: 'suite', ...(wired ? { lcovProducer: true } : {}), cmd: 'vitest run --coverage',
+    }] }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
-    return { root, item: items.find((entry) => entry.variant === variant) };
+    return { root, built, item: built.items.find((entry) => entry.variant === variant) };
   };
 
-  for (const variant of ['gate-hook.marker-stale', 'read-lane.stale', 'state-block']) {
+  it('no item variant is a retired hook arm and no rendered line carries --reseed', () => {
+    const { built } = buildHookItem('gate-hook.not-current', { wired: true });
+    const retired = ['gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing'];
+    assert.deepEqual(built.items.filter((item) => retired.includes(item.variant)).map((item) => item.variant), []);
+    assert.doesNotMatch(formatRecommendations(built), /--reseed/u);
+  });
+
+  for (const variant of ['gate-hook', 'state-block']) {
     it(`${variant} renders the harness check immediately before its apply without HAND-APPLY`, () => {
       const { root, item } = buildHookItem(variant);
       assert.ok(item, variant);
@@ -1148,17 +1153,15 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     });
   }
 
-  it('the writer argv places state-block without --require-block and reseeds the stale read-lane hook', () => {
-    const { root } = buildHookItem('read-lane.stale');
+  it('the writer argv places state-block without --require-block and applies the gate hook with the plain --apply', () => {
+    const { root } = buildHookItem('gate-hook');
     const facts = { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' };
     const consoleArgv = need(lanes, 'consoleArgv');
     const stateBlock = consoleArgv('state-block', facts);
-    const readLane = consoleArgv('read-lane.stale', facts);
     assert.ok(stateBlock, 'state-block has a writer argv');
     assert.deepEqual(stateBlock.apply, ['node', join(HERE, 'state-block-hook.mjs'), '--apply', '--cwd', root]);
     assert.ok(!stateBlock.apply.includes('--require-block'));
-    assert.ok(readLane, 'read-lane.stale has a reseed writer argv');
-    assert.deepEqual(readLane.apply, ['node', join(HERE, 'gate-hook.mjs'), '--apply', '--reseed', '--cwd', root]);
+    assert.deepEqual(consoleArgv('gate-hook', facts).apply, ['node', join(HERE, 'gate-hook.mjs'), '--apply', '--cwd', root]);
   });
 
   it('the exported state-block constants and Stop convergence agree with the writer leaf', async () => {
@@ -1172,7 +1175,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
       writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify(data));
       const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
       rmSync(root, { recursive: true, force: true });
-      return { data, wired, offered: items.some((item) => item.key === 'state-block') };
+      return { data, wired, offered: items.some((item) => item.variant === 'state-block') };
     });
     const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
     const needLeaf = (name) => need(leaf, name);
@@ -1193,7 +1196,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     } }));
     const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
-    assert.ok(!items.some((item) => item.key === 'state-block'));
+    assert.ok(!items.some((item) => item.variant === 'state-block'));
     assert.ok(!skips.some((skip) => skip.key === 'state-block'));
   });
 
@@ -1215,7 +1218,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains twenty-one harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
+  it('VARIANT_LANES contains eighteen harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
 });
 
 // This item exists because its ABSENCE fired: kit 3.14.0 shipped the state-block detector with a mode
@@ -1254,7 +1257,7 @@ describe('recommendations — the state-block-guard offer (AD-075)', () => {
     writeFileSync(join(root, '.claude', 'settings.json'), flatStopWiring('node ./.claude/hooks/state-block-guard.mjs'));
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
-    assert.ok(!items.some((i) => i.key === 'state-block'), 'a working wiring must never be nagged');
+    assert.ok(!items.some((i) => i.variant === 'state-block'), 'a working wiring must never be nagged');
   });
 
   // Matched on the RUNTIME FILE NAME: with no writer every user pastes their own path, so an exact
@@ -1270,7 +1273,7 @@ describe('recommendations — the state-block-guard offer (AD-075)', () => {
       writeFileSync(join(root, '.claude', 'settings.json'), stopWiring(command));
       const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
       rmSync(root, { recursive: true, force: true });
-      assert.ok(!items.some((i) => i.key === 'state-block'), 'already watching — do not nag');
+      assert.ok(!items.some((i) => i.variant === 'state-block'), 'already watching — do not nag');
     });
   }
 
@@ -1289,8 +1292,8 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
   // The REAL bundled hook the advisor byte-compares the placed hook against (council B7).
   const REAL_BUNDLE = readFileSync(join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs'), 'utf8');
   // A deployment with the gate hook PLACED and WIRED (the read-lane item's precondition). hookCurrent
-  // (default false) writes a STALE placeholder; true copies the real bundle (byte-current).
-  const wiredHookProject = ({ lanes, hookCurrent = false } = {}) => {
+  // (default true) copies the real bundle (byte-current); false writes an older placeholder.
+  const wiredHookProject = ({ lanes, hookCurrent = true } = {}) => {
     const root = makeProject();
     mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
     writeFileSync(join(root, '.claude', 'hooks', 'agent-workflow-gates.mjs'), hookCurrent ? REAL_BUNDLE : '// an old placed hook\n');
@@ -1320,33 +1323,6 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(!items.some((i) => i.key === 'read-lane'), 'an enabled lane over a current hook converges the item');
-  });
-
-  it('readLane: true + a STALE placed hook → ATTENTION with the checked reseed route [B7]', () => {
-    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
-    rmSync(root, { recursive: true, force: true });
-    const item = items.find((i) => i.key === 'read-lane');
-    assert.ok(item, 'a stale hook under an enabled lane fires the item (it is a silent no-op otherwise)');
-    assert.equal(item.severity, SEVERITY_ATTENTION);
-    const facts = { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' };
-    assert.equal(item.apply, need(lanes, 'applySlot')('read-lane.stale', facts)?.apply);
-    assert.doesNotMatch(item.apply, /rm |HAND-APPLY/u);
-  });
-
-  it('a hook that VANISHES between the survey and the currency read renders the place recovery, never a reseed of nothing', () => {
-    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
-    const { items, skips } = buildRecommendations({
-      cwd: root,
-      deps: hermeticDeps(root, { readRegularFileNoFollow: () => ({ outcome: 'absent' }) }),
-    });
-    rmSync(root, { recursive: true, force: true });
-    const item = items.find((i) => i.key === 'read-lane');
-    assert.ok(item, 'a dark lane is still reported');
-    assert.equal(item.severity, SEVERITY_ATTENTION);
-    assert.match(item.what, /placed file is missing/, item.what);
-    assert.equal(item.variant, 'read-lane.missing');
-    assert.ok(!skips.some((s) => s.key === 'read-lane'), 'and a race is answered, not degraded to a probe failure');
   });
 
   it('readLane:false / a non-boolean value → the lane is off → the item fires (the writer will flip it), never a skip', () => {
@@ -1415,31 +1391,84 @@ describe('recommendations — the read-lane offer (AD-055 Part II, Help-through-
     assert.ok(skips.some((s) => s.key === 'read-lane'), 'a non-regular lanes.json is a stated skip');
   });
 
-  it('a wired hook whose placed FILE is MISSING → ATTENTION place-first (never a silent dark lane) [R2-M2]', () => {
-    const root = makeProject();
-    mkdirSync(join(root, '.claude'), { recursive: true }); // settings wired, but NO .claude/hooks file placed
-    writeFileSync(
-      join(root, '.claude', 'settings.json'),
-      JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: HOOK_CMD }] }] } }),
-    );
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
-    rmSync(root, { recursive: true, force: true });
-    const item = items.find((i) => i.key === 'read-lane');
-    assert.ok(item, 'a wired-but-missing hook fires the item (the lane is silently dark otherwise)');
-    assert.equal(item.severity, SEVERITY_ATTENTION);
-    assert.equal(item.variant, 'read-lane.missing');
-  });
+});
 
-  it('the stale reseed route names an ABSOLUTE --cwd root and carries no rm or HAND-APPLY (council R2-M3)', () => {
-    const root = wiredHookProject({ lanes: JSON.stringify({ readLane: true }), hookCurrent: false });
-    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
-    const item = items.find((i) => i.key === 'read-lane');
-    rmSync(root, { recursive: true, force: true });
-    assert.ok(item);
-    const facts = { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' };
-    assert.equal(item.apply, need(lanes, 'applySlot')('read-lane.stale', facts)?.apply);
-    assert.ok(item.apply.includes(`--cwd ${quoteArg(root)}`), item.apply);
-    assert.doesNotMatch(item.apply, /rm |HAND-APPLY/u);
+describe('spec:init-project/S72 the gate-hook and state-block keys by their state table', () => {
+  const GATE = '.claude/hooks/agent-workflow-gates.mjs';
+  const STOP = '.claude/hooks/state-block-guard.mjs';
+  const OLD = '// an earlier kit hook body\n';
+  const CURRENT = { [GATE]: readFileSync(join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs')), [STOP]: readFileSync(join(HERE, '..', 'references', 'hooks', 'state-block-guard.mjs')) };
+  const KIT_BENEFIT = 'currency — a hook you wired runs the body the kit writes for it today';
+  const gateEntry = (matcher = 'Bash') => ({ matcher, hooks: [{ type: 'command', command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"' }] });
+  const stopEntry = (command = recommendations.STATE_BLOCK_HOOK_COMMAND) => ({ hooks: [{ type: 'command', command }] });
+  // wired: 'project' | 'local' | null; an entry is written to the project file in place of the kit's;
+  // file: undefined (absent) | bytes | 'link' | 'dir'; device: a rel read as a character device.
+  const project = (t, key, { wired = 'project', entry, file, device, stamp, gates = true, lanes } = {}) => {
+    const root = makeProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const [rel, event] = key === 'gate-hook' ? [GATE, 'PreToolUse'] : [STOP, 'Stop'];
+    mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
+    const hooks = { hooks: { [event]: [entry ?? (key === 'gate-hook' ? gateEntry() : stopEntry())] } };
+    writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify(wired === 'project' || entry ? hooks : {}));
+    if (wired === 'local') writeFileSync(join(root, '.claude', 'settings.local.json'), JSON.stringify(hooks));
+    if (file === 'link') symlinkSync(join(root, 'package.json'), join(root, rel));
+    else if (file === 'dir') mkdirSync(join(root, rel));
+    else if (file !== undefined) writeFileSync(join(root, rel), file);
+    if (stamp) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);
+    if (gates) writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [{ id: 'unit-tests', title: 'T', cmd: 'node --test' }] }));
+    if (lanes !== undefined) writeFileSync(join(root, LANES_FILE), JSON.stringify({ readLane: lanes }));
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, device ? { lstat: maskingDeps(root, [device]).lstat } : {}) });
+    const pick = (k) => [built.items.filter((item) => item.key === k), built.skips.filter((skip) => skip.key === k)];
+    return { root, rel, built, pick };
+  };
+  const NOT_REGULAR = (rel) => new RegExp(`${rel.replaceAll('.', '\\.')} exists but is not a regular file`, 'u');
+  const rows = [
+    ['unwired, a differing file', { wired: null }, 'offer'], ['a gate entry under another matcher, a differing file', { entry: gateEntry('Write') }, 'offer', 'gate-hook'],
+    ['wired, an absent file', { file: null }, 'kit'], ['wired, a differing file', {}, 'kit'], ['wired only in settings.local.json, a differing file', { wired: 'local' }, 'kit'],
+    ['wired, a current file', { file: 'current' }, 'nothing'], ['wired, a link at the kit path', { file: 'link' }, NOT_REGULAR],
+    ['wired, a directory at the kit path', { file: 'dir' }, NOT_REGULAR], ['wired, a device at the kit path', { file: '', device: 'rel' }, NOT_REGULAR],
+    ['wired, a device at .claude/hooks', { device: '.claude/hooks' }, () => /\.claude\/hooks exists but is not a directory/u],
+    ['wired, a stale stamp beside a planned file', { stamp: '2.9.0' }, () => /run \/agent-workflow-kit upgrade first/u],
+    ['another copy of the runtime, no kit file', { entry: stopEntry('node agent-workflow-kit/references/hooks/state-block-guard.mjs --require-block'), file: null }, 'kit', 'state-block'],
+  ];
+  for (const key of ['gate-hook', 'state-block']) {
+    for (const [label, setup, expected] of rows.filter((row) => !row[3] || row[3] === key)) it(`${key}: ${label}`, (t) => {
+      const rel = key === 'gate-hook' ? GATE : STOP;
+      const file = setup.file === null ? undefined : setup.file === 'current' ? CURRENT[rel] : setup.file ?? OLD;
+      const { root, pick } = project(t, key, { ...setup, file, device: setup.device === 'rel' ? rel : setup.device });
+      const [items, skips] = pick(key);
+      const variant = expected === 'kit' ? `${key}.not-current` : key;
+      if (typeof expected === 'function') {
+        assert.deepEqual([items, skips.length], [[], 1], JSON.stringify(skips));
+        assert.match(skips[0].reason, expected(rel));
+        return;
+      }
+      assert.deepEqual([items.map((item) => item.variant), skips], [expected === 'nothing' ? [] : [variant], []], JSON.stringify(skips));
+      if (expected === 'nothing') return;
+      const slot = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+      assert.deepEqual([items[0].lane, items[0].check, items[0].apply], [expected === 'kit' ? 'kit' : 'harness', slot.check, slot.apply]);
+      if (expected === 'offer') return;
+      const what = `${rel} is absent or differs from the body the kit writes for it — written with that body, with no question`;
+      assert.deepEqual([items[0].severity, items[0].what, items[0].benefit, items[0].detail], [SEVERITY_OPTIONAL, what, KIT_BENEFIT, `writes: ${rel}`]);
+      assert.ok(what.length <= ITEM_LINE_CAP);
+    });
+  }
+  it('gate-hook: a wired gate hook with no declaration renders gates-declaration beside its kit arm', (t) => {
+    const { built, pick } = project(t, 'gate-hook', { file: OLD, gates: false });
+    assert.deepEqual([pick('gate-hook')[0].map((item) => item.variant), built.items.some((item) => item.key === 'gates-declaration')], [['gate-hook.not-current'], true]);
+  });
+  it('the read-lane offer renders exactly while the gate hook is wired and the toggle is off, whatever the hook bytes', (t) => {
+    for (const lanes of [false, true]) {
+      for (const file of [CURRENT[GATE], OLD, undefined]) {
+        const [items, skips] = project(t, 'gate-hook', { file, lanes }).pick('read-lane');
+        assert.deepEqual([items.map((item) => item.variant), skips], [lanes ? [] : ['read-lane'], []], `toggle ${lanes}, ${file === undefined ? 'absent' : file === OLD ? 'differing' : 'current'}`);
+      }
+    }
+  });
+  it('no WHATS or SEVERITIES key is gate-hook.marker-stale, read-lane.stale or read-lane.missing', () => {
+    for (const retired of ['gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing']) {
+      assert.equal(Object.hasOwn(WHATS, retired) || Object.hasOwn(SEVERITIES, retired), false, retired);
+    }
   });
 });
 
@@ -2810,7 +2839,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
-  it('the harness variant count is twenty-one', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
+  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
   const makeHarnessProject = () => {
     const root = makeProject();
     const dir = join(root, 'farm');
@@ -3502,7 +3531,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }
-  it('the harness variant count is twenty-one', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 21));
+  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
 });
 
 describe('spec:init-project/S54 the advisor arms by their tables', () => {

@@ -99,10 +99,11 @@ customization: every kit script, the spec layer's four pair files (`scripts/spec
 included, the hook installer set, the kit rules files `docs/ai/rules/<theme>.md` and the kit agent
 files (the five the kit bundles for `.claude/agents/` — `changelog-skeleton.md`, `executor.md`,
 `gate-triage.md`, `mechanical-sweep.md`, `review-lens.md` — and each configured
-`review-lens-<model>-<effort>.md`) are written over by the next upgrade with no question and no copy
-kept. A declaration seeded once from a template and never
+`review-lens-<model>-<effort>.md`) and, within a hook you wired, the kit hook files
+`.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs` are written over
+by the next upgrade with no question and no copy kept. A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
-user's own file. A customization goes into one of six channels instead:
+user's own file. A customization goes into one of seven channels instead:
 
 - **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed
   pre-commit hook runs it first, once the installer has run.
@@ -112,6 +113,7 @@ user's own file. A customization goes into one of six channels instead:
 - **An agent's model** goes in the vehicle settings `docs/ai/vehicles.json`.
 - **A vehicle of your own** goes in `.claude/agents/<name>.local.md` with a `name:` of its own, which
   no review roster names; a lens of your own in a review slot keeps a stem of its own.
+- **A hook of your own** goes in `.claude/hooks/<name>.local.mjs`, which you wire.
 
 No path segment of a file the kit bundles and places as its own has a dot-separated part exactly
 `local`; a path of that form is the user's, and no kit tool writes one on its own. Outside that rule:

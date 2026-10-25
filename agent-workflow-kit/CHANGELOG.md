@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 18.0.0 — the kit's two hook files are written current within a hook you wired; `gate-hook --reseed` and three advisor items retire (AD-209)
+
+**MAJOR: `gate-hook.mjs --reseed` is removed, and the advisor's `gate-hook.marker-stale`, `read-lane.stale` and
+`read-lane.missing` items are gone.** Before, a placed gate hook that differed from the kit's was preserved by
+`gate-hook --apply`; the advisor offered the reseed route, on your yes, in two states only: a declaration carrying
+`lcovProducer`, and an enabled read-lane. A wired gate hook whose file was missing got `read-lane.missing`, whose apply
+was `gate-hook --apply`; a wired state-block hook whose file was missing was never offered at all. Now one rule covers
+both kit hook files, `.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs`: within a hook
+you wired (for the gate hook, a `PreToolUse` `Bash` entry running its command; for the state-block hook, a `Stop` entry
+whose command names `state-block-guard.mjs`, whichever copy it runs — in `.claude/settings.json` or
+`.claude/settings.local.json`), an absent file is placed and one whose bytes
+differ is written with the body the kit writes for it, in place, with no question and no copy kept. Wiring stays
+yours: an unwired hook keeps its `gate-hook` or `state-block` offer and your yes.
+
+- **Two new kit items, `gate-hook.not-current` and `state-block.not-current`.** Over a wired hook whose file is absent
+  or differs, the advisor renders this `lane: kit` item, which the agent applies with no question by the kit route. Its
+  text reads `<the hook file> is absent or differs from the body the kit writes for it — written with that body, with
+  no question`, and its detail names the one file its apply writes. A stale stamp beside it is the upgrade-first skip.
+- **`gate-hook --apply` writes a differing file.** It places an absent hook file, writes a differing one with the
+  bundled body in place, leaves a current one, and wires the entry only while it is wired in neither settings file —
+  so over a wired hook it writes the file alone. A differing file under an unwired hook is no longer refused: your yes
+  to the offer writes and wires it.
+- **The line.** A differing kit hook file reads `differs from the body the kit writes for it — written with that body;
+  a hook of your own goes in .claude/hooks/<name>.local.mjs` (on a dry run, `would be written with that body`), from
+  both hook writers. No line says preserved or reseed.
+- **The danger check** for a kit hook item admits only that hook file and its folders, and only while it judges the
+  hook wired; over an unwired hook it admits nothing (`refused:`, exit 1), so the no-question apply never wires a hook.
+- **`read-lane` is the enable offer alone.** It renders while the hook is wired and the lane is off; a stale or absent
+  hook under it is written by `gate-hook.not-current` first. The `--read-lane` currency refusal now names
+  `gate-hook --apply`.
+- **`--reseed` is gone, with no alias.** `gate-hook.mjs --reseed` now stops with `unknown argument: --reseed`, exit 2.
+  No migration note is owed: every line that printed it — the retired items `gate-hook.marker-stale` and
+  `read-lane.stale`, the writer's refusals, its diverged line and `--help` — is gone or now names `gate-hook --apply`,
+  and a script that ran `--apply --reseed` runs `gate-hook.mjs --apply`.
+- **The texts say the same.** The writer's header and `--help`; the hook, gates, state-block-guard and recommendations
+  modes; `references/advisor-writers.md`; the README's hook and state-block-guard rows; the guide's *Reserved names and
+  channels*, which names the two hook files and gains a seventh channel, `.claude/hooks/<name>.local.mjs`, for a hook
+  of your own, which you wire.
+
 ## 17.0.0 — every kit agent file is written current with no question; `--executor` and `executor-vehicle.differing` retire (AD-208)
 
 **MAJOR: `cheap-agents.mjs --executor` is removed, and the advisor's `executor-vehicle.differing` item is gone.** Before,

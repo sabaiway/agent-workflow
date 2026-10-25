@@ -13,7 +13,7 @@ import {
 } from './harness.test.mjs';
 
 const CHECK_DIGEST = 'a'.repeat(64);
-const HARNESS_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook', 'read-lane.missing',
+const HARNESS_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier'];
 
 describe('spec:init-project/S11 previews and one terminal y', () => {
@@ -184,14 +184,10 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     put(join(f.root, '.claude/settings.json'), JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] } }));
   };
 
-  it('gate-hook.marker-stale and state-block apply on one y, print each check after its preview, and leave no pending item', async (t) => {
-    const variants = ['gate-hook.marker-stale', 'state-block'];
+  it('gate-hook over a differing unwired hook and state-block apply on one y, print each check after its preview, and leave no pending item', async (t) => {
+    const variants = ['gate-hook', 'state-block'];
     const f = realFixture(t, new Set(variants));
-    placeStaleHook(f);
-    put(join(f.root, 'docs/ai/gates.json'), JSON.stringify({
-      gates: [{ id: 'test', title: 'Tests', cmd: 'node --test', lcovProducer: true }],
-    }));
-    assert.equal(JSON.parse(readFileSync(join(f.root, '.claude/settings.json'), 'utf8')).hooks.Stop, undefined);
+    put(join(f.root, HOOK_FILE_REL), 'process.exit(0);\n');
     assert.deepEqual(pending(f), variants);
     const respond = f.respond;
     f.respond = (argv, opts) => {
@@ -204,7 +200,7 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     assert.deepEqual(await run(f.deps), { code: 0 });
     assert.deepEqual(f.questions, [APPLY]);
     assert.deepEqual(applies(f).map(({ argv }) => argv), [
-      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--reseed', '--cwd', f.root],
+      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--cwd', f.root],
       ['node', join(TOOLS, 'state-block-hook.mjs'), '--apply', '--cwd', f.root],
     ]);
     for (const [index, variant] of variants.entries()) {
@@ -222,27 +218,29 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     const leaf = await import('../state-block-hook.mjs').catch(() => ({}));
     assert.equal(need(leaf, 'isStopHookWired')(settings), true);
     assert.deepEqual(settings.hooks.Stop, [need(leaf, 'buildStopHookEntry')()]);
+    assert.deepEqual(settings.hooks.PreToolUse, [buildHookSettingsEntry()]);
   });
 
-  it('read-lane.stale applies on one y with its check after the preview and is no longer pending', async (t) => {
-    const f = realFixture(t, new Set(['read-lane.stale']));
+  it('gate-hook.not-current over a wired differing hook is previewed by the plain dry run, applied on one y with both settings files byte-identical, and listed no more', async (t) => {
+    const f = realFixture(t, new Set(['gate-hook.not-current']));
     placeStaleHook(f);
     put(join(f.root, LANES_REL), JSON.stringify({ readLane: true }));
-    const declaration = JSON.parse(readFileSync(join(f.root, 'docs/ai/gates.json'), 'utf8'));
-    assert.ok(declaration.gates.every((gate) => !Object.hasOwn(gate, 'lcovProducer')));
-    assert.deepEqual(pending(f), ['read-lane.stale']);
-    const run = need(init, 'runInitProject');
-    assert.deepEqual(await run(f.deps), { code: 0 });
+    put(join(f.root, '.claude/settings.local.json'), '{"otherLocal":"kept"}\n');
+    const settingsBytes = () => ['.claude/settings.json', '.claude/settings.local.json'].map((rel) => readFileSync(join(f.root, rel)));
+    const before = settingsBytes();
+    assert.deepEqual(pending(f), ['gate-hook.not-current']);
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
     assert.deepEqual(f.questions, [APPLY]);
-    assert.deepEqual(applies(f).map(({ argv }) => argv), [
-      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--reseed', '--cwd', f.root],
+    assert.deepEqual(f.calls.map(({ argv }) => argv), [
+      ['node', join(TOOLS, 'gate-hook.mjs'), '--cwd', f.root],
+      ['node', join(TOOLS, 'gate-hook.mjs'), '--apply', '--cwd', f.root],
     ]);
-    const preview = f.printed.indexOf('preview: read-lane.stale');
-    const scope = f.printed.indexOf('scope: within the declared scope of read-lane.stale');
+    const preview = f.printed.indexOf('preview: gate-hook.not-current');
+    const scope = f.printed.indexOf('scope: within the declared scope of gate-hook.not-current');
     assert.ok(preview >= 0 && scope > preview + 1 && f.printed.indexOf(RUN_NONE) > scope);
     assert.deepEqual(pending(f), []);
     assert.equal(readFileSync(join(f.root, HOOK_FILE_REL), 'utf8'), readFileSync(BUNDLED_HOOK_PATH, 'utf8'));
-    assert.equal(JSON.parse(readFileSync(join(f.root, LANES_REL), 'utf8')).readLane, true);
+    assert.deepEqual(settingsBytes(), before);
   });
 
   it('on a fresh git project with no package.json a pending enforcement item is previewed by the leaf\'s dry run and applied on the one y, the record refreshed', async (t) => {

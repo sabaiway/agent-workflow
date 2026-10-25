@@ -51,6 +51,7 @@ import {
   writeHookFile,
 } from './gate-hook.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import { fileLine } from './distribution-files/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -206,11 +207,10 @@ const STATE_BLOCK_CURRENT_LINE = 'nothing to change: the state-block hook is pla
 const TRUST_POSTURE_LINE =
   'trust posture: the guard reads the closing assistant message of each turn and writes one warning line; it runs a Node process on every turn end, reads nothing else, makes no network call and approves nothing.';
 
-const PLACEMENT_LINES = Object.freeze({
-  [PLACEMENT_CREATE]: ['would place', 'placed'],
-  [PLACEMENT_KEEP]: ['already current', 'already current'],
-  [PLACEMENT_REPLACE]: ['would replace with the bundle (it differs from the bundled runtime)', 'replaced with the bundle'],
-});
+const PLACEMENT_LINES = Object.freeze({ [PLACEMENT_CREATE]: ['would place', 'placed'], [PLACEMENT_KEEP]: ['already current', 'already current'] });
+const placementLine = ({ placement, dryRun }) => (placement === PLACEMENT_REPLACE
+  ? fileLine({ rel: STATE_BLOCK_HOOK_FILE_REL, state: 'hook' }, dryRun ? undefined : 'written', dryRun)
+  : `${STATE_BLOCK_HOOK_FILE_REL}: ${PLACEMENT_LINES[placement][dryRun ? 0 : 1]}`);
 
 const MERGE_LINES = Object.freeze({
   [MERGE_NO_HOOKS]: 'the hooks key with the Stop entry',
@@ -230,7 +230,7 @@ export const formatResult = (result) => {
     result.dryRun
       ? 'agent-workflow state-block hook — DRY RUN (no changes; re-run with --apply)'
       : 'agent-workflow state-block hook — APPLY',
-    `  - ${STATE_BLOCK_HOOK_FILE_REL}: ${PLACEMENT_LINES[result.placement][result.dryRun ? 0 : 1]}`,
+    `  - ${placementLine(result)}`,
     formatSettingsLine(result),
     `  command: ${STATE_BLOCK_HOOK_COMMAND} (no --require-block; references/modes/state-block-guard.md says when to add it)`,
     TRUST_POSTURE_LINE,

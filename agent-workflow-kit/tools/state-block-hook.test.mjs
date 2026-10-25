@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { fileLine } from './distribution-files/index.mjs';
 
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const need = (name) => {
@@ -22,6 +23,7 @@ const BUNDLE_PATH = fileURLToPath(new URL('../references/hooks/state-block-guard
 const COMMAND = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/state-block-guard.mjs"';
 const ENTRY = { hooks: [{ type: 'command', command: COMMAND, timeout: 10 }] };
 const CURRENT = 'nothing to change: the state-block hook is placed, current and wired';
+const OWN_HOOK = '; a hook of your own goes in .claude/hooks/<name>.local.mjs';
 const SESSION_NOTE = 'settings hot-reload: the Stop hook runs from the next turn end — no session restart needed.';
 const FOREIGN_PRE = { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo pre' }] };
 const FOREIGN_STOP = { matcher: 'foreign', hooks: [{ type: 'command', command: 'echo stop' }] };
@@ -75,7 +77,7 @@ describe('spec:init-project/S28 the state-block writer by proof on a temp projec
     const placements = [
       { placement: 'create', hook: undefined, line: 'would place' },
       { placement: 'keep', hook: bundle, line: 'already current' },
-      { placement: 'replace', hook: 'older runtime\n', line: 'would replace with the bundle (it differs from the bundled runtime)' },
+      { placement: 'replace', hook: 'older runtime\n', line: `differs from the body the kit writes for it — would be written with that body${OWN_HOOK}` },
     ];
     const merges = [
       { mergeCase: 'no-hooks', settings: {}, line: 'the hooks key with the Stop entry' },
@@ -137,7 +139,7 @@ describe('spec:init-project/S28 the state-block writer by proof on a temp projec
     const output = invoke(need('main'), ['--apply', '--cwd', root]);
     assert.equal(output.code, 0, output.err);
     assert.equal(output.err, '');
-    assert.ok(output.out.split('\n').includes(`  - ${HOOK}: replaced with the bundle`));
+    assert.ok(output.out.split('\n').includes(`  - ${HOOK}: differs from the body the kit writes for it — written with that body${OWN_HOOK}`), output.out);
     assert.deepEqual(readFileSync(hookPath), readFileSync(BUNDLE_PATH));
     assert.equal(statSync(hookPath).ino, inode);
     assert.deepEqual(readFileSync(join(root, SETTINGS)), settings);
@@ -323,6 +325,19 @@ describe('spec:init-project/S28 the state-block writer by proof on a temp projec
     }
     for (const forbidden of ['lstat', 'isSymbolicLink', 'must be an array', 'must be a JSON object']) {
       assert.equal(source.includes(forbidden), false, forbidden);
+    }
+  });
+
+  it('a differing runtime\'s line is fileLine of the index over the state hook, imported from the index', (t) => {
+    makeProject(t);
+    need('writeStateBlockHook');
+    const source = readFileSync(new URL('./state-block-hook.mjs', import.meta.url), 'utf8');
+    const fromIndex = /^import \{[^}]*\bfileLine\b[^}]*\} from '\.\/distribution-files\/index\.mjs';$/mu;
+    assert.ok(fromIndex.test(source), 'state-block-hook.mjs imports fileLine from ./distribution-files/index.mjs');
+    assert.equal(/replaced? with the bundle/u.test(source), false, 'no line says replace with the bundle');
+    for (const dryRun of [true, false]) {
+      const tail = `${dryRun ? 'would be written' : 'written'} with that body${OWN_HOOK}`;
+      assert.equal(fileLine({ rel: HOOK, state: 'hook' }, dryRun ? undefined : 'written', dryRun), `${HOOK}: differs from the body the kit writes for it — ${tail}`);
     }
   });
 

@@ -393,16 +393,19 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   process cwd and failed alike. Narrow fix: expand a literal `~`/`~/…` override against the home before the probe.
   Raised by the S2 diff review (codex round 2).
 - **RESEED-PRINTS-NO-CLASS-FOR-RE-ARMED-APPROVAL** — invariant: a check result names what a write turns back on. Origin:
-  the S6 reseed of a wired gate hook prints only a `writes:` line, no class, though the replaced hook turns gate
-  auto-approval (marker-stale) or the read-lane compounds (read-lane.stale) back on; the same form as revision 6's
-  `read-lane.missing` placement over a wired entry (`agent-workflow-kit/tools/apply-danger-check.mjs:262-267`, `:330-332`).
-  Narrow fix: a class suffix on a hook-file `writes:` line naming what the hook approves. Raised by the S6 spec review
-  (lens round 1, m4).
+  the kit items `gate-hook.not-current` and `state-block.not-current` (spec init-project, part hook-writers revision 8)
+  write a wired hook's file with the kit's body and print only a `writes:` line, no class, though the written hook turns
+  gate auto-approval, the read-lane compounds or the Stop check back on; the harness `gate-hook` placement over a wired
+  entry prints the same form (`plannedChange` in `agent-workflow-kit/tools/apply-danger-check.mjs`). Narrow fix: a class
+  suffix on a hook-file `writes:` line naming what the hook approves. Raised by the S6 spec review (lens round 1, m4);
+  reworded to the kit hook items during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
 - **GATE-HOOK-DIVERGED-UNWIRED-RECOVERY-SKIPS-THE-CHECK** — invariant: every recovery the kit prints for a harness
-  write is a check line. Origin: spec init-project revision 7 (part hook-writers) makes the base `gate-hook` item's
-  diverged-and-unwired refusal name the raw reseed line `gate-hook.mjs --apply --reseed`, which wires a PreToolUse entry
-  with no danger check; no advisor arm routes that state through the check. Narrow fix: the refusal names the
-  `gate-hook.marker-stale` check line (or a new arm). Raised by the S6 spec review (lens round 1, m5).
+  write is a check line. Origin: the read-lane's printed recoveries in `agent-workflow-kit/tools/gate-hook.mjs` — the
+  `--apply --read-lane` refusals of a stale, absent or unwired hook and the read-lane dry run's `STALE` and wiring
+  lines — name the raw `gate-hook --apply` line (`applyGateHookCommand`), a hook-file write with no danger check that
+  also wires an unwired hook (spec init-project, part hook-writers revision 8). Narrow fix: those lines name the check
+  line of `gate-hook.not-current` over a wired hook and of `gate-hook` over an unwired one. Raised by the S6 spec review
+  (lens round 1, m5); reworded to the read-lane's recoveries during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
 - **S6-LIVE-ACCEPTANCE-RUNS-NO-STOP-HOOK** — invariant: a live acceptance proves the placed hook runs, not only that the
   item leaves the list. Origin: the S6 plan's live bullet (story S6 of BRIDGES-WORK-UNDER-THE-SANDBOX) checks that the
   next advisor run no longer lists `state-block`, never that the wired Stop hook fires. Narrow fix: start a new session in
@@ -429,7 +432,11 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   widens nothing that process lacks; the same residual covers a hard link at the hook path and the same window over a
   parent directory (`.claude` or `.claude/hooks` swapped for a link between the preflight and the write, which the
   recursive `mkdir`, `wx` and `O_NOFOLLOW` do not see). Raised by the S6 diff review (codex round 1, M1, the
-  generalization; lens round 2, M1, the parent directory and the hard link).
+  generalization; lens round 2, M1, the parent directory and the hard link). Widened during the
+  DISTRIBUTION-FILES-STAY-CURRENT S16 spec review: in both hook writers the re-read of the placed hook right before the
+  settings write is an `lstat` then a plain read, so a link swapped in between the two is read through; over a hook the
+  user wired nothing is wired, so the kit items `gate-hook.not-current` and `state-block.not-current` never reach that
+  window.
 - **HOOK-REPLACE-OPEN-BLOCKS-ON-A-FIFO** — invariant: a writer refuses a non-regular entry, never blocks on it. Origin:
   `writeHookFile`'s replace flags (`agent-workflow-kit/tools/gate-hook.mjs:147`, `O_WRONLY | O_NOFOLLOW | O_TRUNC`) block
   on a FIFO swapped in at the hook path after the preflight until a reader opens it, and the danger check's apply spawn
@@ -437,11 +444,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   no-follow reader does (`agent-workflow-kit/tools/fs-read-nofollow.mjs`). Raised by the S6 diff review (lens round 2, m1).
 - **HOOK-REPLACE-REFUSES-WITHOUT-NOFOLLOW** — invariant: a harness item the advisor offers can be applied on every
   platform the kit supports. Origin: `writeHookFile` (`agent-workflow-kit/tools/gate-hook.mjs`) refuses an in-place
-  replace where `fs.constants.O_NOFOLLOW` is absent (native Windows), so `gate-hook.marker-stale`, `read-lane.stale` and
-  a differing unwired state-block runtime stay offered there and never converge. Narrow fix: without `O_NOFOLLOW`,
-  unlink the entry (which removes a link, never its target) and create the file exclusively (`wx`). Proof: the
-  no-follow-absent cell applies and leaves a planted link's target unchanged. Raised by the S6 diff review (codex fold
-  ask, C-M1 correction).
+  replace where `fs.constants.O_NOFOLLOW` is absent (native Windows), so the kit items `gate-hook.not-current` and
+  `state-block.not-current` over a differing file, and the harness `gate-hook` and `state-block` offers over a differing
+  unwired one, stay pending there and never converge. Narrow fix: without `O_NOFOLLOW`, unlink the entry (which removes
+  a link, never its target) and create the file exclusively (`wx`). Proof: the no-follow-absent cell applies and leaves
+  a planted link's target unchanged. Raised by the S6 diff review (codex fold ask, C-M1 correction); reworded to the two
+  kit items during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
 - **STATE-BLOCK-HOOK-PRINTS-NO-HIDDEN-MODE-NOTE** — invariant: every `.claude/` placing writer names the hide-footprint
   reconcile. Origin: `agent-workflow-kit/tools/state-block-hook.mjs` prints only the hot-reload line after a write, while
   `gate-hook.mjs` adds the hidden-mode note; on a hidden deployment with no gate hook the placed `.claude/hooks/` shows in
@@ -452,11 +460,46 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   is already the default. Narrow fix: accept `--dry-run` and refuse it beside `--apply`, as gate-hook does. Raised by the
   S6 diff review (agy round 1, n1).
 - **STATE-BLOCK-CONVERGES-ON-THE-WIRING-ALONE** — invariant: an item converges only when what it installs runs. Origin:
-  `probeStateBlockHook` returns on `isStopHookWired` (`agent-workflow-kit/tools/recommendations.mjs:1061`,
-  `agent-workflow-kit/tools/state-block-hook.mjs:106-112`), which reads only the settings; with the Stop entry wired
-  and `.claude/hooks/state-block-guard.mjs` missing the item is not offered and the hook errors at each turn end. The
-  writer already handles the state (placement `create`, no merge). Narrow fix: the probe offers `state-block` when the
-  runtime file is absent beside a wired entry; one cell for that state. Raised by the S6 release (session 51).
+  `isStopHookWired` (`agent-workflow-kit/tools/state-block-hook.mjs`) matches the runtime name in a Stop entry's command
+  and reads only the settings. From story S16 of DISTRIBUTION-FILES-STAY-CURRENT a wired entry with the kit file absent
+  renders `state-block.not-current`, so one state stays: a Stop entry running another copy of the runtime (this
+  repository runs the kit source) whose file is missing accepts the hook, the kit file is placed though that entry does
+  not run it, and the entry errors at each turn end while no state-block item renders. Narrow fix: the probe reads the
+  path the accepting entry runs and states a skip naming it when that file is absent; one cell for that state. Raised
+  by the S6 release (session 51); narrowed during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
+- **GATE-APPROVE-SUITE-COMMENT-NAMES-THE-RESEED-ARM** — invariant: a suite's comments describe the shipped behaviour.
+  Origin: `agent-workflow-kit/test/gate-approve-hook.test.mjs:257-260` still describes the "marker-scoped reseed arm",
+  which story S16 of DISTRIBUTION-FILES-STAY-CURRENT retires for `gate-hook.not-current`. Narrow fix: the comment names
+  the kit item. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
+- **HOOK-KEY-UNWIRED-READS-NO-DRY-RUN-UNPINNED** — invariant: an unwired hook's key renders its offer whatever the writer
+  dry run would say. Origin: spec init-project S72 has no cell proving the dry run is not read while the hook is unwired
+  — unwired beside a link at the kit hook path, an unsafe `permissions.defaultMode` or a malformed `hooks.PreToolUse`
+  renders the offer, not a skip. Narrow fix: those three unwired rows in the S72 table of
+  `agent-workflow-kit/tools/recommendations.test.mjs`. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
+- **HOOK-KEY-STALE-STAMP-OVER-A-CURRENT-FILE-UNPINNED** — invariant: a stale stamp alone never renders a hook item or
+  skip. Origin: spec init-project S72 pins the upgrade-first skip beside a planned file but no cell for a stale stamp over
+  a current wired file rendering nothing (the agents precedent, S48). Narrow fix: one S72 row per key. Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
+- **INIT-PROJECT-R23-NAMES-GIT-HOOKS-WITH-NO-PASSAGE** — invariant: a part a revision names as following carries the
+  passage it follows with. Origin: spec init-project revision 23 (its revision note and Links) names the part git-hooks
+  among the parts that follow, though git-hooks carries one phrase of it and no revision-23 passage. Narrow fix: drop
+  git-hooks from the revision-23 list, or give it the one passage. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S16
+  spec review.
+- **HOOK-WRITERS-STOPS-OMIT-AN-UNREADABLE-HOOK-FILE** — invariant: the part's STOP list is exact. Origin: spec
+  init-project, part hook-writers, "Exactly the following stop either writer" omits a regular but unreadable kit hook
+  file, which `planTarget`'s raw read (`agent-workflow-kit/tools/gate-hook.mjs`) throws on, both writers alike. Narrow
+  fix: the list names it, and one cell per writer pins the refusal. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S16
+  spec review.
+- **HOOK-MD-CONSENT-STEPS-NOT-SCOPED-TO-AN-UNWIRED-HOOK** — invariant: a mode doc's consent steps apply only where a yes
+  is asked. Origin: `agent-workflow-kit/references/modes/hook.md` consent steps 2 and 3 are not scoped to an unwired
+  hook, so a wired hook whose file differs still reads as asking a yes; no S33 cell pins the scope. Narrow fix: the two
+  steps open with the unwired case, and an S33 cell pins it. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S16 spec
+  review.
+- **HOOK-WRITERS-MASK-LIMIT-TOO-BROAD-FOR-GATE-HOOK** — invariant: a stated limit is true for each key it names. Origin:
+  spec init-project, part hook-writers, Stated limits, "over an unwired one the offer renders and its check stops on that
+  refusal", is too broad for the gate-hook key: with no declaration that key renders `gates-declaration` alone. Narrow
+  fix: "the offer, where it renders, stops on that refusal at its check (exit 3)". Raised during the
+  DISTRIBUTION-FILES-STAY-CURRENT S16 spec review.
 - **GIT-HOOKS-INSTALLER-SKIPS-ON-ANY-REV-PARSE-FAILURE** — invariant: the hook installer skips only outside a git
   checkout. Origin: any non-zero `git rev-parse --git-path hooks` exit (dubious ownership, git absent) reads as "not a
   git checkout" and exits 0 (`agent-workflow-kit/references/scripts/install-git-hooks.mjs:60-63,179-182`): the
@@ -586,7 +629,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   a configured `subagent` slot degrades to `solo`. Origin: from story S15 `agents.not-current` renders in the base
   `executor-vehicle` arm's place over a missing or unusable executor in a placed component (spec carriers, part
   agent-files), and a kit item counts in no verdict class (`agent-workflow-kit/tools/recommendations.mjs:254-263`,
-  `:1763`); while its apply ends pending the verdict can read `nothing is broken`. A fold that counted the stand-in as
+  `:1763`); while its apply ends pending the verdict can read `nothing is broken`. From story S16 the kit items
+  `gate-hook.not-current` and `state-block.not-current` count in no class either, so a wired hook whose file is absent or
+  stale can read `nothing is broken` while its item stays pending (widened during the DISTRIBUTION-FILES-STAY-CURRENT S16
+  spec review). A fold that counted the stand-in as
   attention was tried at the S15 spec review and bred restatements (the mode doc's verdict paragraph, init-project S4 and
   S7, the item's label and sort), so it was withdrawn. Narrow fix: one design of the stand-in's class across the item,
   its label, its sort and the verdict paragraph. Proof: a verdict cell over that tree. Residual, not live: the kit route
@@ -868,7 +914,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (`agent-workflow-kit/tools/cheap-agents.mjs:221`, `agent-workflow-kit/tools/gate-hook.mjs:112`), so under the
   no-question rule an older body and a differing one read alike and both get the route line. Narrow fix: for a family
   with no catalog, the line stays neutral ("differs from the bundled body — written; a customization belongs in …").
-  Carried by stories S6 and S7 when they write those families. Raised at the epic revision (2026-10-23).
+  Carried by stories S6 and S7 when they write those families; story S16 carries it for the two hook writers, whose line
+  for a differing kit hook file is `fileLine`'s state `hook` ("differs from the body the kit writes for it"), the same
+  for an older body and an edited one. Raised at the epic revision (2026-10-23).
 - **PAIRS-ONLY-TREE-LACKS-THE-SHIM** — invariant: every suite the kit leaves in `scripts/` loads. Origin: a tree where
   the specs op seeded the spec-layer pairs and the component is not accepted (the pairs-only tree and a declined one
   alike) has no `_expect-shim.mjs`, so its two pair suites fail at import (`spec-schema.test.mjs:2`,

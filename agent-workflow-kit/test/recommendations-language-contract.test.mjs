@@ -278,7 +278,7 @@ describe('recommendations contract — the third-outcome vocabulary reaches the 
   const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
 
   it('every third-outcome arm is named in the posture notes by its own identifier', () => {
-    for (const arm of ['producer-unrecognized', 'coverage-domain-narrow', 'adopted-elsewhere', 'id-squatter', 'marker-stale']) {
+    for (const arm of ['producer-unrecognized', 'coverage-domain-narrow', 'adopted-elsewhere', 'id-squatter']) {
       assert.ok(notes.includes(`\`${arm}\``), `the ${arm} arm is named where its consent moment is`);
     }
   });
@@ -339,13 +339,13 @@ describe('recommendations contract — the retired item key is gone from LIVE su
     assert.doesNotMatch(HOOK_DOC, /never new per-command exposure/i, 'the overstated subset claim is gone');
   });
 
-  it('the read-lane posture note covers BOTH the enable-preview and the stale --apply --reseed recovery (council R2-minor)', () => {
+  it('the read-lane posture note names the enable preview and the kit item for a stale or absent hook (council R2-minor)', () => {
     const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
     assert.match(notes, /- `read-lane` —/, 'the read-lane posture note exists');
     const note = between(notes, '- `read-lane` —', POSTURE_NOTE_BOUNDARY);
     assert.match(note, /gate-hook --read-lane/u, 'the note names the enable preview');
-    assert.match(note, /--apply --reseed/u, 'the note names the stale-variant reseed recovery, not only the enable preview');
-    assert.doesNotMatch(note, /delete-to-reseed|\brm\b/iu);
+    assert.ok(note.includes('`gate-hook.not-current`'), 'a stale or absent hook under the lane is a planned file of the kit item');
+    assert.doesNotMatch(note, /reseed|\brm\b/iu);
   });
 });
 
@@ -478,10 +478,10 @@ describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked
 
 const SLOT_VARIANTS = Object.freeze([
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render',
-  'gate-hook', 'read-lane.missing', 'mcp-channel', 'mcp-channel.differing',
+  'gate-hook', 'mcp-channel', 'mcp-channel.differing',
   'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
   'jev-skill.earlier', 'jev-connect', 'family-freshness',
-  'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'sandbox-provision',
+  'state-block', 'sandbox-provision',
   'enforcement', 'commit-guard',
   'gates-inert.unfillable', 'gates-inert.producer-unrecognized',
   'source-size.id-squatter', 'review-recipe',
@@ -773,11 +773,23 @@ describe('spec:velocity-profile/S21 — shipped bridge keys have no hand-apply a
 });
 
 describe('spec:init-project/S33 shipped text of the three writers', () => {
-  const variants = Object.freeze(['gate-hook.marker-stale', 'read-lane.stale', 'state-block']);
+  const variants = Object.freeze(['gate-hook', 'state-block', 'gate-hook.not-current', 'state-block.not-current']);
   const bannedTokens = /HAND-APPLY|\brm\b|No writer yet|has no writer|yours to paste|by hand/iu;
   const stateBlockDoc = read('references/modes/state-block-guard.md');
+  const gatesDoc = read('references/modes/gates.md');
   const skillDoc = read('SKILL.md');
   const routerModeBudget = 52224;
+  const OWN_HOOK = '.claude/hooks/<name>.local.mjs';
+  const readmeRowOf = (command) => README.split('\n').find((line) => line.includes(`\`/agent-workflow-kit ${command}\``)) ?? '';
+  // A retired word anywhere, or a clause (split at ; and at a sentence end) that says preserved or by hand of a hook file.
+  const retiredHookWords = (text) => [...(text.match(/reseed|never clobbered|placement stays opt-in|never place new ones/giu) ?? []),
+    ...text.split(/;|\.\s/u).filter((clause) => /preserved|by hand/iu.test(clause) && /\.mjs|hook file|placed hook/iu.test(clause))];
+
+  it('hook.md, gates.md, state-block-guard.md, recommendations.md and the README hook rows carry no retired hook-file word', () => {
+    const surfaces = { 'hook.md': HOOK_DOC, 'gates.md': gatesDoc, 'state-block-guard.md': stateBlockDoc, 'recommendations.md': MODE_DOC,
+      'README hook row': readmeRowOf('hook'), 'README state-block-guard row': readmeRowOf('state-block-guard') };
+    for (const [name, text] of Object.entries(surfaces)) assert.deepEqual(retiredHookWords(text), [], name);
+  });
 
   it('the three writers have apply slots with no retired hand-step tokens', () => {
     const facts = { toolsDir: resolve(kitRoot, 'tools'), root: '/project', home: '/home/example', env: {}, platform: 'linux' };
@@ -791,15 +803,16 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
     }
   });
 
-  it('the marker-stale and stale read-lane notes permit the checked chat yes and optional init without hand steps', () => {
+  it('the gate-hook and read-lane notes carry no retired arm, name the kit item and keep the checked chat yes and optional init', () => {
     const notes = between(MODE_DOC, '**Per-item posture notes', '**Sandbox lanes');
-    for (const [key, armStart] of [['gate-hook', '**`marker-stale`**'], ['read-lane', 'when it is STALE']]) {
+    for (const key of ['gate-hook', 'read-lane']) {
       const note = between(notes, `- \`${key}\` —`, POSTURE_NOTE_BOUNDARY);
-      const arm = between(note, armStart, '');
-      assert.doesNotMatch(arm, bannedTokens, key);
-      assert.match(arm, /\bagent\b[^.]*\bapplies\b[^.]*\bchat yes\b/i, key);
-      assert.match(arm, /after the check/i, key);
-      assert.match(arm, /\binit\b[^.]*\b(?:may take|instead)\b/i, key);
+      assert.doesNotMatch(note, bannedTokens, key);
+      assert.doesNotMatch(note, /marker-stale|read-lane\.stale|read-lane\.missing|\*\*stale\*\* arm/u, key);
+      assert.ok(note.includes('`gate-hook.not-current`'), `${key} names the kit item`);
+      assert.match(note, /\bagent\b[^.]*\bapplies\b[^.]*\bchat yes\b/i, key);
+      assert.match(note, /after the check/i, key);
+      assert.match(note, /\binit\b[^.]*\b(?:may take|instead)\b/i, key);
     }
   });
 
@@ -812,30 +825,34 @@ describe('spec:init-project/S33 shipped text of the three writers', () => {
     const requireBlock = between(stateBlockDoc, '**The writer offers that command without', '\n\n');
     assert.match(requireBlock, /\bwriter\b/iu);
     assert.ok(requireBlock.includes('--require-block'));
+    assert.ok(stateBlockDoc.includes('`state-block.not-current`'), 'state-block-guard.md names the kit item for a wired runtime absent or differing');
   });
 
-  it('hook.md names the state-block writer and the reseed recovery without the retired no-refresh claim', () => {
+  it('hook.md states the rule, the own hook file and the kit item, and its invariant keeps only the wiring opt-in', () => {
     const otherHook = between(HOOK_DOC, "**The kit's other hook.**", '');
     assert.ok(otherHook.includes('tools/state-block-hook.mjs'));
     assert.doesNotMatch(otherHook, bannedTokens);
-    assert.ok(HOOK_DOC.includes('--apply --reseed'));
-    assert.doesNotMatch(HOOK_DOC, /no refresh-only hook lane|delete-to-reseed/iu);
+    for (const pin of [/\bplaced when (?:it is )?absent\b/iu, /\bwritten with the kit's body\b/iu, /\bno copy (?:is )?kept\b/iu, /\bwith no question\b/iu]) assert.ok(pin.test(HOOK_DOC), `hook.md states: ${pin}`);
+    for (const literal of [OWN_HOOK, '`gate-hook.not-current`', 'once the hook is wired',
+      "(wiring stays opt-in — the AD-011/AD-034 boundary: the upgrade with no question, and init on its one y, place or refresh the hook file of a hook the user wired, and a hook is wired only on the user's yes to its offer)"]) {
+      assert.ok(HOOK_DOC.includes(literal), `hook.md carries: ${literal}`);
+    }
+    assert.doesNotMatch(HOOK_DOC, /no refresh-only hook lane|placed \*\*and\*\* wired/iu);
   });
 
-  it('gates.md recovers a marker-carrying declaration with --apply --reseed and no hand step', () => {
-    const gatesDoc = read('references/modes/gates.md');
+  it('gates.md recovers a marker-carrying declaration with gate-hook.not-current, applied with no question', () => {
     const marker = between(gatesDoc, '**A marker-carrying declaration needs a CURRENT placed hook.**', '\n\n');
-    assert.ok(marker.includes('--apply --reseed'));
+    assert.ok(marker.includes('`gate-hook.not-current`'));
+    assert.match(marker, /\bwith no question\b/iu);
     assert.doesNotMatch(marker, bannedTokens);
   });
 
-  it('the README hook and state-block-guard rows name the reseed route and the writer', () => {
-    const hookRow = README.split('\n').find((line) => line.includes('`/agent-workflow-kit hook`'));
-    const stateBlockRow = README.split('\n').find((line) => line.includes('`/agent-workflow-kit state-block-guard`'));
-    assert.ok(hookRow, 'README hook row exists');
-    assert.ok(stateBlockRow, 'README state-block-guard row exists');
-    assert.ok(hookRow.includes('--reseed'));
-    assert.doesNotMatch(hookRow, /delete-to-reseed/iu);
+  it('the README hook and state-block-guard rows state the rule, the own hook file and the writer', () => {
+    const [hookRow, stateBlockRow] = [readmeRowOf('hook'), readmeRowOf('state-block-guard')];
+    for (const [name, row] of [['hook', hookRow], ['state-block-guard', stateBlockRow]]) {
+      assert.ok(row.includes(OWN_HOOK), `README ${name} row names the own hook file`);
+      assert.match(row, /\bwith no question\b/iu, `README ${name} row states the rule`);
+    }
     assert.ok(stateBlockRow.includes('tools/state-block-hook.mjs'));
     assert.doesNotMatch(stateBlockRow, /has no writer|yourself/iu);
   });

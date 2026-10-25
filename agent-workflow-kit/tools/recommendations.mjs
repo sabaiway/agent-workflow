@@ -47,7 +47,8 @@ import {
 import { loadAutonomy, isSparseSeedConfig, AUTONOMY_REL } from './autonomy-config.mjs';
 import { deriveDoctorPlan, TRUSTED_DIRS } from './autonomy-doctor.mjs';
 import { LANE_KIT, laneOf, applySlot, consoleArgv } from './write-lanes.mjs';
-import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired } from './state-block-hook.mjs';
+import { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_FILE_REL, STATE_BLOCK_HOOK_RUNTIME, isStopHookWired, writeStateBlockHook } from './state-block-hook.mjs';
+import { HOOK_FILE_REL, HOOKS_DIR, writeGateHook } from './gate-hook.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
@@ -55,8 +56,7 @@ import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
-import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
-import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate } from './gates-declaration.mjs';
 // The typed channel's READ-ONLY leaf only — never tools/mcp.mjs, which reaches the write core.
 import {
   SERVER_NAME as MCP_SERVER_NAME,
@@ -193,17 +193,14 @@ export const SEVERITIES = Object.freeze({
   'source-size.schema-1': SEVERITY_ATTENTION,
   'source-size.layout': SEVERITY_OPTIONAL,
   'gate-hook': SEVERITY_OPTIONAL,
-  // A placed hook that predates the marker key goes DARK on a marker-carrying declaration (unknown
-  // key → auto-approval off), so a CONFIGURED capability silently stops working: attention, not an
-  // offer to enable something.
-  'gate-hook.marker-stale': SEVERITY_ATTENTION,
+  // A wired hook's kit file absent or differing: its lane is kit, as `agents.not-current`'s.
+  'gate-hook.not-current': SEVERITY_OPTIONAL,
   'commit-guard': SEVERITY_OPTIONAL,
   'hook-checks': SEVERITY_OPTIONAL,
   enforcement: SEVERITY_OPTIONAL,
   'read-lane': SEVERITY_OPTIONAL,
-  'read-lane.stale': SEVERITY_ATTENTION,
-  'read-lane.missing': SEVERITY_ATTENTION,
   'state-block': SEVERITY_OPTIONAL,
+  'state-block.not-current': SEVERITY_OPTIONAL,
   'mcp-channel': SEVERITY_OPTIONAL,
   'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
@@ -292,14 +289,13 @@ export const WHATS = Object.freeze({
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
   'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
-  'gate-hook.marker-stale': 'the declaration carries the lcovProducer key but the placed hook predates it — the hook goes dark and every gate prompts',
+  'gate-hook.not-current': `${HOOK_FILE_REL} is absent or differs from the body the kit writes for it — written with that body, with no question`,
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
   'hook-checks': 'the pre-commit hook lacks this kit\'s {checks} — the kit arms each line',
   enforcement: ENFORCEMENT_WHAT,
   'read-lane': 'the gate hook is wired but the read-only compound lane is off — pipes/chains of seeded reads still prompt one by one',
-  'read-lane.stale': 'the read-lane is ON but the placed gate hook is stale — an old hook never reads lanes.json, so the lane is silently dark; reseed it',
-  'read-lane.missing': 'the gate hook is wired but its placed file is missing — every Bash call errors and the read-lane is dark; re-place it',
   'state-block': 'nothing checks the closing state block — a turn that ends on «nothing needed from you», or on a promise it never started, passes unseen',
+  'state-block.not-current': `${STATE_BLOCK_HOOK_FILE_REL} is absent or differs from the body the kit writes for it — written with that body, with no question`,
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
@@ -383,8 +379,11 @@ export const BENEFITS = Object.freeze({
   'jev-skill': 'the TypeSafe skill for Claude Code, Codex and Antigravity CLI, one pinned verified copy per agent root, from one command you run',
 });
 // The arms whose gain differs from their base item's (BENEFITS stays keyed by item key).
+const HOOK_CURRENCY_BENEFIT = 'currency — a hook you wired runs the body the kit writes for it today';
 export const VARIANT_BENEFITS = Object.freeze({
   'agents.not-current': 'currency — each kit agent file carries the body the kit writes for it today, model and effort where docs/ai/vehicles.json names them',
+  'gate-hook.not-current': HOOK_CURRENCY_BENEFIT,
+  'state-block.not-current': HOOK_CURRENCY_BENEFIT,
   'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
 });
 
@@ -613,46 +612,33 @@ const probeReviewRecipe = ({ root, deps, add, skip }) => {
   }
 };
 
-const probeGates = ({ root, deps, add, skip, shared }) => {
+// The kit arm of a WIRED hook (contract: init-project, part hook-writers): the writer's plain dry run,
+// the call the danger check makes. A throw is the probe's stated skip; no planned place or replace
+// renders nothing; a stale stamp beside one is the upgrade-first skip; otherwise the kit item.
+const probeKitHook = ({ key, write, rel, root, deps, add }) => {
+  const plan = write({ cwd: root, dryRun: true }, deps);
+  if (!plan.placePlanned && !plan.replacePlanned) return;
+  if (!plan.stampOk) throw upgradeFirst(plan.stamp);
+  const variant = `${key}.not-current`;
+  add(key, WHATS[variant], formsApply(variant, root), variant, `writes: ${rel}`);
+};
+
+const probeGates = ({ root, deps, add, skip }) => {
   try {
     const sg = surveyGateHook(root, deps);
     if (sg.error) throw new Error(sg.error);
-    if (sg.declarationPresent && sg.declaredGates === null) throw new Error(sg.declarationError ?? 'gates.json present but unreadable');
     // An ABSENT file and the seeded-EMPTY list are equally undeclared (Segment B); the
     // apply is the consent-gated gates-init PREVIEW (it proposes entries from the project's own
-    // scripts and writes only on an explicit yes) — never the runner.
-    if (!sg.declarationPresent || sg.declaredGates === 0) {
-      // gates-init writes ONLY with --apply — the apply field stays a PURE executable command
-      // (run-exactly-as-rendered feeds it to the shell); the two-step preview semantics live in
-      // WHAT, never as prose appended to the command.
-      add('gates-declaration', fillTemplate(WHATS['gates-declaration'], {}), `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`);
-      return;
-    }
-    if (!sg.wired) {
-      add('gate-hook', fillTemplate(WHATS['gate-hook'], { n: sg.declaredGates }), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`);
-      return;
-    }
-    // D8 — the marker REFRESH path. The placed hook validates the declaration through its OWN baked
-    // copy and goes dark on any key it does not know (auto-approval off, every gate prompts again),
-    // so a declaration carrying the marker key under a hook that predates it silently switches a
-    // CONFIGURED capability off with no error anywhere. Deliberately marker-SCOPED: a stale hook is
-    // otherwise harmless, and nagging every deployment about hook bytes is not this item's job.
-    if (!declarationCarriesMarker(root, deps)) return;
-    // Throws on a symlink / directory / unreadable target → the stated skip, never a wrong verdict.
-    // ABSENT is not this arm either: a hook that is not placed belongs to the place offers above and
-    // in the read-lane item, whose recovery actually places one.
-    if (readPlacedHookCurrency(root, deps) !== HOOK_CURRENCY.STALE) return;
-    // The writer's OWN stale recovery: `gate-hook --apply --reseed` replaces the placed hook with
-    // the bundle in place — the one consented replacement; the slot renders it behind the check.
-    // The RESULT is what the read-lane item defers to — not these conditions re-derived there. Both
-    // probes read the placed hook independently, so a hook that changes between the two reads would
-    // otherwise let each conclude the other owns it and leave a dark lane reported by nobody.
-    shared.markerStaleRendered = add(
-      'gate-hook',
-      fillTemplate(WHATS['gate-hook.marker-stale'], {}),
-      `node ${q(toolPath('gate-hook.mjs'))} --apply --reseed --cwd ${q(root)}`,
-      'gate-hook.marker-stale',
-    );
+    // scripts and writes only on an explicit yes) — never the runner. gates-init writes ONLY with
+    // --apply — the apply field stays a PURE executable command; the two-step preview semantics
+    // live in WHAT, never as prose appended to the command.
+    const undeclared = !sg.declarationPresent || sg.declaredGates === 0;
+    if (undeclared) add('gates-declaration', fillTemplate(WHATS['gates-declaration'], {}), `node ${q(toolPath('gates-init.mjs'))} --cwd ${q(root)}`);
+    // A wired hook is accepted: its kit file is written current whatever the declaration says (an
+    // unreadable one is the gates-inert probe's skip). An unwired one keeps the order of its offer.
+    if (sg.wired) return probeKitHook({ key: 'gate-hook', write: writeGateHook, rel: HOOK_FILE_REL, root, deps, add });
+    if (sg.declaredGates === null) throw new Error(sg.declarationError ?? 'gates.json present but unreadable');
+    if (!undeclared) add('gate-hook', fillTemplate(WHATS['gate-hook'], { n: sg.declaredGates }), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`);
   } catch (err) {
     skip('gate-hook', err);
   }
@@ -1067,55 +1053,18 @@ export const probeEnforcement = ({ root, deps, add, skip }) => {
   }
 };
 
-// The read-lane offer (AD-055 Part II, Help-through-Recommendations): once the gate hook is PLACED
-// and WIRED, offer to enable the opt-in read-only compound lane. Mutually exclusive with the
-// gate-hook item BY CONSTRUCTION — that item keys on `!wired`, this one on `wired` — so an unplaced
-// or un-wired hook is covered there, never double-offered here. The apply is the gate-hook
-// --read-lane PREVIEW one-liner (its own currency check + posture note fire at the writer; it may
-// prompt once — it IS a consent flow). Converges once lanes.json enables the lane.
-const probeReadLane = ({ root, deps, add, skip, shared }) => {
+// The read-lane offer (AD-055 Part II, Help-through-Recommendations): once the gate hook is WIRED,
+// offer to enable the opt-in read-only compound lane, whatever the placed hook's bytes — a stale or
+// absent hook under it is a planned file of `gate-hook.not-current`, which the kit route applies
+// before the offers. Mutually exclusive with the gate-hook offer BY CONSTRUCTION — that offer keys
+// on `!wired`, this one on `wired`. The apply is the gate-hook --read-lane PREVIEW one-liner (its
+// own currency check + posture note fire at the writer; it IS a consent flow). Converges once
+// lanes.json enables the lane.
+const probeReadLane = ({ root, deps, add, skip }) => {
   try {
     const sg = surveyGateHook(root, deps);
     if (sg.error) throw new Error(sg.error);
-    if (!sg.wired) return; // not wired → the gate-hook item covers (no double-fire)
-    // Wired but the placed hook FILE is missing — the hook errors on every Bash call and the lane
-    // is silently dark; surface it as attention with a place-first recovery (council R2-M2).
-    const placeRecovery = () =>
-      add('read-lane', fillTemplate(WHATS['read-lane.missing'], {}), `node ${q(toolPath('gate-hook.mjs'))} --apply --cwd ${q(root)}`, 'read-lane.missing');
-    if (!sg.filePlaced || readsAbsent(deps, join(root, GATE_HOOK_REL))) {
-      placeRecovery();
-      return;
-    }
-    if (readReadLaneToggle(root, deps)) {
-      // The lane is ON: converged IFF the placed hook is byte-current — a stale (pre-1.48) hook never
-      // reads lanes.json, so the enabled lane is a silent no-op the user must reseed (council B7). The
-      // reseed route pins the ABSOLUTE root (council R2-M3), so running it from any cwd can only
-      // replace this repo's hook.
-      const currency = readPlacedHookCurrency(root, deps);
-      if (currency === HOOK_CURRENCY.CURRENT) return; // converged
-      if (currency === HOOK_CURRENCY.ABSENT) {
-        // The survey saw it placed and it is gone by the time we read it. The missing arm is the
-        // honest report of that; a reseed recovery, which refuses an absent hook, is not.
-        placeRecovery();
-        return;
-      }
-      // ONE render per condition — and the item that renders is the one whose CAUSE is true. A hook
-      // that postdates the read-lane but predates the marker key reads lanes.json perfectly well, so
-      // this arm's "an old hook never reads lanes.json" would be a false diagnosis over it, while the
-      // marker arm's is exact. Both carry the same reseed recovery, so deferring costs
-      // the reader nothing and buys a true sentence. The condition is that the marker arm REALLY
-      // rendered — never the conditions it would have used, re-derived here: each probe reads the
-      // placed hook itself, so a hook changing between the two reads could otherwise have both defer
-      // to the other and leave the dark lane reported by nobody.
-      if (shared.markerStaleRendered === true) return;
-      add(
-        'read-lane',
-        fillTemplate(WHATS['read-lane.stale'], {}),
-        `node ${q(toolPath('gate-hook.mjs'))} --apply --reseed --cwd ${q(root)}`,
-        'read-lane.stale',
-      );
-      return;
-    }
+    if (!sg.wired || readReadLaneToggle(root, deps)) return;
     add('read-lane', fillTemplate(WHATS['read-lane'], {}), `node ${q(toolPath('gate-hook.mjs'))} --read-lane --cwd ${q(root)}`);
   } catch (err) {
     skip('read-lane', err);
@@ -1125,12 +1074,16 @@ const probeReadLane = ({ root, deps, add, skip, shared }) => {
 // The state-block-guard offer (AD-075 · OPT-IN-SHIPS-INVISIBLE). This item exists because its absence
 // fired: 3.14.0 shipped the detector with a mode doc, a catalog row and a README row — and no advisor
 // entry — so `upgrade` reported «nothing is broken» to a user who did not have it. Its writer is
-// state-block-hook.mjs; convergence is that leaf's own isStopHookWired over both settings files.
+// state-block-hook.mjs; acceptance is that leaf's own isStopHookWired over both settings files, and
+// a wired hook takes the kit arm.
 const probeStateBlockHook = ({ root, deps, add, skip }) => {
   try {
     const project = readSettingsFile(join(root, SETTINGS_FILE), { ...deps, cwd: root });
     const local = readSettingsFile(join(root, SETTINGS_LOCAL_FILE), { ...deps, cwd: root });
-    if (isStopHookWired(project.data) || isStopHookWired(local.data)) return; // converged
+    if (isStopHookWired(project.data) || isStopHookWired(local.data)) {
+      probeKitHook({ key: 'state-block', write: writeStateBlockHook, rel: STATE_BLOCK_HOOK_FILE_REL, root, deps, add });
+      return;
+    }
     add(
       'state-block',
       fillTemplate(WHATS['state-block'], {}),
@@ -1307,58 +1260,13 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
 // so no lane names it. The store's path, keys, lane registry and reader are ack-store.mjs.
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
-// placed hook reads live. The read-lane item offers to enable it once the hook is placed+wired.
+// placed hook reads live. The read-lane item offers to enable it once the hook is wired.
 export const LANES_FILE = 'docs/ai/lanes.json';
 export const READ_LANE_KEY = 'readLane';
-
-// The placed gate hook + the bundled runtime the read-lane item byte-compares for currency (AD-055
-// Part II, council B7): an enabled lane over a STALE hook is a silent no-op — the pre-1.48 hook never
-// reads lanes.json — so it must surface as an ATTENTION reseed, not a silent convergence.
-const GATE_HOOK_REL = '.claude/hooks/agent-workflow-gates.mjs';
-const BUNDLED_HOOK_ABS = join(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
 
 // The state-block-guard wiring the advisor looks for is the writer leaf's own rule (any Stop entry of
 // either settings file running the runtime); the two constants are re-exported for their readers.
 export { STATE_BLOCK_HOOK_COMMAND, STATE_BLOCK_HOOK_RUNTIME };
-
-// The placed gate hook's currency, as the states a caller must tell APART (D8). Read through the
-// writer-class fail-closed no-follow primitive, never a bare readFile: a byte-compare that FOLLOWS a
-// symlink can call a placed hook current because something ELSE is — a wrong verdict, which is worse
-// than a missing one. `current` and `stale` are answers; `absent` is one the caller disposes of
-// itself (a hook that is not there belongs to the place offers, never to a refresh arm); a symlink,
-// a directory and an unreadable target all THROW into the probe's stated-skip lane.
-const HOOK_CURRENCY = Object.freeze({ CURRENT: 'current', STALE: 'stale', ABSENT: 'absent' });
-const readsAbsent = (deps, path) => {
-  try {
-    (deps.lstat ?? lstatSync)(path);
-    return false;
-  } catch (err) {
-    return err?.code === ABSENT_CODE;
-  }
-};
-
-const readPlacedHookCurrency = (root, deps) => {
-  if (readsAbsent(deps, join(root, GATE_HOOK_REL))) return HOOK_CURRENCY.ABSENT;
-  const read = deps.readRegularFileNoFollow ?? readRegularFileNoFollow;
-  const placed = read(join(root, GATE_HOOK_REL));
-  if (placed.outcome === 'absent') return HOOK_CURRENCY.ABSENT;
-  if (placed.outcome === 'foreign') {
-    throw new Error(`${GATE_HOOK_REL} is a ${placed.className}, not a regular file — refusing to judge its currency`);
-  }
-  if (placed.outcome !== 'ok') throw new Error(`${GATE_HOOK_REL} is unreadable (${placed.code})`);
-  const bundle = (deps.readFile ?? readFileSync)(deps.bundledHookPath ?? BUNDLED_HOOK_ABS, 'utf8');
-  return placed.content === bundle ? HOOK_CURRENCY.CURRENT : HOOK_CURRENCY.STALE;
-};
-
-// Does the declaration carry the marker KEY at all? The question is PRESENCE, never the value: an
-// older hook rejects a key it does not know whatever that key says, so `lcovProducer: false` — a
-// perfectly valid declaration the runner accepts — darkens such a hook exactly as `true` does. Asking
-// through the producer predicate would be wrong twice over: it answers yes for a cmd-recognized
-// producer that needs nothing from the hook, and no for the false marker that does.
-const declarationCarriesMarker = (root, deps) => {
-  const declaration = loadDeclaration(root, deps);
-  return declaration.outcome === 'loaded' && declaration.gates.some((gate) => Object.hasOwn(gate, LCOV_PRODUCER_KEY));
-};
 
 // Read the opt-in read-lane toggle for the read-lane item. An ABSENT file (or absent docs/ai) →
 // false (the lane is off — offer it). `readLane === true` → enabled (converged). A parse/IO error on
@@ -1692,7 +1600,7 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // TOO LONG for the capped WHAT and outside the pure-command apply (such as the bridge-tier
   // missing-entries line or the worktrees-dir ack fallback). Single-line like apply; absent otherwise.
   // Returns whether the item really RENDERED. One probe's disposition depends on another's having
-  // spoken (the marker-stale ⟷ read-lane.stale precedence), and "the conditions still look right"
+  // spoken (executor-vehicle yields to agents.not-current), and "the conditions still look right"
   // is not the same fact as "an item exists" — the shape backstop can refuse, and a condition read
   // twice can answer twice.
   const add = (key, what, apply, variant = key, detail = null) => {
@@ -1717,19 +1625,21 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
     return true;
   };
   // The per-run scratch a probe uses to tell a LATER probe what it actually did. Written by exactly
-  // one pair today (the marker-stale ⟷ read-lane.stale precedence) and read in the frozen PROBES
+  // one pair today (executor-vehicle yields to agents.not-current) and read in the frozen PROBES
   // order, so the reader can never run first.
   const shared = {};
-  // A device node reads as absent (a sandbox mask), except under .claude/agents/: there it is the
-  // agents writer's refusal, as the danger check reads it.
+  // A device node reads as absent (a sandbox mask), except under .claude/agents/ and at or under
+  // .claude/hooks/: there it is the kit writer's refusal, as the danger check reads it.
   const agentsDir = join(root, AGENTS_DIR) + sep;
+  const hooksDir = join(root, HOOKS_DIR) + sep;
+  const kitPath = (path) => String(path).startsWith(agentsDir) || `${path}${sep}`.startsWith(hooksDir);
   const contentDeps = Object.create(Object.getPrototypeOf(deps), {
     ...Object.getOwnPropertyDescriptors(deps),
     lstat: {
       enumerable: true,
       value: (path, ...args) => {
         const stat = (deps.lstat ?? deps.lstatSync ?? lstatSync)(path, ...args);
-        if (!String(path).startsWith(agentsDir) && (stat.isCharacterDevice?.() || stat.isBlockDevice?.())) {
+        if (!kitPath(path) && (stat.isCharacterDevice?.() || stat.isBlockDevice?.())) {
           throw Object.assign(new Error(`${ABSENT_CODE}: ${path}`), { code: ABSENT_CODE });
         }
         return stat;

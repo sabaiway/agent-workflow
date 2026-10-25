@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-25 — AD-209: the kit's two hook files are written current within a hook you wired; `gate-hook --reseed` retires (kit 18.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**Within a hook you wired, the kit's hook file is now written current with no question**:
+`.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs` are placed when absent and written
+with the body the kit writes for them when they differ, in place, no copy kept. Before, a differing gate hook was
+preserved unless a reseed item applied on a yes, and a wired state-block hook with its file missing was never offered.
+The advisor renders the new kit items `gate-hook.not-current` and `state-block.not-current`; wiring stays opt-in, so an
+unwired hook keeps its offer and your yes. A hook of your own goes in `.claude/hooks/<name>.local.mjs`, which you wire.
+`gate-hook.mjs --reseed` and the items `gate-hook.marker-stale`, `read-lane.stale` and `read-lane.missing` are removed
+(`unknown argument`, exit 2). Contracts: init-project revision 23 (part hook-writers revision 8), distribution-files
+revision 10. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-25 — AD-208: every kit agent file is written current with no question; `--executor` retires (kit 17.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **Every kit agent file in `.claude/agents/`** (the five the kit bundles and each configured roster-derived lens) **is

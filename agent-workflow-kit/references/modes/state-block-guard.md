@@ -100,6 +100,10 @@ stamp refusals use that writer's error codes:
   present and not an array is a refusal with nothing written;
 - the entry is merged only while no `Stop` entry of either settings file runs the runtime, so a
   wiring you made yourself (another path, `--require-block`) counts and is never duplicated;
+- within a wired hook the advisor renders a runtime that is absent or differs as
+  `state-block.not-current`, lane kit: the agent applies it with no question after the danger check,
+  and the writer then writes only the file. A hook of your own goes in `.claude/hooks/<name>.local.mjs`,
+  which you wire;
 - a symlinked `.claude`, `.claude/hooks`, target or settings file, malformed settings and an unsafe
   permission mode each refuse with nothing written; a deployment stamp behind the kit refuses
   `--apply` (the preview still answers and notes it); the runtime is written through gate-hook's

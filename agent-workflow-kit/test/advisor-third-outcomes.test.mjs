@@ -15,7 +15,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync, symlinkSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -338,12 +338,13 @@ describe('advisor third outcomes — an UNAVAILABLE census never buys an optimal
   });
 });
 
-describe('spec:init-project/S32 advisor third outcomes — the marker refresh path (D8)', () => {
+describe('spec:init-project/S32 advisor third outcomes — a wired gate hook over an older body (revision 23)', () => {
   // The placed hook validates the declaration through its OWN baked copy and goes dark on any key it
-  // does not know. So a marker-carrying declaration under a pre-marker hook silently switches
-  // auto-approval off: everything still works, and every gate prompts again, with no error anywhere.
+  // does not know. Within a wired hook the kit writes its current body with no question, so an older
+  // body is one kit item whatever the declaration carries and whatever the read-lane toggle says.
   const MARKER_GATES = [gate('suite', 'vitest run --coverage', { lcovProducer: true })];
   const PLAIN_GATES = [gate('suite', 'vitest run --coverage')];
+  const RETIRED = ['gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing'];
   const hookProject = ({ gates = MARKER_GATES, hook = '// an old placed hook\n', lanes } = {}) => {
     const extraFiles = { '.claude/settings.json': HOOK_WIRING };
     if (hook !== null) extraFiles[PLACED_HOOK_REL] = hook;
@@ -351,18 +352,26 @@ describe('spec:init-project/S32 advisor third outcomes — the marker refresh pa
     return fixture({ tsFiles: 1, gates, extraFiles }).root;
   };
 
-  it('a marker declaration under a STALE placed hook fires the reseed arm, and RUNNING that recovery converges it', async () => {
+  it('an older body renders exactly one gate-hook item, gate-hook.not-current, with the marker or not and the lane on or off', async () => {
+    const { applySlot } = await import('../tools/write-lanes.mjs');
+    for (const [label, gates] of [['marker', MARKER_GATES], ['no marker', PLAIN_GATES]]) {
+      for (const lanes of [undefined, JSON.stringify({ readLane: true })]) {
+        const root = hookProject({ gates, lanes });
+        const built = report(root);
+        const at = `${label}, lane ${lanes ? 'on' : 'off'}`;
+        assert.deepEqual(built.items.filter((i) => i.key === 'gate-hook').map((i) => i.variant), ['gate-hook.not-current'], at);
+        assert.deepEqual({ check: built.hook.check, apply: built.hook.apply }, applySlot('gate-hook.not-current', { root, toolsDir: TOOLS }), at);
+        assert.deepEqual(built.items.filter((i) => RETIRED.includes(i.variant)).map((i) => i.variant), [], at);
+        assert.equal(built.readLane?.variant, lanes ? undefined : 'read-lane', at);
+      }
+    }
+  });
+
+  it('running the apply line through the check with its digest converges it, the declaration byte-identical', () => {
     const root = hookProject();
     const { hook } = report(root);
-    assert.ok(hook, 'a configured capability silently switched off is attention, not silence');
-    assert.equal(hook.variant, 'gate-hook.marker-stale');
-    assert.equal(hook.severity, SEVERITY_ATTENTION);
-    assert.match(hook.what, /lcovProducer/, hook.what);
-    const checkLine = `node ${join(TOOLS, 'apply-danger-check.mjs')} --variant gate-hook.marker-stale --cwd ${root}`;
-    assert.equal(hook.check, checkLine);
-    assert.equal(hook.apply, `${checkLine} --apply --expect <digest>`);
-    const { applySlot } = await import('../tools/write-lanes.mjs');
-    assert.deepEqual({ check: hook.check, apply: hook.apply }, applySlot(hook.variant, { root, toolsDir: TOOLS }));
+    assert.equal(hook?.variant, 'gate-hook.not-current');
+    const gatesBefore = readFileSync(join(root, 'docs', 'ai', 'gates.json'));
     // EXECUTED, not matched. A rendered recovery that does not converge the item it was rendered for
     // is this repo's standing defect, and a test that only reads the string would stay green through
     // exactly that — including if the writer ever stopped placing the hook at all.
@@ -374,110 +383,17 @@ describe('spec:init-project/S32 advisor third outcomes — the marker refresh pa
     assert.ok(digest, `the check's last line carries its digest: ${checked.stdout}`);
     const applyArgv = hook.apply.replace('<digest>', digest[1]).split(' ');
     assert.ok(applyArgv.every((arg) => /^[A-Za-z0-9_./-]+$/.test(arg)), 'every apply argument is bare');
-    const reseed = spawnSync(applyArgv[0], applyArgv.slice(1), { encoding: 'utf8' });
-    assert.equal(reseed.status, 0, `${reseed.stdout}${reseed.stderr}`);
-    assert.equal(readFileSync(join(root, PLACED_HOOK_REL), 'utf8'), REAL_BUNDLE, 'the reseeded hook IS the current bundle');
-    assert.equal(report(root).hook, undefined, 'and the item it was rendered for is gone');
+    const applied = spawnSync(applyArgv[0], applyArgv.slice(1), { encoding: 'utf8' });
+    assert.equal(applied.status, 0, `${applied.stdout}${applied.stderr}`);
+    assert.equal(readFileSync(join(root, PLACED_HOOK_REL), 'utf8'), REAL_BUNDLE, 'the written hook IS the current bundle');
+    assert.equal(report(root).items.some((i) => i.key === 'gate-hook'), false, 'and the item it was rendered for is gone');
+    assert.deepEqual(readFileSync(join(root, 'docs', 'ai', 'gates.json')), gatesBefore, 'the declaration is byte-identical');
   });
 
-  it('the arm keys on the marker KEY, not its value — lcovProducer false darkens an older hook just the same', () => {
-    // A pre-marker hook rejects a key it does not know whatever that key says, so the honest
-    // condition is presence. Keying on the literal true would leave a valid declaration silently
-    // un-auto-approved with nothing reporting it.
-    const root = hookProject({ gates: [gate('suite', 'vitest run --coverage', { lcovProducer: false })] });
-    const { hook } = report(root);
-    assert.ok(hook, 'a false marker is still a key an older hook cannot honor');
-    assert.equal(hook.variant, 'gate-hook.marker-stale');
-  });
-
-  it('the arm is MARKER-SCOPED and CURRENCY-scoped: no marker, or a byte-current hook, is silent', () => {
-    for (const [label, options] of [
-      ['a stale hook under a declaration with no marker', { gates: PLAIN_GATES }],
-      ['a byte-current hook under a marker declaration', { hook: REAL_BUNDLE }],
-    ]) {
-      const built = report(hookProject(options));
-      assert.equal(built.hook, undefined, `${label}: nothing to say`);
-      assert.equal(built.skips.find((s) => s.key === 'gate-hook'), undefined, `${label}: and no skip either`);
-    }
-  });
-
-  it('a MISSING placed hook belongs to the place offers, never to this arm', () => {
+  it('an absent placed file under a wired entry renders the same item, and the read-lane key only its enable offer', () => {
     const built = report(hookProject({ hook: null }));
-    assert.equal(built.hook, undefined, 'a hook that is not there cannot be reseeded');
-    assert.ok(built.readLane, 'the wired-but-unplaced state has its own item');
-    assert.equal(built.readLane.variant, 'read-lane.missing', 'and that item PLACES one');
-  });
-
-  it('a SYMLINKED or NON-REGULAR placed hook is a stated SKIP — never a currency verdict read through a link', () => {
-    // The retired byte-compare used a plain readFile, which FOLLOWS a symlink: a hook linked at the
-    // real bundle would have read as current. A wrong verdict is worse than a missing one.
-    const linked = hookProject({ hook: null });
-    mkdirSync(join(linked, '.claude', 'hooks'), { recursive: true });
-    symlinkSync(join(KIT, 'references', 'hooks', 'gate-approve.mjs'), join(linked, PLACED_HOOK_REL));
-    const viaLink = report(linked);
-    assert.equal(viaLink.hook, undefined, 'a symlink is not a placed hook');
-    assert.match(viaLink.skips.find((s) => s.key === 'gate-hook').reason, /symlink.*not a regular file/, 'and the refusal says so');
-
-    const dir = hookProject({ hook: null });
-    mkdirSync(join(dir, PLACED_HOOK_REL), { recursive: true });
-    const viaDir = report(dir);
-    assert.equal(viaDir.hook, undefined, 'a directory at the path is not a placed hook either');
-    assert.match(viaDir.skips.find((s) => s.key === 'gate-hook').reason, /directory.*not a regular file/);
-  });
-
-  it('an UNREADABLE placed hook is a stated SKIP, never a reseed recommendation over bytes nobody read', () => {
-    const root = hookProject();
-    const built = buildRecommendations({
-      cwd: root,
-      deps: { ...hermeticAdvisorDeps(root), readRegularFileNoFollow: () => ({ outcome: 'error', code: 'EACCES' }) },
-    });
-    assert.equal(built.items.find((i) => i.key === 'gate-hook'), undefined);
-    assert.match(built.skips.find((s) => s.key === 'gate-hook').reason, /unreadable \(EACCES\)/);
-  });
-
-  it('ONE render per condition: marker + an ENABLED read-lane + a stale hook is ONE item, and it is the one whose CAUSE is true', () => {
-    // Both arms carry the same reseed recovery, so which one renders is decided by which
-    // sentence is TRUE. `read-lane.stale` says "an old hook never reads lanes.json" — false for a
-    // hook that postdates the read-lane and merely predates the marker key, which is exactly the
-    // deployment this arm exists for. The marker arm's cause holds in every such case.
-    const root = hookProject({ lanes: JSON.stringify({ readLane: true }) });
-    const built = report(root);
-    assert.ok(built.hook, 'the marker arm owns it');
-    assert.equal(built.hook.variant, 'gate-hook.marker-stale');
-    assert.equal(built.readLane, undefined, 'and the read-lane item does not repeat it under a false cause');
-    const staleItems = built.items.filter((i) => i.variant === 'gate-hook.marker-stale' || i.variant === 'read-lane.stale');
-    assert.equal(staleItems.length, 1, `exactly one reseed recovery renders: ${staleItems.map((i) => i.key).join(', ')}`);
-  });
-
-  it('the deferral binds the RENDERED item, not a re-derived condition — a hook that changes between the two probes is still reported', () => {
-    // Each probe reads the placed hook itself. Suppressing on "the declaration carries the marker"
-    // would let the gate-hook probe see a CURRENT hook and stay silent while the read-lane probe sees
-    // a STALE one and defers to an item that was never added — a dark lane reported by nobody. The
-    // seam hands out CURRENT first and STALE after, which is exactly that race made deterministic.
-    const root = hookProject({ lanes: JSON.stringify({ readLane: true }) });
-    const bundle = readFileSync(join(KIT, 'references', 'hooks', 'gate-approve.mjs'), 'utf8');
-    let reads = 0;
-    const built = buildRecommendations({
-      cwd: root,
-      deps: {
-        ...hermeticAdvisorDeps(root),
-        readRegularFileNoFollow: () => {
-          reads += 1;
-          return { outcome: 'ok', content: reads === 1 ? bundle : '// an old placed hook\n' };
-        },
-      },
-    });
-    assert.ok(reads >= 2, 'both probes really read the hook independently');
-    const recoveries = built.items.filter((i) => i.variant === 'gate-hook.marker-stale' || i.variant === 'read-lane.stale');
-    assert.equal(recoveries.length, 1, `the dark lane is reported exactly once: ${built.items.map((i) => i.variant).join(', ')}`);
-    assert.equal(recoveries[0].variant, 'read-lane.stale', 'by the probe that actually saw it stale');
-  });
-
-  it('the deferral is SCOPED: with no marker, an enabled lane over a stale hook still fires read-lane.stale', () => {
-    const root = hookProject({ gates: PLAIN_GATES, lanes: JSON.stringify({ readLane: true }) });
-    const built = report(root);
-    assert.equal(built.hook, undefined, 'nothing for the marker arm to say');
-    assert.ok(built.readLane, 'and the arm that owns a plain stale hook is untouched');
-    assert.equal(built.readLane.variant, 'read-lane.stale');
+    assert.equal(built.hook?.variant, 'gate-hook.not-current');
+    assert.equal(built.readLane?.variant, 'read-lane');
+    assert.deepEqual(built.items.filter((i) => RETIRED.includes(i.variant)).map((i) => i.variant), []);
   });
 });

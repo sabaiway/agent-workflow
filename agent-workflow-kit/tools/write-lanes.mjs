@@ -35,14 +35,13 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.schema-1': LANE_CHAT,
   'source-size.layout': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
-  'gate-hook.marker-stale': LANE_HARNESS,
+  'gate-hook.not-current': LANE_KIT,
   'commit-guard': LANE_HARNESS,
   'hook-checks': LANE_HARNESS,
   enforcement: LANE_HARNESS,
   'read-lane': LANE_CHAT,
-  'read-lane.stale': LANE_HARNESS,
-  'read-lane.missing': LANE_HARNESS,
   'state-block': LANE_HARNESS,
+  'state-block.not-current': LANE_KIT,
   'mcp-channel': LANE_HARNESS,
   'mcp-channel.differing': LANE_HARNESS,
   agents: LANE_HARNESS,
@@ -93,8 +92,8 @@ export const isProtectedPath = (abs, { root, home, hooksDir }) => {
 
 const SETTINGS_WRITES = [SETTINGS_PATH];
 const LOCAL_SETTINGS_WRITES = [join('.claude', 'settings.local.json')];
-const HOOK_WRITES = [join('.claude', 'hooks', 'agent-workflow-gates.mjs'), ...SETTINGS_WRITES];
-const STOP_HOOK_WRITES = [join('.claude', 'hooks', 'state-block-guard.mjs'), ...SETTINGS_WRITES];
+const GATE_HOOK_FILE = [join('.claude', 'hooks', 'agent-workflow-gates.mjs')];
+const STOP_HOOK_FILE = [join('.claude', 'hooks', 'state-block-guard.mjs')];
 const MCP_WRITES = ['.mcp.json', ...SETTINGS_WRITES];
 const AGENT_WRITES = [join('.claude', 'agents')];
 
@@ -139,8 +138,8 @@ const createForm = (file, preview, apply, writes, envDependent = false, userStep
 });
 
 const CORE_FORM = createForm('velocity-profile.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], SETTINGS_WRITES);
-const HOOK_FORM = createForm('gate-hook.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], HOOK_WRITES);
-const RESEED_FORM = createForm('gate-hook.mjs', ['--reseed', '--cwd', '<root>'], ['--apply', '--reseed', '--cwd', '<root>'], HOOK_WRITES);
+// A hook's offer writes its file and the settings entry; its kit item, over a wired hook, the file alone.
+const hookForm = (file, writes) => createForm(file, ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], writes);
 const AGENT_FORM = createForm('cheap-agents.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], AGENT_WRITES);
 const SKILL_FORM = createForm('jev-skill.mjs', ['--claude-dir', '<dir>'], ['--apply', '--claude-dir', '<dir>'], getSkillPaths, true);
 
@@ -152,11 +151,10 @@ const FORMS = Object.freeze({
     ['--bridge-tier', '--cwd', '<root>'], ['--apply', '--bridge-tier', '--cwd', '<root>'], SETTINGS_WRITES, true),
   'autonomy-render': createForm('velocity-profile.mjs',
     ['--autonomy', '--cwd', '<root>'], ['--autonomy', '--apply', '--cwd', '<root>'], SETTINGS_WRITES),
-  'gate-hook': HOOK_FORM,
-  'read-lane.missing': HOOK_FORM,
-  'gate-hook.marker-stale': RESEED_FORM,
-  'read-lane.stale': RESEED_FORM,
-  'state-block': createForm('state-block-hook.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], STOP_HOOK_WRITES),
+  'gate-hook': hookForm('gate-hook.mjs', [...GATE_HOOK_FILE, ...SETTINGS_WRITES]),
+  'gate-hook.not-current': hookForm('gate-hook.mjs', GATE_HOOK_FILE),
+  'state-block': hookForm('state-block-hook.mjs', [...STOP_HOOK_FILE, ...SETTINGS_WRITES]),
+  'state-block.not-current': hookForm('state-block-hook.mjs', STOP_HOOK_FILE),
   'mcp-channel': createForm('mcp.mjs', ['--cwd', '<root>'], ['--apply', '--cwd', '<root>'], MCP_WRITES),
   'mcp-channel.differing': createForm('mcp.mjs',
     ['--replace', '--cwd', '<root>'], ['--replace', '--apply', '--cwd', '<root>'], MCP_WRITES),

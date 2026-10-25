@@ -25,14 +25,13 @@
 | source-size.schema-1 | chat | source-size-check.mjs |
 | source-size.layout | chat | source-size-check.mjs |
 | gate-hook | harness | gate-hook.mjs |
-| gate-hook.marker-stale | harness | gate-hook.mjs |
+| gate-hook.not-current | kit | gate-hook.mjs |
 | commit-guard | harness | git-hooks.mjs |
 | hook-checks | harness | git-hooks.mjs |
 | enforcement | harness | git-hooks.mjs |
 | read-lane | chat | gate-hook.mjs |
-| read-lane.stale | harness | gate-hook.mjs |
-| read-lane.missing | harness | gate-hook.mjs |
 | state-block | harness | state-block-hook.mjs |
+| state-block.not-current | kit | state-block-hook.mjs |
 | mcp-channel | harness | mcp.mjs |
 | mcp-channel.differing | harness | mcp.mjs |
 | agents | harness | cheap-agents.mjs |
