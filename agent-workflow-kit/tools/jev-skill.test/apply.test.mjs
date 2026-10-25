@@ -179,7 +179,7 @@ describe('spec:jev-guide/S33 the apply on a temp home', () => {
     const result = run(['--apply'], { home, lstat });
     assert.equal(result.code, 4);
     assert.ok(result.stdout.includes(`refused: ${at.claude} — changed since the plan: now foreign`), result.stdout.join(LF));
-    assert.ok(!result.stdout.some((line) => line.startsWith('kept aside')));
+    assert.ok(!result.stdout.some((line) => /^(?:kept aside|leftover)/.test(line)), result.stdout.join(LF));
     assert.deepEqual(readdirSync(at.claude).sort(), ['LICENSE', 'SKILL.md', 'raced.txt']);
     assert.deepEqual(pairOf(at.claude), OLDER);
     assert.deepEqual(kitDirsIn(home), []);
@@ -248,13 +248,13 @@ describe('spec:jev-guide/S34 interruption and leftovers', () => {
     const result = run(['--apply'], { home, rename });
     assert.equal(result.code, 4);
     assert.equal(result.stdout[1], `refused: ${at.codex} — EIO`);
-    assert.ok(!result.stdout.some((line) => line.startsWith('kept aside')));
+    assert.ok(!result.stdout.some((line) => /^(?:kept aside|leftover)/.test(line)), result.stdout.join(LF));
     assert.deepEqual(pairOf(at.codex), OLDER);
     assert.equal(statesOf(home)[0], 'earlier');
     assert.deepEqual(kitDirsIn(home), []);
   });
 
-  it('when the rename back fails too, the kept-aside line names the aside path and the target stays absent', () => {
+  it('when the rename back fails too, the leftover line names the aside path and the target stays absent', () => {
     const home = tempHome();
     const at = targetsOf(home);
     fill(at.codex, OLDER);
@@ -267,7 +267,8 @@ describe('spec:jev-guide/S34 interruption and leftovers', () => {
     assert.equal(result.stdout[1], `refused: ${at.codex} — EIO`);
     const [aside] = kitDirsIn(home);
     assert.match(aside, /\.typesafe-ai\.kit-old-/);
-    assert.equal(result.stdout[2], `kept aside: ${join(aside, 'typesafe-ai')} — EIO`);
+    assert.equal(result.stdout[2], `leftover: ${join(aside, 'typesafe-ai')} — EIO`);
+    assert.ok(!result.stdout.some((line) => line.startsWith('kept aside')), result.stdout.join(LF));
     assert.deepEqual(pairOf(join(aside, 'typesafe-ai')), OLDER);
     assert.equal(statesOf(home)[0], 'absent');
   });
@@ -284,14 +285,15 @@ describe('spec:jev-guide/S34 interruption and leftovers', () => {
     assert.match(aside, /\.typesafe-ai\.kit-old-/);
     assert.deepEqual(result.stdout.slice(1, 3), [
       `refused: ${at.codex} — changed since the plan: now foreign`,
-      `kept aside: ${join(aside, 'typesafe-ai')} — the target is now foreign`,
+      `leftover: ${join(aside, 'typesafe-ai')} — the target is now foreign`,
     ]);
+    assert.ok(!result.stdout.some((line) => line.startsWith('kept aside')), result.stdout.join(LF));
     assert.deepEqual(pairOf(join(aside, 'typesafe-ai')), OLDER, 'the aside copy whole');
     assert.equal(readFileSync(at.codex, 'utf8'), 'raced\n', 'the file at the target untouched');
     assert.deepEqual(kitDirsIn(home), [aside], 'only the temp dir removed');
   });
 
-  it('an aside copy that re-verifies as other than earlier is kept with the kept-aside line', () => {
+  it('an aside copy that re-verifies as other than earlier is kept with the leftover line', () => {
     const home = tempHome();
     const at = targetsOf(home);
     fill(at.codex, OLDER);
@@ -304,8 +306,9 @@ describe('spec:jev-guide/S34 interruption and leftovers', () => {
     const [aside] = kitDirsIn(home);
     assert.deepEqual(result.stdout.slice(1, 3), [
       `replaced: ${at.codex} (v0.5.6 → ${TAG})`,
-      `kept aside: ${join(aside, 'typesafe-ai')} — it reads foreign`,
+      `leftover: ${join(aside, 'typesafe-ai')} — it reads foreign`,
     ]);
+    assert.ok(!result.stdout.some((line) => line.startsWith('kept aside')), result.stdout.join(LF));
     assert.deepEqual(pairOf(at.codex), CURRENT);
   });
 });

@@ -101,7 +101,10 @@ files (the five the kit bundles for `.claude/agents/` — `changelog-skeleton.md
 `gate-triage.md`, `mechanical-sweep.md`, `review-lens.md` — and each configured
 `review-lens-<model>-<effort>.md`) and, within a hook you wired, the kit hook files
 `.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs` are written over
-by the next upgrade with no question and no copy kept. A declaration seeded once from a template and never
+by the next upgrade with no question and no copy kept.
+Also the kit's: the vendor skill copy the kit installs into the three agent skill roots
+when it matches a pin the kit shipped, written with no question beside a copy at a kit pin;
+a copy matching none is the user's, left and named. A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
 user's own file. A customization goes into one of seven channels instead:
 

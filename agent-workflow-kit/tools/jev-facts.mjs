@@ -61,7 +61,7 @@ export const JEV_ERROR_MEANINGS = Object.freeze({
 
 // ── the vendor skill (part jev-skill) ─────────────────────────────────────────────────────────────
 // Each target file name -> the name the kit ships it under. The shipped SKILL.md is renamed so no agent
-// walking the kit's own tree (a skill folder itself) loads the vendor's text before the user's --apply.
+// walking the kit's own tree (a skill folder itself) loads the vendor's text before an --apply places it.
 export const SKILL_FILES = Object.freeze({ 'SKILL.md': 'SKILL.md.pinned', LICENSE: 'LICENSE' });
 // Newest first; a release that moves the pin puts the new entry first and removes none.
 export const SKILL_PINS = Object.freeze([Object.freeze({
@@ -143,6 +143,9 @@ export const skillState = (target, io) => {
     return foreign(codeOf(error));
   }
 };
+
+// The component is accepted exactly when a judged target reads current or earlier: a copy at a kit pin.
+export const skillAccepted = (judged) => judged.some(({ state }) => state === 'current' || state === 'earlier');
 
 // The skill command's apply line, always with the Claude Code dir its caller resolved; '' when a path holds a control byte.
 export const skillLine = (toolsDir, platform, claudeDir) => {

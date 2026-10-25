@@ -105,7 +105,7 @@ import {
 import { ADOPTION, STORE_DIR_REL as SPEC_STORE_DIR_REL, SPEC_ADOPTION_LANE, declineFingerprint, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { ENSURE_OPS } from './ensure-vocabulary.mjs';
 import { composeProfileGapScreen } from './profile-gap-screen.mjs';
-import { NO_APPLY_LINE, SKILL_PINS, claudeDirOf, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
+import { NO_APPLY_LINE, SKILL_PINS, claudeDirOf, keySet, placeOf, printable, skillAccepted, skillLine, skillState, skillTargets } from './jev-facts.mjs';
 
 // The upgrade ensure that seeds the spec store — the not-adopted item's apply; pinned to the vocabulary.
 const SPEC_LAYER_ENSURE = ENSURE_OPS.includes('specs') ? 'specs' : null;
@@ -226,7 +226,7 @@ export const SEVERITIES = Object.freeze({
   'profile-gap': SEVERITY_OPTIONAL,
   'jev-connect': SEVERITY_OPTIONAL,
   'jev-skill': SEVERITY_OPTIONAL,
-  'jev-skill.earlier': SEVERITY_OPTIONAL,
+  'jev-skill.not-current': SEVERITY_OPTIONAL,
   'spec-adoption.adopting': SEVERITY_OPTIONAL,
 });
 // The per-item render tags (frozen presentation data, same language contract as the templates).
@@ -311,8 +311,8 @@ export const WHATS = Object.freeze({
   'spec-adoption': 'feature-spec store absent (docs/ai/specs) — no feature contract can govern a plan here yet; seed the store, or record the decline',
   'profile-gap': '{what}',
   'jev-connect': 'Jev (TypeSafe) is not connected: TYPESAFE_API_KEY is not in the environment the agent\'s commands run in',
-  'jev-skill': 'Jev\'s vendor skill is not installed for every agent here: a skill root the kit fills is absent or behind the kit\'s pin',
-  'jev-skill.earlier': 'Jev\'s vendor skill in the agent skill roots is at {old}, behind the kit\'s pin {new}; only copies matching a kit pin change',
+  'jev-skill': 'Jev\'s vendor skill is not installed for every agent here: a skill root the kit fills is absent',
+  'jev-skill.not-current': 'Jev\'s vendor skill is absent or behind the kit\'s pin in {n} agent skill root(s) beside a copy at a kit pin — written with no question',
   'spec-adoption.adopting': 'feature-spec store: {n} draft spec(s), no live contract — nothing governs a plan through it yet; land a live contract, or record the decline',
 });
 
@@ -384,6 +384,7 @@ export const VARIANT_BENEFITS = Object.freeze({
   'agents.not-current': 'currency — each kit agent file carries the body the kit writes for it today, model and effort where docs/ai/vehicles.json names them',
   'gate-hook.not-current': HOOK_CURRENCY_BENEFIT,
   'state-block.not-current': HOOK_CURRENCY_BENEFIT,
+  'jev-skill.not-current': "currency — every agent skill root the kit fills holds the vendor skill at the kit's pin once a copy is placed",
   'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
 });
 
@@ -1472,34 +1473,43 @@ export const probeJevConnect = ({ root, deps, add, skip }) => {
   }
 };
 
-// The Jev skill offer (contract: kit/jev-guide, part jev-offer): only once the key is set, so one jev item shows at a time.
-// Each target is judged by the facts leaf's one state rule; the item's apply comes from the lane leaf's checked slot.
+// The Jev skill (contract: kit/jev-guide, parts jev-offer and jev-copy). The targets are judged whatever the key; a
+// component a copy at a kit pin accepts renders the kit item, written with no question, and reads no key and no ack;
+// otherwise the offer, only once the key is set, so the offer and jev-connect never show together. The apply is the lane leaf's checked slot.
 export const probeJevSkill = ({ root, deps, add, skip }) => {
   try {
     const env = deps.getenv ?? {};
-    if (deps.keySet !== true && !keySet(env)) return;
     const host = deps.jevHost ?? {};
     if (typeof host.home !== 'string' || host.home === '') return;
     const pins = deps.jevPins ?? SKILL_PINS;
     const { dir, note } = claudeDirOf(env, host.home, host.platform);
     const io = { lstat: deps.lstat ?? lstatSync, readdir: deps.readdir ?? readdirSync, readFile: deps.readFile ?? readFileSync, pins };
     const judged = skillTargets({ home: host.home, claudeDir: dir }).map((target) => ({ ...target, ...skillState(target, io) }));
-    if (!judged.some(({ state }) => state === 'absent' || state === 'earlier')) return;
-    const decline = factFingerprint(`${JEV_SKILL_DECLINED}${pins[0].tag}`);
-    if (readAckValue(root, deps, ACKS_JEV_SKILL_KEY) === decline) return;
+    const accepted = skillAccepted(judged);
+    const planned = judged.filter(({ state }) => state === 'absent' || state === 'earlier');
+    if (planned.length === 0) return;
+    let decline = null;
+    if (!accepted) {
+      if (deps.keySet !== true && !keySet(env)) return;
+      decline = factFingerprint(`${JEV_SKILL_DECLINED}${pins[0].tag}`);
+      if (readAckValue(root, deps, ACKS_JEV_SKILL_KEY) === decline) return;
+    }
     const line = skillLine(HERE, host.platform, dir);
     if (line === '') {
       skip('jev-skill', new Error(NO_APPLY_LINE));
       return;
     }
+    const foreign = judged.filter(({ state }) => state === 'foreign');
+    if (accepted) {
+      const recipe = [`writes: ${planned.map(({ path }) => printable(path)).join(', ')}`,
+        ...foreign.map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}`), ...(note ? [note] : [])];
+      add('jev-skill', fillTemplate(WHATS['jev-skill.not-current'], { n: planned.length }), line, 'jev-skill.not-current', recipe.join('; '));
+      return;
+    }
     const place = placeOf({ env, platform: host.platform, hostname: host.hostname, container: host.container });
-    const behind = judged.filter(({ state }) => state === 'earlier').map(({ tag }) => pins.findIndex((pin) => pin.tag === tag));
-    const what = behind.length ? fillTemplate(WHATS['jev-skill.earlier'], { old: pins[Math.max(...behind)].tag, new: pins[0].tag })
-      : WHATS['jev-skill'];
-    const untouched = judged.filter(({ state }) => state === 'foreign')
-      .map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}; `).join('');
+    const untouched = foreign.map(({ path, reason }) => `left untouched: ${printable(path)} — ${printable(reason)}; `).join('');
     const record = `node ${q(toolPath('ack-write.mjs'))} --lane jev-skill --fingerprint ${decline} --cwd ${q(root)}`;
-    add('jev-skill', what, line, behind.length ? 'jev-skill.earlier' : 'jev-skill',
+    add('jev-skill', WHATS['jev-skill'], line, 'jev-skill',
       `${place ? `run the apply in ${place}; ` : ''}${untouched}${note ? `${note}; ` : ''}${DECLINE_ALTERNATIVE}${record}`);
   } catch (err) {
     skip('jev-skill', err);

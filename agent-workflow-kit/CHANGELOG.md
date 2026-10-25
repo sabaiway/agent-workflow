@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.0.0 — the Jev copy is written current with no question beside a copy at a kit pin; `jev-skill.earlier` retires (AD-210)
+
+**MAJOR: the advisor's `jev-skill.earlier` item is gone, and `apply-danger-check --variant jev-skill.earlier` is a
+usage refusal, exit 2.** Before, the vendor's Jev skill copy in the agent skill roots was never updated silently: a copy
+at an earlier pin was replaced only on your yes to `jev-skill.earlier`, and an absent root was filled only on your yes
+to the `jev-skill` offer, both shown only once `TYPESAFE_API_KEY` was set. Now a copy whose two files match a pin the
+kit shipped is the kit's, and beside one such copy in any of the three roots (`~/.agents/skills`, the Claude Code skills
+dir, `~/.gemini/config/skills`) every root absent or behind the kit's pin is written with no question. A copy matching
+no pin, a link or any other node there is yours: left untouched and named.
+
+- **A new kit item, `jev-skill.not-current`.** Beside a copy at a kit pin the advisor renders this `lane: kit` item,
+  which the agent applies with no question by the kit route, whatever the key and whatever decline you recorded. Its
+  text reads `Jev's vendor skill is absent or behind the kit's pin in {n} agent skill root(s) beside a copy at a kit
+  pin — written with no question`, and its `recipe:` line names every root its apply writes and each foreign copy it
+  leaves.
+- **The offer is for a first install only.** Where no root holds a copy at a kit pin, the `jev-skill` offer is
+  unchanged — the key gate, the decline, your yes — and its text now reads `a skill root the kit fills is absent`.
+- **The danger check** for the kit item admits the skill roots only while it judges the component accepted itself;
+  over a home with no copy at a kit pin it admits nothing, so each planned write prints `refused:`, exit 1, and the
+  no-question apply installs nothing there. A copy at a kit pin removed between the check and the writer's own read is
+  not seen: the writer still fills every root it plans. A copy the vendor's `skills` CLI wrote with the same bytes
+  counts as a copy at a kit pin.
+- **The skill command's line.** `jev-skill.mjs --apply` prints `leftover: <path> — <cause>` where it printed
+  `kept aside:`; its plan, argv and exit codes are unchanged. A script that read `kept aside:` reads `leftover:`.
+- **The texts say the same.** The skill command's header, which now names the four routes that apply it; the jev and
+  recommendations modes; `references/advisor-writers.md`; the guide's *Reserved names and channels*, which names the
+  vendor skill copy at a kit pin as the kit's.
+
 ## 18.0.0 — the kit's two hook files are written current within a hook you wired; `gate-hook --reseed` and three advisor items retire (AD-209)
 
 **MAJOR: `gate-hook.mjs --reseed` is removed, and the advisor's `gate-hook.marker-stale`, `read-lane.stale` and

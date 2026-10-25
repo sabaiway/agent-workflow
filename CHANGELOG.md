@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-25 — AD-210: the Jev copy is written current with no question beside a copy at a kit pin; `jev-skill.earlier` retires (kit 19.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**Beside a Jev skill copy at a kit pin, the kit now writes every other agent skill root current with no question**:
+a root absent or behind the kit's pin is filled by the new kit item `jev-skill.not-current`, whatever the key and
+whatever decline was recorded. Before, an earlier copy was replaced only on a yes to `jev-skill.earlier`, and nothing
+showed until `TYPESAFE_API_KEY` was set. A copy matching no pin the kit shipped is yours, left untouched and named.
+Where no root holds a copy at a kit pin, the `jev-skill` offer and its yes are unchanged. The `jev-skill.earlier` item
+is removed, and `apply-danger-check --variant jev-skill.earlier` is a usage refusal (exit 2); the skill command prints
+`leftover:` where it printed `kept aside:`. Contracts: jev-guide revision 11 (new part jev-copy), init-project revision
+24, distribution-files revision 11. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-25 — AD-209: the kit's two hook files are written current within a hook you wired; `gate-hook --reseed` retires (kit 18.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **Within a hook you wired, the kit's hook file is now written current with no question**:

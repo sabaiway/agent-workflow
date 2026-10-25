@@ -14,7 +14,8 @@ import {
 
 const CHECK_DIGEST = 'a'.repeat(64);
 const HARNESS_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
-  'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill', 'jev-skill.earlier'];
+  'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill'];
+const KIT_VARIANTS = ['agents.not-current', 'jev-skill.not-current'];
 
 describe('spec:init-project/S11 previews and one terminal y', () => {
   it('every pending variant with preview argv prints its preview and check lines, bridge-tier with its note and velocity-core without one', async (t) => {
@@ -145,7 +146,7 @@ describe('spec:init-project/S11 previews and one terminal y', () => {
 describe('spec:init-project/S24 danger check beside each harness and each kit preview', () => {
   it('selects by argv presence, prints each check after its preview, and removes refused or throwing checks before one y', async (t) => {
     for (const mode of ['within', 'refused', 'throw']) await t.test(mode, async (t) => {
-      const queue = [...HARNESS_VARIANTS.map((variant) => ({ ...item(variant), lane: 'harness' })), { ...item('agents.not-current'), lane: 'kit' }, item('sandbox-provision.installable'), item('review-recipe')];
+      const queue = [...HARNESS_VARIANTS.map((variant) => ({ ...item(variant), lane: 'harness' })), ...KIT_VARIANTS.map((variant) => ({ ...item(variant), lane: 'kit' })), item('sandbox-provision.installable'), item('review-recipe')];
       const f = fixture(t, queue, ['y', '']);
       const checked = [];
       const refused = mode === 'within' ? [] : ['bridge-tier'];
@@ -161,12 +162,13 @@ describe('spec:init-project/S24 danger check beside each harness and each kit pr
           refused: mode === 'refused' && variant === 'bridge-tier' ? keys.map((key) => ({ path: '.claude/settings.json', key, reason: `beyond the declared scope of ${variant}` })) : [] };
       };
       assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
-      assert.deepEqual(checked, [...HARNESS_VARIANTS, 'agents.not-current']);
-      for (const variant of [...HARNESS_VARIANTS, 'agents.not-current'].filter((variant) => mode !== 'throw' || variant !== 'bridge-tier')) {
+      assert.deepEqual(checked, [...HARNESS_VARIANTS, ...KIT_VARIANTS]);
+      for (const variant of [...HARNESS_VARIANTS, ...KIT_VARIANTS].filter((variant) => mode !== 'throw' || variant !== 'bridge-tier')) {
         const start = f.printed.indexOf(`preview: ${variant}`);
         assert.deepEqual(f.printed.slice(start + 2, start + 4), [`CHECK: ${variant}`, `digest: ${CHECK_DIGEST}`]);
       }
-      assert.deepEqual(applies(f).map(({ argv }) => argv), [...HARNESS_VARIANTS.filter((variant) => !refused.includes(variant)).map((variant) => need(lanes, 'consoleArgv')(variant, facts(f)).apply), ['node', join(TOOLS, 'cheap-agents.mjs'), '--apply', '--cwd', f.root]]);
+      assert.deepEqual(applies(f).map(({ argv }) => argv), [...HARNESS_VARIANTS.filter((variant) => !refused.includes(variant)).map((variant) => need(lanes, 'consoleArgv')(variant, facts(f)).apply), ['node', join(TOOLS, 'cheap-agents.mjs'), '--apply', '--cwd', f.root],
+        ['node', join(TOOLS, 'jev-skill.mjs'), '--apply', '--claude-dir', join(f.home, '.claude')]]);
       assert.deepEqual(f.questions, [APPLY, SUDO]);
       assert.ok(f.printed.includes('listed, not applied here: review-recipe — review-recipe'));
       if (mode !== 'within') {

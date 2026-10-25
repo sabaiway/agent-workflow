@@ -48,5 +48,5 @@
 | profile-gap | chat | rules-insert.mjs, tier-preview.mjs, checker-gates.mjs |
 | jev-connect | user | user step |
 | jev-skill | harness | jev-skill.mjs |
-| jev-skill.earlier | harness | jev-skill.mjs |
+| jev-skill.not-current | kit | jev-skill.mjs |
 | spec-adoption.adopting | chat | ack-write.mjs |

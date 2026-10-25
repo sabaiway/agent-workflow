@@ -245,12 +245,12 @@ describe('spec:jev-guide/S11 registration: the catalog entry, the SKILL header a
     for (const line of [ORDER_LINE, INVARIANTS_LINE]) assert.equal(doc.split(LF).filter((item) => item === line).length, 1, line);
   });
 
-  it('states the revision 8 hand-over rule without an agent-never-runs sentence, walk, curl or network sentence', () => {
+  it('states the revision 11 hand-over rule, the kit item beside the offer, without an agent-never-runs sentence, walk, curl or network sentence', () => {
     const doc = readFileSync(join(TOOLS, '../references/modes/jev.md'), 'utf8').replace(/\s+/g, ' ');
     for (const rule of [/connect line is the user's own step.*hand it over as printed.*key never reaches the agent or the chat/,
       /connect command refuses without a terminal, and a terminal is not consent/,
-      /agent applies the skill only through the advisor's `jev-skill` item: its check line, and on the user's yes on that result its apply line/,
-      /where the advisor shows no `jev-skill` item \(the key not set\), STEP 2's line is the user's own step/,
+      /agent applies the skill only through the advisor's `jev-skill` items: the offer's check line, and on the user's yes on that result its apply line, or, beside a copy at a kit pin, the kit item `jev-skill\.not-current` by the kit route with no question/,
+      /where the advisor shows no `jev-skill` item, STEP 2's line is the user's own step/,
       /guide's line is the user's command for a terminal of their own/,
       /Only when the user asks to see the plan, run the skill command without `--apply` yourself: a read-only dry run/,
       /vendor's install lines are the user's own step too/]) assert.match(doc, rule);

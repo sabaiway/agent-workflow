@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatHelp } from '../commands.mjs';
-import { BENEFITS, SEVERITIES, WHATS } from '../recommendations.mjs';
+import { BENEFITS, SEVERITIES, VARIANT_BENEFITS, WHATS } from '../recommendations.mjs';
 
 const loaded = await import('../jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
@@ -214,8 +214,9 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     const advisor = 'kit:tools/recommendations.mjs';
     const all = fileLines(advisor);
     const one = (test, label) => onlyOne(all.filter(({ text }) => test(text)), label);
-    const rows = [['export const SEVERITIES', ['jev-connect', 'jev-skill', 'jev-skill.earlier']],
-      ['export const WHATS', ['jev-connect', 'jev-skill', 'jev-skill.earlier']], ['export const BENEFITS', ['jev-connect', 'jev-skill']]]
+    const rows = [['export const SEVERITIES', ['jev-connect', 'jev-skill', 'jev-skill.not-current']],
+      ['export const WHATS', ['jev-connect', 'jev-skill', 'jev-skill.not-current']], ['export const BENEFITS', ['jev-connect', 'jev-skill']],
+      ['export const VARIANT_BENEFITS', ['jev-skill.not-current']]]
       .flatMap(([opener, keys]) => keys.map((key) => rowIn(advisor, opener, key)));
     return [...rows,
       ...['jev-connect', 'jev-skill'].map((id) => one((text) => text.trim() === `{ id: '${id}', mode: 'jev', advisorKey: '${id}' },`, `the ${id} opt-in row`)),
@@ -254,17 +255,18 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     const tableLines = fileLines('kit:references/advisor-writers.md').filter(({ text }) => WORDS.test(text));
     assert.equal(tableLines.length, 3, 'advisor-writers.md carries exactly three jev table rows');
     const tableKeys = tableLines.map(({ text }) => {
-      const row = text.match(/^\| (jev-connect|jev-skill(?:\.earlier)?) \| (?:user|harness) \| (user step|jev-skill\.mjs) \|$/);
+      const row = text.match(/^\| (jev-connect|jev-skill(?:\.not-current)?) \| (?:user|harness|kit) \| (user step|jev-skill\.mjs) \|$/);
       assert.ok(row, text);
       assert.doesNotMatch(text.replace(row[1], '').replace(row[2], ''), WORDS, text);
       return row[1];
     });
-    assert.deepEqual(tableKeys.sort(), ['jev-connect', 'jev-skill', 'jev-skill.earlier']);
+    assert.deepEqual(tableKeys.sort(), ['jev-connect', 'jev-skill', 'jev-skill.not-current']);
     const laneSource = readRequired('tools/write-lanes.mjs');
     const dangerSource = readRequired('tools/apply-danger-check.mjs');
     const initSource = readRequired('tools/init-project.mjs');
     const laneLines = [laneSource, dangerSource].flatMap((source) => source.split(LF).filter((text) => WORDS.test(text)));
-    for (const text of laneLines) assert.match(text, /(?:^|[^A-Za-z0-9_.-])(?:jev-connect|jev-skill(?:\.earlier)?|jev-(?:facts|connect|skill)\.mjs)(?![A-Za-z0-9_.-])/, text);
+    for (const text of laneLines) assert.match(text, /(?:^|[^A-Za-z0-9_.-])(?:jev-connect|jev-skill(?:\.not-current)?|jev-(?:facts|connect|skill)\.mjs)(?![A-Za-z0-9_.-])/, text);
+    assert.deepEqual(laneLines.filter((text) => text.includes('jev-skill.earlier')), [], 'the retired variant leaves the lanes and the check');
     assert.doesNotMatch(initSource, WORDS, 'tools/init-project.mjs');
     const header = skillLines().findIndex(({ text }) => text === '### Mode: jev');
     assert.ok(header >= 0, 'the jev header');
@@ -287,12 +289,13 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line) && !bridgeLine(line)).map(where), []);
   });
 
-  it('gives the Recommendations registries exactly the jev keys jev-connect and jev-skill, the variant beside them, and the reference profile none', () => {
+  it('gives the Recommendations registries exactly the jev keys jev-connect and jev-skill, the kit variant beside them, and the reference profile none', () => {
     const profile = JSON.parse(readFileSync(join(KIT, 'references', 'reference-profile.json'), 'utf8'));
     for (const registry of [SEVERITIES, WHATS]) {
-      assert.deepEqual(Object.keys(registry).filter((key) => WORDS.test(key)).sort(), ['jev-connect', 'jev-skill', 'jev-skill.earlier']);
+      assert.deepEqual(Object.keys(registry).filter((key) => WORDS.test(key)).sort(), ['jev-connect', 'jev-skill', 'jev-skill.not-current']);
     }
     assert.deepEqual(Object.keys(BENEFITS).filter((key) => WORDS.test(key)).sort(), ['jev-connect', 'jev-skill']);
+    assert.deepEqual(Object.keys(VARIANT_BENEFITS).filter((key) => WORDS.test(key)), ['jev-skill.not-current']);
     assert.ok(profile.items.length > 0);
     assert.deepEqual(profile.items.map(({ id }) => id).filter((id) => WORDS.test(id)), []);
   });

@@ -315,7 +315,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Narrow fix: name the listed set in the root's Order-and-consent bullet. Raised by the S1 spec review (lens 12).
 - **DANGER-CHECK-USAGE-EXITS-INCOMPLETE** — invariant: every malformed invocation of the danger check exits 2 with
   nothing read. Origin: the part apply-danger-check's exit table names no exit for a missing `--variant`, a missing
-  `--cwd` or a relative `--claude-dir` (jev-skill rejects a relative dir, `agent-workflow-kit/tools/jev-skill.mjs:47-48`).
+  `--cwd` or a relative `--claude-dir` (jev-skill rejects a relative dir, `agent-workflow-kit/tools/jev-skill.mjs:49-50`).
   Narrow fix: the three join exit 2 and S23. Raised by the S1 spec review (lens 14; agy round 2, minor 2).
 - **DANGER-CHECK-DIGEST-BINDS-WRITTEN-BYTES-UNPINNED** — invariant: the bytes an apply writes are the bytes whose sha256
   the user saw. Origin: S22's real-apply cell compares settings diffs and changed paths, not the printed `writes: …
@@ -326,7 +326,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   spawns a writer. Origin: S23 names nothing spawned on 1, 2 and 5, not on 3 (a writer's dry-run refusal or a masked
   file). Narrow fix: S23 reads "1, 2, 3 or 5". Raised by the S1 spec review (agy round 2, minor 1).
 - **DANGER-CHECK-TYPESAFE-PREFIX-LITERAL** — invariant: the danger check keeps the jev word-surface rule. Origin: the
-  part prints `temporary: <parent>/.typesafe-ai.kit-tmp-*`; the prefixes are private to jev-skill.mjs (:20-21) and the
+  part prints `temporary: <parent>/.typesafe-ai.kit-tmp-*`; the prefixes are private to jev-skill.mjs (:22-23) and the
   surface rule (jev-guide S12, `agent-workflow-kit/tools/jev-guide.test/surface.test.mjs:18`, `:257`) refuses a line
   carrying the word outside a jev key or leaf. Narrow fix: derive the prefix from the `typesafe-ai` basename of
   skillTargets' path, or export the prefixes from the facts leaf. Raised by the S1 spec review (lens round 2, minor 5).
@@ -334,26 +334,17 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   <digest>`. Origin: the part write-lanes says each element after `node` passes through `quoteArg`, which would render
   `'<digest>'` (`<` and `>` are outside its safe set, `agent-workflow-kit/tools/jev-facts.mjs:16-17`). Narrow fix: quoteArg
   builds the check line; the suffix is literal. Raised by the S1 spec review (lens round 2, minor 6).
-- **JEV-SKILL-HEADER-SAYS-THE-USER-RUNS-IT** — invariant: no shipped comment states who runs an item contrary to the
-  lanes. Origin: `agent-workflow-kit/tools/jev-skill.mjs:3-5` says the USER runs the apply in a terminal of their own;
-  under revision 8 the agent applies it through the jev-skill item; S1 keeps jev-skill.mjs unchanged. Narrow fix: the
-  comment names the agent's route and the user's terminal as the alternative (the epic's S6 shares the file). Raised by
-  the S1 spec review (lens round 2, minor 7).
 - **DANGER-CHECK-CREATED-DIR-TWO-PRINT-FORMS** — invariant: each path the check prints has exactly one line form. Origin:
   the part apply-danger-check prints a created directory as `writes: <dir>/ created` (scope bullet) while the result
   bullet prints "every other file or directory it would create or replace" as `writes: <path> sha256:<hex>`, so
   cheap-agents creating `.claude/agents` (`agent-workflow-kit/tools/cheap-agents.mjs:197`) matches both. Narrow fix: the
   result bullet reads "every other file, and each directory it fills whole". Raised by the S1 re-read (lens).
-- **JEV-GUIDE-INDEX-SKILL-COMMAND-THIRD-COPY** — invariant: every restatement of who applies the Jev skill says the agent
-  applies it only through the advisor's jev-skill item. Origin: `docs/ai/specs/kit/jev-guide/index.md:21` still says
-  flatly "the skill command is the agent's — the harness lane, applied on the chat yes after the danger check", while
-  STEP 2's line is the user's own where no item shows (jev-steps.md:136-138). Narrow fix: "the skill command, through the
-  advisor's jev-skill item, is the agent's". Raised by the S1 re-read (lens).
 - **DANGER-CHECK-IN-INIT-READS-PROCESS-ENV** — invariant: `init`'s in-process check judges the environment its spawned
   writers get. Origin: `findOnPath` reads `process.env` (`agent-workflow-kit/tools/velocity-profile.mjs:241`) while
   init spawns writers with `deps.env` minus the GIT_* variables (`init-project.mjs:160`, `:337-339`); equal in
-  production, different in every batch cell; outside a project the jev-skill check has no root. Narrow fix: `checkApply`
-  derives `findWrapper` and `env` from `facts.env` and takes root null for jev-skill. Raised by the S1 spec review (lens 16).
+  production, different in every batch cell; outside a project the check of either Jev variant (`jev-skill` and, from
+  story S17, the kit item `jev-skill.not-current`) has no root. Narrow fix: `checkApply` derives `findWrapper` and `env`
+  from `facts.env` and takes root null for both Jev variants. Raised by the S1 spec review (lens 16).
 - **JEV-CONNECT-USER-STEP-WIN32-QUOTING** — invariant: a user step printed for the user's own terminal is quoted for
   that terminal. Origin: the part write-lanes quotes the jev-connect user step with `quoteArg` on every platform, while
   on win32 the place is a PowerShell terminal and `connectLine` has a PowerShell form
@@ -369,9 +360,23 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `deny` changed to another mode) prints `nothing widened` beside its refusal (`apply-danger-check.mjs:144`, `:69`).
   Raised by the S1 code session's self-review; the credentials case by the S1 release lens; its line by the S6 re-check
   lens.
+- **JEV-SKILL-BENEFIT-SAYS-YOU-RUN-IT** — invariant: no shipped benefit names who runs an item contrary to its lane.
+  Origin: `BENEFITS['jev-skill']` ends `from one command you run` (`agent-workflow-kit/tools/recommendations.mjs:379`,
+  pinned by `agent-workflow-kit/tools/jev-guide.test/offer.test.mjs:202`), while the offer is applied by the agent on
+  the chat yes or by `init` on its y. Narrow fix: `one pinned verified copy per agent root, installed on your yes`.
+  Residual, not live: only the offer shows it (the kit item has its own `VARIANT_BENEFITS` row) and no write decision
+  reads it. Raised by the S17 diff review's copy pre-pass.
+- **JEV-SKIP-CELLS-OMIT-THE-SILENT-ROWS** — invariant: the `NO_APPLY_LINE` skip shows only where a jev-skill arm would
+  render. Origin: the tabbed-`CLAUDE_CONFIG_DIR` cells (`agent-workflow-kit/tools/jev-guide.test/copy.test.mjs:112-118`,
+  `agent-workflow-kit/tools/jev-guide.test/offer.test.mjs:307-313`) use homes where an arm renders, so a probe calling
+  `skillLine` (`agent-workflow-kit/tools/recommendations.mjs:1497`) before its gates (`:1490-1496`) passes them. Narrow
+  fix: two cells, each `{ items: [], skips: [] }`: a tabbed `CLAUDE_CONFIG_DIR` whose own target
+  (`homeTargets(home, tabbed)[1]`) and the Codex and Antigravity targets all hold the current pair, and a tabbed
+  `CLAUDE_CONFIG_DIR` over a key-unset home with every target absent. Residual, not live: the probe orders its gates
+  before `skillLine` today; no write decision reads the cells. Raised by the S17 diff review (lens round 1).
 - **JEV-SKILL-PLACE-HINT-NAMES-A-DIGEST-LINE** — invariant: a hint telling the user to run "the apply" points to a line
   that runs on its own. Origin: `run the apply in <place>` on the harness jev-skill item
-  (`agent-workflow-kit/tools/recommendations.mjs:1564`), whose apply line needs the check's digest
+  (`agent-workflow-kit/tools/recommendations.mjs:1513`), whose apply line needs the check's digest
   (`agent-workflow-kit/tools/write-lanes.mjs:200`). Narrow fix: "run the check line, then the apply line with its
   digest, in <place>". Residual: a pasted `--expect <digest>` is a parse error in bash, zsh, fish and PowerShell;
   nothing runs. Raised by the S1 diff review (lens round 1).
@@ -628,11 +633,13 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **KIT-STAND-IN-COUNTS-IN-NO-VERDICT-CLASS** — invariant: the advisor's verdict never reads `nothing is broken` while
   a configured `subagent` slot degrades to `solo`. Origin: from story S15 `agents.not-current` renders in the base
   `executor-vehicle` arm's place over a missing or unusable executor in a placed component (spec carriers, part
-  agent-files), and a kit item counts in no verdict class (`agent-workflow-kit/tools/recommendations.mjs:254-263`,
-  `:1763`); while its apply ends pending the verdict can read `nothing is broken`. From story S16 the kit items
+  agent-files), and a kit item counts in no verdict class (`agent-workflow-kit/tools/recommendations.mjs:250-259`,
+  `:1669-1670`); while its apply ends pending the verdict can read `nothing is broken`. From story S16 the kit items
   `gate-hook.not-current` and `state-block.not-current` count in no class either, so a wired hook whose file is absent or
   stale can read `nothing is broken` while its item stays pending (widened during the DISTRIBUTION-FILES-STAY-CURRENT S16
-  spec review). A fold that counted the stand-in as
+  spec review). From story S17 the kit item `jev-skill.not-current` counts in no class either, so an agent skill root
+  absent or behind the pin beside a copy at a kit pin can read `nothing is broken` while its item stays pending.
+  A fold that counted the stand-in as
   attention was tried at the S15 spec review and bred restatements (the mode doc's verdict paragraph, init-project S4 and
   S7, the item's label and sort), so it was withdrawn. Narrow fix: one design of the stand-in's class across the item,
   its label, its sort and the verdict paragraph. Proof: a verdict cell over that tree. Residual, not live: the kit route

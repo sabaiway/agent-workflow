@@ -58,7 +58,7 @@ export const VARIANT_LANES = Object.freeze({
   'profile-gap': LANE_CHAT,
   'jev-connect': LANE_USER,
   'jev-skill': LANE_HARNESS,
-  'jev-skill.earlier': LANE_HARNESS,
+  'jev-skill.not-current': LANE_KIT,
   'spec-adoption.adopting': LANE_CHAT,
 });
 
@@ -168,7 +168,7 @@ const FORMS = Object.freeze({
     (facts, argv) => 'your own step (a sudo install; the doctor prints the --apply line to run next) — '
       + `${TERMINAL_STEP}cd ${quoteArg(facts.root)} && ${formatCommand(argv.preview)}`),
   'jev-skill': SKILL_FORM,
-  'jev-skill.earlier': SKILL_FORM,
+  'jev-skill.not-current': SKILL_FORM,
   'jev-connect': createForm('jev-connect.mjs', null, [], getStartupPaths, true,
     (facts, argv) => `${OWN_STEP}it asks for the key in your terminal and the key never goes into the chat — `
       + `${TERMINAL_STEP}${formatCommand(argv.apply)}`),

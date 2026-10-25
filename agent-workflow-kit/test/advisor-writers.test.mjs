@@ -109,13 +109,14 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, sixteen chat, eighteen harness and three kit rows: forty-six keys', () => {
+  it('counts nine user, sixteen chat, seventeen harness and four kit rows: forty-six keys', () => {
     const rows = readRows(readTable());
-    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [46, 9, 16, 18, 3], 'row count, then user, chat, harness and kit rows');
-    const named = ['hook-checks', 'source-size.layout', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current'];
-    assert.deepEqual([...named, 'gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing'].map((v) => rows.find(({ variant }) => variant === v)), [
+    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [46, 9, 16, 17, 4], 'row count, then user, chat, harness and kit rows');
+    const named = ['hook-checks', 'source-size.layout', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current', 'jev-skill.not-current'];
+    assert.deepEqual([...named, 'gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing', 'jev-skill.earlier'].map((v) => rows.find(({ variant }) => variant === v)), [
       { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' },
       { variant: 'agents.not-current', lane: 'kit', writer: 'cheap-agents.mjs' }, { variant: 'gate-hook.not-current', lane: 'kit', writer: 'gate-hook.mjs' },
-      { variant: 'state-block.not-current', lane: 'kit', writer: 'state-block-hook.mjs' }, undefined, undefined, undefined]);
+      { variant: 'state-block.not-current', lane: 'kit', writer: 'state-block-hook.mjs' }, { variant: 'jev-skill.not-current', lane: 'kit', writer: 'jev-skill.mjs' },
+      undefined, undefined, undefined, undefined]);
   });
 });

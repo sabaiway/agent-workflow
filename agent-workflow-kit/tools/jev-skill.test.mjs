@@ -236,6 +236,16 @@ describe('spec:jev-guide/S32 the dry run and the exit table', () => {
     }
   });
 
+  it('the header comment names the four routes and no sentence of it says the user runs the apply', () => {
+    const source = readFileSync(CLI, 'utf8');
+    const header = source.slice(0, source.indexOf('\nimport ')).split(LF).filter((line) => line.startsWith('//'))
+      .map((line) => line.replace(/^\/\/ ?/, '')).join(' ');
+    const routes = ['kit item', 'with no question', 'beside a copy at a kit pin', 'chat yes', "the user's own terminal"];
+    assert.deepEqual([...routes.filter((words) => !header.includes(words)), ...(/\binit\b/.test(header) ? [] : ['init'])], [], header);
+    const sentences = header.split(/[.;](?=\s|$)/);
+    assert.deepEqual(sentences.filter((text) => /\b(?:the user|you)\s+runs?\b/i.test(text) && /\bapply\b/i.test(text)), []);
+  });
+
   it('main returns its code and never exits; the direct run answers --help at exit 0', () => {
     const exitCode = process.exitCode;
     assert.equal(run(['--bogus'], {}).code, 2);

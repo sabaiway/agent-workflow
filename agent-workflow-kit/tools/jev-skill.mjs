@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // spec:jev-guide — docs/ai/specs/kit/jev-guide/jev-skill.md
 // The one command that installs the vendor's Jev skill, pinned and digest-checked, as a verified COPY into
-// the three agent skill roots. The USER runs it with --apply in a terminal of their own after their yes in
-// the chat; without --apply it is a read-only dry run. It reads no secret, needs no terminal, opens no
-// connection, never writes through a link below a base, and never removes what it did not mint this run.
+// the three agent skill roots. Its --apply comes by four routes: the advisor's kit item, with no question
+// beside a copy at a kit pin; the offer, on the chat yes after the danger check; init, on its terminal y;
+// and the user's own terminal. Without --apply it is a read-only dry run. It reads no secret, needs no
+// terminal, opens no connection, never writes through a link below a base, and never removes a leftover it
+// did not mint this run.
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -125,7 +127,7 @@ export const applyTarget = (entry, io) => {
           io.rm(aside, { recursive: true, force: true });
         } catch (error) { kept = codeOf(error); }
       }
-      if (kept !== null) lines.push(`kept aside: ${printable(join(aside, 'typesafe-ai'))} — ${kept}`);
+      if (kept !== null) lines.push(`leftover: ${printable(join(aside, 'typesafe-ai'))} — ${kept}`);
     }
     return { lines, outcome: 'refused' };
   };
@@ -168,7 +170,7 @@ export const applyTarget = (entry, io) => {
     const old = { base: aside, path: join(aside, 'typesafe-ai') };
     const verified = skillState(old, io);
     if (verified.state === 'earlier') io.rm(aside, { recursive: true, force: true });
-    else lines.push(`kept aside: ${printable(old.path)} — it reads ${verified.state}`);
+    else lines.push(`leftover: ${printable(old.path)} — it reads ${verified.state}`);
     lines.unshift(`replaced: ${path} (${entry.tag} → ${io.pins[0].tag})`);
     return { lines, outcome: 'replaced' };
   } catch (error) {

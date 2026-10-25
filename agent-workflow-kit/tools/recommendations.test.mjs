@@ -1102,13 +1102,13 @@ describe('spec:init-project/S25 — velocity-core names the apply ask rule while
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(velocityCoreOn(true, true), undefined);
   });
-  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; eighteen harness variants', () => {
+  it('one benefit naming the purpose (all work stays in auto mode); no text claims the rule removes a prompt; seventeen harness variants', () => {
     need(velocityModule, 'APPLY_ASK_RULE');
     assert.equal(BENEFITS['velocity-core'], 'velocity — routine read-only commands stop prompting while the maintainer is away; all work stays in auto mode');
     for (const text of [...Object.values(WHATS), ...Object.values(BENEFITS), ...rows.map((row) => row[3])]) {
       if (/ask rule|harness apply/i.test(text)) assert.doesNotMatch(text, /\b(?:remov|silenc)/i);
     }
-    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18);
+    assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17);
   });
 });
 
@@ -1218,7 +1218,7 @@ describe('spec:init-project/S31 the three render as harness items', () => {
     }
   });
 
-  it('VARIANT_LANES contains eighteen harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
+  it('VARIANT_LANES contains seventeen harness variants', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
 });
 
 // This item exists because its ABSENCE fired: kit 3.14.0 shipped the state-block detector with a mode
@@ -2839,7 +2839,7 @@ describe('recommendations — the worktrees-dir arming item', () => {
 });
 
 describe('spec:init-project/S40 — the worktrees-dir item by the table', () => {
-  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
+  it('the harness variant count is seventeen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
   const makeHarnessProject = () => {
     const root = makeProject();
     const dir = join(root, 'farm');
@@ -3531,7 +3531,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }
-  it('the harness variant count is eighteen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 18));
+  it('the harness variant count is seventeen', () => assert.equal(Object.values(need(lanes, 'VARIANT_LANES')).filter((lane) => lane === 'harness').length, 17));
 });
 
 describe('spec:init-project/S54 the advisor arms by their tables', () => {

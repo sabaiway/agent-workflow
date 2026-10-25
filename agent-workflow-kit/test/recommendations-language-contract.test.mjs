@@ -422,8 +422,8 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
 const JEV_NOTE_START = '- `jev-connect` — ';
 const JEV_SKILL_NOTE_START = '- `jev-skill` — ';
 const JEV_SKILL_NOTE_LITERALS = Object.freeze([
-  'the agent records', 'chat yes', 'after the check', 'third-party text', 'pinned', 'verified copy',
-  'never updated silently', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json',
+  'the agent records', 'the chat yes', 'after the check', 'third-party text', 'pinned', 'verified copy',
+  'jev-skill.not-current', 'with no question', 'foreign', 'left untouched', 'BEFORE the confirmation', 'jevSkillAck', 'docs/ai/acks.json',
 ]);
 const JEV_NOTE_LITERALS = Object.freeze([
   'the agent records', "user's own step", 'not consent', 'no echo', 'api.typesafe.ai', "only on the user's own run",
@@ -457,7 +457,7 @@ describe('spec:jev-guide/S19 — the jev-connect user step and jev-skill checked
     for (const literal of JEV_SKILL_NOTE_LITERALS) {
       assert.ok(note.includes(literal), `the jev-skill note states: ${literal}`);
     }
-    assert.doesNotMatch(note, /HAND-APPLY/);
+    assert.deepEqual(['HAND-APPLY', 'never updated silently', 'jev-skill.earlier'].filter((retired) => note.includes(retired)), []);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
   });
   it('ACK_LANES maps jev-connect to jevConnectAck and jev-skill to jevSkillAck, and the writer usage names both lanes', () => {
@@ -480,7 +480,7 @@ const SLOT_VARIANTS = Object.freeze([
   'velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render',
   'gate-hook', 'mcp-channel', 'mcp-channel.differing',
   'agents', 'executor-vehicle', 'sandbox-provision.installable', 'jev-skill',
-  'jev-skill.earlier', 'jev-connect', 'family-freshness',
+  'jev-skill.not-current', 'jev-connect', 'family-freshness',
   'state-block', 'sandbox-provision',
   'enforcement', 'commit-guard',
   'gates-inert.unfillable', 'gates-inert.producer-unrecognized',

@@ -11,8 +11,8 @@ import * as hook from './gate-hook.mjs';
 import { writeMcp } from './mcp.mjs';
 import { buildServerEntry } from './mcp-registration.mjs';
 import { writeCheapAgents } from './cheap-agents.mjs';
-import { planFor } from './jev-skill.mjs';
-import { SKILL_FILES, SKILL_PINS, skillTargets } from './jev-facts.mjs';
+import { main as jevSkillMain, planFor } from './jev-skill.mjs';
+import { SKILL_FILES, SKILL_PINS, skillState, skillTargets } from './jev-facts.mjs';
 import { detectBackends, findOnPath } from './detect-backends.mjs';
 import { ACTIVITIES } from './carriers.mjs';
 import * as lanes from './write-lanes.mjs';
@@ -40,7 +40,7 @@ const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SETTINGS = '.claude/settings.json';
 const VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle',
-  'jev-skill', 'jev-skill.earlier', 'worktrees-dir'];
+  'jev-skill', 'worktrees-dir'];
 const CLASSES = ['hosts reachable', 'paths writable', 'commands outside the sandbox', 'prompts removed',
   'commands the harness runs', 'nothing widened'];
 const NOTHING = CLASSES[5];
@@ -404,30 +404,6 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
     });
     assert.deepEqual(hashes(f), originalHashes, 'original retained while copy applied');
   });
-  it('jev-skill.earlier: real planFor replacement prints skill writes and both temporary prefixes', (t) => {
-    const f = fixture(t);
-    const legacy = { 'SKILL.md': 'earlier skill\n', LICENSE: 'earlier license\n' };
-    const pins = [...SKILL_PINS, { tag: 'fixture-earlier', digests:
-      Object.fromEntries(Object.keys(SKILL_FILES).map((name) => [name, sha(legacy[name])])) }];
-    for (const target of skillTargets({ home: f.home, claudeDir: join(f.home, '.claude') })) {
-      for (const [name, bytes] of Object.entries(legacy)) put(join(target.path, name), bytes);
-    }
-    unchanged(f, () => {
-      const plan = expectedPlan('jev-skill.earlier', f, { pins });
-      assert.equal(plan.writes.length, 3);
-      assert.equal(plan.temporaries.length, 6);
-      const result = danger.checkApply('jev-skill.earlier', f, { pins });
-      assertPreview('jev-skill.earlier', f, result, plan);
-      assert.equal(result.lines.some((line) => line.startsWith('writes: ') && line.includes(' — replaces')), false);
-    });
-    const current = fixture(t);
-    unchanged(current, () => {
-      const result = danger.checkApply('jev-skill.earlier', current);
-      const cli = capture(current);
-      assert.equal(danger.main(argvFor('jev-skill.earlier', current), cli.io), 0);
-      assert.deepEqual(cli.lines, result.lines);
-    });
-  });
   const plants = [
     ['a host of a bridge no slot uses', 'bridge-tier', 'sandbox.network.allowedDomains', () => {
       const agy = json(join(TOOLS, '../bridges/antigravity-cli-bridge/capability.json')).networkHosts;
@@ -561,6 +537,121 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
         mocked.mock.restore();
         syncBuiltinESMExports();
       }
+    });
+  });
+});
+
+describe('spec:jev-guide/S38 the danger check over jev-skill.not-current by proof over the real plan', () => {
+  const KIT_SKILL = 'jev-skill.not-current';
+  const BEYOND = `beyond the declared scope of ${KIT_SKILL}`;
+  const VENDORED = Object.fromEntries(Object.entries(SKILL_FILES).map(([name, shipped]) => [name, fs.readFileSync(join(TOOLS, '../references/vendor/typesafe-ai', shipped))]));
+  const PAIRS = { current: VENDORED, earlier: { 'SKILL.md': 'earlier skill\n', LICENSE: 'earlier license\n' },
+    foreign: { ...VENDORED, 'notes.txt': 'mine\n' }, nopin: { 'SKILL.md': 'no pin skill\n', LICENSE: 'no pin license\n' } };
+  // A second pin, matching no entry of SKILL_PINS, placed after SKILL_PINS[0]: the plan and the acceptance both read it.
+  const pins = [...SKILL_PINS, { tag: 'fixture-earlier', commit: 'fixture', digests: Object.fromEntries(Object.keys(SKILL_FILES).map((name) => [name, sha(PAIRS.earlier[name])])) }];
+  const skillHome = (f, states) => skillTargets({ home: f.home, claudeDir: join(f.home, '.claude') }).map(({ path }, index) => {
+    for (const [name, bytes] of Object.entries(PAIRS[states[index]] ?? {})) put(join(path, name), bytes);
+    return path;
+  });
+  const assertRefusesEveryWrite = (result, plan) => {
+    const paths = [...plan.writes.map(({ path }) => path), ...plan.directories].sort();
+    assert.ok(plan.writes.length > 0, 'something is planned');
+    assert.deepEqual(result.refused.map(({ path }) => path).sort(), paths);
+    for (const path of paths) assert.ok(result.lines.includes(`refused: ${path} ${path} — ${BEYOND}`), path);
+    assert.equal(result.lines.at(-2), 'nothing written');
+  };
+  const refusedRun = (f) => capture(f, () => { throw new Error('a refused check spawned'); });
+
+  it('over one current, one absent and one earlier target: writes and temporaries within scope, exit 0 with --claude-dir; the real apply on a copy leaves every target current', (t) => {
+    const f = fixture(t);
+    skillHome(f, ['current', null, 'earlier']);
+    f.claudeDir = join(f.home, '.claude');
+    unchanged(f, () => {
+      const plan = expectedPlan(KIT_SKILL, f, { pins });
+      assert.equal(plan.writes.length, 2);
+      const result = danger.checkApply(KIT_SKILL, f, { pins });
+      assertPreview(KIT_SKILL, f, result, plan);
+      assert.deepEqual(result.lines.filter((line) => line.endsWith(':') || line.startsWith('masked:')), [], 'no settings file is read or changed');
+      assert.equal(danger.main(argvFor(KIT_SKILL, f), capture(f).io), 0);
+    });
+    const copy = copyFixture(t, f);
+    const before = snapshot(copy);
+    const result = unchanged(copy, () => danger.checkApply(KIT_SKILL, copy, { pins }));
+    const quiet = { log: () => {}, error: () => {} };
+    assert.equal(jevSkillMain(['--apply', '--claude-dir', copy.claudeDir], { ...quiet, home: copy.home, env: {}, platform: process.platform, pins }), 0);
+    assertAppliedPaths(copy, before, result, []);
+    const io = { lstat: fs.lstatSync, readdir: fs.readdirSync, readFile: fs.readFileSync, pins };
+    assert.deepEqual(skillTargets({ home: copy.home, claudeDir: copy.claudeDir }).map((target) => skillState(target, io).state), ['current', 'current', 'current']);
+  });
+
+  it('over a home where no target reads current or earlier, each planned write and created directory is refused, nothing written, exit 1', (t) => {
+    for (const states of [[null, null, null], ['foreign', null, 'nopin']]) {
+      const f = fixture(t);
+      skillHome(f, states);
+      unchanged(f, () => {
+        const result = danger.checkApply(KIT_SKILL, f);
+        assertRefusesEveryWrite(result, expectedPlan(KIT_SKILL, f));
+        const cli = refusedRun(f);
+        assert.equal(danger.main(argvFor(KIT_SKILL, f), cli.io), 1);
+        assert.deepEqual(cli.lines, result.lines);
+      });
+    }
+  });
+
+  it('a --claude-dir whose judged targets hold no copy at a kit pin is refused though <home>/.claude holds a current one', (t) => {
+    const f = fixture(t);
+    skillHome(f, [null, 'current', null]);
+    f.claudeDir = join(f.home, 'elsewhere');
+    unchanged(f, () => {
+      const result = danger.checkApply(KIT_SKILL, f);
+      assertRefusesEveryWrite(result, expectedPlan(KIT_SKILL, f));
+      assert.equal(danger.main(argvFor(KIT_SKILL, f), refusedRun(f).io), 1);
+    });
+  });
+
+  it('over a home whose every target reads earlier by the second pin: a writes: line per target with both temporary prefixes, within scope', (t) => {
+    const f = fixture(t);
+    skillHome(f, ['earlier', 'earlier', 'earlier']);
+    unchanged(f, () => {
+      const plan = expectedPlan(KIT_SKILL, f, { pins });
+      assert.deepEqual([plan.writes.length, plan.temporaries.length], [3, 6]);
+      const result = danger.checkApply(KIT_SKILL, f, { pins });
+      assertPreview(KIT_SKILL, f, result, plan);
+      assert.equal(result.lines.some((line) => line.startsWith('writes: ') && line.includes(' — replaces')), false);
+    });
+  });
+
+  it('a plan read current through node:fs is refused when the acceptance, read through the check\'s own seams, finds the last copy gone', (t) => {
+    const f = fixture(t);
+    const [codex] = skillHome(f, ['current', null, null]);
+    const lstat = (path, ...args) => {
+      if (path === codex || path.startsWith(`${codex}/`)) throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+      return fs.lstatSync(path, ...args);
+    };
+    unchanged(f, () => {
+      const plan = expectedPlan(KIT_SKILL, f);
+      assert.equal(plan.writes.length, 2, 'the plan reads the Codex copy current');
+      assertRefusesEveryWrite(danger.checkApply(KIT_SKILL, f, { lstat }), plan);
+    });
+  });
+
+  it('over an accepted home a planted plan\'s writes outside the skill targets are refused, with their created directories', (t) => {
+    const f = fixture(t);
+    skillHome(f, ['current', 'current', 'current']);
+    const roots = [join(f.home, '.agents', 'skills', 'other'), join(f.home, '.ssh')];
+    const planted = roots.map((root) => ({ agent: 'planted', base: f.home, root, path: join(root, 'typesafe-ai'), state: 'absent', tag: null, reason: null, action: 'install' }));
+    const owns = [];
+    const planOf = (io) => {
+      const own = planFor(io);
+      owns.push(own.targets.map(({ action }) => action));
+      return { ...own, targets: [...own.targets, ...planted] };
+    };
+    unchanged(f, () => {
+      const result = danger.checkApply(KIT_SKILL, f, { planFor: planOf });
+      assert.deepEqual(owns.at(-1), ['keep', 'keep', 'keep'], 'the check plans through deps.planFor over jev-skill\'s own plan');
+      assert.deepEqual(result.refused.map(({ path }) => path).sort(), [...planted.map(({ path }) => path), ...roots].sort());
+      assert.ok(result.refused.every(({ reason }) => reason === BEYOND));
+      assert.equal(result.lines.at(-2), 'nothing written');
     });
   });
 });
@@ -1716,6 +1807,7 @@ describe('spec:init-project/S23 CLI usage, consent digest and exact apply argv',
     ['--help', 0], ['-h', 0], ['--unknown', 2], ['--variant', 2], ['--cwd', 2], ['--claude-dir', 2], ['--expect', 2],
     ['--variant velocity-core --cwd <file>', 2], ['--variant velocity-core --cwd <root> --claude-dir <dir>', 2],
     ['--variant read-lane --cwd <root>', 2], ['--variant jev-connect --cwd <root>', 2],
+    ['--variant jev-skill.earlier --cwd <root>', 2], ['--variant jev-skill.earlier --cwd <root> --claude-dir <dir>', 2],
     ['--variant velocity-core --cwd <root> --apply', 2], ['--variant velocity-core --cwd <root> --expect <hex>', 2],
     ...['short', 'A'.repeat(64), 'g'.repeat(64)].map((hex) => [`--variant velocity-core --cwd <root> --apply --expect ${hex}`, 2]),
     ['--help --variant velocity-core', 2], ['-h --cwd <root>', 2],

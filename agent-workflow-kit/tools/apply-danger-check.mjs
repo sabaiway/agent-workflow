@@ -21,7 +21,7 @@ import { writeMcp } from './mcp.mjs';
 import { ENABLED_KEY, MCP_JSON_REL, SERVERS_KEY, SERVER_NAME, allowRulesFor, buildServerEntry } from './mcp-registration.mjs';
 import { AGENTS_DIR, agentsAccepted, kitAgentNames, writeCheapAgents } from './cheap-agents.mjs';
 import { planFor } from './jev-skill.mjs';
-import { SKILL_FILES, claudeDirOf, skillTargets } from './jev-facts.mjs';
+import { SKILL_FILES, claudeDirOf, skillAccepted, skillState, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
 import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
@@ -31,7 +31,8 @@ import { isDirectRun } from './direct-run.mjs';
 import { dirCovers as covers } from './declared-paths.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
-const SKILL_VARIANTS = ['jev-skill', 'jev-skill.earlier'];
+const SKILL_KIT = 'jev-skill.not-current';
+const SKILL_VARIANTS = ['jev-skill', SKILL_KIT];
 const VELOCITY_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier'];
 const [GATE_KIT, STOP, STOP_KIT] = ['gate-hook.not-current', 'state-block', 'state-block.not-current'];
 const [HOOK_VARIANTS, STOP_VARIANTS, KIT_HOOKS] = [['gate-hook', GATE_KIT], [STOP, STOP_KIT], [GATE_KIT, STOP_KIT]];
@@ -171,6 +172,7 @@ const unmaskedLstat = (facts) => (path, ...args) => {
   return stat;
 };
 const kitHookWired = (variant, facts) => SETTINGS_FILES.some((rel) => (variant === GATE_KIT ? isHookWired : isStopHookWired)(readSettingsFile(join(facts.root, rel), { lstat: unmaskedLstat(facts), cwd: facts.root }).data));
+const skillIo = (deps) => ({ lstat: deps.lstat ?? lstatSync, readdir: deps.readdir ?? readdirSync, readFile: deps.readFile ?? readFileSync, pins: deps.pins });
 
 export const scopeOf = (variant, facts, deps = {}) => {
   const allowed = {};
@@ -210,8 +212,10 @@ export const scopeOf = (variant, facts, deps = {}) => {
     set(ENABLED_KEY, [SERVER_NAME]);
     set('permissions.allow', allowRulesFor());
   }
-  const targets = SKILL_VARIANTS.includes(variant) ? skillTargets({ home: facts.home,
+  const judged = SKILL_VARIANTS.includes(variant) ? skillTargets({ home: facts.home,
     claudeDir: facts.claudeDir ?? claudeDirOf(facts.env, facts.home, facts.platform).dir }) : [];
+  // The kit skill variant's scope holds only while the check's own judgement accepts the component, never read from the plan.
+  const targets = variant !== SKILL_KIT || skillAccepted(judged.map((target) => ({ ...target, ...skillState(target, skillIo(deps)) }))) ? judged : [];
   const accepted = !KIT_HOOKS.includes(variant) || kitHookWired(variant, facts);
   const filePaths = !accepted ? [] : HOOK_VARIANTS.includes(variant) ? [join(facts.root, HOOK_FILE_REL)] : STOP_VARIANTS.includes(variant) ? [join(facts.root, STATE_BLOCK_HOOK_FILE_REL)] : [];
   const directories = !accepted || SKILL_VARIANTS.includes(variant) || variant === FOOTPRINT ? [] : [join(facts.root, CLAUDE_DIR)];
@@ -313,7 +317,7 @@ export const plannedChange = (variant, facts, deps = {}) => {
         writes.push({ path: item.abs, bytes: item.content });
       }
     } else if (SKILL_VARIANTS.includes(variant)) {
-      const plan = planFor({ ...writerDeps, lstat: lstatSync, readdir: readdirSync, readFile: readFileSync });
+      const plan = (deps.planFor ?? planFor)({ ...writerDeps, lstat: lstatSync, readdir: readdirSync, readFile: readFileSync });
       for (const target of plan.targets.filter(({ action }) => ['install', 'replace'].includes(action))) {
         const stem = basename(target.path);
         const bytes = Object.keys(SKILL_FILES).sort().map((name) => [name,
