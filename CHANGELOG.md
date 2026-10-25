@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-25 — AD-208: every kit agent file is written current with no question; `--executor` retires (kit 17.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
+
+**Every kit agent file in `.claude/agents/`** (the five the kit bundles and each configured roster-derived lens) **is
+now written current with no question**: an absent one placed, a differing one written with the body the kit writes for
+it, no copy kept. Before, a differing cheap vehicle or roster-derived lens was preserved forever, and a differing review lens waited for
+a yes. Over a placed component
+the advisor renders the new kit item `agents.not-current`, whose text names every file its apply writes; a link at a
+kit agent path stops the writer naming it, nothing written. A vehicle of your own goes in
+`.claude/agents/<name>.local.md`. `cheap-agents.mjs --executor` and the `executor-vehicle.differing` item are removed
+(`unknown argument`, exit 2). Contracts: carriers revision 11 (new part agent-files), executor-vehicle revision 8,
+review-roster revision 8, distribution-files revision 9, init-project revision 22. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-24 — AD-207: the agent writes a differing executor vehicle with no question (kit 16.1.0 MINOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **A placed `.claude/agents/executor.md` that differs from the body derived from `docs/ai/vehicles.json` is now written

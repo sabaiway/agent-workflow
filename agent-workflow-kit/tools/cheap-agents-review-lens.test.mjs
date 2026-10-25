@@ -1,13 +1,15 @@
-import { it, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   AGENTS_DIR, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION, CHEAP_AGENTS_BUNDLE, CHEAP_AGENTS_VEHICLES,
   readBundledAgents, writeCheapAgents, formatResult, main,
 } from './cheap-agents.mjs';
 import { buildRecommendations, WHATS, ITEM_LINE_CAP } from './recommendations.mjs';
+import { applySlot } from './write-lanes.mjs';
 
 const read = await import('./cheap-agents-read.mjs').catch(() => ({}));
 const vehicleSettings = await import('./vehicle-settings.mjs').catch(() => ({}));
@@ -19,8 +21,8 @@ const reviewLensTemplate = (...args) => need(read.reviewLensTemplate, 'reviewLen
 const readReviewLensPosture = (...args) => need(read.readReviewLensPosture, 'readReviewLensPosture')(...args);
 const lensVehicle = () => need(read.REVIEW_LENS_VEHICLE, 'REVIEW_LENS_VEHICLE');
 const lensDefaults = () => need(vehicleSettings.REVIEW_LENS_DEFAULTS, 'REVIEW_LENS_DEFAULTS');
-const lensRederiveWhat = () => need(WHATS['agents.lens-rederive'], 'WHATS[agents.lens-rederive]');
 
+const TOOLS = dirname(fileURLToPath(import.meta.url));
 const LENS = 'review-lens.md';
 const LENS_REL = `${AGENTS_DIR}/${LENS}`;
 const EXECUTOR = 'executor.md';
@@ -30,9 +32,9 @@ const SETTINGS_REL = 'docs/ai/vehicles.json';
 const CONFIG_REL = 'docs/ai/orchestration.json';
 const REVIEW = { 'plan-execution': { review: ['review-lens:opus:xhigh'] } };
 const CUSTOM_EXECUTOR = '---\nname: executor\ntools: Read, Bash\n---\nHand edit\n';
-const LENS_LABEL = 're-derived — the earlier body was replaced; set its model and effort in docs/ai/vehicles.json';
-const executorLine = (verb) => `differs from the body derived from the vehicle settings — ${verb} with that body; its model and effort are set in docs/ai/vehicles.json`;
+const derivedLine = (verb) => `differs from the body derived from the vehicle settings — ${verb} with that body; its model and effort are set in docs/ai/vehicles.json`;
 const PLACE_ONLY_WHAT = '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first';
+const KIT_WHAT = '{n} kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for it, with no question';
 const settingsWith = (lens) => JSON.stringify({
   executor: { model: 'sonnet', effort: 'medium', fallback: 'opus' }, ...(lens ? { 'review-lens': lens } : {}),
 });
@@ -79,7 +81,13 @@ const advisorDeps = (root) => ({
     unsupportedExtensions: [], verdict: 'within-domain', total: 4,
   }),
 });
-const agentsItem = (root) => buildRecommendations({ cwd: root, deps: advisorDeps(root) }).items.find((item) => item.key === 'agents');
+// The agents key of one advisor run: its items and its stated skips.
+const agentsKey = (root, extra = {}) => {
+  const built = buildRecommendations({ cwd: root, deps: { ...advisorDeps(root), ...extra } });
+  return [built.items.filter((item) => item.key === 'agents'), built.skips.filter((skip) => skip.key === 'agents')];
+};
+const slotOf = (variant, root) => applySlot(variant, { toolsDir: TOOLS, root, env: {}, home: root, platform: 'linux' });
+const plannedRels = (root) => writeCheapAgents({ cwd: root, dryRun: true }).plan.filter((item) => ['place', 're-derive'].includes(item.action)).map((item) => item.rel);
 
 it('spec:review-roster/S17 the bundled review lens frontmatter carries REVIEW_LENS_DEFAULTS', () => {
   assert.deepEqual({ ...lensDefaults() }, { model: 'opus', effort: 'high' });
@@ -104,7 +112,7 @@ it('derives the lens body from the bundled bytes with exactly the model and effo
   assert.throws(() => reviewLensTemplate(lensDefaults(), { bundleDir }), { code: CHEAP_AGENTS_BUNDLE });
 });
 
-it('re-derives a differing placed lens, keeps every other customized vehicle and prints the lens posture', () => {
+it('writes a differing placed lens with the derived line, every differing cheap vehicle and derived lens too, and prints the lens posture', () => {
   for (const [settings, posture] of [
     [undefined, { model: 'opus', effort: 'high', source: 'default' }],
     [settingsWith({ model: 'sonnet', effort: 'high' }), { model: 'sonnet', effort: 'high', source: 'file' }],
@@ -112,24 +120,18 @@ it('re-derives a differing placed lens, keeps every other customized vehicle and
     const root = makeProject(settings, REVIEW);
     assert.deepEqual(readReviewLensPosture(root), { posture, reason: null });
     writeCheapAgents({ cwd: root, dryRun: false });
-    const kept = { [SWEEP]: 'Customized sweep\n', [DERIVED_LENS]: 'Customized derived lens\n' };
-    for (const [name, body] of Object.entries({ ...kept, [EXECUTOR]: CUSTOM_EXECUTOR, [LENS]: STALE })) {
-      writeFileSync(agentPath(root, name), body);
-    }
+    const bodies = Object.fromEntries(writeCheapAgents({ cwd: root, dryRun: true }).plan.map((item) => [item.name, item.content]));
+    const older = { [SWEEP]: 'Customized sweep\n', [DERIVED_LENS]: 'Customized derived lens\n', [EXECUTOR]: CUSTOM_EXECUTOR, [LENS]: STALE };
+    for (const [name, body] of Object.entries(older)) writeFileSync(agentPath(root, name), body);
     for (const dryRun of [true, false]) {
       const result = writeCheapAgents({ cwd: root, dryRun });
-      const actionOf = (name) => result.plan.find((item) => item.name === name).action;
-      assert.equal(actionOf(LENS), 're-derive');
-      assert.equal(actionOf(SWEEP), 'customized-preserved');
-      assert.equal(actionOf(DERIVED_LENS), 'customized-preserved');
+      assert.deepEqual(Object.keys(older).map((name) => result.plan.find((item) => item.name === name).action), Object.keys(older).map(() => 're-derive'));
       assert.deepEqual(result.lensPosture, posture);
       assertPostureLine(result, posture);
-      assert.equal(rowLine(result, LENS), `  - ${LENS_REL}: ${dryRun ? 'would re-derive' : LENS_LABEL}`);
-      assert.equal(rowLine(result, EXECUTOR), `  - ${AGENTS_DIR}/${EXECUTOR}: ${executorLine(dryRun ? 'would be written' : 'written')}`);
-      const expected = dryRun ? STALE : withPosture(BUNDLED, posture.model, posture.effort);
-      assert.equal(readFileSync(agentPath(root, LENS), 'utf8'), expected);
-      for (const [name, body] of Object.entries(kept)) assert.equal(readFileSync(agentPath(root, name), 'utf8'), body);
+      for (const name of [LENS, EXECUTOR]) assert.equal(rowLine(result, name), `  - ${AGENTS_DIR}/${name}: ${derivedLine(dryRun ? 'would be written' : 'written')}`);
+      for (const name of Object.keys(older)) assert.equal(readFileSync(agentPath(root, name), 'utf8'), dryRun ? older[name] : bodies[name], name);
     }
+    assert.equal(bodies[LENS], withPosture(BUNDLED, posture.model, posture.effort));
   }
 });
 
@@ -154,36 +156,57 @@ it('stops the writer on a malformed review-lens section with nothing placed', ()
   }
 });
 
-it('the agents offer counts the lens re-derive beside the placements and never the executor re-derive', () => {
-  const root = makeProject();
-  writeCheapAgents({ cwd: root, dryRun: false });
-  const placed = Object.fromEntries(readdirSync(join(root, AGENTS_DIR)).map((name) => [name, readFileSync(agentPath(root, name), 'utf8')]));
-  writeFileSync(agentPath(root, LENS), STALE);
-  const lensOnly = agentsItem(root);
-  assert.equal(lensOnly?.what, fill(lensRederiveWhat(), { n: 0, ro: 0, ex: 0 }));
-  assert.equal(lensOnly.variant, 'agents');
-  for (const name of [SWEEP, EXECUTOR]) rmSync(agentPath(root, name));
-  assert.equal(agentsItem(root)?.what, fill(lensRederiveWhat(), { n: 2, ro: 1, ex: 1 }));
-  for (const [name, body] of Object.entries(placed)) writeFileSync(agentPath(root, name), body);
-  assert.equal(agentsItem(root), undefined);
-  writeFileSync(agentPath(root, EXECUTOR), CUSTOM_EXECUTOR);
-  assert.equal(agentsItem(root), undefined);
-  rmSync(agentPath(root, SWEEP));
-  assert.equal(WHATS.agents, PLACE_ONLY_WHAT);
-  assert.equal(agentsItem(root)?.what, fill(PLACE_ONLY_WHAT, { n: 1, ro: 1, ex: 0 }));
-});
+describe('the agents key by its state table (spec:carriers/S26)', () => {
+  it("not accepted with a planned place renders the agents offer with today's texts", () => {
+    const root = makeProject();
+    mkdirSync(join(root, AGENTS_DIR), { recursive: true });
+    writeFileSync(agentPath(root, 'doc-research.md'), 'own vehicle\n');
+    const [[item, ...more], skips] = agentsKey(root);
+    const follow = `hidden-mode deployments only: after the --apply the preview prints, run node ${join(TOOLS, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`;
+    assert.deepEqual([item.variant, item.lane, item.what, item.detail, item.apply, more, skips], ['agents', 'harness', fill(PLACE_ONLY_WHAT, { n: 5, ro: 4, ex: 1 }), follow, slotOf('agents', root).apply, [], []]);
+  });
 
-it('every filled agents text stays within ITEM_LINE_CAP at every count the bundle can reach', () => {
-  const lensWhat = lensRederiveWhat();
-  for (const pattern of [/review-lens\.md/u, /docs\/ai\/vehicles\.json/u, /\{n\}/u, /\{ro\}/u, /\{ex\}/u]) assert.match(lensWhat, pattern);
-  const total = readBundledAgents().length;
-  for (const [template, max] of [[lensWhat, total - 1], [WHATS.agents, total]]) {
-    for (let n = 0; n <= max; n += 1) {
-      for (const ex of [0, 1].filter((count) => count <= n)) {
-        const what = fill(template, { n, ro: n - ex, ex });
-        assert.ok(what.length <= ITEM_LINE_CAP, `${what.length}: ${what}`);
-        assert.doesNotMatch(what, /[{}\r\n]/u);
-      }
+  it('accepted with a planned place or re-derive renders agents.not-current: lane kit, its count, every planned file, the executor included, no hidden-mode follow-up', () => {
+    for (const older of [[EXECUTOR], [EXECUTOR, LENS, SWEEP, DERIVED_LENS]]) {
+      const root = makeProject(settingsWith({ model: 'sonnet', effort: 'high' }), REVIEW);
+      writeCheapAgents({ cwd: root, dryRun: false });
+      if (older.length === 1) rmSync(agentPath(root, EXECUTOR));
+      else for (const name of older) writeFileSync(agentPath(root, name), 'an earlier body\n');
+      const planned = plannedRels(root);
+      const [[item, ...more], skips] = agentsKey(root);
+      assert.equal(item?.variant, 'agents.not-current', JSON.stringify(item));
+      const slot = slotOf('agents.not-current', root);
+      assert.deepEqual([item?.variant, item?.lane, item?.what, item?.detail, item?.check, item?.apply, more, skips],
+        ['agents.not-current', 'kit', fill(KIT_WHAT, { n: planned.length }), `writes: ${planned.join(', ')}`, slot.check, slot.apply, [], []]);
+      assert.deepEqual(older.map((name) => planned.includes(`${AGENTS_DIR}/${name}`)), older.map(() => true));
     }
-  }
+  });
+
+  it('a throw is one stated skip naming it, a character device at a kit agent path among them; a stale stamp beside a planned item the upgrade-first skip; nothing planned renders nothing', () => {
+    const root = makeProject(undefined, REVIEW);
+    writeCheapAgents({ cwd: root, dryRun: false });
+    const device = agentPath(root, 'gate-triage.md');
+    const kinds = ['isCharacterDevice', 'isBlockDevice', 'isFIFO', 'isSocket', 'isSymbolicLink', 'isDirectory', 'isFile'];
+    const lstat = (path, ...rest) => (path === device ? Object.fromEntries(kinds.map((kind) => [kind, () => kind === 'isCharacterDevice'])) : lstatSync(path, ...rest));
+    const answers = [agentsKey(root), agentsKey(root, { lstat })];
+    rmSync(agentPath(root, DERIVED_LENS));
+    symlinkSync(join(root, CONFIG_REL), agentPath(root, DERIVED_LENS));
+    answers.push(agentsKey(root));
+    rmSync(agentPath(root, DERIVED_LENS));
+    writeFileSync(join(root, WORKFLOW_STAMP), '0.0.1\n');
+    answers.push(agentsKey(root));
+    writeCheapAgents({ cwd: root, dryRun: false }, { readFile: (path, ...rest) => (path === join(root, WORKFLOW_STAMP) ? `${EXPECTED_WORKFLOW_VERSION}\n` : readFileSync(path, ...rest)) });
+    answers.push(agentsKey(root));
+    const named = [null, /\.claude\/agents\/gate-triage\.md/u, /\.claude\/agents\/review-lens-opus-xhigh\.md/u, /run \/agent-workflow-kit upgrade first/u, null];
+    assert.deepEqual(answers.map(([items, skips]) => [items.length, skips.length]), named.map((pattern) => [0, pattern ? 1 : 0]));
+    named.forEach((pattern, index) => pattern && assert.match(answers[index][1][0].reason, pattern));
+  });
+
+  it('every filled agents text stays within ITEM_LINE_CAP at every count, and agents.lens-rederive is no WHATS key', () => {
+    assert.deepEqual([WHATS['agents.not-current'], WHATS.agents, Object.hasOwn(WHATS, 'agents.lens-rederive')], [KIT_WHAT, PLACE_ONLY_WHAT, false]);
+    const total = readBundledAgents().length;
+    const fills = [...[0, 1, 9, 10, 99, 100, 999].map((n) => fill(KIT_WHAT, { n })),
+      ...Array.from({ length: total + 1 }, (_, n) => [0, 1].filter((ex) => ex <= n).map((ex) => fill(PLACE_ONLY_WHAT, { n, ro: n - ex, ex }))).flat()];
+    assert.deepEqual(fills.filter((what) => what.length > ITEM_LINE_CAP || /[{}\r\n]/u.test(what)), []);
+  });
 });

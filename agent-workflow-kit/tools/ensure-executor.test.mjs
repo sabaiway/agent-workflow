@@ -159,7 +159,7 @@ describe('spec:executor-vehicle/S5', () => {
       };
       for (const dryRun of [true, false]) {
         runUnchanged(cwd, dryRun, 'pending', null,
-          [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'executor-vehicle.differing', 'nothing', 'written'], { deps });
+          [EXECUTOR_VEHICLE_REL, SETTINGS_REL, 'agents', 'nothing', 'written'], { deps });
         assert.deepEqual(readFileSync(target), Buffer.from(CUSTOM));
       }
       assert.equal(deps.rename.mock.callCount(), 0);
@@ -198,17 +198,37 @@ describe('spec:executor-vehicle/S5', () => {
   });
 });
 
+describe('spec:carriers/S27 the executor ensure names the advisor agents item and claims no route', () => {
+  afterEach(() => {
+    while (roots.length) rmSync(roots.pop(), { recursive: true, force: true });
+  });
+  it('the not-placed and pending lines name the agents item, their tokens unchanged and nothing written', () => {
+    const lines = {};
+    for (const [token, body] of [['not-placed', undefined], ['pending', CUSTOM]]) {
+      const cwd = makeProject(SETTINGS, body);
+      for (const dryRun of [true, false]) runUnchanged(cwd, dryRun, token, null, []);
+      lines[token] = ensureExecutor({ cwd, kitRoot: KIT_ROOT, dryRun: true }).lines;
+    }
+    assert.deepEqual(lines, {
+      'not-placed': [`${EXECUTOR_VEHICLE_REL}: not placed — nothing written; the advisor's agents item places it`],
+      pending: [`${EXECUTOR_VEHICLE_REL}: differs from the body derived from ${SETTINGS_REL} — nothing written; the advisor's agents item writes the derived body`],
+    });
+  });
+  it('recommendations.mjs names no executorBodyDiffers', () => {
+    assert.equal(/\bexecutorBodyDiffers\b/u.test(readFileSync(join(KIT_ROOT, 'tools', 'recommendations.mjs'), 'utf8')), false);
+  });
+});
+
 describe('spec:init-project/S51 configs finish over a differing executor', () => {
   afterEach(() => {
     while (roots.length) rmSync(roots.pop(), { recursive: true, force: true });
   });
-  it('shares executorBodyDiffers from the read core and imports no atomic write in the ensure', () => {
+  it('cell 6 keeps executorBodyDiffers of the read core, no advisor probe calls it, and the ensure imports no atomic write', () => {
     const tools = join(KIT_ROOT, 'tools');
-    for (const name of ['ensure-executor.mjs', 'recommendations.mjs']) {
-      const source = readFileSync(join(tools, name), 'utf8');
-      assert.match(source, /import\s*\{[^}]*\bexecutorBodyDiffers\b[^}]*\}\s*from\s*['"]\.\/cheap-agents-read\.mjs['"]/u);
-      if (name === 'ensure-executor.mjs') assert.doesNotMatch(source, /import[^;]*atomic-write/u);
-    }
+    const source = readFileSync(join(tools, 'ensure-executor.mjs'), 'utf8');
+    assert.match(source, /import\s*\{[^}]*\bexecutorBodyDiffers\b[^}]*\}\s*from\s*['"]\.\/cheap-agents-read\.mjs['"]/u);
+    assert.doesNotMatch(source, /import[^;]*atomic-write/u);
+    assert.equal(/\bexecutorBodyDiffers\b/u.test(readFileSync(join(tools, 'recommendations.mjs'), 'utf8')), false, 'no advisor probe calls it');
     const declarations = readdirSync(tools).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs'))
       .filter((name) => /\b(?:const|function)\s+executorBodyDiffers\b/u.test(readFileSync(join(tools, name), 'utf8')));
     assert.deepEqual(declarations, ['cheap-agents-read.mjs']);
@@ -234,7 +254,7 @@ describe('spec:init-project/S51 configs finish over a differing executor', () =>
       assert.deepEqual(snapshot(cwd), before);
     });
   }
-  it('keeps all other configs tokens and renders both differing and global-footprint items', async () => {
+  it('keeps all other configs tokens and renders both the agents kit item and the global-footprint item', async () => {
     const { main } = await import('./ensure-configs.mjs');
     const { buildRecommendations, formatRecommendations } = await import('./recommendations.mjs');
     const cwd = makeProject();
@@ -267,9 +287,9 @@ describe('spec:init-project/S51 configs finish over a differing executor', () =>
       planGlobalRemoval: () => ({ source: '/h/.gitignore_global', before: 'x', after: '', removedLines: ['x'] }),
     };
     const result = buildRecommendations({ cwd, deps });
-    const differingItem = result.items.find((item) => item.variant === 'executor-vehicle.differing');
+    const differingItem = result.items.find((item) => item.variant === 'agents.not-current');
     const globalItem = result.items.find((item) => item.key === 'footprint-global');
-    assert.ok(differingItem, JSON.stringify(result.skips));
+    assert.ok(differingItem?.detail.includes(EXECUTOR_VEHICLE_REL), JSON.stringify(result.skips));
     assert.ok(globalItem, JSON.stringify(result.skips));
     const rendered = formatRecommendations(result);
     assert.ok(rendered.includes(differingItem.what));

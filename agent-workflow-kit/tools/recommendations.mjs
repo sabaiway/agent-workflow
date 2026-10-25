@@ -32,7 +32,7 @@
 
 import { readFileSync, readdirSync, lstatSync, existsSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   preflightVelocityProfile,
@@ -82,13 +82,12 @@ import { homeRelative } from './bridge-state-dirs.mjs';
 import { sandboxEnabled, HOST_HONORS_QUALIFIER } from './bridge-wiring.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from './worktrees.mjs';
-import { preflightCheapAgents, writeCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
+import { readBundledAgents, writeCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 import { ATTRIBUTION_KEY, LEGACY_ATTRIBUTION_KEY, attributionHidesText, effectiveAttribution, readAttributionChoice, wrongTypedKey } from './attribution.mjs';
 import { planGlobalRemoval } from './hide-footprint.mjs';
 import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
-import { surveyExecutorVehicle, readExecutorPosture, executorBodyDiffers, executorTemplate, reviewLensTemplate, readStamp, readFsDeps, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION, REVIEW_LENS_VEHICLE } from './cheap-agents-read.mjs';
-import { readVehicles, resolveExecutor, resolveReviewLens } from './vehicle-settings.mjs';
+import { surveyExecutorVehicle, readExecutorPosture, agentsAccepted, readStamp, readFsDeps, AGENTS_DIR, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -208,13 +207,13 @@ export const SEVERITIES = Object.freeze({
   'mcp-channel': SEVERITY_OPTIONAL,
   'mcp-channel.differing': SEVERITY_ATTENTION,
   agents: SEVERITY_OPTIONAL,
-  // The `agents` row above is an OFFER to place vehicles. This one reports a config that ALREADY
+  // A placed component with a kit agent file not current: its lane is kit, so the agent writes it
+  // with no pick and the verdict counts it in neither class.
+  'agents.not-current': SEVERITY_OPTIONAL,
+  // The `agents` rows above place and write vehicles. This one reports a config that ALREADY
   // names the subagent carrier over a vehicle that cannot carry it — a configured declaration that
   // is broken, which is what attention means.
   'executor-vehicle': SEVERITY_ATTENTION,
-  // A hand edit of the placed executor is not a broken declaration — the vehicle still carries — so it is optional;
-  // its lane is kit, so the agent writes it with no pick and the verdict counts it in neither class.
-  'executor-vehicle.differing': SEVERITY_OPTIONAL,
   // The AGENTS.md block is a configured choice the harness does not honour.
   attribution: SEVERITY_ATTENTION,
   'footprint-global': SEVERITY_OPTIONAL,
@@ -304,9 +303,8 @@ export const WHATS = Object.freeze({
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
   agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
-  'agents.lens-rederive': 'the placed review-lens.md differs from its body derived from docs/ai/vehicles.json; {n} vehicle(s) to place ({ro} read-only, {ex} executor)',
+  'agents.not-current': '{n} kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for it, with no question',
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
-  'executor-vehicle.differing': 'the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — the derived body is written with no question',
   attribution: 'AGENTS.md says attribution off but .claude/settings.json does not hide the harness trailer and PR text',
   'footprint-global': 'legacy kit ignore line(s) sit in {file} — they ignore kit paths in every repository here',
   'family-freshness': '{parts}',
@@ -384,9 +382,9 @@ export const BENEFITS = Object.freeze({
   'jev-connect': 'decisions — a typed choice with a confidence in under a second for your code and the agent\'s scripts, once for every project here',
   'jev-skill': 'the TypeSafe skill for Claude Code, Codex and Antigravity CLI, one pinned verified copy per agent root, from one command you run',
 });
-// The one arm whose gain differs from its base item's (BENEFITS stays keyed by item key).
+// The arms whose gain differs from their base item's (BENEFITS stays keyed by item key).
 export const VARIANT_BENEFITS = Object.freeze({
-  'executor-vehicle.differing': 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names',
+  'agents.not-current': 'currency — each kit agent file carries the body the kit writes for it today, model and effort where docs/ai/vehicles.json names them',
   'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
 });
 
@@ -444,9 +442,9 @@ export const OPT_IN_CAPABILITIES = Object.freeze([
   // which is why the review-recipe benefit is worded for either slot rather than for review alone.
   { id: 'delegated-execution', mode: 'set-recipe', advisorKey: 'review-recipe' },
   { id: 'agents', mode: 'agents', advisorKey: 'agents' },
-  // A DISTINCT capability from the offer above: the offer converges the moment nothing is left to
-  // PLACE and the review lens matches its derived body, which a customized-but-unusable executor
-  // also satisfies — so it can never observe the state that makes a configured subagent carrier run solo.
+  // A DISTINCT capability from the offer above: the `agents` key writes a regular executor whose bytes differ,
+  // but it never names a configured subagent slot that runs solo — over a component not placed it offers the
+  // placement, and over a refusal (a symlinked executor, an unreadable docs/ai/vehicles.json) only its skip.
   { id: 'executor-vehicle', mode: 'agents', advisorKey: 'executor-vehicle' },
   // Exempt, not un-audited. `acceptEdits` auto-applies Edit/Write and auto-runs mkdir/touch/mv/cp:
   // a TRUST-POSTURE change. Velocity presents its full posture at its own consent moment;
@@ -1147,37 +1145,35 @@ const probeStateBlockHook = ({ root, deps, add, skip }) => {
 // surfaced its absence: `agents` is the family's SECOND `.claude/` writer, the `help` Tune tail
 // advertises it, and the advisor had no entry for it — so a user who never runs `help` never learned
 // it existed while the advisor reported the deployment optimal. Found by the guard, not by an incident.
-// A PLACE action and the bundled review lens's `re-derive` (its placed body differs from the one derived from docs/ai/vehicles.json) count as gaps: `already-current` is converged; a customized read-only vehicle or derived lens is
-// the user's own edit the writer never clobbers and the advisor never nags about; the executor is not preserved but re-derived from docs/ai/vehicles.json (its `re-derive` answer is not a gap of this offer).
-const probeCheapAgents = ({ root, deps, add, skip }) => {
+// The key renders by its state table (contract: kit/carriers, part agent-files) over the writer's
+// plain dry run, the call the danger check makes: a throw is one stated skip naming the refusal; no
+// planned file renders nothing; a stale stamp beside a planned file is the upgrade-first skip; over
+// a component not accepted the OFFER to place, over an accepted one `agents.not-current`, kit lane.
+const upgradeFirst = (stamp) => new Error(`run /agent-workflow-kit upgrade first (deployment stamp ${stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`);
+
+const probeCheapAgents = ({ root, deps, add, skip, shared }) => {
   try {
-    const fs = readFsDeps(deps);
-    const answer = readVehicles(root, fs.readFile, fs.lstat);
-    const { posture, reason } = resolveExecutor(answer);
-    if (posture === null) {
-      skip('agents', new Error(`${reason} — fix that file first`));
+    const result = writeCheapAgents({ cwd: root, dryRun: true }, deps);
+    const planned = result.plan.filter((item) => item.action === 'place' || item.action === 're-derive');
+    if (planned.length === 0) return; // converged
+    if (!result.stampOk) throw upgradeFirst(result.stamp);
+    if (agentsAccepted(root, result.plan.map((item) => item.name), deps)) {
+      // The detail names every file the apply writes, never truncated; the component is placed and the
+      // known-footprint registry lists /.claude/agents/, so no hidden-mode follow-up rides it.
+      shared.agentsNotCurrent = add('agents', fillTemplate(WHATS['agents.not-current'], { n: planned.length }),
+        formsApply('agents.not-current', root), 'agents.not-current', `writes: ${planned.map((item) => item.rel).join(', ')}`);
       return;
     }
-    const derived = [executorTemplate(posture, deps), reviewLensTemplate(resolveReviewLens(answer).posture, deps)];
-    const preflight = preflightCheapAgents({ cwd: root, derived }, deps);
-    // The writer refuses below the expected lineage, so offering its command would hand the user a
-    // guaranteed failure — the honest surface is a stated skip naming the recovery.
-    if (!preflight.stampOk) {
-      skip('agents', new Error(`not a deployed agent-workflow project at the current lineage (found ${preflight.stamp ?? 'none'}) — run upgrade first`));
-      return;
-    }
-    const toPlace = preflight.plan.filter((item) => item.action === 'place');
-    const lensRederive = preflight.plan.some((item) => item.name === REVIEW_LENS_VEHICLE && item.action === 're-derive');
-    if (toPlace.length === 0 && !lensRederive) return; // converged
-    // The writer's contract is «--dry-run first, ALWAYS» (references/modes/agents.md, and its stated
-    // invariant «preview by default»), so the rendered line is the PREVIEW — this item joins the
-    // dry-run-preview class the mode doc already documents for the gates-declaration seeder, where the
-    // same confirmation then runs the follow-up the preview prints. Rendering --apply here would have
-    // skipped the per-vehicle plan the user is supposed to see before consenting.
-    // The hidden-mode reconcile rides the detail, never the apply line: it is wrong to run on a
-    // VISIBLE deployment, and the apply slot must stay one pure executable command.
+    // The offer counts the BUNDLED templates the plan would place. The writer's contract is «--dry-run
+    // first, ALWAYS» (references/modes/agents.md), so the rendered line is the PREVIEW — the
+    // dry-run-preview class the mode doc documents for the gates-declaration seeder, where the same
+    // confirmation then runs the follow-up the preview prints. The hidden-mode reconcile rides the
+    // detail, never the apply line: it is wrong to run on a VISIBLE deployment, and the apply slot
+    // must stay one pure executable command.
+    const bundled = new Set(readBundledAgents(deps).map((template) => template.name));
+    const toPlace = planned.filter((item) => bundled.has(item.name));
     const executors = toPlace.filter((item) => item.name === EXECUTOR_VEHICLE).length;
-    add('agents', fillTemplate(WHATS[lensRederive ? 'agents.lens-rederive' : 'agents'], { n: toPlace.length, ex: executors, ro: toPlace.length - executors }),
+    add('agents', fillTemplate(WHATS.agents, { n: toPlace.length, ex: executors, ro: toPlace.length - executors }),
       `node ${q(toolPath('cheap-agents.mjs'))} --cwd ${q(root)}`, 'agents',
       `hidden-mode deployments only: after the --apply the preview prints, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
     );
@@ -1187,14 +1183,15 @@ const probeCheapAgents = ({ root, deps, add, skip }) => {
 };
 
 // The subagent carrier's ONE instrument (contract: kit/carriers). Neither neighbour can report this
-// state: `probeReviewRecipe` skips a slot configured `subagent` by construction, and the offer above
-// judges only what is left to PLACE and the bundled lens's re-derive — a customized-but-broken executor
-// gives it neither. So a project could declare the carrier and have every such slot run solo, unseen.
+// state: `probeReviewRecipe` skips a slot configured `subagent` by construction, and the `agents` key
+// above names files to place or write, never a configured slot that runs solo. It yields to
+// `agents.not-current`, whose apply writes the executor (the frozen order runs `agents` first).
 const VEHICLE_BROKEN_STATES = Object.freeze(['missing', 'unusable']);
 
+// The writer's plain dry run, the call the `agents` key makes: its refusal is the last precondition.
 const writerBlock = (root, deps) => {
   try {
-    preflightCheapAgents({ cwd: root }, deps);
+    writeCheapAgents({ cwd: root, dryRun: true }, deps);
     return null;
   } catch (err) {
     return safeLine(err?.message ?? String(err));
@@ -1203,39 +1200,27 @@ const writerBlock = (root, deps) => {
 
 const HIDDEN_AGENTS_FOLLOW_UP = (root) => `hidden-mode deployments only: after the apply, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`;
 
-const probeExecutorVehicle = ({ root, deps, add, skip }) => {
-  if (renderBrokenExecutor({ root, deps, add, skip })) return;
-  try {
-    if (!executorBodyDiffers(root, deps)) return;
-    // The executor-only dry run: the call the check makes, so the arm, the check and the apply judge one plan.
-    const plan = writeCheapAgents({ cwd: root, dryRun: true, executorOnly: true }, deps);
-    if (!plan.stampOk) throw new Error(`run /agent-workflow-kit upgrade first (deployment stamp ${plan.stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`);
-    add('executor-vehicle', WHATS['executor-vehicle.differing'], formsApply('executor-vehicle.differing', root), 'executor-vehicle.differing');
-  } catch (err) {
-    skip('executor-vehicle', err);
-  }
-};
-
-const renderBrokenExecutor = ({ root, deps, add, skip }) => {
+const probeExecutorVehicle = ({ root, deps, add, skip, shared }) => {
   try {
     // The VALIDATED reader, as probeReviewRecipe uses it: a schema-invalid config is a stated skip,
     // never an item computed over a shape nothing accepted.
     const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const configured = Object.entries(ACTIVITIES).flatMap(([activity, def]) =>
       Object.keys(def.slots).filter((slot) => config?.[activity]?.[slot] === 'subagent'));
-    if (configured.length === 0) return false;
+    if (configured.length === 0) return;
     const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
-    if (!VEHICLE_BROKEN_STATES.includes(survey.state)) return false;
+    if (!VEHICLE_BROKEN_STATES.includes(survey.state) || shared?.agentsNotCurrent) return;
     const reason = safeLine(survey.reason ?? '');
     const { posture, reason: settingsReason } = readExecutorPosture(root, deps);
     const stamp = readStamp(join(root, WORKFLOW_STAMP), readFsDeps(deps));
     const preconditions = [
-      ...(stamp === EXPECTED_WORKFLOW_VERSION ? [] : [`run /agent-workflow-kit upgrade first (deployment stamp ${stamp ?? 'none'}, expected ${EXPECTED_WORKFLOW_VERSION})`]),
+      ...(stamp === EXPECTED_WORKFLOW_VERSION ? [] : [upgradeFirst(stamp).message]),
       ...(posture === null ? [`${safeLine(settingsReason)} — fix that`] : []),
     ];
-    // The writer refuses on ANY vehicle path it cannot touch (a symlinked read-only vehicle blocks a
-    // missing executor's placement too), so its own preflight is the last precondition.
-    const blocked = writerBlock(root, deps);
+    // The writer refuses on ANY kit agent path it cannot touch (a linked configured lens blocks a
+    // missing executor's placement too), so its plain dry run is the last precondition, skipped when
+    // the posture is already unreadable so that reason is named once.
+    const blocked = posture === null ? null : writerBlock(root, deps);
     if (blocked) preconditions.push(`${blocked} — fix that`);
     const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
     add(
@@ -1245,16 +1230,14 @@ const renderBrokenExecutor = ({ root, deps, add, skip }) => {
         state: survey.state,
         reason: reason && room > 0 ? `: ${truncatedTo(reason, room)}` : '',
       }),
-      // The writer places a missing vehicle and re-derives a placed executor whose bytes differ from the derived body (an invalid
+      // The writer places a missing vehicle and writes a placed executor whose bytes differ from the derived body (an invalid
       // frontmatter or read-only tools included), so those states need no precondition; every precondition above is a refusal the apply would meet.
       `node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
       'executor-vehicle',
       `${preconditions.length ? `precondition: ${preconditions.join('; ')}; ` : ''}${HIDDEN_AGENTS_FOLLOW_UP(root)}`,
     );
-    return true;
   } catch (err) {
     skip('executor-vehicle', err);
-    return true;
   }
 };
 
@@ -1737,13 +1720,16 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   // one pair today (the marker-stale ⟷ read-lane.stale precedence) and read in the frozen PROBES
   // order, so the reader can never run first.
   const shared = {};
+  // A device node reads as absent (a sandbox mask), except under .claude/agents/: there it is the
+  // agents writer's refusal, as the danger check reads it.
+  const agentsDir = join(root, AGENTS_DIR) + sep;
   const contentDeps = Object.create(Object.getPrototypeOf(deps), {
     ...Object.getOwnPropertyDescriptors(deps),
     lstat: {
       enumerable: true,
       value: (path, ...args) => {
         const stat = (deps.lstat ?? deps.lstatSync ?? lstatSync)(path, ...args);
-        if (stat.isCharacterDevice?.() || stat.isBlockDevice?.()) {
+        if (!String(path).startsWith(agentsDir) && (stat.isCharacterDevice?.() || stat.isBlockDevice?.())) {
           throw Object.assign(new Error(`${ABSENT_CODE}: ${path}`), { code: ABSENT_CODE });
         }
         return stat;

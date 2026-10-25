@@ -1,7 +1,7 @@
 // ensure-executor.mjs — the EIGHTH upgrade ensure, fifth in the fixed order right after `vehicles`:
 // the placed executor vehicle (.claude/agents/executor.md) judged against the body derived from
-// docs/ai/vehicles.json. It never writes: the agents writer PLACES the vehicle on consent, and a placed
-// body that differs is reported `pending` — the advisor's executor-vehicle.differing item writes it.
+// docs/ai/vehicles.json. It never writes: a vehicle not placed and a placed body that differs
+// (`pending`) are each written by the advisor's `agents` item.
 //
 // The state table, in the order the cells are proven:
 // | cell | .claude, .claude/agents | placed path | docs/ai/vehicles.json | answer | read before answering |
@@ -48,7 +48,7 @@ export const ensureExecutor = ({ cwd, kitRoot, deps = {} }) => {
     return loud('wrong-node-kind', `${EXECUTOR_VEHICLE_REL}: exists but is ${probe.wrongKind} — nothing was read or written; resolve it by hand, then re-run`);
   }
   if (!probe.present) {
-    return ok('not-placed', [`${EXECUTOR_VEHICLE_REL}: not placed — the agents mode places it on consent; nothing written`]);
+    return ok('not-placed', [`${EXECUTOR_VEHICLE_REL}: not placed — nothing written; the advisor's agents item places it`]);
   }
 
   const { posture, reason } = readExecutorPosture(cwd, deps);
@@ -66,5 +66,5 @@ export const ensureExecutor = ({ cwd, kitRoot, deps = {} }) => {
   if (!executorBodyDiffers(cwd, bundleDeps)) {
     return ok('already-current', [`${EXECUTOR_VEHICLE_REL}: the body derived from ${VEHICLES_REL} (model=${posture.model}, effort=${posture.effort}, source ${posture.source}) — nothing written`]);
   }
-  return ok('pending', [`${EXECUTOR_VEHICLE_REL}: differs from the body derived from ${VEHICLES_REL} — nothing written; the advisor's executor-vehicle.differing item, which the agent applies with no question, writes the derived body`]);
+  return ok('pending', [`${EXECUTOR_VEHICLE_REL}: differs from the body derived from ${VEHICLES_REL} — nothing written; the advisor's agents item writes the derived body`]);
 };

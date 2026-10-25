@@ -381,29 +381,24 @@ describe('writeCheapAgents — preview-then-mutate', () => {
     assert.deepEqual(writes, [], 'no write call on an already-current set');
   });
 
-  it('NEVER overwrites a diverged existing file — customization reported with its path, others still place', () => {
+  it('writes a differing cheap vehicle with the bundled bytes and its agent line, no copy kept, others still place', () => {
     const project = makeProject();
     mkdirSync(join(project, AGENTS_DIR), { recursive: true });
-    const customized = '---\nname: gate-triage\nmodel: opus\n---\nmy own prompt\n';
-    writeFileSync(join(project, AGENTS_DIR, 'gate-triage.md'), customized);
+    writeFileSync(join(project, AGENTS_DIR, 'gate-triage.md'), '---\nname: gate-triage\nmodel: opus\n---\nmy own prompt\n');
+    const line = (verb) => `  - ${AGENTS_DIR}/gate-triage.md: differs from the body the kit writes for it — ${verb} with that body; a vehicle of your own goes in .claude/agents/<name>.local.md with a name: of its own`;
+    const out = [];
+    assert.equal(main(['--cwd', project], { log: (l) => out.push(l), errlog: (l) => out.push(l) }), 0);
     const result = writeCheapAgents({ cwd: project, dryRun: false });
     const byName = Object.fromEntries(result.plan.map((p) => [p.name, p.action]));
-    assert.equal(byName['gate-triage.md'], 'customized-preserved');
-    assert.equal(byName['mechanical-sweep.md'], 'place');
-    assert.equal(readFileSync(join(project, AGENTS_DIR, 'gate-triage.md'), 'utf8'), customized, 'the customization is untouched');
-    const out = [];
-    const code = main(['--apply', '--cwd', project], { log: (l) => out.push(l), errlog: (l) => out.push(l) });
-    assert.equal(code, 0, 'a preserved customization is a report, not an error');
-    assert.match(out.join('\n'), /gate-triage\.md: customized — preserved/);
+    assert.deepEqual([byName['gate-triage.md'], byName['mechanical-sweep.md'], readdirSync(join(project, AGENTS_DIR)).sort()], ['re-derive', 'place', EXPECTED_VEHICLES], 'no copy kept beside it');
+    assert.equal(readFileSync(join(project, AGENTS_DIR, 'gate-triage.md'), 'utf8'), BUNDLE.find((t) => t.name === 'gate-triage.md').content);
+    assert.deepEqual([out.join('\n').split('\n').find((l) => l.includes('gate-triage.md')), formatResult(result).split('\n').find((l) => l.includes('gate-triage.md'))], [line('would be written'), line('written')]);
   });
 
   it('writes ONLY under .claude/agents/ — never settings*.json (capture every write)', () => {
     const project = makeProject();
     const writes = [];
-    writeCheapAgents(
-      { cwd: project, dryRun: false },
-      { writeFile: (path, content) => writes.push(String(path).replace(/\\/g, '/')) },
-    );
+    writeCheapAgents({ cwd: project, dryRun: false }, { writeFile: (path, ...rest) => writes.push(String(path).replace(/\\/g, '/')) && writeFileSync(path, ...rest) });
     assert.equal(writes.length, EXPECTED_VEHICLES.length);
     for (const path of writes) {
       assert.ok(path.includes(`/${AGENTS_DIR}/`), `write outside ${AGENTS_DIR}: ${path}`);
@@ -432,13 +427,17 @@ describe('writeCheapAgents — preconditions (STOPs)', () => {
     assert.throws(() => writeCheapAgents({ cwd: project, dryRun: true }), (e) => e.code === CHEAP_AGENTS_SYMLINK);
   });
 
-  it('a symlinked target file → STOP, never written through', () => {
+  it('a symlinked target file stops the run naming it, exit 1, nothing written, in a dry run and an apply', () => {
     const project = makeProject();
     mkdirSync(join(project, AGENTS_DIR), { recursive: true });
     const elsewhere = join(project, 'elsewhere.md');
     writeFileSync(elsewhere, 'x');
     symlinkSync(elsewhere, join(project, AGENTS_DIR, 'mechanical-sweep.md'));
-    assert.throws(() => writeCheapAgents({ cwd: project, dryRun: false }), (e) => e.code === CHEAP_AGENTS_SYMLINK);
+    for (const argv of [[], ['--apply']]) {
+      const errors = [];
+      assert.deepEqual([main([...argv, '--cwd', project], { log: () => {}, errlog: (l) => errors.push(l) }), errors.some((l) => l.includes(`${AGENTS_DIR}/mechanical-sweep.md`))], [1, true]);
+      assert.deepEqual([readdirSync(join(project, AGENTS_DIR)), readFileSync(elsewhere, 'utf8')], [['mechanical-sweep.md'], 'x']);
+    }
   });
 
   it('an empty bundle dir → loud BUNDLE stop (an incomplete kit install is never a silent no-op)', () => {

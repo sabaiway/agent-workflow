@@ -412,7 +412,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40214, '349e6c5eea25558623e3ad5d513789fcc5820119d1efbab9e84717614bbea164'], 'the bytes after distribution-files story S6 (the kit route)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40108, '3854bb6af4bbc90de439d4aae4965915d7812b4de45bd02c82e6a7fad7c034ab'], 'the bytes after distribution-files story S15 (the kit agent files)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -1043,8 +1043,8 @@ describe("spec:init-project/S44 — the worktrees grant's shipped text", () => {
   });
 });
 
+const namesAgentsItem = (name, text, flat = text.replace(/\s+/gu, ' ')) => assert.ok(/\bagents`? item\b/u.test(flat) && !/executor-vehicle\.differing|agents\.not-current|\bwith no question\b|\bon consent\b|\byes\b/u.test(flat), `${name}: ${flat}`);
 describe('spec:init-project/S50 — shipped text of the five writes', () => {
-  const namesNoQuestion = (name, text, flat = text.replace(/\s+/gu, ' ')) => assert.ok(/executor-vehicle\.differing`? (?:item|arm)\b[^.;]*\bwith no question\b/u.test(flat) && !/executor-vehicle\.differing[^.;]*\byes\b/u.test(flat), name);
   it('bootstrap declares both capabilities and routes steps 4 and 9 through their items without hand steps', () => {
     for (const key of ['attribution', 'footprint-global']) {
       assert.ok(BOOTSTRAP_DOC.includes(`<!-- opt-in-capability: ${key} -->`), key);
@@ -1067,7 +1067,7 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
       assert.ok(text.includes('`pending`'));
       assert.doesNotMatch(text, /\b(?:re-derived|would-re-derive)\b/u);
     }
-    namesNoQuestion('upgrade.md', executor);
+    namesAgentsItem('upgrade.md', executor);
     assert.ok(between(read('references/shared/composition-handoff.md'), '- **Delegated**', '- **Fallback**')
       .includes('memory is told to skip its step-4 settings write; the `attribution` item of step 11 sets it'));
   });
@@ -1107,7 +1107,8 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
     }
     assert.ok(between(notes, '- `footprint-global` — ', POSTURE_NOTE_BOUNDARY).includes("Another of the user's repositories may rely on the same lines"));
     const executor = between(MODE_DOC, '**The `executor-vehicle` item', '\n\n');
-    namesNoQuestion('recommendations.md', executor);
+    const flat = executor.replace(/\s+/gu, ' ');
+    assert.ok(/\bkit item\b[^.;]*\bwith no question\b/u.test(flat) && /\byield[^.;]*agents\.not-current/u.test(flat) && !flat.includes('executor-vehicle.differing'), flat);
     assert.ok(executor.includes('**`placed` renders NOTHING**'));
     assert.doesNotMatch(executor, /\bcustomized\b[^.;\n]*\brenders? NOTHING\b/iu);
   });
@@ -1116,15 +1117,34 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
     assert.ok(read('references/shared/composition-handoff.md').replace(/\s+/gu, ' ').includes("(a stale memory's residual global block is the advisor's footprint-global item)"));
     assert.ok(JSON.parse(read('references/templates/vehicles.json'))._README.includes('the upgrade reports a differing body as pending'));
     const help = between(read('tools/ensure-configs.mjs'), 'Usage:', '`;');
-    assert.ok(help.includes("is pending — the advisor's executor-vehicle.differing item"));
+    assert.ok(help.includes('is pending'));
     assert.doesNotMatch(help, /\bre-derive(?:d)?\b/iu);
-    namesNoQuestion('ensure-configs help', between(help, 'The executor ensure writes nothing', 'A fifth writes too'));
-    const pending = read('tools/ensure-executor.mjs').split('\n').filter((line) => line.includes('executor-vehicle.differing') && !line.trim().startsWith('//'));
-    for (const line of pending.length > 0 ? pending : ['(no pending line)']) namesNoQuestion('ensure-executor pending line', line);
+    namesAgentsItem('ensure-configs help', between(help, 'The executor ensure writes nothing', 'A fifth writes too'));
+    const lines = read('tools/ensure-executor.mjs').split('\n').filter((line) => line.includes("the advisor's") && !line.trim().startsWith('//'));
+    for (const line of lines.length > 0 ? lines : ['(no line names the advisor)']) namesAgentsItem('ensure-executor line', line);
     const agents = read('references/modes/agents.md');
-    assert.ok(agents.includes('differs from the body derived from the vehicle settings') && agents.includes('--executor'));
+    assert.ok(agents.includes('differs from the body derived from the vehicle settings') && !agents.includes('--executor'));
     assert.ok(readmeRow.includes("; a kit item it applies with no question, its check line first, the harness's own dialog the only ask, or the one plain step where auto mode refuses its check or apply"));
     assert.ok(README.split('\n').find((line) => line.includes('`/agent-workflow-kit velocity`')).includes('a harness or kit apply (the `apply:` line of each harness or kit item'));
+  });
+});
+
+describe('spec:carriers/S28 shipped text of the kit agent files rule', () => {
+  const [OWN, RETIRED] = ['.claude/agents/<name>.local.md', /--executor|\bpreserved\b|never overwritten|delete the file to reseed|Only on an explicit yes/iu];
+  it("agents.md, the writer's --help and header and the README agents row state the rule and the own-vehicle file with no retired word; agents.md's step 2, the base arm's yield, the router budget, upgrade.md and ensure-configs", async () => {
+    const help = [];
+    (await import('../tools/cheap-agents.mjs')).main(['--help'], { log: (line) => help.push(line) });
+    const surfaces = { 'agents.md': read('references/modes/agents.md'), '--help': help.join('\n'), header: read('tools/cheap-agents.mjs').split('\nimport ')[0], 'README agents row': README.split('\n').find((line) => line.startsWith('| `/agent-workflow-kit agents`')) ?? '' };
+    const misses = Object.entries(surfaces).flatMap(([name, text, flat = text.replace(/\s+/gu, ' ')]) => [
+      !/\bwith no question\b/u.test(flat) && `${name}: no rule`, !flat.includes(OWN) && `${name}: no ${OWN}`, RETIRED.test(flat) && `${name}: ${flat.match(RETIRED)?.[0]}`,
+      /\bcustomized\b/iu.test(flat.replace(/`customized`/gu, '')) && `${name}: customized outside its code span`].filter(Boolean));
+    assert.deepEqual(misses, []);
+    const step2 = between(read('references/modes/agents.md'), '\n2. ', '\n3. ').replace(/\s+/gu, ' ');
+    assert.ok(['agents.not-current', '--apply'].every((word) => step2.includes(word)) && /\bwith no question\b/u.test(step2) && /\bfirst placement\b[^.]*\byes\b/iu.test(step2), step2);
+    assert.match(between(MODE_DOC, '**The `executor-vehicle` item', '\n\n').replace(/\s+/gu, ' '), /\byield[^.;]*agents\.not-current/u);
+    assert.ok(Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md')) <= 52224);
+    namesAgentsItem('upgrade.md', between(UPGRADE_DOC, '**What the executor ensure does.**', '\n\n'));
+    namesAgentsItem('ensure-configs help', between(between(read('tools/ensure-configs.mjs'), 'Usage:', '`;'), 'The executor ensure writes nothing', 'A fifth writes too'));
   });
 });
 

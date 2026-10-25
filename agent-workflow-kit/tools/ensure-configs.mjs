@@ -89,8 +89,8 @@ exists; and the navigator index — a GENERATED artifact, regenerated
 whenever it is missing or stale; where a module the project's hook loads is not the bundled one,
 the project's own checker judges the navigator and a write it rejects is put back byte for byte.
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
-body derived from docs/ai/vehicles.json is pending — the advisor's executor-vehicle.differing item
-writes the derived body with no question; an absent file is never placed here.
+body derived from docs/ai/vehicles.json is pending and an absent one is not placed here — the
+advisor's agents item writes the derived body.
 A fifth writes too: once a kit script outside the seed names stands in scripts/, the enforcement-script
 ensure writes every kit script that is not the bundled body, the hook installer and its two suites
 first, with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced

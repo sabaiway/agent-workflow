@@ -4,6 +4,42 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 17.0.0 — every kit agent file is written current with no question; `--executor` and `executor-vehicle.differing` retire (AD-208)
+
+**MAJOR: `cheap-agents.mjs --executor` is removed, and the advisor's `executor-vehicle.differing` item is gone.** Before,
+a placed cheap vehicle or roster-derived lens whose bytes differed from the kit's was `customized — preserved` forever,
+a differing bundled `review-lens.md` was re-derived only on your yes to the `agents` item, and only the executor had a
+no-question route. Now one rule covers every kit agent file — the five names the
+kit bundles for `.claude/agents/` (`changelog-skeleton.md`, `executor.md`, `gate-triage.md`, `mechanical-sweep.md`,
+`review-lens.md`) and each configured `review-lens-<model>-<effort>.md`: an absent one is placed, one whose bytes
+differ is written with the body the kit writes for it, a current one is left, with no question and no copy kept.
+Every other file under `.claude/agents/` is yours, and no kit tool writes it.
+
+- **A new kit item, `agents.not-current`.** Over a placed component (a kit agent path holds a regular file) the
+  advisor's `agents` key renders this `lane: kit` item, which the agent applies with no question by the kit route. Its
+  text reads `{n} kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for
+  it, with no question`, and its `recipe:` line names every file the apply writes. Over a component not placed the
+  `agents` offer is unchanged, and your yes to it is what places the component.
+- **The lines.** A differing executor keeps, and a differing bundled `review-lens.md` now takes, `differs from the body
+  derived from the vehicle settings — written with that body; its model and effort are set in docs/ai/vehicles.json`. Every other kit agent file
+  reads `differs from the body the kit writes for it — written with that body; a vehicle of your own goes in
+  .claude/agents/<name>.local.md with a name: of its own`. No line says customized or preserved.
+- **A link stops the run.** A link, another non-regular node or an unreadable file at a kit agent path stops the writer
+  naming it, in a dry run too, with nothing written; the advisor states that refusal as a skip. Every write is contained
+  and atomic.
+- **The danger check** for `agents.not-current` admits only the kit agent paths, and over a tree with no placed kit
+  agent file it admits none (`refused:`, exit 1), so the no-question apply never places a component you never accepted.
+- **The base `executor-vehicle` item yields** to `agents.not-current`, whose apply writes the executor: the two never
+  render for one tree.
+- **`--executor` is gone, with no alias.** `cheap-agents.mjs --executor` now stops with `unknown argument: --executor`,
+  exit 2. No migration note is owed: its printed caller, the advisor's `executor-vehicle.differing` item, retires with
+  it, and the `agents` item now writes the executor; a script that ran `--executor --apply` runs `cheap-agents.mjs
+  --apply`, which writes every kit agent file that is not current.
+- **The texts say the same.** The executor ensure's `pending` and `not-placed` lines and the `ensure-configs.mjs` help
+  name the advisor's `agents` item; the writer's header and `--help`; the agents, upgrade and recommendations modes;
+  `references/advisor-writers.md`; the README's agents row; the guide's *Reserved names and channels*, which names the
+  kit agent files and gains a sixth channel, `.claude/agents/<name>.local.md`, for a vehicle of your own.
+
 ## 16.1.0 — the agent writes a differing executor vehicle with no question: a new advisor lane `kit` (AD-207)
 
 **A placed `.claude/agents/executor.md` that differs from the body derived from `docs/ai/vehicles.json` is now

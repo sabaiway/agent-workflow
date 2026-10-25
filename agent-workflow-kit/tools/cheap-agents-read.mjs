@@ -96,7 +96,7 @@ export const assertDirSafe = (absPath, relPath, fs) => {
   return { absent: false };
 };
 
-// Per-template placement plan: place | already-current | re-derive | customized-preserved.
+// Per-template placement plan: place | already-current | re-derive (every differing kit file).
 export const planPlacement = (templates, projectDir, deps = {}) => {
   const fs = readFsDeps(deps);
   return templates.map((template) => {
@@ -109,9 +109,14 @@ export const planPlacement = (templates, projectDir, deps = {}) => {
     }
     const existing = fs.readFile(abs, UTF8);
     if (existing === template.content) return { ...template, rel, abs, action: 'already-current' };
-    if (template.rederive === true) return { ...template, rel, abs, action: 're-derive', existing };
-    return { ...template, rel, abs, action: 'customized-preserved', existing };
+    return { ...template, rel, abs, action: 're-derive', existing };
   });
+};
+
+// The component is accepted when a kit agent path of the given names holds a regular file, never followed.
+export const agentsAccepted = (projectDir, names, deps = {}) => {
+  const fs = readFsDeps(deps);
+  return names.some((name) => lstatNoFollow(join(projectDir, AGENTS_DIR, name), fs)?.isFile() === true);
 };
 
 // ── the executor vehicle's readiness (the subagent carrier's one instrument) ──────────

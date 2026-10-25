@@ -23,7 +23,7 @@ const FORM_A = [
   'jev-skill', 'jev-skill.earlier',
   'gate-hook.marker-stale', 'read-lane.stale', 'state-block', 'enforcement', 'commit-guard', 'hook-checks',
   'worktrees-dir',
-  'attribution', 'footprint-global', 'executor-vehicle.differing',
+  'attribution', 'footprint-global', 'agents.not-current',
 ];
 const FORM_B = ['jev-connect'];
 const FORM_C = [
@@ -37,7 +37,7 @@ const HARNESS = [
   'worktrees-dir',
   'attribution', 'footprint-global',
 ];
-const KIT = ['executor-vehicle.differing'];
+const KIT = ['agents.not-current'];
 const USER = [
   'jev-connect', 'family-freshness', 'sandbox-provision.installable', 'sandbox-provision', 'worktrees-dir.home',
   'gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe',
@@ -81,7 +81,7 @@ const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
     ['worktrees-dir', 'velocity-profile.mjs', ['--worktrees', '--cwd', ROOT], ['--apply', '--worktrees', '--cwd', ROOT]],
     ['attribution', 'attribution.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
     ['footprint-global', 'hide-footprint.mjs', ['--remove-global', '--dry-run', '--dir', ROOT], ['--remove-global', '--dir', ROOT]],
-    ['executor-vehicle.differing', 'cheap-agents.mjs', ['--executor', '--cwd', ROOT], ['--apply', '--executor', '--cwd', ROOT]],
+    ['agents.not-current', 'cheap-agents.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
   ];
   return Object.fromEntries(table.map(([variant, file, preview, apply]) => [variant, {
     preview: ['node', join(TOOLS, file), ...preview],
@@ -103,8 +103,7 @@ describe('spec:init-project/S1 every severity key has one of the four lanes and 
     assert.deepEqual(Object.keys(variantLanes).sort(), keys);
     assert.equal(Object.hasOwn(variantLanes, 'sandbox-provision.installable'), true);
     assert.equal(Object.hasOwn(SEVERITIES, 'sandbox-provision.installable'), true);
-    assert.equal(Object.hasOwn(variantLanes, 'mcp-channel.masked'), false);
-    assert.equal(Object.hasOwn(SEVERITIES, 'mcp-channel.masked'), false);
+    for (const retired of ['mcp-channel.masked', 'executor-vehicle.differing']) assert.equal(Object.hasOwn(variantLanes, retired) || Object.hasOwn(SEVERITIES, retired), false, retired);
     assert.deepEqual([chatLane, harnessLane, userLane, kitLane], ['chat', 'harness', 'user', 'kit']);
     assert.equal(Object.hasOwn(lanes, 'LANE_CONSOLE'), false);
     assert.equal(Object.hasOwn(lanes, 'routeLine'), false);
@@ -250,6 +249,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       const argv = consoleArgv(variant, FACTS);
       for (const element of [...(argv?.preview ?? []), ...(argv?.apply ?? [])]) {
         assert.equal(element.includes(PACKAGE_ROOT), false, `${variant}: ${element}`);
+        assert.notEqual(element, '--executor', variant);
       }
     }
     const applySlot = need(lanes, 'applySlot');
@@ -291,7 +291,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'worktrees-dir': [join(ROOT, '.claude', 'settings.local.json')],
       attribution: settings,
       'footprint-global': [],
-      'executor-vehicle.differing': [join(ROOT, '.claude', 'agents', 'executor.md')],
+      'agents.not-current': agents,
     };
     const nullVariants = [...new Set([...FORM_C, ...Object.keys(SEVERITIES).filter((v) => !WITH_FORMS.includes(v))])];
     const writesOf = need(lanes, 'writesOf');

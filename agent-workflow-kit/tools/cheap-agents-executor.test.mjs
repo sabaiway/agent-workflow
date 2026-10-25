@@ -176,7 +176,7 @@ it('spec:executor-vehicle/S2 surveys directories before settings and derived byt
   }
 });
 
-it('spec:executor-vehicle/S3 places and re-derives executor while preserving other templates', () => {
+it('spec:executor-vehicle/S3 places and re-derives the executor beside every other differing kit file, and --executor retires', () => {
   for (const settings of [undefined, SETTINGS]) {
     const root = makeProject(settings);
     const { posture } = readExecutorPosture(root);
@@ -236,11 +236,10 @@ it('spec:executor-vehicle/S3 places and re-derives executor while preserving oth
     assert.equal(result.plan.filter((item) => item.name === EXECUTOR_NAME).length, 1);
     assert.equal(result.plan.findIndex((item) => item.name === EXECUTOR_NAME), readBundledAgents().findIndex((item) => item.name === EXECUTOR_NAME));
     for (const item of others) {
-      const lensRow = item.name === 'review-lens.md';
-      assert.equal(result.plan.find((row) => row.name === item.name).action, lensRow ? 're-derive' : 'customized-preserved');
-      const derived = lensRow && !dryRun ? reviewLensTemplate(readReviewLensPosture(root).posture).content : null;
-      assert.equal(readFileSync(item.abs, 'utf8'), derived ?? `Customized ${item.name}\n`);
+      assert.equal(result.plan.find((row) => row.name === item.name).action, 're-derive');
+      assert.equal(readFileSync(item.abs, 'utf8'), dryRun ? `Customized ${item.name}\n` : item.content);
     }
+    assert.equal(others.find((item) => item.name === 'review-lens.md').content, reviewLensTemplate(readReviewLensPosture(root).posture).content);
     assert.equal(readExecutor(root), dryRun ? CUSTOM : executorTemplate(posture).content);
   }
   {
@@ -278,40 +277,19 @@ it('spec:executor-vehicle/S3 places and re-derives executor while preserving oth
       else assert.equal(kind === 'symlink' ? lstatSync(target).isSymbolicLink() : lstatSync(target).isDirectory(), true);
     }
   }
-  const executorOnly = (project, apply, deps) => {
-    const run = runMain([...(apply ? ['--apply'] : []), '--executor', '--cwd', project], deps);
-    assert.deepEqual([run.exit, run.errors], [0, []]);
-    return run.output.join('\n').split('\n');
-  };
-  // --executor, one project walked through: an edited lens, then a linked lens target, a rejected config, a stale stamp.
+  // --executor retires to the generic usage error, nothing read; the one plain form stops on a linked configured derived lens.
   const solo = makeProject(SETTINGS, REVIEW);
-  const derivedBody = executorTemplate(readExecutorPosture(solo).posture).content;
-  const listing = () => readdirSync(join(solo, AGENTS_DIR)).sort().map((name) => [name, lstatSync(join(solo, AGENTS_DIR, name)).isSymbolicLink() ? 'link' : readFileSync(join(solo, AGENTS_DIR, name), 'utf8')]);
   placeExecutor(solo, CUSTOM);
-  writeFileSync(join(solo, AGENTS_DIR, 'review-lens.md'), 'Edited lens\n');
-  const dry = executorOnly(solo, false);
-  assert.deepEqual([dry.length, dry[0], dry[1], /^executor posture: /u.test(dry[2]), /^to apply, run exactly: node \S.* --executor\b/u.test(dry[3])], [4, 'agent-workflow subagent vehicles — DRY RUN (no changes)', `  - ${DERIVED.dry}`, true, true]);
-  assert.deepEqual(listing(), [['executor.md', CUSTOM], ['review-lens.md', 'Edited lens\n']]);
-  const applied = executorOnly(solo, true);
-  assert.deepEqual([applied.length, applied[0], applied[1], /^executor posture: /u.test(applied[2])], [3, 'agent-workflow subagent vehicles — APPLY', `  - ${DERIVED.written}`, true]);
-  assert.deepEqual(listing(), [['executor.md', derivedBody], ['review-lens.md', 'Edited lens\n']]);
-  placeExecutor(solo, CUSTOM);
+  const { events, deps } = traceReads();
+  const retired = runMain(['--executor', '--cwd', solo], deps);
+  assert.deepEqual([retired.exit, retired.output, retired.errors[0], events], [2, [], 'unknown argument: --executor', []]);
+  assert.doesNotMatch(runMain(['--help']).output.join('\n'), /--executor\b/u);
   symlinkSync(join(solo, CONFIG_REL), join(solo, AGENTS_DIR, LENS_NAME));
-  for (const dryRun of [true, false]) assert.throws(() => writeCheapAgents({ cwd: solo, dryRun }), { code: CHEAP_AGENTS_SYMLINK });
-  assert.deepEqual([executorOnly(solo, false)[1], executorOnly(solo, true)[1]], [`  - ${DERIVED.dry}`, `  - ${DERIVED.written}`]);
-  assert.deepEqual(listing(), [['executor.md', derivedBody], [LENS_NAME, 'link'], ['review-lens.md', 'Edited lens\n']]);
-  writeFileSync(join(solo, CONFIG_REL), MALFORMED);
   for (const apply of [false, true]) {
-    placeExecutor(solo, CUSTOM);
-    const { events, deps } = traceReads();
-    assert.equal(executorOnly(solo, apply, deps)[1], `  - ${apply ? DERIVED.written : DERIVED.dry}`);
-    assert.equal(events.includes(`read:${join(solo, CONFIG_REL)}`), false, events.join('\n'));
+    const run = runMain([...(apply ? ['--apply'] : []), '--cwd', solo]);
+    assert.deepEqual([run.exit, run.output, run.errors.some((line) => line.includes(`${AGENTS_DIR}/${LENS_NAME}`))], [1, [], true]);
+    assert.deepEqual([readExecutor(solo), readdirSync(join(solo, AGENTS_DIR)).sort()], [CUSTOM, ['executor.md', LENS_NAME]]);
   }
-  writeFileSync(join(solo, WORKFLOW_STAMP), '0.0.1\n');
-  placeExecutor(solo, CUSTOM);
-  const stale = executorOnly(solo, false);
-  assert.deepEqual([stale.length, stale[1], stale[2].startsWith('note: ')], [5, `  - ${DERIVED.dry}`, true]);
-  assert.match(runMain(['--help']).output.join('\n'), /--executor\b/u);
 });
 
 it('spec:executor-vehicle/S4 refuses unreadable settings before any placement', () => {

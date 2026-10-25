@@ -171,7 +171,7 @@ const expectedPlan = (variant, f, deps = {}) => {
     const p = writeMcp({ cwd: f.root, dryRun: true, replace: variant.endsWith('.differing') }).plan;
     if (p.writeMcpJson) addFile('.mcp.json', JSON.parse(p.mcpBody));
     if (p.writeSettings) addFile(SETTINGS, JSON.parse(p.settingsBody));
-  } else if (['agents', 'executor-vehicle'].includes(variant)) {
+  } else if (['agents', 'executor-vehicle', 'agents.not-current'].includes(variant)) {
     const p = writeCheapAgents({ cwd: f.root, dryRun: true });
     for (const item of p.plan.filter(({ action }) => ['place', 're-derive'].includes(action))) {
       writes.push({ path: item.abs, bytes: item.content, ...(item.action === 're-derive' ? { replaces: fs.readFileSync(item.abs) } : {}) });
@@ -1556,27 +1556,41 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
       });
     });
   }
-  it('executor-vehicle.differing: the one executor write beside absent vehicles, an edited or linked lens and a rejected config; scope admits it alone', (t) => {
-    const [f, path, config] = [fixture(t), '.claude/agents/executor.md', 'docs/ai/orchestration.json'];
-    for (const [rel, body] of [[path, 'differing body\n'], [config, JSON.stringify({ 'plan-execution': { review: ['review-lens:opus:xhigh'] } })], ['.claude/agents/review-lens.md', 'edited lens\n']]) put(join(f.root, rel), body);
-    const derived = writeCheapAgents({ cwd: f.root, dryRun: true }).plan.find((item) => item.rel === path && item.action === 're-derive').content;
-    const judge = () => unchanged(f, () => {
-      const result = danger.checkApply('executor-vehicle.differing', f);
-      assert.deepEqual([result.lines.filter((line) => line.startsWith('writes: ')), result.refused, result.lines.includes('scope: within the declared scope of executor-vehicle.differing')], [[`writes: ${path} sha256:${sha(derived)} — replaces sha256:${sha('differing body\n')}`], [], true]);
+  const AGENTS_KIT = 'agents.not-current';
+  const kitTree = (t, f = fixture(t)) => {
+    for (const [rel, body] of [['.claude/agents/executor.md', 'differing body\n'], ['.claude/agents/review-lens.md', 'edited lens\n'], ['.claude/agents/doc-research.md', 'own vehicle\n'],
+      ['docs/ai/orchestration.json', JSON.stringify({ 'plan-execution': { review: ['review-lens:opus:xhigh'] } })]]) put(join(f.root, rel), body);
+    return f;
+  };
+  it('agents.not-current over a placed component: a writes line per planned place or re-derive, the scope exactly the kit agent paths', (t) => {
+    const f = kitTree(t);
+    const plan = expectedPlan(AGENTS_KIT, f);
+    assert.deepEqual(plan.writes.map(({ path }) => basename(path)).sort(), ['changelog-skeleton.md', 'executor.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens-opus-xhigh.md', 'review-lens.md']);
+    unchanged(f, () => {
+      const result = danger.checkApply(AGENTS_KIT, f);
+      assertPreview(AGENTS_KIT, f, result, plan);
       const cli = capture(f, () => { throw new Error('CLI preview spawned'); });
-      assert.deepEqual([danger.main(argvFor('executor-vehicle.differing', f), cli.io), cli.lines], [0, result.lines]);
-      return result.digest;
+      assert.deepEqual([result.lines.filter((line) => line.startsWith('writes: ')).length, danger.main(argvFor(AGENTS_KIT, f), cli.io), cli.lines], [plan.writes.length, 0, result.lines]);
     });
-    const digest = judge();
-    for (const mutate of [() => fs.symlinkSync(join(f.root, config), join(f.root, '.claude/agents/review-lens-opus-xhigh.md')), () => put(join(f.root, config), '{ not json')]) {
-      mutate();
-      assert.equal(judge(), digest, 'the executor-only plan reads neither the lens nor the config');
-    }
-    assert.deepEqual(['executor.md', 'mechanical-sweep.md', 'review-lens.md', 'review-lens-opus-xhigh.md'].map((name) => danger.scopeOf('executor-vehicle.differing', f).admitsPath(join(f.root, '.claude/agents', name))), [true, false, false, false]);
+    const [scope, planted] = [danger.scopeOf(AGENTS_KIT, f), ['.claude/agents/doc-research.md', 'docs/ai/notes.md', '.claude/agents/sub/executor.md'].map((rel) => join(f.root, rel))];
+    assert.deepEqual([...[...plan.writes.map(({ path }) => path), ...planted].map((path) => scope.admitsPath(path)), scope.admitsPath(join(f.root, '.claude/agents'), true)], [...plan.writes.map(() => true), false, false, false, true]);
   });
-  for (const variant of ['attribution', 'footprint-global', 'executor-vehicle.differing']) it(`CLI accepts --variant ${variant}`, (t) => {
+  const kitRels = [...fs.readdirSync(join(TOOLS, '../references/agents')), 'review-lens-opus-xhigh.md'].map((name) => `.claude/agents/${name}`);
+  for (const [title, prepare, code, named] of [
+    ['a tree holding no regular kit agent file: each planned write refused naming it, exit 1', (f) => ['executor.md', 'review-lens.md'].forEach((name) => fs.rmSync(join(f.root, '.claude/agents', name))), 1, kitRels.map((rel) => `refused: ${rel} ${rel} — `)],
+    ["a linked configured derived lens: the writer's refusal naming it, exit 3", (f) => fs.symlinkSync(join(f.root, 'docs/ai/autonomy.json'), join(f.root, kitRels.at(-1))), 3, [kitRels.at(-1)]],
+    ["an orchestration config the reader rejects: the writer's refusal, exit 3", (f) => put(join(f.root, 'docs/ai/orchestration.json'), '{ not json'), 3, ['docs/ai/orchestration.json']],
+  ]) it(`agents.not-current over ${title}, nothing written`, (t) => {
+    const f = kitTree(t);
+    prepare(f);
+    unchanged(f, () => {
+      const cli = capture(f, () => { throw new Error('refusal spawned'); });
+      assert.deepEqual([danger.main(argvFor(AGENTS_KIT, f), cli.io), named.filter((text) => !cli.lines.some((line) => line.includes(text)))], [code, []], cli.lines.join('\n'));
+      if (code === 1) assert.deepEqual([cli.lines.filter((line) => line.startsWith('refused: ')).length, cli.lines.at(-2)], [named.length, 'nothing written']);
+    });
+  });
+  for (const variant of ['attribution', 'footprint-global']) it(`CLI accepts --variant ${variant}`, (t) => {
     const f = variant === 'footprint-global' ? configureGlobal(fixture(t)) : fixture(t);
-    if (variant === 'executor-vehicle.differing') put(join(f.root, '.claude/agents/executor.md'), 'differing body\n');
     unchanged(f, () => {
       const cli = capture(f, () => { throw new Error('CLI preview spawned'); });
       assert.equal(danger.main(argvFor(variant, f), cli.io), 0);

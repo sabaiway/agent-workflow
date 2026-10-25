@@ -543,15 +543,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `attributionHidesText` from `agent-workflow-kit/tools/attribution.mjs`; `uninstall` names the `attribution` key too.
   Proof: a status cell and an uninstall cell over a settings file holding only the object form. Residual, not live:
   report text only; no write or refusal changes. A non-goal of S11 (in-session-writes, stated limits).
-- **PENDING-EXECUTOR-LINE-NAMES-ONE-ARM** — invariant: the executor ensure's `pending` line names the advisor arm
-  that renders for the same tree. Origin: the line and its texts name `executor-vehicle.differing`
-  (`agent-workflow-kit/tools/ensure-executor.mjs:69`, `agent-workflow-kit/references/modes/upgrade.md:44`,
-  `agent-workflow-kit/tools/ensure-configs.mjs:97`), while a `subagent` slot over an executor whose frontmatter is
-  invalid renders the base `executor-vehicle` arm instead (`agent-workflow-kit/tools/recommendations.mjs:1135,1159`).
-  Narrow fix: name the item key `executor-vehicle`, true of both arms, in the line, the spec clause
-  (executor-vehicle, init-project S50) and their pins. Proof: an ensure cell and an advisor cell over that tree.
-  Residual, not live: both arms apply the same `cheap-agents.mjs --apply`, so the user's yes re-derives the body
-  either way; only the arm's name differs. Raised by the S11 copy lens.
 - **CONSENT-BINDS-EVERY-REPLACED-TREE** — invariant: every check line for a write that replaces an existing tree
   carries the replaced tree's digest, as a write over an existing regular file now does. Origin: the skill variants'
   `replace` writes print the new tree's digest alone (`agent-workflow-kit/tools/apply-danger-check.mjs:304-310`,
@@ -591,31 +582,41 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `<toolsDir>/../references/modes/gates.md`. Proof: a step cell asserting the printed path exists. Residual, not live: the
   agent presents the step and resolves the kit-relative `references/modes/` path, as every advisor note does. Raised by
   the S9 diff review (lens).
-- **ONE-AGENTS-APPLY-REDERIVES-BOTH-BODIES-UNSTATED** — invariant: an advisor item's text names every file its apply
-  writes. Origin: the `executor-vehicle.differing` item applies through the agents writer's `--apply`
-  (`agent-workflow-kit/tools/write-lanes.mjs:162`), which after story S1 of KIT-DEFAULT-POSTURE also
-  re-derives a differing `review-lens.md`; the item's text names only the executor, and the `agents` item's text only
-  the lens, so a yes to one rewrites both. Narrow fix: one sentence in review-roster's vehicles part and each text
-  naming both bodies when both differ. Residual, not live: the apply-danger check prints every file the writer would
-  rewrite before the apply (`agent-workflow-kit/tools/apply-danger-check.mjs:299-301`). Raised by the KIT-DEFAULT-POSTURE spec review
-  (lens, round 1).
-- **BARE-STEM-NEVER-DERIVED-SENTENCE-OVERREACHES** — invariant: the vehicles part states which bare stems the writer
-  derives in every configured state. Origin: review-roster's vehicles part (revision 7, story S1 of KIT-DEFAULT-POSTURE) says every bare stem
-  other than `review-lens` is never derived, while a bare stem deduped with a configured derived member of the same
-  stem is derived and placed (`agent-workflow-kit/tools/cheap-agents-derived.test.mjs:49-63`). Narrow fix: "Every other
-  bare stem takes no posture: it is surveyed as-is, and its file is derived only through a configured derived member of
-  the same stem." Residual, not live: the code and its pinned test already behave so. Raised by the KIT-DEFAULT-POSTURE spec review
+- **KIT-STAND-IN-COUNTS-IN-NO-VERDICT-CLASS** — invariant: the advisor's verdict never reads `nothing is broken` while
+  a configured `subagent` slot degrades to `solo`. Origin: from story S15 `agents.not-current` renders in the base
+  `executor-vehicle` arm's place over a missing or unusable executor in a placed component (spec carriers, part
+  agent-files), and a kit item counts in no verdict class (`agent-workflow-kit/tools/recommendations.mjs:254-263`,
+  `:1763`); while its apply ends pending the verdict can read `nothing is broken`. A fold that counted the stand-in as
+  attention was tried at the S15 spec review and bred restatements (the mode doc's verdict paragraph, init-project S4 and
+  S7, the item's label and sort), so it was withdrawn. Narrow fix: one design of the stand-in's class across the item,
+  its label, its sort and the verdict paragraph. Proof: a verdict cell over that tree. Residual, not live: the kit route
+  applies the item in the same upgrade, and a pending item is shown with its output. Raised by the S15 spec review
   (lens, round 2).
-- **AGENTS-OFFER-PRESENT-BUT-UNUSABLE-OVERREACHES** — invariant: a restatement of which executor states the `agents`
-  offer cannot observe names only the states it converges over. Origin: `agent-workflow-kit/references/modes/agents.md:17`
-  ("can never observe a present-but-unusable vehicle") and `references/modes/recommendations.md:25` ("which a
-  present-but-unusable executor also satisfies"), wording carried from before KIT-DEFAULT-POSTURE S1; a symlinked or
-  non-regular `executor.md` makes `planPlacement` throw (`agent-workflow-kit/tools/cheap-agents-read.mjs:107-108`) and an
-  unreadable `docs/ai/vehicles.json` makes the probe skip (`agent-workflow-kit/tools/recommendations.mjs:1093-1095`), so
-  the offer states a skip there instead of converging; only a regular executor failing the check converges, the scope
-  `recommendations.mjs:436` states. Narrow fix: both docs say "a regular-file executor that fails the check (it is
-  re-derived, never placed)". Residual, not live: the skip line names the reason, and `executor-vehicle` still renders
-  the solo degrade. Raised by the KIT-DEFAULT-POSTURE S1 diff review (lens, round 2).
+- **ROSTER-LENS-HAS-NO-RESERVED-FORM** — invariant: a user's own vehicle under `.claude/agents/` takes a name form no
+  kit release ever takes. Origin: a review roster's lens member names `.claude/agents/<stem>.md`, its stem a slug with
+  no dot (`agent-workflow-kit/tools/review-roster.mjs:8`), so a lens of the user's own in a review slot cannot take the
+  reserved `.local` form, and a later release that bundles its stem writes over it with no question (spec carriers, part
+  agent-files, stated limits). Narrow fix: the lens survey also reads `.claude/agents/<stem>.local.md` for a bare stem
+  with no bundled template. Proof: a survey cell and a writer cell over that file. Residual, not live: no bundled name
+  collides with a stem in use today. Raised by the S15 spec review (lens, round 1).
+- **ROSTER-RENDERS-NAMES-A-MISSING-LENS-ITEM** — invariant: a spec names only advisor items the advisor renders.
+  Origin: `docs/ai/specs/kit/review-roster/renders.md:71` and review-roster S9 describe a `review-lens` attention item
+  for a missing roster-derived lens, while `agent-workflow-kit/tools/recommendations.mjs` has no `review-lens` key and
+  `probeReviewRecipe` skips lens members. Narrow fix: drop the clause from renders.md and S9, or render the item.
+  Proof: an advisor cell over a configured derived lens with no file. Residual, not live: from story S15 an accepted
+  component places that lens through `agents.not-current`. Raised by the S15 spec session.
+- **FAMILY-REGISTRY-COMMENT-SAYS-PRESERVED** — invariant: a code comment states what the code's writer does.
+  Origin: `agent-workflow-kit/tools/family-registry.mjs:618-619` says a customized copy counts as placed because "the
+  writer preserves it"; from story S15 the agents writer writes it current. Narrow fix: "(it exists; the agents writer
+  writes it current)". Proof: none needed (comment). Residual, not live: the count is right. Raised by the S15 spec
+  review (lens, round 2).
+- **AGENTS-DIR-MASK-READ-TWO-WAYS** — invariant: the advisor and the danger check read `.claude/agents` itself alike.
+  Origin: the advisor reads a device-node mask at an absent `.claude/agents` as absent and renders the `agents` offer,
+  while the check's `assertDirSafe` (`agent-workflow-kit/tools/cheap-agents-read.mjs:95`) exits 3 "exists but is not a
+  directory"; S15 exempts only paths under the folder. Narrow fix: the check prints `masked: .claude/agents` for the
+  agent variants and exits 3 as for a masked settings file. Proof: a check cell over that mask. Residual, not live:
+  predates S15 and sits inside the unmeasured single-file binds of init-project's stated limits. Raised by the S15 spec
+  review (lens, round 2).
 - **RULES-RECORD-REPLACE-DROPS-A-NEWER-KITS-ENTRIES** — invariant: an older kit never deletes a newer kit's record
   entries. Origin: the record writer replaces an unreadable record (project-rules revision 2), and `parseRecord` reads
   a theme outside the registry as unreadable (`agent-workflow-kit/tools/project-rules/rules-check.mjs:57`), so an

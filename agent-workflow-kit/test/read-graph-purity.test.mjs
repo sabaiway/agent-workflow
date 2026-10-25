@@ -108,7 +108,7 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     const coreClosure = [...closureOf([core])].map(rel);
     assert.deepEqual(coreClosure.filter((r) => WRITE_MODULES.includes(r)), [], `the read core reached: ${coreClosure.sort().join(', ')}`);
     assert.equal(coreClosure.includes('cheap-agents.mjs'), false, 'the core must never reach its own writer');
-    assert.match(readFileSync(writer, 'utf8'), /fs\.writeFile\(/u, 'cheap-agents.mjs really does write, directly');
+    assert.match(readFileSync(writer, 'utf8'), /writeContainedFileAtomic\(/u, 'cheap-agents.mjs really does write, through the contained atomic write');
   });
 
   it('spec:held-session/S4 review-state reaches the delegation read leaf; procedures reaches neither it nor the append lane', () => {

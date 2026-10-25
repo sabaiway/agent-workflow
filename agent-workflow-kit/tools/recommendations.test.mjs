@@ -706,7 +706,7 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
   });
 
   it('a kit item counts in neither verdict class: alone it opens with nothing is broken and is listed as optional; beside one optional harness item the count is 1', () => {
-    const kit = { key: 'executor-vehicle', variant: 'executor-vehicle.differing', severity: SEVERITY_OPTIONAL, lane: 'kit', what: 'w', benefit: 'b', detail: null, check: 'c', apply: 'a' };
+    const kit = { key: 'agents', variant: 'agents.not-current', severity: SEVERITY_OPTIONAL, lane: need(lanes, 'laneOf')('agents.not-current'), what: 'w', benefit: 'b', detail: null, check: 'c', apply: 'a' };
     assert.deepEqual(formatRecommendations({ items: [kit], skips: [] }).split('\n').slice(2, 8), [VERDICT_NOTHING_BROKEN, '', `1. ${SEVERITY_LABELS[SEVERITY_OPTIONAL]}: w`, '   benefit: b', '   lane: kit', '   check: c']);
     const beside = { items: [kit, { ...kit, key: 'agents', variant: 'agents', lane: 'harness' }], skips: [] };
     assert.equal(formatRecommendations(beside).split('\n')[2], `${VERDICT_NOTHING_BROKEN} — ${fillCount(VERDICT_OPTIONAL_TEMPLATE, 1)}`);
@@ -1830,7 +1830,7 @@ describe('recommendations — the executor-vehicle attention item (spec:carriers
     const root = makeProject();
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);
     const dir = join(root, '.claude', 'agents');
-    if (vehicle !== undefined) { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, 'executor.md'), vehicle); }
+    if (vehicle !== undefined) { mkdirSync(dir, { recursive: true }); if (vehicle === null) symlinkSync(join(root, 'nowhere'), join(dir, 'executor.md')); else writeFileSync(join(dir, 'executor.md'), vehicle); }
     const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     return { ...built, root, found: built.items.filter((i) => i.key === 'executor-vehicle') };
@@ -1843,10 +1843,14 @@ describe('recommendations — the executor-vehicle attention item (spec:carriers
     assert.match(found[0].detail, /hidden-mode deployments only:.*--reconcile/u, 'the reconcile rides the detail, never the apply');
     assert.equal(found[0].detail, `hidden-mode deployments only: after the apply, run node ${join(HERE, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`);
   });
-  it('configured + unusable: the survey reason rides the text', () => {
-    const { found } = run(CARRIER, '---\nname: executor\ntools: Read\n---\nbody\n');
+  it('configured + a symlinked executor: the attention item, the survey reason riding the text', () => {
+    const { found } = run(CARRIER, null);
     assert.equal(found.length, 1);
-    assert.equal(found[0].what, '1 slot(s) configured subagent but the executor vehicle is unusable: tools: Read is read-only — every such slot runs solo until it is usable');
+    assert.ok(found[0].what.startsWith('1 slot(s) configured subagent but the executor vehicle is unusable: ') && /executor\.md exists but is not a regular file/u.test(found[0].detail), found[0].detail);
+  });
+  it('configured + a regular executor failing the check: the kit item alone, the base arm yielding to agents.not-current', () => {
+    const { found, items } = run(CARRIER, '---\nname: executor\ntools: Read\n---\nbody\n');
+    assert.deepEqual([found.map((i) => i.variant), items.filter((i) => i.key === 'agents').map((i) => i.variant)], [[], ['agents.not-current']]);
   });
   it('placed, customized and no subagent slot: no attention item — the rest of the list is untouched', () => {
     const placed = run(CARRIER, BUNDLED);
@@ -3317,8 +3321,8 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     assert.equal(item.detail, `hidden-mode deployments only: after the --apply the preview prints, run node ${join(HERE, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`);
   });
 
-  // `already-current` is convergence and `customized-preserved` is the user's own edit, which the
-  // writer never clobbers — neither is a gap, and nagging about either would be a defect.
+  // `already-current` is convergence: every kit agent file carrying the body the kit writes for it
+  // renders no agents item, neither the offer nor agents.not-current.
   it('a project whose subagents are all placed gets NO offer (converged)', () => {
     const root = makeProject();
     mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
@@ -3359,7 +3363,6 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
     const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { planGlobalRemoval: () => null, ...extra }) });
     return { items: built.items.filter((item) => item.key === key), skips: built.skips.filter((skip) => skip.key === key) };
   };
-  const [DIFFERING_WHAT, DIFFERING_BENEFIT] = ['the placed executor vehicle differs from the body derived from docs/ai/vehicles.json — the derived body is written with no question', 'carrier fidelity — the placed executor runs the model and effort docs/ai/vehicles.json names'];
   const assertHarnessItem = async (root, built, variant, severity, lane = 'harness') => {
     assert.equal(built.items.length, 1);
     assert.deepEqual(built.skips, []);
@@ -3369,8 +3372,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
     assert.equal(item.lane, lane);
     const slot = need(lanes, 'applySlot')(variant, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
     assert.deepEqual({ check: item.check, apply: item.apply }, slot);
-    const benefits = variant === 'executor-vehicle.differing' ? need(await import('./recommendations.mjs'), 'VARIANT_BENEFITS') : BENEFITS;
-    assert.equal(item.benefit, benefits[variant]);
+    assert.equal(item.benefit, BENEFITS[variant]);
     assert.ok(item.what.length <= ITEM_LINE_CAP);
     assert.ok(item.benefit.length <= ITEM_LINE_CAP);
     const rendered = formatRecommendations(built);
@@ -3445,64 +3447,58 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       assert.equal(SEVERITIES['footprint-global'], SEVERITY_OPTIONAL);
     });
   }
+  // The agents key and the base executor-vehicle arm judged together (spec carriers, part agent-files): a differing
+  // executor is a planned file of agents.not-current; a string names the item rendered, a pattern the agents key's skip.
+  const KIT_TEXT = ['kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for it, with no question', 'currency — each kit agent file carries the body the kit writes for it today, model and effort where docs/ai/vehicles.json names them'];
+  const LINKED_LENS = /review-lens-opus-high\.md exists but is not a regular file/u;
   const executorRows = [
-    ['customized, no slot', 'customized', false, 'differing'],
-    ['customized, configured slot', 'customized', true, 'differing'],
-    ['unusable, no slot', 'unusable', false, 'differing'],
-    ['unusable, configured slot', 'unusable', true, 'base'],
-    ['placed, no slot', 'placed', false, 'silent'],
-    ['placed, configured slot', 'placed', true, 'silent'],
-    ['missing, no slot', 'missing', false, 'silent'],
-    ['missing, configured slot', 'missing', true, 'base'],
-    ['symlinked agents, no slot', 'symlink', false, /\.claude\/agents is a symlink/u],
-    ['configured derived lens whose target is a symlink', 'lens-symlink', false, 'differing'],
-    ['stale stamp, differing executor', 'stale-differing', false, /run \/agent-workflow-kit upgrade first/u],
-    ['stale stamp, current executor', 'stale-current', false, 'silent'],
+    ['customized, no slot', 'customized', false, ['kit']], ['customized, configured slot', 'customized', true, ['kit']],
+    ['unusable, configured slot: the base arm yields', 'unusable', true, ['kit']], ['placed, configured slot, the component current', 'placed', true, []],
+    ['missing, no slot', 'missing', false, ['offer']], ['missing, configured slot', 'missing', true, ['offer', 'base']],
+    ['missing beside a placed vehicle, configured slot', 'missing-beside', true, ['kit']],
+    ['symlinked agents, no slot', 'symlink', false, [/\.claude\/agents is a symlink/u]],
+    ['symlinked executor, configured slot', 'executor-symlink', true, [/executor\.md exists but is not a regular file/u, 'base']],
+    ['configured derived lens whose target is a symlink', 'lens-symlink', false, [LINKED_LENS]],
+    ['linked configured derived lens beside a missing executor, configured slot', 'lens-symlink-missing', true, [LINKED_LENS, 'base']],
+    ['stale stamp, differing executor', 'stale-differing', false, [/run \/agent-workflow-kit upgrade first/u]],
+    ['stale stamp, current component', 'stale-current', false, []],
   ];
   for (const [label, state, configured, expected] of executorRows) {
-    it(`executor-vehicle: ${label}`, async (t) => {
+    it(`executor-vehicle and agents: ${label}`, async (t) => {
       const root = makeProject();
       t.after(() => rmSync(root, { recursive: true, force: true }));
       const reader = await import('./cheap-agents-read.mjs');
       const { writeCheapAgents } = await import('./cheap-agents.mjs');
       const config = { routine: { carrier: configured ? 'subagent' : 'solo' } };
-      if (state === 'lens-symlink') config['plan-execution'] = { review: ['review-lens:opus:high'] };
+      if (state.startsWith('lens-symlink')) config['plan-execution'] = { review: ['review-lens:opus:high'] };
       writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
-      if (state.startsWith('stale-')) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
       const dir = join(root, '.claude', 'agents');
-      mkdirSync(dir, { recursive: true });
-      if (state === 'symlink') {
-        rmSync(dir, { recursive: true });
-        mkdirSync(join(root, 'vehicles'));
-        symlinkSync(join(root, 'vehicles'), dir);
+      if (['placed', 'stale-current'].includes(state)) writeCheapAgents({ cwd: root, dryRun: false });
+      if (state.startsWith('stale-')) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
+      for (const path of state === 'symlink' ? [join(root, 'vehicles'), join(root, '.claude')] : [dir]) mkdirSync(path, { recursive: true });
+      if (state === 'symlink') symlinkSync(join(root, 'vehicles'), dir);
+      const current = reader.executorTemplate(reader.readExecutorPosture(root).posture).content;
+      const body = state === 'unusable' ? '---\nname: executor\ntools: Read\n---\nbody\n' : `${current}\ncustom\n`;
+      if (['customized', 'unusable', 'symlink', 'lens-symlink', 'stale-differing'].includes(state)) writeFileSync(join(dir, 'executor.md'), body);
+      if (state === 'executor-symlink') symlinkSync(join(root, 'nowhere'), join(dir, 'executor.md'));
+      if (state === 'missing-beside') writeFileSync(join(dir, 'gate-triage.md'), readFileSync(join(HERE, '..', 'references', 'agents', 'gate-triage.md')));
+      if (state.startsWith('lens-symlink')) symlinkSync(join(root, 'docs', 'ai', 'orchestration.json'), join(dir, 'review-lens-opus-high.md'));
+      const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { planGlobalRemoval: () => null }) });
+      const [items, skips] = [built.items.filter((i) => ['agents', 'executor-vehicle'].includes(i.key)), built.skips.filter((s) => ['agents', 'executor-vehicle'].includes(s.key))];
+      const variants = { kit: 'agents.not-current', offer: 'agents', base: 'executor-vehicle' };
+      assert.deepEqual(items.map((i) => i.variant), expected.filter((e) => typeof e === 'string').map((e) => variants[e]), JSON.stringify(skips));
+      const patterns = expected.filter((e) => e instanceof RegExp);
+      assert.deepEqual(skips.map((s) => s.key), patterns.map(() => 'agents'));
+      patterns.forEach((pattern, index) => assert.match(skips[index].reason, pattern));
+      const kit = items.find((i) => i.variant === variants.kit);
+      if (kit) {
+        const planned = writeCheapAgents({ cwd: root, dryRun: true }).plan.filter((p) => ['place', 're-derive'].includes(p.action));
+        const slot = need(lanes, 'applySlot')(variants.kit, { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+        assert.deepEqual([kit.lane, kit.severity, kit.what, kit.benefit, kit.detail, kit.check, kit.apply], ['kit', SEVERITY_OPTIONAL, `${planned.length} ${KIT_TEXT[0]}`, KIT_TEXT[1], `writes: ${planned.map((p) => p.rel).join(', ')}`, slot.check, slot.apply]);
+        assert.ok(planned.some((p) => p.rel === '.claude/agents/executor.md'), 'the executor is among the planned files');
       }
-      const { posture } = reader.readExecutorPosture(root);
-      const current = reader.executorTemplate(posture).content;
-      const body = state === 'placed' || state === 'stale-current' ? current
-        : state === 'unusable' ? '---\nname: executor\ntools: Read\n---\nbody\n' : `${current}\ncustom\n`;
-      if (state !== 'missing') writeFileSync(join(dir, 'executor.md'), body);
-      if (state === 'lens-symlink') symlinkSync(join(root, 'docs', 'ai', 'orchestration.json'), join(dir, 'review-lens-opus-high.md'));
-      const built = collect(root, 'executor-vehicle');
-      const executorBodyDiffers = need(reader, 'executorBodyDiffers');
-      assert.equal(executorBodyDiffers(root), !['missing', 'placed', 'stale-current'].includes(state));
-      if (expected === 'differing') {
-        const item = await assertHarnessItem(root, built, 'executor-vehicle.differing', SEVERITY_OPTIONAL, 'kit');
-        assert.deepEqual([item.what, item.benefit, item.detail ?? null], [DIFFERING_WHAT, DIFFERING_BENEFIT, null]);
-        assert.ok(!formatRecommendations(built).split('\n').some((line) => line.startsWith('   recipe: ')));
-      } else if (expected === 'base') {
-        const item = await assertHarnessItem(root, built, 'executor-vehicle', SEVERITY_ATTENTION);
-        assert.match(item.what, new RegExp(`1 slot\\(s\\) configured subagent but the executor vehicle is ${state}`));
-        assert.match(item.detail, /hidden-mode deployments only:.*--reconcile/u);
-      } else {
-        assert.deepEqual(built.items, []);
-        if (expected === 'silent') assert.deepEqual(built.skips, []);
-        else {
-          assert.equal(built.skips.length, 1);
-          assert.match(built.skips[0].reason, expected);
-          if (!state.startsWith('stale-')) assert.throws(() => writeCheapAgents({ cwd: root, dryRun: true }), expected);
-          else assert.equal(writeCheapAgents({ cwd: root, dryRun: true }).stampOk, false);
-        }
-      }
+      const base = items.find((i) => i.variant === variants.base);
+      if (base && patterns.length) assert.ok(base.detail.startsWith('precondition: ') && patterns[0].test(base.detail), base.detail);
       assert.doesNotMatch(formatRecommendations(built), /HAND-APPLY/u);
     });
   }

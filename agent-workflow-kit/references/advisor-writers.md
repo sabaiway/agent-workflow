@@ -36,8 +36,8 @@
 | mcp-channel | harness | mcp.mjs |
 | mcp-channel.differing | harness | mcp.mjs |
 | agents | harness | cheap-agents.mjs |
+| agents.not-current | kit | cheap-agents.mjs |
 | executor-vehicle | harness | cheap-agents.mjs |
-| executor-vehicle.differing | kit | cheap-agents.mjs |
 | attribution | harness | attribution.mjs |
 | footprint-global | harness | hide-footprint.mjs |
 | family-freshness | user | user step |

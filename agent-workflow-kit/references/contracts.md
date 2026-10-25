@@ -96,10 +96,13 @@ On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, def
 Every name the kit bundles and writes over on an upgrade is the kit's, and an edit there is never a
 customization: every kit script, the spec layer's four pair files (`scripts/spec-schema.mjs`,
 `scripts/spec-schema.test.mjs`, `scripts/check-docs-size.mjs`, `scripts/check-docs-size.test.mjs`)
-included, the hook installer set and the kit rules files `docs/ai/rules/<theme>.md` are written
-over by the next upgrade with no question and no copy kept. A declaration seeded once from a template and never
+included, the hook installer set, the kit rules files `docs/ai/rules/<theme>.md` and the kit agent
+files (the five the kit bundles for `.claude/agents/` — `changelog-skeleton.md`, `executor.md`,
+`gate-triage.md`, `mechanical-sweep.md`, `review-lens.md` — and each configured
+`review-lens-<model>-<effort>.md`) are written over by the next upgrade with no question and no copy
+kept. A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
-user's own file. A customization goes into one of five channels instead:
+user's own file. A customization goes into one of six channels instead:
 
 - **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed
   pre-commit hook runs it first, once the installer has run.
@@ -107,6 +110,8 @@ user's own file. A customization goes into one of five channels instead:
 - **A setting** goes in a config a script reads.
 - **Your own rules** go in the local rules file `docs/ai/rules/local/<theme>.md`.
 - **An agent's model** goes in the vehicle settings `docs/ai/vehicles.json`.
+- **A vehicle of your own** goes in `.claude/agents/<name>.local.md` with a `name:` of its own, which
+  no review roster names; a lens of your own in a review slot keeps a stem of its own.
 
 No path segment of a file the kit bundles and places as its own has a dot-separated part exactly
 `local`; a path of that form is the user's, and no kit tool writes one on its own. Outside that rule:
