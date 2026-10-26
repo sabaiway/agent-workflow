@@ -108,6 +108,9 @@ a copy matching none is the user's, left and named. Also the kit's: the three ki
 `docs/ai/agent_rules.md` (Communication, Story sessions and the planning/review lens), each
 written current on every upgrade with no question and no copy kept. Also the kit's: the three pointers of `AGENTS.md`
 and its Memory Map rows of the rules themes, each written current on every upgrade with no question and no copy kept.
+Also the kit's: the onboarding note of `docs/ai/orchestration.json`, its `_README` key, written current on every
+upgrade with no question and no copy kept, every recipe kept; a note of your own goes in `AGENTS.md`, outside the
+two `<!-- workflow: -->` comment lines around the orchestration pointer.
 A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
 user's own file. A customization goes into one of nine channels instead:

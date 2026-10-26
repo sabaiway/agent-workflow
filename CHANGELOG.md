@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-26 — AD-213: the orchestration note is written current with no question (kit 19.3.0 MINOR; memory, engine and both bridges unchanged)
+
+**The upgrade now writes the onboarding note of `docs/ai/orchestration.json` current with no question**: a current
+note is left, and an absent, earlier or any other note is written, no copy kept, every recipe kept in its order. A
+note the kit did not ship prints one line naming the route (a note of your own goes in `AGENTS.md`, outside the two
+`<!-- workflow: -->` comment lines around the orchestration pointer). Before, such a note was kept as found
+(`customized-preserved`). `set-recipe` and the tier offer still keep a differing note, so the upgrade is the one writer
+over it. This is the last story of the distribution-files epic. Contracts: orchestration-note revision 1 (new), distribution-files revision 14, review-roster revision
+9. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-26 — AD-212: the entry file's kit pointers and Memory Map rows are written current with no question (kit 19.2.0 MINOR; memory 8.6.3 PATCH; engine and both bridges unchanged)
 
 **The upgrade now writes the three kit pointers of `AGENTS.md` and its Memory Map rows of the rules themes current

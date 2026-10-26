@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { UPGRADE_RUNLIST } from '../tools/upgrade-runlist.mjs';
 import { main } from '../tools/ensure-configs.mjs';
 import { RELAYED_ENSURE_TOKENS } from '../tools/ensure-vocabulary.mjs';
+import * as readme from '../tools/orchestration-readme.mjs';
 import { SKIPPED_READONLY } from '../tools/setup-backends.mjs';
 import { PARITY } from '../tools/refresh-parity.mjs';
 
@@ -290,11 +291,12 @@ const PAIR_FILES = ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', '
 const keepAsideClauses = (text) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)/).filter((clause) => !/an earlier release/i.test(clause) && ((/\b(?:keeps?|kept|keeping)\b.*\baside\b/i.test(clause) && /upgrade|\bedit/i.test(clause)) || /\.agent-workflow\/kept-aside\//.test(clause)));
 const hasLocalPart = (path) => path.split(/[\\/]/).some((segment) => segment.split('.').includes('local'));
 describe('spec:distribution-files/S26 the guide names the reserved names and channels, and no bundled name takes the local form', () => {
-  it("the opening paragraph names the section, which names the kit's names, its agent and hook files, the vendor skill copy, the rules file's three kit sections, the entry file's pointers and rows, the nine channels and the name form with its two exceptions", () => {
+  it("the opening paragraph names the section, which names the kit's names, its agent and hook files, the vendor skill copy, the rules file's three kit sections, the entry file's pointers and rows, the onboarding note, the nine channels and the name form with its two exceptions", () => {
     assert.ok(between(CONTRACTS, '# Setup contracts\n\n', '\n\n', 'contracts.md').includes('*Reserved names and channels*'), 'the opening paragraph names the section');
     const section = (CONTRACTS.split('\n## Reserved names and channels\n')[1] ?? '').replace(/\s+/g, ' ');
     assert.deepEqual(["Every name the kit bundles and writes over on an upgrade is the kit's", 'written over by the next upgrade with no question and no copy kept', 'A declaration seeded once from a template', "is the user's own file", '`.claude/agents/<name>.local.md`', '`.claude/hooks/agent-workflow-gates.mjs`', '`.claude/hooks/state-block-guard.mjs`', 'within a hook you wired', '`.claude/hooks/<name>.local.mjs`', '`review-lens-<model>-<effort>.md`', '`scripts/pre-commit.local`', 'go in `scripts/` under names of your own', 'a config a script reads', '`docs/ai/rules/local/<theme>.md`', '`docs/ai/vehicles.json`', 'No path segment of a file the kit bundles and places as its own has a dot-separated part exactly `local`', '`.claude/settings.local.json`', "which the agent writes only on the user's own request"].filter((words) => !section.includes(words)), []);
     assert.deepEqual([...['one of nine channels', '`docs/ai/agent_rules.md` (Communication, Story sessions and the planning/review lens)', 'written current on every upgrade with no question and no copy kept', "under a ### heading of its own, titled unlike the kit's sections"].filter((words) => !section.includes(words)), ...['text of your own goes outside the two <!-- workflow: --> comment lines around each pointer', 'a row of your own goes on a line of its own, its first cell a path of your own'].filter((words) => !section.replaceAll('`', '').includes(words)), ...['Memory Map rows of the rules themes', 'written current on every upgrade with no question and no copy kept'].filter((words) => !(section.split('. ').find((one) => one.includes('the three pointers of `AGENTS.md`')) ?? '').includes(words))], [], "the rules file's three kit sections, the entry file's pointers and rows, the eighth and ninth channels");
+    assert.deepEqual(['written current on every upgrade with no question and no copy kept', String(readme.NOTE_ROUTE)].filter((words) => !(section.replaceAll('`', '').split('. ').find((one) => one.includes('docs/ai/orchestration.json') && one.includes('onboarding note')) ?? '').includes(words)), [], "the orchestration config's onboarding note is the kit's, its route in the same sentence");
     const copy = ['the vendor skill copy the kit installs into the three agent skill roots', 'when it matches a pin the kit shipped', 'beside a copy at a kit pin', "a copy matching none is the user's, left and named"];
     assert.deepEqual([...copy.filter((words) => !section.includes(words)), ...['jev', 'typesafe'].filter((word) => section.toLowerCase().includes(word))], [], 'the vendor skill copy, by neither jev word');
     assert.deepEqual([...PAIR_FILES, ...readdirSync(resolve(kitRoot, 'references', 'agents'))].filter((path) => !section.includes(path)).concat([/\bname:`? of its own\b/, /\bno review roster names\b/, /<name>\.local\.mjs`[^.;]*\b(?:you|the user) wires?\b/].filter((re) => !re.test(section)).map(String)), [], 'every kit script and bundled agent file written over, the four spec-layer pair files included; the sixth channel takes a name: of its own that no review roster names; the seventh is a hook the user wires');
@@ -371,6 +373,19 @@ describe('spec:distribution-files/S4 the shipped text of the spec layer states t
   });
   it("no spec-layer clause of them names a replace run, a replace block, kept aside, withheld, the user's yes, one yes or --replace-custom", () => {
     assert.deepEqual(Object.entries(parts).flatMap(([part, text]) => clausesOf(text).filter((clause) => SPEC_LAYER_RETIRED.test(clause)).map((clause) => `${part}: ${clause.trim()}`)), []);
+  });
+});
+
+const noteKeptClauses = (text) => clausesOf(text.replace(/`[a-z-]+`/g, ' ')).filter((clause) => /\bnote\b|_README/i.test(clause) && /preserved|verbatim|customi[sz]ed|your own wording/i.test(clause) && !/malformed/i.test(clause));
+describe('spec:orchestration-note/S7 the shipped text writes the note current and names its route', () => {
+  const configs = readFileSync(resolve(kitRoot, 'tools', 'ensure-configs.mjs'), 'utf8'), arm = between(blockOf('configs'), 'orchestration → ', ';', 'configs block'), slices = { 'upgrade.md orchestration arm': arm, 'upgrade.md orchestration paragraph': between(UPGRADE, '**What the orchestration-config ensure does.**', '\n\n', 'upgrade.md'),'ensure-configs.mjs header row': configs.split('\n').find((line) => line.startsWith('//   orchestration ')) ?? '', 'ensure-configs.mjs --help': clausesOf(main(['--help']).stdout).filter((clause) => /onboarding note/i.test(clause)).join(';') };
+  it('the token arms, the paragraph (the current note left, any other written current, the route, no module or refresher name) and the ensure-configs texts', () => {
+    assert.deepEqual([...['seeded', 'note-refreshed', 'already-current', 'malformed-preserved', 'customized-preserved'].map((token) => hasToken(arm, token)), hasToken(between(blockOf('configs'), 'index → ', ';', 'configs block'), 'customized-preserved')], [true, true, true, true, false, true]);
+    const paragraph = slices['upgrade.md orchestration paragraph'].replaceAll('`', ''), names = ['orchestration-readme.mjs', 'orchestration-config.mjs', 'refreshReadme', 'refreshIfCanonical'].filter((name) => paragraph.includes(name));
+    assert.deepEqual([/current note[^.;]*\bleft\b/i.test(paragraph), /any other note[^.;]*written current[^.;]*no question and no copy kept/i.test(paragraph), paragraph.includes(String(readme.NOTE_ROUTE)), names, ...['ensure-configs.mjs header row', 'ensure-configs.mjs --help'].map((name) => /written current/i.test(slices[name]))], [true, true, true, [], true, true], JSON.stringify(slices, null, 1));
+  });
+  it('no clause of those slices pairs the note with a word that keeps it, save the malformed-config clause; the judge catches one and spares a token and that clause', () => {
+    assert.deepEqual([Object.entries(slices).flatMap(([name, text]) => noteKeptClauses(text).map((clause) => `${name}: ${clause.trim()}`)), ['a customized note is preserved verbatim', 'the note arm: `customized-preserved`', 'a malformed config is preserved untouched, the note too'].map((text) => noteKeptClauses(text).length)], [[], [1, 0, 0]]);
   });
 });
 

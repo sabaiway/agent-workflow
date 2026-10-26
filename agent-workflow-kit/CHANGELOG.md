@@ -4,6 +4,28 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.3.0 — the orchestration note is written current with no question; a differing one is named with its route (AD-213)
+
+**Your upgrade now writes the onboarding note of `docs/ai/orchestration.json` current, with no question and no copy
+kept.** Before, the orchestration ensure wrote the note (its `_README` key) only when it was absent or matched a note
+the kit had shipped; any other note was kept as found (`customized-preserved`), so an edited note stayed on old wording for good.
+Now a current note is left (`already-current`), and an absent, earlier or any other note is written current
+(`note-refreshed`, dry `would-refresh-note`), the note first and every activity, slot and key after it kept with its
+value and in its order. A note the kit did not ship prints this line:
+
+`docs/ai/orchestration.json: the current onboarding note was written over a different one (every recipe you set is kept); a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines around the orchestration pointer`
+
+- **An absent note says so**: `the onboarding note was absent and is now written (every recipe you set is kept)`.
+- **`set-recipe` and the tier offer's slot write still keep a differing note**: the upgrade is the one writer over
+  one, so every such write is named by its line.
+- **Nothing else moves.** The seed, a config that appears while the seed runs (now judged by the same rule), a
+  malformed config (`malformed-preserved`), a link or other node (`wrong-node-kind`) and a vanishing config
+  (`race-unresolved`) behave as before; `customized-preserved` stays for the navigator index, and no token or cause is
+  added.
+- **The texts say the same.** `upgrade.md` (the orchestration token arm and paragraph), the `ensure-configs.mjs` header
+  and `--help`, and the guide's *Reserved names and channels*, which names the note as the kit's and points at the
+  ninth channel.
+
 ## 19.2.0 — the entry file's kit pointers and Memory Map rows are written current with no question; a differing one is named with its route (AD-212)
 
 **Your upgrade now writes the kit's three pointers in `AGENTS.md` current, with no question and no copy kept.**

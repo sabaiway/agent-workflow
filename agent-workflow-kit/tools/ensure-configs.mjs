@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ensure-configs.mjs — ONE runnable command for the stamp-independent upgrade ensures:
 //
-//   orchestration  docs/ai/orchestration.json  seed, or refresh a still-canonical onboarding note
+//   orchestration  docs/ai/orchestration.json  seed, or the onboarding note written current (a differing one's line names its route)
 //   gates          docs/ai/gates.json          seed-if-missing (an existing declaration is authored content)
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
@@ -78,10 +78,10 @@ Usage:
   --help, -h    this help
 
 Every SEED is CREATE-ONLY: an existing file is preserved byte-for-byte, never clobbered and never
-refreshed in place. Four ops refresh instead: the orchestration onboarding note, only while it still
-matches a canonical the kit shipped (your own wording is preserved verbatim); the spec-layer reader
-and checker pairs, with no question and no copy kept: a body a release shipped is refreshed, an
-edited one replaced (its line names where an edit meant to last goes) and an absent one placed,
+refreshed in place. Four ops refresh instead: the orchestration onboarding note, written current over any other
+note with no question and no copy kept, every recipe kept (a differing note's line names where a note of your
+own goes); the spec-layer reader and checker pairs, with no question and no copy kept: a body a release shipped
+is refreshed, an edited one replaced (its line names where an edit meant to last goes) and an absent one placed,
 the reader pair, then the checker pair, then the spec store root seeded create-only; the project rules
 kit file, refreshed while its bytes are a body a release shipped and any other body replaced by the template,
 with no question and no copy kept, the effective file rebuilt as its copy and recorded where no local file

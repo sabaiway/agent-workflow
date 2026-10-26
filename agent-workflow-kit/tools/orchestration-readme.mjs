@@ -82,7 +82,21 @@ export const refreshReadme = (config) => {
     ? CANON_README
     : refreshIfCanonical(current, KNOWN_PRIOR_README, CANON_README);
   if (readme === current) return { config, changed: false };
-  const next = { _README: readme };
+  return { config: withCurrentReadme(config), changed: true };
+};
+
+export const NOTE_ROUTE = 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines around the orchestration pointer';
+
+export const readmeState = (config) => {
+  if (!Object.hasOwn(config, '_README')) return 'absent';
+  if (typeof config._README !== 'string') return 'differing';
+  const normalized = normalizeCanonical(config._README);
+  if (normalized === normalizeCanonical(CANON_README)) return 'current';
+  return KNOWN_PRIOR_README.some((prior) => normalizeCanonical(prior) === normalized) ? 'prior' : 'differing';
+};
+
+export const withCurrentReadme = (config) => {
+  const next = { _README: CANON_README };
   for (const [key, value] of Object.entries(config)) if (key !== '_README') next[key] = value;
-  return { config: next, changed: true };
+  return next;
 };

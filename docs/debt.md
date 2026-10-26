@@ -1061,3 +1061,45 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (S35, S37) has one, so `isOneRow` without `.trimEnd()` (`agent-workflow-kit/tools/project-rules/memory-map-row.mjs:29`)
   stays green. Narrow fix: an S35 cell over every theme's row with three trailing spaces, answering written. Raised by
   the DISTRIBUTION-FILES-STAY-CURRENT S18 diff review (round 1).
+- **ORCHESTRATION-NOTE-CRLF-PRIOR-CELL-MISSING** — invariant: a note that is an earlier release's body reads prior in
+  any line-end form. Origin: spec orchestration-note S1 judges every `KNOWN_PRIOR_README` entry only in its exact bytes,
+  so a `readmeState` that normalizes only the current note reads a CRLF prior as differing and prints the written-over
+  line with the route for a kit body. Narrow fix: S1 gains one prior entry with CRLF line ends and trailing spaces,
+  answering prior. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 spec review (round 1).
+- **ORCHESTRATION-NOTE-NON-STRING-READS-TWO-WAYS** — invariant: every clause of the note's judgement gives one answer
+  per input. Origin: spec orchestration-note's judgement bullet says current after `normalizeCanonical` and differing
+  for a non-string value, but `normalizeCanonical` takes `String(value)`
+  (`agent-workflow-kit/tools/orchestration-readme.mjs:1`), so `[CANON_README]` reads both ways; the op never meets one
+  (`loadConfig` refuses a non-string `_README`, `agent-workflow-kit/tools/orchestration-config.mjs:220`). Narrow fix:
+  a non-string value is differing, judged before any normalization, with one S1 cell over a one-element array. Raised
+  by the DISTRIBUTION-FILES-STAY-CURRENT S19 spec review (round 1).
+- **ORCHESTRATION-NOTE-RACE-LINE-UNPINNED** — invariant: the race's written line is the differing note's line with
+  the seed's temp-file note after it. Origin: spec orchestration-note S3 pins the token and the file after the race,
+  not its line, so a race path that drops the route or the temp-file note stays green. Narrow fix: S3 asserts the line
+  ends with `NOTE_ROUTE` and, with a leftover temp file, the temp-file note follows it. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S19 spec review (round 1).
+- **NOTE-ROUTE-SENDS-TEXT-INTO-A-CAPPED-FILE** — invariant: following a route never stops the upgrade bringing a kit
+  part current. Origin: `NOTE_ROUTE` and `POINTER_ROUTE` send the user's text into `AGENTS.md`, whose cap is 100 lines
+  (`agent-workflow-kit/tools/inject-methodology.mjs:35`); a long note moved there can bring the file past the cap, and
+  the next reconcile soft-skips the orchestration pointer (spec entry-pointers, the two chained slots). Narrow fix: the
+  route sentence says a long note goes in a file of the user's own that a line beside the pointer names. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S19 spec review (round 1).
+- **ENSURE-OPS-ORCHESTRATION-COMMENTS-UNPINNED** — invariant: the module's own header and comments describe the
+  orchestration op it runs. Origin: spec orchestration-note says the `ensure-ops.mjs` header and orchestration comments
+  describe the rule, but no scenario reads them, so a header still naming `refreshReadme` and a still-canonical note
+  (`agent-workflow-kit/tools/ensure-ops.mjs:16-18,105-109`) stays green, where distribution-files S24 pins the same
+  header for the scripts rule. Narrow fix: S7 gains the header and its orchestration comments naming `readmeState` and
+  no `refreshReadme`, still-canonical or customized. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 spec review
+  (round 2).
+- **ORCHESTRATION-PARAGRAPH-MAY-NAME-THE-RETIRED-TOKEN** — invariant: no shipped orchestration paragraph says the op
+  answers a token it never answers. Origin: spec orchestration-note S7 sets every backticked token of the closed
+  vocabulary aside, `customized-preserved` included, and checks the token arm alone for that token, so a rewritten
+  `agent-workflow-kit/references/modes/upgrade.md:38` keeping a tail such as "→ `customized-preserved`" stays green.
+  Narrow fix: S7 and the contract's shipped-text bullet add that the orchestration paragraph names no
+  `customized-preserved`. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 spec review (last-round re-read).
+- **ORCHESTRATION-NOTE-S2-SLOT-ORDER-UNPINNED** — invariant: every slot inside an activity keeps its order through
+  the note's write. Origin: `agent-workflow-kit/tools/ensure-ops.test.mjs:547` compares `Object.entries(configOf(dir))`,
+  and `assert.deepEqual` does not compare key order inside nested objects, so a write that rebuilds each activity in
+  the kit's slot order stays green. Narrow fix: compare `JSON.stringify(configOf(dir))` with
+  `JSON.stringify({ _README: CANON_README, ...RECIPES })`. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 diff
+  review (round 1).

@@ -2,8 +2,8 @@
 // (docs/ai/orchestration.json). The three seed-if-missing ensures live in ensure-seeds.test.mjs.
 //
 // What these guard: the ops now WRITE into a deployed project, so every claim they print has to be
-// one the run proved. The seed is create-only, the refresh only touches a note the kit itself
-// shipped, and every fail-closed arm must write NOTHING and say so out loud.
+// one the run proved. The seed is create-only, the note write touches only the onboarding note,
+// and every fail-closed arm must write NOTHING and say so out loud.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import * as ensureOps from './ensure-ops.mjs';
 import { composeFailure, composeOutcome, ensureOrchestration } from './ensure-ops.mjs';
 import { CANON_README, CONFIG_REL, KNOWN_PRIOR_README } from './orchestration-config.mjs';
+import * as readme from './orchestration-readme.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const INDEX_REL = 'docs/ai/index.md';
@@ -510,7 +511,7 @@ describe('index ensure — the navigator is materialized, never preserved', () =
   });
 });
 
-describe('orchestration ensure — seed, or refresh ONLY a still-canonical note', () => {
+describe('orchestration ensure — seed, or write the onboarding note current', () => {
   it('seeds an absent config, then reports already-current without writing again', () => {
     withProject((dir) => {
       const seeded = ensureOrchestration({ cwd: dir, deps: {} });
@@ -527,29 +528,29 @@ describe('orchestration ensure — seed, or refresh ONLY a still-canonical note'
     });
   });
 
-  it('refreshes a note that still matches a PREVIOUS canonical, keeping every activity/slot', () => {
-    withProject((dir) => {
-      writeFileSync(
-        join(dir, CONFIG_REL),
-        `${JSON.stringify({ _README: KNOWN_PRIOR_README[0], 'plan-execution': { review: 'council' } }, null, 2)}\n`,
-      );
-      const r = ensureOrchestration({ cwd: dir, deps: {} });
-      assert.equal(r.token, 'note-refreshed');
-      const after = configOf(dir);
-      assert.equal(after._README, CANON_README);
-      assert.deepEqual(after['plan-execution'], { review: 'council' }, 'the user\'s own recipe survives the note refresh');
-    });
-  });
-
-  it('preserves a CUSTOMIZED note verbatim and writes nothing', () => {
-    withProject((dir) => {
-      const mine = { _README: 'my own note about this project', 'plan-authoring': { review: 'solo' } };
-      const bytes = `${JSON.stringify(mine, null, 2)}\n`;
-      writeFileSync(join(dir, CONFIG_REL), bytes);
-      const r = ensureOrchestration({ cwd: dir, deps: {} });
-      assert.equal(r.token, 'customized-preserved');
-      assert.equal(readFileSync(join(dir, CONFIG_REL), 'utf8'), bytes, 'byte-for-byte');
-    });
+  describe('spec:orchestration-note/S2 every note state, dry then plain, over a config holding recipes in two activities', () => {
+    const RECIPES = { 'plan-authoring': { review: 'solo' }, 'plan-execution': { review: 'council', execute: 'delegated' } }, KEPT = '(every recipe you set is kept)';
+    const others = (tree) => new Map([...tree].filter(([path]) => path !== CONFIG_REL)), JUDGED = /customi[sz]ed|preserved|verbatim|your own wording|edited|kept aside/i;
+    const STATES = [
+      ['differing', { _README: 'another note', ...RECIPES }, () => [`the current onboarding note would be written over a different one ${KEPT}; ${readme.NOTE_ROUTE}`, `the current onboarding note was written over a different one ${KEPT}; ${readme.NOTE_ROUTE}`]],
+      ['prior', { ...RECIPES, _README: KNOWN_PRIOR_README[0] }, () => [`the onboarding note matches a previous canonical and would be refreshed ${KEPT}`, `the onboarding note was refreshed to the current canonical ${KEPT}`]],
+      ['absent', RECIPES, () => [`the onboarding note is absent and would be written ${KEPT}`, `the onboarding note was absent and is now written ${KEPT}`]],
+    ];
+    for (const [state, config, lines] of STATES) {
+      it(`the ${state} note: the dry run writes nothing, the run writes the current note first and every recipe in order, a second run is already-current`, () => {
+        withProject((dir) => {
+          const [wouldBe, written] = lines().map((line) => `${CONFIG_REL}: ${line}`);
+          writeFileSync(join(dir, CONFIG_REL), `${JSON.stringify(config, null, 2)}\n`);
+          const before = snapshotFiles(dir), dry = ensureOrchestration({ cwd: dir, dryRun: true, deps: {} });
+          assert.deepEqual([dry.token, dry.lines, snapshotFiles(dir)], ['would-refresh-note', [wouldBe], before], 'the dry run leaves the whole tree byte-identical');
+          const r = ensureOrchestration({ cwd: dir, deps: {} }), after = snapshotFiles(dir);
+          assert.deepEqual([r.token, r.lines, Object.entries(configOf(dir)), others(after)], ['note-refreshed', [written], [['_README', CANON_README], ...Object.entries(RECIPES)], others(before)], 'only the config changes');
+          const again = ensureOrchestration({ cwd: dir, deps: {} });
+          assert.deepEqual([again.token, readFileSync(join(dir, CONFIG_REL))], ['already-current', after.get(CONFIG_REL)]);
+          assert.deepEqual([dry, r].flatMap((outcome) => outcome.lines).filter((line) => JUDGED.test(line)), []);
+        });
+      });
+    }
   });
 
   it('a MALFORMED config is preserved untouched, LOUD, and marked failed', () => {
@@ -586,8 +587,8 @@ describe('orchestration ensure — seed, or refresh ONLY a still-canonical note'
   });
 
   // The create-only race: the config appears between the probe and the write. The seed must NOT
-  // clobber it, and the op must report what the file now IS rather than the write it did not do.
-  it('a config that appears mid-seed survives, and the op reports the file it found', () => {
+  // publish over it; the op reads it once more and judges it as a present config.
+  it('spec:orchestration-note/S3 a config with a differing note that appears mid-seed ends with the note current and its recipe kept', () => {
     withProject((dir) => {
       const mine = `${JSON.stringify({ _README: 'mine', 'plan-authoring': { review: 'solo' } }, null, 2)}\n`;
       let probes = 0;
@@ -610,8 +611,7 @@ describe('orchestration ensure — seed, or refresh ONLY a still-canonical note'
       };
       writeFileSync(join(dir, CONFIG_REL), mine);
       const r = ensureOrchestration({ cwd: dir, deps });
-      assert.equal(readFileSync(join(dir, CONFIG_REL), 'utf8'), mine, 'the file that appeared is untouched');
-      assert.equal(r.token, 'customized-preserved', 'and the outcome describes THAT file, not the seed');
+      assert.deepEqual([r.token, Object.entries(configOf(dir))], ['note-refreshed', [['_README', CANON_README], ['plan-authoring', { review: 'solo' }]]], 'the file that appeared is judged as a present config, not the seed');
       assert.equal(publications, 1, 'the create-only publication was really attempted — this is the seed path, not the ordinary one');
     });
   });

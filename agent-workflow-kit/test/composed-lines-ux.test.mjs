@@ -148,8 +148,12 @@ const eacces = (msg = 'EACCES: permission denied') => Object.assign(new Error(ms
   prior();
   ensureFx('orchestration-would-refresh-note', ensureOrchestration({ cwd: dir, dryRun: true, deps: {} }));
   ensureFx('orchestration-note-refreshed', ensureOrchestration({ cwd: dir, deps: {} }));
-  writeFileSync(join(dir, CONFIG_REL), `${JSON.stringify({ _README: 'my own note' }, null, 2)}\n`);
-  ensureFx('orchestration-customized-preserved', ensureOrchestration({ cwd: dir, deps: {} }));
+  writeFileSync(join(dir, CONFIG_REL), `${JSON.stringify({ _README: 'another note' }, null, 2)}\n`);
+  ensureFx('orchestration-would-write-differing', ensureOrchestration({ cwd: dir, dryRun: true, deps: {} }));
+  ensureFx('orchestration-differing-written', ensureOrchestration({ cwd: dir, deps: {} }));
+  writeFileSync(join(dir, CONFIG_REL), '{}\n');
+  ensureFx('orchestration-would-write-absent', ensureOrchestration({ cwd: dir, dryRun: true, deps: {} }));
+  ensureFx('orchestration-absent-written', ensureOrchestration({ cwd: dir, deps: {} }));
   writeFileSync(join(dir, CONFIG_REL), '{ not json');
   ensureFx('orchestration-malformed-preserved', ensureOrchestration({ cwd: dir, deps: {} }));
 }
@@ -330,6 +334,10 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
 
 const unwitnessed = (witnesses) => Object.entries(witnesses).flatMap(([phrase, ids]) => ids.filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase))).map((id) => `${id}: a line carries "${phrase}"`));
 describe('spec:docs-navigator/S5 the kept-checker index lines are user-grade', () => { it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'], 'the navigator was put back byte for byte': ['index-kept-put-back'] }), [], 'each S5 fixture carries its witness')); });
+describe('spec:orchestration-note/S5 the note lines are user-grade', () => {
+  const [OVER, ROUTE] = ['written over a different one (every recipe you set is kept); ', 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines'];
+  it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ [`the current onboarding note would be ${OVER}${ROUTE}`]: ['orchestration-would-write-differing'], [`the current onboarding note was ${OVER}${ROUTE}`]: ['orchestration-differing-written'], 'the onboarding note is absent and would be written': ['orchestration-would-write-absent'], 'the onboarding note was absent and is now written': ['orchestration-absent-written'], 'the onboarding note is the current canonical': ['orchestration-already-current'], 'created from the canonical seed': ['orchestration-seeded'], 'refreshed to the current canonical': ['orchestration-note-refreshed'], 'would be refreshed': ['orchestration-would-refresh-note'] }), [], 'each S5 fixture carries its witness'));
+});
 describe('spec:distribution-files/S11 every line form of the specs and scripts ops is user-grade', () => {
   it('each S11 fixture carries the line it witnesses', () => assert.deepEqual([...fxUnwitnessed(SCRIPTS_FX), ...fxUnwitnessed(SPECS_FX)], [], 'each S11 fixture carries its witness'));
   it("no line of the scripts or specs op waits for the user's yes", () => assert.deepEqual([...SCRIPTS_FX, ...SPECS_FX].flatMap(([id]) => (SURFACES.find((s) => s.id === id)?.lines ?? []).filter((line) => line.includes("the user's yes")).map((line) => `${id}: ${line}`)), []));

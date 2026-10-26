@@ -11,10 +11,11 @@
 //
 // The invariants every op holds (they are what the tests pin):
 //   • CREATE-ONLY seeds. A seed never clobbers: the write is the link-based create-only arm of
-//     atomic-write.mjs, so a file that appears between the probe and the write survives byte-for-byte
-//     and the op says `already-present` rather than reporting a write it did not do.
-//   • The DECISION lives where it already lived. The orchestration `_README` refresh asks
-//     orchestration-config.mjs (refreshReadme / the known-prior canonical set) and writes through
+//     atomic-write.mjs, so the seed never publishes over a file that appears between the probe and the
+//     write: a template seed says `already-present`, and the orchestration op reads the file once more and
+//     judges it as a present config.
+//   • The DECISION lives where the note lives. The orchestration op asks orchestration-readme.mjs
+//     (readmeState / withCurrentReadme) and writes every note but the current one current through
 //     orchestration-write.mjs — the file's one writer. Nothing here re-derives either.
 //   • Every token names a state this run PROVED. `already-present` follows a probe; `skipped-no-node-evidence`
 //     names every Node probe that answered absent (the refusal the kit-script and spec-layer ensures
@@ -27,7 +28,8 @@
 import { readFileSync, lstatSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { CANON_README, CONFIG_REL, SEED_CONFIG, loadConfig, normalizeCanonical, refreshReadme } from './orchestration-config.mjs';
+import { CONFIG_REL, SEED_CONFIG, loadConfig } from './orchestration-config.mjs';
+import { NOTE_ROUTE, readmeState, withCurrentReadme } from './orchestration-readme.mjs';
 import { seedConfig, writeConfig } from './orchestration-write.mjs';
 import { lstatNoFollow, writeDocsAiFileAtomic } from './atomic-write.mjs';
 import { GATES_REL } from './gates-declaration.mjs';
@@ -102,29 +104,24 @@ export const probeSeedTarget = (abs, lstat) => {
 export const tmpNote = (rel, tmpLeftBehind) =>
   (tmpLeftBehind ? [`${rel}: the write stands, but its temp file could not be removed — delete it by hand: ${tmpLeftBehind}`] : []);
 
-// ── orchestration.json — seed, or refresh ONLY a still-canonical onboarding note ────────────────
+// ── orchestration.json — seed, or write the onboarding note current ──────────────────────────────
 
-// Which no-change outcome is it? refreshReadme returns `changed: false` for two very different trees:
-// a note that already IS the current canonical, and a note the user rewrote. Reporting both as
-// "already current" would claim the second is something it is not.
-const unchangedNoteToken = (config) =>
-  normalizeCanonical(config?._README ?? '') === normalizeCanonical(CANON_README) ? 'already-current' : 'customized-preserved';
+// The note is the kit's part of a shared file: every state but `current` is written current, every
+// activity and slot kept, and only a differing note's line names where a note of one's own goes.
+const NOTE_LINES = {
+  absent: ['the onboarding note is absent and would be written', 'the onboarding note was absent and is now written'],
+  prior: ['the onboarding note matches a previous canonical and would be refreshed', 'the onboarding note was refreshed to the current canonical'],
+  differing: ['the current onboarding note would be written over a different one', 'the current onboarding note was written over a different one'],
+};
 
 const applyNoteRefresh = (cwd, config, dryRun, deps) => {
-  const { config: next, changed } = refreshReadme(config);
-  if (!changed) {
-    const token = unchangedNoteToken(config);
-    return ok(
-      'orchestration',
-      token,
-      token === 'already-current'
-        ? `${CONFIG_REL}: the onboarding note is the current canonical — nothing written`
-        : `${CONFIG_REL}: the onboarding note carries your own wording — preserved verbatim, nothing written`,
-    );
-  }
-  if (dryRun) return ok('orchestration', 'would-refresh-note', `${CONFIG_REL}: the onboarding note matches a previous canonical and would be refreshed (every recipe you set is kept)`);
-  writeConfig(cwd, next, deps);
-  return ok('orchestration', 'note-refreshed', `${CONFIG_REL}: the onboarding note was refreshed to the current canonical (every recipe you set is kept)`);
+  const state = readmeState(config);
+  if (state === 'current') return ok('orchestration', 'already-current', `${CONFIG_REL}: the onboarding note is the current canonical — nothing written`);
+  const route = state === 'differing' ? `; ${NOTE_ROUTE}` : '';
+  const [wouldBe, written] = NOTE_LINES[state].map((line) => `${CONFIG_REL}: ${line} (every recipe you set is kept)${route}`);
+  if (dryRun) return ok('orchestration', 'would-refresh-note', wouldBe);
+  writeConfig(cwd, withCurrentReadme(config), deps);
+  return ok('orchestration', 'note-refreshed', written);
 };
 
 // A load failure is not automatically "malformed": a file that VANISHED between the reader's own
@@ -162,8 +159,8 @@ export const ensureOrchestration = ({ cwd, dryRun = false, deps = {} }) => {
   const { created, tmpLeftBehind } = seedConfig(cwd, SEED_CONFIG, deps);
   const seedNote = tmpNote(CONFIG_REL, tmpLeftBehind);
   if (created) return ok('orchestration', 'seeded', `${CONFIG_REL}: created from the canonical seed`, ...seedNote);
-  // It appeared between the probe and the write. Nothing was overwritten; read it once more and
-  // report what it now IS, rather than a claim about the file we did not write.
+  // It appeared between the probe and the write. The seed published nothing over it; read it once
+  // more and judge it as a present config, rather than claim the seed this run did not write.
   let second;
   try {
     second = loadConfig(cwd, read, lstat);

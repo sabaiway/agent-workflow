@@ -377,6 +377,22 @@ describe('orchestration-config — canonical refresh', () => {
   });
 });
 
+describe('spec:orchestration-note/S1 the judgement: readmeState, withCurrentReadme and NOTE_ROUTE', () => {
+  it('readmeState: absent, current (CRLF and trailing spaces too), every prior, and differing for any other value', async () => {
+    const { readmeState } = await import('./orchestration-readme.mjs');
+    assert.deepEqual([{}, { _README: CANON_README }, { _README: `${CANON_README}\r\n` }, { _README: `${CANON_README}   ` }].map(readmeState), ['absent', 'current', 'current', 'current']);
+    assert.deepEqual(KNOWN_PRIOR_README.map((prior) => readmeState({ _README: `${prior}\r\n` })), KNOWN_PRIOR_README.map(() => 'prior'));
+    assert.deepEqual(['another note', '', 42, null, ['x']].map((value) => readmeState({ _README: value })), Array(5).fill('differing'));
+  });
+  it('withCurrentReadme: CANON_README first, every other key with its value in its order, the input unchanged', async () => {
+    const { withCurrentReadme } = await import('./orchestration-readme.mjs');
+    const flow = { schema: FLOW_SCHEMA_VERSION, future: { bytes: true } }, input = { 'plan-execution': { review: 'council' }, _README: 'another note', flow, epic: { review: ['review-lens'] } }, before = structuredClone(input);
+    assert.deepEqual(Object.entries(withCurrentReadme(input)), [['_README', CANON_README], ['plan-execution', { review: 'council' }], ['flow', flow], ['epic', { review: ['review-lens'] }]]);
+    assert.deepEqual([Object.entries(input), Object.keys(withCurrentReadme({ flow }))], [Object.entries(before), ['_README', 'flow']], 'the input keeps its keys, values and order; an absent note is put first');
+  });
+  it('NOTE_ROUTE is the route text', async () => assert.equal((await import('./orchestration-readme.mjs')).NOTE_ROUTE, 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines around the orchestration pointer'));
+});
+
 // ── FLOW-TOLERATE — the versioned, uninterpreted `flow` top-level key (tolerate-only release) ──
 describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => {
   let cwd;
@@ -456,29 +472,29 @@ describe('orchestration-config — flow tolerate branch (FLOW-TOLERATE)', () => 
 });
 
 // The upgrade path: refreshReadme touches ONLY `_README`; a present flow subtree rides through.
-describe('orchestration-config — upgrade-path flow preservation (refreshReadme characterization)', () => {
+describe('spec:orchestration-note/S4 refreshReadme unchanged: upgrade-path flow preservation', () => {
   const FLOW = { schema: FLOW_SCHEMA_VERSION, future: { bytes: true } };
 
-  it('absent _README: seeded + changed, flow subtree JSON-value-equal through serialization', () => {
+  it('absent _README: seeded + changed, every other key in order, flow subtree JSON-value-equal through serialization', () => {
     const r = refreshReadme({ flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
     assert.equal(r.changed, true);
-    assert.equal(r.config._README, CANON_README);
+    assert.deepEqual([Object.keys(r.config), r.config._README], [['_README', 'flow', 'plan-authoring'], CANON_README]);
     assert.deepEqual(r.config.flow, FLOW);
     assert.deepEqual(JSON.parse(serializeConfig(r.config)).flow, FLOW);
   });
 
-  it('known-prior canonical _README: refreshed, flow subtree JSON-value-equal', () => {
-    const r = refreshReadme({ _README: KNOWN_PRIOR_README[0], flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
+  it('known-prior canonical _README: refreshed, every other key in order, flow subtree JSON-value-equal', () => {
+    const r = refreshReadme({ 'plan-authoring': { review: 'solo' }, _README: KNOWN_PRIOR_README[0], flow: structuredClone(FLOW) });
     assert.equal(r.changed, true);
-    assert.equal(r.config._README, CANON_README);
+    assert.deepEqual([Object.keys(r.config), r.config._README], [['_README', 'plan-authoring', 'flow'], CANON_README]);
     assert.deepEqual(r.config.flow, FLOW);
   });
 
-  it('customized _README: preserved verbatim, flow subtree JSON-value-equal', () => {
-    const r = refreshReadme({ _README: 'my own note', flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
-    assert.equal(r.changed, false);
-    assert.equal(r.config._README, 'my own note');
-    assert.deepEqual(r.config.flow, FLOW);
+  it('a current or a differing _README comes back with changed false, flow subtree JSON-value-equal', () => {
+    for (const note of [CANON_README, 'my own note']) {
+      const r = refreshReadme({ _README: note, flow: structuredClone(FLOW), 'plan-authoring': { review: 'solo' } });
+      assert.deepEqual([r.changed, r.config._README, r.config.flow], [false, note, FLOW]);
+    }
   });
 });
 

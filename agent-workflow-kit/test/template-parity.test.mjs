@@ -105,7 +105,7 @@ describe('orchestration.json seed — strict JSON valid against the kit schema',
   it('every activity/slot/recipe is valid, _README is the canonical note, no unknown keys', async () => {
     const { CANON_README } = await import('../tools/orchestration-config.mjs');
     const config = JSON.parse(raw);
-    assert.equal(config._README, CANON_README, 'the note is the canonical CANON_README — never a drifting retype (a drifted note reads as customized and is never refreshed)');
+    assert.equal(config._README, CANON_README, 'the note is the canonical CANON_README — never a drifting retype (a drifted seed note would be written over by every upgrade)');
     for (const [activity, slots] of Object.entries(config)) {
       if (activity === '_README') continue;
       assert.ok(ACTIVITIES[activity], `"${activity}" is a known activity`);
