@@ -100,11 +100,11 @@ describe('lens-region — render + pure reconcile policy', () => {
     assert.equal(normalizeLensBody(region.body), normalizeLensBody(FRAGMENT));
   });
 
-  it('a customized body → status custom, text unchanged byte-for-byte', () => {
+  it('a differing body → status custom, written with the current render at the SAME number', () => {
     const text = doc({ body: `${atNumber(PRE_E4, 6).replace('Fold by code, not prose', 'Fold by vibes')}\n` });
     const out = reconcileLensText(text, FRAGMENT, PRIORS);
     assert.equal(out.status, 'custom');
-    assert.equal(out.text, text);
+    assert.equal(out.text, doc({ body: `${renderLens(FRAGMENT, '6')}\n` }));
   });
 
   it('bytes outside the region are byte-identical after a refresh', () => {
@@ -218,11 +218,11 @@ describe('comms-region — canon, priors, pure reconcile (AD-061)', () => {
     assert.equal(second.text, first.text);
   });
 
-  it('a customized §2.5 → preserved byte-for-byte (custom)', () => {
+  it('a differing §2.5 → custom, written with the canon at the SAME number', () => {
     const text = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5).replace('Lead with the result', 'Bury the result')}\n` });
     const out = reconcileCommsText(text, COMMS_CANON, COMMS_PRIORS);
     assert.equal(out.status, 'custom');
-    assert.equal(out.text, text);
+    assert.equal(out.text, commsDoc({ body: `${renderComms(COMMS_CANON, '5')}\n` }));
   });
 
   it('renderComms binds the neutral heading to the file’s own number', () => {
@@ -266,12 +266,12 @@ describe('comms-region — CLI reconcile (the legacy-deployment upgrade acceptan
     assert.ok(logs.some((l) => l.includes('no "### 2.x. Communication')), logs.join('\n'));
   });
 
-  it('a customized §2.5 at the CLI → preserved verbatim + advisory note', async () => {
+  it('a differing §2.5 (and lens) at the CLI → written with the canon + the route line', async () => {
     const custom = commsDoc({ body: `${commsAt(COMMS_PRIORS[0], 5).replace('Lead with the result', 'Bury the result')}\n` });
     writeFileSync(target(), custom);
     assert.equal(await run(), 0);
-    assert.equal(readFileSync(target(), 'utf8'), custom);
-    assert.ok(logs.some((l) => l.includes('Communication section carries a custom edit')), logs.join('\n'));
+    assert.equal(readFileSync(target(), 'utf8'), commsDoc({ body: `${renderComms(COMMS_CANON, '5')}\n`, after: `\n${renderLens(FRAGMENT, '6')}\n` }));
+    assert.ok(logs.includes(OUTCOME_LINES.commsWritten?.()), logs.join('\n'));
   });
 
   it('an over-cap Communication refresh → loud refusal, exit 0, file preserved', async () => {
@@ -372,13 +372,13 @@ describe('lens-region — CLI reconcile (live engine read, outcomes, atomic writ
     assert.equal(readFileSync(target(), 'utf8'), refreshed, 'the re-run is a zero-diff no-op');
   });
 
-  it('preserves a customized body verbatim and prints the advisory note', async () => {
+  it('writes a differing body with the current canon and prints the route line', async () => {
     const custom = doc({ body: `${atNumber(PRE_E4, 6).replace('Fold by code', 'Fold by hand')}\n` });
     writeFileSync(target(), custom);
     assert.equal(await run(), 0);
-    assert.equal(readFileSync(target(), 'utf8'), custom);
-    assert.ok(logs.some((l) => l.includes('custom edit — preserved verbatim')), logs.join('\n'));
-    assert.ok(logs.some((l) => l.includes('note:')), 'the advisory note is printed');
+    assert.equal(readFileSync(target(), 'utf8'), doc({ body: `${renderLens(FRAGMENT, '6')}\n` }));
+    assert.ok(logs.includes(OUTCOME_LINES.lensWritten?.()), logs.join('\n'));
+    assert.ok(logs.every((l) => !l.includes('preserved')), 'no line promises a preserved body');
   });
 
   it('an absent or renamed heading → left untouched + advisory (engine never needed)', async () => {

@@ -290,10 +290,11 @@ const PAIR_FILES = ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', '
 const keepAsideClauses = (text) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)/).filter((clause) => !/an earlier release/i.test(clause) && ((/\b(?:keeps?|kept|keeping)\b.*\baside\b/i.test(clause) && /upgrade|\bedit/i.test(clause)) || /\.agent-workflow\/kept-aside\//.test(clause)));
 const hasLocalPart = (path) => path.split(/[\\/]/).some((segment) => segment.split('.').includes('local'));
 describe('spec:distribution-files/S26 the guide names the reserved names and channels, and no bundled name takes the local form', () => {
-  it("the opening paragraph names the section, which names the kit's names, its agent and hook files, the vendor skill copy, the seven channels and the name form with its two exceptions", () => {
+  it("the opening paragraph names the section, which names the kit's names, its agent and hook files, the vendor skill copy, the rules file's three kit sections, the eight channels and the name form with its two exceptions", () => {
     assert.ok(between(CONTRACTS, '# Setup contracts\n\n', '\n\n', 'contracts.md').includes('*Reserved names and channels*'), 'the opening paragraph names the section');
     const section = (CONTRACTS.split('\n## Reserved names and channels\n')[1] ?? '').replace(/\s+/g, ' ');
-    assert.deepEqual(["Every name the kit bundles and writes over on an upgrade is the kit's", 'written over by the next upgrade with no question and no copy kept', 'A declaration seeded once from a template', "is the user's own file", 'one of seven channels', '`.claude/agents/<name>.local.md`', '`.claude/hooks/agent-workflow-gates.mjs`', '`.claude/hooks/state-block-guard.mjs`', 'within a hook you wired', '`.claude/hooks/<name>.local.mjs`', '`review-lens-<model>-<effort>.md`', '`scripts/pre-commit.local`', 'go in `scripts/` under names of your own', 'a config a script reads', '`docs/ai/rules/local/<theme>.md`', '`docs/ai/vehicles.json`', 'No path segment of a file the kit bundles and places as its own has a dot-separated part exactly `local`', '`.claude/settings.local.json`', "which the agent writes only on the user's own request"].filter((words) => !section.includes(words)), []);
+    assert.deepEqual(["Every name the kit bundles and writes over on an upgrade is the kit's", 'written over by the next upgrade with no question and no copy kept', 'A declaration seeded once from a template', "is the user's own file", '`.claude/agents/<name>.local.md`', '`.claude/hooks/agent-workflow-gates.mjs`', '`.claude/hooks/state-block-guard.mjs`', 'within a hook you wired', '`.claude/hooks/<name>.local.mjs`', '`review-lens-<model>-<effort>.md`', '`scripts/pre-commit.local`', 'go in `scripts/` under names of your own', 'a config a script reads', '`docs/ai/rules/local/<theme>.md`', '`docs/ai/vehicles.json`', 'No path segment of a file the kit bundles and places as its own has a dot-separated part exactly `local`', '`.claude/settings.local.json`', "which the agent writes only on the user's own request"].filter((words) => !section.includes(words)), []);
+    assert.deepEqual(['one of eight channels', '`docs/ai/agent_rules.md` (Communication, Story sessions and the planning/review lens)', 'written current on every upgrade with no question and no copy kept', "under a ### heading of its own, titled unlike the kit's sections"].filter((words) => !section.includes(words)), [], "the rules file's three kit sections and the eighth channel");
     const copy = ['the vendor skill copy the kit installs into the three agent skill roots', 'when it matches a pin the kit shipped', 'beside a copy at a kit pin', "a copy matching none is the user's, left and named"];
     assert.deepEqual([...copy.filter((words) => !section.includes(words)), ...['jev', 'typesafe'].filter((word) => section.toLowerCase().includes(word))], [], 'the vendor skill copy, by neither jev word');
     assert.deepEqual([...PAIR_FILES, ...readdirSync(resolve(kitRoot, 'references', 'agents'))].filter((path) => !section.includes(path)).concat([/\bname:`? of its own\b/, /\bno review roster names\b/, /<name>\.local\.mjs`[^.;]*\b(?:you|the user) wires?\b/].filter((re) => !re.test(section)).map(String)), [], 'every kit script and bundled agent file written over, the four spec-layer pair files included; the sixth channel takes a name: of its own that no review roster names; the seventh is a hook the user wires');
@@ -306,6 +307,28 @@ describe('spec:distribution-files/S26 the guide names the reserved names and cha
     const named = [resolve(kitRoot, 'references'), resolve(kitRoot, '..', 'agent-workflow-memory', 'references')].flatMap((root) => listRegularFiles(root).map((file) => relative(root, file)));
     assert.deepEqual(named.filter(hasLocalPart), []);
     assert.deepEqual(['scripts/pre-commit.local', 'docs/ai/rules/local/x.md', 'x.local.test.mjs', 'localize.mjs'].map(hasLocalPart), [true, true, true, false]);
+  });
+});
+
+// The lens slices of the shipped text: a clause (split at ;, a sentence end and a · mark) pairing a section, body or edit with a word that keeps it promises a preserved section; the phrases a write keeps are spared.
+const REGION_ROUTE = "text of your own goes under a ### heading of its own, titled unlike the kit's sections";
+const wordOf = (words) => new RegExp(`(^|[^a-z])(?:${words})([^a-z]|$)`, 'i'), KEPT = [wordOf('sections?|body|bodies|edits?'), wordOf('preserved|verbatim|untouched|never overwritten|stays|as you wrote|left|kept')];
+const keptClauses = (text, spared = /^$/) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)|·/).map((clause) => clause.replace(/no copy kept|trailing blank lines kept/gi, ' ').trim())
+  .filter((clause) => KEPT.every((re) => re.test(clause)) && !spared.test(clause));
+describe('spec:rules-regions/S24 the shipped text names the differing body written and no preserved section', () => {
+  const lens = UPGRADE_RUNLIST.find((e) => e.id === 'lens'), handoff = readFileSync(resolve(kitRoot, 'references', 'shared', 'composition-handoff.md'), 'utf8');
+  const relays = { 'upgrade.md lens block': blockOf('lens'), 'upgrade.md step-4 relay': between(between(UPGRADE, '\n4. ', '\n5. ', 'step 4'), '**agent-rules lens**', '**full-flow offer**', 'step 4'), 'composition-handoff.md lens paragraph': between(handoff, '**Agent-rules lens', '\n\n', 'composition-handoff.md') };
+  const slices = { ...relays, 'upgrade.md lens row': rowsOf(step3()).find((row) => row.id === 'lens')?.line ?? '', 'upgrade.md step-8 relay': between(UPGRADE.slice(UPGRADE.indexOf('\n8. ')), '**agent-rules lens**', '**full-flow offer**', 'step 8'), 'run-list lens outcomes': lens.outcomes.join(' · '), 'contracts.md Reserved names and channels': CONTRACTS.split('\n## Reserved names and channels\n')[1] ?? '' };
+  it("upgrade.md's lens row and the run-list's lens outcomes name differing body written; the relays name it with the route, the doubled heading as nothing written", () => {
+    assert.deepEqual([lens.outcomes.includes('differing body written'), hasToken(slices['upgrade.md lens row'], 'differing body written')], [true, true]);
+    const checks = [[/differing body[^.;]*written/i, 'differing body written'], [new RegExp(escapeRe(REGION_ROUTE)), 'the route'], [/doubled heading[^.;]*nothing[^.;]*written/i, 'doubled heading, nothing written']];
+    assert.deepEqual(Object.entries(relays).flatMap(([name, text]) => checks.filter(([re]) => !re.test(text.replace(/\s+/g, ' '))).map(([, what]) => `${name}: ${what}`)), []);
+  });
+  it('no clause of the named slices pairs a section, body or edit with a word that keeps it', () => {
+    assert.deepEqual(Object.entries(slices).flatMap(([name, text]) => keptClauses(text, name === 'upgrade.md lens block' ? /renamed heading|as the offer/i : undefined).map((clause) => `${name}: ${clause}`)), []);
+  });
+  it('the judge catches a kept section and spares the phrases a write keeps', () => {
+    assert.deepEqual(['a custom edit is preserved verbatim', 'the section stays as you wrote it', 'the Communication-section outcome (refreshed / custom preserved + note)', 'written with no question and no copy kept', 'the section is written, trailing blank lines kept', 'the leftover body'].map((text) => keptClauses(text).length), [1, 1, 1, 0, 0, 0]);
   });
 });
 

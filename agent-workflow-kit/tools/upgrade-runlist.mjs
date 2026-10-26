@@ -78,7 +78,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
     [
       'refreshed',
       'already current',
-      'custom edit preserved',
+      'differing body written',
       'file absent',
       'engine too old',
       'over the line cap — refused',

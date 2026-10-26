@@ -9,7 +9,7 @@ import * as asyncFs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCli, OUTCOME_LINES as LENS_LINES } from './lens-region.mjs';
+import { runCli, renderLens, OUTCOME_LINES as LENS_LINES } from './lens-region.mjs';
 
 const loaded = await import('./rules-insert.mjs').catch(() => ({}));
 const failAbsent = () => {
@@ -31,7 +31,7 @@ const COMMUNICATION = ['### 2.5. Communication (user-facing messages)', 'Speak p
 const STORY = ['### 2.7. Story sessions', 'Keep sessions separate.', '', ''].join(LF);
 const PRESERVED = [
   '### 2.9. Local rules', 'Keep nine.', '',
-  '### 2.3. Planning, review & process-fidelity invariants', 'Local lens.', '', '',
+  renderLens(readFileSync(join(ENGINE, 'references', 'agent-rules-lens.md'), 'utf8'), '3'), '', '',
 ].join(LF);
 const TAIL = ['---', '', '## 3. Tail', 'Keep tail.', ''].join(LF);
 const TEMPLATE = HEADER + COMMUNICATION + STORY + TAIL;

@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-26 — AD-211: the kit sections of the agent rules file are written current with no question (kit 19.1.0 MINOR; engine 5.12.2 PATCH; memory 8.6.2 PATCH; both bridges unchanged)
+
+**The upgrade now writes the three kit sections of `docs/ai/agent_rules.md` current with no question**:
+Communication, Story sessions and the planning/review lens. A current section is left, a known earlier one refreshed,
+and any other body is written with the canon at the file's own heading number, no copy kept; its line names the route,
+text of your own goes under a ### heading of its own, titled unlike the kit's sections. Before, a body the kit did not
+know was preserved verbatim with a note. A section with doubled headings is left as it stands while the other sections
+are still reconciled; a link, any other node that is not a regular file and a file that is not valid UTF-8 write
+nothing. The engine's lens canon (5.12.2) and the memory template (8.6.2) stop
+promising a preserved edit. Contracts: rules-regions revision 9 (part lens-region), distribution-files revision 12,
+story-flow revision 5, gap-screen revision 2, session-rules revision 3. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-25 — AD-210: the Jev copy is written current with no question beside a copy at a kit pin; `jev-skill.earlier` retires (kit 19.0.0 MAJOR; memory 8.6.1, engine 5.12.1 and both bridges unchanged)
 
 **Beside a Jev skill copy at a kit pin, the kit now writes every other agent skill root current with no question**:

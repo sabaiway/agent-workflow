@@ -411,21 +411,21 @@ const composeLines = (table, key, args) => () => {
   return Array.isArray(out) ? out : [out];
 };
 const LENS_ARGS = {
-  targetAbsent: ['docs/ai/agent_rules.md'],
+  targetAbsent: ['docs/ai/agent_rules.md'], targetUndecodable: ['docs/ai/agent_rules.md'], targetNotRegular: ['docs/ai/agent_rules.md'],
   commsNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')],
   lensNoRegion: ['docs/ai/agent_rules.md'],
   commsCapRefused: ['docs/ai/agent_rules.md', 152, 150],
   lensCapRefused: ['docs/ai/agent_rules.md', 152, 150],
-  storyNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')], storyCurrent: [], storyCustom: [],
+  storyNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')], storyCurrent: [], storyWritten: [],
   storyCapRefused: ['docs/ai/agent_rules.md', 152, 150], storyRefreshed: [],
   regionHeadingTwice: ['### 2.x. Story sessions', 'docs/ai/agent_rules.md'],
   templateCanonStop: [],
   errorDetail: ['EACCES: permission denied, open /x'],
   engineStop: [caughtEngineErr({ rel: 'references/no-such-engine-file.md' })],
-  commsCurrent: [], commsCustom: [], capSkipNote: [], commsRefreshed: [],
-  engineTooOld: [], lensCurrent: [], lensCustom: [], lensRefreshed: [],
+  commsCurrent: [], commsWritten: [], capSkipNote: [], commsRefreshed: [],
+  engineTooOld: [], lensCurrent: [], lensWritten: [], lensRefreshed: [],
 };
-const LENS_ABNORMAL = new Set(['commsNoRegion', 'commsCapRefused', 'templateCanonStop', 'errorDetail', 'lensNoRegion', 'engineTooOld', 'engineStop', 'lensCapRefused', 'storyNoRegion', 'storyCapRefused', 'regionHeadingTwice']);
+const LENS_ABNORMAL = new Set(['targetUndecodable', 'targetNotRegular', 'commsNoRegion', 'commsCapRefused', 'templateCanonStop', 'errorDetail', 'lensNoRegion', 'engineTooOld', 'engineStop', 'lensCapRefused', 'storyNoRegion', 'storyCapRefused', 'regionHeadingTwice']);
 for (const [key, args] of Object.entries(LENS_ARGS)) {
   fx('lens-region', key, LENS_ABNORMAL.has(key), composeLines(OUTCOME_LINES, key, args));
 }
@@ -597,8 +597,8 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
       for (const line of composeLines(CLOSE_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
     }
   });
-  it('every lens-region outcome composer has a fixture', () => {
-    assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort());
+  it('every lens-region outcome composer has a fixture, no Custom composer left spec:rules-regions/S25', () => {
+    assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort()); for (const key of ['commsWritten', 'storyWritten', 'lensWritten']) assert.ok(composeLines(OUTCOME_LINES, key, [])()[0].includes("text of your own goes under a ### heading of its own, titled unlike the kit's sections"), key + ' names the route');
     for (const key of ['commsNoRegion', 'storyNoRegion']) assert.equal(OUTCOME_LINES[key](...LENS_ARGS[key])[1]?.split(String.fromCharCode(96))[1], LENS_ARGS[key][1], key);
     for (const key of ['commsNoRegion', 'storyNoRegion']) assert.doesNotMatch(OUTCOME_LINES[key](...LENS_ARGS[key]).join(' '), /undefined|<kit>|<project>/, key);
   });

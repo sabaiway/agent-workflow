@@ -4,6 +4,12 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.6.2 — the rules template's lens section carries the engine's current intro (AD-211)
+
+The planning/review lens section of `references/templates/agent_rules.md` carries the intro of engine 5.12.2: the
+section is written current on every upgrade, and text of your own goes under a ### heading of its own, titled unlike the
+kit's sections. It no longer says a custom edit is preserved. PATCH: template text only.
+
 ## 8.6.1 — the install note for an older ADR layout names the next upgrade, never a migration command (AD-204)
 
 **The note `npx @sabaiway/agent-workflow-memory@latest init` prints when it updates an install from below 2.0.0** no longer tells

@@ -4,6 +4,14 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.12.2 — the lens canon says its section is written current on every upgrade and where your own text goes (AD-211)
+
+`references/agent-rules-lens.md`: the intro no longer says a custom edit is preserved verbatim, but flagged. It says the
+section is rendered from the canon and written current on every upgrade, and that text of your own goes under a ###
+heading of its own, titled unlike the kit's sections. The outgoing body joins `references/agent-rules-lens-priors.md`,
+so a deployed copy of it refreshes on upgrade; the store's header, the README and SKILL.md say any other body is
+written with the current canon. PATCH: canon text only.
+
 ## 5.12.1 — the spec canon hands where code, tests and specs go to the project-layout rules (AD-191)
 
 `references/specs.md`: the bullet **Spec drives modular, feature-sliced architecture** keeps its name, the drill-down

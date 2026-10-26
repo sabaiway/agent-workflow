@@ -70,8 +70,8 @@ the canonical methodology reference on disk:
   `docs/ai/agent_rules.md` region and refreshes on upgrade — a canon wording change ships as an
   engine-only release.
 - [`references/agent-rules-lens-priors.md`](references/agent-rules-lens-priors.md) — the
-  **append-only store** of previously-shipped lens bodies; the kit refreshes a deployed region only
-  when it matches a known body (a customized region is preserved verbatim).
+  **append-only store** of previously-shipped lens bodies; the kit refreshes a deployed region that
+  matches a known body, and any other body is written with the current canon, none preserved.
 
 ## What this package ships
 

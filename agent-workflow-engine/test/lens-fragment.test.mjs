@@ -101,16 +101,19 @@ const DISCIPLINE_TOKENS = [
   'never a licence',
 ];
 
-// The pre-E4 intro line (the outgoing body differs from the current fragment ONLY by the
-// Decision-7 provenance clause in the intro) — lets the test compute the exact outgoing body
-// and pin its priors membership without relying on git history (CI checkouts may be shallow).
-const CURRENT_INTRO =
+// The intro lines, pinned so the test computes each prior exactly without git history (CI
+// checkouts may be shallow). This release's delta is the intro alone: the outgoing intro promised
+// a preserved edit; the current one says the section is written current and names the route,
+// in the words of the kit's REGION_ROUTE (the engine knows nobody, so the words are copied here).
+const INTRO_LEAD = 'Apply these when authoring a plan, reviewing, folding a finding, or editing code';
+const REGION_ROUTE = "text of your own goes under a ### heading of its own, titled unlike the kit's sections";
+const OUTGOING_INTRO =
   "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon. This section is rendered from that canon and refreshed on upgrade; a custom edit is preserved verbatim, but flagged.)";
 const PRE_E4_INTRO =
   "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)";
 
-// This release's delta: the four review bullets move to the spec review. The previous release's line of
-// each is pinned by its sha256, so the outgoing body is checkable without git history.
+// The release before this one moved the four review bullets to the spec review. The line of each
+// before that move is pinned by its sha256, so that earlier prior is checkable without git history.
 const OUTGOING_BULLETS = {
   '- **Finding scope': '6c87401b5fb7b941ec3bdabd3f001d8837b82bed71a3c2ae5b62682b3727b063',
   '- **Spec-first.**': '63103e3751328213e7eec5d8bcc01d354469a58850054fe5e413525692ac11ac',
@@ -120,6 +123,8 @@ const OUTGOING_BULLETS = {
 const PLAN_REVIEW_RE = /plan[- ]review|reviews? (a|the) plan/i;
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 const leadOf = (line) => Object.keys(OUTGOING_BULLETS).find((lead) => line.startsWith(lead));
+const isIntro = (line) => line.startsWith(INTRO_LEAD);
+const PRIORS_HEADER = priorsText.slice(0, priorsText.search(/^<!-- prior/m)).replace(/\s+/g, ' ');
 
 describe('agent-rules-lens fragment — canon presence', () => {
   it('starts with the number-neutral heading', () => {
@@ -133,8 +138,18 @@ describe('agent-rules-lens fragment — canon presence', () => {
     }
   });
 
-  it('carries the Decision-7 provenance intro (rendered-from-canon honesty)', () => {
-    assert.ok(fragment.includes(CURRENT_INTRO), 'the fragment intro must carry the provenance clause verbatim');
+  it('spec:rules-regions/S23 the intro says the section is written current on every upgrade and names the route, never a preserved edit', () => {
+    const intros = fragment.split('\n').filter(isIntro);
+    assert.equal(intros.length, 1, 'the fragment carries one intro line');
+    assert.ok(intros[0].includes('This section is rendered from that canon'), 'the intro keeps the Decision-7 provenance clause');
+    assert.ok(/written current on every upgrade/i.test(intros[0]), 'S23: the intro says the section is written current on every upgrade');
+    assert.ok(intros[0].includes(REGION_ROUTE), "S23: the intro names the route in REGION_ROUTE's words");
+    assert.ok(!/preserved|custom edit/i.test(intros[0]), 'S23: the intro no longer says a custom edit is preserved');
+  });
+
+  it("S23: the prior store's header says any other body is written with the current canon", () => {
+    assert.ok(PRIORS_HEADER.includes('any other body is written with the current canon'), 'S23: the header names the write');
+    assert.ok(!/preserved verbatim/i.test(PRIORS_HEADER), 'S23: the header no longer promises a preserved region');
   });
 
   it("spec:story-flow/S4 the four review bullets name the spec review, the heavy-review bullet has it read the plan's ledger in the same rounds, and no bullet gives the plan a review of its own", () => {
@@ -184,16 +199,25 @@ describe('agent-rules-lens-priors — append-only prior store shape', () => {
   });
 
   it('the OUTGOING body of the previous release IS the newest entry — line by line', () => {
-    // The newest prior equals the fragment on every line but this release's delta, which carries the
-    // pinned outgoing lines. This pin moves with every canon release: it names THIS release's delta.
+    // The newest prior equals the fragment on every line but this release's delta, the intro line,
+    // which is the outgoing one. This pin moves with every canon release: it names THIS release's delta.
+    const lines = normalize(fragment).split('\n');
+    const newest = priors[priors.length - 1].split('\n');
+    assert.equal(newest.length, lines.length, "S23: the newest prior has the fragment's line count");
+    for (const [index, line] of lines.entries()) {
+      assert.equal(newest[index], isIntro(line) ? OUTGOING_INTRO : line, `S23: the newest prior's line ${index + 1}`);
+    }
+  });
+
+  it('the body before the spec-review move stays a prior, its four review bullets the pinned outgoing ones', () => {
+    // story-flow S4: the released body that move replaced stays a prior, now second newest.
     const lines = normalize(fragment).split('\n');
     for (const line of lines.filter(leadOf)) assert.notEqual(sha256(line), OUTGOING_BULLETS[leadOf(line)], `S4: the ${leadOf(line)}** bullet is still the outgoing one`);
-    const newest = priors[priors.length - 1].split('\n');
-    assert.ok(priors[priors.length - 1].includes(CURRENT_INTRO), 'the outgoing body carries the provenance intro (post-E4)');
-    assert.equal(newest.length, lines.length, 'S4: the newest prior has the fragment\'s line count');
+    const earlier = priors[priors.length - 2].split('\n');
+    assert.equal(earlier.length, lines.length, "S4: that prior has the fragment's line count");
     for (const [index, line] of lines.entries()) {
-      if (leadOf(line)) assert.equal(sha256(newest[index]), OUTGOING_BULLETS[leadOf(line)], `S4: the newest prior's ${leadOf(line)}** bullet`);
-      else assert.equal(newest[index], line, `S4: the newest prior's line ${index + 1}`);
+      if (leadOf(line)) assert.equal(sha256(earlier[index]), OUTGOING_BULLETS[leadOf(line)], `S4: that prior's ${leadOf(line)}** bullet`);
+      else assert.equal(earlier[index], isIntro(line) ? OUTGOING_INTRO : line, `S4: that prior's line ${index + 1}`);
     }
   });
 

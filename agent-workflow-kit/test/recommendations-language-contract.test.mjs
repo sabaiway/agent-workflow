@@ -390,7 +390,7 @@ const PROFILE_GAP_NOTE_LITERALS = Object.freeze([
   'runs `node ${CLAUDE_SKILL_DIR}/tools/tier-preview.mjs --decline --cwd <project-root>` only when the user refuses EVERY item the tier preview then reports offered',
   'a declined item leaves the screen until a lineage step changes the profile',
   'An undecidable entry is a stated skip naming its reason',
-  "a prior → the upgrade's `lens` reconcile; an absent region → the insert; a customized region → a hand edit only",
+  "a prior or any other body → the upgrade's `lens` reconcile, which writes the region current or names the line cap that refused the write; an absent region → the insert",
   'rewrites `docs/ai/orchestration.json` in canonical form with the `_README` note',
   'the PRIVILEGED `docs/ai/gates.json`',
 ]);
@@ -403,7 +403,7 @@ describe('recommendations contract — the profile-gap posture note (spec:gap-sc
     assert.equal(notes.split(PROFILE_GAP_NOTE_START).length - 1, 1, 'exactly one profile-gap bullet');
     for (const literal of PROFILE_GAP_NOTE_LITERALS) assert.ok(note.includes(literal), `the profile-gap note states: ${literal}`);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
-    assert.doesNotMatch(note, /<kit>/, 'a kit path is written in the ${CLAUDE_SKILL_DIR} form');
+    for (const [pattern, why] of [[/<kit>/, 'a kit path is written in the ${CLAUDE_SKILL_DIR} form'], [/hand edit|lens preserves/i, 'no remedy says a hand edit or that the lens preserves a region']]) assert.doesNotMatch(note, pattern, why);
   });
 });
 
@@ -412,7 +412,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40108, '3854bb6af4bbc90de439d4aae4965915d7812b4de45bd02c82e6a7fad7c034ab'], 'the bytes after distribution-files story S15 (the kit agent files)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40199, 'cea68fa8279b0dd204b871c1133d3804a7fe96f415f7e55e24abe91a52ece1bc'], 'the bytes after distribution-files story S7 (the rules file sections)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);

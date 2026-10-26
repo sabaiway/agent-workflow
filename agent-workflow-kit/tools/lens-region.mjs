@@ -2,9 +2,10 @@
 // The only mutation of a deployed rules file the composition root runs WITHOUT a consent ask.
 import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
-import { RULES_REGIONS, extractRegionBy, readTemplateSpan, frontmatterMaxLines, exceedsCap, buildInsertPreview } from './rules-regions.mjs';
+import { RULES_REGIONS, extractRegionBy, readTemplateSpan, frontmatterMaxLines, exceedsCap, buildInsertPreview, decodeUtf8Strict } from './rules-regions.mjs';
 
 export { frontmatterMaxLines } from './rules-regions.mjs';
+export const REGION_ROUTE = "text of your own goes under a ### heading of its own, titled unlike the kit's sections";
 const [COMMUNICATION, STORY, LENS] = RULES_REGIONS;
 export const LENS_HEADING_RE = LENS.headingRe;
 export const COMMS_HEADING_RE = COMMUNICATION.headingRe;
@@ -88,13 +89,13 @@ export const replaceLensRegion = (text, region, renderedBody) => {
 const reconcileRegionText = (text, fragment, priors, { extract, normalize, render }) => {
   const region = extract(text);
   if (!region.found) return { status: 'no-region', text };
-  if (region.count > SINGLE_HEADING) return { status: 'custom', text };
+  if (region.count > SINGLE_HEADING) return { status: 'doubled', text };
   const current = normalize(region.body);
   const canon = normalize(fragment);
   if (current === canon) return { status: 'current', text };
   const known = priors.map((prior) => normalize(prior));
-  if (!known.includes(current)) return { status: 'custom', text };
-  return { status: 'refreshed', text: replaceLensRegion(text, region, render(fragment, region.number)) };
+  const status = known.includes(current) ? 'refreshed' : 'custom';
+  return { status, text: replaceLensRegion(text, region, render(fragment, region.number)) };
 };
 export const reconcileLensText = (text, fragment, priors) =>
   reconcileRegionText(text, fragment, priors, { extract: extractLensRegion, normalize: normalizeLensBody, render: renderLens });
@@ -104,20 +105,22 @@ export const reconcileStoryText = (text, fragment, priors) =>
   reconcileRegionText(text, fragment, priors, { extract: extractStoryRegion, normalize: normalizeStoryBody, render: renderStory });
 const RECONCILERS = Object.freeze({ communication: reconcileCommsText, 'story-sessions': reconcileStoryText, lens: reconcileLensText });
 
+const writtenLine = (section) => `[lens-region] the ${section} differed from the current canon ${EM_DASH} written with it; ${REGION_ROUTE}.`;
+const capRefusedLine = (section, target, count, cap, capWord = 'cap') => `[lens-region] refused ${EM_DASH} writing the current ${section} would push ${oneLine(target)} to ${count} lines (${capWord} ${cap}); trim the file and re-run. The ${section} was not changed.`;
+
 export const OUTCOME_LINES = Object.freeze({
   errorDetail,
   targetAbsent: (target) => `[lens-region] ${oneLine(target)} is absent ${EM_DASH} skipped (nothing to update; the file is seeded at bootstrap).`,
+  targetNotRegular: (target) => `[lens-region] ${oneLine(target)} is a link or not a regular file ${EM_DASH} left as it stands; nothing written.`,
+  targetUndecodable: (target) => `[lens-region] ${oneLine(target)} is not valid UTF-8 ${EM_DASH} nothing written; fix its encoding and re-run.`,
   commsNoRegion: (target, command) => [
     `[lens-region] no "${COMMUNICATION.label}" section in ${spanFree(target)} ${EM_DASH} left untouched.`,
     ...insertNote(command),
   ],
   commsCurrent: () => `[lens-region] Communication section already current ${EM_DASH} nothing to do (zero-diff).`,
-  commsCustom: () => [
-    `[lens-region] Communication section carries a custom edit ${EM_DASH} preserved verbatim.`,
-    `[lens-region] note: the canonical Communication section has changed since this section was edited ${EM_DASH} compare it with the current template when convenient; your wording is never overwritten.`,
-  ],
+  commsWritten: () => writtenLine('Communication section'),
   capSkipNote: () => '[lens-region] note: no `maxLines` frontmatter on the target ' + EM_DASH + ' the line-cap guard is skipped.',
-  commsCapRefused: (target, count, cap) => `[lens-region] refused ${EM_DASH} refreshing the Communication section would push ${oneLine(target)} to ${count} lines (cap ${cap}); trim the file and re-run. The Communication section was not changed.`,
+  commsCapRefused: (target, count, cap) => capRefusedLine('Communication section', target, count, cap),
   commsRefreshed: () => '[lens-region] refreshed the Communication section to the current canon.',
   templateCanonStop: () => `[lens-region] STOP ${EM_DASH} the kit's bundled agent_rules.md template canon is unreadable; reinstall the kit: npx @sabaiway/agent-workflow-kit@latest init`,
   storyNoRegion: (target, command) => [
@@ -125,15 +128,12 @@ export const OUTCOME_LINES = Object.freeze({
     ...insertNote(command),
   ],
   storyCurrent: () => `[lens-region] Story sessions section already current ${EM_DASH} nothing to do (zero-diff).`,
-  storyCustom: () => [
-    `[lens-region] Story sessions section carries a custom edit ${EM_DASH} preserved verbatim.`,
-    `[lens-region] note: this body differs from the bundled template's Story sessions section ${EM_DASH} compare the two when convenient; your wording is never overwritten.`,
-  ],
-  storyCapRefused: (target, count, cap) => `[lens-region] refused ${EM_DASH} refreshing the Story sessions section would push ${oneLine(target)} to ${count} lines (maxLines ${cap}); trim the file and re-run. The Story sessions section was not changed.`,
+  storyWritten: () => writtenLine('Story sessions section'),
+  storyCapRefused: (target, count, cap) => capRefusedLine('Story sessions section', target, count, cap, 'maxLines'),
   storyRefreshed: () => '[lens-region] refreshed the Story sessions section to the current canon.',
   regionHeadingTwice: (label, target) => [
-    `[lens-region] more than one "${oneLine(label)}" section in ${oneLine(target)} ${EM_DASH} preserved verbatim.`,
-    '[lens-region] note: give the sections distinct headings before retrying; their wording was not changed.',
+    `[lens-region] more than one "${oneLine(label)}" section in ${oneLine(target)} ${EM_DASH} none of them was changed.`,
+    "[lens-region] note: retitle every one of these headings but one so it no longer opens with the section's title words, then re-run.",
   ],
   lensNoRegion: (target) => [
     `[lens-region] no "${LENS.label}" section in ${oneLine(target)} ${EM_DASH} left untouched.`,
@@ -145,11 +145,8 @@ export const OUTCOME_LINES = Object.freeze({
     return err?.reason ? [human, errorDetail(err.reason)] : [human];
   },
   lensCurrent: () => `[lens-region] lens section already current ${EM_DASH} nothing to do (zero-diff).`,
-  lensCustom: () => [
-    `[lens-region] lens section carries a custom edit ${EM_DASH} preserved verbatim.`,
-    `[lens-region] note: the canonical planning/review lens has changed since this section was edited ${EM_DASH} compare it with the project methodology canon when convenient; your wording is never overwritten.`,
-  ],
-  lensCapRefused: (target, count, cap) => `[lens-region] refused ${EM_DASH} refreshing would push ${oneLine(target)} to ${count} lines (cap ${cap}); trim the file and re-run. The planning/review lens section was not changed.`,
+  lensWritten: () => writtenLine('planning/review lens section'),
+  lensCapRefused: (target, count, cap) => capRefusedLine('planning/review lens section', target, count, cap),
   lensRefreshed: () => '[lens-region] refreshed the planning/review lens section to the current canon.',
 });
 
@@ -195,16 +192,28 @@ export const runCli = async (argv, deps = {}) => {
   const targetPath = resolve(argv[1]);
   const served = targetPath.endsWith(sep + SERVED_TARGET.join(sep));
   const command = served ? buildInsertPreview(resolve(targetPath, '..', '..', '..')) : '';
-  const text = await (async () => {
+  const stat = await fs.lstat(targetPath).catch((err) => {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  });
+  if (stat === null) {
+    log(OUTCOME_LINES.targetAbsent(argv[1]));
+    return EXIT_OK;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    log(OUTCOME_LINES.targetNotRegular(argv[1]));
+    return EXIT_OK;
+  }
+  const bytes = await fs.readFile(targetPath);
+  const text = (() => {
     try {
-      return await fs.readFile(targetPath, UTF8);
-    } catch (err) {
-      if (err.code === 'ENOENT') return null;
-      throw err;
+      return decodeUtf8Strict(bytes);
+    } catch {
+      return null;
     }
   })();
   if (text === null) {
-    log(OUTCOME_LINES.targetAbsent(argv[1]));
+    log(OUTCOME_LINES.targetUndecodable(argv[1]));
     return EXIT_OK;
   }
   const templatePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'references', 'templates', 'agent_rules.md');
@@ -255,10 +264,6 @@ export const runCli = async (argv, deps = {}) => {
       log(OUTCOME_LINES[`${prefix}Current`]());
       return state;
     }
-    if (result.status === 'custom') {
-      for (const line of OUTCOME_LINES[`${prefix}Custom`]()) log(line);
-      return state;
-    }
     const cap = frontmatterMaxLines(state.text);
     const decision = exceedsCap(result.text, cap);
     if (decision.skipped) log(OUTCOME_LINES.capSkipNote());
@@ -267,7 +272,7 @@ export const runCli = async (argv, deps = {}) => {
       return state;
     }
     await atomicWrite(result.text);
-    log(OUTCOME_LINES[`${prefix}Refreshed`]());
+    log(OUTCOME_LINES[`${prefix}${result.status === 'custom' ? 'Written' : 'Refreshed'}`]());
     return { text: result.text, code: EXIT_OK };
   }, Promise.resolve({ text, code: EXIT_OK }));
   return outcome.code;

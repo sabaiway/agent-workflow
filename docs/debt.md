@@ -146,10 +146,36 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   fix shipped in the S1 diff review round 1: the three sentences, red first in `story-flow-canon.test.mjs` (S1).
   Proof: that cell. Residual exposure, not live: a later edit of another field (Epic, Spec, Plan) drifting from
   flow-steps; the S1 cell checks field labels only. Raised by the review lens and codex (2026-10-04).
-- **STORY-FLOW-S6-EACH-PRIOR-REFRESHES** — `agent-workflow-kit/tools/rules-regions.test.mjs:324-343` pins the
-  story prior count and prior 1's bytes, never that a rules file on each prior refreshes; a reconcile that read
-  only `priors[0]` (`lens-region.mjs:95`) stays green. Narrow fix: for every story prior, `reconcileStoryText`
-  returns `refreshed` with the template body. Raised by codex and the review lens at the S1 diff review (2026-10-04).
+- **BRIDGE-SETTINGS-COMMENT-NAMES-THE-RETIRED-LENS-POSTURE** — invariant: no comment names a posture the kit has
+  retired. Origin: `agent-workflow-kit/tools/bridge-settings.mjs:150` likens a preserved settings key to "the
+  lens-region custom-edit posture", which story S7 of DISTRIBUTION-FILES-STAY-CURRENT retires (a differing kit
+  section is written current). Comment-only, no run-time effect. Narrow fix: drop the parenthetical. Raised by the
+  S7 spec review.
+- **LENS-RELAYS-NAME-NO-TARGET-REFUSAL** — invariant: every outcome line the lens reconcile prints has its relay
+  wording. Origin: `agent-workflow-kit/references/modes/upgrade.md:18`, `:78-92`, `:117`,
+  `agent-workflow-kit/tools/upgrade-runlist.mjs:78-87` and `agent-workflow-kit/references/shared/composition-handoff.md:53-55`
+  name no outcome for the `targetNotRegular` and `targetUndecodable` lines (`lens-region.mjs:114-115`) story S7 added.
+  Narrow fix: add `a link or not a regular file — nothing written` and `not valid UTF-8 — nothing written` to those
+  lists (the `upgrade.md` byte pin and the read-set budget move with it). Residual exposure, not live: the agent
+  relays the tool's own printed line, which names the state. Raised by the S7 copy lens.
+- **LENS-DOUBLED-CELL-PROVES-NO-LATER-WRITE** — invariant: a doubled heading withholds the write for its own section
+  only. Origin: `agent-workflow-kit/tools/lens-region.test/story-sessions.test.mjs:215-227` plants every other section
+  current, so a reconcile that stopped after a doubled section stays green. Narrow fix: in the Communication-doubled
+  cell plant `CUSTOM_STORY`, assert the story written with the canon and the logs `[...regionHeadingTwice,
+  storyWritten, lensCurrent]`. Residual exposure, not live: `lens-region.mjs:250-253` returns the state and the reduce
+  goes on. Raised by the S7 diff review (review lens, round 1).
+- **LENS-HEADING-MATCHER-STOPS-BEFORE-ITS-LABEL** — invariant: the title words a line names are the words the
+  matcher reads. Origin: `agent-workflow-kit/tools/rules-regions.mjs:75` matches `Planning, review &
+  process-fidelity` while the label (`:76`) and the doubled note (`lens-region.mjs:134-137`) name `... invariants`; a
+  duplicate retitled `### 2.9. Planning, review & process-fidelity (project additions)` stays doubled. Narrow fix:
+  extend the lens `headingRe` to `process-fidelity invariants` (every prior and both templates carry it) with the
+  part lens-region's matcher clause. Residual exposure, not live: a retitle away from the opening words clears it.
+  Raised by the S7 diff review (review lens, round 1).
+- **LENS-REGION-TEST-COMMENT-NAMES-THE-PRESERVE-POSTURE** — invariant: no comment states the retired preserve
+  posture. Origin: `agent-workflow-kit/tools/lens-region.test.mjs:182-184` says a region matching no prior never
+  reaches the projects running it; since story S7 it is written, only its line differs. Comment-only, the suite is not
+  shipped (`agent-workflow-kit/package.json` files). Narrow fix: "Without its own prior entry the region is still
+  written, but its line says it differed rather than refreshed." Raised by the S7 diff review (review lens, round 1).
 - **STORY-FLOW-S5-DOCS-PATH-SELF-CHECK** — `agent-workflow-kit/test/template-region-parity.test.mjs:180` proves
   "reads nothing under docs/ai" only by its own source lacking the literal `docs/ai`; a path built from segments
   passes. Narrow fix: refuse any quoted `docs` path segment in the source. Raised by the review lens (2026-10-04).
@@ -802,6 +828,11 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 ## Closed
 
+- **STORY-FLOW-S6-EACH-PRIOR-REFRESHES** — invariant: a rules file on each story prior refreshes. Origin:
+  `agent-workflow-kit/tools/rules-regions.test.mjs:324-343` pinned the prior count and prior 1's bytes only. Raised
+  by codex and the review lens at the story-flow S1 diff review (2026-10-04). Closed by story S7 of
+  DISTRIBUTION-FILES-STAY-CURRENT: `lens-region.test/differing-body.test.mjs` judges every Communication and Story
+  sessions prior `refreshed` with the canon (rules-regions S22).
 - **INIT-PROJECT-S66-REFRESH-CELLS-NAME-NO-ADR-STATE** — invariant: every cell of init-project S66 that expects the
   token `refreshed` names the ADR files' state that token needs. Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S9
   spec review (lens, the re-read of round 2). Closed in kit 14.46.0 (AD-198): S66 retired with S65-S70; the scripts

@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCli, OUTCOME_LINES, frontmatterMaxLines } from '../lens-region.mjs';
+import { runCli, OUTCOME_LINES, frontmatterMaxLines, renderLens } from '../lens-region.mjs';
 import { PROFILE_GAPS } from '../profile-gaps.mjs';
 
 const lens = await import('../lens-region.mjs').catch(() => ({}));
@@ -52,6 +52,12 @@ const PRIOR_CANON = [STORY_LABEL, PRIOR_BODY].join(LF);
 const PRIOR_REGION = [OWN_HEADING, PRIOR_BODY].join(LF);
 const CUSTOM_STORY = [STORY_HEADING, '  Keep my wording and spacing.  ', '', 'My local rule.'].join(LF);
 const CUSTOM_LENS = ['### 2.6. Planning, review & process-fidelity invariants', 'My local lens policy.'].join(LF);
+const LENS_CURRENT = renderLens(await fs.readFile(join(ENGINE_DIR, 'references', 'agent-rules-lens.md'), 'utf8'), '6');
+const EM_DASH = String.fromCharCode(8212);
+const doubledLines = (label, target) => [
+  '[lens-region] more than one "' + label + '" section in ' + target + ' ' + EM_DASH + ' none of them was changed.',
+  "[lens-region] note: retitle every one of these headings but one so it no longer opens with the section's title words, then re-run.",
+];
 const TEMPLATE = [COMMS_REGION, '', STORY_REGION, '', '---', ''].join(LF);
 const REINSTALL = 'npx @sabaiway/agent-workflow-kit@latest init';
 const STORY_CURRENT_RE = /story[- ]sessions.*current/i;
@@ -65,7 +71,7 @@ const CONSENT_RE = /(^|[^a-z])yes([^a-z]|$)/i;
 const DOUBLED_REGIONS = [
   { name: 'Communication', region: COMMS_REGION, label: COMMS_LABEL },
   { name: 'story sessions', region: STORY_REGION, label: STORY_LABEL },
-  { name: 'lens', region: CUSTOM_LENS, label: LENS_LABEL },
+  { name: 'lens', region: LENS_CURRENT, label: LENS_LABEL },
 ];
 const WIDE_CAP = 150;
 const OWN_COMMS_NUMBER = '4';
@@ -167,15 +173,14 @@ describe('story-sessions verdicts spec:rules-regions/S13', () => {
     assert.ok(result.logs.includes(composeOutcome('storyCurrent')));
   });
 
-  it('preserves a custom story body byte-for-byte with its note', async (context) => {
-    const text = createDocument([COMMS_REGION, CUSTOM_STORY]).split(LF).join(CRLF);
-    const fixture = await createFixture(context, text);
+  it('writes a differing story body with the canon at its own number, CRLF kept, with its written line', async (context) => {
+    const crlf = (blocks) => createDocument(blocks, WIDE_CAP).split(LF).join(CRLF);
+    const fixture = await createFixture(context, crlf([COMMS_REGION, CUSTOM_STORY, LENS_CURRENT]));
     const result = await reconcileFixture(fixture);
     assert.equal(result.code, EXIT_OK);
-    await assertUnchanged(fixture);
-    const lines = composeOutcome('storyCustom');
-    assertEmitted(result.logs, lines);
-    assert.ok(lines.some((line) => NOTE_RE.test(line)), 'custom preservation must carry a note');
+    assert.equal(await fs.readFile(fixture.target, 'utf8'), crlf([COMMS_REGION, STORY_REGION, LENS_CURRENT]));
+    const lines = [composeOutcome('commsCurrent'), composeOutcome('storyWritten'), composeOutcome('lensCurrent')];
+    assert.deepEqual(result.logs, lines);
   });
 
   it('refreshes an injected prior at the document own section number', async (context) => {
@@ -208,15 +213,16 @@ describe('story-sessions verdicts spec:rules-regions/S13', () => {
   });
 
   for (const row of DOUBLED_REGIONS) {
-    it('preserves doubled ' + row.name + ' headings with a shared note and no write', async (context) => {
-      const text = createDocument([COMMS_REGION, STORY_REGION, CUSTOM_LENS, row.region]);
+    it('writes nothing for doubled ' + row.name + ' headings, saying none of them was changed', async (context) => {
+      const text = createDocument([COMMS_REGION, STORY_REGION, LENS_CURRENT, row.region]);
       const fixture = await createFixture(context, text);
       const result = await reconcileFixture(fixture);
       assert.equal(result.code, EXIT_OK);
       await assertUnchanged(fixture);
       const lines = composeOutcome('regionHeadingTwice', row.label, fixture.target);
+      assert.deepEqual(lines, doubledLines(row.label, fixture.target));
       assertEmitted(result.logs, lines);
-      assert.ok(lines.some((line) => NOTE_RE.test(line)), 'doubled heading must carry a note');
+      assert.ok(result.logs.every((line) => !line.includes('preserved')), 'no line promises a preserved section');
     });
   }
 });
@@ -331,12 +337,12 @@ describe('the prior refresh through the CLI spec:session-rules/S3', () => {
     await assertUnchanged(fixture);
   });
 
-  it('preserves a custom Communication region with its note while the story prior refreshes', async (context) => {
+  it('writes a differing Communication region with the canon while the story prior refreshes', async (context) => {
     const fixture = await createFixture(context, createDocument([COMMS_REGION, renderStory(storyPrior(), OWN_NUMBER)], WIDE_CAP));
     const result = await reconcileFixture(fixture, { template: TEMPLATE_TEXT });
     assert.equal(result.code, EXIT_OK);
-    assertEmitted(result.logs, [...composeOutcome('commsCustom'), composeOutcome('storyRefreshed')]);
-    const expected = createDocument([COMMS_REGION, renderStory(storyCanon(), OWN_NUMBER)], WIDE_CAP);
+    assertEmitted(result.logs, [composeOutcome('commsWritten'), composeOutcome('storyRefreshed')]);
+    const expected = createDocument([renderComms(commsCanon(), '5'), renderStory(storyCanon(), OWN_NUMBER)], WIDE_CAP);
     assert.equal(await fs.readFile(fixture.target, 'utf8'), expected);
   });
 });

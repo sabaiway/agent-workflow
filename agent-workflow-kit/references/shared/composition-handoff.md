@@ -51,13 +51,15 @@ only after `<project>/docs/ai/agent_rules.md` exists: after the substrate deploy
 This is what converges a substrate seeded by an older memory — a lens section matching a known
 prior canonical body is refreshed from the installed engine; a current seed reports *already
 current* (zero-diff). Relay its outcome in plain language (*refreshed* / *already current* /
-*custom edit preserved + note* / *file absent — skipped* / *engine too old — skipped* / *over the
+*differing body written* / *file absent — skipped* / *engine too old — skipped* / *over the
 line cap — refused*); a fully absent/invalid engine is the same loud STOP + one-line install
 command as the pointer reconcile. The same invocation also reconciles the **Communication
 (user-facing messages)** and **story-sessions** sections from the kit's own bundled template canon (no engine involved):
 a body matching the current canon is reported *already current*; a body matching a known prior
-is refreshed; a custom body is preserved + noted; an absent section is a stated note;
-an over-cap refresh is refused; and an unreadable bundled template canon is its own
+is refreshed; any other differing body is written with the canon, its line naming the route: text
+of your own goes under a ### heading of its own, titled unlike the kit's sections; a doubled
+heading has nothing written; an absent section is a stated note;
+an over-cap write is refused; and an unreadable bundled template canon is its own
 loud STOP naming the kit reinstall command. Relay both sections' outcome lines.
 The printed absent-section note already carries the preview command: relaying it is the offer.
 Run the insert with `--apply` only on the user's explicit yes.

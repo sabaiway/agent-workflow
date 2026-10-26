@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.1.0 — the kit sections of the agent rules file are written current with no question; a differing body is named with its route (AD-211)
+
+**Your upgrade now writes the kit's three sections of `docs/ai/agent_rules.md` current, with no question and no copy
+kept.** Before, the `lens` step refreshed Communication (user-facing messages), Story sessions and the planning/review
+lens only when a section matched a body the kit had shipped; any other body was preserved verbatim with a note, so an
+edited section stayed on old wording for good. Now a current section is left, a known earlier one refreshed, and any
+other body is written with the canon at the file's own heading number, in the file's own newline form, its trailing
+blank lines kept and every byte outside the section unchanged. Its line names where your own text goes:
+
+`[lens-region] the planning/review lens section differed from the current canon — written with it; text of your own goes under a ### heading of its own, titled unlike the kit's sections.`
+
+From engine 5.12.2 on, the lens section's own intro says it is written current; with an earlier engine that ships the
+lens canon, the step writes that engine's canon, whose intro still says a custom edit is preserved.
+
+- **A `### 2.<N>.` heading that opens with a section's title words is that section.** Alone, `### 2.6. Planning,
+  review & process-fidelity invariants: my additions` is written over too; beside the kit's own heading the two are
+  doubled and neither is changed. A section of your own needs a title of its own.
+- **A section with doubled headings is left.** With more than one heading for a section, the step prints `none of them
+  was changed` for it, still reconciles the other sections, and asks you to retitle every heading but one, then re-run.
+- **A target the step cannot rewrite safely is left alone.** A link or any other node that is not a regular file at
+  the target, or a file that is not valid UTF-8, prints one line and nothing is written.
+- **The line cap still guards every write where the file declares `maxLines`**: a section whose write would pass it
+  is refused and left as it stands, exit 0; a file with no `maxLines` skips the guard with a note.
+- **The texts say the same.** `upgrade.md` (the `lens` row, its relay and the report), `composition-handoff.md`, the
+  run-list's `lens` outcome `differing body written` in place of `custom edit preserved`, the Recommendations remedy
+  (a prior or any other body → the upgrade's `lens` reconcile), the rules template, and the guide's *Reserved names and
+  channels*, which names the three sections as the kit's and gains the eighth channel: text of your own under a `###`
+  heading of its own, titled unlike the kit's sections.
+
 ## 19.0.0 — the Jev copy is written current with no question beside a copy at a kit pin; `jev-skill.earlier` retires (AD-210)
 
 **MAJOR: the advisor's `jev-skill.earlier` item is gone, and `apply-danger-check --variant jev-skill.earlier` is a
