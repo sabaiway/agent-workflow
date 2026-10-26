@@ -4,6 +4,12 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.6.3 — the pointer-slots gotcha says the composition root writes the slots current (AD-212)
+
+The pointer-slots gotcha of `SKILL.md` says memory ships the three pointer slots of `AGENTS.md` empty and never writes
+them: memory's own upgrade carries their content over as it stands, and the composition root writes them current on
+every upgrade. It no longer says the slots stay the user's. PATCH: skill text only.
+
 ## 8.6.2 — the rules template's lens section carries the engine's current intro (AD-211)
 
 The planning/review lens section of `references/templates/agent_rules.md` carries the intro of engine 5.12.2: the

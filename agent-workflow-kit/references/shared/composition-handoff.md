@@ -23,25 +23,27 @@ exists, run ONE command — `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.m
 `/agent-workflow-kit recipes`) right below it, and the **autonomy-policy** pointer (the
 `docs/ai/autonomy.json` read contract) below that. Each is **one atomic operation per slot**:
 **ensure the slot exists**
-(insert an empty marker pair at its anchor when a legacy entry point lacks one) → **inject the bounded
-fragment ONLY IF the slot is empty** (a filled / user-customized slot is preserved verbatim) →
+(insert an empty marker pair at its anchor when a legacy entry point lacks one) → **judge it against
+the bounded fragment**: the same text needs no write; an empty slot is filled; any other text is
+written with the fragment, no question and no copy kept, its line naming the route — text of your
+own goes outside the two `<!-- workflow: -->` comment lines around each pointer →
 **cap-check** (each chained pointer's check runs on the file *after* the previous one, so it guards the
-**combined** ≤100-line budget). The fragments are short summary + pointer, read **live from the
+**combined** ≤100-line budget). The same call writes a Memory Map row with other text current, its
+line naming the route — a row of your own goes on a line of its own, its first cell a path of your
+own. The fragments are short summary + pointer, read **live from the
 installed `agent-workflow-engine`** (`references/methodology-slot.md` + `references/orchestration-slot.md`
 + `references/autonomy-slot.md`,
 the family's one source of truth) — **not** a bundled mirror, and **not** the full references. The
-live read is **lazy + fail-loud**: the engine is consulted **only when a slot actually needs filling**,
-so a deployment with **all three** pointers filled and its Memory Map rows present reconciles to a
-zero-diff no-op even on a host without the engine (one still missing the autonomy pair needs the engine to gain it); when a fill
-**is** needed and the engine is **absent/invalid**, reconcile
-**STOPs** — report it in plain language with the one-line install command
+live read is **fail-loud**: the engine is read for every pointer the run judges, so an
+**absent/invalid** engine **STOPs** the reconcile also when every pointer is filled — report it in
+plain language with the one-line install command
 `npx @sabaiway/agent-workflow-engine@latest init` (`npx @sabaiway/agent-workflow-kit@latest init`
 installs the engine for you; translate, never leak tool internals). Contract per slot: exactly one
 ordered `start → end` pair; a malformed slot (single, reversed, nested, duplicate) or a missing /
-duplicate anchor → **STOP with an error**, never edit (the file is left byte-for-byte unchanged). A
-**chained pointer is soft-skipped** (reported, never silent) when — and only when — adding it would
-exceed the 100-line cap, the engine is too old to ship its fragment, or (autonomy only) its anchor
-(the orchestration pair) is absent: every prior pointer still lands and the upgrade continues.
+duplicate anchor → **STOP with an error**, never edit (nothing is written). A
+**chained pointer is soft-skipped** (reported, never silent) when — and only when — adding or writing it
+would exceed the 100-line cap, the engine is too old to ship its fragment, or (autonomy only) the
+orchestration pointer was itself skipped this run: every prior pointer still lands and the upgrade continues.
 
 **Agent-rules lens + Communication refresh (runs in BOTH paths).** Its precondition is its own target file — run it
 only after `<project>/docs/ai/agent_rules.md` exists: after the substrate deploy in the

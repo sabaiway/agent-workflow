@@ -3,7 +3,7 @@ name: agent-workflow-memory
 description: Deploy or upgrade a portable AI-agent memory substrate in any project — an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) and a structured `docs/ai/` context store with cap/archive/index enforcement. Use when the user wants to bootstrap `docs/ai/`, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-memory` / `/agent-workflow-memory upgrade`. Triggers on "set up the memory system", "deploy the AI memory here", "bootstrap docs/ai", "upgrade the memory substrate". This is the substrate only — the workflow methodology (plan→execute→review, queue, Cleanup) is owned elsewhere and injected into AGENTS.md by the family composition root.
 disable-model-invocation: true
 metadata:
-  version: '8.6.2'
+  version: '8.6.3'
 ---
 
 # agent-workflow-memory
@@ -382,9 +382,9 @@ memory substrate has none, so it relies on the STOP + the explicit ask — never
 - **Stamp = lineage head, not package version.** `.memory-version` carries the **deployment-lineage
   head** (`4.0.0`, the shared `agent-workflow` lineage) — a **separate axis** from this package's npm
   version (the two may even coincide by accident). They move independently.
-- **All three pointer slots ship empty and stay the user's.** Never author methodology,
-  orchestration or autonomy text into them; on upgrade, preserve their content byte-for-byte. The
-  composition root is their only writer.
+- **All three pointer slots ship empty, and memory never writes them.** Never author methodology,
+  orchestration or autonomy text into them; memory's own upgrade carries their content over as it
+  stands. The composition root writes them current on every upgrade.
 - **The `Co-Authored-By` trailer is added by the harness, not by prose.** When attribution is
   `off` + Claude Code, also set `"includeCoAuthoredBy": false` in `.claude/settings.json`.
 - **Hidden mode is project-local, never machine-global.** Memory's hide writes to the repo's

@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.2.0 — the entry file's kit pointers and Memory Map rows are written current with no question; a differing one is named with its route (AD-212)
+
+**Your upgrade now writes the kit's three pointers in `AGENTS.md` current, with no question and no copy kept.**
+Before, the reconcile filled an empty pointer and refreshed one that matched text the kit had shipped; any other text
+between a pointer's two `<!-- workflow: -->` comment lines was kept as found, with an advisory note, so an edited
+pointer stayed on old wording for good. Now a current pointer is left, a known earlier one refreshed, and any other
+text is written with the installed engine's fragment, every byte outside the two comment lines unchanged and a CRLF
+file staying CRLF. Its clause in the reconcile line reads `wrote the current <name> pointer over a different one`, and
+one note line names where your own text goes:
+
+`[inject-methodology] note: text of your own goes outside the two <!-- workflow: --> comment lines around each pointer.`
+
+- **The Memory Map rows of the rules themes follow the same rule.** A theme's row with other text is written with the
+  current row (`the <theme> Memory Map row written with the current text`), and its note reads `a row of your own goes
+  on a line of its own, its first cell a path of your own`. A theme with more than one row, or a row that does not
+  close its cells on one line, is left as it stands with its reason.
+- **The engine is read for every pointer the run judges.** A filled pointer cannot be judged without its fragment, so
+  a file whose three pointers are all filled now stops with the install command when the engine is absent, where it
+  was a zero-diff exit 0. The kit's own route always installs the engine; the No-Node walk reports that no pointer was
+  brought current and continues the upgrade.
+- **The line cap still guards every write**: a differing pointer whose write would pass the 100-line cap takes the
+  same lane as a fill, and the chained soft skips are unchanged.
+- **The advisory notes retire**: the procedures hint and the per-pointer upgrade advice no longer print.
+- **The texts say the same.** `upgrade.md` (the pointers row and block, the No-Node walk, the step-4 and step-8
+  relays), the run-list's pointers outcomes (`written over a different one`), `composition-handoff.md`, the procedures
+  guide's cap-soft-skip paragraph and the guide's *Reserved names and channels*, which names the pointers and the
+  rules-theme rows as the kit's and gains the ninth channel.
+
 ## 19.1.0 — the kit sections of the agent rules file are written current with no question; a differing body is named with its route (AD-211)
 
 **Your upgrade now writes the kit's three sections of `docs/ai/agent_rules.md` current, with no question and no copy

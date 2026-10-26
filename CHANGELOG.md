@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-26 — AD-212: the entry file's kit pointers and Memory Map rows are written current with no question (kit 19.2.0 MINOR; memory 8.6.3 PATCH; engine and both bridges unchanged)
+
+**The upgrade now writes the three kit pointers of `AGENTS.md` and its Memory Map rows of the rules themes current
+with no question**: a current one is left, a known earlier one refreshed, and any other text is written, no copy
+kept; each written kind prints one note naming the route (text of your own goes outside the two `<!-- workflow: -->`
+comment lines around each pointer; a row of your own goes on a line of its own, its first cell a path of your own).
+Before, a pointer the kit did not know was kept as found, with advisory notes, which retire. The engine is now read for
+every pointer the run judges, so an all-filled file with no engine stops with the install command. Memory's
+pointer-slots gotcha (8.6.3) says the composition root writes the slots current. Contracts: entry-pointers revision 1
+(new), project-rules revision 7, distribution-files revision 13, carriers revision 12. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-26 — AD-211: the kit sections of the agent rules file are written current with no question (kit 19.1.0 MINOR; engine 5.12.2 PATCH; memory 8.6.2 PATCH; both bridges unchanged)
 
 **The upgrade now writes the three kit sections of `docs/ai/agent_rules.md` current with no question**:

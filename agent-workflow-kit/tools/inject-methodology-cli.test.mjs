@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   runCli, START_MARKER, END_MARKER, ORCH_START_MARKER, ORCH_END_MARKER, AUTONOMY_START_MARKER, AUTONOMY_END_MARKER,
 } from './inject-methodology.mjs';
@@ -13,10 +14,13 @@ import {
 const ANCHOR_CELL = '| [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) |';
 const LAYOUT_ROW = '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | Creating, moving or naming a file, a module or a spec | Only through `/agent-workflow-kit rules` |';
 const TEMPLATES = ['../references/templates/AGENTS.md', '../../agent-workflow-memory/references/templates/AGENTS.md'];
-const SLOT_PAIRS = [[START_MARKER, END_MARKER], [ORCH_START_MARKER, ORCH_END_MARKER], [AUTONOMY_START_MARKER, AUTONOMY_END_MARKER]];
+// The repo engine is injected, so a filled pointer is judged against the engine's own fragment.
+const ENGINE_DIR = fileURLToPath(new URL('../../agent-workflow-engine', import.meta.url));
+const SLOT_PAIRS = [[START_MARKER, END_MARKER, 'methodology'], [ORCH_START_MARKER, ORCH_END_MARKER, 'orchestration'], [AUTONOMY_START_MARKER, AUTONOMY_END_MARKER, 'autonomy']];
 
 const readTemplate = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
-const fillSlots = (text) => SLOT_PAIRS.reduce((acc, [start, end]) => acc.replace(`${start}\n${end}`, `${start}\n> pointer line\n${end}`), text);
+const fragmentOf = (name) => readFileSync(join(ENGINE_DIR, 'references', `${name}-slot.md`), 'utf8').trim();
+const fillSlots = (text) => SLOT_PAIRS.reduce((acc, [start, end, name]) => acc.replace(`${start}\n${end}`, `${start}\n${fragmentOf(name)}\n${end}`), text);
 const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const lineAfterAnchor = (text) => {
   const lines = text.split('\n');
@@ -30,9 +34,9 @@ const withTempDir = async (fn) => {
     rmSync(dir, { recursive: true, force: true });
   }
 };
-const reconcileIn = (dir, args) => runCli(['reconcile', ...args], { env: {}, home: dir });
+const reconcileIn = (dir, args) => runCli(['reconcile', ...args], { env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, home: dir });
 
-describe('inject-methodology runCli — refusal branches', () => {
+describe('inject-methodology runCli — refusal branches spec:entry-pointers/S12', () => {
   it('no AGENTS.md argument → usage on stderr, exit 2', async () => {
     const { code, stderr } = await runCli([]);
     assert.equal(code, 2);

@@ -11,7 +11,6 @@ import {
   extractSlot,
   ensureSlot,
   reconcileSlot,
-  slotNeedsFill,
   METHODOLOGY_ANCHOR,
   EMPTY_SLOT,
   AGENTS_MD_CAP,
@@ -27,12 +26,8 @@ import {
   findMarkerSlot,
   extractMarkerSlot,
   reconcileMarkerSlot,
-  markerSlotNeedsFill,
-  markerSlotUpgradeHint,
-  methodologyProceduresHint,
   isFillCapRefusal,
   injectIntoSlot,
-  PROCEDURES_POINTER,
   KNOWN_PRIOR_METHODOLOGY_SLOT,
   KNOWN_PRIOR_ORCH_SLOT,
   runCli,
@@ -44,6 +39,9 @@ import {
   DEFAULT_ACTIVITY_AUTONOMY,
   AUTONOMY_REL,
 } from './autonomy-config.mjs';
+
+// markerSlotEnsurable is read off the namespace, so its absence reds its cells, never the suite.
+const inject = await import('./inject-methodology.mjs');
 
 // Read the orchestration / autonomy slot content from a reconciled entry point.
 const extractOrch = (text) => extractMarkerSlot(text, ORCHESTRATION_DESCRIPTOR);
@@ -155,7 +153,7 @@ const legacyWithAnchor = (nl = '\n') =>
 
 const countMatches = (text, re) => (text.match(new RegExp(re.source, 'gm')) || []).length;
 
-describe('findSlot — marker classification', () => {
+describe('findSlot — marker classification spec:entry-pointers/S7', () => {
   it('one ordered pair → ok', () => {
     assert.equal(findSlot(wrap('\n')).state, 'ok');
   });
@@ -364,11 +362,11 @@ describe('reconcileSlot — ensure + inject-if-empty + cap, as one atomic policy
     assert.equal(extractSlot(out.text).trim(), FRAGMENT.trim());
   });
 
-  it('present customized/filled slot → present-filled, preserved verbatim (byte-for-byte)', () => {
-    const custom = wrap('\nuser-authored methodology notes\nsecond line\n');
-    const out = reconcileSlot(custom, FRAGMENT, { maxLines: AGENTS_MD_CAP });
-    assert.equal(out.status, 'present-filled');
-    assert.equal(out.text, custom, 'a filled slot is never overwritten');
+  it('present slot holding other content → reconciled-written with the fragment, outside bytes unchanged', () => {
+    const differing = wrap('\nuser-authored methodology notes\nsecond line\n');
+    const out = reconcileSlot(differing, FRAGMENT, { maxLines: AGENTS_MD_CAP });
+    assert.equal(out.status, 'reconciled-written');
+    assert.equal(out.text, wrap(`\n${FRAGMENT.trim()}\n`), 'a differing slot is written current');
   });
 
   it('malformed slot → error, input returned byte-for-byte', () => {
@@ -413,49 +411,32 @@ describe('reconcileSlot — ensure + inject-if-empty + cap, as one atomic policy
   });
 });
 
-describe('slotNeedsFill — lazy-read predicate (matches reconcileSlot fill decision)', () => {
-  it('present empty slot → true', () => {
-    assert.equal(slotNeedsFill(wrap('\n')), true);
-  });
-  it('markerless legacy with one anchor (insertable empty slot) → true', () => {
-    assert.equal(slotNeedsFill(legacyWithAnchor()), true);
-  });
-  it('present filled/customized slot → false (fragment not needed)', () => {
-    assert.equal(slotNeedsFill(wrap('\nuser notes\n')), false);
-  });
-  it('malformed slot → false (reconcileSlot error path fires, not a fill)', () => {
-    assert.equal(slotNeedsFill(`${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`), false);
-  });
-  it('markerless with no anchor → false (cannot insert; reconcile errors without the engine)', () => {
-    assert.equal(slotNeedsFill('# AGENTS.md\n\nno anchor here\n'), false);
-  });
-
-  // slotNeedsFill and reconcileSlot share the SAME emptiness primitives (ensureSlot + extractSlot), so
-  // the lazy "read the engine only when needed" guard cannot disagree with reconcileSlot's actual fill
-  // decision. Pin that equivalence across representative inputs: needsFill === true  IFF reconcile fills
-  // (reconciled-filled / reconciled-inserted); needsFill === false IFF reconcile does NOT fill
-  // (present-filled / error). This forecloses any future divergence that could silently drop a slot.
-  it('agrees with reconcileSlot across every slot state (no divergence → no silent drop)', () => {
+// markerSlotEnsurable and reconcileSlot share the SAME ensure, so the guard that reads the engine cannot
+// disagree with the policy: ensurable === true IFF the policy judges the slot (any status but error); a
+// filled slot, current or not, needs its fragment to be judged.
+describe('markerSlotEnsurable — the engine-read predicate (matches the reconcile ensure)', () => {
+  it('agrees with reconcileSlot across every slot state (no divergence → no unjudged slot)', () => {
     const cases = [
-      wrap('\n'), // present empty slot → fill
-      legacyWithAnchor(), // markerless + anchor → insert + fill
-      wrap('\nuser notes\n'), // filled slot → no fill
-      `${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`, // malformed → no fill (error)
-      '# AGENTS.md\n\nno anchor here\n', // no anchor → no fill (error)
+      [wrap('\n'), true], // present empty slot → fill
+      [legacyWithAnchor(), true], // markerless + anchor → insert + fill
+      [wrap(`\n${FRAGMENT.trim()}\n`), true], // current slot → judged, left
+      [wrap(`\n${KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1)}\n`), true], // known prior → refresh
+      [wrap('\nuser notes\n'), true], // other content → write
+      [`${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`, false], // malformed → error
+      ['# AGENTS.md\n\nno anchor here\n', false], // no anchor → error
     ];
-    for (const text of cases) {
-      const needs = slotNeedsFill(text);
+    for (const [text, expected] of cases) {
+      const ensurable = inject.markerSlotEnsurable(text, METHODOLOGY_DESCRIPTOR);
       const result = reconcileSlot(text, FRAGMENT, { maxLines: AGENTS_MD_CAP });
-      const filled = result.status === 'reconciled-filled' || result.status === 'reconciled-inserted';
-      assert.equal(needs, filled, `slotNeedsFill (${needs}) must match whether reconcile fills (${result.status})`);
+      assert.deepEqual([ensurable, result.status !== 'error'], [expected, expected], `${result.status}: ${text}`);
     }
   });
 });
 
-// ── canonical-refresh (AD-025 §1.6a/§1.9): push a NEW canon clause to FILLED-but-stale slots, preserve a
-//    customization, advise on the customized case. Covers BOTH the methodology + orchestration slots. ──
+// ── canonical-refresh (AD-025 §1.6a/§1.9): push a NEW canon clause to FILLED-but-stale slots; any other
+//    content is written current. Covers BOTH the methodology + orchestration slots. ──
 const FOUR_ACTIVITY_METH = KNOWN_PRIOR_METHODOLOGY_SLOT[3].replace('(plan-authoring, plan-execution, routine)', '(plan-authoring, plan-execution, routine, feedback-triage)');
-describe('canonical-refresh — refresh a known-prior slot, preserve a customization', () => {
+describe('canonical-refresh — refresh a known-prior slot, write any other content', () => {
   // current-minus-one is the NEWEST prior — the entry the release that changed the fragment appended.
   const PRIOR_METH = KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1);
   const PRIOR_ORCH = KNOWN_PRIOR_ORCH_SLOT.at(-1);
@@ -463,36 +444,31 @@ describe('canonical-refresh — refresh a known-prior slot, preserve a customiza
   const NEW_ORCH = '> **Orchestration recipes (new canon)** — `/agent-workflow-kit recipes`; set it with `/agent-workflow-kit set-recipe`.\n';
   const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
 
-  it('the four-activity fragment is the newest prior and refreshes to the shipped six-activity fragment (spec:carriers/S18)', () => {
+  it('the four-activity fragment is the newest prior and refreshes to the shipped six-activity fragment, any other fragment written with it (spec:carriers/S18)', () => {
     assert.equal(KNOWN_PRIOR_METHODOLOGY_SLOT.at(-1), FOUR_ACTIVITY_METH); const realMeth = readFileSync(join(ENGINE_DIR, 'references', 'methodology-slot.md'), 'utf8');
     assert.ok(realMeth.includes('(plan-authoring, plan-execution, routine, feedback-triage, epic, task)')); assert.equal(reconcileSlot(wrap('\n' + FOUR_ACTIVITY_METH + '\n'), realMeth, { maxLines: AGENTS_MD_CAP }).status, 'reconciled-refreshed');
+    const other = reconcileSlot(wrap('\n' + FOUR_ACTIVITY_METH + ' House rule: plans name their owner.\n'), realMeth, { maxLines: AGENTS_MD_CAP });
+    assert.deepEqual([other.status, extractSlot(other.text).trim()], ['reconciled-written', realMeth.trim()]);
   });
   it('methodology: a slot filled with a KNOWN PRIOR is refreshed to the new fragment', () => {
-    const stale = wrap(`\n${PRIOR_METH}\n`);
-    assert.equal(slotNeedsFill(stale), true, 'a stale slot needs the fragment re-sourced');
-    const out = reconcileSlot(stale, NEW_METH, { maxLines: AGENTS_MD_CAP });
+    const out = reconcileSlot(wrap(`\n${PRIOR_METH}\n`), NEW_METH, { maxLines: AGENTS_MD_CAP });
     assert.equal(out.status, 'reconciled-refreshed');
     assert.equal(extractSlot(out.text).trim(), NEW_METH.trim());
   });
 
-  it('methodology: a CUSTOMIZED slot is preserved verbatim (never matches a prior)', () => {
-    const custom = wrap('\n> my own methodology note\n');
-    assert.equal(slotNeedsFill(custom), false, 'a customization is not re-sourced');
-    const out = reconcileSlot(custom, NEW_METH, { maxLines: AGENTS_MD_CAP });
-    assert.equal(out.status, 'present-filled');
-    assert.equal(out.text, custom, 'a customization is never overwritten');
+  it('methodology: a slot holding other content (never a prior) is written with the new fragment', () => {
+    const out = reconcileSlot(wrap('\n> my own methodology note\n'), NEW_METH, { maxLines: AGENTS_MD_CAP });
+    assert.equal(out.status, 'reconciled-written');
+    assert.equal(out.text, wrap(`\n${NEW_METH.trim()}\n`));
   });
 
-  it('orchestration: a known-prior slot refreshes; a customized one is preserved', () => {
-    const stale = wrapDual('\nuser meth\n', `\n${PRIOR_ORCH}\n`);
-    assert.equal(markerSlotNeedsFill(stale, ORCHESTRATION_DESCRIPTOR), true);
-    const refreshed = reconcileMarkerSlot(stale, ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP });
+  it('orchestration: a known-prior slot refreshes; one holding other content is written', () => {
+    const refreshed = reconcileMarkerSlot(wrapDual('\nuser meth\n', `\n${PRIOR_ORCH}\n`), ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP });
     assert.equal(refreshed.status, 'reconciled-refreshed');
     assert.equal(extractOrch(refreshed.text).trim(), NEW_ORCH.trim());
 
-    const custom = wrapDual('\nuser meth\n', '\n> my own orch note\n');
-    assert.equal(markerSlotNeedsFill(custom, ORCHESTRATION_DESCRIPTOR), false);
-    assert.equal(reconcileMarkerSlot(custom, ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP }).status, 'present-filled');
+    const written = reconcileMarkerSlot(wrapDual('\nuser meth\n', '\n> my own orch note\n'), ORCHESTRATION_DESCRIPTOR, NEW_ORCH, { maxLines: AGENTS_MD_CAP });
+    assert.deepEqual([written.status, written.text], ['reconciled-written', wrapDual('\nuser meth\n', `\n${NEW_ORCH.trim()}\n`)]);
   });
 
   it('a prior carrying trailing-space / CRLF noise still matches (normalized)', () => {
@@ -532,45 +508,6 @@ describe('canonical-refresh — refresh a known-prior slot, preserve a customiza
   });
 });
 
-describe('markerSlotUpgradeHint — read-only advisory for a customized slot missing the new clause', () => {
-  it('a customized four-activity fragment stays and is told about the epic and task rows', () => {
-    const custom = wrap('\n' + FOUR_ACTIVITY_METH + ' House rule: plans name their owner.\n'); const realMeth = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'methodology-slot.md'), 'utf8'); const out = reconcileSlot(custom, realMeth, { maxLines: AGENTS_MD_CAP }); const hint = markerSlotUpgradeHint(custom, METHODOLOGY_DESCRIPTOR);
-    assert.equal(out.status, 'present-filled'); assert.equal(out.text, custom); assert.equal(typeof hint, 'string'); assert.match(hint, /\bepic\b/); assert.match(hint, /\btask\b/); assert.match(hint, /communication-contract/); assert.equal(FOUR_ACTIVITY_METH.includes(METHODOLOGY_DESCRIPTOR.upgradeSignature), false); assert.ok(realMeth.includes(METHODOLOGY_DESCRIPTOR.upgradeSignature));
-  });
-  it('methodology: a filled slot WITHOUT the six-activity token gets the advice; the shipped fragment → null', () => {
-    const without = wrap('\n> custom methodology note (no comms clause)\n');
-    const hint = markerSlotUpgradeHint(without, METHODOLOGY_DESCRIPTOR);
-    assert.match(hint, /communication-contract|deliver the artifact/);
-    const realMeth = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'methodology-slot.md'), 'utf8');
-    assert.ok(realMeth.includes('Communication'), 'the shipped methodology fragment carries the Communication clause');
-    const withClause = wrap(`\n${realMeth.trim()}\n`);
-    assert.equal(markerSlotUpgradeHint(withClause, METHODOLOGY_DESCRIPTOR), null, 'a slot already carrying the clause gets no advice');
-  });
-
-  it('orchestration: a customized slot missing the set-recipe pointer gets the advice; with it → null', () => {
-    const without = wrapDual('\nm\n', '\n> custom orch note, no set-recipe\n');
-    const hint = markerSlotUpgradeHint(without, ORCHESTRATION_DESCRIPTOR);
-    assert.match(hint, /read-at-start|set-recipe/);
-    const realOrch = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'orchestration-slot.md'), 'utf8');
-    const withClause = wrapDual('\nm\n', `\n${realOrch.trim()}\n`);
-    assert.equal(markerSlotUpgradeHint(withClause, ORCHESTRATION_DESCRIPTOR), null, 'a slot already carrying the clause gets no advice');
-  });
-
-  it('an empty / absent slot gets no advice', () => {
-    assert.equal(markerSlotUpgradeHint(wrapDual('\nm\n', '\n'), ORCHESTRATION_DESCRIPTOR), null);
-    assert.equal(markerSlotUpgradeHint('# AGENTS.md\nno slot\n', ORCHESTRATION_DESCRIPTOR), null);
-  });
-
-  it('autonomy: a customized slot missing the policy-file name gets the advice; the real fragment → null', () => {
-    const without = wrapTriple('\nm\n', '\no\n', '\n> custom autonomy note, no policy file named\n');
-    const hint = markerSlotUpgradeHint(without, AUTONOMY_DESCRIPTOR);
-    assert.match(hint, /docs\/ai\/autonomy\.json|set-autonomy/);
-    const realAut = readFileSync(join(HERE, '..', '..', 'agent-workflow-engine', 'references', 'autonomy-slot.md'), 'utf8');
-    const withClause = wrapTriple('\nm\n', '\no\n', `\n${realAut.trim()}\n`);
-    assert.equal(markerSlotUpgradeHint(withClause, AUTONOMY_DESCRIPTOR), null, 'a slot carrying the current canon gets no advice');
-  });
-});
-
 // ── AD-044 Plan 3 — the third (autonomy) descriptor: reconcile statuses, the chained anchor, and
 //    the cap behavior, all against the SAME generic engine (pure functions, no fs). ──
 describe('AUTONOMY_DESCRIPTOR — third-slot reconcile statuses + chained anchor position', () => {
@@ -593,17 +530,13 @@ describe('AUTONOMY_DESCRIPTOR — third-slot reconcile statuses + chained anchor
     assert.equal(extractAut(out.text).trim(), AUT_FRAGMENT.trim());
   });
 
-  it('a FILLED autonomy slot is ALWAYS custom-preserved — refreshed is unreachable with empty priors', () => {
+  it('a FILLED autonomy slot is left when current and written otherwise — refreshed is unreachable with empty priors', () => {
     assert.deepEqual(AUTONOMY_DESCRIPTOR.knownPriorCanonicals, [], 'first canon: no known priors yet');
-    // Even a slot carrying the CURRENT fragment verbatim is preserved (it matches no PRIOR) — the
-    // refresh lane only opens once a future release appends the outgoing content to a prior store.
-    for (const inner of ['\nuser autonomy customization\n', `\n${AUT_FRAGMENT.trim()}\n`]) {
-      const input = wrapTriple('\nm\n', '\no\n', inner);
-      assert.equal(markerSlotNeedsFill(input, AUTONOMY_DESCRIPTOR), false, 'a filled slot is never re-sourced');
-      const out = reconcileMarkerSlot(input, AUTONOMY_DESCRIPTOR, AUT_FRAGMENT, { maxLines: AGENTS_MD_CAP });
-      assert.equal(out.status, 'present-filled');
-      assert.equal(out.text, input, 'preserved byte-for-byte');
-    }
+    const current = wrapTriple('\nm\n', '\no\n', `\n${AUT_FRAGMENT.trim()}\n`);
+    const left = reconcileMarkerSlot(current, AUTONOMY_DESCRIPTOR, AUT_FRAGMENT, { maxLines: AGENTS_MD_CAP });
+    assert.deepEqual([left.status, left.text], ['present-filled', current]);
+    const written = reconcileMarkerSlot(wrapTriple('\nm\n', '\no\n', '\nuser autonomy words\n'), AUTONOMY_DESCRIPTOR, AUT_FRAGMENT, { maxLines: AGENTS_MD_CAP });
+    assert.deepEqual([written.status, written.text], ['reconciled-written', current]);
   });
 
   it('malformed autonomy pair → error, input returned byte-for-byte', () => {
@@ -633,11 +566,11 @@ describe('isFillCapRefusal — the D4 cap-lane split over the real cap messages'
     assert.equal(isFillCapRefusal(fillOverflow.error), true, 'a genuine fill-overflow is the soft skip');
   });
 
-  it('FALSE on the already-over-cap custom-file message (reconcileMarkerSlot refusal) — keeps its distinct report', () => {
-    const overCap = reconcileMarkerSlot(wrapTriple('\nm\n', '\no\n', '\ncustom\n'), AUTONOMY_DESCRIPTOR, AUT_FRAGMENT, { maxLines: 5 });
+  it('FALSE on the already-over-cap message of a current slot (reconcileMarkerSlot refusal) — keeps its distinct report', () => {
+    const overCap = reconcileMarkerSlot(wrapTriple('\nm\n', '\no\n', `\n${AUT_FRAGMENT.trim()}\n`), AUTONOMY_DESCRIPTOR, AUT_FRAGMENT, { maxLines: 5 });
     assert.equal(overCap.status, 'error');
     assert.match(overCap.error, /\(cap 5\)/, 'sanity: this message carries the SAME "(cap N)" substring the old classifier conflated');
-    assert.match(overCap.error, /trim the file/, 'sanity: it is the over-cap-custom-file message');
+    assert.match(overCap.error, /trim the file \(the current autonomy pointer must still fit the cap\)$/, 'it is the over-cap message, naming no customized slot');
     assert.equal(isFillCapRefusal(overCap.error), false, 'an over-cap file is NOT a fill skip — it keeps the over-cap report');
   });
 });
@@ -667,13 +600,9 @@ describe('engine autonomy-slot.md ⟷ kit parity (D3 tokens from the kit exports
     assert.ok(realAut.includes(nonCommandFloor), `fragment states "${nonCommandFloor}"`);
     assert.ok(realAut.includes(`floors at \`${DEFAULT_ACTIVITY_AUTONOMY}\``), 'the absent-activity floor comes from the kit export');
   });
-
-  it('the descriptor upgrade signature is present in the current fragment (a filled current slot gets no advice)', () => {
-    assert.ok(realAut.includes(AUTONOMY_DESCRIPTOR.upgradeSignature), 'the fragment carries its own canonical-signature token');
-  });
 });
 
-describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragment LIVE from the engine', () => {
+describe('reconcile CLI — atomic ensure+judge+cap, reading the fragment LIVE from the engine spec:entry-pointers/S8', () => {
   const withTempAgents = async (contents, run) => {
     const dir = mkdtempSync(join(tmpdir(), 'reconcile-cli-'));
     const agents = join(dir, 'AGENTS.md');
@@ -711,20 +640,19 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     });
   });
 
-  it('ALL THREE slots already filled → zero-diff no-op WITHOUT consulting the engine (engine absent, exit 0)', async () => {
-    const custom = wrapTriple('\nuser meth notes\n', '\nuser orch notes\n', '\nuser autonomy notes\n');
-    await withTempAgents(custom, async (agents) => {
-      // Engine pointed at a path that does not exist — a fully-filled entry point must NOT require it.
-      const out = await runScript(['reconcile', agents], { env: withEngine(NO_ENGINE) });
-      assert.equal(readFileSync(agents, 'utf8'), custom);
+  it('ALL THREE slots current → zero-diff no-op with no note line (exit 0)', async () => {
+    const current = wrapTriple(`\n${FRAGMENT.trim()}\n`, `\n${ORCH_FRAGMENT.trim()}\n`, `\n${AUT_FRAGMENT.trim()}\n`);
+    await withTempAgents(current, async (agents) => {
+      const out = await runScript(['reconcile', agents], { env: withEngine(ENGINE) });
+      assert.equal(readFileSync(agents, 'utf8'), current);
       assert.match(out, /all three pointers already present and filled/, 'the zero-diff report names all three pointers');
+      assert.doesNotMatch(out, /note:/, 'a current file prints no note');
     });
   });
 
-  it('meth+orch filled, autonomy markers ABSENT + engine fully ABSENT → hard STOP (a fill is needed; install command shown)', async () => {
-    // The autonomy pair chains below a PRESENT orchestration pair, so a fill is genuinely needed —
-    // and a fully absent/invalid engine cannot supply ANY fragment: the same hard STOP as the
-    // methodology/orchestration lanes, never a silent drop (distinct from the too-old soft skip).
+  it('meth+orch filled, autonomy markers ABSENT + engine fully ABSENT → hard STOP (install command shown)', async () => {
+    // Every slot the ensure can place is judged against its fragment, and a fully absent/invalid
+    // engine cannot supply ANY fragment: a hard STOP, never a silent drop (distinct from the too-old soft skip).
     const custom = wrapDual('\nuser meth notes\n', '\nuser orch notes\n');
     await withTempAgents(custom, async (agents) => {
       const err = await runScript(['reconcile', agents], { env: withEngine(NO_ENGINE) }).then(() => null, (e) => e);
@@ -735,13 +663,13 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     });
   });
 
-  it('meth+orch customized, EMPTY autonomy pair → only the autonomy slot is filled; the custom fills survive byte-for-byte', async () => {
-    const custom = wrapTriple('\nuser meth notes\n', '\nuser orch notes\n', '\n');
-    await withTempAgents(custom, async (agents) => {
+  it('meth+orch current, EMPTY autonomy pair → only the autonomy slot is filled; the current fills stay byte-for-byte', async () => {
+    const current = wrapTriple(`\n${FRAGMENT.trim()}\n`, `\n${ORCH_FRAGMENT.trim()}\n`, '\n');
+    await withTempAgents(current, async (agents) => {
       const out = await runScript(['reconcile', agents], { env: withEngine(ENGINE) });
       const text = readFileSync(agents, 'utf8');
-      assert.equal(extractSlot(text), '\nuser meth notes\n', 'methodology customization preserved byte-for-byte');
-      assert.equal(extractOrch(text), '\nuser orch notes\n', 'orchestration customization preserved byte-for-byte');
+      assert.equal(extractSlot(text), `\n${FRAGMENT.trim()}\n`, 'the current methodology pointer unchanged');
+      assert.equal(extractOrch(text), `\n${ORCH_FRAGMENT.trim()}\n`, 'the current orchestration pointer unchanged');
       assert.equal(extractAut(text).trim(), AUT_FRAGMENT.trim(), 'the empty autonomy pointer was filled');
       assert.match(out, /filled the empty autonomy pointer/);
     });
@@ -1036,7 +964,7 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
     });
   });
 
-  it('legacy inject mode: markerless AGENTS.md → no-op WITHOUT the engine (exit 0)', async () => {
+  it('legacy inject mode: markerless AGENTS.md → no-op WITHOUT the engine (exit 0) spec:entry-pointers/S9', async () => {
     const markerless = '# AGENTS.md\n\nlegacy, no slot\n';
     await withTempAgents(markerless, async (agents) => {
       await runScript([agents], { env: withEngine(NO_ENGINE) });
@@ -1067,45 +995,6 @@ describe('reconcile CLI — atomic ensure+inject-if-empty+cap, reading the fragm
   });
 });
 
-// AD-019 §3.1a — the read-only upgrade advisory: a FILLED methodology pointer lacking the procedures
-// route gets a hint (it can't be auto-re-rendered, reconcile preserves a filled slot verbatim); a slot
-// that already routes to procedures, or an empty / absent / malformed slot, is silent. NO mutation.
-describe('methodologyProceduresHint — read-only upgrade advisory (§3.1a)', () => {
-  it('a filled methodology slot WITHOUT the procedures route → a hint naming the procedures command', () => {
-    const entry = wrap('\n> methodology notes the user wrote, no procedures route here\n');
-    const hint = methodologyProceduresHint(entry);
-    assert.ok(hint, 'a filled-without-clause slot yields a hint');
-    assert.match(hint, new RegExp(PROCEDURES_POINTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  });
-
-  it('a filled methodology slot that ALREADY routes to procedures → silent (null)', () => {
-    const entry = wrap(`\n> methodology — see ${PROCEDURES_POINTER} <activity> for the steps\n`);
-    assert.equal(methodologyProceduresHint(entry), null);
-  });
-
-  it('an empty methodology slot → silent (null) — only a filled slot is advised', () => {
-    assert.equal(methodologyProceduresHint(wrap('\n')), null);
-  });
-
-  it('an absent / malformed methodology slot → silent (null)', () => {
-    assert.equal(methodologyProceduresHint('# AGENTS.md\n\nno slot here\n'), null);
-    assert.equal(methodologyProceduresHint(`${START_MARKER}\n${END_MARKER}\n${START_MARKER}\n${END_MARKER}\n`), null);
-  });
-
-  it('is read-only: a pre-filled-without-clause deployment is reported, not mutated, on reconcile (engine absent)', async () => {
-    // A triple-filled entry point whose methodology lacks the procedures route: reconcile is a zero-diff
-    // no-op (filled slots preserved) yet still surfaces the hint on stdout — never rewrites the file.
-    const custom = wrapTriple('\nuser meth notes, no procedures route\n', '\nuser orch notes\n', '\nuser autonomy notes\n');
-    const dir = mkdtempSync(join(tmpdir(), 'reconcile-hint-'));
-    tmpDirs.push(dir);
-    const agents = join(dir, 'AGENTS.md');
-    writeFileSync(agents, custom);
-    const out = await runScript(['reconcile', agents], { env: withEngine(NO_ENGINE) });
-    assert.equal(readFileSync(agents, 'utf8'), custom, 'the file is byte-unchanged (read-only advisory)');
-    assert.match(out, /note:.*procedures/i, 'the upgrade flow surfaces the procedures hint');
-  });
-});
-
 // §3.2 (kit) — the REAL extended engine fragments must keep the triple-fill ≤ 100 on BOTH deployed
 // templates. Each canonical fragment is ONE line, but pin it against the REAL fragments + REAL
 // templates so a future fragment edit that DID add a line is caught here, not in the field.
@@ -1121,7 +1010,7 @@ describe('real-fragment triple-fill ≤ cap on both deployed templates (§3.2)',
   };
 
   it('the real methodology fragment carries the procedures route (auto-discovery clause)', () => {
-    assert.match(realMeth, new RegExp(PROCEDURES_POINTER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.ok(realMeth.includes('/agent-workflow-kit procedures'), 'the methodology fragment routes to the procedures advisor');
     assert.equal(lineCount(realMeth), 1, 'the methodology fragment stays exactly one content line');
   });
 

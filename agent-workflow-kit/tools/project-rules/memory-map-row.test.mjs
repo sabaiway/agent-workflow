@@ -1,4 +1,4 @@
-// The Memory Map row of each theme: derived from the registry, placed after the agent_rules row, kept, refreshed or skipped.
+// The Memory Map row of each theme: derived from the registry, placed after the agent_rules row, kept, refreshed, written or skipped.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -23,8 +23,11 @@ const HEAD_LINES = Object.freeze([
 const TAIL_LINES = Object.freeze(['| [`docs/ai/changelog.md`](./docs/ai/changelog.md) | Reviewing history | After each session |', '', '## Next']);
 const NO_ANCHOR = 'the Memory Map has no docs/ai/agent_rules.md row to place it after';
 const SPLIT_ANCHOR = "the Memory Map's docs/ai/agent_rules.md row spans more than one line";
+const BACKSLASH = String.fromCharCode(92);
 
 const openRow = (path) => '| [`' + path + '`](./' + path + ') |';
+// A row of the theme's path cell with other text, a user edit.
+const otherRow = (themePaths, theme) => openRow(themePaths(theme.name).effective) + ' My own words | Edit by hand |';
 const buildRow = (themePaths, theme) =>
   openRow(themePaths(theme.name).effective) + ' ' + theme.readWhen + ' | Only through `/agent-workflow-kit rules` |';
 const joinLines = (lines, eol = LF) => lines.map((line) => line + eol).join('');
@@ -78,7 +81,7 @@ describe('spec:project-rules/S26 each theme row is derived from the registry and
   });
 });
 
-describe('spec:project-rules/S27 a present row is kept or refreshed from the prior list, which is frozen and empty', () => {
+describe('spec:project-rules/S27 a present current row is kept, a prior refreshed, and the prior list is frozen and empty', () => {
   it('keeps a present current row byte for byte, also above the anchor', async () => {
     const { reconcile, THEMES, rows } = await loadLeaf();
     for (const text of [mapWith([ANCHOR, ...rows]), joinLines([...rows, ...HEAD_LINES, ANCHOR, ...TAIL_LINES])]) {
@@ -86,25 +89,6 @@ describe('spec:project-rules/S27 a present row is kept or refreshed from the pri
       assert.equal(result.text, text);
       assert.deepEqual(result.outcomes, answerAll(THEMES, 'kept'));
     }
-  });
-
-  it('keeps a row with other text, a user edit, byte for byte', async () => {
-    const { reconcile, THEMES, themePaths } = await loadLeaf();
-    const edited = THEMES.map((theme) => openRow(themePaths(theme.name).effective) + ' My own words | Edit by hand |');
-    const text = mapWith([ANCHOR, ...edited], CRLF);
-    const result = reconcile(text, { maxLines: 100 });
-    assert.equal(result.text, text);
-    assert.deepEqual(result.outcomes, answerAll(THEMES, 'kept'));
-  });
-
-  it('keeps a row on two lines with the text unchanged', async () => {
-    const { reconcile, THEMES, themePaths } = await loadLeaf();
-    const split = THEMES.flatMap((theme) => [openRow(themePaths(theme.name).effective) + ' ' + theme.readWhen,
-      '  | Only through `/agent-workflow-kit rules` |']);
-    const text = mapWith([ANCHOR, ...split]);
-    const result = reconcile(text, { maxLines: 100 });
-    assert.equal(result.text, text);
-    assert.deepEqual(result.outcomes, answerAll(THEMES, 'kept'));
   });
 
   it('refreshes a row equal to an injected prior in place, its ending and the line count kept', async () => {
@@ -131,7 +115,7 @@ describe('spec:project-rules/S27 a present row is kept or refreshed from the pri
   });
 });
 
-describe('spec:project-rules/S28 the three skip reasons leave the text byte for byte and a refresh at the cap is never skipped', () => {
+describe('spec:project-rules/S28 the three skip reasons leave the text byte for byte and neither a refresh nor a write at the cap is skipped', () => {
   it('skips with its note when the Memory Map has no agent_rules row', async () => {
     const { reconcile, THEMES } = await loadLeaf();
     const text = mapWith([]);
@@ -161,12 +145,84 @@ describe('spec:project-rules/S28 the three skip reasons leave the text byte for 
     assert.deepEqual(at.outcomes, answerAll(THEMES, 'inserted'));
   });
 
-  it('refreshes a prior row on a text already at maxLines, never skipping it', async () => {
+  it('refreshes a prior row and writes a row with other text on a text already at maxLines, never skipping either', async () => {
     const { reconcile, THEMES, themePaths, rows } = await loadLeaf();
     const priors = THEMES.map((theme) => openRow(themePaths(theme.name).effective) + ' An older read-when | Only through `/agent-workflow-kit rules` |');
     const text = joinLines(['| File | Read When... | Update When... |', ANCHOR, ...priors]);
     const result = reconcile(text, { maxLines: countLines(text), priors });
     assert.equal(result.text, joinLines(['| File | Read When... | Update When... |', ANCHOR, ...rows]));
     assert.deepEqual(result.outcomes, answerAll(THEMES, 'refreshed'));
+    const other = joinLines(['| File | Read When... | Update When... |', ANCHOR, ...THEMES.map((theme) => otherRow(themePaths, theme))]);
+    const written = reconcile(other, { maxLines: countLines(other) });
+    assert.deepEqual([written.text, written.outcomes], [joinLines(['| File | Read When... | Update When... |', ANCHOR, ...rows]), answerAll(THEMES, 'written')]);
+  });
+});
+
+describe('spec:project-rules/S35 a theme row with other text on one whole line is written in place with the current text', () => {
+  it('names the route in ROW_ROUTE', async () => {
+    const ROW_ROUTE = need(await load('./memory-map-row.mjs'), 'ROW_ROUTE');
+    assert.equal(ROW_ROUTE, 'a row of your own goes on a line of its own, its first cell a path of your own');
+  });
+
+  it('writes a user edit in place, its ending, its position and the line count kept, LF and CRLF, also above the anchor', async () => {
+    const { reconcile, THEMES, themePaths, rows } = await loadLeaf();
+    const edited = THEMES.map((theme) => otherRow(themePaths, theme));
+    for (const eol of [LF, CRLF]) {
+      const pairs = [[mapWith([ANCHOR, ...edited], eol), mapWith([ANCHOR, ...rows], eol)],
+        [joinLines([...edited, ...HEAD_LINES, ANCHOR, ...TAIL_LINES], eol), joinLines([...rows, ...HEAD_LINES, ANCHOR, ...TAIL_LINES], eol)]];
+      for (const [text, expected] of pairs) {
+        const result = reconcile(text, { maxLines: 100 });
+        assert.deepEqual([result.text, countLines(result.text)], [expected, countLines(text)]);
+        assert.deepEqual(result.outcomes, answerAll(THEMES, 'written'));
+      }
+    }
+  });
+
+  it('writes it in a file with no docs/ai/agent_rules.md row', async () => {
+    const { reconcile, THEMES, themePaths, rows } = await loadLeaf();
+    const result = reconcile(mapWith(THEMES.map((theme) => otherRow(themePaths, theme))), { maxLines: 100 });
+    assert.deepEqual([result.text, result.outcomes], [mapWith(rows), answerAll(THEMES, 'written')]);
+  });
+});
+
+describe('spec:project-rules/S36 a theme path cell opening two or more lines is skipped, none of them changed', () => {
+  it('skips two current rows, a current row beside other text, and rows of two and of three cells, the text byte for byte', async () => {
+    const { reconcile, THEMES, themePaths, rows } = await loadLeaf();
+    const opening = (theme) => openRow(themePaths(theme.name).effective);
+    const doubles = [THEMES.flatMap((theme, i) => [rows[i], rows[i]]), THEMES.flatMap((theme, i) => [rows[i], otherRow(themePaths, theme)]),
+      THEMES.flatMap((theme) => [opening(theme) + ' two cells |', opening(theme) + ' three | cells |'])];
+    for (const lines of doubles) {
+      const text = mapWith([ANCHOR, ...lines]);
+      const result = reconcile(text, { maxLines: 100 });
+      assert.equal(result.text, text);
+      const note = (theme) => 'the Memory Map has more than one ' + themePaths(theme.name).effective + ' row — none of them was changed';
+      assert.deepEqual(result.outcomes, THEMES.map((theme) => ({ theme: theme.name, status: 'skipped', note: note(theme) })));
+    }
+  });
+});
+
+describe('spec:project-rules/S37 a theme row that does not close its cells on one line is skipped, a whole row of five cells written', () => {
+  it('skips a row broken after its path cell or its read-when cell, a last | a backslash escapes and a last cell no | closes', async () => {
+    const { reconcile, THEMES, themePaths } = await loadLeaf();
+    const opening = (theme) => openRow(themePaths(theme.name).effective);
+    const RULES_CELL = 'Only through `/agent-workflow-kit rules`';
+    const shapes = [(theme) => [opening(theme), '  ' + theme.readWhen + ' | ' + RULES_CELL + ' |'],
+      (theme) => [opening(theme) + ' ' + theme.readWhen + ' |', '  ' + RULES_CELL + ' |'],
+      (theme) => [opening(theme) + ' ' + theme.readWhen + ' | ' + RULES_CELL + ' | trailing ' + BACKSLASH + '|'],
+      (theme) => [opening(theme) + ' ' + theme.readWhen + ' | ' + RULES_CELL]];
+    for (const shape of shapes) {
+      const text = mapWith([ANCHOR, ...THEMES.flatMap(shape)]);
+      const result = reconcile(text, { maxLines: 100 });
+      assert.equal(result.text, text);
+      const note = (theme) => 'the ' + themePaths(theme.name).effective + ' row does not close its cells on one line — left as it stands';
+      assert.deepEqual(result.outcomes, THEMES.map((theme) => ({ theme: theme.name, status: 'skipped', note: note(theme) })));
+    }
+  });
+
+  it('writes a whole row carrying a fifth cell with the current text', async () => {
+    const { reconcile, THEMES, themePaths, rows } = await loadLeaf();
+    const fifth = THEMES.map((theme) => openRow(themePaths(theme.name).effective) + ' a | b | c | d |');
+    const result = reconcile(mapWith([ANCHOR, ...fifth]), { maxLines: 100 });
+    assert.deepEqual([result.text, result.outcomes], [mapWith([ANCHOR, ...rows]), answerAll(THEMES, 'written')]);
   });
 });

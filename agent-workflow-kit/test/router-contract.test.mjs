@@ -262,8 +262,8 @@ const BUDGET = {
   // THREE pointers (the autonomy slot: step-3 wording, the (a)(iii) anchor-absent soft-skip lane,
   // the No-Node walk, the step-4/8 report row) — ~575 B of new contract content over 179 B of
   // headroom; a documented KB-multiple bump, never a silent re-pin.)
-  fullReadSet: 82944, // 81920 → 82944 (81 KB): router + mode + its declared shared files. Project-rules story S3 — the rules mode header lands in the router and references/modes/upgrade.md gains the Memory Map row and rules-mode words.
-  // Measured 82569 B (pair 52573 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 29996), 649 B over the 81920 ceiling; 375 B of headroom — a documented KB-multiple bump. History: 79872 → 81920 (80 KB): Consumers epic story S3 (+1138 B), measured 80983 B; 78848 → 79872 (78 KB): story S2 (+733 B), measured 79569 B.
+  fullReadSet: 83968, // 82944 → 83968 (82 KB): router + mode + its declared shared files. Story S18 of DISTRIBUTION-FILES-STAY-CURRENT — upgrade.md and composition-handoff.md name the pointer and the Memory Map row written current, with their routes.
+  // Measured 83367 B (pair 53109 + report-footer.md, composition-handoff.md, deploy-tail.md and command-shapes.md 30258), 423 B over the 82944 ceiling; 601 B of headroom — a documented KB-multiple bump. History: 81920 → 82944 (81 KB): project-rules story S3, measured 82569 B; 79872 → 81920 (80 KB): Consumers epic story S3 (+1138 B), measured 80983 B; 78848 → 79872 (78 KB): story S2 (+733 B), measured 79569 B.
   // History: 76800 → 78848 (77 KB): AD-123 —
   // upgrade's set carries its own growth (see routerPlusMode above) plus deploy-tail.md's Node-evidence
   // + contradicted-skip gotcha; measures 78084 B, 1284 B over the 75 KB ceiling, and the 76 KB

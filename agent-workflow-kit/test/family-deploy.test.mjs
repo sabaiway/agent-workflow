@@ -243,7 +243,7 @@ describe('transition — a fallback project later adopts the substrate', () => {
 
 // Upgrade safety (Plan 2): a markerless prior-lineage entry point (one that predates the
 // methodology slot) now gets the slot ADDED at its Session-Protocols anchor, with every other byte
-// preserved; an empty slot is filled; a user-customized slot is preserved verbatim.
+// preserved; an empty slot is filled; a slot holding other content is written current (entry-pointers).
 
 describe('backward compatibility — a prior-lineage deployment is reconciled on upgrade', () => {
   it('a markerless prior entry point gets the slot inserted at the anchor, all other bytes preserved', () => {
@@ -258,14 +258,14 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     }
   });
 
-  it('a user-customized slot is preserved verbatim on reconcile (never regenerated)', () => {
-    const custom = 'methodology notes the user wrote\nand a second line';
-    const entry = `# Entry\n\n${START_MARKER}\n${custom}\n${END_MARKER}\n\n# Tail\n`;
-    assert.equal(extractSlot(entry).trim(), custom, 'the user content is what lives in the slot');
+  it('a slot holding other content is written with the fragment on reconcile, every byte outside it unchanged', () => {
+    const differing = 'methodology notes the user wrote\nand a second line';
+    const entry = `# Entry\n\n${START_MARKER}\n${differing}\n${END_MARKER}\n\n# Tail\n`;
+    assert.equal(extractSlot(entry).trim(), differing, 'the other content is what lives in the slot');
 
     const result = reconcileSlot(entry, FRAGMENT, { maxLines: AGENTS_MD_CAP });
-    assert.equal(result.status, 'present-filled');
-    assert.equal(result.text, entry, 'the customization survives byte-for-byte — not replaced by the bundled fragment');
+    assert.equal(result.status, 'reconciled-written');
+    assert.equal(result.text, `# Entry\n\n${START_MARKER}\n${FRAGMENT.trim()}\n${END_MARKER}\n\n# Tail\n`, 'the slot carries the fragment, the rest byte-for-byte');
   });
 
   it('an upgrade touches only the artifacts it owns — unrelated project files stay intact (slot reconcile)', async () => {

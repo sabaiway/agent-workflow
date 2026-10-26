@@ -23,7 +23,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
     'pointers',
     'node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md',
     null,
-    ['added', 'already present', 'skipped', 'STOP'],
+    ['added', 'already present', 'written over a different one', 'skipped', 'STOP'],
   ),
   entry(
     'footprint',

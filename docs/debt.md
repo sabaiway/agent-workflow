@@ -998,3 +998,66 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   written or created". Residual: no code writes a copy, and the S20 pending cells already assert that the kit file is
   the only path changed (`rules-ensure.test.mjs:243`). Raised by the DISTRIBUTION-FILES-STAY-CURRENT S5 spec review
   (round 2).
+- **ENTRY-POINTER-OLD-LINES-NAME-SLOT-AND-FRAGMENT** — invariant: no human sentence the entry-file reconcile prints
+  names a slot, marker, fragment or anchor (`agent-workflow-kit/references/shared/deploy-tail.md:15`). Origin: two
+  lines that predate story S18 do: the cap error `injection would push AGENTS.md to <n> lines (cap <m>) — trim the
+  fragment or the file` (`agent-workflow-kit/tools/inject-methodology.mjs:177`) and the explicit form's
+  `methodology slot already present and filled — nothing to do (zero-diff).` (`:412`). Narrow fix: `writing the
+  pointer would push AGENTS.md to <n> lines (cap <m>) — trim the file` and `methodology pointer already present and
+  filled — nothing to do (zero-diff).`, moving the machine key `isFillCapRefusal` and the chained lanes read
+  (`injection would push`, `(cap `) with the words, and the cells that pin both lines. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S18 spec review (round 1).
+- **ENTRY-POINTER-TEMP-CLEANUP-FAILURE-UNREPORTED** — invariant: no failure of the entry-file reconcile's write is
+  silent. Origin: a failed write or rename removes the temporary file with `rm(tmp, { force: true }).catch(() => {})`
+  (`agent-workflow-kit/tools/inject-methodology.mjs:385`), so a failed removal leaves the temporary file beside
+  `AGENTS.md` with no line; spec entry-pointers states it as a limit. Narrow fix: on a failed removal, reject with the
+  write's error carrying the temporary path, and one cell where the write and the removal both fail. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S18 spec review (round 1).
+- **RULES-MODE-ZERO-DIFF-OMITS-THE-CAP** — invariant: every zero-diff sentence about the entry file is true of an
+  over-cap file. Origin: `docs/ai/specs/kit/project-rules/rules-mode.md:71-73` says a deployment whose pointers equal
+  the engine's fragments and whose rows are current reconciles to a zero-diff no-op, while a file past 100 lines is
+  the over-cap error, exit 1 (`agent-workflow-kit/tools/inject-methodology.mjs:234-236`); the gap predates story S18.
+  Narrow fix: after `whose Memory Map rows are current` insert `, the file within the cap,`. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S18 spec review (round 2).
+- **MEMORY-MAP-ANCHOR-WHOLE-ROW-TEST-UNSTATED** — invariant: the anchor row's multi-line skip has one stated test.
+  Origin: from story S18 a theme's row is whole by four unescaped `|` and an unescaped closing `|`
+  (`docs/ai/specs/kit/project-rules/memory-map-row.md`), while the anchor's skip ("that row on more than one line")
+  names no test and `agent-workflow-kit/tools/project-rules/memory-map-row.mjs:69` uses `isWhole`; an anchor broken
+  after its read-when cell, ending with `|`, gets a row inserted between its halves under `isWhole`. Narrow fix: the
+  anchor reason reads `it has that row on more than one line (its line does not, trailing spaces aside, end with |)`,
+  or names the theme row's test, with one S28 cell. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S18 spec review
+  (round 2).
+- **ENTRY-POINTERS-S11-BOUND-OPENS-A-BRACKET** — invariant: every slice bound a scenario names reads as one unit.
+  Origin: spec entry-pointers S11's step-4 start bound is the literal `` `pointers` slot (workflow-methodology ``,
+  whose `(` opens inside the scenario's own parenthetical and never closes, so a reader works out where the bound
+  ends. Narrow fix: quote each bound in a code span. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S18 spec review
+  (round 2 re-read).
+- **ENTRY-POINTER-OUTCOME-LISTS-OMIT-REFRESHED** — invariant: every shipped list of the pointers outcomes names each
+  outcome the reconcile prints. Origin: a known earlier pointer prints `refreshed the <name> pointer to the current
+  canon` (`agent-workflow-kit/tools/inject-methodology.mjs:284`), while the `pointers` row of
+  `agent-workflow-kit/references/modes/upgrade.md:13`, its step-4 relay (`:117`) and the run-list's pointers outcomes
+  (`agent-workflow-kit/tools/upgrade-runlist.mjs:26`) name no refreshed pointer; the gap predates story S18. Narrow
+  fix: `refreshed` after `already present` in the three lists, moving the run-list cells
+  (`agent-workflow-kit/test/upgrade-runlist.test.mjs`) and the upgrade.md byte pin
+  (`agent-workflow-kit/test/recommendations-language-contract.test.mjs`). Raised by the DISTRIBUTION-FILES-STAY-CURRENT
+  S18 diff review (copy pass).
+- **ENTRY-POINTER-WRITE-REMOVES-A-NESTED-PAIR** — invariant: a write over a pointer never removes another pointer's
+  marker. Origin: `reconcileMarkerSlot` (`agent-workflow-kit/tools/inject-methodology.mjs:226-244`) writes a differing
+  slot whose content holds another slot's ordered pair (the methodology pair nested in the orchestration pair), so the
+  file is written with no methodology pointer, exit 0, while its line names that pointer present or written; each pair
+  alone reads `ok`, though `agent-workflow-kit/references/shared/composition-handoff.md:42` names a nested slot
+  malformed. Narrow fix: content holding a `<!-- workflow:` marker answers the error `the <label> pointer holds another
+  pointer's marker — refusing to write`, the slot's STOP, with one S1 cell. Residual: only a hand-nested pair reaches
+  it. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S18 diff review (round 1).
+- **ENTRY-POINTER-MALFORMED-STOP-CELL-READS-NO-STDERR** — invariant: a slot whose ensure answers error reads no
+  fragment. Origin: the malformed-slot cell (`agent-workflow-kit/tools/inject-methodology.test.mjs:959-965`) asserts
+  only a rejection and an unchanged file, so dropping the `markerSlotEnsurable` guard
+  (`agent-workflow-kit/tools/inject-methodology.mjs:392`) STOPs on the absent engine instead and stays green. Narrow
+  fix: run it through `runCli` with the engine absent, asserting exit 1, the `reconcile refused — expected exactly one
+  start/end marker pair` line and no `engine not found`; the same for a markerless file with no anchor. Raised by the
+  DISTRIBUTION-FILES-STAY-CURRENT S18 diff review (round 1).
+- **MEMORY-MAP-ROW-TRAILING-SPACES-CELL-MISSING** — invariant: a whole row with spaces after its last `|` is written,
+  never skipped as split. Origin: no cell of `agent-workflow-kit/tools/project-rules/memory-map-row.test.mjs:161-227`
+  (S35, S37) has one, so `isOneRow` without `.trimEnd()` (`agent-workflow-kit/tools/project-rules/memory-map-row.mjs:29`)
+  stays green. Narrow fix: an S35 cell over every theme's row with three trailing spaces, answering written. Raised by
+  the DISTRIBUTION-FILES-STAY-CURRENT S18 diff review (round 1).

@@ -106,9 +106,11 @@ Also the kit's: the vendor skill copy the kit installs into the three agent skil
 when it matches a pin the kit shipped, written with no question beside a copy at a kit pin;
 a copy matching none is the user's, left and named. Also the kit's: the three kit sections of
 `docs/ai/agent_rules.md` (Communication, Story sessions and the planning/review lens), each
-written current on every upgrade with no question and no copy kept. A declaration seeded once from a template and never
+written current on every upgrade with no question and no copy kept. Also the kit's: the three pointers of `AGENTS.md`
+and its Memory Map rows of the rules themes, each written current on every upgrade with no question and no copy kept.
+A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
-user's own file. A customization goes into one of eight channels instead:
+user's own file. A customization goes into one of nine channels instead:
 
 - **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed
   pre-commit hook runs it first, once the installer has run.
@@ -121,6 +123,9 @@ user's own file. A customization goes into one of eight channels instead:
 - **A hook of your own** goes in `.claude/hooks/<name>.local.mjs`, which you wire.
 - **Your own text in the agent rules file**: text of your own goes under a ### heading of its own,
   titled unlike the kit's sections.
+- **Your own text in the entry file `AGENTS.md`**: text of your own goes outside the two
+  `<!-- workflow: -->` comment lines around each pointer; a row of your own goes on a line of its
+  own, its first cell a path of your own.
 
 No path segment of a file the kit bundles and places as its own has a dot-separated part exactly
 `local`; a path of that form is the user's, and no kit tool writes one on its own. Outside that rule:
