@@ -106,7 +106,7 @@ const KIT_LINES = [
   'source-size: limit depth 5, tolerance 0% — from kit',
   'source-size: limit files-per-root none recorded, tolerance 10% — from kit',
 ];
-const RECORDED_ROOTS = "source-size: limit files-per-root each judged root's recorded count, tolerance 10% — from kit";
+const RECORDED_ROOTS = "source-size: limit files-per-root each declared root's recorded count, tolerance 10% — from kit";
 const NO_LAYOUT = (cwd) => `source-size: NOTE — ${configPath(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`;
 // The five limits open the output in the table's order; no other line states a limit.
 const assertLimitLines = (result, code, expected) => {

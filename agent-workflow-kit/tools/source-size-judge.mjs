@@ -47,6 +47,8 @@ export const standingWarningsOf = (findings) => findings.flatMap((f) => {
   return kind && f.dimension !== 'depth' && f.actual > f.allowed && f.actual <= f.ceiling ? [{ ...f, kind }] : [];
 });
 export const hasLoweredRecord = (findings) => findings.some((f) => LOWERED_KINDS.has(f.kind));
+// The spec store's files count, recorded before files per root left the store: no decomposition, so no focus line.
+export const hasStoreRecord = (findings) => findings.some((f) => f.kind === 'store-record');
 
 // One rule for every recorded number: a raise stops, any other change warns. `kinds` names no record
 // yet, grew, lowered and no longer needed in the target's own vocabulary.
@@ -95,7 +97,7 @@ const measureLayout = (cwd, config, scope, deps) => {
   const undecodable = [];
   for (const [root, entries] of counted) {
     const counts = layoutCounts(entries);
-    roots.set(root, counts.files);
+    if (root !== SPEC_STORE_ROOT) roots.set(root, counts.files);
     const base = Buffer.from(root, 'utf8').toString('latin1');
     for (const [below, facts] of counts.directories) {
       const bytes = Buffer.from(below === '' ? base : root === '.' ? below : `${base}/${below}`, 'latin1');
@@ -119,7 +121,7 @@ const rootFindings = (measured, projected, recorded, tolerance) => {
     else if (actual > was) findings.push({ kind: 'root-band', severity: WARNING, root, actual, recorded: was, ceiling });
   }
   for (const [root, was] of Object.entries(recorded.roots)) {
-    if (!measured.roots.has(root)) findings.push({ kind: 'root-gone', severity: WARNING, root, recorded: was.files });
+    if (!measured.roots.has(root)) findings.push({ kind: root === SPEC_STORE_ROOT ? 'store-record' : 'root-gone', severity: WARNING, root, recorded: was.files });
   }
   return findings;
 };

@@ -12,6 +12,7 @@ const loadLimits = () => import('./limits.mjs');
 const loadLayout = () => import('./layout.mjs');
 const loadRecord = () => import('./record.mjs');
 const loadSetup = () => import('./setup.mjs');
+const loadPiles = () => import('./piles.mjs');
 const loadDoor = () => import('./index.mjs');
 const loadCore = () => import('../source-size-core.mjs');
 const loadReport = () => import('../source-size-report.mjs');
@@ -23,6 +24,7 @@ const FILE_NAMES = {
   'layout.mjs': ['SPEC_STORE_ROOT', 'bandOf', 'layoutCounts', 'layoutDefect', 'walkSpecStore'],
   'record.mjs': ['changesFor', 'isRaise', 'materialize', 'ownEntry', 'planRecord', 'projectLayout', 'serialize'],
   'setup.mjs': ['SETUP_ANSWERS', 'checkTargetOf', 'layoutSetupOf'],
+  'piles.mjs': ['PILE_ANSWERS', 'PILE_HELD', 'PILE_QUEUE_MAX_BYTES', 'PILE_QUEUE_REL', 'pileIdOf', 'pileOfferOf', 'pileRowOf', 'pilesOf', 'queueChecksOf', 'spliceLater'],
 };
 const DOOR_NAMES = Object.values(FILE_NAMES).flat();
 const IDS = ['lines-per-file', 'bytes-per-line', 'entries-per-directory', 'depth', 'files-per-root'];
@@ -263,7 +265,7 @@ describe('the limit lines state every resolved limit', () => {
       'limit depth 5, tolerance 0% — from kit',
     ];
     assert.deepEqual(limitLines(limits, { escape, recorded: false }), [...head, 'limit files-per-root none recorded, tolerance 20% — from override: <wider band>']);
-    assert.deepEqual(limitLines(limits, { escape, recorded: true }), [...head, "limit files-per-root each judged root's recorded count, tolerance 20% — from override: <wider band>"]);
+    assert.deepEqual(limitLines(limits, { escape, recorded: true }), [...head, "limit files-per-root each declared root's recorded count, tolerance 20% — from override: <wider band>"]);
     assert.deepEqual(limitLines(resolveLimits({}).limits, { escape, recorded: false }), [
       'limit lines-per-file 400, tolerance 10% — from kit',
       'limit bytes-per-line 1000, tolerance 0% — from kit',
@@ -274,12 +276,13 @@ describe('the limit lines state every resolved limit', () => {
   });
 });
 
-describe('spec:source-size/S14 the door exports exactly the twenty-two names of limits.mjs, layout.mjs, record.mjs and setup.mjs, and no kit module imports past it', () => {
-  it('re-exports the very exports of its four files through the door and the core, and no kit module reaches a file of it but the door', async () => {
+describe('spec:source-size/S14 the door exports exactly the thirty-two names of limits.mjs, layout.mjs, record.mjs, setup.mjs and piles.mjs, and no kit module imports past it', () => {
+  it('re-exports the very exports of its five files through the door and the core, and no kit module reaches a file of it but the door', async () => {
     const door = await loadDoor();
     const modules = { 'limits.mjs': await loadLimits(), 'layout.mjs': await loadLayout(), 'record.mjs': await loadRecord(), 'setup.mjs': await loadSetup() };
+    modules['piles.mjs'] = await loadPiles().catch(() => ({}));
     const core = await loadCore();
-    assert.equal(DOOR_NAMES.length, 22);
+    assert.equal(DOOR_NAMES.length, 32);
     assert.deepEqual(Object.keys(door).sort(), [...DOOR_NAMES].sort());
     for (const [file, names] of Object.entries(FILE_NAMES)) {
       assert.deepEqual(Object.keys(modules[file]).sort(), [...names].sort(), `the door exports exactly the exports of ${file}`);

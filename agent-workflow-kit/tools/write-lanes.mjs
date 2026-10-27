@@ -34,6 +34,7 @@ export const VARIANT_LANES = Object.freeze({
   'source-size.id-squatter': LANE_USER,
   'source-size.schema-1': LANE_CHAT,
   'source-size.layout': LANE_CHAT,
+  'source-size.piles': LANE_CHAT,
   'gate-hook': LANE_HARNESS,
   'gate-hook.not-current': LANE_KIT,
   'commit-guard': LANE_HARNESS,

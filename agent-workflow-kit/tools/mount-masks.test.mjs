@@ -141,7 +141,7 @@ describe('mount-masks — the leaf is library-only (spec:sandbox-masks/S15)', ()
   it('the package ships it: tools/ is in files and no negation strips a non-test module', () => {
     const pkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
     assert.ok(existsSync(LEAF) && pkg.files.includes('tools/'));
-    assert.deepEqual(pkg.files.filter((f) => f.startsWith('!tools/')), ['!tools/**/*.test.mjs', '!tools/manifest/fixtures/**']);
+    assert.deepEqual(pkg.files.filter((f) => f.startsWith('!tools/')), ['!tools/**/*.test.mjs', '!tools/manifest/fixtures/**', '!tools/project-rules/fixtures/**']);
   });
 });
 

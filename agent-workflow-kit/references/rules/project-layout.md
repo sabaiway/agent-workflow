@@ -34,7 +34,7 @@ Modules never nest by technical layer, so there is no directory of all controlle
 
 ## The spec mirrors the module
 
-A spec's path mirrors its module's path, so the name of one gives the place of the other.
+Specs live in docs/ai/specs. A spec's path mirrors its module's path, so the name of one gives the place of the other.
 
 ## Old code
 

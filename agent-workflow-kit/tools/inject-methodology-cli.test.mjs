@@ -12,7 +12,7 @@ import {
 } from './inject-methodology.mjs';
 
 const ANCHOR_CELL = '| [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) |';
-const LAYOUT_ROW = '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | Creating, moving or naming a file, a module or a spec | Only through `/agent-workflow-kit rules` |';
+const LAYOUT_ROW = '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | **Start of every session** | Only through `/agent-workflow-kit rules` |';
 const TEMPLATES = ['../references/templates/AGENTS.md', '../../agent-workflow-memory/references/templates/AGENTS.md'];
 // The repo engine is injected, so a filled pointer is judged against the engine's own fragment.
 const ENGINE_DIR = fileURLToPath(new URL('../../agent-workflow-engine', import.meta.url));

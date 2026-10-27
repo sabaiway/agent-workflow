@@ -76,7 +76,7 @@ export const resolveLimits = (limits = {}) => {
 // the check and the plan-time render state the same five lines from this one function.
 export const limitLines = (limits, { escape = String, recorded = false } = {}) => Object.keys(KIT_LIMITS).map((id) => {
   const { value, tolerance, source, reason } = limits[id];
-  const amount = value !== null ? `${value}` : recorded ? "each judged root's recorded count" : 'none recorded';
+  const amount = value !== null ? `${value}` : recorded ? "each declared root's recorded count" : 'none recorded';
   return `limit ${id} ${amount}, tolerance ${tolerance}% — ${source === 'kit' ? 'from kit' : `from override: ${escape(reason)}`}`;
 });
 

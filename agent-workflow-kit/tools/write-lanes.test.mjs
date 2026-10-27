@@ -440,7 +440,7 @@ describe('spec:init-project/S38 — worktrees-dir is a harness variant and workt
 describe('spec:init-project/S53 the four user variants of revision 11 by proof', () => {
   const variants = ['gates-inert.unfillable', 'gates-inert.producer-unrecognized', 'source-size.id-squatter', 'review-recipe'];
 
-  it('the four variants are user among nine user, seventeen harness, four kit and sixteen chat keys, with no HAND-APPLY in any slot', (t) => {
+  it('the four variants are user among nine user, seventeen harness, four kit and seventeen chat keys, with no HAND-APPLY in any slot', (t) => {
     const facts = createFacts(t);
     const variantLanes = need(lanes, 'VARIANT_LANES');
     const applySlot = need(lanes, 'applySlot');
@@ -449,7 +449,7 @@ describe('spec:init-project/S53 the four user variants of revision 11 by proof',
       assert.equal(variantLanes[variant], 'user', variant);
     }
     const count = (lane) => keys.filter((variant) => variantLanes[variant] === lane).length;
-    assert.deepEqual(['user', 'harness', 'kit', 'chat'].map(count), [9, 17, 4, 16]);
+    assert.deepEqual(['user', 'harness', 'kit', 'chat'].map(count), [9, 17, 4, 17]);
     for (const variant of keys) {
       const slot = applySlot(variant, facts);
       for (const line of [slot?.check, slot?.apply].filter((line) => line != null)) {

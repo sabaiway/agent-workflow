@@ -44,7 +44,7 @@ const valueOf = (argv, index, flag) => {
   return value;
 };
 
-const parseArgv = (argv) => {
+export const parseArgv = (argv) => {
   // `--help` is answered ONLY when it is the whole invocation. A help flag that wins from anywhere
   // makes `--check <dirty-file> --help` exit 0 — the gate's refusal replaced by a help page, which
   // is the same bypass a second mode flag would be, reached by a flag nobody reads as dangerous.

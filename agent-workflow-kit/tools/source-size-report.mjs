@@ -18,7 +18,7 @@
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
 import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
-import { hasLoweredRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
+import { hasLoweredRecord, hasStoreRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
 import { isRaise, limitLines } from './source-size/index.mjs';
 
 // The project directory is project-controlled too, so the path every refusal names enters its line
@@ -140,7 +140,7 @@ const FINDING_LINE = Object.freeze({
   grew: (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds its recorded baseline ${f.recorded} — recorded debt is not permission to grow`,
   'aggregate-grew': (f) => `${f.root}: aggregate lines ${f.actual} exceeds the recorded budget ${f.recorded} — splitting a file buys no aggregate headroom`,
   'aggregate-unrecorded': (f) => `${f.root}: declared root carries NO recorded aggregate budget (${f.actual} lines measured) — the record must mirror the declared roots exactly`,
-  'root-unrecorded': (f) => `${f.root}: judged root carries NO recorded files count (${f.actual} files measured) — the layout record must mirror the judged roots exactly`,
+  'root-unrecorded': (f) => `${f.root}: declared root carries NO recorded files count (${f.actual} files measured) — the layout record must mirror the declared roots exactly`,
   'root-grew': (f) => `${f.root}: files ${f.actual} exceeds its recorded ${f.recorded} beyond its band (up to ${f.ceiling})`,
   'dir-over': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds the limit ${f.allowed} beyond its band (up to ${f.ceiling})`,
   'dir-grew': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds its recorded ${f.recorded} — recorded debt is not permission to grow`,
@@ -156,7 +156,8 @@ const WARNING_LINE = Object.freeze({
   'aggregate-root-gone': (f) => `${f.root}: recorded in "aggregate" but no longer a declared root — the regeneration removes it`,
   'root-band': (f) => `${f.root}: files ${f.actual} is over its recorded ${f.recorded} but within its band (up to ${f.ceiling}) — past ${f.ceiling} it stops`,
   'root-stale': (f) => `${f.root}: files ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
-  'root-gone': (f) => `${f.root}: recorded in "layout"."roots" but no longer a judged root — the regeneration removes it`,
+  'root-gone': (f) => `${f.root}: recorded in "layout"."roots" but no longer a declared root — the regeneration removes it`,
+  'store-record': (f) => `${f.root}: recorded in "layout"."roots", but files per root no longer judges the spec store — the regeneration removes it`,
   'dir-band': (f) => `${f.dir}: ${f.dimension} ${f.actual} is ${BAND(f)} — past ${f.ceiling} it stops`,
   'dir-stale': (f) => `${f.dir}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
   'dir-obsolete': (f) => (f.actual > f.ceiling ? `${f.dir}: its depth record ${f.recorded} no longer sits on the shallowest directory beyond the depth band — the regeneration removes it` : `${f.dir}: ${f.dimension} ${f.actual} is within its band (up to ${f.ceiling}), so its record is obsolete — the regeneration removes it`),
@@ -206,7 +207,8 @@ export const checkReportLines = ({ cwd, config, verdict, absent = false }) => {
   lines.push(...warningLines(warnings));
   const lowered = hasLoweredRecord(warnings);
   if (stops.length === 0) {
-    if (lowered) lines.push(tightenLine(cwd), SPLIT_QUALITY_FOCUS);
+    if (lowered || hasStoreRecord(warnings)) lines.push(tightenLine(cwd));
+    if (lowered) lines.push(SPLIT_QUALITY_FOCUS);
     lines.push(warnings.length === 0
       ? `source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`
       : `source-size: PASS with ${warnings.length} warning(s) — ${verdict.scope.files.length} in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled`);
@@ -362,8 +364,8 @@ tolerance and source, then what it does not judge, then its warnings, then its s
 
 Counting: lines, and the longest line in BYTES. A terminator never counts (the CR of a CRLF
 included); a last line with no final newline still counts; an empty file is 0 lines. Layout: the
-entries of each directory, its depth below its root, and the files of each root — every tracked
-entry under a declared root, plus the spec store docs/ai/specs walked from disk.
+entries of each directory and its depth below its root, over every tracked entry under a declared
+root plus the spec store docs/ai/specs walked from disk, and the files of each declared root.
 
 A recorded entry is DEBT: a finding stops exactly when the regeneration would raise it, and a record
 above the tree or gone warns until the regeneration lowers or removes it. Each declared root carries

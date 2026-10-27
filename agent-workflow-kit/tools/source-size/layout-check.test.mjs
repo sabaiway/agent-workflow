@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { main } from '../source-size-check.mjs';
+import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-layout-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -72,7 +73,8 @@ const dirRecord = (facts) => ({ ...facts, reason: R });
 const SIXTH = 'src/a/b/c/d/e/g';
 const overEntries = (dir, n) => `${dir}: entries ${n} exceeds the limit 20 beyond its band (up to 22)`;
 const overDepth = (dir) => `${dir}: depth 6 exceeds the limit 5 beyond its band (up to 5)`;
-const unrecordedRoot = (root, n) => `${root}: judged root carries NO recorded files count (${n} files measured) — the layout record must mirror the judged roots exactly`;
+const unrecordedRoot = (root, n) => `${root}: declared root carries NO recorded files count (${n} files measured) — the layout record must mirror the declared roots exactly`;
+const STORE_RECORD = 'docs/ai/specs: recorded in "layout"."roots", but files per root no longer judges the spec store — the regeneration removes it';
 const NOT_JUDGED = (cwd) => `source-size: NOTE — ${configPath(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`;
 const ABSENT_NOTE = (cwd) => `source-size: NOTE — ${configPath(cwd)} is absent, so the kit's values judge layout alone and no file is judged on lines or bytes`;
 
@@ -167,7 +169,7 @@ describe('spec:source-size/S32 at the check the layout record ratchets, director
     const warnings = collectWarnings(result);
     for (const text of [
       'src: files 47 is under the recorded 50 — the regeneration lowers it',
-      'lib: recorded in "layout"."roots" but no longer a judged root — the regeneration removes it',
+      'lib: recorded in "layout"."roots" but no longer a declared root — the regeneration removes it',
       'src/wide: entries 22 is within its band (up to 22), so its record is obsolete — the regeneration removes it',
       'src/wider: entries 23 is under the recorded 25 — the regeneration lowers it',
       'src/a/b/c/d/e/g: depth 6 is under the recorded 7 — the regeneration lowers it',
@@ -184,18 +186,16 @@ describe('spec:source-size/S32 at the check the layout record ratchets, director
     assert.doesNotMatch(result.stdout, /depth 6 is within its band/);
   });
 
-  it('an unrecorded judged root stops, the spec store walked from disk being one', () => {
+  it('an unrecorded declared root stops, the spec store walked from disk not being one', () => {
     const cwd = createProject({ files: ONE, config: WITH_LAYOUT({}), store: { 'docs/ai/specs/index.md': 'x' } });
     const result = runCli(cwd, '--check');
-    assert.equal(result.code, 1, showRun(result));
-    assert.deepEqual(collectFindings(result), [unrecordedRoot('docs/ai/specs', 1), unrecordedRoot('src', 1)]);
+    assert.deepEqual([result.code, collectFindings(result)], [1, [unrecordedRoot('src', 1)]], showRun(result));
   });
 
   it('a hidden spec directory beyond its band is caught though git tracks none of it', () => {
-    const cwd = createProject({ files: ONE, config: WITH_LAYOUT({ src: 1, 'docs/ai/specs': 23 }), store: makeMany('docs/ai/specs/kit', 23) });
+    const cwd = createProject({ files: ONE, config: WITH_LAYOUT({ src: 1 }), store: makeMany('docs/ai/specs/kit', 23) });
     const result = runCli(cwd, '--check');
-    assert.equal(result.code, 1, showRun(result));
-    assert.deepEqual(collectFindings(result), [overEntries('docs/ai/specs/kit', 23)]);
+    assert.deepEqual([result.code, collectFindings(result)], [1, [overEntries('docs/ai/specs/kit', 23)]], showRun(result));
   });
 
   it('a record exempts only its own dimension: an entries record leaves depth judged, a depth record leaves entries judged', () => {
@@ -308,7 +308,7 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
     assertHas(result, 'source-size: limit files-per-root none recorded, tolerance 10% — from kit');
     assert.equal(result.code, 0, showRun(result));
     assert.deepEqual(collectWarnings(result), ['wide: entries 22 is over the limit 20 but within its band (up to 22) — past 22 it stops']);
-    assert.doesNotMatch(result.stdout, /big\.mjs|aggregate|files \d|judged root/);
+    assert.doesNotMatch(result.stdout, /big\.mjs|aggregate|files \d|declared root/);
     assert.equal(existsSync(configPath(cwd)), false, 'a check writes nothing: the config stays absent');
     assert.deepEqual(listDocsAi(cwd), listed);
   });
@@ -342,10 +342,38 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
     assert.deepEqual(config.baseline, {});
     assert.deepEqual(config.aggregate, { '.': { lines: 0, reason: 'first record' } });
     assert.deepEqual(config.layout, {
-      roots: { '.': { files: 24, reason: 'first record' }, 'docs/ai/specs': { files: 1, reason: 'first record' } },
+      roots: { '.': { files: 24, reason: 'first record' } },
       directories: { wider: { entries: 23, reason: 'first record' } },
     });
     assert.equal(runCli(cwd, '--check').code, 0, 'the first write leaves a record the check holds');
+  });
+});
+
+describe('spec:source-size/S43 files per root judges the declared roots alone, and a deployed store record warns until the regeneration drops it', () => {
+  const STORED = WITH_LAYOUT({ src: 1, 'docs/ai/specs': 1 });
+  const THREE = makeMany('docs/ai/specs/kit', 3);
+  it('a store recorded at one file takes its third with no stop, every --check warning on the record, present or absent, with the regeneration line and no focus line; a code root still stops', () => {
+    for (const store of [THREE, {}]) {
+      const cwd = createProject({ files: ONE, config: STORED, store });
+      const result = runCli(cwd, '--check');
+      const tighten = `a record above is lower or gone, so regenerating lowers or removes it with no reason: node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"`;
+      assert.deepEqual([result.code, collectWarnings(result), /REVIEW FOCUS/.test(result.stdout)], [0, [STORE_RECORD, tighten], false], showRun(result));
+    }
+    const grown = runCli(createProject({ files: { ...ONE, 'src/b.txt': 'x', 'src/c.txt': 'x' }, config: STORED, store: THREE }), '--check');
+    assert.deepEqual([grown.code, collectFindings(grown)], [1, ['src: files 3 exceeds its recorded 1 beyond its band (up to 2)']], showRun(grown));
+    assert.ok(collectWarnings(grown).includes(STORE_RECORD), showRun(grown));
+    const unrecorded = runCli(createProject({ files: ONE, config: WITH_LAYOUT({ src: 1 }), store: THREE }), '--check');
+    assert.deepEqual([unrecorded.code, collectWarnings(unrecorded)], [0, []], showRun(unrecorded));
+  });
+
+  it('--write-baseline with no --reason drops the record with its delta and no warning, the roots then mirroring the declared roots', () => {
+    const cwd = createProject({ files: ONE, config: STORED, store: THREE });
+    const write = runCli(cwd, '--write-baseline');
+    assert.deepEqual([write.code, write.stdout.includes(STORE_RECORD)], [0, false], showRun(write));
+    assertHas(write, '  docs/ai/specs: files 1 → none');
+    assert.deepEqual(readConfig(cwd).layout.roots, rootsOf({ src: 1 }));
+    const next = runCli(cwd, '--check');
+    assert.deepEqual([next.code, collectWarnings(next)], [0, []], showRun(next));
   });
 });
 
@@ -370,10 +398,12 @@ describe('what a declared root counts, and what MINTED means beside the layout r
     const written = runCli(cwd, '--write-baseline', '--layout', '--reason', R);
     assert.equal(written.code, 0, showRun(written));
     const { layout } = readConfig(cwd);
-    assert.deepEqual(Object.fromEntries(Object.entries(layout.roots).map(([root, { files }]) => [root, files])), { '.': 2, 'docs/ai/specs': 25 });
+    assert.deepEqual(Object.fromEntries(Object.entries(layout.roots).map(([root, { files }]) => [root, files])), { '.': 2 });
     assert.deepEqual(layout.directories, { 'docs/ai/specs': { entries: 25, reason: R } }, 'gen (30 entries) is excluded, and docs/ai counts no "specs" entry');
     assert.equal(runCli(cwd, '--check').code, 0);
   });
+
+  it('--help states what layout counts in one sentence, files counted for the declared roots alone', () => assert.match(main(['--help']).stdout.replace(/\s+/g, ' '), /Layout: the entries of each directory and its depth below its root, over every tracked entry under a declared root plus the spec store docs\/ai\/specs walked from disk, and the files of each declared root\./));
 
   it('a directory name that is not valid UTF-8 is counted and never refused, until a record would have to carry it', () => {
     const cwd = createProject({ files: ONE, config: WITH_LAYOUT({ src: 2 }) });

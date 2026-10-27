@@ -34,3 +34,16 @@ export {
   checkTargetOf,
   layoutSetupOf,
 } from './setup.mjs';
+
+export {
+  PILE_ANSWERS,
+  PILE_HELD,
+  PILE_QUEUE_MAX_BYTES,
+  PILE_QUEUE_REL,
+  pileIdOf,
+  pileOfferOf,
+  pileRowOf,
+  pilesOf,
+  queueChecksOf,
+  spliceLater,
+} from './piles.mjs';

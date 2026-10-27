@@ -3,7 +3,9 @@
 
 import { digestOf } from './rules-check.mjs';
 
-export const RULES_PRIORS = Object.freeze([]);
+export const RULES_PRIORS = Object.freeze([
+  Object.freeze({ theme: 'project-layout', release: '14.37.0', sha256: 'b79f19a9e0583f1e0619ee6aca06feb2c359b9655f1d260e87d8d5647bd1de19' }),
+]);
 
 // isKnownPrior(theme, bytes, catalog?) → true exactly when the bytes hash to an entry of that theme.
 export const isKnownPrior = (theme, bytes, catalog = RULES_PRIORS) => {

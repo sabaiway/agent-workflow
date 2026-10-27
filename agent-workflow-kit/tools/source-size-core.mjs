@@ -1,6 +1,6 @@
 // source-size-core.mjs — the PURE READ core of the source-size practice (D-18): the ONE import point
 // for every surface that must ask about the practice without reaching a writer. It owns no logic but
-// the layout setup's one bound form, no write API, and spawns only a read-only git query, so the read-graph purity suite
+// the layout setup's and the pile offer's bound forms, no write API, and spawns only a read-only git query, so the read-graph purity suite
 // (test/read-graph-purity.test.mjs) stays true however the halves behind it move.
 //
 // The halves, each holding ONE rule set and each within the cap this practice declares:
@@ -13,12 +13,15 @@
 //                                lines, the band and the layout count, the recorded ratchet as data
 //                                and the layout setup
 //
-// Re-export only, but for readLayoutSetup: a consumer imports the practice, never a particular half, so
+// Re-export only, but for readLayoutSetup and readPileOffer: a consumer imports the practice, never a particular half, so
 // a later split moves code without touching a single call site.
 
+import { lstatSync, realpathSync } from 'node:fs';
+import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
 import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_SCHEMA, loadSourceSizeConfig, validateSourceSizeConfig } from './source-size-config.mjs';
 import { judgeTree, stopsOf } from './source-size-judge.mjs';
-import { layoutSetupOf } from './source-size/index.mjs';
+import { isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
+import { PILE_QUEUE_MAX_BYTES, layoutSetupOf, pileOfferOf } from './source-size/index.mjs';
 
 export {
   SOURCE_SIZE_CONFIG_REL,
@@ -79,6 +82,16 @@ export {
   SETUP_ANSWERS,
   checkTargetOf,
   layoutSetupOf,
+  PILE_ANSWERS,
+  PILE_HELD,
+  PILE_QUEUE_MAX_BYTES,
+  PILE_QUEUE_REL,
+  pileIdOf,
+  pileOfferOf,
+  pileRowOf,
+  pilesOf,
+  queueChecksOf,
+  spliceLater,
 } from './source-size/index.mjs';
 
 export {
@@ -103,3 +116,15 @@ export const readLayoutSetup = (root, deps = {}) => layoutSetupOf(root, {
   absentConfig: validateSourceSizeConfig({ schema: SOURCE_SIZE_SCHEMA }),
   reason: INITIAL_ADOPTION_REASON,
 }, deps);
+
+// readPileOffer(root, declaration, deps) → the pile offer for a project, the one bound form the advisor
+// and the writer ask: the loader, the capped no-follow queue read, realpath, lstat and the line rule.
+// `declaration` is the caller's loadDeclaration answer, or { outcome: 'error', message } where it threw.
+export const readPileOffer = (root, declaration, deps = {}) => pileOfferOf(root, {
+  loadSourceSizeConfig,
+  readQueue: (path) => readFileBytesNoFollowCapped(path, PILE_QUEUE_MAX_BYTES),
+  realpath: realpathSync,
+  lstat: lstatSync,
+  isLineUnsafe,
+  jsonForLine,
+}, declaration, deps);

@@ -161,8 +161,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **LENS-DOUBLED-CELL-PROVES-NO-LATER-WRITE** — invariant: a doubled heading withholds the write for its own section
   only. Origin: `agent-workflow-kit/tools/lens-region.test/story-sessions.test.mjs:215-227` plants every other section
   current, so a reconcile that stopped after a doubled section stays green. Narrow fix: in the Communication-doubled
-  cell plant `CUSTOM_STORY`, assert the story written with the canon and the logs `[...regionHeadingTwice,
-  storyWritten, lensCurrent]`. Residual exposure, not live: `lens-region.mjs:250-253` returns the state and the reduce
+  cell plant `CUSTOM_STORY` in a document built at `WIDE_CAP` (at the default `TARGET_CAP` of 12 the story write is
+  refused), assert the story written with the canon and the logs `[...regionHeadingTwice, storyWritten,
+  lensCurrent]`. Residual exposure, not live: `lens-region.mjs:250-253` returns the state and the reduce
   goes on. Raised by the S7 diff review (review lens, round 1).
 - **LENS-HEADING-MATCHER-STOPS-BEFORE-ITS-LABEL** — invariant: the title words a line names are the words the
   matcher reads. Origin: `agent-workflow-kit/tools/rules-regions.mjs:75` matches `Planning, review &
@@ -174,7 +175,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **LENS-REGION-TEST-COMMENT-NAMES-THE-PRESERVE-POSTURE** — invariant: no comment states the retired preserve
   posture. Origin: `agent-workflow-kit/tools/lens-region.test.mjs:182-184` says a region matching no prior never
   reaches the projects running it; since story S7 it is written, only its line differs. Comment-only, the suite is not
-  shipped (`agent-workflow-kit/package.json` files). Narrow fix: "Without its own prior entry the region is still
+  shipped (`agent-workflow-kit/package.json` files). Narrow fix: the whole comment, its first sentence included,
+  reads "A project deployed on the previous canon is refreshed. Without its own prior entry the region is still
   written, but its line says it differed rather than refreshed." Raised by the S7 diff review (review lens, round 1).
 - **STORY-FLOW-S5-DOCS-PATH-SELF-CHECK** — `agent-workflow-kit/test/template-region-parity.test.mjs:180` proves
   "reads nothing under docs/ai" only by its own source lacking the literal `docs/ai`; a path built from segments
@@ -1044,10 +1046,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **ENTRY-POINTER-WRITE-REMOVES-A-NESTED-PAIR** — invariant: a write over a pointer never removes another pointer's
   marker. Origin: `reconcileMarkerSlot` (`agent-workflow-kit/tools/inject-methodology.mjs:226-244`) writes a differing
   slot whose content holds another slot's ordered pair (the methodology pair nested in the orchestration pair), so the
-  file is written with no methodology pointer, exit 0, while its line names that pointer present or written; each pair
-  alone reads `ok`, though `agent-workflow-kit/references/shared/composition-handoff.md:42` names a nested slot
-  malformed. Narrow fix: content holding a `<!-- workflow:` marker answers the error `the <label> pointer holds another
-  pointer's marker — refusing to write`, the slot's STOP, with one S1 cell. Residual: only a hand-nested pair reaches
+  file is written with no methodology pointer, exit 0, while its line reports the methodology pointer as landed
+  (already present, filled, refreshed or written); each pair alone reads `ok`, though
+  `agent-workflow-kit/references/shared/composition-handoff.md:42` names a nested slot malformed. Narrow fix: only a
+  later slot whose content holds an earlier slot's marker (the methodology marker in the orchestration or autonomy
+  slot, the orchestration marker in the autonomy slot) answers the error `the <label> pointer holds another pointer's
+  marker — refusing to write`, the slot's STOP, with one S1 cell. Residual: only a hand-nested pair reaches
   it. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S18 diff review (round 1).
 - **ENTRY-POINTER-MALFORMED-STOP-CELL-READS-NO-STDERR** — invariant: a slot whose ensure answers error reads no
   fragment. Origin: the malformed-slot cell (`agent-workflow-kit/tools/inject-methodology.test.mjs:959-965`) asserts
@@ -1087,7 +1091,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 - **ENSURE-OPS-ORCHESTRATION-COMMENTS-UNPINNED** — invariant: the module's own header and comments describe the
   orchestration op it runs. Origin: spec orchestration-note says the `ensure-ops.mjs` header and orchestration comments
   describe the rule, but no scenario reads them, so a header still naming `refreshReadme` and a still-canonical note
-  (`agent-workflow-kit/tools/ensure-ops.mjs:16-18,105-109`) stays green, where distribution-files S24 pins the same
+  (`agent-workflow-kit/tools/ensure-ops.mjs:17-19,107-110`) stays green, where distribution-files S24 pins the same
   header for the scripts rule. Narrow fix: S7 gains the header and its orchestration comments naming `readmeState` and
   no `refreshReadme`, still-canonical or customized. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 spec review
   (round 2).
@@ -1103,3 +1107,61 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   the kit's slot order stays green. Narrow fix: compare `JSON.stringify(configOf(dir))` with
   `JSON.stringify({ _README: CANON_README, ...RECIPES })`. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 diff
   review (round 1).
+- **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the
+  paste-ready regeneration. Origin: `docs/ai/specs/kit/source-size/judge.md:51-52` says "A lowered or removed record
+  warns with the same paste-ready regeneration", but `aggregate-stale` and `aggregate-root-gone` are outside
+  `LOWERED_KINDS` (`agent-workflow-kit/tools/source-size-judge.mjs:37`) and `checkReportLines` adds the tighten line
+  only when `hasLoweredRecord` or `hasStoreRecord` holds (`agent-workflow-kit/tools/source-size-report.mjs:208-210`),
+  so a green check
+  whose only removed record is an aggregate budget prints no regeneration line. Narrow fix: judge.md names "a lowered
+  or removed file or layout record", as layout.md does from revision 5. Raised by the S11 spec review of
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING (lens, round 2).
+- **REPO-SEARCH-OVERSIZED-FILE-ENDS-THE-WALK** — invariant: a file over the per-file bound is skipped and the walk goes
+  on. Origin: `readRegularFile` sets `state.incomplete` for a file over `maxBytes`
+  (`agent-workflow-kit/tools/repo-search.mjs:291-297`), and `walk` returns at once while `state.incomplete` is set
+  (`:381`), so one large file (`docs/ai/history/queue-purge-archive.txt`) turns a search of the whole tree into "no
+  matches" plus INCOMPLETE, exit 3. Narrow fix: the per-file skip records its own flag, reported as INCOMPLETE at the
+  end, and only the result, walk and total budgets stop the walk; one cell with a large file before a matching one.
+  Residual exposure, live: callers pass `--max-bytes 67108864`. Raised by the S10 plan session of
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.
+- **BRIDGES-HAVE-NO-CHOOSE-AN-OPTION-CONSULT-FORM** — invariant: a consult that asks a bridge to choose between options
+  gets the choice back with a receipt. Origin: `codex-review plan` judges a plan and answers ship or revise, so a
+  choice question came back as ship with no choice; `agy-review` refuses any verdict outside SHIP, SHIP WITH NITS and
+  REWORK with exit 4 and no receipt (`antigravity-cli-bridge/bin/agy-review.sh:2249-2254`), so `Verdict: C` was lost.
+  Narrow fix: none inside one bridge; a consult brief asks for a review verdict and puts the choice in the body.
+  Residual exposure, live: each choice consult costs a re-run. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 consult.
+- **GATE-APPROVE-HOOK-ASKS-ON-A-QUOTED-METACHARACTER** — invariant: a read-only search or a file write the agent has a
+  no-prompt lane for reaches no human prompt. Origin: the hook asks on a seeded read-only command carrying a
+  redirection, a command substitution, an `--output` flag or a line continuation, quoted or not, and only that ask
+  hints the lane to the caller (`agent-workflow-kit/references/hooks/gate-approve.mjs:34-38,:318`); its opt-in
+  read-lane allows no metacharacter at all, and any other command gets no decision from it and no hint (`:39-46`); it
+  never denies (`:46`), so a quoted grep pattern or a shell redirect still prompts the maintainer. Narrow fix: none in the hook (the
+  string-level scan cannot tell a quoted byte safely); the hint names the MCP `repo_search` and the Write tool.
+  Residual exposure, live: every such call is one prompt. Raised by the S10 spec session of
+  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.
+- **REVIEW-LOOP-COSTS-OF-THE-JEV-S13-RELEASE** — invariant: the review loop ends with no run spent on a known false
+  stop. Origin, each measured on the JEV epic's S13 release (2026-10-07): (1) a codex `revise` carrying only minors is
+  a recognized negative, so `review-state` vetoes it (`agent-workflow-kit/tools/review-state-judge.mjs:138,261`); (2)
+  release copy written after the diff review is re-checked one sentence at a time (the re-check rule,
+  `agent-workflow-engine/references/procedures.md:129-134`), three re-checks for 13 copy findings; (3) the one-run agy
+  raise to 420000 bytes sits near the CLI's edge over the 240000 default (`antigravity-cli-bridge/bin/agy-review.sh:482`);
+  (4) a ship verdict over a numbered Blocking item exits 4 with no receipt (`agy-review.sh:2257-2264`); (5) Fold + loop
+  (`procedures.md:48`) names no stop when folds breed new states; (6) a re-check that is not ship-class goes to the
+  maintainer (`procedures.md:131-133`), a stop only a human lifts. Narrow fix per item: (1) the canon tells codex to
+  answer ship with minors; (2) the copy is staged and lens-read before round 1; (3) a facts file that keeps the total
+  under 240000; (4) re-run once, then degrade; (5) Fold + loop names the stop the planning canon states; (6) none,
+  the maintainer's rule. Residual exposure, live: each item costs a run or an ask.
+- **KIT-TOOL-STOPS-OF-THE-JEV-S13-CODE-AND-RELEASE** — invariant: a kit tool's refusal names a route that works. Origin:
+  (1) `run-gates --pre-review` runs no `coverage-check` (`agent-workflow-kit/tools/run-gates.mjs:105-106`), so an
+  uncovered branch shows only at `--final`, after the council; (2) `--write-baseline` lists files through
+  `git ls-files -s` (`agent-workflow-kit/tools/source-size-scope.mjs:64`), so a new untracked file is left out and the
+  record under-counts it; (3) `dispatch open --retry-of` refuses a retry whose brief was stamped on a newer checkpoint
+  (`agent-workflow-kit/tools/dispatch-store-read.mjs:211`) and names no route, while a fresh thread at retry index 0
+  on the new checkpoint works. Narrow fix per item: (1) `--pre-review` prints the `coverage-check.mjs --check` line to
+  run next; (2) the baseline writer names untracked files under a declared root; (3) the refusal names the fresh
+  thread. Residual exposure, live: each costs a late red or a lost retry. Raised by the JEV S13 code session.
+- **KIT-APPLY-MEETS-THE-HARNESS-DIALOG** — invariant: a kit apply the user said yes to in chat reaches the user only as
+  the harness's own consent. Origin: the sandbox protects `.claude/` (its settings files, skills and hooks), so an
+  apply into it meets the harness dialog. Narrow fix: none the kit can make alone; a route with no dialog needs a
+  narrow allow rule and a kit-writer exclusion, which is the maintainer's call. Residual exposure, live: one harness
+  dialog per such apply. Raised by the S6 spec session of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.

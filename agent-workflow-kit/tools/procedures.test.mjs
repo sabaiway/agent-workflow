@@ -1294,9 +1294,9 @@ describe('procedures CLI — the declared practice names the limits and the layo
     rmSync(join(cwd, SOURCE_SIZE_CONFIG_REL));
     for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), [], `${activity}: an absent config renders nothing`);
   });
-  it('a layout record renders files-per-root as each judged root\'s recorded count and layout recorded; --json IS the human block', () => {
+  it('a layout record renders files-per-root as each declared root\'s recorded count and layout recorded; --json IS the human block', () => {
     writePractice({ ...SCHEMA2, layout: { roots: { scripts: { files: 2, reason: 'layout starts' }, src: { files: 30, reason: 'layout starts' } }, directories: {} } });
-    const expected = blockOf([...LIMITS, filesPerRoot('each judged root\'s recorded count'), '  layout: recorded — entries per directory, depth and files per root are judged by the size check.']);
+    const expected = blockOf([...LIMITS, filesPerRoot('each declared root\'s recorded count'), '  layout: recorded — entries per directory, depth and files per root are judged by the size check.']);
     assert.deepEqual(renderBlock('plan-execution'), expected);
     assert.ok(run(['plan-execution'], { codex: READY, agy: READY }).stdout.includes(expected.join('\n')), 'the human render carries the same lines, contiguously');
   });

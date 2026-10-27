@@ -71,7 +71,7 @@ import { takeCensus, censusFact, CENSUS_VERDICT } from './tracked-tree-census.mj
 // fill's own WRITER is never called from here — the advisor renders its consent-gated command, it
 // does not run it.
 import { buildOffer } from './gates-init.mjs';
-import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig, readLayoutSetup } from './source-size-core.mjs';
+import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig, readLayoutSetup, readPileOffer } from './source-size-core.mjs';
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -192,6 +192,7 @@ export const SEVERITIES = Object.freeze({
   // A minted schema-1 config is a record the check stops on until the writer moves it.
   'source-size.schema-1': SEVERITY_ATTENTION,
   'source-size.layout': SEVERITY_OPTIONAL,
+  'source-size.piles': SEVERITY_OPTIONAL,
   'gate-hook': SEVERITY_OPTIONAL,
   // A wired hook's kit file absent or differing: its lane is kit, as `agents.not-current`'s.
   'gate-hook.not-current': SEVERITY_OPTIONAL,
@@ -286,6 +287,7 @@ export const WHATS = Object.freeze({
   'source-size.unminted': 'the source-size gate is declared over an unminted record ({state}) — the check refuses it, or if absent judges layout alone, no line',
   'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write',
   'source-size.layout': 'the layout record is not started — starting it records any directory already beyond the layout limits, so the commit hook can judge layout',
+  'source-size.piles': '{n} recorded pile(s) have no queue row planning their cleanup — one row each goes to the end of the queue\'s Later bucket',
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
   'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
@@ -386,6 +388,7 @@ export const VARIANT_BENEFITS = Object.freeze({
   'state-block.not-current': HOOK_CURRENCY_BENEFIT,
   'jev-skill.not-current': "currency — every agent skill root the kit fills holds the vendor skill at the kit's pin once a copy is placed",
   'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
+  'source-size.piles': 'layout — each recorded pile gets a queue row that plans its cleanup, so the debt is ordered work in the queue, not only a record',
 });
 
 // ── the CLOSED opt-in capability registry (OPT-IN-SHIPS-INVISIBLE) ──────────────────────────────
@@ -859,6 +862,20 @@ const layoutSetupOrSkip = (root, deps, skip) => {
   }
 };
 
+// The piles arm: write renders the item, held its stated skip, none nothing; its own throw is a stated skip.
+const pilesArm = (root, declaration, deps, add, skip) => {
+  try {
+    const offer = readPileOffer(root, declaration, deps);
+    if (offer.answer === 'write') {
+      add('source-size', fillTemplate(WHATS['source-size.piles'], { n: offer.piles.length }),
+        `node ${q(toolPath('source-size/piles-cli.mjs'))} --write --cwd ${q(root)}`, 'source-size.piles',
+        `piles without a row: ${offer.piles.map(({ key }) => key).join(', ')}`);
+    } else if (offer.answer === 'held') skip('source-size.piles', new Error(offer.text));
+  } catch (err) {
+    skip('source-size.piles', err);
+  }
+};
+
 const probeSourceSize = ({ root, deps, add, skip, shared }) => {
   try {
     const tool = toolPath('source-size-check.mjs');
@@ -873,7 +890,11 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
       shared.layoutRecord = add('source-size', fillTemplate(WHATS['source-size.layout'], {}),
         `node ${q(tool)} ${setup.args.map(q).join(' ')} --cwd ${q(root)}`, 'source-size.layout', LAYOUT_RECORD_RECIPE);
     } else if (setup?.answer === 'held' && Object.hasOwn(LAYOUT_HELD, setup.reason)) skip('source-size.layout', new Error(LAYOUT_HELD[setup.reason](setup)));
-    const declaration = loadDeclaration(root, deps);
+    // One declaration read for the piles arm and the gate arms; where it throws, the gate arms rethrow it.
+    let loadError = null;
+    const declaration = (() => { try { return loadDeclaration(root, deps); } catch (err) { loadError = err; return { outcome: 'error', message: err.message }; } })();
+    pilesArm(root, declaration, deps, add, skip);
+    if (loadError !== null) throw loadError;
     const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
     // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
     // mint records, and a first mint records the whole tree — so "this is what the tree already

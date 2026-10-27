@@ -24,6 +24,7 @@
 | source-size.id-squatter | user | user step |
 | source-size.schema-1 | chat | source-size-check.mjs |
 | source-size.layout | chat | source-size-check.mjs |
+| source-size.piles | chat | source-size/piles-cli.mjs |
 | gate-hook | harness | gate-hook.mjs |
 | gate-hook.not-current | kit | gate-hook.mjs |
 | commit-guard | harness | git-hooks.mjs |

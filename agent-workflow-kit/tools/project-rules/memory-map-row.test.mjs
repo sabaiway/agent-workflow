@@ -11,6 +11,7 @@ const CRLF = '\r\n';
 const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(?\s*)(['"`])([^'"`\n]+)\1/g;
 const SHIPPED_ROWS = Object.freeze([
   '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | Creating, moving or naming a file, a module or a spec | Only through `/agent-workflow-kit rules` |',
+  '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | **Start of every session** | Only through `/agent-workflow-kit rules` |',
 ]);
 const ANCHOR = '| [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) | **Before any code change** | Protocol changes |';
 const HEAD_LINES = Object.freeze([
@@ -81,7 +82,7 @@ describe('spec:project-rules/S26 each theme row is derived from the registry and
   });
 });
 
-describe('spec:project-rules/S27 a present current row is kept, a prior refreshed, and the prior list is frozen and empty', () => {
+describe('spec:project-rules/S27 a present current row is kept, a prior refreshed, and the prior list is frozen with the 14.39.0 row', () => {
   it('keeps a present current row byte for byte, also above the anchor', async () => {
     const { reconcile, THEMES, rows } = await loadLeaf();
     for (const text of [mapWith([ANCHOR, ...rows]), joinLines([...rows, ...HEAD_LINES, ANCHOR, ...TAIL_LINES])]) {
@@ -105,11 +106,11 @@ describe('spec:project-rules/S27 a present current row is kept, a prior refreshe
     assert.equal(reconcile(above, { maxLines: 100, priors }).text, joinLines([...rows, ANCHOR]));
   });
 
-  it('holds MEMORY_MAP_PRIOR_ROWS frozen and empty, and every shipped row text is a prior or the current row', async () => {
+  it('holds MEMORY_MAP_PRIOR_ROWS frozen with exactly the 14.39.0 row, and every shipped row text is a prior or the current row', async () => {
     const { reconcile, THEMES } = await loadLeaf();
     const MEMORY_MAP_PRIOR_ROWS = need(await load('./memory-map-row.mjs'), 'MEMORY_MAP_PRIOR_ROWS');
     assert.ok(Object.isFrozen(MEMORY_MAP_PRIOR_ROWS), 'MEMORY_MAP_PRIOR_ROWS is frozen');
-    assert.deepEqual(MEMORY_MAP_PRIOR_ROWS, []);
+    assert.deepEqual(MEMORY_MAP_PRIOR_ROWS, [SHIPPED_ROWS[0]]);
     const inserted = reconcile(joinLines([ANCHOR]), { maxLines: 100 }).text.split(LF).slice(1, 1 + THEMES.length);
     assert.deepEqual(SHIPPED_ROWS, [...MEMORY_MAP_PRIOR_ROWS, ...inserted]);
   });

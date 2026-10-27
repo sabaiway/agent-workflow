@@ -5,7 +5,7 @@ export const THEMES = Object.freeze([
   Object.freeze({
     name: 'project-layout',
     template: 'references/rules/project-layout.md',
-    readWhen: 'Creating, moving or naming a file, a module or a spec',
+    readWhen: '**Start of every session**',
   }),
 ]);
 

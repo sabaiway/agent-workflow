@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.4.0 — each recorded pile is offered a queue row; the layout rules are read at every session start; the spec store drops files per root (AD-214)
+
+**Recommendations now offers a queue row that plans the cleanup of each pile the size check records.** A pile is a
+directory the layout record of `docs/ai/source-size.json` holds beyond its entries band: with the kit's limit of 20 at
+10%, a record of 23 entries or more. For each pile no queue row names, the new chat item `source-size.piles` offers one
+row at the end of the Later bucket of `docs/plans/queue.md`. On your yes the agent runs
+`node <kit>/tools/source-size/piles-cli.mjs --write --cwd <project>`, which prints one `queued: <id> — <key>` line per
+row, and the next run shows nothing. A no writes nothing, and the item comes back. Each row reads:
+
+    - Plan the cleanup of the directory `<key>`, whose <n> entries the size check records over the limit of <v>, so its files are laid out by meaning — id PILE-<the key upper-cased, each run of other characters one dash>-<8 hex digits>
+      - recorded in docs/ai/source-size.json under "layout"."directories"; a regeneration lowers the record as the directory shrinks
+
+- **Your queue's own check decides.** The rows are judged by each `queue-audit-cli.mjs` gate of `docs/ai/gates.json`
+  that checks this queue (with no such gate, by the readback alone), then read back, before anything is written.
+  Where a write would not pass, nothing is written and the item is a stated skip naming why: a pile key a row cannot
+  carry; a queue that cannot take the rows (absent, a link, unreadable, not a regular UTF-8 file within 8 MiB, CR line
+  endings, a text the queue audit refuses, already failing its own check, or rows that would not read back in its
+  Later bucket); not exactly one heading reading `Later` or opening with `Later `; a `docs/ai/gates.json` or a gate
+  the advisor cannot read, or whose check cannot judge the queue; or the check refusing the queue with the rows added (a row cap, for one).
+- **A pile a row already names is offered no more**, whatever the row's bucket or state.
+- **No tree is walked**: the piles come from the record alone, so the offer follows the record, not the tree.
+
+**The project-layout rules are read at the start of every session.** The theme's Memory Map row in `AGENTS.md` now
+reads `**Start of every session**` where it read `Creating, moving or naming a file, a module or a spec`, and *The
+spec mirrors the module* opens with `Specs live in docs/ai/specs.` Your upgrade writes both current: the earlier row
+answers `refreshed`, and with no local rules file the earlier rules text answers `refreshed` and the effective file is
+rebuilt from the new text; with one, the kit file is still refreshed, the op answers `pending` and names the merge for
+the agent to make, as for any change of the kit's rules.
+
+**Files per root no longer judges the spec store.** `docs/ai/specs` keeps its limits on entries per directory and depth,
+but its file count is no longer recorded or judged, so a store recorded at one spec takes its third with no stop, while
+a declared code root beyond its band still stops. A config that still records `docs/ai/specs` in `"layout"."roots"` is
+read with no stop and warns on every check until the next record write drops it:
+
+`source-size: WARNING — docs/ai/specs: recorded in "layout"."roots", but files per root no longer judges the spec store — the regeneration removes it`
+
+A check with no stop prints the paste-ready regeneration line beside that warning. The limit line and the root lines
+now say *declared root* where they said *judged root*.
+
 ## 19.3.0 — the orchestration note is written current with no question; a differing one is named with its route (AD-213)
 
 **Your upgrade now writes the onboarding note of `docs/ai/orchestration.json` current, with no question and no copy

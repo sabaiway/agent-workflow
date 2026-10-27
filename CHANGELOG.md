@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-27 — AD-214: each recorded pile is offered a queue row; the layout rules are read at every session start; the spec store drops files per root (kit 19.4.0 MINOR; memory, engine and both bridges unchanged)
+
+**Recommendations now offers, for each pile the size check records with no queue row naming it, one row at the end
+of the queue's Later bucket that plans its cleanup**, written on the chat yes by the new
+`tools/source-size/piles-cli.mjs --write`; the queue's own declared check, where one is declared, and a readback judge
+the rows first, and where they would not pass nothing is written and the item says why. The project-layout theme's Memory Map row now
+sends agents to its rules at the start of every session, and the rules say specs live in `docs/ai/specs`; the upgrade
+refreshes both, naming the merge for the agent where a local rules file exists. Files per root now judges the declared roots alone: the spec store keeps its other limits, and a
+config still recording its file count warns until the next record write drops it. Contracts: project-rules revision
+8, source-size revisions 5 and 6, init-project revision 25, distribution-files revision 15. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-26 — AD-213: the orchestration note is written current with no question (kit 19.3.0 MINOR; memory, engine and both bridges unchanged)
 
 **The upgrade now writes the onboarding note of `docs/ai/orchestration.json` current with no question**: a current

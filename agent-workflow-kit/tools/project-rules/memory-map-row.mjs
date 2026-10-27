@@ -6,7 +6,9 @@ import { THEMES, themePaths } from './themes.mjs';
 
 // The row texts a release shipped, append-only: a release that changes a row's text first appends
 // the outgoing one here.
-export const MEMORY_MAP_PRIOR_ROWS = Object.freeze([]);
+export const MEMORY_MAP_PRIOR_ROWS = Object.freeze([
+  '| [`docs/ai/rules/effective/project-layout.md`](./docs/ai/rules/effective/project-layout.md) | Creating, moving or naming a file, a module or a spec | Only through `/agent-workflow-kit rules` |',
+]);
 
 // The route the reconcile's row note names when it wrote a row with other text.
 export const ROW_ROUTE = 'a row of your own goes on a line of its own, its first cell a path of your own';

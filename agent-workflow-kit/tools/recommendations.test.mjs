@@ -3664,6 +3664,15 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
       aggregate: { src: { lines: 1, reason: 'fixture' } },
     }));
     addBuilt(collect(schema1Root));
+    const pilesRoot = makeRoot(t);
+    const fixture = 'fixture';
+    writeFileSync(join(pilesRoot, 'docs', 'ai', 'source-size.json'), JSON.stringify({
+      schema: 2, roots: ['src'], extensions: ['.mjs'], baseline: {}, aggregate: { src: { lines: 1, reason: fixture } },
+      layout: { roots: { src: { files: 30, reason: fixture } }, directories: { src: { entries: 30, reason: fixture } } },
+    }));
+    mkdirSync(join(pilesRoot, 'docs', 'plans'), { recursive: true });
+    writeFileSync(join(pilesRoot, 'docs', 'plans', 'queue.md'), '# Queue\n\n### Later\n');
+    addBuilt(collect(pilesRoot));
     const { repoFactory, writeFence, stubs, line } = await import('./sandbox-masks-harness.test.mjs');
     const root = repoFactory('s54-mount', { 'docs/ai/.workflow-version': '4.0.0\n' })();
     writeFence(root, '.zshrc');
@@ -3789,7 +3798,8 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
   it('8 — every chat variant renders exactly its table writers and the judge rejects missing, unrelated and wrong writers', async (t) => {
     const text = readFileSync(join(KIT_ROOT, 'references', 'advisor-writers.md'), 'utf8');
     const items = (await buildChatItems(t)).filter((item) => item.lane === 'chat');
-    const variants = Object.entries(need(lanes, 'VARIANT_LANES')).filter(([, lane]) => lane === 'chat').map(([variant]) => variant);
+    assert.ok(items.some((item) => item.variant === 'source-size.piles'), 'the piles fixture renders source-size.piles');
+    const variants =Object.entries(need(lanes, 'VARIANT_LANES')).filter(([, lane]) => lane === 'chat').map(([variant]) => variant);
     assert.deepEqual([...new Set(items.map((item) => item.variant))].sort(), [...variants].sort(), 'rendered chat variants equal the lane registry');
     const readTable = (text) => {
       const lines = text.split('\n');
@@ -3810,7 +3820,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
           continue;
         }
         const paths = [...item.apply.matchAll(/\bnode\s+(?:'([^']+)'|"([^"]+)"|([^\s;&|]+))/gu)];
-        const writers = paths.map((match) => (match[1] ?? match[2] ?? match[3]).split('/').at(-1));
+        const writers = paths.map((match) => match[1] ?? match[2] ?? match[3]).map((path) => (path.startsWith(`${HERE}/`) ? path.slice(HERE.length + 1) : path));
         const modes = [...item.apply.matchAll(/\/agent-workflow-kit\s+([a-z-]+)/gu)].map((match) => match[1]);
         const named = [...writers, ...modes];
         const union = rendered.get(item.variant) ?? new Set();

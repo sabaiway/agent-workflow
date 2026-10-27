@@ -18,7 +18,7 @@ const ARCHITECTURE_TEMPLATES = ['agent-workflow-memory', 'agent-workflow-kit'].m
 const ENTRY = {
   name: 'project-layout',
   template: 'references/rules/project-layout.md',
-  readWhen: 'Creating, moving or naming a file, a module or a spec',
+  readWhen: '**Start of every session**',
 };
 
 const PRESCRIPTIONS = [
@@ -33,6 +33,7 @@ const PRESCRIPTIONS = [
 
 const templateText = () => readFileSync(TEMPLATE, 'utf8');
 const bodyLines = (text) => text.replace(FRONTMATTER_RE, '').split('\n');
+const sectionProse = (text, heading) => text.split(`\n${heading}\n`)[1]?.split('\n## ')[0].split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
 const sliceBullet = (text) => {
   const start = text.indexOf(SLICED_BULLET);
   const end = text.indexOf('\n- **', start + SLICED_BULLET.length);
@@ -86,7 +87,7 @@ describe('spec:project-rules/S1 THEMES holds exactly project-layout and themePat
   });
 });
 
-describe('spec:project-rules/S2 the bundled project-layout template is keyless prose stating each prescription', () => {
+describe('spec:project-rules/S2 the bundled project-layout template is keyless prose stating each prescription and where specs live', () => {
   it('carries frontmatter', () => {
     const text = templateText();
     assert.match(text, FRONTMATTER_RE);
@@ -112,10 +113,11 @@ describe('spec:project-rules/S2 the bundled project-layout template is keyless p
     assert.doesNotMatch(text, /\b(TODO|TBD|XXX)\b/, 'no TODO, TBD or XXX');
   });
 
-  it('states every layout prescription of the themes part', () => {
+  it('states every layout prescription of the themes part, the spec section exactly its sentence', () => {
     const body = bodyLines(templateText()).join('\n');
     const missing = PRESCRIPTIONS.filter((phrase) => !body.includes(phrase));
     assert.deepEqual(missing, [], 'every prescription phrase is present');
+    assert.equal(sectionProse(templateText(), '## The spec mirrors the module'), "Specs live in docs/ai/specs. A spec's path mirrors its module's path, so the name of one gives the place of the other.");
   });
 });
 

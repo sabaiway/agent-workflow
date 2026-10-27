@@ -66,11 +66,11 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     assert.deepEqual(check(rows), []);
   });
 
-  it('has exactly one row per VARIANT_LANES key, forty-six in total', () => {
+  it('has exactly one row per VARIANT_LANES key, forty-seven in total', () => {
     const rows = readRows(readTable());
     const variantLanes = need(lanes, 'VARIANT_LANES');
     assert.deepEqual(tableMismatches(rows, variantLanes), []);
-    assert.equal(Object.keys(variantLanes).length, 46);
+    assert.equal(Object.keys(variantLanes).length, 47);
   });
 
   it('gives every row the lane returned by laneOf', () => {
@@ -109,12 +109,13 @@ describe('spec:init-project/S56 the completeness table by proof', () => {
     }
   });
 
-  it('counts nine user, sixteen chat, seventeen harness and four kit rows: forty-six keys', () => {
+  it('counts nine user, seventeen chat, seventeen harness and four kit rows: forty-seven keys', () => {
     const rows = readRows(readTable());
-    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [46, 9, 16, 17, 4], 'row count, then user, chat, harness and kit rows');
-    const named = ['hook-checks', 'source-size.layout', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current', 'jev-skill.not-current'];
+    assert.deepEqual([rows.length, ...['user', 'chat', 'harness', 'kit'].map((lane) => rows.filter((row) => row.lane === lane).length)], [47, 9, 17, 17, 4], 'row count, then user, chat, harness and kit rows');
+    const named = ['hook-checks', 'source-size.layout', 'source-size.piles', 'agents.not-current', 'gate-hook.not-current', 'state-block.not-current', 'jev-skill.not-current'];
     assert.deepEqual([...named, 'gate-hook.marker-stale', 'read-lane.stale', 'read-lane.missing', 'jev-skill.earlier'].map((v) => rows.find(({ variant }) => variant === v)), [
       { variant: 'hook-checks', lane: 'harness', writer: 'git-hooks.mjs' }, { variant: 'source-size.layout', lane: 'chat', writer: 'source-size-check.mjs' },
+      { variant: 'source-size.piles', lane: 'chat', writer: 'source-size/piles-cli.mjs' },
       { variant: 'agents.not-current', lane: 'kit', writer: 'cheap-agents.mjs' }, { variant: 'gate-hook.not-current', lane: 'kit', writer: 'gate-hook.mjs' },
       { variant: 'state-block.not-current', lane: 'kit', writer: 'state-block-hook.mjs' }, { variant: 'jev-skill.not-current', lane: 'kit', writer: 'jev-skill.mjs' },
       undefined, undefined, undefined, undefined]);

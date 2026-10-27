@@ -416,6 +416,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/source-size/layout.mjs',
       'tools/source-size/record.mjs',
       'tools/source-size/setup.mjs',
+      'tools/source-size/piles.mjs',
+      'tools/source-size/piles-cli.mjs',
       // the parallel-feature worktrees tool + its mode contract (AD-060)
       'tools/worktrees.mjs',
       'references/modes/worktrees.md',
@@ -491,10 +493,10 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
   });
 
   it('ships no fixtures anywhere (neither `fixtures/` nor the inline-fixtures `__fixtures__/`)', () => {
-    // The manifest validator's `fixtures/` dir is stripped by files[]. The presenter modules use
-    // INLINE fixtures (never a tools/__fixtures__/ dir) — defense-in-depth: reject either spelling so a
-    // stray fixtures dir can never leak past the gate (`!tools/**/*.test.mjs` would NOT catch a non-test
-    // fixtures file).
+    // The `fixtures/` dirs of the manifest validator and the project-rules prior catalog are stripped by
+    // files[]. The presenter modules use INLINE fixtures (never a tools/__fixtures__/ dir) —
+    // defense-in-depth: reject either spelling so a stray fixtures dir can never leak past the gate
+    // (`!tools/**/*.test.mjs` would NOT catch a non-test fixtures file).
     const leaks = packed.filter((p) => /(^|\/)fixtures\//.test(p) || /(^|\/)__fixtures__\//.test(p));
     assert.deepEqual(leaks, [], 'no fixtures (fixtures/ or __fixtures__/) may ship in the tarball');
   });
@@ -900,7 +902,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 383 = 381 + tools/source-size/layout.mjs (the layout counts and the spec-store walk) and tools/source-size/record.mjs (the record planner) - story S5 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
     // 384 = 383 + tools/source-size/setup.mjs (the layout setup) - story S6 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING; 387 = 384 + tools/distribution-files/{index,replace-set,kept-aside}.mjs - story S2 of DISTRIBUTION-FILES-STAY-CURRENT; 388 = 387 + tools/distribution-files/scripts.mjs - story S3 of it (spec:distribution-files/S25)
     // 386 = 388 - tools/migrate-adr-store.mjs and references/modes/migrate-adr-store.md, the retired opt-in mode - story S13 of DISTRIBUTION-FILES-STAY-CURRENT; 384 = 386 - tools/distribution-files/{replace-set,kept-aside}.mjs, the retired replace step - story S14 of it
-    assert.deepEqual([packed.length, packed.filter((path) => /^tools\/distribution-files\/(?:replace-set|kept-aside)\.mjs$/.test(path))], [384, []], `tarball file count drifted (${packed.length}\u2260 384), or a retired distribution-files leaf ships`);
+    // 386 = 384 + tools/source-size/piles.mjs (the pile offer) and tools/source-size/piles-cli.mjs (its writer) - story S12 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
+    assert.deepEqual([packed.length, packed.filter((path) => /^tools\/distribution-files\/(?:replace-set|kept-aside)\.mjs$/.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired distribution-files leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {
