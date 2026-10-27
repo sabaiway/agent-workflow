@@ -4,6 +4,15 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 5.13.0 — the spec canon names no children limit; the `fan-out` refusal retires (AD-215)
+
+`references/specs.md`: *Caps and thresholds* says the reader counts no children: where the layout check runs, a
+folder's entries are bounded by its entries per directory, and every index stays within its own `maxLines: 80`; a
+folder that grows subdivides along feature-slice or subdomain boundaries, as before. The index shape drops `at most
+30`, and the refusals table drops the `fan-out` row, so it lists 34 rule ids in the reader's order. The *Scale* budget
+and its 30-per-folder test tree are unchanged: that is the shape the probe builds, not a limit. The one-line canon
+summary in `SKILL.md` and `README.md` names the promotion threshold only. MINOR: a refusal leaves the contract.
+
 ## 5.12.2 — the lens canon says its section is written current on every upgrade and where your own text goes (AD-211)
 
 `references/agent-rules-lens.md`: the intro no longer says a custom edit is preserved verbatim, but flagged. It says the

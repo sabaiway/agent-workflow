@@ -40,10 +40,12 @@ against it.
 - **status** — `draft` | `live` | `retired`. Transitions run forward only: draft -> live (the
   landing row of the approved plan) and live -> retired (the removal row), never backwards.
   `revision` increments by one per live contract change.
-- **Caps and thresholds** — `maxLines: 80` on an index, `maxLines: 150` on a spec or a part. Fan-out:
-  an index lists at most 30 immediate children; beyond that it subdivides along feature-slice /
-  subdomain boundaries, never into arbitrary buckets. Promotion: a spec over its own `maxLines: 150`
-  becomes `<slug>/index.md` (`kind: spec`) plus `part` files beside it — recursive, no depth limit.
+- **Caps and thresholds** — `maxLines: 80` on an index, `maxLines: 150` on a spec or a part. The
+  reader counts no children: wherever the layout check runs, a folder's entries are bounded by the
+  layout check's entries per directory, and everywhere every index stays within its own
+  `maxLines: 80`; a folder that grows subdivides along feature-slice / subdomain boundaries, never
+  into arbitrary buckets. Promotion: a spec over its own `maxLines: 150` becomes `<slug>/index.md`
+  (`kind: spec`) plus `part` files beside it — recursive, no depth limit.
 - **slug** — the file stem of a flat spec, the folder name of a promoted root or a domain index:
   `^[a-z0-9]+(-[a-z0-9]+)*$`. Every path segment under the store is a slug.
 - **Scenario line** — `- S<N> <name> :: <repo-relative test path> :: spec:<slug>/S<N>` or
@@ -72,7 +74,7 @@ against it.
 
 - **`index`** — frontmatter: the six keys + `kind: index` (+ `maxLines: 80`). Headings: `# <title>`,
   `## Children` — each immediate child exactly once as `- [name](./<child>.md)` or
-  `- [name](./<child>/index.md)`, at most 30. No `status`, no `revision`, no `## Scenarios`,
+  `- [name](./<child>/index.md)`. No `status`, no `revision`, no `## Scenarios`,
   `## Out of scope`, `## Module` or `## Parts`. The store root additionally carries, before its
   first section, exactly the line `> Up: [technical_specification.md](../technical_specification.md)`.
 - **`spec`** — frontmatter: the six keys + `kind: spec` + `status` + `revision` (+ `maxLines: 150`).
@@ -111,7 +113,6 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
 | `open-list` | a judged clause has a check verb and a two-or-more-item enumeration but no closing form in that clause |
 | `children-link` | a `## Children` line that is not a child link to a slug |
 | `children-duplicate` | a child listed twice |
-| `fan-out` | more than 30 children |
 | `scenario-line` | a `## Scenarios` line outside the scenario grammar |
 | `scenario-number` | scenario ids not contiguous from 1 |
 | `scenario-marker` | a marker whose slug or id differs from its own line |

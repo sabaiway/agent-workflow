@@ -113,13 +113,13 @@ describe('readSpecDocument — refuse, exactly one rule per defect', () => {
     refuses(partDoc({ extra: '\n## Scenarios\n\n- S1 x :: unbound\n' }), 'auth/login/sessions.md', 'section-forbidden');
   });
 
-  it('children-link / children-duplicate / fan-out', () => {
+  it('children-link / children-duplicate; the reader counts no children, so an index of 31 reads clean', () => {
     refuses(indexDoc({ children: ['- login'] }), 'auth/index.md', 'children-link');
     refuses(indexDoc({ children: ['- [login](../login.md)'] }), 'auth/index.md', 'children-link');
     refuses(indexDoc({ children: ['- [login](./login.md)', '- [login again](./login.md)'] }), 'auth/index.md', 'children-duplicate');
-    const many = Array.from({ length: SPEC_SCHEMA.fanOutMax + 1 }, (_, i) => `- [c${i}](./c${i}.md)`);
-    refuses(indexDoc({ children: many }), 'auth/index.md', 'fan-out');
-    expect(readSpecDocument(indexDoc({ children: many.slice(0, SPEC_SCHEMA.fanOutMax) }), 'auth/index.md').errors).toEqual([]);
+    const many = Array.from({ length: 31 }, (_, i) => `- [c${i}](./c${i}.md)`);
+    const verdict = readSpecDocument(indexDoc({ children: many }), 'auth/index.md');
+    expect({ errors: verdict.errors, children: verdict.structure.children.length }).toEqual({ errors: [], children: 31 });
   });
 
   it('scenario-line / scenario-number / scenario-marker / scenario-path', () => {
@@ -341,8 +341,8 @@ describe('classifyPath + the frozen constants', () => {
     ]);
   });
 
-  it('SPEC_SCHEMA carries the frozen numbers and SPECS_COLLAPSE joins the store root', () => {
-    expect(SPEC_SCHEMA.fanOutMax).toBe(30);
+  it('SPEC_SCHEMA carries the frozen numbers, no children count, and SPECS_COLLAPSE joins the store root', () => {
+    expect({ fanOutMax: Object.hasOwn(SPEC_SCHEMA, 'fanOutMax'), rules: SPEC_SCHEMA.rules.length, fanOut: SPEC_SCHEMA.rules.includes('fan-out') }).toEqual({ fanOutMax: false, rules: 34, fanOut: false });
     expect(SPEC_SCHEMA.maxLines).toEqual({ index: 80, spec: 150, part: 150 });
     expect(SPEC_SCHEMA.statuses).toEqual(['draft', 'live', 'retired']);
     expect(SPEC_SCHEMA.kinds).toEqual(['index', 'spec', 'part']);

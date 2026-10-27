@@ -4,6 +4,16 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
 
+## 8.7.0 — the spec reader counts no children: an index may list more than 30 (AD-215)
+
+**`scripts/spec-schema.mjs` no longer refuses an index that lists more than 30 children.** The `fan-out` refusal is
+gone, so `SPEC_SCHEMA.rules` holds 34 ids, the others in their order with their messages; `SPEC_SCHEMA` no longer
+exports `fanOutMax`. An index stays within its own `maxLines: 80`, and where your workflow toolkit's layout check runs,
+a folder stays within its entries per directory. A child listed twice and a line that is not a child link still
+refuse. The store-root template no longer says `(at most 30)`; a store root you already have is yours and keeps that
+sentence, prose no reader judges. Your upgrade (`/agent-workflow-memory upgrade`, or your workflow toolkit's) writes the new
+reader pair into `scripts/` with no question. MINOR: a refusal retires, and no store that read clean now refuses.
+
 ## 8.6.3 — the pointer-slots gotcha says the composition root writes the slots current (AD-212)
 
 The pointer-slots gotcha of `SKILL.md` says memory ships the three pointer slots of `AGENTS.md` empty and never writes

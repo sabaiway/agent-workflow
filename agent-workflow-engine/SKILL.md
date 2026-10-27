@@ -3,7 +3,7 @@ name: agent-workflow-engine
 description: Canonical home of the agent-workflow planning methodology — the capped plan shape (goal and boundary, module ledger, verification), plan lifecycle, queue.md series index, mandatory Cleanup phase, the feature-spec canon (the durable per-feature contract layer with its frozen schema and Out-of-scope discipline), the bounded methodology slot fragment, the orchestration-recipe vocabulary (Solo / Reviewed / Council / Delegated / Subagent), and the activity-procedures canon (plan-authoring / plan-execution / routine / feedback-triage / epic / task, with typed recipe slots). A published, installable npm package (available:true) that *provides* the methodology text; it mutates nothing. The composition root (agent-workflow-kit) reads this canon LIVE from the installed engine and injects the bounded slots from it — one source of truth, no bundled mirror; `npx @sabaiway/agent-workflow-kit@latest init` installs the engine.
 disable-model-invocation: true
 metadata:
-  version: '5.12.2'
+  version: '5.13.0'
 ---
 
 # agent-workflow-engine
@@ -24,7 +24,7 @@ slot fill is needed but the engine is absent, the kit's reconcile **fails loudly
   series index and the mandatory final **Phase: Cleanup**.
 - [`references/specs.md`](references/specs.md) — the **feature-spec canon**: the durable per-feature
   contract layer under `docs/ai/specs/` (Contract · Scenarios · Out of scope · Module), the frozen
-  schema (kinds, statuses, forward-only transitions, the numeric fan-out and promotion thresholds,
+  schema (kinds, statuses, forward-only transitions, the numeric promotion threshold,
   the scenario-binding grammar, the refusal table the deployed reader enforces), governing specs
   cited per plan, the feature-vs-page precedence table, spec-driven feature-sliced architecture,
   and the retroactive onboarding path. The memory substrate's deployed reader

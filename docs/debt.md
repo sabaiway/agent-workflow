@@ -1165,3 +1165,11 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   apply into it meets the harness dialog. Narrow fix: none the kit can make alone; a route with no dialog needs a
   narrow allow rule and a kit-writer exclusion, which is the maintainer's call. Residual exposure, live: one harness
   dialog per such apply. Raised by the S6 spec session of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.
+- **COMMIT-HOOK-RUNS-THE-HOST-KIT-CHECKS** — invariant: a release that changes what the hook's checks read is told so
+  before its own commit. Origin: the rules and layout lines name the tools path of the kit that wrote them
+  (`agent-workflow-kit/tools/git-hooks.mjs:71-72`, `TOOLS`), in this repository the host install
+  (`.git/hooks/pre-commit:17-18`, `~/.claude/skills/agent-workflow-kit/tools/…`), so the commit of a kit release runs
+  the previous release's checks over the new tree; nothing says so before `release-run` reaches its commit stage.
+  Narrow fix: `release-run --plan` names the hook lines whose tool differs from the repository's own and the host
+  refresh that clears them. Residual exposure, live: the 19.4.0 release stopped at `commit` until a record went back
+  with its reason and the host refresh. Raised by the S10-S12 release of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.

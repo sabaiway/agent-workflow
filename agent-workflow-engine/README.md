@@ -44,8 +44,8 @@ the canonical methodology reference on disk:
   lifecycle, the `queue.md` series index, and the mandatory final **Phase: Cleanup**.
 - [`references/specs.md`](references/specs.md) — the **feature-spec canon**: the durable
   per-feature contract layer under `docs/ai/specs/` (Contract · Scenarios · Out of scope · Module),
-  the frozen schema (kinds, statuses, forward-only transitions, the numeric fan-out and promotion
-  thresholds, the scenario-binding grammar, the refusal table), governing specs cited per plan, the
+  the frozen schema (kinds, statuses, forward-only transitions, the numeric promotion
+  threshold, the scenario-binding grammar, the refusal table), governing specs cited per plan, the
   feature-vs-page precedence table, spec-driven feature-sliced architecture, and the retroactive
   onboarding path. The deployed reader `scripts/spec-schema.mjs` (memory) is pinned against it.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded**

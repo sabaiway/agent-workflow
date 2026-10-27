@@ -137,6 +137,23 @@ describe('the spec layer reaches an existing deployment on --reconcile (the 4.5.
     });
   });
 
+  it('a deployment on the 8.0.0 reader pair is refreshed by one plain run, and its navigator counts a store-root index of 31 children', () => {
+    withDeployment({ checker: 'current' }, (project) => {
+      for (const name of READER) writeFileSync(join(project, 'scripts', name), readFileSync(join(PRIORS, '8.0.0', `${name}.txt`)));
+      const r = reconcile(project);
+      assert.equal(r.code, 0, r.stdout);
+      for (const name of READER) assert.ok(r.stdout.includes(`scripts/${name}: matches a body an earlier release shipped — refreshed to the bundled one`), `${name}\n${r.stdout}`);
+      assert.deepEqual(READER.filter((name) => !isBundled(project, name)), [], 'the reader pair is the bundled bodies');
+      const children = Array.from({ length: 31 }, (_, i) => `- [c${i + 1}](./c${i + 1}.md)`);
+      writeFileSync(join(project, STORE), `${readFileSync(join(project, STORE), 'utf8')}${children.join('\n')}\n`);
+      checkDeployedDocs(project, '--write-index');
+      const navigator = readFileSync(join(project, 'docs', 'ai', 'index.md'), 'utf8');
+      const rows = navigator.split('\n').filter((line) => line.includes('specs/'));
+      assert.equal(rows.length, 1, `exactly one specs/ row\n${rows.join('\n')}`);
+      assert.match(rows[0], /\| 0 specs \| 0 parts · 1 indexes \|/, 'the 31-children store root reads clean and is counted');
+    });
+  });
+
   it('a 4.6.x deployment (reader pair on the 4.6.0 bodies, checker already current) upgrades WHOLE: reader refreshed, store seeded, the real hook commits', () => {
     withDeployment({ reader: 'prior', checker: 'current' }, (project) => {
       const r = reconcile(project);

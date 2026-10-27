@@ -12,7 +12,6 @@ export const SPEC_SCHEMA = Object.freeze({
   statuses: Object.freeze(['draft', 'live', 'retired']),
   transitions: Object.freeze([Object.freeze(['draft', 'live']), Object.freeze(['live', 'retired'])]),
   maxLines: Object.freeze({ index: 80, spec: 150, part: 150 }),
-  fanOutMax: 30,
   slugPattern: '^[a-z0-9]+(-[a-z0-9]+)*$',
   emptyMarker: '*(empty)*',
   unboundMarker: 'unbound',
@@ -38,7 +37,7 @@ export const SPEC_SCHEMA = Object.freeze({
   rules: Object.freeze([
     'frontmatter', 'frontmatter-key', 'substrate-key', 'type', 'kind', 'maxlines', 'status', 'revision',
     'root-owns', 'slug', 'kind-path', 'root-uplink', 'title', 'section-missing', 'section-order',
-    'section-forbidden', 'fence', 'open-list', 'children-link', 'children-duplicate', 'fan-out', 'scenario-line',
+    'section-forbidden', 'fence', 'open-list', 'children-link', 'children-duplicate', 'scenario-line',
     'scenario-number', 'scenario-marker', 'scenario-path', 'scenarios-empty', 'out-of-scope', 'module-line', 'module-empty',
     'module-traversal', 'module-absolute', 'module-backslash', 'module-glob', 'module-mix', 'parts',
   ]),
@@ -243,7 +242,6 @@ const checkChildren = (parsed, errors) => {
   }
   const duplicate = targets.find((target, i) => targets.indexOf(target) !== i);
   if (duplicate !== undefined) errors.push({ rule: 'children-duplicate', message: `child "${duplicate}" is listed twice` });
-  if (targets.length > SPEC_SCHEMA.fanOutMax) errors.push({ rule: 'fan-out', message: `${targets.length} children > ${SPEC_SCHEMA.fanOutMax} — subdivide along slice boundaries` });
 };
 
 const parseScenario = (line) => {

@@ -37,7 +37,7 @@ describe('specs.md — the canon carries the frozen schema the reader enforces',
       // each "Shape per kind" bullet names ITS kind's cap — per kind, never a shared sentence
       assert.match(flat, new RegExp(`\\*\\*\`${kind}\`\\*\\* — frontmatter:[^*]*\\(\\+ \`maxLines: ${SPEC_SCHEMA.maxLines[kind]}\`\\)`), `the ${kind} shape carries maxLines: ${SPEC_SCHEMA.maxLines[kind]}`);
     }
-    assert.match(flat, new RegExp(`at most ${SPEC_SCHEMA.fanOutMax} immediate children`));
+    assert.doesNotMatch(flat, /at most 30|\| `fan-out` \|/, 'the reader counts no children: no children count, no fan-out row');
     assert.match(flat, new RegExp(`over its own \`maxLines: ${SPEC_SCHEMA.maxLines.spec}\``), 'promotion trigger = the spec cap');
     assert.ok(canon.includes(`\`${SPEC_SCHEMA.slugPattern}\``), 'the slug pattern verbatim');
     const forms = SPEC_SCHEMA.scenarioGrammar.split('  |  ');

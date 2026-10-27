@@ -39,7 +39,7 @@ const specDoc = (slug) =>
 const UPLINK = '\n> Up: [technical_specification.md](../technical_specification.md)\n';
 
 // The tree plan: leaves hold up to FAN_OUT specs, groups up to FAN_OUT leaves, the root lists the
-// groups — every index stays within the fan-out rule for N <= FAN_OUT^3.
+// groups — a three-level tree for N <= FAN_OUT^3.
 export const planTree = (n) => {
   const leafCount = Math.ceil(n / FAN_OUT);
   const groupCount = Math.ceil(leafCount / FAN_OUT);

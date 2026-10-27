@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-27 — AD-215: the spec reader counts no children (memory 8.7.0, engine 5.13.0 and kit 19.5.0 MINOR; both bridges unchanged)
+
+**The spec reader no longer refuses an index that lists more than 30 children**, in every copy: the memory canon, the
+kit's mirror and each deployment's `scripts/`. The `fan-out` refusal and `SPEC_SCHEMA.fanOutMax` are gone; a folder of
+the spec store is bounded by the layout check's entries per directory where it runs, and every index by its own
+`maxLines: 80`. The engine canon, its summaries and the store-root template drop the limit. The reader pair memory
+8.0.0 to 8.6.3 shipped is a known prior, so one plain upgrade names it and writes the new reader. Contracts:
+source-size revision 7, project-rules revision 9. Detail: [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md),
+[agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md),
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-27 — AD-214: each recorded pile is offered a queue row; the layout rules are read at every session start; the spec store drops files per root (kit 19.4.0 MINOR; memory, engine and both bridges unchanged)
 
 **Recommendations now offers, for each pile the size check records with no queue row naming it, one row at the end

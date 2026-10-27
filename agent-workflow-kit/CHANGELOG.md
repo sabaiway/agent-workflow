@@ -4,6 +4,21 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 19.5.0 — the spec reader counts no children, and one plain upgrade brings it to every deployment (AD-215)
+
+**The spec reader your project runs no longer refuses an index of more than 30 children.** The kit carries memory
+8.7.0's reader pair and store-root template: the `fan-out` refusal is gone, so a folder of the spec store is bounded
+by the layout check's entries per directory where it runs, and every index by its own `maxLines: 80`. A child listed twice and a
+line that is not a child link still refuse.
+
+**One plain upgrade writes the new reader.** The reader pair memory 8.0.0 to 8.6.3 shipped, one body throughout, is
+now a known prior, so your upgrade names it and writes the bundled bodies, with no question and no copy kept:
+
+`scripts/spec-schema.mjs: matches a body an earlier release shipped — refreshed to the bundled one`
+
+and the same line for `scripts/spec-schema.test.mjs`. A store root you already have keeps its `(at most 30)` sentence:
+it is your file, seeded once, and no reader judges that prose. Contracts: source-size revision 7, project-rules revision 9.
+
 ## 19.4.0 — each recorded pile is offered a queue row; the layout rules are read at every session start; the spec store drops files per root (AD-214)
 
 **Recommendations now offers a queue row that plans the cleanup of each pile the size check records.** A pile is a
