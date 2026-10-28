@@ -26,6 +26,7 @@ export const KIT_TOOLS = Object.freeze({
   'plan-shape': resolve(HERE, '..', 'plan-shape-cli.mjs'),
   'spec-check': resolve(HERE, '..', 'spec-check-cli.mjs'),
   'spec-coverage': resolve(HERE, '..', 'spec-coverage-cli.mjs'),
+  'project-rules': resolve(HERE, '..', 'project-rules', 'rules-cli.mjs'),
 });
 
 const REAL = Object.freeze({

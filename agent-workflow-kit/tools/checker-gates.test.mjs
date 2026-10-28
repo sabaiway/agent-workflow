@@ -12,9 +12,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = join(HERE, '..');
 const TOOL = join(HERE, 'checker-gates.mjs');
 const GATES = 'docs/ai/gates.json';
-const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage'];
+const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage', 'project-rules'];
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n', gates: [] };
-const CANDIDATE_LINE_RE = /^(control-bytes|plan-shape|spec-check|spec-coverage): (offered|declared|id-taken|not-applicable|probe-unreadable|withheld|applied)(?: — .+)?$/;
+const CANDIDATE_LINE_RE = /^(control-bytes|plan-shape|spec-check|spec-coverage|project-rules): (offered|declared|id-taken|not-applicable|probe-unreadable|withheld|applied)(?: — .+)?$/;
 const PLACEHOLDER_RE = /<kit>|<project>|undefined|null|\[object |\$\{/;
 const lines = () => {
   assert.ok(loaded.OUTCOME_LINES, 'checker-gates.mjs OUTCOME_LINES is absent');
@@ -25,7 +25,9 @@ const idsOf = (root) => JSON.parse(bytesOf(root)).gates.map(({ id }) => id);
 // The entry line the one derivation composes for an offered candidate, read back from the read leaf.
 const entryOf = (root, id) => {
   const judge = reader.judgeCheckerGates ?? (() => { throw new Error('checker-gates-read.mjs judgeCheckerGates is absent'); });
-  return `  entry: ${judge(root, {}).candidates.find((candidate) => candidate.id === id).entry}`;
+  const found = judge(root, {}).candidates.find((candidate) => candidate.id === id);
+  assert.ok(found, `no candidate ${id}`);
+  return `  entry: ${found.entry}`;
 };
 const offeredLines = (root, id) => [`${id}: offered`, entryOf(root, id)];
 const THROWING = Object.fromEntries(['lstatSync', 'lstat', 'open', 'readFileSync'].map((name) => [name, () => {
@@ -59,7 +61,7 @@ describe('spec:checker-gates/S2 the preview is the default and writes zero bytes
     const run = await runVerb(root, ['--apply', '--only', 'plan-shape']);
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(run.lines, [TRUST_CHAIN_DISCLOSURE, ...offeredLines(root, 'control-bytes'), 'plan-shape: applied',
-      ...offeredLines(root, 'spec-check'), ...offeredLines(root, 'spec-coverage')]);
+      ...offeredLines(root, 'spec-check'), ...offeredLines(root, 'spec-coverage'), ...offeredLines(root, 'project-rules')]);
     const { root: whole } = makeProject(PROBED);
     const applied = await runVerb(whole, ['--apply']);
     assert.deepEqual(applied.lines, [TRUST_CHAIN_DISCLOSURE, ...IDS.map((id) => `${id}: applied`)]);
@@ -81,7 +83,7 @@ describe('spec:checker-gates/S8 --only accumulates and names offered candidates 
     assert.equal(run.code, 0, run.stderr);
     assert.deepEqual(idsOf(root), ['control-bytes', 'spec-check']);
     assert.deepEqual(run.lines, [TRUST_CHAIN_DISCLOSURE, 'control-bytes: applied', ...offeredLines(root, 'plan-shape'),
-      'spec-check: applied', ...offeredLines(root, 'spec-coverage')]);
+      'spec-check: applied', ...offeredLines(root, 'spec-coverage'), ...offeredLines(root, 'project-rules')]);
   });
 
   it('selects an id given twice once', async () => {
@@ -158,7 +160,7 @@ describe('spec:checker-gates/S15 every printed line comes from the one OUTCOME_L
     const { root } = makeProject({ ...PROBED, gates: [{ id: 'control-bytes', title: 't', cmd: 'npm run bytes' }] });
     const run = await runVerb(root);
     assert.deepEqual(run.lines, [table.disclosure(), table.candidate('control-bytes', 'id-taken', 'npm run bytes'),
-      ...['plan-shape', 'spec-check', 'spec-coverage'].flatMap((id) => [table.candidate(id, 'offered'), table.entry(entryOf(root, id).slice(9))])]);
+      ...IDS.slice(1).flatMap((id) => [table.candidate(id, 'offered'), table.entry(entryOf(root, id).slice(9))])]);
     const { root: bare } = makeProject();
     assert.equal((await runVerb(bare)).stderr, table.refusal('declaration-absent'));
   });
@@ -186,7 +188,7 @@ describe('spec:checker-gates/S17 the documents name the verb and drop the hand-d
     for (const id of [...IDS, 'epic-shape', 'queue-audit', 'doc-parity']) assert.ok(paragraph.includes(`\`${id}\``), id);
     assert.match(paragraph, /removed by hand/);
     assert.match(paragraph, /\btier\b/);
-    assert.doesNotMatch(paragraph, /--apply|gates-init|\b(?:four|4)\b/);
+    assert.doesNotMatch(paragraph, /--apply|gates-init|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b|\d/i);
     assert.doesNotMatch(gates, /the only gates\.json writer is the consented legacy migration/);
     assert.ok(gates.includes('At upgrade'), 'gates.md states who writes gates.json at upgrade');
     const sentence = gates.slice(gates.indexOf('At upgrade')).split(/\.\s/)[0];

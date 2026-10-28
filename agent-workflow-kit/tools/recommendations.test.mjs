@@ -2039,17 +2039,17 @@ describe('recommendations — the inert gate declaration item', () => {
     assert.match(item.what, /no project-verification command/);
   });
 
-  it('cause B: a matrix of nothing but the four declarable kit checkers fires the no-verification arm', () => {
+  it('cause B: a matrix of nothing but the declarable kit checkers fires the no-verification arm', () => {
     const root = makeProject();
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [
       gate('control-bytes', kitCheck('control-bytes.mjs')),
       gate('plan-shape', `node "${join(HERE, 'plan-shape-cli.mjs')}" --check --in-flight`),
       gate('spec-check', `node "${join(HERE, 'spec-check-cli.mjs')}" --all`),
-      gate('spec-coverage', kitCheck('spec-coverage-cli.mjs')),
+      gate('spec-coverage', kitCheck('spec-coverage-cli.mjs')), gate('project-rules', kitCheck('project-rules/rules-cli.mjs')),
     ] }));
     const item = buildRecommendations({ cwd: root, deps: hermeticDeps(root) }).items.find((i) => i.key === 'gates-inert');
     rmSync(root, { recursive: true, force: true });
-    assert.equal(item?.variant, 'gates-inert.no-verification', 'the four kit checkers verify no project command');
+    assert.equal(item?.variant, 'gates-inert.no-verification', 'the declarable kit checkers verify no project command');
   });
 
   // The SAME class as cause A, reached from the other arm: a kit checker the offer also carries is
@@ -3925,13 +3925,13 @@ describe('the executor-vehicle recipe carries the precondition (AD-124 fold)', (
 
 const PROFILE_GAP = 'profile-gap';
 const PROFILE_GAP_BENEFIT = 'full flow — each difference from the reference profile is previewed by its own writer; a declined one returns only at a lineage step';
-const PLAN_SHAPE_GATE = { id: 'mine', title: 't', cmd: `node "${join(HERE, 'plan-shape-cli.mjs')}" --check --in-flight` };
+const [PLAN_SHAPE_GATE, PROJECT_RULES_GATE] = [['mine', 'plan-shape-cli.mjs', '--check --in-flight'], ['rules', 'project-rules/rules-cli.mjs', '--check']].map(([id, tool, tail]) => ({ id, title: 't', cmd: `node "${join(HERE, tool)}" ${tail}` }));
 const QUEUE_SKIP = 'named-queue-row-seed: plans-not-directory';
 const PROFILE_FILES = Object.freeze({
   gaps: { 'docs/ai/orchestration.json': '{}\n', 'docs/ai/gates.json': '{"gates":[]}\n' },
   undecidable: { 'docs/ai/orchestration.json': '{}\n', 'docs/ai/gates.json': '{"gates":[]}\n', 'docs/plans': 'not a directory' },
   present: { 'docs/ai/orchestration.json': JSON.stringify({ epic: { author: 'solo', review: 'solo' }, task: { author: 'solo', execute: 'solo' } }),
-    'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE] }), 'docs/ai/epics': { kind: 'directory' }, 'docs/plans/queue.md': '# Queue\n' },
+    'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE, PROJECT_RULES_GATE] }), 'docs/ai/epics': { kind: 'directory' }, 'docs/plans/queue.md': '# Queue\n' },
 });
 const profileRoot = (kind) => makeProfileProject({ files: PROFILE_FILES[kind] }).root;
 const profileProbe = () => probeProfileGaps ?? (() => { throw new Error('probeProfileGaps is absent'); });
@@ -3998,7 +3998,7 @@ describe('recommendations — the rendered profile-gap screen (spec:gap-screen/S
     assert.deepEqual([omitCheckField(items), skips], [expected, [{ key: PROFILE_GAP, reason: QUEUE_SKIP }]]);
   });
   it('renders the profile gaps after every attention item, last in probe order, in the full chain', () => {
-    const { root } = makeProfileProject({ files: { ...PROFILE_FILES.gaps, 'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE] }) } });
+    const { root } = makeProfileProject({ files: { ...PROFILE_FILES.gaps, 'docs/ai/gates.json': JSON.stringify({ gates: [PLAN_SHAPE_GATE, PROJECT_RULES_GATE] }) } });
     const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     const first = items.findIndex(({ key }) => key === PROFILE_GAP);
     assert.ok(items.some(({ severity }) => severity === SEVERITY_ATTENTION), 'the fixture fires an attention item');

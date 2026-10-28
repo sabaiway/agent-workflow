@@ -225,16 +225,20 @@ export const isReviewDependentGate = (gate, projectDir) =>
 // "does this declaration verify the PROJECT?" through the review-dependent predicate alone read a
 // matrix of nothing but that gate as project verification. Three surfaces asked it, each knowing a
 // different half; this is the one home, so a future kit checker is added once.
-// KIT_CHECKER_CLAIMS is the one statement of the four declarable kit checkers' basenames, tails and
+// KIT_CHECKER_CLAIMS is the one statement of the declarable kit checkers' basenames, paths, tails and
 // canonical paths (docs/ai/specs/kit/tier/checker-gates/, part checker-claim-tail).
-const kitCheckerClaim = (id, basename, tail) => Object.freeze({
-  id, basename, tail, screen: checkerClaimTool(basename, fileURLToPath(new URL(`./${basename}`, import.meta.url)), tail),
-});
+const kitCheckerClaim = (id, path, tail) => {
+  const basename = path.split('/').at(-1);
+  return Object.freeze({
+    id, basename, path, tail, screen: checkerClaimTool(basename, fileURLToPath(new URL(`./${path}`, import.meta.url)), tail),
+  });
+};
 export const KIT_CHECKER_CLAIMS = Object.freeze([
   kitCheckerClaim('control-bytes', 'control-bytes.mjs', '--check'),
   kitCheckerClaim('plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'),
   kitCheckerClaim('spec-check', 'spec-check-cli.mjs', '--all'),
   kitCheckerClaim('spec-coverage', 'spec-coverage-cli.mjs', '--check'),
+  kitCheckerClaim('project-rules', 'project-rules/rules-cli.mjs', '--check'),
 ]);
 
 export const isKitOwnedCheckerGate = (gate, projectDir) =>

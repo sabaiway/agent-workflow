@@ -39,7 +39,7 @@ const PROFILE_PATH = 'references/reference-profile.json';
 const PROFILE_GAP = 'profile-gap';
 const SESSION_CLOSE_LEAD = 'Two blocks for the user';
 const TASK_PHRASE = 'only when it writes new tests or code';
-const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all']];
+const DECLARED = [['plan-shape', 'plan-shape-cli.mjs', '--check --in-flight'], ['spec-check', 'spec-check-cli.mjs', '--all'], ['project-rules', 'project-rules/rules-cli.mjs', '--check']];
 // The SLOT_RECIPES value set of each target slot's type, written out by hand.
 const SLOT_VALUES = [
   ['epic', 'author', ['solo', 'subagent']],
@@ -278,12 +278,12 @@ const detectCheckerGates = (record) => {
   if (declaration._README !== parseConfig(record.gatesBefore)._README) return { reason: 'the _README changed' };
   const expected = DECLARED.map(([id, tool, tail]) => [id, `node "${join(record.home, 'tools', tool)}" ${tail}`]);
   if (!isDeepStrictEqual(declaration.gates.map(({ id, cmd }) => [id, cmd]), expected)) {
-    return { reason: 'gates.json does not carry exactly plan-shape and spec-check with the installed tool paths' };
+    return { reason: 'gates.json does not carry exactly plan-shape, spec-check and project-rules with the installed tool paths' };
   }
   if (!repeated.gates.bytes.equals(apply.gates.bytes)) return { reason: 'second apply changed gates.json' };
   const lines = repeated.result.stdout.split(LF);
-  return lines.includes('plan-shape: declared') && lines.includes('spec-check: declared')
-    ? null : { reason: 'the second apply does not report plan-shape and spec-check declared' };
+  return DECLARED.every(([id]) => lines.includes(`${id}: declared`))
+    ? null : { reason: 'the second apply does not report plan-shape, spec-check and project-rules declared' };
 };
 
 // The S5 slice's own rules detector: the session-close-rules item retired, so no profile item keys it.
@@ -490,7 +490,7 @@ describe('full flow upgrade delivery', () => {
     assertStory('S3', fixture.profile, fixture.record);
   });
 
-  it('spec:checker-gates/S16 declares the two applicable kit checkers in the older project, a second apply a no-op', () => {
+  it('spec:checker-gates/S16 declares the applicable kit checkers in the older project, a second apply a no-op', () => {
     const before = JSON.parse(fixture.record.gatesBefore.toString('utf8'));
     assert.deepEqual(before.gates, []);
     assert.equal(existsSync(join(fixture.record.project, '.git')), false);

@@ -4,12 +4,14 @@
 // (part checker-gates-read). No CLI (refuseDirectRun); nothing here writes.
 import { lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CHECKER_CLAIM, classifyCheckerClaim, dqUnsafePath } from './checker-claim.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { GATES_REL, KIT_CHECKER_CLAIMS, coverageDeclarationDefects, validateDeclaration } from './gates-declaration.mjs';
 import { escapeForLine, isLineUnsafe } from './source-size-core.mjs';
 
+const KIT_TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 const DEPLOYMENT_CHAIN = ['.', 'docs', 'docs/ai'];
 const NOT_APPLICABLE_CODES = new Set(['ENOENT', 'ENOTDIR']);
 const OK = 'ok';
@@ -78,6 +80,7 @@ export const CHECKER_GATE_CANDIDATES = Object.freeze([
     'No work without a specification — every in-scope tool is governed by a contract, or named in the shrink-only debt',
     requiring(COVERAGE_SCOPE, STORE_ROOT),
   ),
+  candidate('project-rules', 'Project rules — each theme\'s effective file matches the record of what it was built from', requiring()),
 ]);
 
 const claimOf = (id) => KIT_CHECKER_CLAIMS.find((claim) => claim.id === id);
@@ -119,7 +122,7 @@ const claimState = ({ id, screen }, gates, root) => {
   return taken ? { state: CANDIDATE_STATES.idTaken, detail: taken.cmd } : {};
 };
 
-const toolPathOf = ({ basename, screen }, deps) => join(deps.kitToolsDir ?? dirname(screen.canonical), basename);
+const toolPathOf = ({ path }, deps) => join(deps.kitToolsDir ?? KIT_TOOLS_DIR, path);
 const isUnrenderable = (path) => dqUnsafePath(path) || isLineUnsafe(path);
 
 const judgeCandidate = ({ id, title, probe }, rendered, gates, root, deps) => {

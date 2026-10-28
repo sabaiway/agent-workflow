@@ -13,7 +13,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = join(HERE, '..', 'checker-gates.mjs');
 const GATES = 'docs/ai/gates.json';
 const LF = String.fromCharCode(10);
-const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage'];
+const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage', 'project-rules'];
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n' };
 const COVERAGE_CHECK = join(dirname(KIT_TOOLS['plan-shape']), 'coverage-check.mjs');
 const gate = (id, cmd, extra = {}) => ({ id, title: id, cmd, ...extra });
@@ -85,7 +85,7 @@ describe('spec:checker-gates/S9 a second --apply, like a first with nothing offe
 
   it('is the same no-op on a first run where every candidate is declared or not-applicable', async () => {
     const [, planShape] = await writtenEntries();
-    const { root } = makeProject({ gates: [planShape] });
+    const { root } = makeProject({ gates: [planShape, gate('project-rules', `node "${KIT_TOOLS['project-rules']}" --check`)] });
     const before = bytesOf(root);
     const run = await runVerb(root, ['--apply']);
     assert.equal(run.code, 0, run.stderr);

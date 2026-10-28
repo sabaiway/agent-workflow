@@ -22,14 +22,17 @@ const PURITY_TEST = join(HERE, '..', 'test', 'read-graph-purity.test.mjs');
 const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const WRITE_MODULES_RE = /const WRITE_MODULES = \[([^\]]*)\]/;
 const GATES = 'docs/ai/gates.json';
-const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage'];
+const IDS = ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage', 'project-rules'];
 const TITLES = {
   'control-bytes': 'No raw control byte in the work tree',
   'plan-shape': 'Plans in flight keep the structural planning shape',
   'spec-check': 'Feature-spec store structure — the whole store',
   'spec-coverage': 'No work without a specification — every in-scope tool is governed by a contract, or named in the shrink-only debt',
+  'project-rules': 'Project rules — each theme\'s effective file matches the record of what it was built from',
 };
-const TAILS = { 'control-bytes': '--check', 'plan-shape': '--check --in-flight', 'spec-check': '--all', 'spec-coverage': '--check' };
+const TAILS = {
+  'control-bytes': '--check', 'plan-shape': '--check --in-flight', 'spec-check': '--all', 'spec-coverage': '--check', 'project-rules': '--check',
+};
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n' };
 const COVERAGE_CHECK = join(dirname(KIT_TOOLS['plan-shape']), 'coverage-check.mjs');
 const INVALID_UTF8 = Buffer.from([0x7b, 0xa0, 0x7d]);
@@ -46,7 +49,9 @@ const judge = (options, extraDeps = () => ({})) => {
 };
 const candidateOf = (judged, id) => {
   assert.ok(Array.isArray(judged.candidates), `no candidates: ${JSON.stringify(judged)}`);
-  return judged.candidates.find((candidate) => candidate.id === id);
+  const found = judged.candidates.find((candidate) => candidate.id === id);
+  assert.ok(found, `no candidate ${id}: ${judged.candidates.map((candidate) => candidate.id).join(', ')}`);
+  return found;
 };
 const bytesOf = (root) => {
   try {
@@ -67,7 +72,7 @@ const claimsOf = () => {
 };
 
 describe('spec:checker-gates/S1 the candidate table is frozen and pairs with the claim table', () => {
-  it('holds exactly the four ids in table order, each a frozen { id, title, probe }', () => {
+  it('holds exactly the candidate ids in table order, each a frozen { id, title, probe }', () => {
     const table = need('CHECKER_GATE_CANDIDATES');
     assert.ok(Object.isFrozen(table));
     assert.deepEqual(table.map(({ id }) => id), IDS);
@@ -85,7 +90,7 @@ describe('spec:checker-gates/S1 the candidate table is frozen and pairs with the
 
   it('renders each offered entry as node, the double-quoted canonical path and its tail, canonical against its own screen', () => {
     const { root, judged } = judge({ ...PROBED, gates: [] });
-    assert.deepEqual(statesOf(judged), ['offered', 'offered', 'offered', 'offered']);
+    assert.deepEqual(statesOf(judged), ['offered', 'offered', 'offered', 'offered', 'offered']);
     for (const claim of claimsOf()) {
       const candidate = candidateOf(judged, claim.id);
       assert.deepEqual(Object.keys(candidate).sort(), ['entry', 'id', 'state']);
@@ -137,7 +142,7 @@ describe('spec:checker-gates/S4 a candidate is declared under any id', () => {
   it('counts a canonical claim under another id as declared, with no entry and no detail', () => {
     const { judged } = judge({ ...PROBED, gates: [gate('my-plans', cmdOf('plan-shape'))] });
     assert.deepEqual(candidateOf(judged, 'plan-shape'), { id: 'plan-shape', state: 'declared', entry: null });
-    assert.deepEqual(statesOf(judged), ['offered', 'declared', 'offered', 'offered']);
+    assert.deepEqual(statesOf(judged), ['offered', 'declared', 'offered', 'offered', 'offered']);
   });
 
   it('counts a tool-elsewhere copy as declared: a relative repo-copy path', () => {
@@ -150,7 +155,7 @@ describe('spec:checker-gates/S4 a candidate is declared under any id', () => {
   it('judges the claim with the tail of the candidate: another tail or a masked one is no claim', () => {
     const gates = [gate('a', `node "${KIT_TOOLS['plan-shape']}" --check`), gate('b', `${cmdOf('spec-check')} --help`)];
     const { judged } = judge({ ...PROBED, gates });
-    assert.deepEqual(statesOf(judged), ['offered', 'offered', 'offered', 'offered']);
+    assert.deepEqual(statesOf(judged), ['offered', 'offered', 'offered', 'offered', 'offered']);
   });
 
   it('answers id-taken for a gate carrying the id while not the tool, its cmd the detail', () => {
@@ -169,7 +174,7 @@ describe('spec:checker-gates/S4 a candidate is declared under any id', () => {
     assert.equal(run.code, 0, run.stderr);
     assert.ok(run.lines.includes('control-bytes: id-taken — npm run bytes'), run.stdout);
     const written = JSON.parse(readFileSync(join(root, GATES), 'utf8')).gates;
-    assert.deepEqual(written.map(({ id }) => id), ['control-bytes', 'plan-shape', 'spec-check', 'spec-coverage']);
+    assert.deepEqual(written.map(({ id }) => id), IDS);
     assert.deepEqual(written[0], gate('control-bytes', 'npm run bytes'));
   });
 });
@@ -181,7 +186,7 @@ describe('spec:checker-gates/S5 an unrenderable kit path withholds what would be
   ]) {
     it(`turns every would-be offer withheld over a path carrying ${label}, the escaped path named once`, () => {
       const { deps, judged } = judge({ ...PROBED, gates: [] }, (root, base) => ({ kitToolsDir: dirOf(base) }));
-      assert.deepEqual(statesOf(judged), ['withheld', 'withheld', 'withheld', 'withheld']);
+      assert.deepEqual(statesOf(judged), ['withheld', 'withheld', 'withheld', 'withheld', 'withheld']);
       assert.ok(judged.candidates.every(({ entry }) => entry === null));
       const named = judged.candidates.filter(({ detail }) => detail !== undefined);
       assert.equal(named.length, 1);
@@ -194,7 +199,7 @@ describe('spec:checker-gates/S5 an unrenderable kit path withholds what would be
       { git: { kind: 'directory' }, scope: '{}\n', gates: [gate('control-bytes', 'npm run bytes'), gate('mine', cmdOf('plan-shape'))] },
       (root, base) => ({ kitToolsDir: join(base, 'kit"tools'), ...failAt(root, 'lstatSync', 'docs/ai/spec-coverage.json') }),
     );
-    assert.deepEqual(statesOf(judged), ['id-taken', 'declared', 'not-applicable', 'probe-unreadable']);
+    assert.deepEqual(statesOf(judged), ['id-taken', 'declared', 'not-applicable', 'probe-unreadable', 'withheld']);
   });
 
   it('names the withheld path once at exit 0 and writes nothing, --apply included', async () => {

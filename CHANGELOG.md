@@ -7,6 +7,16 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-28 — AD-219: the project rules check is offered as a gate of every project (kit 20.2.0 MINOR; memory, engine and both bridges unchanged)
+
+**`checker-gates.mjs` and the upgrade's `tier` step offer a fifth kit checker gate, `project-rules`**
+(`node "<kit>/tools/project-rules/rules-cli.mjs" --check`), applicable on every deployment; it stops a gate run on a
+rules theme it answers `drift` or `record`. Each entry of the kit's checker claim table now carries the tool's path
+under the kit's tools directory, so a nested tool renders and claims as a flat one does. A gate with the id
+`project-rules` that runs the same check with `--cwd .` makes the candidate `id-taken`; dropping `--cwd .` makes it the
+claim. Contracts: checker-gates revision 2,
+project-rules revision 11. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-28 — AD-218: the size check leaves the kit's own folder alone (kit 20.1.0 MINOR; memory, engine and both bridges unchanged)
 
 **`source-size-check` takes every tracked entry at or under `scripts/agent-workflow` away before anything is judged**,

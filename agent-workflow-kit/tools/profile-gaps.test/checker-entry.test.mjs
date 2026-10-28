@@ -14,6 +14,7 @@ const ID = 'checker-gates-declared';
 const IDS = ['epic-task-slots', 'epic-store-seeded', ID, 'named-queue-row-seed'];
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n' };
 const PLAN_SHAPE = { id: 'mine', title: 't', cmd: `node "${KIT_TOOLS['plan-shape']}" --check --in-flight` };
+const PROJECT_RULES = { id: 'rules', title: 't', cmd: `node "${KIT_TOOLS['project-rules']}" --check` };
 const entryOf = () => {
   const entry = (loaded.PROFILE_GAPS ?? []).find(({ id }) => id === ID);
   assert.ok(entry, `the registry carries ${ID}`);
@@ -67,18 +68,18 @@ describe('spec:checker-gates/S14 the checker-gates-declared gap entry', () => {
   });
 
   it('answers present when nothing is offered and nothing is id-taken, probe-unreadable or withheld', () => {
-    const { result } = detectIn({ gates: [PLAN_SHAPE] });
+    const { result } = detectIn({ gates: [PLAN_SHAPE, PROJECT_RULES] });
     assert.deepEqual(result, { verdict: 'present' });
     assert.ok(!Object.hasOwn(result, 'reason'));
   });
 
   it('answers undecidable with the state word of the first such candidate in table order', () => {
     const takenFirst = detectIn(
-      { storeRoot: '# Specs\n', gates: [{ id: 'control-bytes', title: 't', cmd: 'npm run bytes' }, PLAN_SHAPE] },
+      { storeRoot: '# Specs\n', gates: [{ id: 'control-bytes', title: 't', cmd: 'npm run bytes' }, PLAN_SHAPE, PROJECT_RULES] },
       (root) => failAt(root, 'lstatSync', 'docs/ai/specs/index.md', 'EACCES'),
     );
     assert.deepEqual(takenFirst.result, { verdict: 'undecidable', reason: 'id-taken' });
-    const unreadable = detectIn({ gates: [PLAN_SHAPE] }, (root) => failAt(root, 'lstatSync', '.git', 'EACCES'));
+    const unreadable = detectIn({ gates: [PLAN_SHAPE, PROJECT_RULES] }, (root) => failAt(root, 'lstatSync', '.git', 'EACCES'));
     assert.deepEqual(unreadable.result, { verdict: 'undecidable', reason: 'probe-unreadable' });
     const withheld = detectIn({ gates: [] }, (root, base) => ({ kitToolsDir: join(base, 'kit"tools') }));
     assert.deepEqual(withheld.result, { verdict: 'undecidable', reason: 'withheld' });

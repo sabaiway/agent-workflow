@@ -17,7 +17,9 @@ const stateIn = (id, options = {}, extraDeps = () => ({})) => {
   const { root } = makeProject({ gates: [], ...options });
   const judged = judge(root, extraDeps(root));
   assert.ok(Array.isArray(judged.candidates), JSON.stringify(judged));
-  const { state, detail } = judged.candidates.find((candidate) => candidate.id === id);
+  const found = judged.candidates.find((candidate) => candidate.id === id);
+  assert.ok(found, `no candidate ${id}: ${judged.candidates.map((candidate) => candidate.id).join(', ')}`);
+  const { state, detail } = found;
   return { state, detail };
 };
 
@@ -87,6 +89,16 @@ describe('spec:checker-gates/S3 each candidate is offered only over a state wher
       const storeFailed = stateIn('spec-coverage', { scope: '{}\n' }, (root) => failAt(root, 'lstatSync', STORE_ROOT, 'EIO'));
       assert.equal(storeFailed.state, 'probe-unreadable');
       assert.notEqual(storeFailed.state, stateIn('spec-coverage', { scope: '{}\n' }).state);
+    });
+  });
+
+  describe('project-rules: any deployment, whatever the check would answer', () => {
+    it('is offered on a bare deployment with no docs/ai/rules, no .git and no store root', () => {
+      assert.equal(stateIn('project-rules').state, 'offered');
+    });
+
+    it('is offered over a theme the check answers neither current nor absent: a kit file with no record', () => {
+      assert.equal(stateIn('project-rules', { files: { 'docs/ai/rules/project-layout.md': REGULAR } }).state, 'offered');
     });
   });
 });

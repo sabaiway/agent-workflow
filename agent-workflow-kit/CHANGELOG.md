@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 20.2.0 — the project rules check is offered as a gate of every project (AD-219)
+
+**Your project's rules can now stop a red gate run, not only a commit.** The check that each rules theme's effective
+file still matches the record it was built from, `project-rules/rules-cli.mjs --check`, joins the kit checkers that
+`checker-gates.mjs` and the upgrade's `tier` step offer as gates of your project:
+
+- `node <kit>/tools/checker-gates.mjs --cwd <project>` previews a fifth line, `project-rules`, after `spec-coverage`,
+  offered on every deployment, one with no rules theme laid yet included; an offered line is followed by its entry,
+  `node "<kit>/tools/project-rules/rules-cli.mjs" --check`, and `--apply` (or the `tier` yes) writes it add-only, as
+  for the other four.
+- The gate passes over a theme the check answers `current` or `absent` and stops on one it answers `drift` or `record`,
+  naming the remedy `/agent-workflow-kit upgrade`; unlike the commit hook's rules line, it waits for no theme to be
+  `current` first.
+- A decline of `checker-gates-declared` you recorded earlier stays current and covers the new candidate; the preview
+  above and `--apply --only project-rules` still reach it.
+- If your `docs/ai/gates.json` already declares a `project-rules` gate with `--cwd .` (the form `/agent-workflow-kit
+  rules` runs), the preview prints `project-rules: id-taken` and, once no other candidate is offered, every upgrade reads its
+  `checker-gates-declared` item as undecidable. Drop `--cwd`
+  and its value from that gate's cmd: the gate runner already runs every cmd from the project root, and the preview
+  then prints `project-rules: declared`.
+
+Contracts: checker-gates revision 2, project-rules revision 11.
+
 ## 20.1.0 — the size check leaves the kit's own folder `scripts/agent-workflow` alone (AD-218)
 
 **A coming kit release can move its scripts into one folder of your project without stopping a single commit.** The
