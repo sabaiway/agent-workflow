@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 20.1.0 — the size check leaves the kit's own folder `scripts/agent-workflow` alone (AD-218)
+
+**A coming kit release can move its scripts into one folder of your project without stopping a single commit.** The
+kit's scripts will live in `scripts/agent-workflow`, and the kit's own repository already judges their size. Before
+they move, `source-size-check` stops judging that folder in your project:
+
+- Every tracked entry at or under `scripts/agent-workflow` is taken away before anything is judged, under every
+  declared root, the root `.` and an absent `docs/ai/source-size.json` included: no line, byte, layout entry, files-per-root
+  count or aggregate line counts it, and its own name is counted by nothing in `scripts`. The comparison is by whole
+  path segment, so `scripts/agent-workflow-x/a.mjs` and `scripts/agent-workflowx.mjs` stay judged.
+- Every `--check`, `--write-baseline` and `--override` run that judges the tree prints, as the last of its not-judged
+  lines: `source-size: NOTE — scripts/agent-workflow is the kit's own folder, so nothing in it is judged here; the
+  kit's own repository judges its files`. `--help` names the folder in its scope and layout sentences.
+- A declared root at or inside the folder is a config stop, exit 2, naming the root; the roots `scripts` and `.` stay
+  valid, and so does an `exclude` entry inside the folder.
+- A recorded `baseline` or `layout.directories` key under the folder reads as gone: it warns, exit 0, and your next
+  `--write-baseline` removes it with no reason.
+- A declared scope whose only matches lie inside the folder judges no file on lines or bytes and is not refused as
+  empty; its empty-root note says the root matches nothing outside the kit's own folder.
+- The plan-shape check's source scope takes the folder away by the same rule.
+
+No project holds the folder yet, so the changes you see today are the new NOTE line and the `--help` text that names
+the folder. Contract: source-size revision 8.
+
 ## 20.0.1 — `init` removes the folders it leaves empty in the kit home (AD-217)
 
 **A refresh no longer asks you to delete folders by hand.** `init` removes from an existing kit home every file in

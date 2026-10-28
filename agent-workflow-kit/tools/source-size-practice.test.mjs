@@ -107,6 +107,7 @@ const KIT_LINES = [
   'source-size: limit files-per-root none recorded, tolerance 10% — from kit',
 ];
 const RECORDED_ROOTS = "source-size: limit files-per-root each declared root's recorded count, tolerance 10% — from kit";
+const KIT_FOLDER = "source-size: NOTE — scripts/agent-workflow is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files";
 const NO_LAYOUT = (cwd) => `source-size: NOTE — ${configPath(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`;
 // The five limits open the output in the table's order; no other line states a limit.
 const assertLimitLines = (result, code, expected) => {
@@ -143,7 +144,7 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     assert.equal(main(['--write-baseline', '--layout', '--cwd', cwd, '--reason', 'layout starts']).code, 0);
     const recorded = check(cwd);
     assertLimitLines(recorded, 0, [...KIT_LINES.slice(0, 4), RECORDED_ROOTS]);
-    assert.doesNotMatch(recorded.stdout, /NOTE/, 'a config that records layout is judged on every dimension');
+    assert.deepEqual(recorded.stdout.split('\n').filter((line) => line.includes('NOTE')), [KIT_FOLDER], 'a config that records layout is judged on every dimension');
   });
 
   it('then a line per dimension not judged, then the warnings, then the stops; warnings and no stop end in a green line that counts them', () => {
@@ -151,6 +152,7 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     const warned = check(near);
     assert.deepEqual(warned.stdout.split('\n').slice(5), [
       NO_LAYOUT(near),
+      KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
       'source-size: PASS with 1 warning(s) — 1 in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled',
       `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission) · aggregate 420 line(s)${RATCHET_RULE}`,
@@ -165,8 +167,9 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     const stopped = project({ files: { 'src/near.mjs': lines(420), 'src/big.mjs': lines(441) }, config: mintedAt(861) });
     const failed = check(stopped);
     const said = failed.stdout.split('\n');
-    assert.deepEqual(said.slice(5, 9), [
+    assert.deepEqual(said.slice(5, 10), [
       NO_LAYOUT(stopped),
+      KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
       `source-size: FAIL — 1 finding(s) against ${configPath(stopped)}:`,
       '  src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)',

@@ -304,7 +304,7 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
     const cwd = createProject({ files: { 'src/big.mjs': makeLines(441), ...makeMany('wide', 22) }, store: { 'docs/ai/specs/index.md': 'x' } });
     const listed = listDocsAi(cwd);
     const result = runCli(cwd, '--check');
-    assert.deepEqual(result.stdout.split(NL).filter((line) => line.startsWith('source-size: NOTE')), [ABSENT_NOTE(cwd)], showRun(result));
+    assert.deepEqual(result.stdout.split(NL).filter((line) => line.startsWith('source-size: NOTE')), [ABSENT_NOTE(cwd), "source-size: NOTE — scripts/agent-workflow is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files"], showRun(result));
     assertHas(result, 'source-size: limit files-per-root none recorded, tolerance 10% — from kit');
     assert.equal(result.code, 0, showRun(result));
     assert.deepEqual(collectWarnings(result), ['wide: entries 22 is over the limit 20 but within its band (up to 22) — past 22 it stops']);
@@ -403,7 +403,7 @@ describe('what a declared root counts, and what MINTED means beside the layout r
     assert.equal(runCli(cwd, '--check').code, 0);
   });
 
-  it('--help states what layout counts in one sentence, files counted for the declared roots alone', () => assert.match(main(['--help']).stdout.replace(/\s+/g, ' '), /Layout: the entries of each directory and its depth below its root, over every tracked entry under a declared root plus the spec store docs\/ai\/specs walked from disk, and the files of each declared root\./));
+  it('--help states what layout counts in one sentence, files counted for the declared roots alone', () => assert.match(main(['--help']).stdout.replace(/\s+/g, ' '), /Layout: the entries of each directory and its depth below its root, over every tracked entry under a declared root outside the kit's own folder scripts\/agent-workflow plus the spec store docs\/ai\/specs walked from disk, and the files of each declared root\./));
 
   it('a directory name that is not valid UTF-8 is counted and never refused, until a record would have to carry it', () => {
     const cwd = createProject({ files: ONE, config: WITH_LAYOUT({ src: 2 }) });

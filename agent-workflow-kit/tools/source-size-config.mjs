@@ -31,6 +31,8 @@ export const REASON_MAX_BYTES = 300;
 export const INITIAL_ADOPTION_REASON = 'initial adoption';
 // The root an absent `roots` declares: every tracked path. Admitted only as the sole root.
 export const WHOLE_TREE_ROOT = '.';
+// The kit's own folder: taken away from every judgment by this fixed path, with no config key.
+export const KIT_FOLDER_ROOT = 'scripts/agent-workflow';
 
 export const AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits']);
 const SCHEMA1_AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'defaults', 'roots', 'exclude', 'extensions']);
@@ -213,6 +215,10 @@ export const validateSourceSizeConfig = (parsed) => {
         throw configFail(`"roots" entries overlap: "${inner}" sits inside "${outer}" — an overlapping root double-counts its files in the aggregate`);
       }
     }
+  }
+  const kitRoot = roots.find((root) => segmentPrefixOf(KIT_FOLDER_ROOT, root));
+  if (kitRoot !== undefined) {
+    throw configFail(`"roots" declares "${kitRoot}", at or inside the kit's own folder ${KIT_FOLDER_ROOT} — nothing in it is judged here, so declare a root outside it`);
   }
   if (Object.hasOwn(parsed, 'exclude')) {
     if (!Array.isArray(parsed.exclude)) throw configFail('"exclude" must be an array of literal path prefixes');

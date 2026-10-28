@@ -16,7 +16,7 @@
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
-import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
+import { INITIAL_ADOPTION_REASON, KIT_FOLDER_ROOT, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
 import { hasLoweredRecord, hasStoreRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
 import { isRaise, limitLines } from './source-size/index.mjs';
@@ -48,12 +48,16 @@ export const authoringTemplate = () => JSON.stringify({
 export const statedLimitLines = (config) =>
   limitLines(config.limits, { escape: escapeForLine, recorded: config.layout !== null }).map((line) => `source-size: ${line}`);
 
-// What a run does not judge is said once, before its warnings: no extension, no config, no layout.
+const KIT_FOLDER_LINE = `source-size: NOTE — ${KIT_FOLDER_ROOT} is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files`;
+
+// What a run does not judge is said once, before its warnings: no extension, no config, no layout,
+// and last the kit's own folder.
 export const notJudgedLines = (cwd, { absent, config, layout }) => {
-  if (absent) return [`source-size: NOTE — ${namedConfig(cwd)} is absent, so the kit's values judge layout alone and no file is judged on lines or bytes`];
+  if (absent) return [`source-size: NOTE — ${namedConfig(cwd)} is absent, so the kit's values judge layout alone and no file is judged on lines or bytes`, KIT_FOLDER_LINE];
   return [
     ...(config.extensions.length === 0 ? [`source-size: NOTE — ${namedConfig(cwd)} declares no extension, so no file is judged on lines or bytes`] : []),
     ...(layout ? [] : [`source-size: NOTE — ${namedConfig(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`]),
+    KIT_FOLDER_LINE,
   ];
 };
 
@@ -200,8 +204,8 @@ const tightenLine = (cwd) => {
 
 // The order every check prints: its notes, its warnings, then the green line or its stops.
 export const checkReportLines = ({ cwd, config, verdict, absent = false }) => {
-  const lines = verdict.scope.emptyRoots.map(
-    (rel) => `source-size: NOTE — the declared root "${escapeForLine(rel)}" matches no tracked file with a declared extension`);
+  const lines = verdict.scope.emptyRoots.map((rel) =>
+    `source-size: NOTE — the declared root "${escapeForLine(rel)}" matches no tracked file with a declared extension${verdict.scope.kitFolderRoots.includes(rel) ? ` outside the kit's own folder ${KIT_FOLDER_ROOT}` : ''}`);
   const stops = stopsOf(verdict.findings);
   const warnings = warningsOf(verdict.findings);
   lines.push(...warningLines(warnings));
@@ -349,7 +353,8 @@ Usage:
   node source-size-check.mjs --override <id> --kit-default --reason "<text>" [--cwd <project-root>]
 
 Judges every in-scope file against ${SOURCE_SIZE_CONFIG_REL} (schema ${SOURCE_SIZE_SCHEMA}): git-tracked files
-under a declared root carrying a declared extension, minus the excluded path-segment prefixes. An
+under a declared root carrying a declared extension, minus the excluded path-segment prefixes and
+the kit's own folder ${KIT_FOLDER_ROOT}, which nothing here judges and no root may declare. An
 absent "roots" is the one root ".", every tracked path; a config declaring no extension judges no
 file, and every check says so. With the config absent the check judges layout alone under the
 kit's values. Symlinks and submodule gitlinks are skipped by kind; an unmerged index, a non-UTF-8
@@ -365,7 +370,8 @@ tolerance and source, then what it does not judge, then its warnings, then its s
 Counting: lines, and the longest line in BYTES. A terminator never counts (the CR of a CRLF
 included); a last line with no final newline still counts; an empty file is 0 lines. Layout: the
 entries of each directory and its depth below its root, over every tracked entry under a declared
-root plus the spec store docs/ai/specs walked from disk, and the files of each declared root.
+root outside the kit's own folder ${KIT_FOLDER_ROOT} plus the spec store docs/ai/specs walked from
+disk, and the files of each declared root.
 
 A recorded entry is DEBT: a finding stops exactly when the regeneration would raise it, and a record
 above the tree or gone warns until the regeneration lowers or removes it. Each declared root carries

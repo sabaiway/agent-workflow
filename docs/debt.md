@@ -831,6 +831,26 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   set that covers the whole staged diff. Residual exposure, live: every large release review needs a consent or a
   degrade. Raised at the KIT-TEXT release.
 
+- **KIT-FOLDER-GONE-RECORD-BRINGS-THE-SPLIT-FOCUS** — invariant: a review-focus line asking to confirm a decomposition
+  prints only where one happened. Origin: spec source-size S54 (revision 8, KIT-SCRIPTS S1): a `baseline` or
+  `layout.directories` record keyed under `scripts/agent-workflow` reads gone (`entry-gone`, `dir-gone`), a lowered kind
+  (`agent-workflow-kit/tools/source-size-judge.mjs:37`), so a check that stops nothing adds `SPLIT_QUALITY_FOCUS`
+  (`agent-workflow-kit/tools/source-size-report.mjs:213-215`) as S43 already spares the store record. Fix direction: the
+  gone records under the kit folder join the store record's no-focus arm. Residual exposure, NOT live in S1: no
+  deployment holds the folder; S4 first makes the state. Raised at the KIT-SCRIPTS S1 spec review (lens, round 1).
+
+- **KIT-FOLDER-SPEC-R8-WORDING-MINORS** — invariant: every sentence of spec source-size revision 8 is true of the code
+  and pins one order. Origin: the lens, round 2 of the KIT-SCRIPTS S1 spec review, four minors: (1) S55 and the judge
+  part count "tracked matches" before the kind filter (`agent-workflow-kit/tools/source-size-scope.mjs:101`, `:103`,
+  `:112`), so a root with kit-folder files plus a symlinked `.mjs` outside it falls under neither note; state it as "a
+  scope that judges no file only because the folder is taken away" and "a root that judges no file yet would judge one
+  inside the folder"; (2) S52 and the judge part leave the kit-folder line's place against the empty-root notes open —
+  the code prints it before them (`source-size-check.mjs:363-364`, `source-size-report.mjs:207-208`): add "and before any
+  empty-root note"; (3) the Contract bullet's "every run that judges the tree" covers `--adopt`, which prints no note
+  (`source-size-check.mjs:286`): name the three modes; (4) the judge part's "a usage, config, enumeration or scope error
+  judge nothing" is false for the `--override` equality stop (`:159`, `:165`): "they and a usage … error print none".
+  Fix direction: the four text replacements, in the spec's next revision. Residual exposure, NOT live: specs only.
+
 ## Closed
 
 - **KIT-REFRESH-LEAVES-EMPTY-DIRECTORIES-TO-THE-USER** — invariant: a kit refresh leaves the home converged with no

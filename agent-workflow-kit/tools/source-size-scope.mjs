@@ -4,11 +4,12 @@
 // refuse through the same fail-closed lane.
 //
 //   • SCOPE (fail-closed) — git-tracked files under a declared root carrying a declared extension,
-//     minus the excluded path-segment prefixes. Symlinks and submodule gitlinks are skipped BY KIND.
-//     An unmerged index, a non-UTF-8 in-scope FILENAME, an unverifiable in-scope file and an empty
-//     declared scope are REFUSALS (exit 1); a failed enumeration is exit 2. The enumeration is
-//     NUL-delimited and every path test runs on BYTES, so a tracked path carrying a tab or a newline
-//     is judged byte-exactly instead of being mangled by line splitting.
+//     minus the excluded path-segment prefixes and the kit's own folder scripts/agent-workflow
+//     (KIT_FOLDER_ROOT). Symlinks and submodule gitlinks are skipped BY KIND. An unmerged index, a
+//     non-UTF-8 in-scope FILENAME, an unverifiable in-scope file and a declared scope matching no
+//     tracked file, the kit's own folder included, are REFUSALS (exit 1); a failed enumeration is
+//     exit 2. The enumeration is NUL-delimited and every path test runs on BYTES, so a tracked path
+//     carrying a tab or a newline is judged byte-exactly instead of being mangled by line splitting.
 //   • COUNTING — lines, and the longest line in BYTES. Terminators never count, CR included.
 //
 // Dependency-free, Node >= 22. No side effects on import; the only child process is a read-only git
@@ -18,7 +19,7 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { configFail, configPathFor, scopeFail } from './source-size-refusal.mjs';
-import { WHOLE_TREE_ROOT } from './source-size-config.mjs';
+import { KIT_FOLDER_ROOT, WHOLE_TREE_ROOT } from './source-size-config.mjs';
 import { SPEC_STORE_ROOT, walkSpecStore } from './source-size/index.mjs';
 import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';
 
@@ -27,6 +28,7 @@ const CR = 0x0d;
 const SLASH = 0x2f;
 
 const SPEC_STORE = Buffer.from(SPEC_STORE_ROOT, 'utf8');
+const KIT_FOLDER = Buffer.from(KIT_FOLDER_ROOT, 'utf8');
 const SYMLINK_MODE = '120000';
 const GITLINK_MODE = '160000';
 
@@ -73,11 +75,12 @@ export const enumerateIndex = (cwd, deps = {}) => {
 };
 
 // resolveScope(cwd, config) → { files: [rel…] sorted, perRoot: Map<root, [rel…]>, layout: Map<root,
-// [{ path, dir }…]>, emptyRoots: [root…] }; `layout` holds every entry under a root, of any mode, as
-// a binary string below the root.
-// Every exclusion is BY RULE (root / extension / exclude prefix) or BY KIND (symlink, gitlink); an
-// in-scope path that cannot be addressed losslessly is a refusal, never a quiet skip. The root "."
-// covers every tracked path.
+// [{ path, dir }…]>, emptyRoots: [root…], kitFolderRoots: [root…] }; `layout` holds every entry under
+// a root, of any mode, as a binary string below the root; `kitFolderRoots` are the empty roots whose
+// matches all lie inside the kit's own folder.
+// Every exclusion is BY RULE (root / extension / exclude prefix / the kit's own folder) or BY KIND
+// (symlink, gitlink); an in-scope path that cannot be addressed losslessly is a refusal, never a quiet
+// skip. The root "." covers every tracked path.
 export const resolveScope = (cwd, config, deps = {}) => {
   const entries = enumerateIndex(cwd, deps);
   const unmerged = entries.filter((e) => e.stage !== 0);
@@ -90,16 +93,22 @@ export const resolveScope = (cwd, config, deps = {}) => {
   const perRoot = new Map(config.roots.map((rel) => [rel, []]));
   const layout = new Map(config.roots.map((rel) => [rel, []]));
   const files = [];
+  const kitMatched = new Set();
   for (const entry of entries) {
     const root = roots.find((r) => r.rel === WHOLE_TREE_ROOT || bufSegmentPrefix(entry.path, r.buf));
     if (!root) continue;
     if (excludes.some((ex) => bufSegmentPrefix(entry.path, ex))) continue;
+    const extended = extensions.some((ext) => bufEndsWith(entry.path, ext));
+    if (bufSegmentPrefix(entry.path, KIT_FOLDER)) {
+      if (extended) kitMatched.add(root.rel);
+      continue;
+    }
     // Layout counts every entry of any mode, the spec store's aside: the store is a root of its own.
     if (!bufSegmentPrefix(entry.path, SPEC_STORE)) {
       const below = root.rel === WHOLE_TREE_ROOT ? entry.path : entry.path.subarray(root.buf.length + 1);
       if (below.length > 0) layout.get(root.rel).push({ path: below.toString('latin1'), dir: false });
     }
-    if (!extensions.some((ext) => bufEndsWith(entry.path, ext))) continue;
+    if (!extended) continue;
     if (entry.mode === SYMLINK_MODE || entry.mode === GITLINK_MODE) continue;
     const rel = decodeStrict(entry.path);
     if (rel === null) {
@@ -109,13 +118,15 @@ export const resolveScope = (cwd, config, deps = {}) => {
     perRoot.get(root.rel).push(rel);
   }
   // A config declaring no extension judges no file, and the check says so instead of refusing.
-  if (extensions.length === 0) return { files, perRoot, layout, emptyRoots: [] };
-  if (files.length === 0) {
+  if (extensions.length === 0) return { files, perRoot, layout, emptyRoots: [], kitFolderRoots: [] };
+  // A scope the kit's own folder alone matches judges no line, and is no misdeclaration.
+  if (files.length === 0 && kitMatched.size === 0) {
     throw scopeFail(`the declared scope matches ZERO tracked files (roots: ${config.roots.join(', ')}; extensions: ${config.extensions.join(', ')}) — an empty scope is a misdeclaration, never an empty green; either widen "roots" / "extensions" in ${configPathFor(cwd)}, or track a file the declared scope covers`);
   }
   files.sort();
   for (const list of perRoot.values()) list.sort();
-  return { files, perRoot, layout, emptyRoots: [...perRoot].filter(([, list]) => list.length === 0).map(([rel]) => rel) };
+  const emptyRoots = [...perRoot].filter(([, list]) => list.length === 0).map(([rel]) => rel);
+  return { files, perRoot, layout, emptyRoots, kitFolderRoots: emptyRoots.filter((rel) => kitMatched.has(rel)) };
 };
 
 // specStoreEntries(cwd) → the spec store's entries walked from disk, or null where it is absent. A

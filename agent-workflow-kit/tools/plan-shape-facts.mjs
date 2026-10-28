@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
-import { segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
+import { KIT_FOLDER_ROOT, segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
 import { getLineCount, isSweep, resolveAnchorCandidates, unique } from './plan-shape.mjs';
 import { listStories } from './claim-relation.mjs';
 import { EPICS_REL, readEpicStore } from './epic-store.mjs';
@@ -99,6 +99,7 @@ const loadRobustClasses = (deps) => {
 
 const isInScope = (path, config) => Boolean(config &&
   config.roots.some((root) => segmentPrefixOf(root, path)) &&
+  !segmentPrefixOf(KIT_FOLDER_ROOT, path) &&
   !config.exclude.some((excluded) => segmentPrefixOf(excluded, path)) &&
   config.extensions.some((extension) => path.endsWith(extension)));
 

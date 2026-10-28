@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-28 — AD-218: the size check leaves the kit's own folder alone (kit 20.1.0 MINOR; memory, engine and both bridges unchanged)
+
+**`source-size-check` takes every tracked entry at or under `scripts/agent-workflow` away before anything is judged**,
+by a fixed whole-segment rule with no config key, under every root and on the absent config, and every run that judges
+the tree names the folder in one NOTE line. A declared root inside the folder is a config stop; a record under it reads
+as gone; a scope matching only inside it is no refusal; the plan-time scope follows the same rule. This clears the way
+for the kit's scripts to move into the folder in a later release. Contract: source-size revision 8. Detail:
+[agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-28 — AD-217: the kit refresh removes the folders it leaves empty (kit 20.0.1 PATCH; memory, engine and both bridges unchanged)
 
 **`init` no longer leaves empty folders in the kit home and asks the user to remove them by hand.** After its file
