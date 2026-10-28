@@ -51,13 +51,6 @@ export const renderPlan = ({ story = 'Story: S1 of WALK-EPIC', row = MODULE_ROW,
 export const landStory = (epic) => epic.replace('state: planned', `state: landed ${DATE}`);
 export const addResultLine = (epic) => epic.replace('## Acceptance' + LF, '## Acceptance' + LF + `Result line: ${DATE}` + LF);
 export const listFiles = (tree) => Object.keys(tree).filter((path) => tree[path].kind === 'file').sort();
-export const removeStorySpan = (text) => {
-  const lines = text.split(LF);
-  const start = lines.findIndex((line) => /^### 2[.][0-9]+[.] Story sessions/.test(line));
-  if (start < 0) throw new Error('Story sessions template heading is absent');
-  const end = lines.findIndex((line, index) => index > start && /^(---$|## |### )/.test(line));
-  return [...lines.slice(0, start), ...lines.slice(end < 0 ? lines.length : end)].join(LF);
-};
 
 export const createGround = (roots) => {
   const root = mkdtempSync(join(tmpdir(), 'tier-walk-'));
@@ -123,8 +116,7 @@ export const prepareSubstrate = (ground, state) => {
   writeFixture(join(project, MODULE), renderLines(["export const greet = () => 'Hello';"]));
   writeFixture(join(project, 'package.json'), renderLines(['{"name":"walk-project","private":true,"type":"module"}']));
   for (const name of ['orchestration.json', 'gates.json', 'agent_rules.md']) {
-    const bytes = readFileSync(join(kit, 'references/templates', name));
-    writeFixture(join(project, 'docs/ai', name), name === 'agent_rules.md' ? removeStorySpan(bytes.toString('utf8')) : bytes);
+    writeFixture(join(project, 'docs/ai', name), readFileSync(join(kit, 'references/templates', name)));
   }
   if (state === 'seeded') {
     const config = readFileSync(join(project, CONFIG), 'utf8');

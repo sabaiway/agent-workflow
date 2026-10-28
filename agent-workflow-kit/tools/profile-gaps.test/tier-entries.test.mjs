@@ -4,7 +4,6 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SEED_CONFIG, serializeConfig } from '../orchestration-config.mjs';
-import { buildInsertPreview } from '../rules-regions.mjs';
 import { failAt, makeProject } from '../tier-preview.test/harness.test.mjs';
 
 const loaded = await import('../profile-gaps.mjs').catch(() => ({}));
@@ -14,7 +13,7 @@ const MODULE = join(TOOLS, 'profile-gaps.mjs');
 const TIER_TOOL = join(TOOLS, 'tier-preview.mjs');
 const PROFILE_IDS = JSON.parse(readFileSync(join(TOOLS, '..', 'references', 'reference-profile.json'), 'utf8'))
   .items.map(({ id }) => id);
-const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded'];
+const IDS = ['epic-task-slots', 'epic-store-seeded'];
 const CONFIG = 'docs/ai/orchestration.json';
 const RECORD = 'docs/ai/profile-declines.json';
 const STORE = 'docs/ai/epics';
@@ -57,18 +56,18 @@ const assertVerdict = (result, verdict, reason) => {
 };
 
 describe('spec:tier-offer/S13 the two gap entries', () => {
-  it('join the registry after story-sessions-section in profile order, frozen and closed', () => {
+  it('open the registry in profile order, frozen and closed', () => {
     const registry = loaded.PROFILE_GAPS ?? [];
-    assert.deepEqual(registry.map(({ id }) => id), [...IDS, 'checker-gates-declared', 'session-close-rules', 'named-queue-row-seed']);
+    assert.deepEqual(registry.map(({ id }) => id), [...IDS, 'checker-gates-declared', 'named-queue-row-seed']);
     assert.deepEqual(IDS, PROFILE_IDS.filter((id) => IDS.includes(id)));
-    for (const id of IDS.slice(1)) {
+    for (const id of IDS) {
       const entry = entryOf(id);
       assert.ok(Object.isFrozen(entry));
       assert.deepEqual(Reflect.ownKeys(entry).sort(), ['apply', 'detect', 'id']);
     }
   });
 
-  for (const id of IDS.slice(1)) {
+  for (const id of IDS) {
     for (const [name, options, extraDeps] of [
       ['docs/ai absent', { docsAi: 'absent' }],
       ['docs/ai a symlink', { docsAi: 'symlink' }],
@@ -123,7 +122,7 @@ describe('spec:tier-offer/S13 the two gap entries', () => {
 
   it('never reads the decline record or the readiness', () => {
     const files = { [CONFIG]: seed(), [RECORD]: JSON.stringify({ schema: 1, declined: { 'epic-task-slots': '4.0.0' } }) };
-    for (const id of IDS.slice(1)) {
+    for (const id of IDS) {
       const { root, result, paths } = detectIn(id, { files });
       assertVerdict(result, 'absent');
       assert.ok(!paths.includes(join(root, RECORD)), paths.join(', '));
@@ -139,8 +138,9 @@ describe('spec:tier-offer/S13 the two gap entries', () => {
 
   it('apply(root) is the builder\'s tier-preview line for both entries, empty when unsafe', () => {
     const root = '/projects/plain-root';
-    for (const id of IDS.slice(1)) {
-      assert.equal(entryOf(id).apply(root), buildInsertPreview(root, TIER_TOOL));
+    for (const id of IDS) {
+      assert.equal(typeof loaded.buildInsertPreview, 'function', 'profile-gaps.mjs buildInsertPreview is absent');
+      assert.equal(entryOf(id).apply(root), loaded.buildInsertPreview(root, TIER_TOOL));
       assert.equal(entryOf(id).apply(root), `node ${TIER_TOOL} --cwd ${root}`);
       assert.equal(entryOf(id).apply(`${root}${CONTROL_BYTE}`), '');
     }
@@ -150,5 +150,19 @@ describe('spec:tier-offer/S13 the two gap entries', () => {
     const source = readFileSync(MODULE, 'utf8');
     assert.match(source, /import\s*\{[^}]*\bTIER_TARGETS\b[^}]*\}\s*from\s*['"]\.\/reference-profile\.mjs['"]/);
     assert.doesNotMatch(source, /['"](?:author|review|execute)['"]/);
+  });
+});
+
+describe('spec:session-rules/S11 session-close-rules retired', () => {
+  it('the shipped profile and the registry carry neither retired id, the lineage stays 4.0.0, and the four unentered ids remain', () => {
+    const profile = JSON.parse(readFileSync(join(TOOLS, '..', 'references', 'reference-profile.json'), 'utf8'));
+    const retired = ['session-close-rules', 'story-sessions-section'];
+    const registered = (loaded.PROFILE_GAPS ?? []).map(({ id }) => id);
+    assert.ok(registered.length > 0, 'the registry is read');
+    assert.equal(profile.lineage, '4.0.0');
+    assert.deepEqual(PROFILE_IDS.filter((id) => retired.includes(id)), [], 'the shipped profile');
+    assert.deepEqual(registered.filter((id) => retired.includes(id)), [], 'the registry');
+    assert.deepEqual(PROFILE_IDS.filter((id) => !registered.includes(id)),
+      ['migration-notes-delivered', 'migration-blocks-placed', 'payload-converged', 'profile-gap-screen']);
   });
 });

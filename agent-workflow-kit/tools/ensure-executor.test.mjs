@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENSURE_OPS, WRITE_TOKENS, DRY_RUN_TOKENS, ENSURE_TOKENS, RELAYED_ENSURE_TOKENS } from './ensure-vocabulary.mjs';
-import { EXECUTOR_VEHICLE_REL, readBundledAgents } from './cheap-agents-read.mjs';
+import { EXECUTOR_VEHICLE_REL, EXPECTED_WORKFLOW_VERSION, readBundledAgents } from './cheap-agents-read.mjs';
 
 const loaded = await import('./ensure-executor.mjs').catch(() => ({}));
 const absent = () => { throw new Error('absent'); };
@@ -263,7 +263,7 @@ describe('spec:init-project/S51 configs finish over a differing executor', () =>
       rmSync(cwd, { recursive: true, force: true });
       mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
       writeFileSync(join(cwd, 'package.json'), '{"name":"fixture"}\n');
-      writeFileSync(join(cwd, 'docs/ai/.workflow-version'), '4.0.0');
+      writeFileSync(join(cwd, 'docs/ai/.workflow-version'), EXPECTED_WORKFLOW_VERSION);
       writeFileSync(join(cwd, SETTINGS_REL), SETTINGS);
       if (body !== undefined) {
         mkdirSync(join(cwd, AGENTS_DIR), { recursive: true });

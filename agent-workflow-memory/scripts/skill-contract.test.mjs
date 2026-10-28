@@ -57,7 +57,7 @@ describe('SKILL.md and contracts.md — the standalone upgrade keeps the deploye
     ], 'script ensure');
     assert.doesNotMatch(scripts, /\bkit\b/i, 'script ensure: names no kit');
     assert.doesNotMatch(scripts, /catalog/i, 'script ensure: names no catalog');
-    const stepFive = flat(region(UPGRADE, '5. Reconcile drift', '6. **Preserve', 'step 5'));
+    const stepFive = flat(region(UPGRADE, '5. Reconcile drift', '6. **Never regenerate', 'step 5'));
     has(stepFive, ['never a file of `references/scripts/`'], 'step 5');
   });
 

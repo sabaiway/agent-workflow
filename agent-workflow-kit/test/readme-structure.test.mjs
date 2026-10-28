@@ -105,9 +105,9 @@ describe('published READMEs — structure guard (AD-009)', () => {
   }
 });
 
-// The recipe vocabulary is FIVE names on every normative shipped surface (AD-124). Known-prior stores
-// (inject-methodology.mjs, orchestration-config.mjs) legitimately keep the four-name text and are not
-// normative, so the scan is by path, never repo-wide.
+// The recipe vocabulary is FIVE names on every normative shipped surface (AD-124). A known-prior store
+// (orchestration-config.mjs) legitimately keeps the four-name text and is not normative, so the scan
+// is by path, never repo-wide.
 describe('shipped surfaces name five recipes, never the retired four-name list', () => {
   const FOUR_ONLY = /Solo\s*\/\s*Reviewed\s*\/\s*Council\s*\/\s*Delegated(?!\s*\/\s*Subagent)/u;
   const normative = [

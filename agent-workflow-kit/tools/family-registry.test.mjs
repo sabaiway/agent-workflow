@@ -47,7 +47,8 @@ after(() => { for (const dir of dirsToClean) rmSync(dir, { recursive: true, forc
 
 import { INTERNAL_RENDER_FORBIDDEN } from './labels.mjs';
 import { START_MARKER } from './hide-footprint.mjs';
-import { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
+import * as engineSource from './engine-source.mjs';
+const { ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_THEME_REL } = engineSource;
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { toViewModel } from './view-model.mjs'; import { render } from './renderers.mjs';
@@ -160,13 +161,12 @@ describe('surveyFamily', () => {
   });
   // statType where each fragment is independently a readable file ('file') or absent (null); the engine
   // dir + everything else is a 'dir'. The mock is pinned to the AUTHORITATIVE engine-source constants.
-  const fragmentStat = ({ orch = 'file', aut = 'file', proc = 'file', lens = 'file', lensPriors = 'file' }) => (p) => {
+  const fragmentStat = ({ orch = 'file', aut = 'file', proc = 'file', lens = 'file' }) => (p) => {
     const s = String(p);
     if (s.endsWith(ORCHESTRATION_FRAGMENT_REL)) return orch;
     if (s.endsWith(AUTONOMY_FRAGMENT_REL)) return aut;
     if (s.endsWith(PROCEDURES_FRAGMENT_REL)) return proc;
-    if (s.endsWith(LENS_PRIORS_REL)) return lensPriors;
-    if (s.endsWith(LENS_FRAGMENT_REL)) return lens;
+    if (LENS_THEME_REL && s.endsWith(LENS_THEME_REL)) return lens;
     return 'dir';
   };
   const caveatsOf = (rows) => rows.find((r) => r.kind === 'methodology-engine').caveats ?? [];
@@ -214,26 +214,16 @@ describe('surveyFamily', () => {
     assert.match(caveats[0], /activity-procedures|procedures canon/i);
   });
 
-  it('an OK pre-1.13.0 engine MISSING the agent-rules lens canon gets the lens caveat (only)', () => {
-    // The realistic post-release case: an engine at 1.12.0 ships recipes + procedures but no lens pair.
+  it('an OK engine MISSING the lens rules theme (LENS_THEME_REL) gets the lens caveat (only)', () => {
+    assert.equal(typeof LENS_THEME_REL, 'string', 'engine-source.mjs exports LENS_THEME_REL');
     const rows = surveyFamily(engineDeps({
       readVersion: () => ({ version: '1.12.0' }),
-      statType: fragmentStat({ lens: null, lensPriors: null }),
+      statType: fragmentStat({ lens: null }),
       readFileSync: () => '> a bounded fragment',
     }));
     const caveats = caveatsOf(rows);
     assert.equal(caveats.length, 1);
-    assert.match(caveats[0], /agent-rules lens/i);
-  });
-
-  it('a lens FRAGMENT present with the PRIOR STORE missing still gets the lens caveat (the reconcile needs the PAIR)', () => {
-    const rows = surveyFamily(engineDeps({
-      statType: fragmentStat({ lensPriors: null }),
-      readFileSync: () => '> a bounded fragment',
-    }));
-    const caveats = caveatsOf(rows);
-    assert.equal(caveats.length, 1, 'a half-shipped lens pair must not report healthy');
-    assert.match(caveats[0], /agent-rules lens/i);
+    assert.match(caveats[0], /lens/i);
   });
 
   it('an engine MISSING every fragment surfaces EVERY caveat (none overwrites another)', () => {
@@ -246,7 +236,7 @@ describe('surveyFamily', () => {
     assert.ok(caveats.some((c) => /recipes pointer/i.test(c)));
     assert.ok(caveats.some((c) => /autonomy pointer/i.test(c)));
     assert.ok(caveats.some((c) => /activity-procedures|procedures canon/i.test(c)));
-    assert.ok(caveats.some((c) => /agent-rules lens/i.test(c)));
+    assert.ok(caveats.some((c) => /lens/i.test(c)));
   });
 
   it('a broken engine whose fragments are DIRECTORIES is NOT a false "ok"', () => {

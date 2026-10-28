@@ -3,7 +3,7 @@ name: agent-workflow-kit
 description: Deploy or upgrade a portable AI-agent memory-and-workflow system in any project. Use when the user wants to bootstrap `docs/ai/` + an entry-point `AGENTS.md` (+ `CLAUDE.md` alias) + cap/archive/index enforcement in a new or existing repo, set up the Memory Map and session protocols, install the docs-rotation pre-commit hook, or run `/agent-workflow-kit` / `/agent-workflow-kit upgrade`. Triggers on phrases like "set up the memory system", "deploy the AI workflow here", "bootstrap docs/ai", "upgrade the workflow". New to the epic, story and task tier? Run `/agent-workflow-kit tier`. A typed decision with a confidence from Jev? Run `/agent-workflow-kit jev`.
 disable-model-invocation: true
 metadata:
-  version: '19.5.0'
+  version: '20.0.0'
 ---
 
 # agent-workflow-kit
@@ -20,7 +20,7 @@ This kit is the **composition root** of the `agent-workflow` family. The memory 
 (`docs/ai/`, the entry-point doc, caps / archive / index, the setup contracts) is owned by
 **`agent-workflow-memory`**. The kit **prefers to delegate** substrate deployment to that skill
 when it is present and healthy, and otherwise uses its **own bundled copy** (`references/`,
-`migrations/`) — the one-command install stays **dependency-free**. (The methodology slot is a separate axis: its fragment is read **live from the
+`migrations/`) — the one-command install stays **dependency-free**. (The kit block in `AGENTS.md` is a separate axis: its engine texts are read **live from the
 installed `agent-workflow-engine`**, which `npx @sabaiway/agent-workflow-kit@latest init` installs;
 see `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`.)
 `init` also **refreshes the installed memory substrate** (best-effort — a miss is a loud DEGRADED
@@ -51,7 +51,7 @@ made: a partial/broken memory install discovered mid-flow must not disable the w
 > returns who writes what, which stamps end up present, and that the commit gate is kit-only. Both
 > are unit-tested — the contract below is pinned by code.
 
-**Hand-off contract & bounded pointer reconciliation** — `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md` (read at the bootstrap/upgrade point of use).
+**Hand-off contract & the kit block** — `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md` (read at the bootstrap/upgrade point of use).
 
 **One composition-level commit gate.** The delegated memory mode performs **no** commit and
 raises **no** "ask to commit". There is exactly **one** gate, owned by the kit, **after**
@@ -71,14 +71,14 @@ Pick the mode from the user's invocation — the mapping is pinned by `tools/com
 Before acting, read `docs/ai/.workflow-version` (the project's stamp) — via the host's file-read tool, else ONE plain undecorated command (no compounds/redirects/pipes) — to decide the route — an **internal** routing decision, **not** a line you print (version display: *Version disclosure* in `${CLAUDE_SKILL_DIR}/references/shared/report-footer.md`). Route:
 
 - **absent** → bootstrap (a fresh deployment).
-- **stamp < `4.0.0`** (the deployment-lineage head) → `upgrade`.
-- **stamp == `4.0.0`** → already current; only the stamp-independent reconciles may run — the FULL set lives in `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 3; run step 3 (never enumerate the reconciles from memory).
+- **stamp < `5.0.0`** (the deployment-lineage head) → `upgrade`.
+- **stamp == `5.0.0`** → already current; only the stamp-independent reconciles may run — the FULL set lives in `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 3; run step 3 (never enumerate the reconciles from memory).
 - **stamp > head / unparseable** → STOP — never-downgrade gate (see `${CLAUDE_SKILL_DIR}/references/modes/upgrade.md` step 2).
 - **Exempt:** `autonomy-doctor` provisions the OS, not the deployment — stamp-independent (stated in its mode file).
 
 **Two independent version axes — never conflate them:**
 
-1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`4.0.0`). This is the **only** axis this skill compares.
+1. **Project deployment** — `docs/ai/.workflow-version` vs the lineage head (`5.0.0`). This is the **only** axis this skill compares.
 2. **Kit freshness** — this skill's own files vs the published npm package. That is the **npx installer's** job: `npx @sabaiway/agent-workflow-kit@latest init` (it refuses a stale-cache downgrade by comparing the version on disk — **no network**). This skill never checks npm, and the package version is **not** the lineage head.
 
 **Refreshed the kit but nothing changed?** After the npx installer updates `~/.claude/skills/agent-workflow-kit/`, **restart the session** so the agent reloads the new skill files.

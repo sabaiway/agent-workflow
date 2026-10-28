@@ -8,13 +8,14 @@ import { basename, dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  EFFECTIVE, KIT, KIT_TEXT, LOCAL, MERGED_TEXT, RECORD, UPGRADE,
+  EFFECTIVE, KIT, KIT_TEXT, LOCAL, MERGED_TEXT, ONE_THEME, RECORD, UPGRADE,
   copyProject, entryOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
 } from './rules-harness.test.mjs';
 
 const CLI = fileURLToPath(new URL('./rules-cli.mjs', import.meta.url));
 const NOTE = 'move your edit to local/, a rebuild drops it';
 const h = sha(KIT_TEXT);
+const ONE = { themes: ONE_THEME };
 const FOUR = ['--theme', 'project-layout', '--kit', h, '--local', 'absent', '--effective', h];
 
 const loadMain = async () => need(await load('./rules-cli.mjs'), 'main');
@@ -29,9 +30,9 @@ const driftProject = () => {
 
 // The three ways a run names its project: ctx.cwd alone, --cwd absolute, --cwd relative to ctx.cwd.
 const checkRuns = (main, root) => [
-  ['ctx.cwd', () => main(['--check'], { cwd: root })],
-  ['--cwd absolute', () => main(['--check', '--cwd', root])],
-  ['--cwd relative', () => main(['--check', '--cwd', basename(root)], { cwd: dirname(root) })],
+  ['ctx.cwd', () => main(['--check'], { cwd: root, deps: ONE })],
+  ['--cwd absolute', () => main(['--check', '--cwd', root], { deps: ONE })],
+  ['--cwd relative', () => main(['--check', '--cwd', basename(root)], { cwd: dirname(root), deps: ONE })],
 ];
 
 describe('spec:project-rules/S12 exactly one mode with exactly its options, help alone, else usage reading no file', () => {
@@ -85,7 +86,7 @@ describe('spec:project-rules/S12 exactly one mode with exactly its options, help
 
   it('--check with only --cwd over an empty project is accepted and exits 0', async () => {
     const main = await loadMain();
-    const out = main(['--check', '--cwd', root]);
+    const out = main(['--check', '--cwd', root], { deps: ONE });
     assert.equal(out.code, 0);
     assert.equal(out.stdout, 'project-layout: absent\n');
     assert.equal(out.stderr, '');
@@ -165,7 +166,8 @@ describe('spec:project-rules/S13 --check exits 0 only on current or absent, name
     const empty = project(() => makeProject());
     const accepted = spawn(empty);
     assert.equal(accepted.status, 0, accepted.stderr);
-    assert.equal(accepted.stdout, 'project-layout: absent\n');
+    const lines = accepted.stdout.split('\n').filter(Boolean);
+    assert.ok(lines.includes('project-layout: absent') && lines.every((line) => line.endsWith(': absent')), accepted.stdout);
   });
 });
 

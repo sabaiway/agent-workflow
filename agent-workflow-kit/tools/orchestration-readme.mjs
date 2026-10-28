@@ -85,7 +85,7 @@ export const refreshReadme = (config) => {
   return { config: withCurrentReadme(config), changed: true };
 };
 
-export const NOTE_ROUTE = 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines around the orchestration pointer';
+export const NOTE_ROUTE = "a note of your own goes in AGENTS.md, outside the kit block's two workflow:kit comment lines";
 
 export const readmeState = (config) => {
   if (!Object.hasOwn(config, '_README')) return 'absent';

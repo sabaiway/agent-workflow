@@ -11,7 +11,7 @@ import { WHATS, BENEFITS, SEVERITY_ATTENTION, SEVERITY_OPTIONAL } from './recomm
 import { main, probeSandboxMasks, MASKS_FENCE_START } from './sandbox-masks.mjs';
 import { git, repoFactory, line, stubs, writeFence, readExclude, adviseMasks } from './sandbox-masks-harness.test.mjs';
 
-const freshRepo = repoFactory('recommendations-sandbox-masks', { 'docs/ai/.workflow-version': '4.0.0\n' });
+const freshRepo = repoFactory('recommendations-sandbox-masks', { 'docs/ai/.workflow-version': '5.0.0\n' });
 const makeRepo = (...fenced) => {
   const root = freshRepo();
   if (fenced.length > 0) writeFence(root, ...fenced);

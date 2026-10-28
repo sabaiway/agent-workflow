@@ -30,21 +30,17 @@ import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-pari
 import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-backends.mjs';
 import { reconcileSettings } from '../tools/bridge-settings.mjs';
 import { settingsPath } from '../tools/bridge-settings-read.mjs';
-import { OUTCOME_LINES } from '../tools/lens-region.mjs';
-import { PROFILE_GAPS } from '../tools/profile-gaps.mjs';
-const { OUTCOME_LINES: RULES_INSERT_LINES } = await import('../tools/rules-insert.mjs').catch(() => ({}));
 const { OUTCOME_LINES: TIER_LINES } = await import('../tools/tier-preview.mjs').catch(() => ({}));
 const { OUTCOME_LINES: CHECKER_LINES } = await import('../tools/checker-gates.mjs').catch(() => ({}));
 const { OUTCOME_LINES: CLOSE_LINES } = await import('../tools/session-close-check.mjs').catch(() => ({}));
 import { planRecipe } from '../tools/recipes.mjs';
 import { formatReport } from '../tools/hide-footprint.mjs';
-import { readEngineFragment } from '../tools/engine-source.mjs';
+import { NOTE_ROUTE } from '../tools/orchestration-readme.mjs';
 // The scanner leaf (its own negative controls live in composed-lines-scan.test.mjs); it sits under
 // scripts/testing/ — not test/ — so the coverage run sees its lines.
 import { ALARM_WORDS, INTERNAL_NAMES, scannable } from '../../scripts/testing/composed-lines-scan.mjs';
 
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ENGINE_DIR = join(KIT, '..', 'agent-workflow-engine');
 
 // Machine tokens: NEVER inside a human sentence, normal or abnormal (the token slot is stripped
 // before scanning — that slot is the designed exception, characterized below). Scanned members are
@@ -335,7 +331,7 @@ const CLI_RUNS = { success: cliFx('success-run', project(), false) };
 const unwitnessed = (witnesses) => Object.entries(witnesses).flatMap(([phrase, ids]) => ids.filter((id) => !SURFACES.find((surface) => surface.id === id)?.lines.some((line) => line.includes(phrase))).map((id) => `${id}: a line carries "${phrase}"`));
 describe('spec:docs-navigator/S5 the kept-checker index lines are user-grade', () => { it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ "the project's own checker": ['index-kept-regenerated', 'index-kept-already-current', 'index-kept-customized-preserved', 'index-kept-write-refused', 'index-kept-probe-failed', 'index-kept-dry-note'], 'the navigator was put back byte for byte': ['index-kept-put-back'] }), [], 'each S5 fixture carries its witness')); });
 describe('spec:orchestration-note/S5 the note lines are user-grade', () => {
-  const [OVER, ROUTE] = ['written over a different one (every recipe you set is kept); ', 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines'];
+  const [OVER, ROUTE] = ['written over a different one (every recipe you set is kept); ', NOTE_ROUTE];
   it('each S5 fixture carries the line it witnesses', () => assert.deepEqual(unwitnessed({ [`the current onboarding note would be ${OVER}${ROUTE}`]: ['orchestration-would-write-differing'], [`the current onboarding note was ${OVER}${ROUTE}`]: ['orchestration-differing-written'], 'the onboarding note is absent and would be written': ['orchestration-would-write-absent'], 'the onboarding note was absent and is now written': ['orchestration-absent-written'], 'the onboarding note is the current canonical': ['orchestration-already-current'], 'created from the canonical seed': ['orchestration-seeded'], 'refreshed to the current canonical': ['orchestration-note-refreshed'], 'would be refreshed': ['orchestration-would-refresh-note'] }), [], 'each S5 fixture carries its witness'));
 });
 describe('spec:distribution-files/S11 every line form of the specs and scripts ops is user-grade', () => {
@@ -408,50 +404,11 @@ settingsFx('flagged-retired', true, { text: 'AW_OLD_KNOB=1\n' });
 settingsFx('duplicates', true, { text: 'AW_GUARD_KNOB=1\nAW_GUARD_KNOB=0\n' });
 settingsFx('ok', false, { text: 'AW_GUARD_KNOB=1\n' });
 
-// ── the lens-region outcome lines (the whole exported table) ─────────────────────
-const caughtEngineErr = (deps) => {
-  try { readEngineFragment(ENGINE_DIR, deps); } catch (err) { return err; }
-  throw new Error('expected readEngineFragment to throw');
-};
 const composeLines = (table, key, args) => () => {
   const compose = table?.[key] ?? (() => { throw new Error(`missing outcome composer: ${key}`); });
   const out = compose(...args);
   return Array.isArray(out) ? out : [out];
 };
-const LENS_ARGS = {
-  targetAbsent: ['docs/ai/agent_rules.md'], targetUndecodable: ['docs/ai/agent_rules.md'], targetNotRegular: ['docs/ai/agent_rules.md'],
-  commsNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')],
-  lensNoRegion: ['docs/ai/agent_rules.md'],
-  commsCapRefused: ['docs/ai/agent_rules.md', 152, 150],
-  lensCapRefused: ['docs/ai/agent_rules.md', 152, 150],
-  storyNoRegion: ['docs/ai/agent_rules.md', PROFILE_GAPS[0].apply('/project')], storyCurrent: [], storyWritten: [],
-  storyCapRefused: ['docs/ai/agent_rules.md', 152, 150], storyRefreshed: [],
-  regionHeadingTwice: ['### 2.x. Story sessions', 'docs/ai/agent_rules.md'],
-  templateCanonStop: [],
-  errorDetail: ['EACCES: permission denied, open /x'],
-  engineStop: [caughtEngineErr({ rel: 'references/no-such-engine-file.md' })],
-  commsCurrent: [], commsWritten: [], capSkipNote: [], commsRefreshed: [],
-  engineTooOld: [], lensCurrent: [], lensWritten: [], lensRefreshed: [],
-};
-const LENS_ABNORMAL = new Set(['targetUndecodable', 'targetNotRegular', 'commsNoRegion', 'commsCapRefused', 'templateCanonStop', 'errorDetail', 'lensNoRegion', 'engineTooOld', 'engineStop', 'lensCapRefused', 'storyNoRegion', 'storyCapRefused', 'regionHeadingTwice']);
-for (const [key, args] of Object.entries(LENS_ARGS)) {
-  fx('lens-region', key, LENS_ABNORMAL.has(key), composeLines(OUTCOME_LINES, key, args));
-}
-fx('lens-region', 'engineStop-unreadable', true, OUTCOME_LINES.engineStop(
-  caughtEngineErr({ readFileSync: () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); } }),
-));
-
-const RULES_ARGS = {
-  regionPresent: ['story-sessions'], regionPlanned: ['story-sessions'], regionInserted: ['story-sessions'],
-  fileAbsent: LENS_ARGS.targetAbsent, fileSymlink: LENS_ARGS.targetAbsent, fileUnreadable: LENS_ARGS.targetAbsent,
-  templateDefect: [], headingTwice: LENS_ARGS.regionHeadingTwice, anchorAbsent: LENS_ARGS.targetAbsent,
-  capRefused: LENS_ARGS.commsCapRefused, writeFailed: LENS_ARGS.targetAbsent,
-  refusalLine: ['anchor-absent'], errorDetail: LENS_ARGS.errorDetail,
-};
-const RULES_ABNORMAL = new Set(['fileAbsent', 'fileSymlink', 'fileUnreadable', 'templateDefect', 'headingTwice', 'anchorAbsent', 'capRefused', 'writeFailed', 'refusalLine', 'errorDetail']);
-for (const [key, args] of Object.entries(RULES_ARGS)) {
-  fx('rules-insert', key, RULES_ABNORMAL.has(key), composeLines(RULES_INSERT_LINES, key, args));
-}
 
 // ── the tier offer's outcome lines (the whole exported table, spec kit/tier/tier-offer) ─────
 const TIER_ARGS = {
@@ -469,7 +426,7 @@ const TIER_ABNORMAL = new Set(['noCommand', 'tmpLeft', 'detectFailed', 'refusal'
 for (const [key, args] of Object.entries(TIER_ARGS)) if (key !== 'entry') fx('tier-preview', key, TIER_ABNORMAL.has(key), composeLines(TIER_LINES, key, args));
 // An entry line `<id>: <word>[ — <detail>]` is characterized like the ensure slot: id self-label, closed word, detail scanned.
 const TIER_ENTRY_RE = /^([a-z]+(?:-[a-z]+)+): (present|offered|declined|undecidable|applied|recorded)(?: — (.+))?$/;
-for (const id of ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', 'session-close-rules', 'named-queue-row-seed']) fx('tier-preview', `entry-${id}`, false, () => {
+for (const id of ['epic-task-slots', 'epic-store-seeded', 'named-queue-row-seed']) fx('tier-preview', `entry-${id}`, false, () => {
   const [, label, , detail] = composeLines(TIER_LINES, 'entry', [id, ...TIER_ARGS.entry])()[0].match(TIER_ENTRY_RE) ?? [];
   assert.equal(label, id, 'an entry line opens with its registry id');
   return [detail];
@@ -583,10 +540,6 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
   it('every bridge-settings reconcile branch has a fixture', () => {
     assert.deepEqual([...witnessedReconcile].sort(), ['absent', 'duplicates', 'flagged', 'ok', 'unusable']);
   });
-  it('every rules-insert outcome composer has a fixture', () => {
-    assert.ok(RULES_INSERT_LINES, 'rules-insert.mjs OUTCOME_LINES is absent');
-    assert.deepEqual(Object.keys(RULES_INSERT_LINES).sort(), Object.keys(RULES_ARGS).sort());
-  });
   it('every tier-preview outcome composer has a fixture, none printing a placeholder or an unrendered argument', () => {
     assert.deepEqual(Object.keys(TIER_LINES ?? {}).sort(), Object.keys(TIER_ARGS).sort());
     for (const [key, args] of Object.entries(TIER_ARGS)) {
@@ -604,11 +557,6 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
     for (const [key, args] of Object.entries(CLOSE_ARGS)) {
       for (const line of composeLines(CLOSE_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
     }
-  });
-  it('every lens-region outcome composer has a fixture, no Custom composer left spec:rules-regions/S25', () => {
-    assert.deepEqual(Object.keys(OUTCOME_LINES).sort(), Object.keys(LENS_ARGS).sort()); for (const key of ['commsWritten', 'storyWritten', 'lensWritten']) assert.ok(composeLines(OUTCOME_LINES, key, [])()[0].includes("text of your own goes under a ### heading of its own, titled unlike the kit's sections"), key + ' names the route');
-    for (const key of ['commsNoRegion', 'storyNoRegion']) assert.equal(OUTCOME_LINES[key](...LENS_ARGS[key])[1]?.split(String.fromCharCode(96))[1], LENS_ARGS[key][1], key);
-    for (const key of ['commsNoRegion', 'storyNoRegion']) assert.doesNotMatch(OUTCOME_LINES[key](...LENS_ARGS[key]).join(' '), /undefined|<kit>|<project>/, key);
   });
 });
 

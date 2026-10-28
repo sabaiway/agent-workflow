@@ -34,7 +34,7 @@ describe('negative controls — a leak in an exempt-looking position is still ca
 describe('exemptions — narrow by grammar, not by dropping', () => {
   it('a leading self-label/prefix is the machine channel (all four label shapes)', () => {
     for (const line of [
-      '[lens-region] refreshed the section to the current canon.',
+      '[hide-footprint] moved the footprint to the project-local exclude file.',
       '  bridge-settings: 2 key(s) recognized, all current',
       'hide-footprint — DRY RUN (no changes)',
       'ensure-configs (--reconcile)',
@@ -44,7 +44,7 @@ describe('exemptions — narrow by grammar, not by dropping', () => {
   });
 
   it('a whole-line [tool] key=value machine line scans as EMPTY even with banned bytes in the value', () => {
-    assert.equal(scannable('[lens-region] error="EACCES: a fragment anchor slot reconcile"'), '');
+    assert.equal(scannable('[hide-footprint] error="EACCES: a fragment anchor slot reconcile"'), '');
   });
 
   it('command spans, flags, KEY=VALUE and paths stay exempt', () => {

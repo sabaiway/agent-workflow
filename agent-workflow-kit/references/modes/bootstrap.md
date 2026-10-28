@@ -38,11 +38,9 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
 10. **Stamp the deployment lineage.** In both paths, delegated and fallback, **first lay down the
     project rules** — `node ${CLAUDE_SKILL_DIR}/tools/ensure-configs.mjs --reconcile --only rules --cwd <project>`,
     relaying its line — **then re-run the step-7 navigator finalizer**
-    (`--ensure-index`) whenever a later step touched `docs/ai` — the rules run and the reconciles that follow the
-    template copy do (the agent-rules lens,
-    `${CLAUDE_SKILL_DIR}/references/shared/composition-handoff.md`); it is idempotent, so an
+    (`--ensure-index`) whenever a later step touched `docs/ai` — the rules run does; it is idempotent, so an
     untouched tree simply reports `already-current`. Then write the **deployment-lineage head** into
-    `docs/ai/.workflow-version` (one semver line). The lineage head is **`4.0.0`** — the shared
+    `docs/ai/.workflow-version` (one semver line). The lineage head is **`5.0.0`** — the shared
     `agent-workflow` deployment lineage, **NOT** this kit's npm package version (see
     `package.json` / `CHANGELOG.md`). The two are
     independent axes: a packaging-only release bumps the package but leaves the lineage head until a

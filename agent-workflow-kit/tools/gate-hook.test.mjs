@@ -100,7 +100,7 @@ const memFs = ({ files = {}, dirs = [], symlinks = [] } = {}) => {
 };
 
 const deployedFs = (extra = {}) =>
-  memFs({ ...extra, files: { [STAMP_ABS]: '4.0.0\n', ...(extra.files ?? {}) } });
+  memFs({ ...extra, files: { [STAMP_ABS]: '5.0.0\n', ...(extra.files ?? {}) } });
 
 const wiredSettings = (extra = {}) =>
   JSON.stringify({ hooks: { PreToolUse: [buildHookSettingsEntry()] }, ...extra });
@@ -175,7 +175,7 @@ describe('spec:init-project/S27 the plain gate-hook writer by proof', () => {
         const wired = state === 'differing wired';
         const localBytes = '{"otherLocal":"kept"}\n';
         const settingsBytes = wired ? `${wiredSettings()}\n` : '{"otherProject":"kept"}\n';
-        writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+        writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '5.0.0\n');
         writeFileSync(bundlePath, BUNDLE_CONTENT);
         writeFileSync(settingsPath, settingsBytes);
         writeFileSync(localPath, localBytes);
@@ -278,7 +278,7 @@ describe('spec:init-project/S27 the plain gate-hook writer by proof', () => {
       mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
       mkdirSync(join(root, '.claude', 'hooks'), { recursive: true });
       const bundlePath = join(root, 'bundle-gate-approve.mjs');
-      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '5.0.0\n');
       writeFileSync(bundlePath, BUNDLE_CONTENT);
       writeFileSync(join(root, '.claude', 'settings.json'), wiredSettings());
       writeFileSync(join(root, HOOK_FILE_REL), DIVERGED);
@@ -315,7 +315,7 @@ describe('spec:init-project/S27 the plain gate-hook writer by proof', () => {
       const hookPath = join(root, HOOK_FILE_REL);
       const settingsPath = join(root, '.claude', 'settings.json');
       const foreignPath = join(root, 'foreign.mjs');
-      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+      writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '5.0.0\n');
       writeFileSync(bundlePath, BUNDLE_CONTENT);
       writeFileSync(settingsPath, `${wiredSettings()}\n`);
       writeFileSync(foreignPath, 'foreign bytes\n');
@@ -642,9 +642,9 @@ describe('gate-hook --read-lane — the opt-in read-only compound lane writer', 
 
   // hook: BUNDLE_V (current) | STALE (diverged) | undefined (not placed). lanes: raw lanes.json body.
   // wired (default true): wire the hook into settings.json (the --read-lane currency check needs it,
-  // council B5). stamp (default '4.0.0' = the lineage head): the deployment stamp (--read-lane --apply
+  // council B5). stamp (default '5.0.0' = the lineage head): the deployment stamp (--read-lane --apply
   // enforces it, council B6); null skips it.
-  const makeDeployed = ({ hook, lanes, gates, wired = true, stamp = '4.0.0' } = {}) => {
+  const makeDeployed = ({ hook, lanes, gates, wired = true, stamp = '5.0.0' } = {}) => {
     const root = mkdtempSync(join(tmpdir(), 'gate-hook-lane-'));
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     if (stamp !== null) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);

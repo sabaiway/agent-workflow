@@ -1,8 +1,8 @@
-// The one door of the project-rules module: the index re-exports exactly THEMES, checkRules, ensureRules,
-// reconcileMemoryMapRows and ROW_ROUTE, and no other kit module reaches a file of this directory past it. Contract: docs/ai/specs/kit/project-rules/index.md.
+// The one door of the project-rules module: the index re-exports exactly THEMES, themePaths, PRECEDENCE_LINE,
+// checkRules and ensureRules, and no other kit module reaches a file of this directory past it. Contract: docs/ai/specs/kit/project-rules/index.md.
 
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -33,21 +33,20 @@ const kitModules = () => {
   return files;
 };
 
-describe('spec:project-rules/S15 the index exports exactly THEMES, checkRules, ensureRules, reconcileMemoryMapRows and ROW_ROUTE', () => {
-  it('re-exports the very THEMES, checkRules, ensureRules, reconcileMemoryMapRows and ROW_ROUTE, and no kit module imports past the index', async () => {
-    const leaf = await load('./memory-map-row.mjs');
-    const [reconcileMemoryMapRows, ROW_ROUTE] = [need(leaf, 'reconcileMemoryMapRows'), need(leaf, 'ROW_ROUTE')];
-    const ensureRules = need(await load('./rules-ensure.mjs'), 'ensureRules');
+describe('spec:project-rules/S15 the index exports exactly THEMES, themePaths, PRECEDENCE_LINE, checkRules and ensureRules', () => {
+  it('re-exports the very export of each file, no kit module imports past the index, and the row leaf is gone', async () => {
+    const themes = await load('./themes.mjs');
+    const own = {
+      THEMES: need(themes, 'THEMES'),
+      themePaths: need(themes, 'themePaths'),
+      PRECEDENCE_LINE: need(themes, 'PRECEDENCE_LINE'),
+      checkRules: need(await load('./rules-check.mjs'), 'checkRules'),
+      ensureRules: need(await load('./rules-ensure.mjs'), 'ensureRules'),
+    };
     const index = await load('./index.mjs');
-    const THEMES = need(await load('./themes.mjs'), 'THEMES');
-    const checkRules = need(await load('./rules-check.mjs'), 'checkRules');
-    for (const name of ['THEMES', 'checkRules', 'ensureRules', 'reconcileMemoryMapRows', 'ROW_ROUTE']) need(index, name);
-    assert.deepEqual(Object.keys(index).sort(), ['ROW_ROUTE', 'THEMES', 'checkRules', 'ensureRules', 'reconcileMemoryMapRows']);
-    assert.equal(index.THEMES, THEMES);
-    assert.equal(index.checkRules, checkRules);
-    assert.equal(index.ensureRules, ensureRules);
-    assert.equal(index.reconcileMemoryMapRows, reconcileMemoryMapRows);
-    assert.equal(index.ROW_ROUTE, ROW_ROUTE);
+    assert.deepEqual(Object.keys(index).sort(), Object.keys(own).sort());
+    for (const [name, value] of Object.entries(own)) assert.equal(index[name], value, name);
+    assert.equal(existsSync(join(HERE, 'memory-map-row.mjs')), false, 'memory-map-row.mjs remains');
 
     assert.deepEqual(pastTheDoor("import { x } from '../project-rules/themes.mjs';\nexport * from \"./project-rules/index.mjs\";"),
       ['../project-rules/themes.mjs']);

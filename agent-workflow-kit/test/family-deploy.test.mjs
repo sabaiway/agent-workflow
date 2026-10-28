@@ -1,13 +1,14 @@
 // End-to-end acceptance for the composition root's two deploy paths, tying the executable
 // hand-off contract (detectMemory / handoffPlan) to the artifacts that actually land on disk.
 //
-//   fallback  (substrate absent)  → bundled entry point with an EMPTY slot the root reconciles +
-//                                   fills, .workflow-version ONLY
-//   delegate  (substrate present) → substrate writes .memory-version + empty slot; the root injects
-//                                   the bounded fragment and writes .workflow-version → BOTH stamps
+//   fallback  (substrate absent)  → bundled entry point, the root reconciles the kit block in at its
+//                                   start, .workflow-version ONLY
+//   delegate  (substrate present) → substrate writes .memory-version + its entry point; the root
+//                                   reconciles the kit block in and writes .workflow-version → BOTH stamps
 //
 // The delegate path installs the substrate skill via its OWN published installer into a temp dir
-// and drives the real installed payload — so this also proves the hand-off seam end to end.
+// and drives the real installed payload — so this also proves the hand-off seam end to end. The kit
+// block is written by the REAL `inject-methodology.mjs reconcile` against the REAL local engine.
 //
 // Lives outside the package `files` whitelist: it is a dev-only family acceptance test and is not
 // shipped in the tarball. Run it explicitly (it is not matched by the tools/*.test.mjs gate glob).
@@ -20,39 +21,25 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { detectMemory, handoffPlan, EXPECTED_MEMORY_NAME } from '../tools/delegation.mjs';
-import {
-  injectMethodology,
-  reconcileSlot,
-  extractSlot,
-  extractMarkerSlot,
-  ORCHESTRATION_DESCRIPTOR,
-  AUTONOMY_DESCRIPTOR,
-  AGENTS_MD_CAP,
-  START_MARKER,
-  END_MARKER,
-} from '../tools/inject-methodology.mjs';
+import { ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL } from '../tools/engine-source.mjs';
 import { serializeConfig, CANON_README, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { ensureOrchestration } from '../tools/ensure-ops.mjs';
-import { runCli as lensReconcileCli, extractLensRegion, renderLens, normalizeLensBody, parseLensPriors } from '../tools/lens-region.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FAMILY_ROOT = resolve(KIT_ROOT, '..');
 const SUBSTRATE_INSTALLER = join(FAMILY_ROOT, 'agent-workflow-memory', 'bin', 'install.mjs');
 const KIT_ENTRY_TEMPLATE = join(KIT_ROOT, 'references', 'templates', 'AGENTS.md');
-// The bounded methodology fragment is read LIVE from the installed engine at runtime (Plan 3D — the
-// kit mirror is retired). This dev-only acceptance test exercises the pure reconcile/inject contract
-// with an inline single-line fragment, kept decoupled from the sibling engine's on-disk presence.
-const FRAGMENT =
-  '> **Workflow methodology (test fixture)** — plan → execute → review; plans are ephemeral, every Plan ends with a mandatory Phase: Cleanup.\n';
+const ENGINE_DIR = join(FAMILY_ROOT, 'agent-workflow-engine');
+const INJECT = join(KIT_ROOT, 'tools', 'inject-methodology.mjs');
 
 // The shared deployment-lineage head the composition root stamps in BOTH paths. The root knows it
 // independently of the substrate package version (SKILL.md bootstrap step 10) — hard-coded here so
 // the fallback path asserts it without importing the substrate (which, in fallback, is absent).
-const LINEAGE_HEAD = '4.0.0';
+const LINEAGE_HEAD = '5.0.0';
 
-// A realistic pre-slot ("markerless") deployment: it carries the Session-Protocols ANCHOR line the
-// reconcile inserts the slot after, but no slot markers yet (it predates the methodology slot).
-const LEGACY_WITH_ANCHOR = [
+// A realistic prior-lineage deployment with no kit block: the reconcile places the block at the
+// start of the file and leaves every one of these bytes after it.
+const LEGACY_ENTRY = [
   '# AI Agent Algorithm — legacy project',
   '',
   '## 🚀 Session Protocols',
@@ -79,6 +66,26 @@ afterEach(() => {
   while (projects.length) rmSync(projects.pop(), { recursive: true, force: true });
 });
 
+// The real reconcile CLI against the real local engine; a non-zero exit throws with its output.
+const reconcile = (file) => execFileSync(process.execPath, [INJECT, 'reconcile', file], {
+  stdio: 'pipe', encoding: 'utf8', env: { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR },
+});
+// The block the module found, its lines and every byte after its end marker line.
+const kitBlock = async (text) => {
+  const { findKitBlock } = await import('../tools/inject-methodology.mjs');
+  assert.equal(typeof findKitBlock, 'function', 'inject-methodology.mjs exports findKitBlock');
+  const found = findKitBlock(text);
+  assert.equal(found.state, 'ok', JSON.stringify(found));
+  const lines = text.split('\n');
+  return { start: found.start, body: lines.slice(found.start - 1, found.end).join('\n'), after: lines.slice(found.end).join('\n') };
+};
+const assertBlockAtStart = async (text, original) => {
+  const block = await kitBlock(text);
+  assert.equal(block.start, 1, 'the block opens the file');
+  assert.equal(block.after, `\n${original}`, 'one blank line, then every old byte unchanged');
+  return block;
+};
+
 // The substrate is installed ONCE via its OWN published installer; the delegate and transition
 // paths both drive the real installed payload (the genuine hand-off / upgrade seam), not source.
 let substrateDir;
@@ -101,19 +108,12 @@ describe('composition root — fallback (substrate absent)', () => {
     assert.deepEqual(plan.stampsPresent, ['.workflow-version']);
   });
 
-  it('deploys the bundled entry point (empty slot), reconciles it FILLED, stamps .workflow-version ONLY', () => {
+  it('deploys the bundled entry point, reconciles the kit block in at its start, stamps .workflow-version ONLY', async () => {
     const { project, docsAi } = makeProject();
-    cpSync(KIT_ENTRY_TEMPLATE, join(project, 'AGENTS.md'));
-
-    // The bundled entry point now ships an EMPTY methodology slot (Plan 2). The kit reconciles it —
-    // ensure (already present) + inject-because-empty — so the fallback path ends with a FILLED slot.
-    const fragment = FRAGMENT;
-    const result = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
-      maxLines: AGENTS_MD_CAP,
-    });
-    assert.equal(result.status, 'reconciled-filled');
-    writeFileSync(join(project, 'AGENTS.md'), result.text);
-    assert.equal(extractSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8')).trim(), fragment.trim());
+    const entry = join(project, 'AGENTS.md');
+    cpSync(KIT_ENTRY_TEMPLATE, entry);
+    reconcile(entry);
+    await assertBlockAtStart(readFileSync(entry, 'utf8'), readFileSync(KIT_ENTRY_TEMPLATE, 'utf8'));
 
     writeFileSync(join(docsAi, '.workflow-version'), `${LINEAGE_HEAD}\n`);
     assert.equal(readFileSync(join(docsAi, '.workflow-version'), 'utf8').trim(), LINEAGE_HEAD);
@@ -132,22 +132,18 @@ describe('composition root — delegate (substrate present + healthy)', () => {
     assert.deepEqual(plan.stampsPresent, ['.memory-version', '.workflow-version']);
   });
 
-  it('substrate stamps + root injects → BOTH stamps present and the slot is filled under cap', async () => {
+  it('substrate stamps + root reconciles → BOTH stamps present and the kit block at the start of the entry point', async () => {
     const { project, docsAi } = makeProject();
+    const entry = join(project, 'AGENTS.md');
+    const template = join(substrateDir, 'references', 'templates', 'AGENTS.md');
 
-    // Substrate side: deploy its entry point (with the empty slot) and stamp .memory-version
-    // atomically, both from the INSTALLED payload — the real delegated hand-off.
-    cpSync(join(substrateDir, 'references', 'templates', 'AGENTS.md'), join(project, 'AGENTS.md'));
+    // Substrate side: deploy its entry point and stamp .memory-version atomically, both from the
+    // INSTALLED payload — the real delegated hand-off.
+    cpSync(template, entry);
     await stamp.writeStampAtomic(join(docsAi, '.memory-version'), stamp.LINEAGE_HEAD);
 
-    // Composition-root side: inject the bounded fragment into the slot, then write the second
-    // stamp. (Exactly one commit gate would follow injection — not exercised by this test.)
-    const fragment = FRAGMENT;
-    const result = injectMethodology(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
-      maxLines: AGENTS_MD_CAP,
-    });
-    assert.equal(result.status, 'injected', 'the empty slot accepts the fragment');
-    writeFileSync(join(project, 'AGENTS.md'), result.text);
+    // Composition-root side: reconcile the kit block in, then write the second stamp.
+    reconcile(entry);
     writeFileSync(join(docsAi, '.workflow-version'), `${stamp.LINEAGE_HEAD}\n`);
 
     const memoryStamp = readFileSync(join(docsAi, '.memory-version'), 'utf8').trim();
@@ -155,60 +151,7 @@ describe('composition root — delegate (substrate present + healthy)', () => {
     assert.equal(memoryStamp, stamp.LINEAGE_HEAD);
     assert.equal(workflowStamp, stamp.LINEAGE_HEAD);
     assert.equal(memoryStamp, LINEAGE_HEAD, 'substrate and root agree on the lineage head');
-
-    const filled = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.equal(extractSlot(filled).trim(), fragment.trim(), 'the slot now carries the bounded fragment');
-    const lineCount = filled.split('\n').length - (filled.endsWith('\n') ? 1 : 0);
-    assert.ok(lineCount <= AGENTS_MD_CAP, `entry point within the ${AGENTS_MD_CAP}-line cap (got ${lineCount})`);
-  });
-});
-
-// The AD-041 bootstrap seam: after the substrate deploys docs/ai/agent_rules.md, the root runs the
-// lens-region reconcile against the INSTALLED engine — a fresh seed is already current (zero-diff),
-// a stale-memory seed (an older canonical lens body) converges to the engine canon on first touch.
-describe('composition root — the lens region converges after the substrate deploy (AD-041)', () => {
-  const ENGINE_DIR = join(FAMILY_ROOT, 'agent-workflow-engine');
-  const runLens = async (target) => {
-    const logs = [];
-    const code = await lensReconcileCli(['reconcile', target], {
-      log: (l) => logs.push(l),
-      logError: (l) => logs.push(l),
-      env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR },
-    });
-    return { code, text: logs.join('\n') };
-  };
-
-  it('a FRESH substrate seed reports already current (zero-diff)', async () => {
-    const { docsAi } = makeProject();
-    const target = join(docsAi, 'agent_rules.md');
-    cpSync(join(substrateDir, 'references', 'templates', 'agent_rules.md'), target);
-    const { code, text } = await runLens(target);
-    assert.equal(code, 0, text);
-    assert.match(text, /already current/);
-  });
-
-  it('a STALE-memory seed (a known-prior lens body) is refreshed to the engine canon', async () => {
-    const { docsAi } = makeProject();
-    const target = join(docsAi, 'agent_rules.md');
-    const seeded = readFileSync(join(substrateDir, 'references', 'templates', 'agent_rules.md'), 'utf8');
-    const fragment = readFileSync(join(ENGINE_DIR, 'references', 'agent-rules-lens.md'), 'utf8');
-    const priors = parseLensPriors(readFileSync(join(ENGINE_DIR, 'references', 'agent-rules-lens-priors.md'), 'utf8'));
-    const region = extractLensRegion(seeded);
-    assert.equal(region.found, true, 'the substrate template carries the lens block');
-    // Rewind the seeded block to the newest PRIOR body — the exact shape an older memory ships.
-    const stale = seeded.replace(region.body, renderLens(priors[priors.length - 1], region.number));
-    assert.notEqual(stale, seeded, 'sanity: the rewind changed the block');
-    writeFileSync(target, stale);
-
-    const { code, text } = await runLens(target);
-    assert.equal(code, 0, text);
-    assert.match(text, /refreshed the planning\/review lens section/);
-    const converged = extractLensRegion(readFileSync(target, 'utf8'));
-    assert.equal(
-      normalizeLensBody(converged.body),
-      normalizeLensBody(fragment),
-      'the stale seed converged to the installed engine canon',
-    );
+    await assertBlockAtStart(readFileSync(entry, 'utf8'), readFileSync(template, 'utf8'));
   });
 });
 
@@ -242,37 +185,31 @@ describe('transition — a fallback project later adopts the substrate', () => {
   });
 });
 
-// Upgrade safety (Plan 2): a markerless prior-lineage entry point (one that predates the
-// methodology slot) now gets the slot ADDED at its Session-Protocols anchor, with every other byte
-// preserved; an empty slot is filled; a slot holding other content is written current (entry-pointers).
-
+// Upgrade safety: a prior-lineage entry point with no kit block gets the block at its start, every
+// old byte after it unchanged — the old pointer pairs included, whose removal is the lineage migration's.
 describe('backward compatibility — a prior-lineage deployment is reconciled on upgrade', () => {
-  it('a markerless prior entry point gets the slot inserted at the anchor, all other bytes preserved', () => {
-    const legacy = LEGACY_WITH_ANCHOR;
-    assert.equal(legacy.includes('workflow:methodology'), false, 'precondition: the fixture predates the slot');
-    const fragment = FRAGMENT;
-    const result = reconcileSlot(legacy, fragment, { maxLines: AGENTS_MD_CAP });
-    assert.equal(result.status, 'reconciled-inserted');
-    assert.equal(extractSlot(result.text).trim(), fragment.trim(), 'the inserted slot is filled');
-    for (const line of legacy.split('\n').filter(Boolean)) {
-      assert.ok(result.text.includes(line), `original line preserved: ${line}`);
-    }
+  it('a prior entry point with no kit block gets it at its start, every old byte after it', async () => {
+    const { project } = makeProject();
+    const entry = join(project, 'AGENTS.md');
+    writeFileSync(entry, LEGACY_ENTRY);
+    reconcile(entry);
+    await assertBlockAtStart(readFileSync(entry, 'utf8'), LEGACY_ENTRY);
   });
 
-  it('a slot holding other content is written with the fragment on reconcile, every byte outside it unchanged', () => {
-    const differing = 'methodology notes the user wrote\nand a second line';
-    const entry = `# Entry\n\n${START_MARKER}\n${differing}\n${END_MARKER}\n\n# Tail\n`;
-    assert.equal(extractSlot(entry).trim(), differing, 'the other content is what lives in the slot');
-
-    const result = reconcileSlot(entry, FRAGMENT, { maxLines: AGENTS_MD_CAP });
-    assert.equal(result.status, 'reconciled-written');
-    assert.equal(result.text, `# Entry\n\n${START_MARKER}\n${FRAGMENT.trim()}\n${END_MARKER}\n\n# Tail\n`, 'the slot carries the fragment, the rest byte-for-byte');
+  it('a prior entry point holding the old pointer pairs keeps them byte for byte below the block', async () => {
+    const { project } = makeProject();
+    const entry = join(project, 'AGENTS.md');
+    const pairs = ['methodology', 'orchestration', 'autonomy'].map((name) => `<!-- workflow:${name}:start -->\nnotes the user wrote\n<!-- workflow:${name}:end -->`);
+    const legacy = `${LEGACY_ENTRY}${pairs.join('\n')}\n`;
+    writeFileSync(entry, legacy);
+    reconcile(entry);
+    await assertBlockAtStart(readFileSync(entry, 'utf8'), legacy);
   });
 
-  it('an upgrade touches only the artifacts it owns — unrelated project files stay intact (slot reconcile)', async () => {
+  it('an upgrade touches only the artifacts it owns — unrelated project files stay intact (block reconcile)', async () => {
     const { project, docsAi } = makeProject();
-    const legacy = LEGACY_WITH_ANCHOR;
-    writeFileSync(join(project, 'AGENTS.md'), legacy);
+    const entry = join(project, 'AGENTS.md');
+    writeFileSync(entry, LEGACY_ENTRY);
     writeFileSync(join(docsAi, '.workflow-version'), `${LINEAGE_HEAD}\n`);
     mkdirSync(join(project, '.claude'), { recursive: true });
     const settings = `${JSON.stringify({ includeCoAuthoredBy: false }, null, 2)}\n`;
@@ -280,64 +217,38 @@ describe('backward compatibility — a prior-lineage deployment is reconciled on
     const userDoc = '# my own decisions\n';
     writeFileSync(join(docsAi, 'decisions.md'), userDoc);
 
-    // The two upgrade seams that actually write: the substrate stamp takeover + the slot reconcile.
+    // The two upgrade seams that actually write: the substrate stamp takeover + the block reconcile.
     await stamp.applyTakeover(docsAi);
-    const fragment = FRAGMENT;
-    const reconciled = reconcileSlot(readFileSync(join(project, 'AGENTS.md'), 'utf8'), fragment, {
-      maxLines: AGENTS_MD_CAP,
-    });
-    assert.equal(reconciled.status, 'reconciled-inserted');
-    writeFileSync(join(project, 'AGENTS.md'), reconciled.text);
+    reconcile(entry);
 
     assert.equal(readFileSync(join(project, '.claude', 'settings.json'), 'utf8'), settings, 'user settings untouched');
     assert.ok(!readFileSync(join(project, '.claude', 'settings.json'), 'utf8').includes('permissions'), 'upgrade never seeds velocity permissions.* into settings.json (velocity is never auto-run)');
     assert.equal(readFileSync(join(docsAi, 'decisions.md'), 'utf8'), userDoc, 'user-authored doc untouched');
     assert.equal(readFileSync(join(docsAi, '.workflow-version'), 'utf8').trim(), LINEAGE_HEAD, 'legacy stamp preserved');
     assert.equal(readFileSync(join(docsAi, '.memory-version'), 'utf8').trim(), LINEAGE_HEAD, 'takeover reconciled the stamp');
-    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.equal(extractSlot(entry).trim(), fragment.trim(), 'the entry point now carries the filled slot');
-    assert.ok(entry.includes('Read it before any code change.'), 'the anchor and surrounding content survive');
+    await assertBlockAtStart(readFileSync(entry, 'utf8'), LEGACY_ENTRY);
   });
 });
 
-// AD-019 — the CLI-backed deploy seam (not the pure helpers): drive the REAL `inject-methodology.mjs
-// reconcile` against the REAL local engine, so the methodology pointer is filled from the actual
-// fragment (which carries the procedures auto-discovery route) and the orchestration pointer from its
-// fragment. Plus the kit-fallback config seed: the kit ships `references/templates/orchestration.json`,
-// seeds it into docs/ai, and a stamp-independent ensure preserves an edited one.
+// AD-019 — the CLI-backed deploy seam: the REAL `inject-methodology.mjs reconcile` against the REAL
+// local engine writes the engine's three fragments into the block live (the methodology one carrying
+// the procedures auto-discovery route). Plus the kit-fallback config seed: the kit ships
+// `references/templates/orchestration.json`, seeds it into docs/ai, and the real op judges its note.
 describe('composition root — CLI-backed reconcile + config seed (real engine, AD-019)', () => {
-  const ENGINE_DIR = join(FAMILY_ROOT, 'agent-workflow-engine');
-  const INJECT = join(KIT_ROOT, 'tools', 'inject-methodology.mjs');
   const KIT_ORCH_TEMPLATE = join(KIT_ROOT, 'references', 'templates', 'orchestration.json');
-  const withEngine = { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR };
-  const lineCount = (t) => t.split('\n').length - (t.endsWith('\n') ? 1 : 0);
 
-  it('fallback deploy: CLI reconcile fills ALL THREE pointers live — methodology routes to procedures, autonomy carries the policy read contract', () => {
-    const { project } = makeProject();
-    cpSync(KIT_ENTRY_TEMPLATE, join(project, 'AGENTS.md'));
-    execFileSync(process.execPath, [INJECT, 'reconcile', join(project, 'AGENTS.md')], { stdio: 'pipe', env: withEngine });
-    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.match(extractSlot(entry), /\/agent-workflow-kit procedures/, 'the methodology pointer routes to the procedures advisor');
-    const orch = extractMarkerSlot(entry, ORCHESTRATION_DESCRIPTOR);
-    assert.match(orch, /Solo|Reviewed|Council|Delegated/, 'the orchestration pointer carries the recipe vocabulary');
-    const autonomy = extractMarkerSlot(entry, AUTONOMY_DESCRIPTOR);
-    assert.match(autonomy, /docs\/ai\/autonomy\.json/, 'the autonomy pointer names the per-project policy file');
-    assert.match(autonomy, /set-autonomy/, 'the autonomy pointer routes to the kit writer');
-    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `triple-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
-  });
-
-  it('delegated deploy: the real CLI reconcile fills ALL THREE pointers on the INSTALLED substrate template (real engine), under the cap', () => {
-    // The delegate seam end to end: the substrate's own installed template (three empty pairs) +
-    // the kit's real reconcile CLI + the real local engine — not the pure helpers.
-    const { project } = makeProject();
-    cpSync(join(substrateDir, 'references', 'templates', 'AGENTS.md'), join(project, 'AGENTS.md'));
-    execFileSync(process.execPath, [INJECT, 'reconcile', join(project, 'AGENTS.md')], { stdio: 'pipe', env: withEngine });
-    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.match(extractSlot(entry), /\/agent-workflow-kit procedures/, 'methodology pointer filled from the real engine');
-    assert.match(extractMarkerSlot(entry, ORCHESTRATION_DESCRIPTOR), /Solo|Reviewed|Council|Delegated/, 'orchestration pointer filled');
-    const autonomy = extractMarkerSlot(entry, AUTONOMY_DESCRIPTOR);
-    assert.match(autonomy, /docs\/ai\/autonomy\.json/, 'autonomy pointer carries the policy read contract');
-    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `delegated triple-filled entry point within ${AGENTS_MD_CAP} lines (got ${lineCount(entry)})`);
+  it('fallback and delegated deploy: the block carries the three engine fragments live, the methodology one routing to procedures', async () => {
+    const fragments = [ENGINE_FRAGMENT_REL, ORCHESTRATION_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL].map((rel) => readFileSync(join(ENGINE_DIR, rel), 'utf8').trim());
+    for (const template of [KIT_ENTRY_TEMPLATE, join(substrateDir, 'references', 'templates', 'AGENTS.md')]) {
+      const { project } = makeProject();
+      const entry = join(project, 'AGENTS.md');
+      cpSync(template, entry);
+      reconcile(entry);
+      const { body } = await kitBlock(readFileSync(entry, 'utf8'));
+      const at = fragments.map((fragment) => body.indexOf(fragment));
+      assert.ok(at.every((index, n) => index > (n === 0 ? -1 : at[n - 1])), `${template}: the three fragments, in order`);
+      assert.match(body, /\/agent-workflow-kit procedures/, 'the methodology fragment routes to the procedures advisor');
+    }
   });
 
   it('spec:orchestration-note/S6 fallback deploy: the kit seeds docs/ai/orchestration.json; the real orchestration op writes the note current, keeping every recipe', () => {

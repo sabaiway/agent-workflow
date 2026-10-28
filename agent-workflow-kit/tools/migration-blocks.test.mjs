@@ -37,7 +37,8 @@ const FULL = renderFull();
 const WITHOUT_ATTRIBUTION = removeSpan(FULL, ATTRIBUTION);
 const WITHOUT_COMMUNICATION = removeSpan(FULL, COMMUNICATION);
 const WITHOUT_BLOCKS = removeSpan(WITHOUT_ATTRIBUTION, COMMUNICATION);
-const PADDED = WITHOUT_BLOCKS + ('filler' + LF).repeat(87 - WITHOUT_BLOCKS.trimEnd().split(LF).length);
+const padTo = (text, lines) => text + ('filler' + LF).repeat(lines - text.trimEnd().split(LF).length);
+const PADDED = padTo(WITHOUT_BLOCKS, 150);
 const runtime = {};
 before(() => {
   runtime.root = mkdtempSync(join(tmpdir(), 'migration-blocks-'));
@@ -171,7 +172,7 @@ describe('spec:upgrade-delivery/S8 present blocks', () => {
   });
   for (const [name, body] of [
     ['trailing heading spaces', FULL.replace(ATTRIBUTION, ATTRIBUTION + '   ')],
-    ['over cap', FULL + ('filler' + LF).repeat(120)],
+    ['a document of 400 lines', padTo(FULL, 400)],
     ['anchor absent', FULL.replace(ANCHOR + LF, '')],
     ['anchor repeated', FULL.replace(ANCHOR, ANCHOR + LF + ANCHOR)],
   ]) {
@@ -215,7 +216,6 @@ describe('spec:upgrade-delivery/S9 file and anchor refusals', () => {
     ['Communication twice, Attribution absent', WITHOUT_ATTRIBUTION + COMMUNICATION + LF, 'heading-twice'],
     ['no anchor', WITHOUT_BLOCKS.replace(ANCHOR + LF, ''), 'anchor-absent'],
     ['two anchors', WITHOUT_BLOCKS.replace(ANCHOR, ANCHOR + LF + ANCHOR), 'anchor-repeated'],
-    ['87 lines before both inserts', PADDED, 'cap'],
   ]) {
     it(name, async () => {
       const project = createProject(body);
@@ -224,19 +224,21 @@ describe('spec:upgrade-delivery/S9 file and anchor refusals', () => {
       const result = await run(project, APPLY, spy.deps);
       assertRefusal(result, reason);
       if (reason === 'heading-twice') assert.match(result.stderr, /communication/i);
-      if (reason === 'cap') assert.ok((result.stderr.match(/[0-9]+/g) ?? []).some((value) => Number(value) > 100));
       assertUnchanged(project, previous, spy);
     });
   }
-  it('87 lines with only Attribution planned remain below the cap', async () => {
+  it('an insert taking a 150-line document past 150 lines is planned and written, no cap refusal', async () => {
     const project = createProject(PADDED);
-    const previous = snapshot(project);
-    const spy = createSpy();
-    const result = await run(project, ['--attribution', 'off'], spy.deps);
-    const lines = assertStates(result, 'needs', 'planned');
-    assert.ok(lines[0].includes('--language'));
+    assertStates(await run(project, ANSWERS), 'planned', 'planned');
+    const result = await run(project, APPLY);
+    assertStates(result, 'inserted', 'inserted');
     assert.doesNotMatch(result.stderr, /^cap(:|$)/m);
-    assertUnchanged(project, previous, spy);
+    assert.equal(readEntry(project), FULL + PADDED.slice(WITHOUT_BLOCKS.length));
+    assert.ok(readEntry(project).trimEnd().split(LF).length > 150);
+  });
+  it('the module imports nothing from inject-methodology.mjs', () => {
+    const source = readFileSync(join(HERE, 'migration-blocks.mjs'), 'utf8');
+    assert.deepEqual(source.match(/(?:\bfrom|\bimport\s*\()\s*['"][^'"]*inject-methodology\.mjs['"]/g), null);
   });
   for (const [kind, reason] of [
     ['absent', 'file-absent'],

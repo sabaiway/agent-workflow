@@ -37,12 +37,10 @@ export const PROCEDURES_FRAGMENT_REL = 'references/procedures.md';
 // `status` caveat it) instead of discarding the methodology/orchestration fills. readEngineFragment
 // accepts an arbitrary `rel`, so no further plumbing is needed beyond this constant.
 export const AUTONOMY_FRAGMENT_REL = 'references/autonomy-slot.md';
-// The agent-rules lens pair — the canonical lens block + its append-only prior store (engine
-// >= 1.13.0; an older engine ships neither). The kit's lens-region reconcile live-reads BOTH via
-// readEngineFragment({ rel }); detectEngine({ rel }) lets it soft-skip a too-old engine (and
-// `status` caveat it) instead of failing the whole reconcile.
-export const LENS_FRAGMENT_REL = 'references/agent-rules-lens.md';
-export const LENS_PRIORS_REL = 'references/agent-rules-lens-priors.md';
+// The lens rules theme — the template of the engine-homed project-rules theme `lens`. The rules op
+// lays it down as docs/ai/rules/lens.md and the kit block's table names its effective file; an engine that lacks it leaves the
+// theme unlaid with a line, and `status` caveats it.
+export const LENS_THEME_REL = 'references/rules/lens.md';
 const ENGINE_DEFAULT_REL = '.claude/skills/agent-workflow-engine';
 
 const defaultStatType = (path) => {
@@ -134,9 +132,13 @@ export const readEngineFragment = (engineDir, deps = {}) => {
   if (!detection.ok) throw installMe(detection.reason);
   const read = deps.readFileSync ?? readFileSync;
   const fragmentRel = deps.rel ?? ENGINE_FRAGMENT_REL;
-  try {
-    return read(join(engineDir, fragmentRel), 'utf8');
-  } catch (err) {
-    throw installMe(`a required engine file is unreadable (${fragmentRel}): ${err.message}`);
-  }
+  const text = (() => {
+    try {
+      return read(join(engineDir, fragmentRel), 'utf8');
+    } catch (err) {
+      throw installMe(`a required engine file is unreadable (${fragmentRel}): ${err.message}`);
+    }
+  })();
+  if (text.trim() === '') throw installMe(`a required engine file is blank (${fragmentRel})`);
+  return text;
 };

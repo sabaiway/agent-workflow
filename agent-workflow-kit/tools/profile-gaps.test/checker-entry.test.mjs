@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildInsertPreview } from '../rules-regions.mjs';
 import { KIT_TOOLS, failAt, makeProject } from '../checker-gates.test/harness.test.mjs';
 
 const loaded = await import('../profile-gaps.mjs').catch(() => ({}));
@@ -12,7 +11,7 @@ const TOOLS = resolve(HERE, '..');
 const MODULE = join(TOOLS, 'profile-gaps.mjs');
 const VERB = join(TOOLS, 'checker-gates.mjs');
 const ID = 'checker-gates-declared';
-const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', ID, 'session-close-rules', 'named-queue-row-seed'];
+const IDS = ['epic-task-slots', 'epic-store-seeded', ID, 'named-queue-row-seed'];
 const PROBED = { git: { kind: 'directory' }, storeRoot: '# Specs\n', scope: '{}\n' };
 const PLAN_SHAPE = { id: 'mine', title: 't', cmd: `node "${KIT_TOOLS['plan-shape']}" --check --in-flight` };
 const entryOf = () => {
@@ -94,7 +93,8 @@ describe('spec:checker-gates/S14 the checker-gates-declared gap entry', () => {
 
   it('applies the builder preview line for checker-gates.mjs, the empty answer in the no-command cell', () => {
     const { root } = makeProject({ gates: [] });
-    assert.equal(entryOf().apply(root), buildInsertPreview(root, VERB));
+    assert.equal(typeof loaded.buildInsertPreview, 'function', 'profile-gaps.mjs buildInsertPreview is absent');
+    assert.equal(entryOf().apply(root), loaded.buildInsertPreview(root, VERB));
     const { root: backtick } = makeProject({ gates: [], name: `pro${String.fromCharCode(96)}ject` });
     assert.equal(entryOf().apply(backtick), '');
   });

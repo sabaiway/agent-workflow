@@ -11,7 +11,6 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { SEED_CONFIG, serializeConfig } from '../tools/orchestration-config.mjs';
-import { COMMS_PRIORS } from '../tools/lens-region.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = resolve(HERE, '..');
@@ -19,17 +18,11 @@ const LF = String.fromCharCode(10);
 const COMMUNICATION = `## ${String.fromCodePoint(0x1f5e3, 0xfe0f)} Communication language`;
 const ATTRIBUTION = `## ${String.fromCodePoint(0x270d, 0xfe0f)} Attribution`;
 const MEMORY_MAP = `## ${String.fromCodePoint(0x1f9ed)} Memory Map`;
-const STORY_HEADING = '### 2.7. Story sessions';
-const COMMS_HEADING = '### 2.5. Communication (user-facing messages)';
-const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
 const RULES_PATH = 'docs/ai/agent_rules.md';
 const RULES_TEMPLATE = 'references/templates/agent_rules.md';
-const RULES_CAP = 'maxLines: 150';
-const SECTION_BOUNDARY = '---';
-const INSERT_TOOL = 'rules-insert.mjs';
+const THEME_EFFECTIVE = { communication: 'docs/ai/rules/effective/communication.md', 'story-sessions': 'docs/ai/rules/effective/story-sessions.md' };
 const APPLY_ARGS = ['--apply'];
 const ENTRY_ARTIFACT = { path: 'AGENTS.md', key: 'entryPoint' };
-const RULES_ARTIFACT = { path: RULES_PATH, key: 'rules' };
 const CONFIG_PATH = 'docs/ai/orchestration.json';
 const CONFIG_ARTIFACT = { path: CONFIG_PATH, key: 'config' };
 const EPICS_PATH = 'docs/ai/epics';
@@ -39,7 +32,7 @@ const STORE_ROOT_PATH = 'docs/ai/specs/index.md';
 const CHECKER_TOOL = 'checker-gates.mjs';
 const QUEUE_PATH = 'docs/plans/queue.md';
 const QUEUE_SEED = 'references/authoring/QUEUE_TEMPLATE.md';
-const LENS_TOOL = 'lens-region.mjs';
+const ENSURE_TOOL = 'ensure-configs.mjs';
 const AUDIT_TOOL = 'queue-audit-cli.mjs';
 const SCREEN_TOOL = 'recommendations.mjs';
 const PROFILE_PATH = 'references/reference-profile.json';
@@ -57,28 +50,26 @@ const SLOT_VALUES = [
 const PRINTED_SLOT_RE = /^ {2}([a-z]+)\.([a-z]+) = ([a-z]+)/;
 // What the older project lacks before S1, in registry order, with the installed tool each gap's preview runs.
 const SCREEN_GAPS = [
-  ['story-sessions-section', INSERT_TOOL],
   ['epic-task-slots', OFFER_TOOL],
   ['epic-store-seeded', OFFER_TOOL],
   ['checker-gates-declared', CHECKER_TOOL],
   ['named-queue-row-seed', OFFER_TOOL],
 ];
-const SCREEN_SKIPS = ['session-close-rules: region-prior'];
+const SCREEN_SKIPS = [];
 const PAYLOAD = ['references', 'launchers', 'migrations', 'tools', 'bridges'];
 const STORIES = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6'];
+const RETIRED_IDS = ['story-sessions-section', 'session-close-rules'];
 const ITEM_IDS = [
   'migration-notes-delivered',
   'migration-blocks-placed',
   'payload-converged',
-  'story-sessions-section',
   'epic-task-slots',
   'epic-store-seeded',
   'checker-gates-declared',
-  'session-close-rules',
   'named-queue-row-seed',
   'profile-gap-screen',
 ];
-const DIGEST = '26479c9e029977963d5799bf2c564166c898fa4ba31e9199c56d7c8076e3d277';
+const DIGEST = 'b21077677c9d038575899277871dba49fefe34c63b91f1220447091dc6945a6f';
 const LANDED = new Set(['S1', 'S2', 'S3', 'S4', 'S5', 'S6']);
 const fixture = {};
 
@@ -89,33 +80,18 @@ const removeSpan = (text, heading) => {
   return [...lines.slice(0, start), ...lines.slice(next < 0 ? lines.length : next)].join(LF);
 };
 
-const findRegion = (text, heading) => {
-  const lines = text.split(LF);
-  const start = lines.indexOf(heading);
-  if (start < 0) return null;
-  const next = lines.findIndex((line, index) => index > start
-    && (line === SECTION_BOUNDARY || line.startsWith('## ') || line.startsWith('### ')));
-  return { lines, start, end: next < 0 ? lines.length : next };
-};
-
-const removeRulesSpan = (text, heading, replacement = []) => {
-  const region = findRegion(text, heading);
-  if (!region) return text;
-  const { lines, start, end } = region;
-  return [...lines.slice(0, start), ...replacement, ...lines.slice(end)].join(LF);
-};
-
 // S3's third artifact, read only by S5's queue detector: null when absent, else its bytes or error.
 const readQueue = (project) => (lstatSync(join(project, QUEUE_PATH), { throwIfNoEntry: false })
   ? readProjectFile(project, QUEUE_PATH) : null);
 
-// S5 spawns its own children, never through runTool: no --cwd, and the rules bytes after each call.
+// S5 spawns its own children, never through runTool, and records the two theme effective files after each call.
+const readThemes = (project) => Object.fromEntries(Object.entries(THEME_EFFECTIVE).map(([theme, path]) => [theme, readProjectFile(project, path)]));
 const runChild = (home, project, name, args, env = process.env) => {
   const tool = join(home, 'tools', name);
-  if (!existsSync(tool)) return { name, result: { absent: true }, rules: readProjectFile(project, RULES_PATH) };
+  if (!existsSync(tool)) return { name, result: { absent: true }, themes: readThemes(project) };
   const run = spawnSync(process.execPath, [tool, ...args], { encoding: 'utf8', env });
   const result = { code: run.status, stdout: run.stdout, stderr: run.stderr, error: run.error?.message };
-  return { name, result, rules: readProjectFile(project, RULES_PATH) };
+  return { name, result, themes: readThemes(project) };
 };
 
 const writeFixture = (path, bytes) => {
@@ -203,11 +179,12 @@ const detectNotes = (record) => {
     ['1.2.0', '1.2.0-agent-attribution.md', 'Migration 1.2.0-agent-attribution'],
     ['3.0.0', '3.0.0-hardened-core-loop.md', 'Migration 3.0.0-hardened-core-loop'],
     ['4.0.0', '4.0.0-full-flow-offer.md', 'Migration 4.0.0-full-flow-offer'],
+    ['5.0.0', '5.0.0-kit-text-in-kit-files.md', 'Migration 5.0.0-kit-text-in-kit-files'],
   ];
   const expected = notes.map(([version, name, headline]) =>
     `note ${version} ${join(record.home, 'migrations', name)} :: ${headline}`);
   return record.slices.S1[0].result.stdout === expected.join(LF) + LF
-    ? null : { reason: 'selected notes differ from the four pinned paths and headlines' };
+    ? null : { reason: 'selected notes differ from the five pinned paths and headlines' };
 };
 
 const detectBlocks = (record) => {
@@ -247,33 +224,6 @@ const detectPayload = (record) => {
   }
   return payload.runtimeBytes.equals(record.runtimeBefore)
     ? null : { reason: 'runtime-state.json changed' };
-};
-
-const detectStorySessions = (record) => {
-  const gap = findCallGap(record.slices.S2);
-  if (gap) return gap;
-  const unreadable = record.slices.S2.find(({ rules }) => rules.error);
-  if (unreadable) return { reason: `rules unreadable: ${unreadable.rules.error}` };
-  const [preview, apply, repeated] = record.slices.S2;
-  if (!preview.rules.bytes.equals(record.rulesBefore)) {
-    return { reason: 'preview changed the rules file' };
-  }
-  const text = apply.rules.bytes.toString('utf8');
-  const lines = text.split(LF);
-  const lens = lines.indexOf(LENS_HEADING);
-  const story = findRegion(text, STORY_HEADING);
-  if (!story || lens < 0 || story.start <= lens
-    || lines.filter((line) => line === STORY_HEADING).length !== 1) {
-    return { reason: 'story sessions heading is not present once after the lens' };
-  }
-  const template = findRegion(record.rulesTemplate, STORY_HEADING);
-  if (!template) return { reason: 'story sessions template span is absent' };
-  if (!isDeepStrictEqual(story.lines.slice(story.start, story.end),
-    template.lines.slice(template.start, template.end))) {
-    return { reason: 'story sessions span differs from the template bound to 2.7' };
-  }
-  return repeated.rules.bytes.equals(apply.rules.bytes)
-    ? null : { reason: 'second apply changed the rules file' };
 };
 
 const parseConfig = (bytes) => {
@@ -336,23 +286,21 @@ const detectCheckerGates = (record) => {
     ? null : { reason: 'the second apply does not report plan-shape and spec-check declared' };
 };
 
-const regionText = (text, heading) => {
-  const region = findRegion(text, heading);
-  return region ? region.lines.slice(region.start, region.end).join(LF) : null;
-};
-
-const detectSessionRules = (record) => {
+// The S5 slice's own rules detector: the session-close-rules item retired, so no profile item keys it.
+const detectRulesThemes = (record) => {
   const gap = findCallGap(record.slices.S5);
   if (gap) return gap;
-  const unreadable = record.slices.S5.find(({ rules }) => rules.error);
-  if (unreadable) return { reason: `rules unreadable: ${unreadable.rules.error}` };
   const [first, second] = record.slices.S5;
-  const text = first.rules.bytes.toString('utf8');
-  const comms = regionText(text, COMMS_HEADING);
-  const story = regionText(text, STORY_HEADING);
-  if (comms?.split(SESSION_CLOSE_LEAD).length !== 2) return { reason: 'the Communication region does not carry the session-close bullet once' };
-  if (!story?.includes(TASK_PHRASE)) return { reason: 'the Story sessions region does not carry the bridge-executor sentence' };
-  return second.rules.bytes.equals(first.rules.bytes) ? null : { reason: 'the second reconcile changed the rules file' };
+  const unreadable = Object.entries(first.themes).find(([, read]) => read.error);
+  if (unreadable) return { reason: `${unreadable[0]} effective file unreadable: ${unreadable[1].error}` };
+  if (first.themes.communication.bytes.toString('utf8').split(SESSION_CLOSE_LEAD).length !== 2) {
+    return { reason: 'the communication effective file does not carry the session-close bullet once' };
+  }
+  if (!first.themes['story-sessions'].bytes.toString('utf8').includes(TASK_PHRASE)) {
+    return { reason: 'the story-sessions effective file does not carry the bridge-executor sentence' };
+  }
+  const moved = Object.keys(THEME_EFFECTIVE).filter((theme) => !second.themes[theme].bytes?.equals(first.themes[theme].bytes));
+  return moved.length === 0 ? null : { reason: `the second ensure changed ${moved.join(', ')}` };
 };
 
 const detectQueueSeed = (record) => {
@@ -397,11 +345,9 @@ const DETECTORS = {
   'migration-notes-delivered': detectNotes,
   'migration-blocks-placed': detectBlocks,
   'payload-converged': detectPayload,
-  'story-sessions-section': detectStorySessions,
   'epic-task-slots': detectSlots,
   'epic-store-seeded': detectStore,
   'checker-gates-declared': detectCheckerGates,
-  'session-close-rules': detectSessionRules,
   'named-queue-row-seed': detectQueueSeed,
   'profile-gap-screen': detectGapScreen,
 };
@@ -453,9 +399,7 @@ describe('full flow upgrade delivery', () => {
     const withoutCommunication = removeSpan(template.replace('{{PROJECT_NAME}}', 'fixture'), COMMUNICATION);
     const initialBytes = Buffer.from(removeSpan(withoutCommunication, ATTRIBUTION));
     writeFixture(join(project, 'AGENTS.md'), initialBytes);
-    const rulesTemplate = readFileSync(join(KIT, RULES_TEMPLATE), 'utf8');
-    const outgoing = [...COMMS_PRIORS.at(-1).replace('### 2.x.', '### 2.5.').split(LF), ''];
-    const rulesBefore = Buffer.from(removeRulesSpan(removeRulesSpan(rulesTemplate, STORY_HEADING), COMMS_HEADING, outgoing));
+    const rulesBefore = readFileSync(join(KIT, RULES_TEMPLATE));
     writeFixture(join(project, RULES_PATH), rulesBefore);
     const configBefore = Buffer.from(serializeConfig(SEED_CONFIG));
     writeFixture(join(project, CONFIG_PATH), configBefore);
@@ -475,24 +419,20 @@ describe('full flow upgrade delivery', () => {
       runTool(home, project, 'migration-blocks.mjs', answers),
       runTool(home, project, 'migration-blocks.mjs', answers),
     ];
-    const s2Calls = [
-      runTool(home, project, INSERT_TOOL, [], RULES_ARTIFACT),
-      runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
-      runTool(home, project, INSERT_TOOL, APPLY_ARGS, RULES_ARTIFACT),
-    ];
     const s3Calls = [runOffer(home, project), runOffer(home, project, APPLY_ARGS), runOffer(home, project, APPLY_ARGS)];
     const s4Calls = [[], APPLY_ARGS, APPLY_ARGS].map((extra) => runTool(home, project, CHECKER_TOOL, extra, GATES_ARTIFACT));
-    const rulesPath = join(project, RULES_PATH);
     const engineEnv = { ...process.env, AGENT_WORKFLOW_ENGINE_DIR: resolve(KIT, '..', 'agent-workflow-engine') };
+    const ensureArgs = ['--reconcile', '--only', 'rules', '--cwd', project];
     const s5Calls = [
-      runChild(home, project, LENS_TOOL, ['reconcile', rulesPath], engineEnv),
-      runChild(home, project, LENS_TOOL, ['reconcile', rulesPath], engineEnv),
+      runChild(home, project, ENSURE_TOOL, ensureArgs, engineEnv),
+      runChild(home, project, ENSURE_TOOL, ensureArgs, engineEnv),
       runChild(home, project, AUDIT_TOOL, ['--check', join(project, QUEUE_PATH), '--require-names']),
     ];
     const s6Calls = [s6Before, runTool(home, project, SCREEN_TOOL, ['--json'])];
     fixture.record = {
-      home, project, initialBytes, runtimeBefore, rulesBefore, rulesTemplate, configBefore, gatesBefore,
-      slices: { S1: s1Calls, S2: s2Calls, S3: s3Calls, S4: s4Calls, S5: s5Calls, S6: s6Calls }, payload: capturePayload(home),
+      home, project, initialBytes, runtimeBefore, rulesBefore, configBefore, gatesBefore,
+      rulesAfter: readProjectFile(project, RULES_PATH),
+      slices: { S1: s1Calls, S2: [], S3: s3Calls, S4: s4Calls, S5: s5Calls, S6: s6Calls }, payload: capturePayload(home),
     };
     fixture.profile = JSON.parse(readFileSync(join(KIT, 'references/reference-profile.json'), 'utf8'));
   });
@@ -509,6 +449,7 @@ describe('full flow upgrade delivery', () => {
     assert.equal(profile.lineage, '4.0.0');
     assert.ok(Array.isArray(profile.items));
     assert.deepEqual(profile.items.map(({ id }) => id), ITEM_IDS);
+    assert.deepEqual(profile.items.filter(({ id }) => RETIRED_IDS.includes(id)), []);
     assert.equal(new Set(profile.items.map(({ id }) => id)).size, ITEM_IDS.length);
     for (const item of profile.items) {
       assert.deepEqual(Object.keys(item), ['id', 'story', 'has']);
@@ -517,7 +458,7 @@ describe('full flow upgrade delivery', () => {
       assert.ok(item.has.trim().length > 0);
       assert.doesNotMatch(item.has, /[\p{Cc}\p{Zl}\p{Zp}]/u);
     }
-    for (const story of STORIES) {
+    for (const story of STORIES.filter((one) => one !== 'S2')) {
       assert.ok(profile.items.some((item) => item.story === story), `${story} has no item`);
     }
     assert.equal(computeDigest(profile), DIGEST);
@@ -542,17 +483,6 @@ describe('full flow upgrade delivery', () => {
     assert.ok(paths.includes('references/reference-profile.json'));
   });
 
-  it('spec:rules-regions/S20 inserts story sessions into older rules with a read-only preview and repeat', () => {
-    const text = fixture.record.rulesBefore.toString('utf8');
-    const lines = text.split(LF);
-    assert.ok(!lines.includes(STORY_HEADING));
-    assert.ok(lines.includes(RULES_CAP));
-    const lens = findRegion(text, LENS_HEADING);
-    assert.ok(lens, 'seeded rules retain the lens');
-    assert.equal(lens.lines[lens.end], SECTION_BOUNDARY, 'seeded rules retain the section 2 boundary');
-    assertStory('S2', fixture.profile, fixture.record);
-  });
-
   it('spec:tier-offer/S17 offers the epic and task slots and seeds the store in the older project', () => {
     const before = JSON.parse(fixture.record.configBefore.toString('utf8'));
     assert.deepEqual(before, SEED_CONFIG);
@@ -567,8 +497,10 @@ describe('full flow upgrade delivery', () => {
     assertStory('S4', fixture.profile, fixture.record);
   });
 
-  it('spec:session-rules/S15 refreshes both session rules and seeds a named queue in the older project', () => {
-    assert.ok(!fixture.record.rulesBefore.toString('utf8').includes(SESSION_CLOSE_LEAD), 'the older rules carry the outgoing body');
+  it('spec:session-rules/S15 lays both session rules themes and seeds a named queue in the older project', () => {
+    assert.deepEqual(fixture.record.slices.S5.map(({ name }) => name), [ENSURE_TOOL, ENSURE_TOOL, AUDIT_TOOL]);
+    assert.deepEqual(detectRulesThemes(fixture.record), null);
+    assert.ok(fixture.record.rulesAfter.bytes?.equals(fixture.record.rulesBefore), 'no kit tool wrote the rules file');
     assertStory('S5', fixture.profile, fixture.record);
   });
 

@@ -104,13 +104,11 @@ files (the five the kit bundles for `.claude/agents/` — `changelog-skeleton.md
 by the next upgrade with no question and no copy kept.
 Also the kit's: the vendor skill copy the kit installs into the three agent skill roots
 when it matches a pin the kit shipped, written with no question beside a copy at a kit pin;
-a copy matching none is the user's, left and named. Also the kit's: the three kit sections of
-`docs/ai/agent_rules.md` (Communication, Story sessions and the planning/review lens), each
-written current on every upgrade with no question and no copy kept. Also the kit's: the three pointers of `AGENTS.md`
-and its Memory Map rows of the rules themes, each written current on every upgrade with no question and no copy kept.
+a copy matching none is the user's, left and named. Also the kit's: the kit block of `AGENTS.md`, between its two
+`workflow:kit` comment lines, written current on every upgrade with no question and no copy kept.
 Also the kit's: the onboarding note of `docs/ai/orchestration.json`, its `_README` key, written current on every
-upgrade with no question and no copy kept, every recipe kept; a note of your own goes in `AGENTS.md`, outside the
-two `<!-- workflow: -->` comment lines around the orchestration pointer.
+upgrade with no question and no copy kept, every recipe kept; a note of your own goes in AGENTS.md, outside the kit
+block's two workflow:kit comment lines.
 A declaration seeded once from a template and never
 replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
 user's own file. A customization goes into one of nine channels instead:
@@ -124,11 +122,11 @@ user's own file. A customization goes into one of nine channels instead:
 - **A vehicle of your own** goes in `.claude/agents/<name>.local.md` with a `name:` of its own, which
   no review roster names; a lens of your own in a review slot keeps a stem of its own.
 - **A hook of your own** goes in `.claude/hooks/<name>.local.mjs`, which you wire.
-- **Your own text in the agent rules file**: text of your own goes under a ### heading of its own,
-  titled unlike the kit's sections.
-- **Your own text in the entry file `AGENTS.md`**: text of your own goes outside the two
-  `<!-- workflow: -->` comment lines around each pointer; a row of your own goes on a line of its
-  own, its first cell a path of your own.
+- **Your own agent rules** go in the whole of `docs/ai/agent_rules.md`, the project's own rules file: the kit lays
+  it only where it is absent, and apart from the one-time `5.0.0` step, which removes the kit's old sections from it,
+  never reads or writes it.
+- **Your own text in the entry file `AGENTS.md`**: text of your own goes outside the two workflow:kit comment
+  lines; a change to a kit rule goes in its theme's file under docs/ai/rules/local/.
 
 No path segment of a file the kit bundles and places as its own has a dot-separated part exactly
 `local`; a path of that form is the user's, and no kit tool writes one on its own. Outside that rule:

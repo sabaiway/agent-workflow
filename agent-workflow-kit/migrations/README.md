@@ -15,13 +15,13 @@ releases add files/templates, which `upgrade` reconciles without a migration.
    The upgrade must relay those stdout lines verbatim and apply exactly the listed notes.
    A named refusal stops the upgrade, except `stamp-absent`, which routes it back to the upgrade's step 1.
 3. Apply them in the order the tool listed them (**ascending semver order**).
-4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`4.0.0` today — the
+4. Re-stamp `docs/ai/.workflow-version` to the **deployment-lineage head** (`5.0.0` today — the
    shared lineage, **not** this skill's npm package version). A stamp greater than the head → STOP.
 
 ## Authoring rules
 
 - **Idempotent** — safe to re-run; check before mutating (e.g. "if the file already has X, skip").
-- **Non-destructive** — never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs). Add/rename/restructure only what the kernel owns.
+- **Non-destructive** — never clobber project-authored content (their `decisions.md`, `known_issues.md`, page specs). Add/rename/restructure only what the kernel owns. A lineage note may remove what it finds by the kit's old landmarks whole, whatever a project wrote inside it, as its Why states.
 - **Self-contained** — exact paths + commands, readable cold, like a mini-plan.
 - **Mention rollback** — note how to undo if the step is risky.
 - **Template blocks** — a note never pastes entry-point block text; `tools/migration-blocks.mjs` places it from the kit's template.

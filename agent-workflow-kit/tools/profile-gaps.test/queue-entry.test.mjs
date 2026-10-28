@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildInsertPreview } from '../rules-regions.mjs';
 import { makeProject } from '../tier-preview.test/harness.test.mjs';
 
 const loaded = await import('../profile-gaps.mjs').catch(() => ({}));
@@ -17,8 +16,7 @@ const SEED = join(TOOLS, '..', 'references', 'authoring', 'QUEUE_TEMPLATE.md');
 const PROFILE_IDS = JSON.parse(readFileSync(join(TOOLS, '..', 'references', 'reference-profile.json'), 'utf8'))
   .items.map(({ id }) => id);
 const ID = 'named-queue-row-seed';
-const REGISTRY = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', 'checker-gates-declared',
-  'session-close-rules', ID];
+const REGISTRY = ['epic-task-slots', 'epic-store-seeded', 'checker-gates-declared', ID];
 const PLANS = 'docs/plans';
 const QUEUE = 'docs/plans/queue.md';
 const entryOf = (id = ID) => {
@@ -61,14 +59,12 @@ const detectIn = (options, failures) => {
 const undecidable = (reason) => ({ verdict: 'undecidable', reason });
 
 describe('spec:session-rules/S13 the named-queue-row-seed gap entry', () => {
-  it('follows checker-gates-declared and session-close-rules in registry and profile order, frozen and closed', () => {
+  it('follows checker-gates-declared as the registry\'s last, in profile order, frozen and closed', () => {
     assert.deepEqual((loaded.PROFILE_GAPS ?? []).map(({ id }) => id), REGISTRY);
     assert.deepEqual(REGISTRY, PROFILE_IDS.filter((id) => REGISTRY.includes(id)));
-    for (const id of ['session-close-rules', ID]) {
-      const entry = entryOf(id);
-      assert.ok(Object.isFrozen(entry), id);
-      assert.deepEqual(Reflect.ownKeys(entry).sort(), ['apply', 'detect', 'id']);
-    }
+    const entry = entryOf();
+    assert.ok(Object.isFrozen(entry), ID);
+    assert.deepEqual(Reflect.ownKeys(entry).sort(), ['apply', 'detect', 'id']);
   });
 
   for (const [name, options, failures] of [
@@ -136,7 +132,8 @@ describe('spec:session-rules/S13 the named-queue-row-seed gap entry', () => {
 
   it('applies the tier preview line, the empty answer in the no-command cell', () => {
     const { root } = makeProject();
-    assert.equal(entryOf().apply(root), buildInsertPreview(root, TIER_TOOL));
+    assert.equal(typeof loaded.buildInsertPreview, 'function', 'profile-gaps.mjs buildInsertPreview is absent');
+    assert.equal(entryOf().apply(root), loaded.buildInsertPreview(root, TIER_TOOL));
     const { root: backtick } = makeProject({ name: `pro${String.fromCharCode(96)}ject` });
     assert.equal(entryOf().apply(backtick), '');
   });

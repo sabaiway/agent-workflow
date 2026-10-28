@@ -13,7 +13,7 @@ import { ENSURE_IMPLEMENTATIONS, main } from '../ensure-configs.mjs';
 import { readFileBytesNoFollow } from '../fs-read-nofollow.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
 import { ALARM_WORDS, INTERNAL_NAMES, hits } from '../../../scripts/testing/composed-lines-scan.mjs';
-import { EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, RECORD, entryOf, load, makeProject, need, recordText, removeProject, sha, snapshot } from './rules-harness.test.mjs';
+import { EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, ONE_THEME, RECORD, THEME_NAMES, entryOf, load, makeEngine, makeProject, need, recordText, removeProject, sha, snapshot } from './rules-harness.test.mjs';
 
 const NL = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
@@ -67,7 +67,7 @@ const runEnsure = async ({ files = {}, prep, cwd, kitRoot = makeKit(), dryRun = 
   const root = cwd ?? makeTree('rules project ', { 'docs/ai/.keep': '', ...files });
   if (prep) prep(root);
   const before = snapshot(root);
-  const outcome = ensureRules({ cwd: root, kitRoot, dryRun, deps: deps(root) });
+  const outcome = ensureRules({ cwd: root, kitRoot, dryRun, deps: { themes: ONE_THEME, ...deps(root) } });
   outcomes.push(outcome);
   const text = (rel) => readFileSync(join(root, rel), 'utf8');
   const changed = () => movedPaths(before, snapshot(root));
@@ -353,17 +353,20 @@ describe('spec:project-rules/S22 one token per run by the precedence, an edited 
 });
 
 const RULES_CLI = fileURLToPath(new URL('./rules-cli.mjs', import.meta.url));
-const spawnNode = (...args) => spawnSync(process.execPath, args, { encoding: 'utf8' });
+const spawnNode = (env, ...args) => spawnSync(process.execPath, args, { encoding: 'utf8', env: { ...process.env, ...env } });
 
-describe('spec:project-rules/S23 the ensure command spawned on a fixture deployment lays the theme, and --check spawned after it answers current with exit 0', () => {
-  it('ensure-configs --only rules seeds, then rules-cli --check is current', () => {
+describe('spec:project-rules/S23 the ensure command spawned on a fixture deployment with an engine fixture lays every theme, and --check spawned after it answers current for every theme with exit 0', () => {
+  it('ensure-configs --only rules seeds, then rules-cli --check is current for every theme', () => {
     const root = track(makeProject());
-    const laid = spawnNode(ENSURE_CLI, '--reconcile', '--only', 'rules', '--cwd', root);
+    const engine = makeEngine();
+    [engine.dir, engine.home].forEach(track);
+    const env = { ...engine.env, HOME: engine.home };
+    const laid = spawnNode(env, ENSURE_CLI, '--reconcile', '--only', 'rules', '--cwd', root);
     assert.equal(laid.status, 0, `${laid.stdout}${laid.stderr}`);
     assert.ok(laid.stdout.split(NL).includes('  rules: seeded'), laid.stdout);
-    const checked = spawnNode(RULES_CLI, '--check', '--cwd', root);
+    const checked = spawnNode(env, RULES_CLI, '--check', '--cwd', root);
     assert.equal(checked.status, 0, `${checked.stdout}${checked.stderr}`);
-    assert.ok(checked.stdout.split(NL).includes('project-layout: current'), checked.stdout);
+    assert.deepEqual(checked.stdout.split(NL).filter(Boolean), THEME_NAMES.map((name) => `${name}: current`));
   });
 });
 

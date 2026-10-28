@@ -21,6 +21,7 @@ import { hermeticGitEnv } from './git-env.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { homeRelative, mergeAllowWrite } from './bridge-state-dirs.mjs';
 import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
+import { THEMES, themePaths } from './project-rules/index.mjs';
 
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const worktrees = await import('./worktrees.mjs');
@@ -1213,9 +1214,8 @@ describe('spec:init-project/S63 the danger check over hook-checks by proof', () 
     const f = fixture(t);
     f.env = hermeticGitEnv({ ...f.env, PATH: `${f.env.PATH}:${dirname(findOnPath('git', { getenv: process.env }).path)}` }, f.home);
     assert.equal(spawnSync('git', ['init', '-q', f.root], { env: f.env }).status, 0);
-    const record = JSON.stringify({ schema: 1, themes: { 'project-layout': { kit: sha(RULE), local: 'absent', effective: sha(RULE) } } });
-    for (const [path, bytes] of Object.entries({ [INSTALLER]: installer, 'docs/ai/source-size.json': config, ...theme && { 'docs/ai/rules/project-layout.md': RULE,
-      'docs/ai/rules/effective/project-layout.md': RULE, 'docs/ai/rules/effective/sources.json': record } })) if (bytes !== undefined) put(join(f.root, path), bytes);
+    const themed = theme ? { ...Object.fromEntries(THEMES.flatMap(({ name }) => [themePaths(name).kit, themePaths(name).effective]).map((path) => [path, RULE])), [themePaths(THEMES[0].name).record]: JSON.stringify({ schema: 1, themes: Object.fromEntries(THEMES.map(({ name }) => [name, { kit: sha(RULE), local: 'absent', effective: sha(RULE) }])) }) } : {};
+    for (const [path, bytes] of Object.entries({ [INSTALLER]: installer, 'docs/ai/source-size.json': config, ...themed })) if (bytes !== undefined) put(join(f.root, path), bytes);
     return f;
   };
   const runs = (flags, bytes = bundled) => `runs: ${['node', INSTALLER, ...flags].map(shellQuoteArg).join(' ')} sha256:${sha(bytes)}`;

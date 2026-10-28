@@ -9,6 +9,8 @@ maxLines: 80
 
 # Project layout
 
+The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it and docs/ai/rules/effective/ govern over any copy of kit text elsewhere in this project's files; text of your own goes outside the block, and a change to a kit rule goes in its theme's file under docs/ai/rules/local/.
+
 Where a file goes is decided by what it means, never by where there is room.
 
 ## A module is a directory

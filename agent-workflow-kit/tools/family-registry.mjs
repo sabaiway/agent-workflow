@@ -27,7 +27,7 @@ import { isDirectRun } from './direct-run.mjs';
 import { parseSemver, compareSemver } from './semver-lite.mjs';
 import { validateManifest, readAuthoritativeVersion, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 import { START_MARKER, excludePath, inferVisibility } from './hide-footprint.mjs';
-import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_FRAGMENT_REL, LENS_PRIORS_REL } from './engine-source.mjs';
+import { readEngineFragment, ORCHESTRATION_FRAGMENT_REL, PROCEDURES_FRAGMENT_REL, AUTONOMY_FRAGMENT_REL, LENS_THEME_REL } from './engine-source.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 // The config reader lives in orchestration-config.mjs (the single config contract). The read-only status
 // settings-survey reuses THIS reader (one strict-JSON + loud-on-malformed contract), not a second copy.
@@ -181,14 +181,13 @@ export const classifyMember = (member, deps = {}) => {
 // the manifest AND reads the fragment — so an absent, non-file, OR present-but-unreadable fragment all
 // surface (status never claims "ok" for a fragment a reconcile / the procedures CLI would STOP on), and
 // a current, readable fragment never gets the caveat. Read-only, best-effort.
-// Each caveat names the rel(s) its consumer actually needs: the lens reconcile requires the
-// fragment AND its prior store as a PAIR (lens-region soft-skips when either is missing), so its
-// caveat keys on both — an engine missing only the prior store must never report healthy.
+// Each caveat names the rel its consumer actually needs: the lens caveat keys on the lens rules theme
+// the rules op lays down, so an engine lacking it never reports healthy.
 const ENGINE_FRAGMENT_CAVEATS = [
   { rels: [ORCHESTRATION_FRAGMENT_REL], caveat: 'engine present but does not supply the recipes pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
   { rels: [AUTONOMY_FRAGMENT_REL], caveat: 'engine present but does not supply the autonomy pointer (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
   { rels: [PROCEDURES_FRAGMENT_REL], caveat: 'engine present but does not ship the activity-procedures canon (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
-  { rels: [LENS_FRAGMENT_REL, LENS_PRIORS_REL], caveat: 'engine present but does not ship the agent-rules lens canon (the fragment + its prior store; too old / incomplete — engine >= 1.13.0) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
+  { rels: [LENS_THEME_REL], caveat: 'engine present but does not ship the lens rules theme (too old / incomplete) — run `npx @sabaiway/agent-workflow-engine@latest init`' },
 ];
 
 // The orchestration-config TEMPLATE a current memory ships (added in memory 1.2.0; absent in older

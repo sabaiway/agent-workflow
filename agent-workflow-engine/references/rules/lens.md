@@ -1,5 +1,16 @@
-### 2.x. Planning, review & process-fidelity invariants
-Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon. This section is rendered from that canon and written current on every upgrade; text of your own goes under a ### heading of its own, titled unlike the kit's sections.)
+---
+type: rules
+lastUpdated: 2026-10-28
+scope: permanent
+staleAfter: never
+owner: engine
+maxLines: 60
+---
+
+# Planning, review and process-fidelity invariants
+
+The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it and docs/ai/rules/effective/ govern over any copy of kit text elsewhere in this project's files; text of your own goes outside the block, and a change to a kit rule goes in its theme's file under docs/ai/rules/local/.
+
 - **Fold by code, not prose.** Before folding a code-touching finding into a plan or change, read the cited `file:line` and cite it — a prose fold drifts from the code and seeds the next bug.
 - **Finding scope (plan-execution) — name the invariant BEFORE the edit.** During EXECUTION only — a spec and its plan under authoring have no shipped behaviour to call a live defect in, so the spec review carries none of this. Every finding names the invariant its fix would enforce, and where that invariant already lives decides the disposition: already an acceptance criterion of the phase → **fold here**; it would have to be ADDED → ship the **narrow fix** for the found site (red first, then green) and queue ONLY the generalization — a deferral row carries the invariant, the origin `file:line`, the narrow fix, its proof and a residual exposure declared NOT live; no correct narrow fix → **blocking**: the phase does not close, and it is **never queued**. Two bars declared before each round: a finding counts only if it changes a **WRITE/REMOVE decision** or is a false statement in shipped text; a repeat finding in one subarea **routes to SUBTRACTION**, not a fourth patch.
 - **Right altitude.** Pin intent + invariants + acceptance criteria (named tests); leave fine code-mechanics to Execute, where prose cannot diverge from reality.

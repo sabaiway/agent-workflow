@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 
 import { readFileBytesNoFollow } from '../fs-read-nofollow.mjs';
 import {
-  EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, RECORD, UPGRADE,
+  EFFECTIVE, KIT, KIT_TEXT, LOCAL, LOCAL_TEXT, MERGED_TEXT, ONE_THEME, RECORD, UPGRADE,
   copyProject, entryOf, load, makeProject, mergedProject, need, recordText, removeProject, sha, snapshot,
 } from './rules-harness.test.mjs';
 
@@ -17,7 +17,10 @@ const THEME = 'project-layout';
 const NOTE = 'move your edit to local/, a rebuild drops it';
 const TEMPLATE = new URL('../../references/rules/project-layout.md', import.meta.url);
 
-const checkFn = async () => need(await load('./rules-check.mjs'), 'checkRules');
+const checkFn = async () => {
+  const checkRules = need(await load('./rules-check.mjs'), 'checkRules');
+  return (root, deps = {}) => checkRules(root, { themes: ONE_THEME, ...deps });
+};
 const parseFn = async () => need(await load('./rules-check.mjs'), 'parseRecord');
 
 const put = (root, rel, text) => {

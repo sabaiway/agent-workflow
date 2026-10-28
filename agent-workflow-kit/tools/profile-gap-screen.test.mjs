@@ -19,12 +19,13 @@ const PURITY_TEST = join(HERE, '..', 'test', 'read-graph-purity.test.mjs');
 const SHIPPED = JSON.parse(readFileSync(join(HERE, '..', 'references', 'reference-profile.json'), 'utf8'));
 const HAS = Object.fromEntries(SHIPPED.items.map(({ id, has }) => [id, has]));
 const TEMPLATE = readFileSync(join(HERE, '..', 'references', 'templates', 'agent_rules.md'), 'utf8');
-const STORYLESS = TEMPLATE.replace('### 2.7. Story sessions', '### 2.7. Session notes');
-const CUSTOMIZED = TEMPLATE.replace('- **Plain language.**', '- **My own plain language.**');
+const CUSTOMIZED = '# Our rules\n\nOur own rule.\n';
 const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const WRITE_MODULES_RE = /const WRITE_MODULES = \[([^\]]*)\]/;
 const RULES = 'docs/ai/agent_rules.md';
 const DECLINES = 'docs/ai/profile-declines.json';
+const CONFIG = 'docs/ai/orchestration.json';
+const QUEUE = 'docs/plans/queue.md';
 const LINEAGE = SHIPPED.lineage;
 const OTHER_LINEAGE = '3.0.0';
 const SENTENCE = 'no runnable command — the root or the kit path carries a control byte or a backtick';
@@ -67,7 +68,7 @@ describe('spec:gap-screen/S3 the leaf answers one disposition per judged entry',
   });
 
   it('answers nothing for a present entry and for a current decline, and a gap for a decline at another lineage', () => {
-    const declined = { 'story-sessions-section': LINEAGE, 'epic-store-seeded': LINEAGE, 'named-queue-row-seed': OTHER_LINEAGE };
+    const declined = { 'epic-store-seeded': LINEAGE, 'named-queue-row-seed': OTHER_LINEAGE };
     const { root, gaps, skips } = screenIn({ ...ABSENT_PARTS, [DECLINES]: record(declined) });
     assert.deepEqual(gaps, ['epic-task-slots', 'checker-gates-declared', 'named-queue-row-seed'].map((id) => gapOf(id, root)));
     assert.deepEqual(skips, []);
@@ -80,27 +81,11 @@ describe('spec:gap-screen/S3 the leaf answers one disposition per judged entry',
     assert.deepEqual(skips, ['epic-task-slots', 'epic-store-seeded', 'checker-gates-declared', 'named-queue-row-seed'].map((id) => `${id}: ${SENTENCE}`));
   });
 
-  it('answers the detector reason verbatim for an undecidable entry, a customized Communication region included', () => {
-    assert.deepEqual(screenIn({ ...ABSENT_PARTS, [RULES]: CUSTOMIZED }).skips, ['session-close-rules: region-customized']);
+  it('answers the detector reason verbatim for an undecidable entry, a queue-symlink included, and no rules-file reason', () => {
+    const symlinked = screenIn({ ...ABSENT_PARTS, [RULES]: CUSTOMIZED, [QUEUE]: { kind: 'symlink', text: '# Queue\n' } });
+    assert.deepEqual(symlinked.skips, ['named-queue-row-seed: queue-symlink']);
     assert.deepEqual(screenIn({ [RULES]: TEMPLATE }).skips, ['epic-task-slots: config-absent', 'checker-gates-declared: declaration-absent']);
   });
-
-  for (const [name, files, story] of [
-    ['offered', { [RULES]: STORYLESS }, 'gap'],
-    ['currently declined', { [RULES]: STORYLESS, [DECLINES]: record({ 'story-sessions-section': LINEAGE }) }, 'nothing'],
-    ['undecidable', { [RULES]: STORYLESS.replace('maxLines: 150', 'maxLines: 10') }, 'story-sessions-section: cap'],
-  ]) {
-    it(`answers nothing for session-close-rules on story-sessions-absent while story-sessions-section is ${name}`, () => {
-      const { root, gaps, skips } = screenIn({ ...ABSENT_PARTS, ...files });
-      assert.deepEqual(skips.filter((reason) => reason.startsWith('session-close-rules')), []);
-      const storyGaps = gaps.filter(({ id }) => id === 'story-sessions-section');
-      const storySkips = skips.filter((reason) => reason.startsWith('story-sessions-section'));
-      assert.deepEqual({ storyGaps, storySkips }, {
-        storyGaps: story === 'gap' ? [gapOf('story-sessions-section', root)] : [],
-        storySkips: story.includes(':') ? [story] : [],
-      });
-    });
-  }
 
   it('answers the missing-id skip for a registry id the read profile does not carry', () => {
     const partial = { ...SHIPPED, items: SHIPPED.items.filter(({ id }) => id !== 'epic-store-seeded') };
@@ -135,14 +120,14 @@ describe('spec:gap-screen/S5 the seam and the purity', () => {
     const spy = detectorSpy();
     const observed = screen(root, spy.deps);
     assert.deepEqual(observed, screen(root));
-    assert.ok(spy.calls.includes(resolve(root, RULES)) && spy.calls.includes(resolve(root, 'docs/plans')), 'the bag keys reach the detectors');
+    assert.ok(spy.calls.includes(resolve(root, CONFIG)) && spy.calls.includes(resolve(root, 'docs/plans')), 'the bag keys reach the detectors');
     const failing = {
       readFileSync: (path, ...rest) => {
-        if (path === resolve(root, RULES)) throw fsError('EIO');
+        if (path === resolve(root, CONFIG)) throw fsError('EIO');
         return readFileSync(path, ...rest);
       },
     };
-    assert.deepEqual(screen(root, failing).skips, ['story-sessions-section: file-unreadable', 'session-close-rules: file-unreadable']);
+    assert.deepEqual(screen(root, failing).skips, ['epic-task-slots: config-unreadable']);
   });
 
   it("hands the same bag to the readers, each reader's own keys driving its reads", () => {
@@ -163,10 +148,10 @@ describe('spec:gap-screen/S5 the seam and the purity', () => {
     assert.deepEqual(screen(root, { readFile }), { gaps: [], skips: ['profile-unreadable'] });
   });
 
-  it('imports STORY_REGION_ABSENT and carries no copied literal of it', () => {
+  it('names no STORY_REGION_ABSENT and no story-sessions-absent literal', () => {
     const source = readFileSync(MODULE, 'utf8');
-    assert.match(source, /import \{[^}]*\bSTORY_REGION_ABSENT\b[^}]*\} from '\.\/profile-gaps\.mjs'/);
-    assert.equal(source.includes('story-sessions-absent'), false);
+    assert.match(source, /from '\.\/profile-gaps\.mjs'/, 'the leaf source is read');
+    assert.deepEqual(['STORY_REGION_ABSENT', 'story-sessions-absent'].filter((name) => source.includes(name)), []);
   });
 
   it('reaches no write module through its import closure', () => {

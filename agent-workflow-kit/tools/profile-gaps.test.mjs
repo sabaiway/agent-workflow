@@ -1,232 +1,127 @@
+// profile-gaps.test.mjs — the registry's closed shape, the two builders moved into the module, and no
+// detector reading the rules file (docs/ai/specs/kit/tier/gap-screen/, session-rules S12). Red first:
+// the module is imported dynamically; every fixture is built in its cell.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeProject } from './tier-preview.test/harness.test.mjs';
 
 const loaded = await import('./profile-gaps.mjs').catch(() => ({}));
-const regions = await import('./rules-regions.mjs').catch(() => ({}));
-const buildInsertPreview = regions.buildInsertPreview ?? null;
-const getRegistry = loaded.PROFILE_GAPS === undefined ? () => {
-  throw new Error('profile-gaps.mjs is absent');
-} : () => loaded.PROFILE_GAPS;
 const HERE = dirname(fileURLToPath(import.meta.url));
-const KIT = resolve(HERE, '..');
-const ROOT = join(HERE, 'profile-gaps-fixture');
-const TARGET = join(ROOT, 'docs', 'ai', 'agent_rules.md');
-const TEMPLATE_PATH = join(KIT, 'references', 'templates', 'agent_rules.md');
-const PROFILE_PATH = join(KIT, 'references', 'reference-profile.json');
+const PROFILE = JSON.parse(readFileSync(resolve(HERE, '..', 'references', 'reference-profile.json'), 'utf8'));
 const MODULE_PATH = join(HERE, 'profile-gaps.mjs');
-const TOOL_PATH = join(HERE, 'rules-insert.mjs');
-const GAP_ID = 'story-sessions-section';
+const REGISTRY = ['epic-task-slots', 'epic-store-seeded', 'checker-gates-declared', 'named-queue-row-seed'];
+const RETIRED = ['story-sessions-section', 'session-close-rules'];
+const RULES = 'docs/ai/agent_rules.md';
+const TOOL = '/kit/tools/tier-preview.mjs';
 const LF = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
 const CONTROL_BYTE = String.fromCharCode(1);
-const DELETE_BYTE = String.fromCharCode(127);
 const BACKTICK = String.fromCharCode(96);
+const BOM = String.fromCharCode(0xFEFF);
 // A lone continuation byte: valid in cp1251 or latin-1, never valid UTF-8.
-const INVALID_UTF8 = Buffer.from([0xA0]);
-const TAB = String.fromCharCode(9);
-const COMMUNICATION = '### 2.5. Communication (user-facing messages)';
-const STORY = '### 2.7. Story sessions';
-const COMMUNICATION_SPAN = [COMMUNICATION, 'Communication body.', ''].join(LF) + LF;
-const STORY_SPAN = [STORY, 'Story body.', ''].join(LF) + LF;
-const TEMPLATE = COMMUNICATION_SPAN + STORY_SPAN + '---' + LF;
-const PRESENT = TEMPLATE.replace('Story body.', 'Hand-edited story body.');
-const MISSING = COMMUNICATION_SPAN + '---' + LF;
-const NO_ANCHOR = '## Rules' + LF + 'No numbered sections.' + LF;
-const BOTH_MISSING = '### 2.4. Existing section' + LF + 'Preserved body.' + LF;
-const TARGET_CAP = 7;
-const CAPPED = ['---', 'maxLines: ' + TARGET_CAP, '---', MISSING].join(LF);
-const ENTRY_KEYS = ['apply', 'detect', 'id'];
-const VERDICT_KEYS = ['verdict'];
-const UNDECIDABLE_KEYS = ['reason', 'verdict'];
-const VERDICTS = ['present', 'absent', 'undecidable'];
-const WRITE_PRIMITIVES = ['writeFile', 'rename', 'rm'];
+const INVALID_UTF8 = Buffer.from([0x41, 0xA0]);
 const IMPORT_RE = /import[^;]+;/g;
-const REGIONS_IMPORT_RE = new RegExp(
-  `from[ ${LF}${CR}${TAB}]+['"][.]/rules-regions[.]mjs['"]`,
-);
-const WRITER_IMPORT_RE = /atomic-write|writeFile|appendFile|createWriteStream|rename|unlink|[ {,]rm(?:Sync)?[ ,}]/;
+const RETIRED_IMPORT_RE = /['"][.]\/(?:lens-region|rules-regions)[.]mjs['"]/;
+const REAL_FS = Object.freeze({ readFileSync, lstatSync });
 
-const getEntry = () => {
-  const entry = getRegistry().find(({ id }) => id === GAP_ID);
-  assert.ok(entry, 'The registry includes ' + GAP_ID);
-  assert.equal(typeof entry.detect, 'function');
-  assert.equal(typeof entry.apply, 'function');
-  return entry;
+const exported = (name) => {
+  assert.ok(name in loaded, `profile-gaps.mjs exports no ${name}`);
+  return loaded[name];
 };
-const createFixture = ({
-  body = MISSING, kind = 'file', template = TEMPLATE, failRead, invalidTarget,
-} = {}) => {
-  const files = new Map([
-    [TEMPLATE_PATH, { kind: 'file', text: template }],
-    [TARGET, { kind, text: body }],
-  ]);
-  const before = structuredClone(files);
-  const reads = [];
-  const probes = [];
-  const writes = [];
-  const normalizePath = (path) => path instanceof URL ? fileURLToPath(path) : resolve(String(path));
-  const getFile = (path) => {
-    const file = files.get(path);
-    if (!file || file.kind === 'absent') {
-      throw Object.assign(new Error('Missing fixture file'), { code: 'ENOENT' });
-    }
-    return file;
-  };
-  const deps = {
-    lstatSync: (path) => {
-      const normalized = normalizePath(path);
-      probes.push(normalized);
-      const file = getFile(normalized);
-      return {
-        isFile: () => file.kind === 'file',
-        isDirectory: () => file.kind === 'directory',
-        isSymbolicLink: () => file.kind === 'symlink',
-      };
-    },
-    readFileSync: (path, encoding) => {
-      const normalized = normalizePath(path);
-      reads.push(normalized);
-      if (normalized === failRead) throw new Error('read boom');
-      const file = getFile(normalized);
-      if (file.kind !== 'file') throw new Error('Non-regular fixture file');
-      if (normalized === TARGET && invalidTarget) {
-        return Buffer.concat([Buffer.from(file.text), INVALID_UTF8]);
-      }
-      return encoding ? file.text : Buffer.from(file.text);
-    },
-    ...Object.fromEntries(WRITE_PRIMITIVES.map((name) => [
-      name, (...args) => { writes.push([name, args]); },
-    ])),
-  };
-  return { root: ROOT, deps, files, before, reads, probes, writes };
-};
-const assertVerdict = (result, verdict, reason) => {
-  assert.ok(!(result instanceof Promise), 'detect returns synchronously');
-  assert.ok(VERDICTS.includes(result.verdict));
-  assert.deepEqual(Reflect.ownKeys(result).sort(), reason ? UNDECIDABLE_KEYS : VERDICT_KEYS);
-  assert.deepEqual(result, reason ? { verdict, reason } : { verdict });
-  if (result.verdict === 'undecidable') {
-    assert.equal(typeof result.reason, 'string');
-    assert.ok(result.reason.trim().length > 0);
-    assert.ok(!result.reason.includes(LF));
-    assert.ok(!result.reason.includes(CR));
-  }
-};
-const assertDetection = (options, verdict, reason) => {
-  const fixture = createFixture(options);
-  const entry = getEntry();
-  const observed = {};
-  assert.doesNotThrow(() => {
-    observed.result = entry.detect({ root: fixture.root, deps: fixture.deps });
-  });
-  assertVerdict(observed.result, verdict, reason);
-  assert.deepEqual(fixture.writes, []);
-  assert.deepEqual(fixture.files, fixture.before);
-  assert.ok(fixture.reads.includes(TEMPLATE_PATH), 'The template read uses deps');
-  if (reason === 'template') {
-    assert.ok(!fixture.probes.includes(TARGET), 'Template defects precede the file probe');
-    assert.ok(!fixture.reads.includes(TARGET), 'Template defects precede the file read');
-  } else {
-    assert.ok(fixture.probes.includes(TARGET), 'The target probe uses lstatSync');
-    if (!options.kind || options.kind === 'file') {
-      assert.ok(fixture.reads.includes(TARGET), 'The target read uses deps');
-    } else {
-      assert.ok(!fixture.reads.includes(TARGET), 'An unsafe target is never read');
-    }
-  }
-};
+const registry = () => exported('PROFILE_GAPS');
+// detectAll(root) → each entry's answer over the real tree, checked synchronous and of the closed shape.
+const detectAll = (root) => registry().map(({ id, detect }) => {
+  const result = detect({ root, deps: REAL_FS });
+  assert.ok(!(result instanceof Promise), `${id} answers synchronously`);
+  const keys = Reflect.ownKeys(result).sort();
+  assert.deepEqual(keys, result.verdict === 'undecidable' ? ['reason', 'verdict'] : ['verdict'], id);
+  assert.ok(['present', 'absent', 'undecidable'].includes(result.verdict), id);
+  if (result.verdict === 'undecidable') assert.ok(typeof result.reason === 'string' && result.reason.trim() !== '' && !/[\r\n]/.test(result.reason), id);
+  return { id, ...result };
+});
 
-describe('spec:rules-regions/S16 closed registry and synchronous verdicts', () => {
-  it('freezes every entry and keeps unique ids in reference-profile order', () => {
-    const profile = JSON.parse(readFileSync(PROFILE_PATH, 'utf8'));
-    const profileIds = profile.items.map(({ id }) => id);
-    const registry = getRegistry();
-    assert.ok(Array.isArray(registry));
-    assert.ok(Object.isFrozen(registry));
-    const ids = registry.map(({ id }) => id);
-    assert.ok(ids.includes(GAP_ID));
-    assert.equal(new Set(ids).size, ids.length);
-    assert.deepEqual(ids, profileIds.filter((id) => ids.includes(id)));
-    for (const entry of registry) {
-      assert.ok(Object.isFrozen(entry));
-      assert.deepEqual(Reflect.ownKeys(entry).sort(), ENTRY_KEYS);
+describe('spec:gap-screen/S13 the registry is the closed shape of the four entries', () => {
+  it('PROFILE_GAPS is a frozen ordered array of exactly the four ids, in the shipped profile order, each entry frozen and closed', () => {
+    const gaps = registry();
+    assert.ok(Array.isArray(gaps) && Object.isFrozen(gaps));
+    const ids = gaps.map(({ id }) => id);
+    assert.deepEqual(ids, REGISTRY);
+    assert.deepEqual(ids, PROFILE.items.map(({ id }) => id).filter((id) => ids.includes(id)), 'the profile order');
+    assert.deepEqual(ids.filter((id) => RETIRED.includes(id)), []);
+    for (const entry of gaps) {
+      assert.ok(Object.isFrozen(entry), entry.id);
+      assert.deepEqual(Reflect.ownKeys(entry).sort(), ['apply', 'detect', 'id']);
       assert.equal(typeof entry.detect, 'function');
       assert.equal(typeof entry.apply, 'function');
     }
   });
-});
 
-describe('spec:rules-regions/S17 story-sessions detection without writes', () => {
-  for (const [name, options, verdict, reason] of [
-    ['one heading with a custom body', { body: PRESENT }, 'present'],
-    ['only story sessions planned', { body: MISSING }, 'absent'],
-    ['both template regions planned', { body: BOTH_MISSING }, 'absent'],
-    ['absent target', { kind: 'absent' }, 'undecidable', 'file-absent'],
-    ['symlink target', { kind: 'symlink' }, 'undecidable', 'file-symlink'],
-    ['directory target', { kind: 'directory' }, 'undecidable', 'file-unreadable'],
-    ['other non-regular target', { kind: 'socket' }, 'undecidable', 'file-unreadable'],
-    ['target read fails after probe', { failRead: TARGET }, 'undecidable', 'file-unreadable'],
-    ['target bytes are not UTF-8', { invalidTarget: true }, 'undecidable', 'file-unreadable'],
-    ['story heading twice', { body: PRESENT + STORY_SPAN }, 'undecidable', 'heading-twice'],
-    ['communication twice before an insert', { body: MISSING + COMMUNICATION_SPAN }, 'undecidable', 'heading-twice'],
-    ['no numbered anchor', { body: NO_ANCHOR }, 'undecidable', 'anchor-absent'],
-    ['planned insert exceeds own cap', { body: CAPPED }, 'undecidable', 'cap'],
-  ]) {
-    it(name, () => assertDetection(options, verdict, reason));
-  }
-  for (const [name, template, failRead] of [
-    ['template read failure', TEMPLATE, TEMPLATE_PATH],
-    ['Communication heading absent', STORY_SPAN],
-    ['Communication heading twice', TEMPLATE + COMMUNICATION_SPAN],
-    ['Story sessions heading absent', COMMUNICATION_SPAN],
-    ['Story sessions heading twice', TEMPLATE + STORY_SPAN],
-  ]) {
-    for (const [state, body] of [
-      ['story heading absent', MISSING],
-      ['story heading present', PRESENT],
-    ]) {
-      it(name + ' before ' + state, () => {
-        assertDetection({ body, template, failRead }, 'undecidable', 'template');
-      });
+  it('every detect answers exactly { verdict, reason } synchronously, the reason key only on undecidable', () => {
+    const bare = mkdtempSync(join(tmpdir(), 'profile-gaps-bare-'));
+    try {
+      assert.deepEqual(detectAll(bare).map(({ verdict }) => verdict), REGISTRY.map(() => 'undecidable'), 'an undeployed root');
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
     }
-  }
-});
-
-describe('spec:rules-regions/S18 preview command and read-only imports', () => {
-  it('offers one absolute preview command with the supplied project root', () => {
-    const fixture = createFixture();
-    const entry = getEntry();
-    const line = entry.apply(fixture.root);
-    assert.ok(isAbsolute(TOOL_PATH));
-    assert.equal(line, 'node ' + TOOL_PATH + ' --cwd ' + fixture.root);
-    assert.ok(!line.includes('--apply'));
-    assert.ok(!line.includes(LF));
-    assert.ok(!line.includes(CR));
-    if (buildInsertPreview === null) {
-      throw new Error('buildInsertPreview is absent');
-    }
-    assert.equal(line, buildInsertPreview(fixture.root));
+    const { root } = makeProject({ files: { 'docs/plans/queue.md': '# Queue\n', 'docs/ai/epics': { kind: 'directory' } } });
+    const answers = detectAll(root);
+    assert.ok(answers.some(({ verdict }) => verdict !== 'undecidable'), answers.map(({ id, verdict }) => `${id} ${verdict}`).join(', '));
   });
-  for (const [name, character] of [
-    ['control byte', CONTROL_BYTE],
-    ['delete byte', DELETE_BYTE],
-    ['line feed', LF],
-    ['backtick', BACKTICK],
+});
+
+describe('spec:gap-screen/S14 the moved builders and no import of the retired modules', () => {
+  it('buildInsertPreview takes its tool path as a required argument with no default', () => {
+    assert.equal(exported('buildInsertPreview').length, 2);
+  });
+
+  for (const [name, root, toolPath, expected] of [
+    ['a plain root', '/projects/plain-root', TOOL, `node ${TOOL} --cwd /projects/plain-root`],
+    ['a root holding a space', '/projects/my project', TOOL, `node ${TOOL} --cwd '/projects/my project'`],
+    ['a root carrying a control byte', `/projects/a${CONTROL_BYTE}b`, TOOL, ''],
+    ['a root carrying a backtick', `/projects/a${BACKTICK}b`, TOOL, ''],
+    ['a tool path carrying a control byte', '/projects/plain-root', `/kit${CONTROL_BYTE}/tool.mjs`, ''],
+    ['a tool path carrying a backtick', '/projects/plain-root', `/kit${BACKTICK}/tool.mjs`, ''],
   ]) {
-    it('offers no command for a root carrying a ' + name, () => {
-      const root = ROOT + character;
-      assert.equal(getEntry().apply(root), '');
+    it(`buildInsertPreview answers ${expected === '' ? 'the empty string' : 'its node line'} for ${name}`, () => {
+      assert.equal(exported('buildInsertPreview')(root, toolPath), expected);
     });
   }
-  it('imports the regions leaf and no writer', () => {
-    const fixture = createFixture();
-    getEntry().apply(fixture.root);
+
+  it('decodeUtf8Strict answers the text of UTF-8 bytes, a byte-order mark kept, and throws for bytes that do not round-trip', () => {
+    const decodeUtf8Strict = exported('decodeUtf8Strict');
+    assert.equal(decodeUtf8Strict(Buffer.from('\u00fc text\n')), '\u00fc text\n');
+    assert.equal(decodeUtf8Strict(Buffer.from(`${BOM}text`)), `${BOM}text`);
+    assert.throws(() => decodeUtf8Strict(INVALID_UTF8));
+  });
+
+  it('profile-gaps.mjs imports no lens-region.mjs and no rules-regions.mjs', () => {
+    const imports = (readFileSync(MODULE_PATH, 'utf8').match(IMPORT_RE) ?? []).join(LF);
+    assert.match(imports, /reference-profile[.]mjs/, 'the import text is read');
+    assert.doesNotMatch(imports, RETIRED_IMPORT_RE);
+  });
+});
+
+describe('spec:session-rules/S12 no detector reads the rules file', () => {
+  it('the module names no docs/ai/agent_rules.md, imports neither retired module and exports no STORY_REGION_ABSENT', () => {
     const source = readFileSync(MODULE_PATH, 'utf8');
-    const imports = (source.match(IMPORT_RE) ?? []).join(LF);
-    assert.match(imports, REGIONS_IMPORT_RE);
-    assert.doesNotMatch(imports, WRITER_IMPORT_RE);
+    assert.equal(source.includes(RULES), false, RULES);
+    assert.doesNotMatch((source.match(IMPORT_RE) ?? []).join(LF), RETIRED_IMPORT_RE);
+    assert.ok(Object.keys(loaded).length > 0 && !('STORY_REGION_ABSENT' in loaded), Object.keys(loaded).join(', '));
+  });
+
+  it('a rules file absent, a symlink or a body of the user\'s own leaves every verdict unchanged', () => {
+    const verdictsWith = (rules) => detectAll(makeProject({ files: { [RULES]: rules, 'docs/ai/epics': { kind: 'directory' } } }).root)
+      .map(({ id, verdict, reason }) => `${id} ${verdict} ${reason ?? ''}`);
+    const baseline = verdictsWith(null);
+    for (const [name, rules] of [
+      ['a symlink', { kind: 'symlink', text: '# Rules\n' }],
+      ["a body of the user's own", `# Our rules${LF}${LF}Our own rule.${CR}${LF}`],
+    ]) {
+      assert.deepEqual(verdictsWith(rules), baseline, name);
+    }
   });
 });

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { hermeticGitEnv } from './git-env.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
+import { THEMES, themePaths } from './project-rules/index.mjs';
 
 const leaf = await import('./git-hooks.mjs').catch(() => ({}));
 const need = (name) => {
@@ -398,8 +399,7 @@ const BOTH = ['--rules-check', RULES_CLI, '--layout-check', SIZE_CLI];
 const roleLine = (path, role) => `node "${path}" --check # ${role}-check`;
 const [RULES_ON, LAYOUT_ON, RULES_ELSEWHERE, LAYOUT_ELSEWHERE] = [[RULES_CLI, 'rules'], [SIZE_CLI, 'layout'], ['/elsewhere/rules-cli.mjs', 'rules'], ['/elsewhere/source-size-check.mjs', 'layout']].map((pair) => roleLine(...pair));
 const managed = (...lines) => ['#!/bin/sh', '# fixture:install-git-hooks.mjs', ...lines, ''].join('\n');
-const THEME = '# Project layout\n';
-const THEME_FILES = { 'docs/ai/rules/project-layout.md': THEME, 'docs/ai/rules/effective/project-layout.md': THEME, 'docs/ai/rules/effective/sources.json': JSON.stringify({ schema: 1, themes: { 'project-layout': { kit: sha(THEME), local: 'absent', effective: sha(THEME) } } }) };
+const THEME_FILES = ((body) => ({ ...Object.fromEntries(THEMES.flatMap(({ name }) => [themePaths(name).kit, themePaths(name).effective]).map((rel) => [rel, body])), [themePaths(THEMES[0].name).record]: JSON.stringify({ schema: 1, themes: Object.fromEntries(THEMES.map(({ name }) => [name, { kit: sha(body), local: 'absent', effective: sha(body) }])) }) }))('# A rules theme\n');
 const deploy = (t, { installer = PRIOR, rules = true, hook } = {}) => {
   const { root, io } = makeProject(t);
   for (const [rel, bytes] of Object.entries(rules ? THEME_FILES : { 'docs/ai/README.md': '' })) put(root, rel, bytes);
@@ -416,7 +416,7 @@ describe('spec:init-project/S60 the --hook-checks dry run by proof on a temp git
     ['a custom installer', { installer: FOREIGN }, 0, () => [runsLine(BOTH, FOREIGN)]],
     ['an armed rules line and a layout line on another path', { installer: BUNDLED, hook: managed(RULES_ON, LAYOUT_ELSEWHERE) }, 0, () => [runsLine(BOTH.slice(2), BUNDLED)]],
     ['a rules line on another path and an armed layout line', { installer: BUNDLED, hook: managed(RULES_ELSEWHERE, LAYOUT_ON) }, 0, () => [runsLine(BOTH.slice(0, 2), BUNDLED)]],
-    ['no rules theme and an armed layout line', { rules: false, hook: managed(LAYOUT_ON) }, 3, () => ['nothing to plan — the rules-check line: not armable (project-layout: absent); the layout-check line: armed']],
+    ['no rules theme and an armed layout line', { rules: false, hook: managed(LAYOUT_ON) }, 3, () => [`nothing to plan — the rules-check line: not armable (${THEMES.map(({ name }) => `${name}: absent`).join(', ')}); the layout-check line: armed`]],
     ['both lines armed', { hook: managed(RULES_ON, LAYOUT_ON) }, 3, () => ['nothing to plan — the rules-check line: armed; the layout-check line: armed']],
     ['an absent installer', { installer: null }, 3, (root) => [`${join(root, INSTALLER)} is absent — nothing here places the hook installer`]],
     ['an installer that is a directory', { installer: 'dir' }, 3, (root) => [`${join(root, INSTALLER)} is not a regular file`]],

@@ -31,6 +31,7 @@ const OWN_NOTES = [
   ['1.2.0', '1.2.0-agent-attribution.md', 'Migration 1.2.0-agent-attribution'],
   ['3.0.0', '3.0.0-hardened-core-loop.md', 'Migration 3.0.0-hardened-core-loop'],
   ['4.0.0', '4.0.0-full-flow-offer.md', 'Migration 4.0.0-full-flow-offer'],
+  ['5.0.0', '5.0.0-kit-text-in-kit-files.md', 'Migration 5.0.0-kit-text-in-kit-files'],
 ];
 const roots = [];
 after(() => {
@@ -313,10 +314,9 @@ describe('spec:upgrade-delivery/S5 read-only execution, head source and usage', 
     assert.doesNotMatch(source, /(?:from\s*|import\s*(?:\(\s*)?)['"]node:child_process['"]/);
     assert.doesNotMatch(source, /['"`][0-9]+\.[0-9]+\.[0-9]+['"`]/);
   });
-  it('spec:tier-offer/S15 pins the two existing head copies equal at 4.0.0', async () => {
+  it('spec:tier-offer/S15 pins the two kit head copies equal', async () => {
     const other = await import('./velocity-profile.mjs');
     assert.equal(HEAD, other.EXPECTED_WORKFLOW_VERSION);
-    assert.equal(HEAD, '4.0.0');
   });
   for (const stampKind of ['file', 'absent']) {
     for (const usage of ['unknown flag', 'duplicate cwd', 'missing cwd']) {

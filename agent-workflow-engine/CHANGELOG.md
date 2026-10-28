@@ -2,7 +2,18 @@
 
 All notable changes to the methodology engine. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
-(which tracks the shared `agent-workflow` lineage, head `4.0.0`).
+(which tracks the shared `agent-workflow` lineage, head `5.0.0`).
+
+## 6.0.0 — the lens ships as a rules theme, `references/rules/lens.md` (AD-216)
+
+The lens (the planning, review and process-fidelity invariants) moves from `references/agent-rules-lens.md` to
+`references/rules/lens.md`, a rules theme with its own frontmatter, title and precedence line; the kit lays it down as
+the `lens` theme under a deployed `docs/ai/rules/` instead of a section of `docs/ai/agent_rules.md`. The prior store
+`references/agent-rules-lens-priors.md` is deleted: its one reader, the kit's section reconcile, retires with kit
+20.0.0. The three fragments keep their files and their text; `SKILL.md` and `README.md` say the kit writes them
+into the deployed `AGENTS.md`, naming no per-fragment markers or line cap, and `references/procedures.md` says a
+project's own release stages sit outside the kit block.
+The deployment-lineage head this CHANGELOG names moves to `5.0.0`. MAJOR: a reader of the old lens path finds nothing.
 
 ## 5.13.0 — the spec canon names no children limit; the `fan-out` refusal retires (AD-215)
 

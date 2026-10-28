@@ -86,9 +86,9 @@ describe('report contract — the happy path hides the docs/ai structure number 
   });
 
   it('the equal-head exit distinguishes a writeful reconcile from a pure no-op (not misreported as no-op)', () => {
-    // A stamp-independent step-3 reconcile (pointer slot / orchestration.json / hidden footprint) may
+    // A stamp-independent step-3 reconcile (kit block / orchestration.json / hidden footprint) may
     // have JUST written something — that is NOT "settings already current / no update needed".
-    assert.match(equalHead, /added the slot \(or anything else changed\), report it and ask/i,
+    assert.match(equalHead, /added the kit block \(or anything else changed\), report it and ask/i,
       'a writeful reconcile reports what changed and asks');
     assert.match(equalHead, /pure zero-diff no-op.{0,80}settings already current/i,
       'only a pure zero-diff no-op is framed "settings already current"');

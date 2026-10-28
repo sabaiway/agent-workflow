@@ -67,7 +67,7 @@ describe('spec:project-rules/S31 the rules mode doc changes the local file on a 
 describe('spec:project-rules/S34 the rules mode routes a number to the size check override, never into a rules file', () => {
   it('shows the exact --override command with only the numbers the user named, --kit-default to return, run on the yes', () => {
     assertPhrases(readRules(), [
-      "- **Change a number.** A request to change a number, a limit's value or its tolerance, is never written into a rules file: the rules are prose and carry no numbers",
+      "- **Change a size limit.** A request to change a limit of the size check, its value or its tolerance, is never written into a rules file: the kit keeps those numbers in its code",
       'Show the exact `node ${CLAUDE_SKILL_DIR}/tools/source-size-check.mjs --override <id> [--value <n>] [--tolerance <p>] --reason "<text>" --cwd <project>` command, passing only the numbers the user named',
       "with `--kit-default` in their place to return to the kit's numbers; run it on the user's yes and relay its lines.",
     ], 'the number route');
@@ -92,7 +92,7 @@ const PROJECT_RULES_PARAGRAPH = "**What the project-rules ensure does.** Each th
 const RULES_TOKEN_ARM = '; rules → `seeded` / `refreshed` / `regenerated` / `pending` / `already-current`; index → ';
 const WRITTEN_OVER = 'written over by the next upgrade with no question and no copy kept';
 
-describe('spec:project-rules/S32 upgrade.md states the project-rules words, contracts.md names the kit rules files as written over, and both relay the Memory Map rows', () => {
+describe('spec:project-rules/S32 upgrade.md states the project-rules words, contracts.md names the kit rules files as written over, the entry-block row and paragraph name one row per theme, and no report names a Memory Map row', () => {
   it('the project-rules paragraph is exactly the words rules-ensure states, and the rules token arm names no customized-preserved', () => {
     const text = readUpgrade();
     assert.deepEqual([findLine(text, '**What the project-rules ensure does.**').trimStart(), text.includes(RULES_TOKEN_ARM)], [PROJECT_RULES_PARAGRAPH, true]);
@@ -105,22 +105,34 @@ describe('spec:project-rules/S32 upgrade.md states the project-rules words, cont
     assert.ok(sentence.includes('docs/ai/rules/<theme>.md'), sentence);
   });
 
-  it('the pointers row and paragraph keep one Memory Map row per theme, the zero-diff clause asking the rows present', () => {
-    const text = readUpgrade();
-    assertPhrases(findLine(text, '1. `pointers`'), [
-      'per Memory Map row of a rules theme: added · already present · refreshed · skipped (reported)',
-    ], 'the pointers run-list row');
-    assertPhrases(findLine(text, '**`pointers` — the bounded pointers.**'), [
-      'zero-diff when all are already present + filled and the Memory Map rows present',
-      'The same call keeps one Memory Map row per project-rules theme',
-    ], 'the pointers paragraph');
+  it('the entry-block run-list row and its paragraph each say the kit block carries one row per theme', () => {
+    const lines = readUpgrade().split('\n').map((line) => line.trimStart());
+    const row = lines.find((line) => /^[0-9]+\. `entry-block`/.test(line)) ?? '';
+    const paragraph = lines.find((line) => line.startsWith('**`entry-block`')) ?? '';
+    for (const [what, text] of [['the entry-block run-list row', row], ['the entry-block paragraph', paragraph]]) {
+      assert.match(text, /\bone (?:table )?row per (?:rules )?theme\b/, `${what}: ${text}`);
+    }
   });
 
-  it('the step-4 report and step 8 relay the Memory Map row outcome beside the pointers', () => {
+  it('neither the step-4 report nor step 8 names a Memory Map row of a theme', () => {
     const text = readUpgrade();
-    assertPhrases(findLine(text, "- **Report step 3's outcome in plain language**"), [
-      'and each Memory Map row the same way (or *refreshed*)',
-    ], 'the step-4 report bullet');
-    assertPhrases(findLine(text, '8. Re-stamp'), ['the `pointers` slots and Memory Map rows'], 'step 8');
+    const reports = [findLine(text, "- **Report step 3's outcome in plain language**"), findLine(text, '8. Re-stamp')];
+    assert.ok(reports.every((line) => line.length > 0), 'both reports are found');
+    assert.deepEqual(reports.filter((line) => line.includes('Memory Map row')), []);
+  });
+});
+
+describe('spec:project-rules/S38 the mode waits for the engine before it writes or drops the local file of an engine-homed theme', () => {
+  it('runs the ensure --only rules first, and on the no-engine line relays it and stops with the engine install command, no local file written or dropped', () => {
+    const route = readRules().split('\n\n').find((paragraph) => paragraph.includes('engine-homed')) ?? '';
+    assertPhrases(route, [
+      'before',
+      '--only rules',
+      'no installed engine supplies',
+      'npx @sabaiway/agent-workflow-engine@latest init',
+      'writing and dropping no local file',
+    ], 'the engine-homed theme route');
+    assert.match(route, /relay/i);
+    assert.match(route, /\bstops?\b/);
   });
 });

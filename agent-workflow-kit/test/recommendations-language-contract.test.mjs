@@ -383,14 +383,11 @@ const PROFILE_GAP_NOTE_LITERALS = Object.freeze([
   'the same line with ` --apply` appended runs only on a SECOND yes',
   'Items whose apply lines are byte-equal are one writer and take one answer',
   "the tier preview's `--apply` writes the absent slots, the store seed and the queue seed together",
-  'the insert writes every region it plans, all or nothing',
-  'a `communication-absent` skip beside a declined `story-sessions-section` gets its own ask',
   'A no records nothing',
   'A DECLINE is asked apart from later',
   'runs `node ${CLAUDE_SKILL_DIR}/tools/tier-preview.mjs --decline --cwd <project-root>` only when the user refuses EVERY item the tier preview then reports offered',
   'a declined item leaves the screen until a lineage step changes the profile',
   'An undecidable entry is a stated skip naming its reason',
-  "a prior or any other body → the upgrade's `lens` reconcile, which writes the region current or names the line cap that refused the write; an absent region → the insert",
   'rewrites `docs/ai/orchestration.json` in canonical form with the `_README` note',
   'the PRIVILEGED `docs/ai/gates.json`',
 ]);
@@ -403,7 +400,8 @@ describe('recommendations contract — the profile-gap posture note (spec:gap-sc
     assert.equal(notes.split(PROFILE_GAP_NOTE_START).length - 1, 1, 'exactly one profile-gap bullet');
     for (const literal of PROFILE_GAP_NOTE_LITERALS) assert.ok(note.includes(literal), `the profile-gap note states: ${literal}`);
     assert.match(note, ENFORCEMENT_RISK_PROFILE_END);
-    for (const [pattern, why] of [[/<kit>/, 'a kit path is written in the ${CLAUDE_SKILL_DIR} form'], [/hand edit|lens preserves/i, 'no remedy says a hand edit or that the lens preserves a region']]) assert.doesNotMatch(note, pattern, why);
+    for (const [pattern, why] of [[/<kit>/, 'a kit path is written in the ${CLAUDE_SKILL_DIR} form'], [/hand edit|lens preserves/i, 'no remedy says a hand edit or that the lens preserves a region'],
+      [/rules-insert|the insert|`lens` reconcile|region|story-sessions-section|communication-absent/, 'no insert of a rules-file region and no lens remedy is named']]) assert.doesNotMatch(note, pattern, why);
   });
 });
 
@@ -412,7 +410,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40960, '2319f483a65a8be3171700f1430062f2897c6b288adca1bd179eb9be0f9e9207'], 'the bytes after distribution-files story S19 (the orchestration note)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [34973, 'd5ada684ab7f402cc5ab151f856725ccebf76ce1652dce946b34f1123a8fb197'], 'the bytes after KIT-TEXT story S2 (the step-6 relay and head 5.0.0)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);

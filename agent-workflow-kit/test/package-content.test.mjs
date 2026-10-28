@@ -213,8 +213,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/project-rules/rules-record.mjs',
       'tools/project-rules/rules-cli.mjs',
       'tools/project-rules/rules-ensure.mjs', 'tools/project-rules/rules-priors.mjs',
-      'tools/project-rules/index.mjs', 'tools/project-rules/memory-map-row.mjs',
-      'references/rules/project-layout.md',
+      'tools/project-rules/index.mjs',
+      'references/rules/project-layout.md', 'references/rules/communication.md', 'references/rules/story-sessions.md',
       'tools/distribution-files/index.mjs', 'tools/distribution-files/scripts.mjs',
       'tools/feedback-record.mjs', 'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
@@ -324,6 +324,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/tier-preview.mjs',
       'tools/reference-profile.mjs',
       'migrations/4.0.0-full-flow-offer.md',
+      // the lineage 5.0.0 move (story S2 of KIT-TEXT-LIVES-IN-KIT-FILES-AND-ONE-BLOCK): step 6 applies the note, which runs the module CLI
+      'tools/transition/index.mjs',
+      'migrations/5.0.0-kit-text-in-kit-files.md',
       // the checker-gates verb (story S4 of the consumers epic): the gap entry prints its preview line and the verb imports the read leaf
       'tools/checker-gates-read.mjs',
       'tools/checker-gates.mjs',
@@ -449,11 +452,6 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // the guarded autonomy provisioner doctor + its mode contract (AD-044 Plan 2)
       'tools/autonomy-doctor.mjs',
       'references/modes/autonomy-doctor.md',
-      // the lens-region reconcile — invoked from upgrade/bootstrap prose (a count alone would not
-      // catch its accidental exclusion)
-      'tools/lens-region.mjs',
-      'tools/rules-insert.mjs',
-      'tools/rules-regions.mjs',
       // the progressive-disclosure split payload: the router's mode files + shared contracts must
       // ship, or every placed kit routes into a void (representative pins; the exact count below
       // and the catalog↔modes set-equality guard cover the full set)
@@ -903,7 +901,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 384 = 383 + tools/source-size/setup.mjs (the layout setup) - story S6 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING; 387 = 384 + tools/distribution-files/{index,replace-set,kept-aside}.mjs - story S2 of DISTRIBUTION-FILES-STAY-CURRENT; 388 = 387 + tools/distribution-files/scripts.mjs - story S3 of it (spec:distribution-files/S25)
     // 386 = 388 - tools/migrate-adr-store.mjs and references/modes/migrate-adr-store.md, the retired opt-in mode - story S13 of DISTRIBUTION-FILES-STAY-CURRENT; 384 = 386 - tools/distribution-files/{replace-set,kept-aside}.mjs, the retired replace step - story S14 of it
     // 386 = 384 + tools/source-size/piles.mjs (the pile offer) and tools/source-size/piles-cli.mjs (its writer) - story S12 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
-    assert.deepEqual([packed.length, packed.filter((path) => /^tools\/distribution-files\/(?:replace-set|kept-aside)\.mjs$/.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired distribution-files leaf ships`);
+    // 384 = 386 - tools/{lens-region,rules-regions,rules-insert}.mjs and tools/project-rules/memory-map-row.mjs + references/rules/{communication,story-sessions}.md - story S1 of KIT-TEXT-LIVES-IN-KIT-FILES-AND-ONE-BLOCK; 386 = 384 + tools/transition/index.mjs and migrations/5.0.0-kit-text-in-kit-files.md - story S2 of it
+    const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

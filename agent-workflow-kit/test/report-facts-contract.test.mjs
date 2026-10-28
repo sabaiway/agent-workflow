@@ -7,10 +7,9 @@
 //
 // It pins the SINGLE-HOME shape (D2): the full clause lives in report-footer.md carrying footer-only
 // detail tokens; each mode surface carries EXACTLY ONE compact binding line with the pinned tokens
-// and NONE of the footer-only detail. The memory template's §2.5 Communication bullet is bound here
-// too (D3), so the whole report-facts contract lives in one checker. The AD-054 D6 memory-only
-// Communication-twin pin is SUPERSEDED by AD-061: both templates now carry §2.5 byte-identically —
-// the region parity lives in template-region-parity.test.mjs (single home), not here.
+// and NONE of the footer-only detail. The Communication rules theme's report-facts bullet is bound
+// here too (D3), so the whole report-facts contract lives in one checker; the rules templates carry
+// no Communication section any more (template-region-parity.test.mjs pins that).
 //
 // Dev-only repo test (test/ is outside the package `files` whitelist — not shipped in the tarball).
 
@@ -26,13 +25,6 @@ const read = (rel) => readFileSync(resolve(kitRoot, rel), 'utf8');
 const FOOTER = read('references/shared/report-footer.md');
 const UPGRADE = read('references/modes/upgrade.md');
 const RECOMMENDATIONS = read('references/modes/recommendations.md');
-const KIT_TEMPLATE = read('references/templates/agent_rules.md');
-// The §2.5 Communication region lives in BOTH templates since AD-061 (byte-parity pinned in
-// template-region-parity.test.mjs); this checker reads the memory copy for its report-facts token assertions.
-const MEMORY_TEMPLATE = readFileSync(
-  resolve(kitRoot, '..', 'agent-workflow-memory', 'references', 'templates', 'agent_rules.md'),
-  'utf8',
-);
 
 // Slice between two anchors (report-contract.test.mjs precedent — a missing anchor is red).
 const between = (text, from, to) => {
@@ -65,7 +57,6 @@ const footerClause = flat(between(FOOTER, '### Live host/session facts', ''));
 const upgradeStep4 = flat(between(UPGRADE, 'Equal-head exit', '5. Show the relevant'));
 const upgradeStep8 = flat(between(UPGRADE, '8. Re-stamp', ''));
 const recommendations = flat(RECOMMENDATIONS);
-const memoryComms = flat(between(MEMORY_TEMPLATE, '### 2.5. Communication', '### 2.6'));
 
 describe('report-facts contract — the full clause lives in report-footer.md (D1)', () => {
   it('the footer clause carries every pinned token', () => {
@@ -121,14 +112,12 @@ describe('report-facts contract — recommendations.md loads the footer clause i
   });
 });
 
-describe('report-facts contract — the memory template §2.5 bullet carries the pinned tokens (D3)', () => {
-  it('the memory template §2.5 Communication carries the report-facts bullet with every pinned token', () => {
+describe('report-facts contract — the Communication rules theme carries the pinned tokens in one bullet (D3)', () => {
+  it('references/rules/communication.md carries the report-facts bullet with every pinned token', () => {
+    const bullets = read('references/rules/communication.md').split('\n').filter((line) => line.startsWith('- ') && line.includes(BINDING_MARKER));
+    assert.equal(bullets.length, 1, 'the communication theme carries exactly one report-facts bullet');
     for (const token of PINNED_TOKENS) {
-      assert.ok(memoryComms.includes(token), `the memory template §2.5 bullet is missing the pinned token "${token}"`);
+      assert.ok(flat(bullets[0]).includes(token), `the communication theme's report-facts bullet is missing the pinned token "${token}"`);
     }
-  });
-  it('the kit template carries the SAME §2.5 Communication section (AD-061 — parity home: template-region-parity.test.mjs)', () => {
-    assert.ok(/###\s*2\.5\.\s*Communication/.test(KIT_TEMPLATE),
-      'the kit template must carry the §2.5 Communication section (AD-061 superseded the D6 memory-only pin)');
   });
 });

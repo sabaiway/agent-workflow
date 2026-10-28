@@ -66,13 +66,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   denied` returns before `aw_scan_nested_sandbox`, so the earlier diagnosis and its recovery lane are not printed.
   Narrow fix: run the nested-sandbox scan before the exit-72 return. Proof: a fake trace with that line exits 72
   and prints the recovery hint. Raised by codex at the S10 release review (2026-10-06).
-- **LINE-SAFETY-TEST-FULL-RANGE** — the `UNSAFE` byte list in
-  `agent-workflow-kit/tools/lens-region.test.mjs` samples 11 boundary code points while the
-  comment and the composer contract claim the full C0/DEL/C1/U+2028/U+2029 range; generate the
-  array from the complete ranges (U+0000–U+001F, U+007F–U+009F, U+2028, U+2029) and use it in both
-  checks, so a byte the composer misses cannot slip between samples. Queued at the Phase-1 round
-  cap (a test-breadth minor; the composer itself already covers the full range by construction);
-  land it with the next lens-region-touching Step of this plan.
 - **CODEX-CATALOG-EMPTY-EFFORTS-REMEDY** — `codex-cli-bridge/bin/codex-exec.sh:1054` and
   `codex-review.sh:487` split the catalog parser's answer with `IFS=$'\t' read`; TAB is IFS
   whitespace, so an empty field collapses. An effective entry with `supported_reasoning_levels: []`
@@ -146,38 +139,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   fix shipped in the S1 diff review round 1: the three sentences, red first in `story-flow-canon.test.mjs` (S1).
   Proof: that cell. Residual exposure, not live: a later edit of another field (Epic, Spec, Plan) drifting from
   flow-steps; the S1 cell checks field labels only. Raised by the review lens and codex (2026-10-04).
-- **BRIDGE-SETTINGS-COMMENT-NAMES-THE-RETIRED-LENS-POSTURE** — invariant: no comment names a posture the kit has
-  retired. Origin: `agent-workflow-kit/tools/bridge-settings.mjs:150` likens a preserved settings key to "the
-  lens-region custom-edit posture", which story S7 of DISTRIBUTION-FILES-STAY-CURRENT retires (a differing kit
-  section is written current). Comment-only, no run-time effect. Narrow fix: drop the parenthetical. Raised by the
-  S7 spec review.
-- **LENS-RELAYS-NAME-NO-TARGET-REFUSAL** — invariant: every outcome line the lens reconcile prints has its relay
-  wording. Origin: `agent-workflow-kit/references/modes/upgrade.md:18`, `:78-92`, `:117`,
-  `agent-workflow-kit/tools/upgrade-runlist.mjs:78-87` and `agent-workflow-kit/references/shared/composition-handoff.md:53-55`
-  name no outcome for the `targetNotRegular` and `targetUndecodable` lines (`lens-region.mjs:114-115`) story S7 added.
-  Narrow fix: add `a link or not a regular file — nothing written` and `not valid UTF-8 — nothing written` to those
-  lists (the `upgrade.md` byte pin and the read-set budget move with it). Residual exposure, not live: the agent
-  relays the tool's own printed line, which names the state. Raised by the S7 copy lens.
-- **LENS-DOUBLED-CELL-PROVES-NO-LATER-WRITE** — invariant: a doubled heading withholds the write for its own section
-  only. Origin: `agent-workflow-kit/tools/lens-region.test/story-sessions.test.mjs:215-227` plants every other section
-  current, so a reconcile that stopped after a doubled section stays green. Narrow fix: in the Communication-doubled
-  cell plant `CUSTOM_STORY` in a document built at `WIDE_CAP` (at the default `TARGET_CAP` of 12 the story write is
-  refused), assert the story written with the canon and the logs `[...regionHeadingTwice, storyWritten,
-  lensCurrent]`. Residual exposure, not live: `lens-region.mjs:250-253` returns the state and the reduce
-  goes on. Raised by the S7 diff review (review lens, round 1).
-- **LENS-HEADING-MATCHER-STOPS-BEFORE-ITS-LABEL** — invariant: the title words a line names are the words the
-  matcher reads. Origin: `agent-workflow-kit/tools/rules-regions.mjs:75` matches `Planning, review &
-  process-fidelity` while the label (`:76`) and the doubled note (`lens-region.mjs:134-137`) name `... invariants`; a
-  duplicate retitled `### 2.9. Planning, review & process-fidelity (project additions)` stays doubled. Narrow fix:
-  extend the lens `headingRe` to `process-fidelity invariants` (every prior and both templates carry it) with the
-  part lens-region's matcher clause. Residual exposure, not live: a retitle away from the opening words clears it.
-  Raised by the S7 diff review (review lens, round 1).
-- **LENS-REGION-TEST-COMMENT-NAMES-THE-PRESERVE-POSTURE** — invariant: no comment states the retired preserve
-  posture. Origin: `agent-workflow-kit/tools/lens-region.test.mjs:182-184` says a region matching no prior never
-  reaches the projects running it; since story S7 it is written, only its line differs. Comment-only, the suite is not
-  shipped (`agent-workflow-kit/package.json` files). Narrow fix: the whole comment, its first sentence included,
-  reads "A project deployed on the previous canon is refreshed. Without its own prior entry the region is still
-  written, but its line says it differed rather than refreshed." Raised by the S7 diff review (review lens, round 1).
+- **BRIDGE-SETTINGS-COMMENT-NAMES-THE-RETIRED-LENS-POSTURE** — invariant: no comment names a posture or module the
+  kit has retired. Origin: `agent-workflow-kit/tools/bridge-settings.mjs:150` likens a preserved settings key to "the
+  lens-region custom-edit posture", and `agent-workflow-kit/tools/script-priors.mjs:6` names "the lens-region idiom";
+  the posture retired with story S7 of DISTRIBUTION-FILES-STAY-CURRENT and the module `lens-region.mjs` with kit
+  20.0.0 (AD-216). Comment-only, no run-time effect. Narrow fix: drop the parenthetical and name the idiom by what it
+  does. Raised by the S7 spec review; restated at the KIT-TEXT release.
 - **STORY-FLOW-S5-DOCS-PATH-SELF-CHECK** — `agent-workflow-kit/test/template-region-parity.test.mjs:180` proves
   "reads nothing under docs/ai" only by its own source lacking the literal `docs/ai`; a path built from segments
   passes. Narrow fix: refuse any quoted `docs` path segment in the source. Raised by the review lens (2026-10-04).
@@ -649,8 +616,9 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `docs/ai/specs/kit/install/init-project/index.md` ("for profile-gap every PROFILE_GAPS entry is covered") states this
   proof. Fix: the cell takes the expected set from the basenames of `PROFILE_GAPS.map((e) => e.apply(root))` and asserts
   it equals the row, keeping the rendered-union check. Proof: a fixture registry entry naming a new tool fails the cell.
-  Residual, not live: today's row names `rules-insert.mjs`, `tier-preview.mjs` and `checker-gates.mjs`, every writer the
-  six entries' applies use. Raised by the S9 diff review (lens).
+  Residual, not live: today's row names `tier-preview.mjs` and `checker-gates.mjs`, every writer the four entries'
+  applies use (the two rules-file entries and `rules-insert.mjs` retired with kit 20.0.0, AD-216). Raised by the S9
+  diff review (lens).
 - **USER-STEP-NAMES-KIT-DOC-RELATIVE** — invariant: a user step names a kit doc by a path the user can open from the
   project. Origin: the `gates-inert.unfillable` and `gates-inert.producer-unrecognized` steps
   (`agent-workflow-kit/tools/write-lanes.mjs:190-197`) cite `references/modes/gates.md`, a path inside the installed kit
@@ -737,24 +705,11 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   and `--record` refuses with the false `is not a regular file` (`agent-workflow-kit/tools/project-rules/rules-record.mjs:41`).
   Narrow fix: past `wrongNode`, read an `error` record as unreadable and replace it, the message naming the reader's
   code; a spec edit to rules-ensure. Raised by the S2 diff review (lens).
-- **MEMORY-MAP-ROW-OUTRANKS-A-WITHHELD-POINTER** — invariant: a pointer the reconcile withholds this run (an engine
-  too old for its fragment) never loses its line to the Memory Map row, and the row never pushes a later migration
-  block past the 100-line cap. Origin: the row leaf's cap check sees only the current text, while the chained
-  pointers follow a causal order (`agent-workflow-kit/tools/inject-methodology.mjs:531-541`) and the pre-1.2.0 block
-  placement exits `cap` (`agent-workflow-kit/tools/migration-blocks.mjs:125-126`). Narrow fix: skip the row with a
-  stated reason when a pointer was withheld this run; order the migration blocks before the row. Raised by the
-  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S3 spec review (lens).
 - **ROUTER-BUDGET-LITERALS-COPIED-IN-THE-RECOMMENDATIONS-SUITE** — invariant: each router byte budget is written once,
   in `BUDGET` of `agent-workflow-kit/test/router-contract.test.mjs`. Origin:
   `agent-workflow-kit/test/recommendations-language-contract.test.mjs:775,858,915,976,1220` copy 52224, so a
   documented bump of `routerPlusMode` leaves five stale pins. Narrow fix: move `BUDGET` into a small data module both
   suites import, and read it there. Raised by the S3 spec review (orchestrator self-review).
-- **MEMORY-MAP-ANCHOR-WRAPPED-AFTER-A-PIPE-READS-WHOLE** — invariant: an anchor row spread over more than one line is
-  always skipped, never split by the inserted row. Origin: `isWhole` in
-  `agent-workflow-kit/tools/project-rules/memory-map-row.mjs:23` reads a line as a whole row when it ends with `|`, so
-  a `docs/ai/agent_rules.md` row broken right after a cell separator takes the new row between its two lines. Narrow
-  fix: a whole anchor row carries its three cells on its one line; a memory-map-row cell for the break after a `|`.
-  Raised by the EVERY-PROJECT-IS-LAID-OUT-BY-MEANING S3 diff review (codex).
 - **SPEC-STORE-REFUSAL-WRITES-NOTHING-UNPINNED** — invariant: a `--write-baseline` run that meets a spec store present
   but not a directory refuses, exit 1, and leaves the config byte-unchanged. Origin: spec source-size S29 (revision 3)
   states the refusal; the S5 plan's T3 names a `--check` cell over a symlinked store and no writer cell proving
@@ -827,8 +782,36 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   an absent installer. Residual, not live through the advisor: its skip lines for both items already name the
   `enforcement` item or the user's own step (`recommendations.mjs:984,1013`), so only a direct writer run meets the
   bare line. Raised during the DISTRIBUTION-FILES-STAY-CURRENT S9 spec review.
+- **HOOK-RULES-LINE-WAITS-FOR-AN-ENGINE-THEME** — invariant: the `hook-checks` item arms the rules line whenever
+  `--check` would pass. Origin: the item arms it only when every theme answers `current`
+  (`agent-workflow-kit/tools/git-hooks.mjs:112-113`), while `--check` also passes on `absent`; from KIT-TEXT S1 the
+  engine-homed `lens` theme stays `absent` until an engine that supplies it is installed. Narrow fix: arm when every
+  theme is `current` or `absent` and at least one is `current`. Residual exposure, live but truthful: the item says
+  `lens: absent` and the line arms after the engine refresh the upgrade's not-laid line names. Raised by the KIT-TEXT
+  S1 spec review (lens).
+- **RULES-RECORD-VOUCHES-NO-PRECEDENCE-LINE** — invariant: a recorded effective rules file opens with the kit's
+  precedence line. Origin: from KIT-TEXT S1 every theme template opens with `PRECEDENCE_LINE` and an agent's merge
+  keeps it, but `--record` checks only the digests and the frontmatter (spec project-rules, part rules-record), so a
+  merged effective file without the line is recorded `current`. Narrow fix: the record writer refuses a merged
+  effective file whose first non-blank line after the title is not the constant. Residual exposure, live: an agent
+  reading such a file misses which copy governs. Raised by the KIT-TEXT S1 spec review (lens).
+- **KIT-BLOCK-FENCE-HIDES-ITS-MARKERS** — invariant: the kit block's finder never inserts a second block and never
+  names fewer marker lines than the file shows. Origin: from KIT-TEXT S1 a fence hides a marker line when a later
+  line closes it (spec entry-pointers, "Two marker lines"), so a stray opener above the block closed by a later code
+  block hides both markers (absent, a second block inserted at the start), and an opener inside the block closed
+  after it hides the end marker (a refusal naming one line). Likelihood low: the block is inserted at line 1 and stays
+  there. Fix direction, to weigh when taken: name every fenced marker line in the refusal's line; treating a fenced
+  marker line as blocking an insert also refuses a file that only quotes the markers in a sample, a new upgrade STOP,
+  so the taker weighs that against the silent duplicate insert. Raised by the KIT-TEXT S1 spec review (lens).
 
 ## Closed
+
+- **LINE-SAFETY-TEST-FULL-RANGE**, **LENS-RELAYS-NAME-NO-TARGET-REFUSAL**, **LENS-DOUBLED-CELL-PROVES-NO-LATER-WRITE**,
+  **LENS-HEADING-MATCHER-STOPS-BEFORE-ITS-LABEL**, **LENS-REGION-TEST-COMMENT-NAMES-THE-PRESERVE-POSTURE**,
+  **MEMORY-MAP-ROW-OUTRANKS-A-WITHHELD-POINTER** and **MEMORY-MAP-ANCHOR-WRAPPED-AFTER-A-PIPE-READS-WHOLE** — moot,
+  closed in kit 20.0.0 (AD-216): each named a defect of `lens-region.mjs`, `rules-regions.mjs`,
+  `project-rules/memory-map-row.mjs` or their suites, which KIT-TEXT S1 deletes with the section reconcile, the
+  Memory Map row writer, the pointer slots and the entry-file cap they served.
 
 - **STORY-FLOW-S6-EACH-PRIOR-REFRESHES** — invariant: a rules file on each story prior refreshes. Origin:
   `agent-workflow-kit/tools/rules-regions.test.mjs:324-343` pinned the prior count and prior 1's bytes only. Raised

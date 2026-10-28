@@ -4,18 +4,18 @@
 methodology *text* — the capped plan shape (goal and boundary, module ledger, verification), the plan-file lifecycle
 (`docs/plans/*.md`, ephemeral, never committed), the `queue.md` series index, the mandatory
 final **Phase: Cleanup**, the **orchestration-recipe** vocabulary (Solo / Reviewed / Council /
-Delegated / Subagent), the bounded slot fragments the family kit injects into a deployed project's
-`AGENTS.md`, and the canonical agent-rules lens block the kit renders into a deployed
-`docs/ai/agent_rules.md`.
+Delegated / Subagent), the bounded fragments the family kit reads into a deployed project's
+`AGENTS.md`, and the canonical lens rules theme (`references/rules/lens.md`) the kit lays down as a
+rules theme in a deployed project.
 
 This is the **methodology engine** of the `agent-workflow` family — the canonical source the
 rest of the family builds on. It is **content**, not a runtime: it reads nothing, writes
 nothing, and mutates no project file. It deliberately **knows nobody else** in the family —
 it only *provides* the methodology; the family composition root (`agent-workflow-kit`) is the
-one that injects it. The kit reads **this canon live from the installed engine** and injects the
-bounded slot from it — **one source of truth, no bundled mirror** (Plan 3D / AD-016).
-`npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a core part of the kit; if a
-slot fill is needed but the engine is absent, the kit's reconcile **fails loudly**.
+one that writes it into a project. The kit reads **this canon live from the installed engine** and
+writes its fragments into the deployed entry point — **one source of truth, no bundled mirror**
+(Plan 3D / AD-016). `npx @sabaiway/agent-workflow-kit@latest init` installs the engine as a core part
+of the kit; if the engine is absent, the kit's reconcile **fails loudly** and writes nothing.
 
 ## Install
 
@@ -35,8 +35,8 @@ methodology canon on disk for the family to read.
 ## Use
 
 The methodology is consumed by the family composition root, not invoked directly. Day to day
-you install and use the **kit** (`@sabaiway/agent-workflow-kit`), which injects the
-methodology slot into your project's `AGENTS.md`. Install the engine standalone when you want
+you install and use the **kit** (`@sabaiway/agent-workflow-kit`), which writes the
+methodology into your project's `AGENTS.md`. Install the engine standalone when you want
 the canonical methodology reference on disk:
 
 - [`references/planning.md`](references/planning.md) — the **plan canon**: the capped plan shape
@@ -49,35 +49,31 @@ the canonical methodology reference on disk:
   feature-vs-page precedence table, spec-driven feature-sliced architecture, and the retroactive
   onboarding path. The deployed reader `scripts/spec-schema.mjs` (memory) is pinned against it.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded**
-  methodology fragment the composition root injects into a deployed `AGENTS.md` (a short summary +
-  pointer, kept under the entry point's line cap).
+  methodology fragment the composition root reads into a deployed `AGENTS.md` (a short summary that
+  routes to the full reference).
 - [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
   reference: the five recipes (Solo / Reviewed / Council / Delegated / Subagent) over the bridges'
   role vocabulary and the executor vehicle's `carry` role, the when/why, the graceful-degradation
   lattice, and the quota/health guard.
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
-  orchestration fragment the composition root injects into a deployed `AGENTS.md`, routing to the
+  orchestration fragment the composition root reads into a deployed `AGENTS.md`, routing to the
   in-project recipes surface.
 - [`references/autonomy-slot.md`](references/autonomy-slot.md) — the **bounded** one-line autonomy
-  fragment the composition root injects into a deployed `AGENTS.md`: the cross-agent read contract
+  fragment the composition root reads into a deployed `AGENTS.md`: the cross-agent read contract
   for `docs/ai/autonomy.json` (read at session start; the canonical default floor when absent; STOP
   on malformed), routing to the in-project `set-autonomy` / `autonomy-doctor` surfaces.
 - [`references/procedures.md`](references/procedures.md) — the canonical **activity-procedures** canon:
   the named activities (`plan-authoring`, `plan-execution`, `routine`, `feedback-triage`, `epic`, `task`) as ordered steps with typed recipe slots,
   read live and rendered by the read-only `/agent-workflow-kit procedures <activity>`.
-- [`references/agent-rules-lens.md`](references/agent-rules-lens.md) — the canonical **agent-rules
-  lens** block (the planning/review/process-fidelity invariants) the kit renders into a deployed
-  `docs/ai/agent_rules.md` region and refreshes on upgrade — a canon wording change ships as an
-  engine-only release.
-- [`references/agent-rules-lens-priors.md`](references/agent-rules-lens-priors.md) — the
-  **append-only store** of previously-shipped lens bodies; the kit refreshes a deployed region that
-  matches a known body, and any other body is written with the current canon, none preserved.
+- [`references/rules/lens.md`](references/rules/lens.md) — the canonical **lens** rules theme (the
+  planning/review/process-fidelity invariants) the kit lays down as a rules theme under a deployed
+  `docs/ai/rules/` — a canon wording change ships as an engine-only release.
 
 ## What this package ships
 
 `SKILL.md` (the canon overview + ownership rule), `references/` (the full methodology + the
-orchestration + activity-procedures references + the bounded slot fragments + the agent-rules lens
-fragment and its prior store), `capability.json`
+orchestration + activity-procedures references + the bounded fragments + the lens rules theme under
+`references/rules/`), `capability.json`
 (the family manifest), and this installer. It ships **no** family-wide tooling (the schema/validator/injection live in the
 composition root) and mutates nothing — preserving "knows nobody".
 

@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { makeEngine as buildEngine, tempDir } from '../inject-methodology.test/engine-harness.test.mjs';
 
 export const KIT = 'docs/ai/rules/project-layout.md';
 export const LOCAL = 'docs/ai/rules/local/project-layout.md';
@@ -17,7 +19,21 @@ export const KIT_TEXT = '---\ntype: rules\nmaxLines: 80\n---\n\n# Project layout
 export const LOCAL_TEXT = '---\ntype: rules\n---\n\n# Project layout\n\nTests live in test/.\n';
 export const MERGED_TEXT = '---\ntype: rules\nmaxLines: 80\n---\n\n# Project layout\n\nA module is a directory. Tests live in test/.\n';
 
+// The suites written for the one theme keep judging it alone through the registry injection.
+export const ONE_THEME = Object.freeze([Object.freeze({
+  name: 'project-layout', home: 'kit', template: 'references/rules/project-layout.md', readWhen: '**Start of every session**',
+})]);
+export const THEME_NAMES = Object.freeze(['project-layout', 'communication', 'story-sessions', 'lens']);
+export const KIT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
 export const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+// makeEngine({ lens }) → { env, home, dir }: the shared engine fixture, its lens theme template only when asked,
+// and an empty home, the op's engine deps.
+export const makeEngine = ({ lens = true } = {}) => {
+  const dir = buildEngine({ omit: lens ? [] : ['lens'] });
+  return { env: { AGENT_WORKFLOW_ENGINE_DIR: dir }, home: tempDir('project-rules-home-'), dir };
+};
 
 // entryOf({ kit, local?, effective }) → the record entry those texts stand for; no local = 'absent'.
 export const entryOf = ({ kit, local, effective }) =>

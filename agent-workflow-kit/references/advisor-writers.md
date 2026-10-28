@@ -46,7 +46,7 @@
 | worktrees-dir | harness | velocity-profile.mjs |
 | worktrees-dir.home | user | user step |
 | spec-adoption | chat | ensure-configs.mjs |
-| profile-gap | chat | rules-insert.mjs, tier-preview.mjs, checker-gates.mjs |
+| profile-gap | chat | tier-preview.mjs, checker-gates.mjs |
 | jev-connect | user | user step |
 | jev-skill | harness | jev-skill.mjs |
 | jev-skill.not-current | kit | jev-skill.mjs |

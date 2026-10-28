@@ -79,14 +79,13 @@ describe('engine package content — DAG guard (knows nobody)', () => {
       'bin/install.mjs',
       'capability.json',
       'package.json', // npm always includes the manifest, even though files[] does not list it
-      'references/agent-rules-lens.md',
-      'references/agent-rules-lens-priors.md',
       'references/autonomy-slot.md',
       'references/methodology-slot.md',
       'references/orchestration-slot.md',
       'references/orchestration.md',
       'references/planning.md',
       'references/procedures.md',
+      'references/rules/lens.md', // the lens rules theme the kit lays (spec project-rules, part themes)
       'references/specs.md', // the feature-spec canon (spec layer 1a)
     ].sort();
     // Sandbox-safe npm shape (D4): cache under $TMPDIR (cleaned after the run), network

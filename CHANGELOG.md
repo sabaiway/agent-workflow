@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-28 — AD-216: the kit's text lives in kit files and one kit block; one upgrade moves every project once (kit 20.0.0, engine 6.0.0 and memory 9.0.0 MAJOR; both bridges unchanged)
+
+**A project's own `AGENTS.md` and `docs/ai/agent_rules.md` can no longer lose the kit's updates.** The kit writes one
+block of `AGENTS.md` between `<!-- workflow:kit:start -->` and `<!-- workflow:kit:end -->`, current on every upgrade
+with no question, and ships Communication, Story sessions and the engine's lens as rules themes under
+`docs/ai/rules/`; `docs/ai/agent_rules.md` is wholly the project's. The pointer slots, the line cap, the section
+reconcile, the insert lane, the row writer and two advisor items retire. The deployment lineage moves `4.0.0` →
+`5.0.0` in kit and memory; its one note runs `tools/transition/index.mjs` once, which refuses with nothing removed
+while the block, an engine text or the lens theme is missing and otherwise removes the old copies, found by their titles at any level. The
+release notes name what the one-time move leaves. Contracts: entry-pointers revision 2, project-rules revision 10,
+transition revision 1, rules-regions retired. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-27 — AD-215: the spec reader counts no children (memory 8.7.0, engine 5.13.0 and kit 19.5.0 MINOR; both bridges unchanged)
 
 **The spec reader no longer refuses an index that lists more than 30 children**, in every copy: the memory canon, the

@@ -155,8 +155,8 @@ staged diff, so no row commits before the diff review.
 7. **Commit boundary** — the orchestrator makes the single commit of the reviewed staged diff once the
    review closes (a release that ships several stories carries their diffs in its one commit); every
    other carrier never commits; the commit-approval policy lives in the project's own rules.
-8. **After the last row** — the project-declared release or extra stages (the `workflow:methodology`
-   slot; this canon bakes in none) write their committable outputs before step 5, so the diff review
+8. **After the last row** — the project-declared release or extra stages (the project's own text,
+   outside the `workflow:kit` block; this canon bakes in none) write their committable outputs before step 5, so the diff review
    judges them; `## Phase: Cleanup` (*Cleanup, and the plan's own life*) runs after the commit and
    changes nothing the review judged.
 

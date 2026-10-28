@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { lstatSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EPIC_KEYS, EPIC_TEMPLATE_TEXT, EPIC_VALUES, LF, MODULE, MODULE_ROW, PLAN, PROMPT, QUEUE, SURFACES, TASK_KEYS,
@@ -12,7 +12,6 @@ const KIT_SOURCE = fileURLToPath(new URL('../', import.meta.url));
 const REPOSITORY = fileURLToPath(new URL('../../', import.meta.url));
 const BACKTICK = String.fromCharCode(96);
 const EPIC = 'docs/ai/epics/WALK-EPIC.md';
-const RULES = 'docs/ai/agent_rules.md';
 const COPIES = 'template-copies';
 const STORY_ROW = '- S1 | Greet the reader | depends-on: none | owns: src/greet.mjs | shared: none | state: planned';
 const AUTHORED = [EPIC, PLAN, PROMPT];
@@ -130,16 +129,10 @@ const runWalk = (state) => {
   const closedEpic = readFileSync(join(project, EPIC), 'utf8');
   tool('close-again', 'epic-shape-cli.mjs', ['--close', EPIC]);
   walkStage('E5', []);
-  const reconcile = tool('reconcile', 'lens-region.mjs', ['reconcile', RULES]);
-  const lines = reconcile.stdout.split(LF);
-  const storyIndex = lines.findIndex((line) => line.includes('no "### 2.x. Story sessions"'));
-  const offer = storyIndex < 0 ? '' : lines[storyIndex + 1] ?? '';
-  const preview = offer.split(BACKTICK)[1] ?? '';
-  run('offer-preview', '/bin/sh', ['-c', preview]);
   writeFixture(join(project, COPIES, 'EPIC_TEMPLATE.md'), installed['EPIC_TEMPLATE.md']);
   tool('epic-template-check', 'epic-shape-cli.mjs', ['--check', `${COPIES}/EPIC_TEMPLATE.md`]);
   return { ...ground, state, kitBefore, kitAfter: snapshotTree(kit), beforeAuthoring, ...solo, guided, deviations,
-    installed, rendered, closedEpic, offer, preview, walk: records.slice(walkStart) };
+    installed, rendered, closedEpic, walk: records.slice(walkStart) };
 };
 const getStep = (fixture, label) => fixture.records.find((record) => record.label === label);
 const assertCode = (record, code) => assert.equal(record?.code, code, `${record?.label}: ${record?.stderr || record?.stdout}`);
@@ -246,18 +239,12 @@ describe('spec:tier-walk/S7 preserves the home and optional state', () => {
     else assert.deepEqual(readFileSync(join(fixture.project, QUEUE)), fixture.beforeAuthoring[QUEUE].bytes);
   });
 });
-describe('spec:tier-walk/S8 story offer survives the lens stop and runs', () => {
+describe('spec:tier-walk/S8 no placeholder and no section offer', () => {
   for (const state of STATES) {
-    it(`${state}: offer`, () => {
-      const fixture = fixtures[state];
-      const reconcile = getStep(fixture, 'reconcile');
-      assertCode(reconcile, 1);
-      assert.match(reconcile.stderr, /STOP/);
-      assert.match(reconcile.stdout, /Communication section already current/);
-      assert.ok(fixture.offer.includes('note:'));
-      assert.ok(fixture.preview.length > 0);
-      assertCode(getStep(fixture, 'offer-preview'), 0);
-      assert.match(getStep(fixture, 'offer-preview').stdout, /story-sessions: planned/);
+    it(`${state}: the installed copy ships no section reconcile and no insert lane`, () => {
+      const tools = join(fixtures[state].kit, 'tools');
+      assert.equal(existsSync(join(tools, 'tier-preview.mjs')), true, 'the installed tools are found');
+      for (const name of ['lens-region.mjs', 'rules-insert.mjs']) assert.equal(existsSync(join(tools, name)), false, name);
     });
     it(`${state}: no unresolved placeholders`, () => {
       for (const record of fixtures[state].records) {

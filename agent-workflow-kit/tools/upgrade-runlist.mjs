@@ -20,10 +20,10 @@ const entry = (id, command, consent, outcomes) =>
 
 export const UPGRADE_RUNLIST = Object.freeze([
   entry(
-    'pointers',
+    'entry-block',
     'node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md',
     null,
-    ['added', 'already present', 'written over a different one', 'skipped', 'STOP'],
+    ['added', 'already current', 'written', 'refused', 'STOP'],
   ),
   entry(
     'footprint',
@@ -69,21 +69,6 @@ export const UPGRADE_RUNLIST = Object.freeze([
       'unsupported host',
       'skipped-readonly',
       'could not refresh',
-    ],
-  ),
-  entry(
-    'lens',
-    'node ${CLAUDE_SKILL_DIR}/tools/lens-region.mjs reconcile <project>/docs/ai/agent_rules.md',
-    null,
-    [
-      'refreshed',
-      'already current',
-      'differing body written',
-      'file absent',
-      'engine too old',
-      'over the line cap — refused',
-      'section absent — noted',
-      'STOP',
     ],
   ),
   entry(

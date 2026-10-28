@@ -189,13 +189,13 @@ describe('runCli --expect-file — end-to-end against a stubbed installer that w
   };
 
   it('a present file containing the substring → PASS with the ✓ file line', () => {
-    const rel = '.claude/skills/agent-workflow-engine/references/agent-rules-lens.md';
+    const rel = '.claude/skills/agent-workflow-engine/references/rules/lens.md';
     const { code, text } = runWithFile(['--expect-file', `${rel}=process-fidelity invariants`], {
       writeRel: rel,
-      content: '### 2.x. Planning, review & process-fidelity invariants\n',
+      content: '# Planning, review and process-fidelity invariants\n',
     });
     assert.equal(code, 0);
-    assert.match(text, /✓ file .*agent-rules-lens\.md contains/);
+    assert.match(text, /✓ file .*rules\/lens\.md contains/);
     assert.match(text, /PASS — all 1 expectation/);
   });
 

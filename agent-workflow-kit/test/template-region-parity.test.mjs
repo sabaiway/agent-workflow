@@ -1,11 +1,12 @@
 // template-region-parity.test.mjs — the AD-038 discovery-line template guard: the §1.1 session-start
 // region of the kit and memory `agent_rules.md` templates, and the "Active recipes:" handover slot
 // line of the kit and memory `handover.md` templates, stay BYTE-IDENTICAL across the two packages
-// (the two templates deliberately diverge elsewhere — §1.3/§2.x/§5 — so the whole-file parity guard
+// (the two templates deliberately diverge elsewhere — §1.3/§5 — so the whole-file parity guard
 // cannot cover these regions). Both regions stay PATH-NEUTRAL: the memory substrate names no sibling
 // skill (AD-019 knows-nobody DAG), so `/agent-workflow-kit` never appears in either template region —
 // the kit-command convenience lives only in the kit SKILL/README and a project's own dogfood files.
-// Non-vacuity: an injected divergence must be caught by the same extractor + comparator.
+// The Communication and Story sessions texts live in the kit's two rules themes, never in a rules
+// template. Non-vacuity: an injected divergence must be caught by the same extractor + comparator.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_TEMPLATES = join(HERE, '..', 'references', 'templates');
+const KIT_THEMES = join(HERE, '..', 'references', 'rules');
 const MEMORY_TEMPLATES = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'templates');
 const LF = String.fromCharCode(10);
 const RULES_FILE = 'agent_rules.md';
@@ -24,9 +26,7 @@ const KIT_PATH_RE = /agent-workflow-kit|<kit>|tools\//;
 const FOR_THE_USER = '## For the user';
 const LABELS = ['**What was done, and for what:**', '**What is next, and why:**'];
 const PLACEHOLDER_RE = /\{\{|TODO|<[a-z]/i;
-const STORY_HEADING = '### 2.7. Story sessions';
-const LENS_HEADING = '### 2.6. Planning, review & process-fidelity invariants';
-const STRUCTURAL_BOUNDARY = /^(---$|## |### )/;
+const RETIRED_SECTION_RE = /^#+ .*\b(?:Communication|Story sessions|Planning, review)/;
 // The literal Story sessions canon, copied byte for byte from the story-flow contract's flow-steps
 // part, split at its em dashes so no source line passes the line cap.
 const STORY_CANON = [
@@ -37,6 +37,18 @@ const STORY_CANON = [
 ].join(String.fromCharCode(8212));
 
 const read = (root, name) => readFileSync(join(root, name), 'utf8');
+
+// A kit theme template: frontmatter, its title, PRECEDENCE_LINE, then the body's non-blank lines.
+const themeBody = async (name) => {
+  const { PRECEDENCE_LINE } = await import('../tools/project-rules/index.mjs');
+  assert.equal(typeof PRECEDENCE_LINE, 'string', 'the project-rules index exports PRECEDENCE_LINE');
+  const lines = read(KIT_THEMES, `${name}.md`).split(LF);
+  assert.equal(lines[0], '---', `${name}: the theme opens with frontmatter`);
+  const rest = lines.slice(lines.indexOf('---', 1) + 1).filter((line) => line.trim() !== '');
+  assert.equal(rest[1], PRECEDENCE_LINE, `${name}: PRECEDENCE_LINE follows the title`);
+  return rest.slice(2);
+};
+const retiredSections = (text) => text.split(LF).filter((line) => RETIRED_SECTION_RE.test(line));
 
 // The §1.1 region: its heading line through (exclusive) the next `### ` heading.
 const extractSessionStartRegion = (text) => {
@@ -85,26 +97,9 @@ describe('agent_rules.md §1.1 — kit and memory template regions are byte-iden
   });
 });
 
-// The §2.5 Communication region: its heading line through (exclusive) the next `### ` heading.
-// AD-061 supersedes the AD-054 memory-only Communication-twin pin: BOTH templates now carry the
-// section byte-identically (the kit fallback deploy path must communicate under the same bar).
-const extractCommunicationRegion = (text) => {
-  const heading = '### 2.5. Communication (user-facing messages)';
-  const start = text.indexOf(heading);
-  assert.notEqual(start, -1, 'the §2.5 Communication heading exists');
-  const next = text.indexOf('### ', start + heading.length);
-  return text.slice(start, next === -1 ? text.length : next);
-};
-
-describe('agent_rules.md §2.5 Communication — kit and memory template regions are byte-identical (AD-061)', () => {
-  const kit = extractCommunicationRegion(read(KIT_TEMPLATES, 'agent_rules.md'));
-  const memory = extractCommunicationRegion(read(MEMORY_TEMPLATES, 'agent_rules.md'));
-
-  it('the two §2.5 regions match byte-for-byte', () => {
-    assert.equal(kit, memory, 'kit and memory agent_rules.md §2.5 regions have drifted — edit both in the same change');
-  });
-
-  it('the region carries the plain-language bar (the AD-061 communication contract)', () => {
+describe('the communication theme carries the plain-language bar (the AD-061 communication contract)', () => {
+  it('references/rules/communication.md carries every plain-language token', async () => {
+    const body = (await themeBody('communication')).join(LF);
     for (const token of [
       'Plain language',
       'plain words of the dialogue language',
@@ -113,101 +108,42 @@ describe('agent_rules.md §2.5 Communication — kit and memory template regions
       'glossed in plain words',
       'plain English stays plain',
     ]) {
-      assert.ok(kit.includes(token), `the §2.5 region is missing the plain-language token "${token}"`);
+      assert.ok(body.includes(token), `the communication theme is missing the plain-language token "${token}"`);
     }
-  });
-
-  it('the region keeps the report-facts bullet (the AD-054 tokens ride into both templates)', () => {
-    for (const token of ['live tool output', 'context, never report facts']) {
-      assert.ok(kit.includes(token), `the §2.5 region is missing the report-facts token "${token}"`);
-    }
-  });
-
-  it('non-vacuous: an injected divergence is caught by the same extractor + comparator', () => {
-    const mutated = read(KIT_TEMPLATES, 'agent_rules.md').replace('Plain language', 'Fancy language');
-    assert.notEqual(extractCommunicationRegion(mutated), memory, 'the guard detects a region divergence');
-  });
-
-  it('the §2.5 region is immediately followed by the §2.6 lens heading in BOTH templates (the renumber pin)', () => {
-    for (const [label, text] of [
-      ['kit', read(KIT_TEMPLATES, 'agent_rules.md')],
-      ['memory', read(MEMORY_TEMPLATES, 'agent_rules.md')],
-    ]) {
-      const region = extractCommunicationRegion(text);
-      const after = text.slice(text.indexOf(region) + region.length);
-      assert.ok(after.startsWith('### 2.6. Planning, review & process-fidelity invariants'),
-        `${label}: §2.5 Communication must be immediately followed by the §2.6 lens heading`);
-      assert.equal((text.match(/^### 2\.5\./gm) ?? []).length, 1, `${label}: exactly one §2.5 heading`);
-      assert.equal((text.match(/^### 2\.6\./gm) ?? []).length, 1, `${label}: exactly one §2.6 heading`);
-    }
-  });
-
-  it('non-vacuous: a doctored kit template with the lens back at 2.5 fails the renumber pin (injected)', () => {
-    const doctored = read(KIT_TEMPLATES, 'agent_rules.md').replace('### 2.6. Planning', '### 2.5. Planning');
-    const region = extractCommunicationRegion(doctored);
-    const after = doctored.slice(doctored.indexOf(region) + region.length);
-    assert.ok(!after.startsWith('### 2.6. Planning'), 'the doctored regression must be caught by pin (a)');
   });
 });
 
-const extractStoryRegion = (text, heading = STORY_HEADING) => {
-  const lines = text.split(LF);
-  const start = lines.indexOf(heading);
-  assert.notEqual(start, -1, `${heading} exists in the template`);
-  const tail = lines.slice(start + 1);
-  const boundary = tail.findIndex((line) => STRUCTURAL_BOUNDARY.test(line));
-  return [heading, ...tail.slice(0, boundary === -1 ? undefined : boundary)].join(LF) + (boundary === -1 ? '' : LF);
-};
+describe('spec:session-rules/S1 the two rules in their themes, and no rules template carries their sections', () => {
+  it('the communication theme body ends with the Two blocks for the user bullet, once', async () => {
+    const body = await themeBody('communication');
+    assert.ok(body.at(-1).startsWith(SESSION_CLOSE_LEAD), body.at(-1));
+    assert.equal(body.filter((line) => line.includes('Two blocks for the user')).length, 1);
+  });
 
-describe('Story sessions template twins spec:rules-regions/S19', () => {
-  it('the two Story sessions regions match byte-for-byte', () => {
-    const kit = extractStoryRegion(read(KIT_TEMPLATES, RULES_FILE));
-    const memory = extractStoryRegion(read(MEMORY_TEMPLATES, RULES_FILE));
-    assert.equal(kit, memory);
+  it('the story-sessions theme body line ends with the bridge-executor sentence', async () => {
+    const [line] = await themeBody('story-sessions');
+    assert.match(line.slice(line.lastIndexOf('. ') + 2), new RegExp(TASK_PHRASE), 'the body does not end with the bridge-executor sentence');
+    assert.equal(line.split(TASK_PHRASE).length, 2);
   });
-  it('section 2.6 is immediately followed by section 2.7 in both templates', () => {
-    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) {
-      const text = read(root, RULES_FILE);
-      const lens = extractStoryRegion(text, LENS_HEADING);
-      assert.ok(text.slice(text.indexOf(lens) + lens.length).startsWith(STORY_HEADING), root);
-    }
-  });
-  it('both Story sessions bodies equal the literal canon, and the guard reads nothing under the project docs spec:story-flow/S5', () => {
-    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) {
-      const region = extractStoryRegion(read(root, RULES_FILE));
-      assert.equal(region, [STORY_HEADING, STORY_CANON, '', ''].join(LF), `S5: the ${root} Story sessions body is not the four-session canon`);
-    }
+
+  it('the story-sessions theme carries, after its title and the precedence line, exactly the literal canon, and neither rules template carries a Story sessions section; the guard reads nothing under the project docs spec:story-flow/S5', async () => {
+    assert.deepEqual(await themeBody('story-sessions'), [STORY_CANON], 'S5: the story-sessions theme body is not the four-session canon');
+    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) assert.deepEqual(read(root, RULES_FILE).split(LF).filter((line) => /^#+ .*Story sessions/.test(line)), [], root);
     assert.doesNotMatch(readFileSync(fileURLToPath(import.meta.url), 'utf8'), new RegExp(['docs', 'ai'].join('/')));
   });
-  it('the parity comparison rejects a twin changed in memory', () => {
-    const kit = extractStoryRegion(read(KIT_TEMPLATES, RULES_FILE));
-    const memory = extractStoryRegion(read(MEMORY_TEMPLATES, RULES_FILE));
-    assert.equal(kit, memory);
-    const changed = memory.replace(LF + 'A story', LF + 'A STORY');
-    assert.notEqual(memory, changed);
-    assert.throws(() => assert.equal(kit, changed), assert.AssertionError);
+
+  it('neither theme names a kit path', async () => {
+    for (const name of ['communication', 'story-sessions']) assert.doesNotMatch((await themeBody(name)).join(LF), KIT_PATH_RE, name);
   });
-});
 
-describe('spec:session-rules/S1 the session-close bullet and the bridge-executor sentence in both templates', () => {
-  for (const [label, root] of [['kit', KIT_TEMPLATES], ['memory', MEMORY_TEMPLATES]]) {
-    it(`the Communication region ends with the Two blocks for the user bullet: ${label}`, () => {
-      const lines = extractCommunicationRegion(read(root, RULES_FILE)).split(LF).filter((line) => line.trim() !== '');
-      assert.ok(lines.at(-1).startsWith(SESSION_CLOSE_LEAD), lines.at(-1));
-      assert.equal(lines.filter((line) => line.includes('Two blocks for the user')).length, 1);
-    });
+  it('neither the kit nor the memory rules template carries a Communication, a Story sessions or a planning-review invariants section', () => {
+    for (const root of [KIT_TEMPLATES, MEMORY_TEMPLATES]) assert.deepEqual(retiredSections(read(root, RULES_FILE)), [], root);
+  });
 
-    it(`the Story sessions body line ends with the bridge-executor sentence: ${label}`, () => {
-      const [, body] = extractStoryRegion(read(root, RULES_FILE)).split(LF);
-      assert.match(body.slice(body.lastIndexOf('. ') + 2), new RegExp(TASK_PHRASE), 'the body does not end with the bridge-executor sentence');
-      assert.equal(body.split(TASK_PHRASE).length, 2);
-    });
-
-    it(`neither region names a kit path: ${label}`, () => {
-      const text = read(root, RULES_FILE);
-      for (const region of [extractCommunicationRegion(text), extractStoryRegion(text)]) assert.doesNotMatch(region, KIT_PATH_RE);
-    });
-  }
+  it('non-vacuous: a section heading put back into a template copy is caught (injected)', () => {
+    const doctored = `${read(KIT_TEMPLATES, RULES_FILE)}${LF}### 2.5. Communication (user-facing messages)${LF}`;
+    assert.equal(retiredSections(doctored).length >= 1, true);
+  });
 });
 
 describe('spec:session-rules/S4 the handover section and the changelog field in both templates', () => {

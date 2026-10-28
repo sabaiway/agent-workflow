@@ -2,8 +2,8 @@
 // references/templates/ into a project and running the finalizer its bootstrap prose documents
 // produces a working entry point (the always-loaded navigator exists and the generator calls it
 // fresh). Plus the per-exit prose-ORDER contract for upgrade.md and composition-handoff.md: the
-// finalizer has to sit AFTER the last docs/ai mutation of its path, or it goes stale the moment the
-// lens reconcile runs. Every command here is EXTRACTED from the prose, never re-typed — a deploy
+// finalizer has to sit AFTER the last docs/ai mutation of its path, or it goes stale the moment that
+// mutation runs. Every command here is EXTRACTED from the prose, never re-typed — a deploy
 // step that loses its finalizer line fails as the broken deployment it is.
 
 import { describe, it, afterEach } from 'node:test';
@@ -98,7 +98,7 @@ describe('kit fallback bootstrap — the deployed entry point actually works', (
   });
 
   // The behavioural half of the per-exit contract: something changed docs/ai AFTER the early ensure
-  // (a lens refresh does exactly this), so the LATE rung is what leaves the deployment consistent.
+  // (a tier offer write does exactly this), so the LATE rung is what leaves the deployment consistent.
   it('the late --only index rung repairs a navigator that went stale after the first run', () => {
     const project = makeProject();
     const docsAi = materialize(project);
@@ -118,18 +118,18 @@ describe('kit fallback bootstrap — the deployed entry point actually works', (
 // The prose ORDER is the contract the behavioural cases cannot see: a finalizer documented in the
 // wrong place still runs, and still leaves a stale navigator behind.
 describe('kit deploy prose — the finalizer sits after the LAST docs/ai mutation of each path', () => {
-  const LENS_BLOCK = '**`lens` — agent-rules lens refresh.**';
+  const TIER_BLOCK = '**`tier` — the full-flow offer.**';
   const LATE_RUNG = '**The LATE navigator finalizer';
   const EQUAL_HEAD_REPORT = '4. **Equal-head exit';
   const RESTAMP = '8. Re-stamp `docs/ai/.workflow-version`';
-  const HANDOFF_LENS = '**Agent-rules lens + Communication refresh (runs in BOTH paths).**';
+  const TOOL_COMMAND = /node \$\{CLAUDE_SKILL_DIR\}\/tools\//g;
 
-  it('upgrade.md: the equal-head exit runs the late rung AFTER the lens block and BEFORE its report', () => {
-    const lens = UPGRADE_MD.indexOf(LENS_BLOCK);
+  it('upgrade.md: the equal-head exit runs the late rung AFTER the tier block and BEFORE its report', () => {
+    const tier = UPGRADE_MD.indexOf(TIER_BLOCK);
     const late = UPGRADE_MD.indexOf(LATE_RUNG);
     const report = UPGRADE_MD.indexOf(EQUAL_HEAD_REPORT);
-    assert.ok(lens > 0 && late > 0 && report > 0, 'the upgrade flow must carry all three anchors');
-    assert.ok(lens < late, 'a finalizer documented BEFORE the lens reconcile goes stale the moment the lens writes');
+    assert.ok(tier > 0 && late > 0 && report > 0, 'the upgrade flow must carry all three anchors');
+    assert.ok(tier < late, 'a finalizer documented BEFORE the tier offer goes stale the moment the offer writes docs/ai');
     assert.ok(late < report, 'the report relays the LATE run, so the rung has to precede it');
   });
 
@@ -150,10 +150,11 @@ describe('kit deploy prose — the finalizer sits after the LAST docs/ai mutatio
     assert.equal(/runs again at step 8/.test(paragraph), false, 'and never claims to live in step 8');
   });
 
-  it('composition-handoff.md: the delegated path finalizes AFTER the lens reconcile', () => {
-    const lens = HANDOFF_MD.indexOf(HANDOFF_LENS);
+  it('composition-handoff.md: the finalizer follows every tool command of the hand-off, and no lens reconcile writes the rules file', () => {
     const finalizer = HANDOFF_MD.indexOf('--ensure-index');
-    assert.ok(lens > 0 && finalizer > 0, 'the hand-off contract must carry both blocks');
-    assert.ok(lens < finalizer, 'the delegated path regenerates after the root\'s last docs/ai mutation');
+    const commands = [...HANDOFF_MD.matchAll(TOOL_COMMAND)].map((match) => match.index);
+    assert.ok(finalizer > 0 && commands.length > 0, 'the hand-off contract must carry the finalizer and its tool commands');
+    assert.deepEqual(commands.filter((index) => index > finalizer), [], 'the delegated path regenerates after the root\'s last docs/ai mutation');
+    assert.equal(HANDOFF_MD.includes('lens-region.mjs'), false, 'the root writes no section of docs/ai/agent_rules.md');
   });
 });

@@ -6,21 +6,18 @@ import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, SLOT_RECIPES, withVehicle } from './carriers.mjs';
 import { SEED_CONFIG, serializeConfig } from './orchestration-config.mjs';
 import { planRecipe } from './recipes.mjs';
-import { buildInsertPreview } from './rules-regions.mjs';
 import { failAt, makeProject, readinessOf, runOffer } from './tier-preview.test/harness.test.mjs';
 
+const gaps = await import('./profile-gaps.mjs').catch(() => ({}));
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL = join(HERE, 'tier-preview.mjs');
-const RULES_TOOL = join(HERE, 'rules-insert.mjs');
 const LINEAGE = JSON.parse(readFileSync(join(HERE, '..', 'references', 'reference-profile.json'), 'utf8')).lineage;
 const OTHER_LINEAGE = '2.0.0';
 const CONFIG = 'docs/ai/orchestration.json';
 const RECORD = 'docs/ai/profile-declines.json';
 const STORE = 'docs/ai/epics';
-const RULES = 'docs/ai/agent_rules.md';
 const QUEUE = 'docs/plans/queue.md';
-const IDS = ['story-sessions-section', 'epic-task-slots', 'epic-store-seeded', 'checker-gates-declared', 'session-close-rules',
-  'named-queue-row-seed'];
+const IDS = ['epic-task-slots', 'epic-store-seeded', 'checker-gates-declared', 'named-queue-row-seed'];
 const CHECKER_LINE = 'checker-gates-declared: undecidable — declaration-absent';
 const WORDS = ['present', 'offered', 'declined', 'undecidable'];
 const TARGETS = [['epic', 'author', ['subagent', 'solo']], ['epic', 'review', ['reviewed', 'solo']], ['task', 'author', ['subagent', 'solo']], ['task', 'execute', ['subagent', 'solo']]];
@@ -108,23 +105,12 @@ describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule',
 describe('spec:tier-offer/S2 the preview is the default and writes zero bytes', () => {
   it('prints one line per registry entry in registry order, each offered entry with its apply line', async () => {
     const { root, run } = await preview({ files: { [CONFIG]: seed() } }, ALL_READY);
-    assert.deepEqual(entryLines(run.lines), ['story-sessions-section: present', 'epic-task-slots: offered', 'epic-store-seeded: offered', CHECKER_LINE,
-      'session-close-rules: present', 'named-queue-row-seed: offered']);
-    const apply = `  apply: ${buildInsertPreview(root, TOOL)}`;
+    assert.deepEqual(entryLines(run.lines), ['epic-task-slots: offered', 'epic-store-seeded: offered', CHECKER_LINE, 'named-queue-row-seed: offered']);
+    assert.equal(typeof gaps.buildInsertPreview, 'function', 'profile-gaps.mjs buildInsertPreview is absent');
+    const apply = `  apply: ${gaps.buildInsertPreview(root, TOOL)}`;
     assert.equal(under(run.lines, 'epic-task-slots')[0], apply);
     assert.deepEqual(under(run.lines, 'epic-store-seeded'), [apply]);
     assert.deepEqual(under(run.lines, 'named-queue-row-seed'), [apply]);
-    assert.deepEqual(under(run.lines, 'session-close-rules'), []);
-    assert.deepEqual(under(run.lines, 'story-sessions-section'), []);
-  });
-
-  it('follows an offered story-sessions entry with the insert preview', async () => {
-    const rules = readFileSync(join(HERE, '..', 'references', 'templates', 'agent_rules.md'), 'utf8');
-    const { root, run } = await preview({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' }, [QUEUE]: '# Queue\n',
-      [RULES]: rules.replace(/### 2\.7\. Story sessions\n.*\n\n/, '') } });
-    assert.deepEqual(run.lines, ['story-sessions-section: offered', `  apply: ${buildInsertPreview(root, RULES_TOOL)}`,
-      'epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE,
-      'session-close-rules: undecidable — story-sessions-absent', 'named-queue-row-seed: present']);
   });
 
   it('carries exactly one closed verdict word per entry line', async () => {
@@ -189,8 +175,7 @@ describe('spec:tier-offer/S7 a decline is current while its lineage is the shipp
   it('reports a present item present whatever the record holds', async () => {
     const declines = record({ 'epic-task-slots': LINEAGE, 'epic-store-seeded': LINEAGE });
     const { run } = await preview({ files: { [CONFIG]: seed(EVERY_TARGET), [STORE]: { kind: 'directory' }, [QUEUE]: '# Queue\n', [RECORD]: declines } });
-    assert.deepEqual(entryLines(run.lines).slice(1), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE,
-      'session-close-rules: present', 'named-queue-row-seed: present']);
+    assert.deepEqual(entryLines(run.lines), ['epic-task-slots: present', 'epic-store-seeded: present', CHECKER_LINE, 'named-queue-row-seed: present']);
   });
 });
 

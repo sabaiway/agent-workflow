@@ -1,25 +1,36 @@
 import assert from 'node:assert/strict';
-import { lstatSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { parseFrontmatter } from '../../references/scripts/check-docs-size.mjs';
-import { load, need } from './rules-harness.test.mjs';
+import { THEME_NAMES, load, need } from './rules-harness.test.mjs';
 
 const KIT_ROOT = new URL('../../', import.meta.url);
 const TEMPLATE = new URL('references/rules/project-layout.md', KIT_ROOT);
 const FRONTMATTER_RE = /^---\n[\s\S]*?\n---\n?/;
 const REPO_ROOT = new URL('../', KIT_ROOT);
+const ENGINE_ROOT = new URL('agent-workflow-engine/', REPO_ROOT);
 const SPEC_CANON = new URL('agent-workflow-engine/references/specs.md', REPO_ROOT);
 const SLICED_BULLET = '- **Spec drives modular, feature-sliced architecture.**';
 const ARCHITECTURE_TEMPLATES = ['agent-workflow-memory', 'agent-workflow-kit'].map((pkg) => `${pkg}/references/templates/architecture.md`);
-
-const ENTRY = {
-  name: 'project-layout',
-  template: 'references/rules/project-layout.md',
-  readWhen: '**Start of every session**',
-};
+const START = '**Start of every session**';
+const BEFORE = '**Before any code change**';
+const ENTRIES = THEME_NAMES.map((name) => ({ name, home: name === 'lens' ? 'engine' : 'kit', template: `references/rules/${name}.md`, readWhen: name === 'project-layout' ? START : BEFORE }));
+const THEME_TEMPLATES = [
+  ['project-layout', TEMPLATE],
+  ['communication', new URL('references/rules/communication.md', KIT_ROOT)],
+  ['story-sessions', new URL('references/rules/story-sessions.md', KIT_ROOT)],
+  ['lens', new URL('references/rules/lens.md', ENGINE_ROOT)],
+];
+const NEW_KIT_THEMES = [
+  ['communication', '# Communication', (body) => assert.ok(body.at(-1).startsWith('- **Two blocks for the user.**'), body.at(-1))],
+  ['story-sessions', '# Story sessions', (body) => {
+    assert.equal(body.length, 1, 'one body line');
+    assert.ok(body[0].slice(body[0].lastIndexOf('. ') + 2).includes('only when it writes new tests or code'), body[0]);
+  }],
+];
 
 const PRESCRIPTIONS = [
   'A module is a directory', 'code', 'tests', 'mocks', 'fixtures', 'command-line entry',
@@ -33,6 +44,12 @@ const PRESCRIPTIONS = [
 
 const templateText = () => readFileSync(TEMPLATE, 'utf8');
 const bodyLines = (text) => text.replace(FRONTMATTER_RE, '').split('\n');
+// afterTitle(text) → the non-blank lines after the title line, the frontmatter stripped.
+const afterTitle = (text) => {
+  const lines = bodyLines(text);
+  return lines.slice(lines.findIndex((line) => line.startsWith('# ')) + 1).filter((line) => line.trim() !== '');
+};
+const titleOf = (text) => bodyLines(text).find((line) => line.startsWith('# '));
 const sectionProse = (text, heading) => text.split(`\n${heading}\n`)[1]?.split('\n## ')[0].split('\n').map((line) => line.trim()).filter(Boolean).join(' ');
 const sliceBullet = (text) => {
   const start = text.indexOf(SLICED_BULLET);
@@ -41,25 +58,27 @@ const sliceBullet = (text) => {
 };
 const findLead = (text) => text.slice(text.indexOf('\n# Architecture\n')).split('\n').find((line) => line.startsWith('> '));
 const loadEffective = async () => need(await load('./themes.mjs'), 'themePaths')('project-layout').effective;
+const precedenceLine = async () => need(await load('./themes.mjs'), 'PRECEDENCE_LINE');
 
-describe('spec:project-rules/S1 THEMES holds exactly project-layout and themePaths derives its four paths', () => {
-  it('THEMES is a frozen array of exactly one frozen entry equal to the project-layout entry', async () => {
+describe('spec:project-rules/S1 THEMES holds the four themes in order and themePaths derives their four paths', () => {
+  it('THEMES is a frozen array of exactly the four frozen entries with their home, template and read-when', async () => {
     const THEMES = need(await load('./themes.mjs'), 'THEMES');
     assert.ok(Array.isArray(THEMES));
     assert.ok(Object.isFrozen(THEMES), 'THEMES is frozen');
-    assert.equal(THEMES.length, 1);
-    assert.ok(Object.isFrozen(THEMES[0]), 'the entry is frozen');
-    assert.deepEqual({ ...THEMES[0] }, ENTRY);
+    assert.ok(THEMES.every((entry) => Object.isFrozen(entry)), 'every entry is frozen');
+    assert.deepEqual(THEMES.map((entry) => ({ ...entry })), ENTRIES);
   });
 
-  it("the entry's template resolves to a regular file under the kit root", async () => {
+  it("each kit-homed template resolves to a regular file under the kit root, the engine-homed one under the engine's", async () => {
     const THEMES = need(await load('./themes.mjs'), 'THEMES');
-    const { template } = THEMES[0];
-    assert.ok(!isAbsolute(template), 'the template path is relative to the kit root');
-    const abs = fileURLToPath(new URL(template, KIT_ROOT));
-    const rel = relative(fileURLToPath(KIT_ROOT), abs);
-    assert.ok(rel !== '' && !rel.startsWith('..') && !isAbsolute(rel), `${template} stays under the kit root`);
-    assert.ok(lstatSync(abs).isFile(), `${template} is a regular file`);
+    for (const { template, home } of THEMES) {
+      const root = home === 'engine' ? ENGINE_ROOT : KIT_ROOT;
+      assert.ok(!isAbsolute(template), 'the template path is relative to its home');
+      const abs = fileURLToPath(new URL(template, root));
+      const rel = relative(fileURLToPath(root), abs);
+      assert.ok(rel !== '' && !rel.startsWith('..') && !isAbsolute(rel), `${template} stays under its home`);
+      assert.ok(lstatSync(abs).isFile(), `${home}: ${template} is a regular file`);
+    }
   });
 
   it("themePaths('project-layout') is a frozen record of its kit, local, effective and record paths", async () => {
@@ -87,11 +106,12 @@ describe('spec:project-rules/S1 THEMES holds exactly project-layout and themePat
   });
 });
 
-describe('spec:project-rules/S2 the bundled project-layout template is keyless prose stating each prescription and where specs live', () => {
-  it('carries frontmatter', () => {
+describe('spec:project-rules/S2 the bundled project-layout template opens with the precedence line, then keyless prose stating each prescription', () => {
+  it('carries frontmatter and PRECEDENCE_LINE as the first non-blank line after the title', async () => {
     const text = templateText();
     assert.match(text, FRONTMATTER_RE);
     assert.notEqual(parseFrontmatter(text), null);
+    assert.equal(afterTitle(text)[0], await precedenceLine());
   });
 
   it('holds at least two sections of plain prose: no fence, table or list line', () => {
@@ -118,6 +138,63 @@ describe('spec:project-rules/S2 the bundled project-layout template is keyless p
     const missing = PRESCRIPTIONS.filter((phrase) => !body.includes(phrase));
     assert.deepEqual(missing, [], 'every prescription phrase is present');
     assert.equal(sectionProse(templateText(), '## The spec mirrors the module'), "Specs live in docs/ai/specs. A spec's path mirrors its module's path, so the name of one gives the place of the other.");
+  });
+});
+
+describe('spec:project-rules/S26 the communication and story-sessions kit templates carry their outgoing section bodies under the precedence line', () => {
+  for (const [name, title, bodyRule] of NEW_KIT_THEMES) {
+    it(`references/rules/${name}.md: the frontmatter form, the title, PRECEDENCE_LINE, then the section body with no heading, number or kit path`, async () => {
+      const text = readFileSync(new URL(`references/rules/${name}.md`, KIT_ROOT), 'utf8');
+      const fields = parseFrontmatter(text);
+      assert.ok(fields !== null && FRONTMATTER_RE.test(text), 'frontmatter');
+      assert.deepEqual(Object.keys(fields).sort(), Object.keys(parseFrontmatter(templateText())).sort(), 'the keys of project-layout.md');
+      assert.deepEqual([fields.type, fields.owner], ['rules', 'kit']);
+      assert.match(fields.maxLines, /^[1-9][0-9]*$/);
+      assert.equal(titleOf(text), title);
+      const [first, ...body] = afterTitle(text);
+      assert.equal(first, await precedenceLine());
+      assert.ok(body.length > 0, 'a body after the precedence line');
+      assert.deepEqual(body.filter((line) => line.startsWith('#')), [], 'the section heading is dropped');
+      assert.deepEqual(body.filter((line) => /§ ?[0-9]|\b[0-9]+\.[0-9]+\.\s/.test(line)), [], 'no number names a section of another file');
+      assert.deepEqual(body.filter((line) => /<kit>|\$\{CLAUDE_SKILL_DIR\}|agent-workflow-kit\/|references\//.test(line)), [], 'no kit path');
+      bodyRule(body);
+    });
+  }
+});
+
+describe('spec:project-rules/S27 the precedence line opens every theme template and the kit block', () => {
+  for (const [name, url] of THEME_TEMPLATES) {
+    it(`${name}: the first non-blank line after the title is PRECEDENCE_LINE`, async () => {
+      assert.equal(afterTitle(readFileSync(url, 'utf8'))[0], await precedenceLine());
+    });
+  }
+
+  it("the kit block's first body line is PRECEDENCE_LINE, which names no workflow:kit marker", async () => {
+    const PRECEDENCE_LINE = await precedenceLine();
+    const THEMES = need(await load('./themes.mjs'), 'THEMES');
+    const block = await import('../inject-methodology.mjs');
+    const composed = need(block, 'composeKitBlock')({ fragments: { methodology: 'The methodology.', orchestration: 'The recipes.', autonomy: 'The policy.' }, themes: THEMES });
+    const lines = composed.split('\n');
+    const start = lines.findIndex((line) => line.trim() === need(block, 'BLOCK_START'));
+    assert.ok(start >= 0, composed);
+    assert.equal(lines.slice(start + 1).find((line) => line.trim() !== ''), PRECEDENCE_LINE);
+    assert.equal(PRECEDENCE_LINE.includes('workflow:kit'), false);
+    assert.equal(PRECEDENCE_LINE.includes('\n'), false, 'one line');
+  });
+});
+
+describe('spec:project-rules/S36 the lens template lives only in the engine', () => {
+  it('the kit ships no references/rules/lens.md and the engine ships no lens fragment or prior store', () => {
+    assert.equal(existsSync(new URL('references/rules/lens.md', KIT_ROOT)), false, 'kit references/rules/lens.md');
+    for (const rel of ['references/agent-rules-lens.md', 'references/agent-rules-lens-priors.md']) {
+      assert.equal(existsSync(new URL(rel, ENGINE_ROOT)), false, rel);
+    }
+  });
+
+  it('engine-source.mjs exports LENS_THEME_REL and no LENS_FRAGMENT_REL or LENS_PRIORS_REL', async () => {
+    const source = await import('../engine-source.mjs');
+    assert.equal(need(source, 'LENS_THEME_REL'), ENTRIES.find(({ name }) => name === 'lens').template);
+    assert.deepEqual(['LENS_FRAGMENT_REL', 'LENS_PRIORS_REL'].filter((name) => name in source), []);
   });
 });
 

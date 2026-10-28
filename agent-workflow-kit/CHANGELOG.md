@@ -4,6 +4,55 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 20.0.0 — the kit's text lives in kit files and one kit block; one upgrade moves your project once (AD-216)
+
+**Your project's own files can no longer lose the kit's updates.** Until now the kit kept its standing text inside
+files your project owns, three pointers and theme rows in `AGENTS.md` and three sections in `docs/ai/agent_rules.md`,
+and found them by headings and anchor sentences. A project that moved a section to another heading stopped getting
+its updates, and nothing said so. Now:
+
+- **One kit block in `AGENTS.md`.** The upgrade writes one block between `<!-- workflow:kit:start -->` and
+  `<!-- workflow:kit:end -->`, at the start of the file when there is none: a line saying the block is the kit's and
+  governs over any copy of kit text elsewhere, a line to read `docs/ai/index.md` after the entry file and
+  `docs/ai/agent_rules.md` before any code change, the methodology, orchestration and autonomy texts from the installed
+  engine, and one row per rules theme. It is written current with no question and no copy kept. Text of your own
+  goes outside the two comment lines. Marker lines that are not exactly one start before one end stop the upgrade
+  with their line numbers. No line cap is judged on `AGENTS.md` any more.
+- **The rules texts are rules themes.** Communication, Story sessions and the lens now ship as rules themes beside
+  project-layout: `docs/ai/rules/<theme>.md` (the kit's), `docs/ai/rules/local/<theme>.md` (yours, which wins) and
+  `docs/ai/rules/effective/<theme>.md` (what agents read before any code change). The lens theme comes from the
+  installed engine. `docs/ai/agent_rules.md` is now yours: the kit lays it only where it is absent, and apart from the
+  one-time step below never reads or writes it.
+- **What retires.** `tools/rules-regions.mjs`, `tools/lens-region.mjs`, `tools/rules-insert.mjs` and
+  `tools/project-rules/memory-map-row.mjs`; the three pointer pairs and the line cap; the advisor items
+  `story-sessions-section` and `session-close-rules`. Every decline you recorded for the full-flow offer stays current.
+
+**One upgrade moves your project once.** The deployment structure moves to `5.0.0`, and its note
+`migrations/5.0.0-kit-text-in-kit-files.md` runs `node <kit>/tools/transition/index.mjs --cwd <project>` once, after
+the upgrade wrote the block and the themes. It first checks that they are in place: the block, each engine text and
+the lens theme. If one is missing, it refuses `replacement-missing`, removes nothing and names the fix (the upgrade
+again, or `npx @sabaiway/agent-workflow-engine@latest init` and then the upgrade). Otherwise it removes, each whole with
+any text written inside it, the three old pointer pairs, the old theme rows and the old line-cap footer from
+`AGENTS.md`, and the Communication, Planning-review-and-process-fidelity and Story sessions sections from
+`docs/ai/agent_rules.md`, found by their titles at any heading level, and prints one `removed:` line for each. A second
+run prints only `unchanged:` lines. The kit keeps no copy: your version control is the rollback.
+
+**What the one-time move leaves, by design:**
+
+- a line of your own that points at a removed pointer (for example "the `workflow:methodology` slot") stays, pointing
+  at nothing;
+- a deployment that reaches this kit without passing the `5.0.0` step (an old memory-only seed adopted later) keeps
+  its old copies;
+- between updating the kit and running the upgrade, tools that check the structure version refuse;
+- an older `agent-workflow-memory` refuses its own upgrade on a project this kit stamped `5.0.0`, and a bootstrap
+  with an older memory keeps the copies its templates laid;
+- a memory-only deployment gets no kit rules.
+
+MAJOR: four modules, two advisor items and the engine's lens file path retire, and an older kit or memory refuses a
+project at `5.0.0`. Contracts: entry-pointers revision 2, project-rules revision 10, transition revision 1 (new),
+rules-regions retired, gap-screen revision 3, session-rules revision 4, tier-offer revision 7, upgrade-delivery
+revision 9.
+
 ## 19.5.0 — the spec reader counts no children, and one plain upgrade brings it to every deployment (AD-215)
 
 **The spec reader your project runs no longer refuses an index of more than 30 children.** The kit carries memory

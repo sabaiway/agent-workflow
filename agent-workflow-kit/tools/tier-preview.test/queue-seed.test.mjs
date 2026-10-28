@@ -8,9 +8,9 @@ import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SEED_CONFIG, serializeConfig } from '../orchestration-config.mjs';
-import { buildInsertPreview } from '../rules-regions.mjs';
 import { failAt, makeProject, readinessOf, runOffer } from './harness.test.mjs';
 
+const gaps = await import('../profile-gaps.mjs').catch(() => ({}));
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT = join(HERE, '..', '..');
 const TOOL = join(HERE, '..', 'tier-preview.mjs');
@@ -99,7 +99,8 @@ describe('spec:session-rules/S10 --apply seeds docs/plans/queue.md create-only w
     assert.equal(run.code, 0, run.stderr);
     const at = run.lines.indexOf(`${ID}: offered`);
     assert.ok(at >= 0, run.stdout);
-    assert.equal(run.lines[at + 1], `  apply: ${buildInsertPreview(root, TOOL)}`);
+    assert.equal(typeof gaps.buildInsertPreview, 'function', 'profile-gaps.mjs buildInsertPreview is absent');
+    assert.equal(run.lines[at + 1], `  apply: ${gaps.buildInsertPreview(root, TOOL)}`);
     assert.deepEqual(run.after, run.before);
   });
 

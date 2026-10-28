@@ -172,9 +172,9 @@ After `init`, run `/agent-workflow-kit upgrade` in an agent session: the agent a
 > If a **healthy** copy is installed (the kit validates it with its own shipped validator), the kit
 > **delegates** substrate deployment to it and injects the workflow methodology; otherwise it uses
 > its **own bundled copy** — the one command above keeps working with **no new dependency on the
-> memory substrate**. Same `docs/ai/` either way. (The **methodology slot** is a separate axis: its
-> fragment is read **live from the installed `agent-workflow-engine`**, which `npx … init` installs
-> for you — a runtime dependency placed by `init`, read live.)
+> memory substrate**. Same `docs/ai/` either way. (The **kit block** in `AGENTS.md` is a separate
+> axis: its engine texts are read **live from the installed `agent-workflow-engine`**, which
+> `npx … init` installs for you — a runtime dependency placed by `init`, read live.)
 
 ### Refresh the kit itself — same command with `@latest`
 
@@ -269,7 +269,8 @@ file), or run the guarded `/agent-workflow-kit uninstall`.
 | `/agent-workflow-kit bridge-settings` | opt-in, any time | **host-level bridge settings** — read or change the bridges' `KEY=VALUE` config file (`${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf`), the **one place a knob survives kit upgrades** (it lives outside every kit tree; a refresh never touches it, and now states loudly if it ever overwrote a local edit). The **model each bridge runs**: `CODEX_MODEL` + `CODEX_EFFORT` (default `gpt-6.1-sol` at `high`) and `AGY_MODEL` (default `Gemini 3.8 Flash (High)`) — the read-out shows the models each installed CLI offers, and a set one is checked against that list before anything is written. Other knobs: the **codex Fast tier** (`CODEX_SERVICE_TIER=priority` — "2x speed, **increased usage**" in the catalog's own words, quality-neutral, default off — a consented spend), the codex/agy hard timeouts, the codex review byte cap, and `AGY_REVIEW_MAX_TOTAL_BYTES` (the ceiling on what an oversized agy code review may feed before it refuses pre-spend). `AGY_REVIEW_ALLOW_ADDDIR` is a **retired** compatibility key: still recognized so an existing line never warns as unknown, but it arms nothing — the writer refuses to set it and `--unset` clears it. Allowed keys + value rules come from the bundled bridge manifests. **Previews by default**; refuses an unknown key, an out-of-range value, a model or effort the catalog does not offer, or a duplicate-carrying file; writes atomically (symlink/TOCTOU-safe). Never commits, never runs a model (only the read-only catalog commands). |
 | `/agent-workflow-kit autonomy-doctor` | opt-in, any time | **guarded sandbox provisioner "doctor"** — can this machine run the Claude sandbox, and (only with your consent) fix it: macOS Seatbelt built-in / Linux+WSL2 needs `bwrap`+`socat` / native Windows → WSL2. Flagless = **FS-only preview** (the diagnosis, the exact absolute-path command it WOULD run, the exact `--apply <pm>:<pkgs>` consent tuple — runs nothing, never claims ready); `--verify` runs the unprivileged proof (a `bwrap` user-namespace smoke + `socat -V`) — the **only** source of a Linux "ready (verified)" claim; `--apply <pm>:<pkgs>` is the consent-gated privileged install (the tuple must equal the previewed plan; everything executed resolves to absolute paths inside `/usr/bin:/bin:/usr/sbin:/sbin`; the exact command is re-printed immediately before execution), then verifies. Honest loud degrades (unknown PM, untrusted location, nested-sandbox INDETERMINATE, root-unproven) and a stated restart step. Sits **outside every velocity auto-approve tier**; never auto-runs, never writes repo files, never commits. |
 
-It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking.
+It **never auto-commits** and **never overwrites** an existing `AGENTS.md` without asking (its kit
+block aside, which is written current on every run).
 
 > **Two kinds of "upgrade":** `npx @sabaiway/agent-workflow-kit@latest init` updates the **kit's
 > own files** in `~/.claude/skills/`; `/agent-workflow-kit upgrade` then migrates a **project's**
@@ -309,11 +310,18 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
 
 - **Delegates** substrate deployment to **`@sabaiway/agent-workflow-memory`** when a healthy
   standalone copy is present, else uses its **bundled fallback** — same `docs/ai/` either way.
-- **Injects** three bounded pointers into the deployed `AGENTS.md` — the workflow **methodology**, the
-  **orchestration recipes** (Solo / Reviewed / Council / Delegated / Subagent), and the **autonomy policy** (the
-  `docs/ai/autonomy.json` read contract) — read **live** from the installed
+- **Writes** one **kit block** into the deployed `AGENTS.md`, between the
+  `<!-- workflow:kit:start -->` and `<!-- workflow:kit:end -->` comment lines, current on every run
+  with no question and no copy kept — the read order, the workflow **methodology**, the
+  **orchestration recipes** (Solo / Reviewed / Council / Delegated / Subagent), the **autonomy
+  policy** (the `docs/ai/autonomy.json` read contract), and a table of the rules themes
+  (`docs/ai/rules/effective/<theme>.md`); the engine texts are read **live** from the installed
   **`agent-workflow-engine`** (the canonical narrative; a published member, never one of the shipped
-  backends). `/agent-workflow-kit recipes` surfaces + plans a recipe for your environment, read-only.
+  backends). Text of your own goes outside the two `workflow:kit` comment lines; a change to a kit
+  rule goes in its theme's file under `docs/ai/rules/local/`. `docs/ai/agent_rules.md` is yours:
+  the kit lays it only where it is absent, and apart from the one-time `5.0.0` step, which removes the kit's old
+  sections from it, never reads or writes it. `/agent-workflow-kit recipes` surfaces + plans a recipe
+  for your environment, read-only.
 - **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm;
   never first placed by `init` — `setup` places them, and once placed `init`/`upgrade` refresh
   them). They plug into the workflow's **execute** and **review** phases — for *what
@@ -360,7 +368,7 @@ agent-workflow-kit/
 ├── tools/           ← family tooling:
 │   ├── manifest/    ← capability-manifest schema + validator
 │   ├── delegation.mjs        ← detect substrate · delegate-or-fall-back
-│   ├── inject-methodology.mjs ← write the methodology + recipe slots
+│   ├── inject-methodology.mjs ← write the AGENTS.md kit block
 │   ├── engine-source.mjs     ← live engine fragment read (fail-loud)
 │   ├── detect-backends.mjs    ← read-only backend detector
 │   ├── recipes.mjs           ← read-only recipe planner (recipes)

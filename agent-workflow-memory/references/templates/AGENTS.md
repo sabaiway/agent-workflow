@@ -53,13 +53,6 @@ All project knowledge lives in `docs/ai/`. Layered, lazy-loaded context:
 
 Start-of-session, during-work, and task-completion procedures live in [`docs/ai/agent_rules.md`](./docs/ai/agent_rules.md) §1. **Read it before any code change.**
 
-<!-- workflow:methodology:start -->
-<!-- workflow:methodology:end -->
-<!-- workflow:orchestration:start -->
-<!-- workflow:orchestration:end -->
-<!-- workflow:autonomy:start -->
-<!-- workflow:autonomy:end -->
-
 ---
 
 ## 🚫 Hard Constraints
@@ -91,6 +84,3 @@ Start-of-session, during-work, and task-completion procedures live in [`docs/ai/
 
 Full reference → [`docs/ai/env_commands.md`](./docs/ai/env_commands.md).
 
----
-
-**Rule:** This file stays CONCISE (≤100 lines). Details go to `docs/ai/`. Never bloat this file.

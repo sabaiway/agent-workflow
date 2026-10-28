@@ -2,7 +2,6 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AGENTS_MD_CAP } from './inject-methodology.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { isDirectRun } from './direct-run.mjs';
 
@@ -22,7 +21,6 @@ const CONTROL_BYTES = /[\x00-\x1f\x7f\u2028\u2029]/u;
 const makeResult = (code, stdout = '', stderr = '') => ({ code, stdout, stderr });
 const renderDetail = (detail) => String(detail).replace(/[\r\n\u2028\u2029]+/gu, ' ');
 const refuse = (name, detail) => makeResult(1, '', detail ? `${name}: ${renderDetail(detail)}` : name);
-const countLines = (text) => text.split(LF).length - Number(text.endsWith(LF));
 const findHeadings = (lines, heading) => lines.flatMap((line, index) => line.trimEnd() === heading ? [index] : []);
 
 const parseArgs = (argv) => {
@@ -121,10 +119,6 @@ const insertBlocks = (text, lines, blocks) => {
   const anchors = lines.flatMap((line, index) => line.replace(/\r$/u, '') === ANCHOR ? [index] : []);
   if (anchors.length === 0) return { error: refuse('anchor-absent', ANCHOR) };
   if (anchors.length !== 1) return { error: refuse('anchor-repeated', ANCHOR) };
-  const total = countLines(text) + planned.reduce((count, block) => count + countLines(block.body), 0);
-  if (total > AGENTS_MD_CAP) {
-    return { error: refuse('cap', `${total} lines exceed ${AGENTS_MD_CAP}; trim AGENTS.md and re-run`) };
-  }
   const anchor = anchors[0];
   const attribution = blocks.find((block) => block.name === 'attribution');
   const insertions = planned.map((block) => ({

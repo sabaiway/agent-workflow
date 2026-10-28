@@ -129,6 +129,13 @@ describe('delegation gate parity — the orchestration template (Step 2.4)', () 
   });
 });
 
+// Both paths reconcile the ONE kit block of AGENTS.md; the kit writes no slot and no section of the
+// project's own rules file.
+const assertKitBlockWrites = (kitWrites, label) => {
+  assert.ok(kitWrites.some((w) => w.includes('AGENTS.md') && /kit block/i.test(w)), `${label} kitWrites names the kit block of AGENTS.md`);
+  assert.deepEqual(kitWrites.filter((w) => /slot|region|inline|Communication|story-sessions|\blens\b/i.test(w)), [], `${label} kitWrites names no slot, rules-file region or inline methodology`);
+};
+
 describe('handoffPlan — stamp sets + single commit gate', () => {
   it('delegate → both stamps present; memory never raises its own commit gate', () => {
     const p = handoffPlan(true);
@@ -136,15 +143,7 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.equal(p.memoryRaisesCommitGate, false);
     assert.equal(p.commitGate, 'kit-only-after-injection');
     assert.ok(p.memoryWrites.includes('docs/ai/.memory-version'));
-    // Delegate is the ONLY branch with real slots (memory ships them empty; the kit injects).
-    assert.ok(
-      p.kitWrites.some((w) => w.includes('slot') && w.includes('methodology') && w.includes('orchestration') && w.includes('autonomy')),
-      'delegate kitWrites should name the bounded reconcile of all three pointer slots',
-    );
-    assert.ok(
-      p.kitWrites.some((w) => w.includes('agent_rules.md') && w.includes('Communication') && w.includes('story-sessions') && w.includes('lens')),
-      'delegate kitWrites must name the Communication, story-sessions and lens region refresh (it converges a stale-memory seed)',
-    );
+    assertKitBlockWrites(p.kitWrites, 'delegate');
   });
 
   it('fallback → only .workflow-version; kit writes everything; one kit gate', () => {
@@ -153,16 +152,6 @@ describe('handoffPlan — stamp sets + single commit gate', () => {
     assert.deepEqual(p.memoryWrites, []);
     assert.equal(p.memoryRaisesCommitGate, false);
     assert.equal(p.commitGate, 'kit-only-after-injection');
-    // Fallback now ships the kit's own AGENTS.md with the EMPTY pointer slots, which the kit
-    // reconciles + fills — the same slot mechanism as the delegate path (Plan 2).
-    assert.ok(
-      p.kitWrites.some((w) => w.includes('slot') && w.includes('methodology') && w.includes('orchestration') && w.includes('autonomy')) &&
-        !p.kitWrites.some((w) => w.includes('inline')),
-      'fallback kitWrites should describe all three pointer slots, not inline methodology',
-    );
-    assert.ok(
-      p.kitWrites.some((w) => w.includes('agent_rules.md') && w.includes('Communication') && w.includes('story-sessions') && w.includes('lens')),
-      'fallback kitWrites must name the Communication, story-sessions and lens region refresh (both paths run it)',
-    );
+    assertKitBlockWrites(p.kitWrites, 'fallback');
   });
 });

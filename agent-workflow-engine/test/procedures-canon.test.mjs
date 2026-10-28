@@ -79,17 +79,17 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   });
 
   // Set-1 coverage (Phase 3 consistency invariant): every cross-all-four regression-free / convergence
-  // token must live in the procedures region (`## plan-authoring` onward) — the same region
-  // lens-mirror.test.mjs scopes — so the kit drift guard's per-region check passes here too.
+  // token must live in the procedures region (`## plan-authoring` onward), as it lives in the lens theme
+  // (lens-fragment.test.mjs pins the theme's tokens).
   it('lands the cross-all-four regression-free + convergence tokens in the procedures region (Set-1)', () => {
     const start = procedures.indexOf('## plan-authoring');
     assert.notEqual(start, -1, 'has a plan-authoring region');
     const region = procedures.slice(start).toLowerCase();
     for (const token of [
       '0 blockers + 0 majors', 'test-as-spec', 'no code-mechanics', 'at the diff', 'characterize-first',
-      // Review-loop economics (M2/M3/M4/M5-b) — the same five lens-mirror.test.mjs now pins in all four regions.
+      // Review-loop economics (M2/M3/M4/M5-b) — the same five the lens theme carries.
       '≤2 rounds', 'crossover', 'backend divergence', 'diff-review', 'self-consistency',
-      // Checked-vs-unchecked boundary (the §9 B5 sharpening) — same two strings lens-mirror.test.mjs pins.
+      // Checked-vs-unchecked boundary (the §9 B5 sharpening) — the same two strings the lens theme carries.
       'checked syntax', 'logic-bearing',
     ]) {
       assert.ok(region.includes(token), `procedures region carries the "${token}" token`);
@@ -99,8 +99,8 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   // M6 (queue.md third leg — advisor + procedures.md canon step + a token guard): the required per-round
   // structured emission {round N · finding-origin tally · per-backend verdict} is pinned in the per-round
   // loop point of BOTH activities so the canon step cannot be silently deleted from EITHER section, nor
-  // any one of its three fields dropped, with tests green. (M6 is not §9-native, so it is a Set-2 template
-  // token in lens-mirror.test.mjs, not a cross-all-four Set-1 one.)
+  // any one of its three fields dropped, with tests green. (M6 is not §9-native, so it is a Set-2 lens
+  // token, not a cross-all-four Set-1 one.)
   it('pins the M6 per-round emission (round N · finding-origin · per-backend verdict) in BOTH activity sections', () => {
     for (const activity of ['plan-authoring', 'plan-execution']) {
       const section = sectionOf(procedures, activity);
@@ -231,7 +231,7 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   it('the orchestration.md §5 canon carries the cost-lane tokens the kit advisor paraphrases', () => {
     const orchestration = readFileSync(join(ROOT, 'references', 'orchestration.md'), 'utf8');
     // The last five are the D7 prompt-economy invariants (REC-UX-REWORK) — one distinctive token
-    // per invariant, pinned on all three surfaces (canon here · kit advisor · lens fragment).
+    // per invariant, pinned on all three surfaces (canon here · kit advisor · lens theme).
     for (const token of [
       'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
       'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
@@ -288,14 +288,14 @@ describe('procedures.md — canonical activity-procedures reference', () => {
   });
 
   it('stays GENERIC — no concrete project release-publishing bake-in', () => {
-    // The generic deferral phrase ("project-declared release/publishing … per the workflow:methodology
-    // slot") is REQUIRED; the concrete enforcement (skill names, a mandatory Release-Publishing phase)
-    // is a project overlay and must NOT appear in the engine canon.
-    assert.match(procedures, /workflow:methodology/, 'defers project stages to the methodology slot');
+    // The generic deferral phrase ("project-declared release/publishing … outside the workflow:kit block")
+    // is REQUIRED, the retired slot named nowhere; the concrete enforcement (skill names, a mandatory
+    // Release-Publishing phase) is a project overlay and must NOT appear in the engine canon.
+    assert.deepEqual([/outside the `workflow:kit`\s+block/.test(procedures), /workflow:methodology/.test(procedures)], [true, false], 'defers project stages to the project text outside the kit block, never the retired slot');
     // Rows are the steps, but Cleanup is a PHASE, not a row: plan-execution must close with the
     // project-declared stages and then Phase: Cleanup, in that order, or neither is guaranteed to run.
     const closing = stepOf(sectionOf(procedures, 'plan-execution'), 8);
-    const atStages = closing.indexOf('workflow:methodology');
+    const atStages = closing.indexOf('workflow:kit');
     const atCleanup = closing.indexOf('Phase: Cleanup');
     assert.ok(atStages !== -1 && atCleanup !== -1 && atStages < atCleanup, 'plan-execution closes with the project stages, then Phase: Cleanup');
     assert.ok(!/release-engineering/.test(procedures), 'no concrete release-engineering skill bake-in');
@@ -472,7 +472,7 @@ describe('methodology-slot.md — bounded fragment carries the procedures route'
 
   it('carries no marker text (the kit frames it with the markers, the fragment must not)', () => {
     assert.ok(!slot.includes('<!--'), 'the fragment must not contain an HTML comment / marker');
-    assert.ok(!slot.includes('workflow:methodology'), 'the fragment must not contain the slot marker name');
+    assert.ok(!slot.includes('workflow:'), 'the fragment must not contain a workflow marker name');
   });
 
   it('routes to the in-project /agent-workflow-kit procedures surface (auto-discovery clause)', () => {

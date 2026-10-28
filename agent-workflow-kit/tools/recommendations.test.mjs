@@ -60,7 +60,6 @@ const need = (mod, name) => {
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 import { makeProject as makeProfileProject } from './tier-preview.test/harness.test.mjs';
 import { CENSUS_VERDICT } from './tracked-tree-census.mjs';
-import { RULES_REGIONS, extractRegionBy } from './rules-regions.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PACKAGE_JSON = '{"name":"fixture"}\n';
@@ -105,7 +104,7 @@ const bothBridgesReady = () => [...codexReady(), ...agyReady()];
 const makeProject = () => {
   const root = mkdtempSync(join(tmpdir(), 'recommendations-'));
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-  writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+  writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
   writeFileSync(join(root, 'package.json'), FIXTURE_PACKAGE_JSON);
   return root;
 };
@@ -565,7 +564,7 @@ const buildInventoryFixtures = () => {
   const root6 = mkdtempSync(join(tmpdir(), 'recommendations-inventory-'));
   runFixtureGit(root6, ['init', '-q']);
   mkdirSync(join(root6, 'docs', 'ai'), { recursive: true });
-  writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+  writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
   const fakeChar = {
     isFile: () => false,
     isDirectory: () => false,
@@ -1049,7 +1048,7 @@ describe('recommendations — item probes over fixtures', () => {
     const g = (...args) => runFixtureGit(root, args);
     g('init', '-q');
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     const fakeChar = {
       isFile: () => false,
       isDirectory: () => false,
@@ -1733,7 +1732,7 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
   it('an unseedable (space-carrying) project root skips ONLY the kit-tools tier — core still fires', () => {
     const root = mkdtempSync(join(tmpdir(), 'rec space-'));
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     const { items, skips } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     assert.ok(skips.some((s) => s.key === 'kit-tools-tier'), 'the tier derivation refuses the unseedable root — a stated skip');
@@ -2520,7 +2519,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const root = mkdtempSync(join(tmpdir(), 'recommendations-stalereal-'));
     runFixtureGit(root, ['init', '-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
     writeFileSync(
       join(root, '.git', 'info', 'exclude'),
@@ -2546,7 +2545,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-skip-'));
     runFixtureGit(root, ['init', '-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     const deps = hermeticDeps(root, {
       listUntracked: () => {
         throw new Error('walk exploded');
@@ -2883,7 +2882,7 @@ describe('spec:init-project/S40 — the worktrees-dir item by the table', () => 
     const real = mkdtempSync(join(tmpdir(), 'recommendations-home-real-'));
     const linkedRoot = join(real, 'repo');
     mkdirSync(join(linkedRoot, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(linkedRoot, 'docs', 'ai', '.workflow-version'), '4.0.0\n');
+    writeFileSync(join(linkedRoot, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     writeFileSync(join(linkedRoot, 'package.json'), FIXTURE_PACKAGE_JSON);
     const linkedHome = `${real}-home-link`;
     symlinkSync(real, linkedHome);
@@ -3674,7 +3673,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     writeFileSync(join(pilesRoot, 'docs', 'plans', 'queue.md'), '# Queue\n\n### Later\n');
     addBuilt(collect(pilesRoot));
     const { repoFactory, writeFence, stubs, line } = await import('./sandbox-masks-harness.test.mjs');
-    const root = repoFactory('s54-mount', { 'docs/ai/.workflow-version': '4.0.0\n' })();
+    const root = repoFactory('s54-mount', { 'docs/ai/.workflow-version': `${EXPECTED_WORKFLOW_VERSION}\n` })();
     writeFence(root, '.zshrc');
     const readMountinfo = () => [
       line(1, 0, '8:1', '/', '/'),
@@ -3683,15 +3682,9 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
       '',
     ].join('\n');
     addBuilt(collect(root, { ...stubs({ '.bashrc': 'file' }), readMountinfo }));
-    const template = readFileSync(join(KIT_ROOT, 'references', 'templates', 'agent_rules.md'), 'utf8');
-    const region = extractRegionBy(template, RULES_REGIONS[1].headingRe);
-    assert.equal(region.count, 1, 'the Story sessions region exists once in the bundled rules');
-    const lines = template.split('\n');
-    const withoutStorySessions = [...lines.slice(0, region.start), ...lines.slice(region.end)].join('\n');
     const profile = makeProfileProject({ files: {
       'docs/ai/orchestration.json': '{}\n',
       'docs/ai/gates.json': '{"gates":[]}\n',
-      'docs/ai/agent_rules.md': withoutStorySessions,
     } });
     addBuilt(collect(profile.root, { probes: [probeProfileGaps] }));
     return items;
@@ -3799,7 +3792,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     const text = readFileSync(join(KIT_ROOT, 'references', 'advisor-writers.md'), 'utf8');
     const items = (await buildChatItems(t)).filter((item) => item.lane === 'chat');
     assert.ok(items.some((item) => item.variant === 'source-size.piles'), 'the piles fixture renders source-size.piles');
-    const variants =Object.entries(need(lanes, 'VARIANT_LANES')).filter(([, lane]) => lane === 'chat').map(([variant]) => variant);
+    const variants = Object.entries(need(lanes, 'VARIANT_LANES')).filter(([, lane]) => lane === 'chat').map(([variant]) => variant);
     assert.deepEqual([...new Set(items.map((item) => item.variant))].sort(), [...variants].sort(), 'rendered chat variants equal the lane registry');
     const readTable = (text) => {
       const lines = text.split('\n');
@@ -3896,7 +3889,7 @@ describe('the executor-vehicle recipe carries the precondition (AD-124 fold)', (
     const unusable = itemOf(root, { surveyVehicle: survey('unusable', 'tools: Read is read-only') });
     rmSync(root, { recursive: true, force: true });
     for (const item of [missing, unusable]) {
-      assert.match(item.detail, /^precondition: run \/agent-workflow-kit upgrade first \(deployment stamp 2\.9\.0, expected 4\.0\.0\); hidden-mode deployments only:/u);
+      assert.ok(item.detail.startsWith(`precondition: run /agent-workflow-kit upgrade first (deployment stamp 2.9.0, expected ${EXPECTED_WORKFLOW_VERSION}); hidden-mode deployments only:`), item.detail);
     }
   });
 

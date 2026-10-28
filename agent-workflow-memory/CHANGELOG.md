@@ -2,7 +2,21 @@
 
 All notable changes to the memory substrate. Versions are this **package's** npm versions;
 they are distinct from the **deployment-lineage** stamp written into a project's
-`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `4.0.0`).
+`docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
+
+## 9.0.0 — the templates carry no kit text; the deployment-lineage head moves to 5.0.0 (AD-216)
+
+**The `AGENTS.md` template ships no workflow comment lines and no line-cap footer, and the `agent_rules.md` template
+ships no Communication, lens or Story sessions section.** Your workflow toolkit writes those texts itself: one kit
+block in `AGENTS.md` and rules themes under `docs/ai/rules/`. Memory never writes that block and, on upgrade, keeps it
+byte for byte, as it keeps any other `workflow:*` comment-line pair. `SKILL.md` and `README.md` say so in place of the
+three empty pointer slots.
+
+**The deployment-lineage head is `5.0.0`** (`LINEAGE_HEAD` in `scripts/stamp-takeover.mjs`), moved with the kit's
+own head. Memory ships no `5.0.0` note: a project at `4.0.0` selects none and is re-stamped `5.0.0`. The 1.1.0 and
+1.2.0 notes no longer ask to keep `AGENTS.md` within a line budget. MAJOR: an older memory refuses its upgrade on a
+project stamped `5.0.0`, and a bootstrap with an older memory lays the old copies, which the toolkit's `5.0.0` step
+removes only on a project that passes it.
 
 ## 8.7.0 — the spec reader counts no children: an index may list more than 30 (AD-215)
 

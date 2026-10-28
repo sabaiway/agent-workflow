@@ -33,17 +33,10 @@ const SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATES = join(SKILL_ROOT, 'references', 'templates');
 const ENFORCEMENT = join(SKILL_ROOT, 'references', 'scripts');
 
-// The empty delimited slots the substrate ships in its entry point. Hard-coded (not imported
-// from the composition root) so this substrate test stays self-contained and dependency-free.
-const SLOT_START = '<!-- workflow:methodology:start -->';
-const SLOT_END = '<!-- workflow:methodology:end -->';
-const ORCH_START = '<!-- workflow:orchestration:start -->';
-const ORCH_END = '<!-- workflow:orchestration:end -->';
-const AUT_START = '<!-- workflow:autonomy:start -->';
-const AUT_END = '<!-- workflow:autonomy:end -->';
-// The deployed AGENTS.md line budget the composition root fills ALL THREE pointers inside (D-CAP).
-// A representative single-line fragment per slot models what the composition root injects.
-const AGENTS_MD_CAP = 100;
+// Any workflow comment line: memory ships no kit block and no pointer pair, and never writes one.
+// Hard-coded (not imported from the composition root) so this substrate test stays self-contained.
+const WORKFLOW_COMMENT_LINE = /^\s*<!--\s*workflow:/;
+const CAP_FOOTER = /≤\s*\d+\s*lines/;
 // The templates that never enter docs/ai: the entry point (placed at the root) and the two skill-home
 // authoring references — a stray adr-record.md under adr/ fails the store integrity guard, and a stray
 // SPEC_TEMPLATE.md would be a docs/ai file the cap-validator reads and the spec reader never sees.
@@ -51,12 +44,6 @@ const SKILL_HOME_ONLY = new Set(['AGENTS.md', 'adr-record.md', 'SPEC_TEMPLATE.md
 const READER_PAIR = ['spec-schema.mjs', 'spec-schema.test.mjs'];
 const CHECKER_PAIR = ['check-docs-size.mjs', 'check-docs-size.test.mjs'];
 const VALID_SPEC = '---\ntype: spec\nlastUpdated: 2026-08-23\nscope: permanent\nstaleAfter: 90d\nowner: none\nmaxLines: 150\nkind: spec\nstatus: draft\nrevision: 1\n---\n\n# Spec: login\n\n## Contract\n\nc\n\n## Scenarios\n\n- S1 a :: test/login.test.mjs :: spec:login/S1\n\n## Out of scope\n\n- b\n\n## Module\n\n- src/login/\n';
-const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
-const extractPair = (text, start, end) => {
-  const a = text.indexOf(start);
-  const b = text.indexOf(end);
-  return a !== -1 && b !== -1 && b > a ? text.slice(a + start.length, b) : null;
-};
 
 const tempDirs = [];
 const makeProject = () => {
@@ -154,16 +141,12 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.ok(!existsSync(join(docsAi, '.workflow-version')), 'no composition-root stamp in a standalone bootstrap');
   });
 
-  it('ships ALL THREE pointer slots present-but-empty (methodology + orchestration + autonomy)', () => {
+  it('ships an entry point with no workflow comment line (no kit block, no pointer pair) and no line-cap footer', () => {
     const project = makeProject();
     bootstrap(project);
 
-    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    for (const [label, start, end] of [['methodology', SLOT_START, SLOT_END], ['orchestration', ORCH_START, ORCH_END], ['autonomy', AUT_START, AUT_END]]) {
-      const slot = extractPair(entry, start, end);
-      assert.notEqual(slot, null, `an ordered ${label} marker pair is present`);
-      assert.equal(slot.trim(), '', `the ${label} slot is empty as shipped`);
-    }
+    const lines = readFileSync(join(project, 'AGENTS.md'), 'utf8').split('\n');
+    assert.deepEqual(lines.filter((line) => WORKFLOW_COMMENT_LINE.test(line) || CAP_FOOTER.test(line)), []);
   });
 
   it('seeds docs/ai/orchestration.json from the template (the bootstrap loop deploys it)', () => {
@@ -335,24 +318,6 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     assert.equal(readFileSync(dest, 'utf8'), readFileSync(join(TEMPLATES, 'orchestration.json'), 'utf8'));
   });
 
-  it('stays STRICTLY under the cap when the composition root fills ALL THREE pointer slots (D-CAP headroom)', () => {
-    const project = makeProject();
-    bootstrap(project);
-    const entry = readFileSync(join(project, 'AGENTS.md'), 'utf8');
-    assert.ok(lineCount(entry) <= AGENTS_MD_CAP, `shipped (empty) AGENTS.md is ${lineCount(entry)} lines (cap ${AGENTS_MD_CAP})`);
-    // Fill each one-line pointer the way the composition root does (replace the empty body), then re-count.
-    const fill = (text, start, end, body) => {
-      const a = text.indexOf(start);
-      const b = text.indexOf(end);
-      return `${text.slice(0, a + start.length)}\n${body}\n${text.slice(b)}`;
-    };
-    let filled = fill(entry, SLOT_START, SLOT_END, '> methodology pointer (one line)');
-    filled = fill(filled, ORCH_START, ORCH_END, '> orchestration recipes pointer (one line)');
-    filled = fill(filled, AUT_START, AUT_END, '> autonomy policy pointer (one line)');
-    // STRICT (< cap): the third pair once landed the triple-fill exactly AT 100 — only a
-    // genuinely-trimmed template passes, so the headroom trim can never silently regress.
-    assert.ok(lineCount(filled) < AGENTS_MD_CAP, `triple-filled AGENTS.md is ${lineCount(filled)} lines — must stay STRICTLY under the cap ${AGENTS_MD_CAP}`);
-  });
 });
 
 // The navigator is the one always-loaded file no template ships. These drive the finalizer the

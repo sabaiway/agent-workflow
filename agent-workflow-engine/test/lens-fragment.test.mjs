@@ -1,47 +1,32 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Canon-presence guard for the agent-rules lens fragment (the ONE canonical home of the
-// planning/review/process-fidelity lens block) + shape guard for its append-only prior store.
+// Canon-presence guard for the engine's lens rules theme (the ONE canonical home of the
+// planning/review/process-fidelity lens bullets), the theme the kit lays down as docs/ai/rules/lens.md.
 // This is the single discipline-token list going forward: when a future canon change adds a
-// discipline to the lens, append its distinctive token HERE (the kit's lens-mirror test checks
-// render-parity against this fragment, never tokens). The engine knows nobody: this test reads
-// only the engine's own files.
+// discipline to the lens, append its distinctive token HERE. The engine knows nobody: this test reads
+// only the engine's own files, so the kit's PRECEDENCE_LINE and the theme title are copied here.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FRAGMENT_PATH = join(ROOT, 'references', 'agent-rules-lens.md');
-const PRIORS_PATH = join(ROOT, 'references', 'agent-rules-lens-priors.md');
+const THEME_PATH = join(ROOT, 'references', 'rules', 'lens.md');
+const TITLE = '# Planning, review and process-fidelity invariants';
+const PRECEDENCE_LINE = "The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it and docs/ai/rules/effective/ govern over any copy of kit text elsewhere in this project's files; text of your own goes outside the block, and a change to a kit rule goes in its theme's file under docs/ai/rules/local/.";
 
-// CRLF-tolerant reads (a Windows autocrlf checkout must not break the guard — the same
-// normalization the kit-side parser applies per the frozen-format contract).
-const fragment = readFileSync(FRAGMENT_PATH, 'utf8').replace(/\r\n/g, '\n');
-const priorsText = readFileSync(PRIORS_PATH, 'utf8').replace(/\r\n/g, '\n');
-
-const normalize = (s) => String(s).replace(/\r\n/g, '\n').trim();
-
-// The frozen prior-store format (documented in the file's own header, mirrored by the kit's
-// lens-region module): a delimiter is a line starting `<!-- prior` and ending `-->`; an entry
-// body is everything after it up to the next delimiter / EOF, trimmed; the pre-delimiter header
-// is ignored. APPEND-ONLY — an old reader must keep parsing a newer engine's file.
-const parsePriors = (text) => {
-  const entries = [];
-  let current = null;
-  for (const line of text.split('\n')) {
-    if (line.startsWith('<!-- prior') && line.endsWith('-->')) {
-      if (current) entries.push(current.join('\n'));
-      current = [];
-    } else if (current) current.push(line);
-  }
-  if (current) entries.push(current.join('\n'));
-  return entries.map(normalize).filter((e) => e !== '');
+// CRLF-tolerant read (a Windows autocrlf checkout must not break the guard). Read inside each cell.
+const readTheme = () => readFileSync(THEME_PATH, 'utf8').replace(/\r\n/g, '\n');
+const partsOf = (text) => {
+  const lines = text.split('\n');
+  assert.equal(lines[0], '---', 'the theme opens with frontmatter');
+  const close = lines.indexOf('---', 1);
+  assert.ok(close > 0, 'the frontmatter closes');
+  const rest = lines.slice(close + 1).filter((line) => line.trim() !== '');
+  return { frontmatter: lines.slice(1, close), title: rest[0], first: rest[1], body: rest.slice(2), lineCount: lines.length - (text.endsWith('\n') ? 1 : 0) };
 };
 
 // The 22 discipline tokens (the former lens-mirror Set-1 cross-all-four + Set-2 template-scoped
-// lists, united here — the fragment is now the one canonical home of the whole block). Matched
-// lowercased-substring, like the mirror guard always did.
+// lists, united here). Matched lowercased-substring, like the mirror guard always did.
 const DISCIPLINE_TOKENS = [
   // review/fold + convergence disciplines (ex Set-1)
   'fold by code',
@@ -68,7 +53,7 @@ const DISCIPLINE_TOKENS = [
   'red lines never move down',
   'salvage recorded state first',
   // prompt-economy disciplines (D7, REC-UX-REWORK) — one token per invariant, pinned on all
-  // three surfaces (canon · kit advisor render · this lens fragment)
+  // three surfaces (canon · kit advisor render · this lens theme)
   'forbidden lane downgrade',
   'plain pipeline per call',
   'vehicle mandate a host cannot satisfy',
@@ -78,9 +63,8 @@ const DISCIPLINE_TOKENS = [
   // writers combine
   'unbatched writer scatter',
   // finding scope (the fold channel) — the rule's three arms plus the two bars each round declares.
-  // The token carries its SCOPE: this lens intro applies every bullet to plan-AUTHORING as well, and
-  // the rule is plan-execution's alone (a plan has no shipped behaviour to call a live defect in), so
-  // an unqualified bullet would contradict the canon it is rendered from.
+  // The token carries its SCOPE: the rule is plan-execution's alone (a plan has no shipped behaviour
+  // to call a live defect in), so an unqualified bullet would contradict the canon it is rendered from.
   'finding scope (plan-execution)',
   'narrow fix',
   'never queued',
@@ -101,60 +85,35 @@ const DISCIPLINE_TOKENS = [
   'never a licence',
 ];
 
-// The intro lines, pinned so the test computes each prior exactly without git history (CI
-// checkouts may be shallow). This release's delta is the intro alone: the outgoing intro promised
-// a preserved edit; the current one says the section is written current and names the route,
-// in the words of the kit's REGION_ROUTE (the engine knows nobody, so the words are copied here).
-const INTRO_LEAD = 'Apply these when authoring a plan, reviewing, folding a finding, or editing code';
-const REGION_ROUTE = "text of your own goes under a ### heading of its own, titled unlike the kit's sections";
-const OUTGOING_INTRO =
-  "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon. This section is rendered from that canon and refreshed on upgrade; a custom edit is preserved verbatim, but flagged.)";
-const PRE_E4_INTRO =
-  "Apply these when authoring a plan, reviewing, folding a finding, or editing code — the layer read **before any code change**. (Full canon: the project's planning / workflow-methodology + orchestration canon.)";
-
-// The release before this one moved the four review bullets to the spec review. The line of each
-// before that move is pinned by its sha256, so that earlier prior is checkable without git history.
-const OUTGOING_BULLETS = {
-  '- **Finding scope': '6c87401b5fb7b941ec3bdabd3f001d8837b82bed71a3c2ae5b62682b3727b063',
-  '- **Spec-first.**': '63103e3751328213e7eec5d8bcc01d354469a58850054fe5e413525692ac11ac',
-  '- **Fold minimally': 'd8593615bb06b2bf0fcf0138e33ea813fa5258dc3608b58fb57dc885739a9414',
-  '- **Heavy review': '796be6ece068a99c557b8abe925512a38d2a6ac5f0ea3ca945f9b697571ef1dc',
-};
+const REVIEW_LEADS = ['- **Finding scope', '- **Spec-first.**', '- **Fold minimally', '- **Heavy review'];
 const PLAN_REVIEW_RE = /plan[- ]review|reviews? (a|the) plan/i;
-const sha256 = (text) => createHash('sha256').update(text).digest('hex');
-const leadOf = (line) => Object.keys(OUTGOING_BULLETS).find((lead) => line.startsWith(lead));
-const isIntro = (line) => line.startsWith(INTRO_LEAD);
-const PRIORS_HEADER = priorsText.slice(0, priorsText.search(/^<!-- prior/m)).replace(/\s+/g, ' ');
 
-describe('agent-rules-lens fragment — canon presence', () => {
-  it('starts with the number-neutral heading', () => {
-    assert.match(fragment.split('\n')[0], /^### 2\.x\. Planning, review & process-fidelity invariants$/);
+describe('the lens rules theme references/rules/lens.md — canon presence', () => {
+  it('carries frontmatter with maxLines, the title, then PRECEDENCE_LINE as the first non-blank line after the title', () => {
+    const text = readTheme();
+    const { frontmatter, title, first, lineCount } = partsOf(text);
+    const maxLines = frontmatter.find((line) => /^maxLines:\s*\d+\s*$/.test(line));
+    assert.ok(maxLines, 'the frontmatter carries maxLines');
+    assert.ok(lineCount <= Number(maxLines.split(':')[1]), `the theme fits its maxLines (${lineCount} lines)`);
+    assert.deepEqual([title, first], [TITLE, PRECEDENCE_LINE]);
+  });
+
+  it('the body after the precedence line is the lens bullets alone: no heading, no intro line', () => {
+    const { body } = partsOf(readTheme());
+    assert.ok(body.length > 0, 'the theme carries bullets');
+    assert.deepEqual(body.filter((line) => !line.startsWith('- ')), []);
   });
 
   it('carries every discipline token (the single token list going forward)', () => {
-    const lower = fragment.toLowerCase();
+    const lower = readTheme().toLowerCase();
     for (const token of DISCIPLINE_TOKENS) {
-      assert.ok(lower.includes(token), `missing discipline token "${token}" in the lens fragment`);
+      assert.ok(lower.includes(token), `missing discipline token "${token}" in the lens theme`);
     }
   });
 
-  it('spec:rules-regions/S23 the intro says the section is written current on every upgrade and names the route, never a preserved edit', () => {
-    const intros = fragment.split('\n').filter(isIntro);
-    assert.equal(intros.length, 1, 'the fragment carries one intro line');
-    assert.ok(intros[0].includes('This section is rendered from that canon'), 'the intro keeps the Decision-7 provenance clause');
-    assert.ok(/written current on every upgrade/i.test(intros[0]), 'S23: the intro says the section is written current on every upgrade');
-    assert.ok(intros[0].includes(REGION_ROUTE), "S23: the intro names the route in REGION_ROUTE's words");
-    assert.ok(!/preserved|custom edit/i.test(intros[0]), 'S23: the intro no longer says a custom edit is preserved');
-  });
-
-  it("S23: the prior store's header says any other body is written with the current canon", () => {
-    assert.ok(PRIORS_HEADER.includes('any other body is written with the current canon'), 'S23: the header names the write');
-    assert.ok(!/preserved verbatim/i.test(PRIORS_HEADER), 'S23: the header no longer promises a preserved region');
-  });
-
   it("spec:story-flow/S4 the four review bullets name the spec review, the heavy-review bullet has it read the plan's ledger in the same rounds, and no bullet gives the plan a review of its own", () => {
-    const bullets = fragment.split('\n').filter((line) => line.startsWith('- '));
-    for (const lead of Object.keys(OUTGOING_BULLETS)) {
+    const bullets = readTheme().split('\n').filter((line) => line.startsWith('- '));
+    for (const lead of REVIEW_LEADS) {
       const found = bullets.filter((line) => line.startsWith(lead));
       assert.ok(found.length === 1 && /spec review/i.test(found[0]), `S4: the ${lead}** bullet names the spec review`);
     }
@@ -165,72 +124,18 @@ describe('agent-rules-lens fragment — canon presence', () => {
   });
 
   it('is path-neutral — no kit-command literals (the engine knows nobody)', () => {
-    assert.ok(!fragment.includes('agent-workflow-kit'), 'the fragment must never name the kit');
-    for (const entry of parsePriors(priorsText)) {
-      assert.ok(!entry.includes('agent-workflow-kit'), 'no priors entry may name the kit');
-    }
+    assert.ok(!readTheme().includes('agent-workflow-kit'), 'the theme must never name the kit');
   });
 
   it('non-vacuity: stripping a token from an in-memory copy goes red (injected)', () => {
+    const theme = readTheme();
     for (const token of ['checked syntax', 'cheapest adequate executor', 'backend divergence']) {
-      assert.ok(fragment.toLowerCase().includes(token), `sanity: the real fragment carries "${token}"`);
-      const corrupted = fragment.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), 'REDACTED');
+      assert.ok(theme.toLowerCase().includes(token), `sanity: the real theme carries "${token}"`);
+      const corrupted = theme.replace(new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), 'REDACTED');
       assert.ok(
         !corrupted.toLowerCase().includes(token),
         `the check must go RED when "${token}" is removed — otherwise the token guard is vacuous`,
       );
     }
-  });
-});
-
-describe('agent-rules-lens-priors — append-only prior store shape', () => {
-  const priors = parsePriors(priorsText);
-
-  it('is parseable and non-empty', () => {
-    assert.ok(priors.length >= 1, 'the prior store must carry at least one entry');
-  });
-
-  it('every entry is a lens block (number-neutral heading) and differs from the current fragment', () => {
-    const current = normalize(fragment);
-    for (const entry of priors) {
-      assert.match(entry.split('\n')[0], /^### 2\.x\. Planning, review & process-fidelity invariants$/, 'every entry starts with the number-neutral heading');
-      assert.notEqual(entry, current, 'a priors entry must never equal the current fragment (append the OUTGOING body, not the new one)');
-    }
-  });
-
-  it('the OUTGOING body of the previous release IS the newest entry — line by line', () => {
-    // The newest prior equals the fragment on every line but this release's delta, the intro line,
-    // which is the outgoing one. This pin moves with every canon release: it names THIS release's delta.
-    const lines = normalize(fragment).split('\n');
-    const newest = priors[priors.length - 1].split('\n');
-    assert.equal(newest.length, lines.length, "S23: the newest prior has the fragment's line count");
-    for (const [index, line] of lines.entries()) {
-      assert.equal(newest[index], isIntro(line) ? OUTGOING_INTRO : line, `S23: the newest prior's line ${index + 1}`);
-    }
-  });
-
-  it('the body before the spec-review move stays a prior, its four review bullets the pinned outgoing ones', () => {
-    // story-flow S4: the released body that move replaced stays a prior, now second newest.
-    const lines = normalize(fragment).split('\n');
-    for (const line of lines.filter(leadOf)) assert.notEqual(sha256(line), OUTGOING_BULLETS[leadOf(line)], `S4: the ${leadOf(line)}** bullet is still the outgoing one`);
-    const earlier = priors[priors.length - 2].split('\n');
-    assert.equal(earlier.length, lines.length, "S4: that prior has the fragment's line count");
-    for (const [index, line] of lines.entries()) {
-      if (leadOf(line)) assert.equal(sha256(earlier[index]), OUTGOING_BULLETS[leadOf(line)], `S4: that prior's ${leadOf(line)}** bullet`);
-      else assert.equal(earlier[index], isIntro(line) ? OUTGOING_INTRO : line, `S4: that prior's line ${index + 1}`);
-    }
-  });
-
-  it('the pre-E4 body REMAINS an entry (append-only: a deployment seeded from any past release keeps converging)', () => {
-    assert.ok(
-      priors.some((e) => e.includes(PRE_E4_INTRO) && e.toLowerCase().includes('cheapest adequate executor')),
-      'a pre-provenance-intro cost-lanes body stays in the store forever',
-    );
-  });
-
-  it('non-vacuity: dropping the newest entry from an in-memory copy goes red (injected)', () => {
-    const newest = priors[priors.length - 1];
-    const withoutNewest = parsePriors(priorsText).filter((e) => e !== newest);
-    assert.ok(!withoutNewest.includes(newest), 'the membership check must go RED when the newest entry is removed');
   });
 });

@@ -3,8 +3,10 @@
 // writes a local file and never merges two texts. Contract: docs/ai/specs/kit/project-rules/rules-ensure.md.
 
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { writeDocsAiFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
+import { detectEngine, readEngineFragment, resolveEngineDir } from '../engine-source.mjs';
 import { composeFailure, composeOutcome, tmpNote } from '../ensure-ops.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
 import { digestOf, readRecord, readUnder } from './rules-check.mjs';
@@ -13,6 +15,7 @@ import { RULES_PRIORS, isKnownPrior } from './rules-priors.mjs';
 import { RECORD_PATH, THEMES, themePaths } from './themes.mjs';
 
 const OP = 'rules';
+const ENGINE_INSTALL = 'npx @sabaiway/agent-workflow-engine@latest init';
 const FILE_ROLES = ['kit', 'local', 'effective'];
 const causeOf = (err) => String((err && err.message) || err);
 
@@ -24,6 +27,23 @@ const readTemplate = (readFile, path) => {
   } catch (err) {
     return { error: causeOf(err) };
   }
+};
+
+// An engine-homed template: absent when no valid installed engine supplies it, else its bytes, else the
+// read's error (a present template that cannot be read or is blank after trim).
+const readEngineTemplate = (rel, deps) => {
+  const { dir, source } = resolveEngineDir({ env: deps.env ?? process.env, home: deps.home ?? homedir() });
+  if (!detectEngine(dir, { source, rel }).ok) return { absent: true };
+  try {
+    return { bytes: Buffer.from(readEngineFragment(dir, { source, rel })) };
+  } catch (err) {
+    return { error: causeOf(err) };
+  }
+};
+
+const unsupplied = (theme, paths, kit) => {
+  const fate = kit.outcome === 'absent' ? 'not laid' : 'left as it is';
+  return `${paths.kit}: ${fate} — no installed engine supplies the ${theme.name} rules theme; install or refresh it with ${ENGINE_INSTALL}`;
 };
 
 const unreadable = (rel, read) => {
@@ -38,9 +58,16 @@ const survey = ({ themes, cwd, kitRoot, readFile, deps }) => {
   const surveyed = [];
   for (const theme of themes) {
     const paths = themePaths(theme.name);
-    const template = readTemplate(readFile, join(kitRoot, theme.template));
+    const fromEngine = theme.home === 'engine';
+    const template = fromEngine ? readEngineTemplate(theme.template, deps) : readTemplate(readFile, join(kitRoot, theme.template));
     if (template.error !== undefined) {
-      return { failure: composeFailure(OP, 'template-unreadable', `${paths.kit}: the bundled template ${theme.template} could not be read, so nothing was written — reinstall the kit. ${template.error}`) };
+      const remedy = fromEngine ? `the installed engine's template ${theme.template} could not be read, so nothing was written — ${template.error}`
+        : `the bundled template ${theme.template} could not be read, so nothing was written — reinstall the kit. ${template.error}`;
+      return { failure: composeFailure(OP, 'template-unreadable', `${paths.kit}: ${remedy}`) };
+    }
+    if (template.absent) {
+      surveyed.push({ theme, unsupplied: unsupplied(theme, paths, readUnder(cwd, paths.kit, deps)) });
+      continue;
     }
     const reads = Object.fromEntries(FILE_ROLES.map((role) => [role, readUnder(cwd, paths[role], deps)]));
     const failure = FILE_ROLES.map((role) => unreadable(paths[role], reads[role])).find(Boolean);
@@ -195,13 +222,17 @@ export const ensureRules = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const themes = deps.themes ?? THEMES;
   const surveyed = survey({ themes, cwd, kitRoot, readFile: deps.readFile ?? readFileSync, deps });
   if (surveyed.failure) return surveyed.failure;
-  const plans = surveyed.surveyed.map((one) => planTheme(one, surveyed.record, deps.priors ?? RULES_PRIORS));
-  const firstRecordWrite = plans.findIndex((plan) => plan.recordWrite);
-  const replacing = (index) => (index === firstRecordWrite && !surveyed.record.ok ? surveyed.record.reason : null);
+  const priors = deps.priors ?? RULES_PRIORS;
+  const steps = surveyed.surveyed.map((one) => (one.unsupplied ? one : { plan: planTheme(one, surveyed.record, priors) }));
+  const plans = steps.filter((step) => step.plan).map((step) => step.plan);
+  const firstRecordWrite = plans.find((plan) => plan.recordWrite);
+  const replacing = (plan) => (plan === firstRecordWrite && !surveyed.record.ok ? surveyed.record.reason : null);
   const fates = new Map();
   const notes = [];
   const fateOf = (plan, role) => fates.get(`${plan.name}:${role}`) ?? 'would';
-  const lines = () => plans.flatMap((plan, index) => themeLines({ plan, fateOf, kitRoot, cwd, dryRun, replacing: replacing(index) }));
+  const lines = () => steps.flatMap(({ plan, unsupplied: line }) => (plan
+    ? themeLines({ plan, fateOf, kitRoot, cwd, dryRun, replacing: replacing(plan) })
+    : [line]));
   if (dryRun) {
     const wouldWrite = (plan, role) => (role === 'kit' ? plan.kitWrite !== null : role === 'effective' ? plan.effectiveWrite !== null : plan.recordWrite);
     return composeOutcome(OP, tokenOf(plans, wouldWrite, true), lines(), false);

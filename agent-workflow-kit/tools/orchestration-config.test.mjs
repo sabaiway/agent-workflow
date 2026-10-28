@@ -390,7 +390,7 @@ describe('spec:orchestration-note/S1 the judgement: readmeState, withCurrentRead
     assert.deepEqual(Object.entries(withCurrentReadme(input)), [['_README', CANON_README], ['plan-execution', { review: 'council' }], ['flow', flow], ['epic', { review: ['review-lens'] }]]);
     assert.deepEqual([Object.entries(input), Object.keys(withCurrentReadme({ flow }))], [Object.entries(before), ['_README', 'flow']], 'the input keeps its keys, values and order; an absent note is put first');
   });
-  it('NOTE_ROUTE is the route text', async () => assert.equal((await import('./orchestration-readme.mjs')).NOTE_ROUTE, 'a note of your own goes in AGENTS.md, outside the two <!-- workflow: --> comment lines around the orchestration pointer'));
+  it('NOTE_ROUTE is the route text', async () => assert.equal((await import('./orchestration-readme.mjs')).NOTE_ROUTE, "a note of your own goes in AGENTS.md, outside the kit block's two workflow:kit comment lines"));
 });
 
 // ── FLOW-TOLERATE — the versioned, uninterpreted `flow` top-level key (tolerate-only release) ──
