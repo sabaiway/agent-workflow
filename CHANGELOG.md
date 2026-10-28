@@ -7,6 +7,14 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-28 — AD-217: the kit refresh removes the folders it leaves empty (kit 20.0.1 PATCH; memory, engine and both bridges unchanged)
+
+**`init` no longer leaves empty folders in the kit home and asks the user to remove them by hand.** After its file
+sweep, `payload-prune.mjs` removes each directory the package does not carry that holds no entry, children first, by a
+single `rmdir` behind the same guards; a directory still holding an entry stays, with one `kept` line for the topmost such directory of each tree, and a symlink
+stays the owner's. The 20.0.0 refresh had left 70 such folders and 26 lines on every run. Contract: upgrade-delivery
+revision 10. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md).
+
 ## 2026-10-28 — AD-216: the kit's text lives in kit files and one kit block; one upgrade moves every project once (kit 20.0.0, engine 6.0.0 and memory 9.0.0 MAJOR; both bridges unchanged)
 
 **A project's own `AGENTS.md` and `docs/ai/agent_rules.md` can no longer lose the kit's updates.** The kit writes one

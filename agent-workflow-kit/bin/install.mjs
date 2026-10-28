@@ -293,7 +293,7 @@ Installs/refreshes the kit at ~/.claude/skills/agent-workflow-kit
   stays /agent-workflow-kit setup, opt-in); once placed, init refreshes them from the kit's
   own bundled copies — local files only, never a downgrade — and --no-bridges skips that
   refresh. init never deletes your project settings; in an existing kit home it removes each
-  file in its folders that the package does not carry, one line each. If the
+  file in its folders that the package does not carry and each folder left empty. If the
   installed kit is newer than the version you ran, init refuses (no network — it compares
   the version on disk) and points you at @latest; --allow-downgrade overrides that
   refusal (distinct from --force, which is launcher-only).

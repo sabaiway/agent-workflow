@@ -154,7 +154,7 @@ const capturePayload = (home) => {
         installed: listRegularFiles(join(home, entry)),
         packaged: listRegularFiles(join(KIT, entry)),
       })),
-      keptDirectory: lstatSync(join(home, 'references/user-kept-dir'), { throwIfNoEntry: false })?.isDirectory(),
+      removedDirectory: lstatSync(join(home, 'references/user-empty-dir'), { throwIfNoEntry: false }) === undefined,
       keptSymlink: lstatSync(join(home, 'tools/user-link'), { throwIfNoEntry: false })?.isSymbolicLink(),
       runtimeBytes: readFileSync(join(home, 'runtime-state.json')),
     };
@@ -219,8 +219,8 @@ const detectPayload = (record) => {
   if (payload.error) return { reason: `payload unreadable: ${payload.error}` };
   const mismatch = payload.trees.find(({ installed, packaged }) => !isDeepStrictEqual(installed, packaged));
   if (mismatch) return { reason: `${mismatch.entry} regular-file paths did not converge` };
-  if (!payload.keptDirectory || !payload.keptSymlink) {
-    return { reason: 'the seeded directory or symlink was not preserved' };
+  if (!payload.removedDirectory || !payload.keptSymlink) {
+    return { reason: 'the seeded empty directory was not removed or the symlink was not preserved' };
   }
   return payload.runtimeBytes.equals(record.runtimeBefore)
     ? null : { reason: 'runtime-state.json changed' };
@@ -390,7 +390,7 @@ describe('full flow upgrade delivery', () => {
       writeFixture(join(home, path), `old ${path}${LF}`);
     }
     writeFixture(join(home, 'SKILL.md'), ['---', 'name: agent-workflow-kit', '---', ''].join(LF));
-    mkdirSync(join(home, 'references/user-kept-dir'));
+    mkdirSync(join(home, 'references/user-empty-dir'));
     writeFixture(join(tmp, 'outside/keep.txt'), `keep${LF}`);
     symlinkSync(join(tmp, 'outside'), join(home, 'tools/user-link'));
     writeFixture(join(home, 'runtime-state.json'), runtimeBefore);

@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, rmdirSync, unlinkSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { lstatNoFollowRead } from './fs-read-nofollow.mjs';
@@ -107,9 +107,7 @@ const readTree = (root, entry, reports, directoryOnly = false) => {
   return entries;
 };
 
-// The walk lists a directory before its children, so a kept directory's line covers the directories beneath it.
-const planSubtree = (carried, installed, orphans, reports) => {
-  const keptDirectories = [];
+const planSubtree = (carried, installed, orphans, directories, reports) => {
   for (const [path, kind] of installed) {
     if (carried.has(path)) {
       const packageKind = carried.get(path);
@@ -121,10 +119,9 @@ const planSubtree = (carried, installed, orphans, reports) => {
       }
     } else if (kind === 'file') {
       orphans.push(path);
-    } else if (kind === 'directory' && keptDirectories.some((kept) => path.startsWith(`${kept}/`))) {
-      continue;
+    } else if (kind === 'directory') {
+      directories.push(path);
     } else {
-      if (kind === 'directory') keptDirectories.push(path);
       reports.push({
         ok: true,
         line: `${PREFIX} kept ${path} (a ${kind} the package does not carry — yours to remove by hand)`,
@@ -151,9 +148,50 @@ const removeOrphan = (home, path, remove) => {
   }
 };
 
+const removeEmptyDirectory = (home, path, remove) => {
+  const absolute = resolve(home, path);
+  try {
+    remove.assertContainedRealPath(home, absolute);
+    const stat = remove.lstatNoFollowRead(absolute);
+    if (stat === null) {
+      return { state: 'absent' };
+    }
+    if (!stat.isDirectory()) {
+      throw new Error('the path is no longer a real directory');
+    }
+    remove.rmdirSync(absolute);
+    return { state: 'removed' };
+  } catch (error) {
+    const settled = { ENOTEMPTY: 'kept', EEXIST: 'kept', ENOENT: 'absent' }[error.code];
+    return settled ? { state: settled } : { state: 'failed', report: reportFailure(path, error) };
+  }
+};
+
+// The walk lists a directory before its children: reversed, a child is removed before its parent.
+const removeEmptyDirectories = (home, directories, remove) => {
+  const outcomes = new Map([...directories].reverse().map((path) => [path, removeEmptyDirectory(home, path, remove)]));
+  const isTop = (path) => !directories.some((other) => path.startsWith(`${other}/`));
+  return directories.flatMap((path) => {
+    const { state, report } = outcomes.get(path);
+    if (state === 'failed') {
+      return [report];
+    }
+    if (!isTop(path) || state === 'absent') {
+      return [];
+    }
+    return [{
+      ok: true,
+      line: state === 'removed'
+        ? `${PREFIX} removed ${path} (not in the package)`
+        : `${PREFIX} kept ${path} (a directory the package does not carry that still holds an entry)`,
+    }];
+  });
+};
+
 export const prunePayload = ({ packageRoot, home, payload }, deps = {}) => {
   const reports = [];
   const orphans = [];
+  const directories = [];
   for (const entry of new Set(payload)) {
     const path = entry.split(sep).join('/');
     const carried = readTree(packageRoot, path, reports, true);
@@ -161,7 +199,7 @@ export const prunePayload = ({ packageRoot, home, payload }, deps = {}) => {
       continue;
     }
     const installed = readTree(home, path, reports);
-    planSubtree(carried, installed, orphans, reports);
+    planSubtree(carried, installed, orphans, directories, reports);
   }
   if (reports.some((report) => !report.ok)) {
     return finishReport(reports);
@@ -170,9 +208,11 @@ export const prunePayload = ({ packageRoot, home, payload }, deps = {}) => {
     assertContainedRealPath: deps.assertContainedRealPath ?? assertContainedRealPath,
     lstatNoFollowRead: deps.lstatNoFollowRead ?? lstatNoFollowRead,
     unlinkSync: deps.unlinkSync ?? unlinkSync,
+    rmdirSync: deps.rmdirSync ?? rmdirSync,
   };
   for (const path of orphans) {
     reports.push(...removeOrphan(home, path, remove));
   }
+  reports.push(...removeEmptyDirectories(home, directories, remove));
   return finishReport(reports);
 };

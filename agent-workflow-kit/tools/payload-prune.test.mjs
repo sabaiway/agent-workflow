@@ -2,7 +2,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync,
-  readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
+  readFileSync, readlinkSync, rmdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -140,7 +140,7 @@ describe('spec:upgrade-delivery/S12 orphan removal at every depth', () => {
       assertNoRemoval({ lines: result.stdout.split(LF) });
     }
   });
-  it('removes all four orphans and preserves the carried files and emptied directories', async () => {
+  it('removes all four orphans and the emptied directories and preserves the carried files', async () => {
     const fixture = createFixture();
     ORPHANS.forEach((path) => writeFixtureFile(fixture.home, path));
     const result = await prunePayload(fixture);
@@ -151,8 +151,8 @@ describe('spec:upgrade-delivery/S12 orphan removal at every depth', () => {
       assertReport(result, 'removed', path);
     }
     assertPackageFiles(fixture);
-    assert.ok(lstatSync(join(fixture.home, 'references/gone')).isDirectory());
-    assertReport(result, 'kept', 'references/gone');
+    assert.equal(existsSync(join(fixture.home, 'references/gone')), false);
+    assertReport(result, 'removed', 'references/gone');
   });
   it('reports nothing for an unmodified copy', async () => {
     const fixture = createFixture();
@@ -173,27 +173,65 @@ describe('spec:upgrade-delivery/S12 orphan removal at every depth', () => {
 });
 
 describe('spec:upgrade-delivery/S13 preserved objects and payload boundaries', () => {
-  it('keeps an empty uncarried directory tree and reports it by its top directory alone', async () => {
+  it('removes an empty uncarried directory tree with one line for its top directory and none on the next run', async () => {
     const fixture = createFixture();
+    const tops = ['tools/userdir', 'tools/userdir2'];
     ['tools/userdir/a/b', 'tools/userdir2'].forEach((path) => mkdirSync(join(fixture.home, path), { recursive: true }));
     const result = await prunePayload(fixture);
     assertResult(result, true);
-    assert.ok(lstatSync(join(fixture.home, 'tools/userdir/a/b')).isDirectory());
-    assert.deepEqual(result.lines, ['tools/userdir', 'tools/userdir2'].map((path) => assertReport(result, 'kept', path)));
+    tops.forEach((path) => assert.equal(existsSync(join(fixture.home, path)), false));
+    assert.deepEqual(result.lines, tops.map((path) => assertReport(result, 'removed', path)));
+    assert.deepEqual((await prunePayload(fixture)).lines, []);
   });
-  it('keeps a symlink without touching its outside target', async () => {
+  it('keeps a symlink untouched and its directory with one kept line, and removes the empty child', async () => {
     const fixture = createFixture();
     const outside = mkdtempSync(join(state.root, 'outside-'));
     writeFixtureFile(outside, 'secret.txt');
-    const link = join(fixture.home, 'tools/link');
+    const link = join(fixture.home, 'tools/holder/link');
+    mkdirSync(join(fixture.home, 'tools/holder/empty'), { recursive: true });
     symlinkSync(outside, link);
-    const result = await prunePayload(fixture);
-    assertResult(result, true);
-    assertReport(result, 'kept', 'tools/link');
-    assert.ok(lstatSync(link).isSymbolicLink());
-    assert.equal(readlinkSync(link), outside);
-    assertUntouched(outside, 'secret.txt');
+    for (const run of [1, 2]) {
+      const result = await prunePayload(fixture);
+      assertResult(result, true);
+      assert.equal(result.lines.length, 2, `run ${run}`);
+      assert.ok(assertReport(result, 'kept', 'tools/holder').includes('still holds an entry'));
+      assertReport(result, 'kept', 'tools/holder/link');
+      assert.equal(existsSync(join(fixture.home, 'tools/holder/empty')), false);
+      assert.equal(readlinkSync(link), outside);
+      assertUntouched(outside, 'secret.txt');
+    }
   });
+  const directoryCells = [
+    { name: 'an absent directory is no failure', primitive: 'lstatNoFollowRead', value: null, ok: true },
+    { name: 'a path no longer a real directory fails', primitive: 'lstatNoFollowRead', value: { isDirectory: () => false } },
+    { name: 'an rmdir error fails', primitive: 'rmdirSync', message: 'rmdir boom' },
+    { name: 'a directory gone before its rmdir is no failure', primitive: 'rmdirSync', message: 'gone', code: 'ENOENT', ok: true },
+    { name: 'a platform answering EEXIST keeps it with no failure', primitive: 'rmdirSync', message: 'full', code: 'EEXIST', ok: true, kept: true },
+    { name: 'a containment refusal fails', primitive: 'assertContainedRealPath', message: 'contained boom' },
+  ];
+  for (const cell of directoryCells) {
+    it(`emptied directory: ${cell.name}`, async () => {
+      const fixture = createFixture();
+      const directory = join(fixture.home, 'tools/emptied');
+      writeFixtureFile(fixture.home, 'tools/emptied/x.mjs');
+      const real = { assertContainedRealPath, lstatNoFollowRead, rmdirSync };
+      const result = await prunePayload(fixture, {
+        [cell.primitive]: (...args) => {
+          if (args[cell.primitive === 'assertContainedRealPath' ? 1 : 0] !== directory) return real[cell.primitive](...args);
+          if (cell.message) throw Object.assign(new Error(cell.message), { code: cell.code });
+          return cell.value;
+        },
+      });
+      const ok = cell.ok === true;
+      assertResult(result, ok);
+      assertReport(result, 'removed', 'tools/emptied/x.mjs');
+      const lines = result.lines.filter((line) => hasPath(line, 'tools/emptied'));
+      const expected = cell.kept ? 'kept' : ok ? null : 'failed';
+      assert.deepEqual(lines, expected ? [assertReport(result, expected, 'tools/emptied')] : []);
+      assert.ok(ok || lines[0].includes(cell.message ?? 'no longer a real directory'));
+      assert.ok(lstatSync(directory).isDirectory());
+    });
+  }
   it('does not report or change files beside the payload roots', async () => {
     const fixture = createFixture();
     const paths = ['runtime.json', '.cache/x'];

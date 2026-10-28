@@ -803,8 +803,40 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   there. Fix direction, to weigh when taken: name every fenced marker line in the refusal's line; treating a fenced
   marker line as blocking an insert also refuses a file that only quotes the markers in a sample, a new upgrade STOP,
   so the taker weighs that against the silent duplicate insert. Raised by the KIT-TEXT S1 spec review (lens).
+- **PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES** — invariant: the kit's publish test step passes whatever order its suites
+  run in. Origin: `agent-workflow-kit/bin/install.test.mjs:704` runs `npm pack` over the kit folder while the codex
+  bridge suites (`bridges/*/bin/*.test.mjs` in `.github/workflows/_publish-one.yml:171`) create and delete fixture
+  repos under `bridges/codex-cli-bridge/node_modules/.aw-fixtures/`; a file removed mid-walk fails the pack with
+  ENOENT. The kit 20.0.0 publish run 40652332877 failed on it, and the re-dispatch passed. Narrow fix: the bridge
+  suites build their fixtures under the OS temp folder, never inside the package. Residual exposure, live: a release
+  publish fails at random and needs a hand re-run. Raised at the KIT-TEXT release.
+- **CI-FLOOR-RUNS-TESTS-BEFORE-THE-ROOT-HOOK-ENDS** — invariant: every suite passes on the Node floor CI pins.
+  Origin: on Node 22.0.0 (`.github/workflows/ci.yml:43`) the file-level async `before` of
+  `agent-workflow-kit/test/tier-walk-e2e.test.mjs:146-152` is not awaited past its first `await`, so the `seeded`
+  fixture and both `texts` are undefined when the tests read them (CI run 40652297583: 14 suites, TypeError on
+  `records`); Node 24 passes. CI has been red on every release push since kit 19.1.0; only this cause was read.
+  Narrow fix: build every fixture synchronously before the first `await`, or move the hook into a `describe`. Residual
+  exposure, live: CI is red on main, so a real floor regression is not seen. Raised at the KIT-TEXT release.
+- **CI-GLOBS-MISS-THE-NEW-SUITE-FOLDERS** — invariant: CI and the publish step run every tracked suite the local gate
+  runs. Origin: `.github/workflows/ci.yml:68-71` and `_publish-one.yml:171` name fixed-depth globs, so
+  `agent-workflow-kit/tools/transition/*.test.mjs` and `agent-workflow-kit/tools/project-rules/*.test/*.test.mjs`
+  (KIT-TEXT S1, S2) never run there; the gate's `tools/**` runs them. Narrow fix: name both folders in both lists.
+  Residual exposure, live: the transition module ships with its suites run only locally. Raised at the KIT-TEXT release.
+- **BRIDGE-REVIEWS-CANNOT-CARRY-A-LARGE-RELEASE-DIFF** — invariant: a council code review of a release's staged diff
+  runs with no host change. Origin: the KIT-TEXT diff (139 files, 1.09 M characters) passed codex's 1 048 576-character
+  input only through the host setting `CODEX_REVIEW_MAX_TOTAL_BYTES` (a file the sandbox cannot write, set with the
+  maintainer's consent), and agy's code mode refused it (`AGY_REVIEW_MAX_TOTAL_BYTES=240000`), so agy read it in four
+  diff-mode parts and its code-mode receipt was a recorded degrade. Fix direction: the wrapper picks the file transport
+  when the inline payload passes the model's own input cap; the review-state gate accepts a grounded diff-mode receipt
+  set that covers the whole staged diff. Residual exposure, live: every large release review needs a consent or a
+  degrade. Raised at the KIT-TEXT release.
 
 ## Closed
+
+- **KIT-REFRESH-LEAVES-EMPTY-DIRECTORIES-TO-THE-USER** — invariant: a kit refresh leaves the home converged with no
+  hand step. Raised at the 2026-10-28 host refresh to kit 20.0.0, which kept 70 emptied directories and printed 26
+  "yours to remove by hand" lines on every run. Closed in kit 20.0.1 (AD-217): `payload-prune.mjs` removes each
+  uncarried directory left empty after the orphan sweep, children first (upgrade-delivery revision 10, S13).
 
 - **LINE-SAFETY-TEST-FULL-RANGE**, **LENS-RELAYS-NAME-NO-TARGET-REFUSAL**, **LENS-DOUBLED-CELL-PROVES-NO-LATER-WRITE**,
   **LENS-HEADING-MATCHER-STOPS-BEFORE-ITS-LABEL**, **LENS-REGION-TEST-COMMENT-NAMES-THE-PRESERVE-POSTURE**,
@@ -1155,4 +1187,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   the previous release's checks over the new tree; nothing says so before `release-run` reaches its commit stage.
   Narrow fix: `release-run --plan` names the hook lines whose tool differs from the repository's own and the host
   refresh that clears them. Residual exposure, live: the 19.4.0 release stopped at `commit` until a record went back
-  with its reason and the host refresh. Raised by the S10-S12 release of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.
+  with its reason and the host refresh; at kit 20.0.0 the host 19.5.0 rules check refused the moved record (`theme
+  communication is not in the registry`) until the work-tree kit was installed on the host before the commit, the
+  maintainer's choice. Raised by the S10-S12 release of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.

@@ -4,6 +4,24 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 20.0.1 — `init` removes the folders it leaves empty in the kit home (AD-217)
+
+**A refresh no longer asks you to delete folders by hand.** `init` removes from an existing kit home every file in
+the kit's folders that the package does not carry, but it kept the folders themselves and printed `kept <folder> (a
+directory the package does not carry — yours to remove by hand)` for the topmost such folder of each tree, on every
+run. Moving to 20.0.0, which ships no test suites, left 70 empty folders and 26 such lines. Now:
+
+- After removing the files, `init` removes each folder the package does not carry that is left empty, children first,
+  with one `removed <folder> (not in the package)` line for the topmost folder of each removed tree. The next run over
+  the same home prints nothing for it.
+- A folder that still holds something stays, with one `kept <folder> (a directory the package does not carry that
+  still holds an entry)` line for the topmost such folder of each tree. A symlink the package does not carry stays the owner's, unchanged.
+- The removal is a single non-recursive `rmdir` behind the same guards as the file removal; a failure is reported by
+  folder and cause and fails the install, like a file that cannot be removed.
+
+Your next `npx @sabaiway/agent-workflow-kit@latest init` removes the empty folders earlier refreshes left. Contract:
+upgrade-delivery revision 10.
+
 ## 20.0.0 — the kit's text lives in kit files and one kit block; one upgrade moves your project once (AD-216)
 
 **Your project's own files can no longer lose the kit's updates.** Until now the kit kept its standing text inside
