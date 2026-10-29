@@ -6,12 +6,12 @@
 // lanes, the rules-check and layout-check arm/carry/duplicate/refusal lanes (win32 included), the
 // unmanaged refusal, a foreign-named marker rewritten name-free, the up-to-date short-circuit, the
 // not-a-git-checkout skip, the rejected-run catch, an import with an unresolvable entry, and the S71 real-commit lane (real `git commit`
-// through the written hook over stand-ins at their deployed paths). Every child runs with each
-// inherited GIT_* variable stripped, so a hook's environment never leaks in.
+// through the written hook and the stable kit command over stand-ins at their deployed paths). Every child runs with
+// each inherited GIT_* variable stripped, so a hook's environment never leaks in.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, existsSync, realpathSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -99,7 +99,7 @@ describe('install-git-hooks — the in-place installer under a GIT_DIR-pinned fi
     const ok = (args, pre) => { const r = runAt(fx.gitDir, args, pre); assert.equal(r.status, 0, r.stderr); return r; };
     ok(['--commit-guard', guard, '--layout-check', layout, '--rules-check', rules]);
     const tail = `node "${shown(rules)}" --check # rules-check\nnode "${shown(layout)}" --check # layout-check\nnode "${guard}" --check\n`;
-    assert.ok(hookOf(fx).endsWith(`node scripts/agent-workflow/archives/archive-decisions.mjs --check\n${tail}`), hookOf(fx));
+    assert.ok(hookOf(fx).endsWith(`node scripts/agent-workflow/run.mjs archive-decisions --check\n${tail}`), hookOf(fx));
     assert.doesNotMatch(hookOf(fx), /^node --test/m, 'the hook runs no suite');
     assert.match(ok([]).stdout, /already up to date/, 'the flagless re-run carries all three');
     const before = hookOf(fx);
@@ -175,9 +175,9 @@ const IDENTITY = { GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@e', GIT_COMMITTER_
 const bareAt = (home, extra = {}) => { const { NODE_TEST_CONTEXT: _, ...env } = envAt(home, { ...IDENTITY, ...extra }); return env; };
 const passes = (r) => (assert.equal(r.status, 0, r.stderr), r);
 
-// Passing stand-ins for every script the hook runs, each at its deployed path in the kit folder; the docs checker,
-// run right after the local line, records whether the marker existed. The marker and the record live in a sibling
-// dir, outside the work tree.
+// Passing stand-ins for every script the hook runs, each at its deployed path in the kit folder beside a copy of this
+// tree's run.mjs, through which the hook runs them; the docs checker, run right after the local line, records whether
+// the marker existed. The marker and the record live in a sibling dir, outside the work tree.
 const commitRepo = (root, side) => {
   const [marker, record, local] = [join(side, 'marker'), join(side, 'record'), join(root, 'scripts', 'pre-commit.local')];
   const kit = join(root, 'scripts', 'agent-workflow');
@@ -186,6 +186,7 @@ const commitRepo = (root, side) => {
   writeFileSync(join(kit, 'docs-size', 'check-docs-size.mjs'), `import { existsSync, writeFileSync } from 'node:fs';
 if (!process.argv.includes('--check-index')) writeFileSync(${JSON.stringify(record)}, String(existsSync(${JSON.stringify(marker)})));\n`);
   for (const name of ['archive-changelog', 'archive-issues', 'archive-decisions']) writeFileSync(join(kit, 'archives', `${name}.mjs`), 'process.exit(0);\n');
+  copyFileSync(join(HERE, '..', 'run.mjs'), join(kit, 'run.mjs'));
   for (const args of [['init', '-q'], ['add', '-A'], ['commit', '-qm', 'base']]) passes(git(...args));
   passes(spawnChecked(process.execPath, [INSTALLER], { env: bareAt(root, { GIT_DIR: join(root, '.git') }) }));
   const head = () => git('rev-parse', 'HEAD').stdout.trim();
@@ -202,7 +203,7 @@ const inCommitRepo = (cell) => () => {
   try { cell(commitRepo(...dirs)); } finally { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); }
 };
 
-describe('spec:init-project/S71 the local hook file through real commits over stand-ins at their deployed paths', () => {
+describe('spec:init-project/S71 the local hook file through real commits over stand-ins at their deployed paths, run through run.mjs', () => {
   it('a local file that writes a marker runs before the docs check, and the commit exits 0', { timeout: 120_000 }, inCommitRepo((fx) => {
     passes(fx.commit(`printf made > "${fx.marker}"\n`));
     assert.ok(existsSync(fx.marker), 'the local file ran: its marker appeared');

@@ -119,9 +119,9 @@ describe('upgrade-runlist registry — the L1 seven, in order', () => {
   });
 
   it('six commands live under tools/; the ONE exception is gates-migration (references/scripts)', () => {
-    // The migration runs from the skill home: the gates module's skill-home entry of the kit mirror's manifest.
-    const migrate = readFamily().filter(({ module, role }) => module === 'gates' && role === 'skill-home').map(({ path }) => path);
-    assert.deepEqual(migrate, ['gates/migrate-gates.mjs'], 'the gates module runs one skill-home file');
+    // The migration runs from the skill home: gates/migrate-gates.mjs, a skill-home entry of the kit mirror's manifest.
+    const migrate = readFamily().filter(({ path, role }) => path === 'gates/migrate-gates.mjs' && role === 'skill-home').map(({ path }) => path);
+    assert.deepEqual(migrate, ['gates/migrate-gates.mjs'], 'gates-migration runs the skill-home gates/migrate-gates.mjs');
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'gates-migration') {
         assert.ok(

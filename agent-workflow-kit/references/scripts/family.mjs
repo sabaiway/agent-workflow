@@ -18,13 +18,13 @@ export const FAMILY_ROLES = Object.freeze(['deployed', 'skill-home', 'suite', 's
 const SCHEMA = 1;
 const TOP_KEYS = ['schema', 'entries'];
 const ENTRY_KEYS = ['path', 'role', 'seed'];
-const TOP_FILES = new Set(['family.mjs', 'family.test.mjs']);
+const TOP_FILES = new Set(['family.mjs', 'family.test.mjs', 'run.mjs', 'run.test.mjs']);
 const MODULES = new Set(['docs-size', 'spec-schema', 'archives', 'git-hooks', 'gates', 'shared', 'test-support']);
 const FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// A path is a top-level file of the reader's own, or <module>/<file> with the module one of the seven.
+// A path is one of the top-level files, or <module>/<file> with the module one of the seven.
 const inGrammar = (path) => {
   const parts = path.split('/');
   if (parts.length === 1) return TOP_FILES.has(path);
@@ -46,7 +46,7 @@ const readEntry = (raw, at, seen, refuse) => {
   }
   const { path, role } = raw;
   if (!inGrammar(path)) {
-    refuse(`${where}.path`, `${JSON.stringify(path)} is outside the grammar (family.mjs, family.test.mjs or <module>/<file> of ${[...MODULES].join(', ')})`);
+    refuse(`${where}.path`, `${JSON.stringify(path)} is outside the grammar (${[...TOP_FILES].join(', ')} or <module>/<file> of ${[...MODULES].join(', ')})`);
   }
   if (seen.has(path)) refuse(`${where}.path`, `duplicate ${JSON.stringify(path)}`);
   seen.add(path);

@@ -1,7 +1,7 @@
 // install-git-hooks.test.mjs — the pre-commit installer on a copy deployed in the kit folder: the hooks path
 // comes from git plumbing (a linked worktree resolves ITS OWN hooks path); the marker names no project and any
-// `<name>:install-git-hooks.mjs` line reads as managed; the hook runs the docs and archive checks at their
-// deployed paths and no suite; the guard, rules-check and layout-check lines are carried by role, fail closed
+// `<name>:install-git-hooks.mjs` line reads as managed; the hook runs the docs and archive checks through the
+// stable kit command and no suite; the guard, rules-check and layout-check lines are carried by role, fail closed
 // on a duplicate and refuse a bad flag value, writing nothing. Every child runs with each inherited GIT_*
 // variable stripped, so a hook's environment never leaks in.
 
@@ -64,13 +64,14 @@ const readHook = (root) => readFileSync(join(hooksPathOf(root), 'pre-commit'), '
 const stub = (root, rel) => (mkdirSync(dirname(join(root, rel)), { recursive: true }), writeFileSync(join(root, rel), '// a stand-in tool\n'), join(root, rel));
 
 const NAME_FREE = markerFor('agent-workflow');
-const DEPLOYED_LINES = ['node scripts/agent-workflow/docs-size/check-docs-size.mjs', 'node scripts/agent-workflow/docs-size/check-docs-size.mjs --check-index',
-  ...['changelog', 'issues', 'decisions'].map((name) => `node scripts/agent-workflow/archives/archive-${name}.mjs --check`)];
+const COMMAND = 'node scripts/agent-workflow/run.mjs';
+const COMMAND_LINES = [`${COMMAND} docs-size`, `${COMMAND} docs-size --check-index`,
+  ...['changelog', 'issues', 'decisions'].map((name) => `${COMMAND} archive-${name} --check`)];
 const LOCAL_LINE = 'if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi';
 // The plain hook every write carries: the shebang, the name-free marker and `# ` header lines up to set -e (their
 // wording is free, so they are read from the written hook); right after set -e one `# ` comment naming
-// scripts/pre-commit.local (read the same way) and the exact local line; then the docs and archive lines at their
-// deployed paths, and no suite line.
+// scripts/pre-commit.local (read the same way) and the exact local line; then the docs and archive lines through the
+// stable kit command, and no suite line.
 const localHook = (root) => {
   const lines = readHook(root).split('\n');
   const at = lines.indexOf('set -e');
@@ -81,21 +82,21 @@ const localHook = (root) => {
   const comment = lines[at + 1];
   assert.ok(comment?.startsWith('# ') && comment.includes('scripts/pre-commit.local'), `right after set -e a # comment names scripts/pre-commit.local, got ${JSON.stringify(comment)}`);
   assert.deepEqual(lines.filter((l) => l.includes('scripts/pre-commit.local')), [comment, LOCAL_LINE], 'the comment and the local line are the only lines naming scripts/pre-commit.local');
-  assert.deepEqual(lines.slice(at + 3, at + 3 + DEPLOYED_LINES.length), DEPLOYED_LINES, 'the docs and archive lines at their deployed paths follow the local line');
-  return [...header, 'set -e', comment, LOCAL_LINE, ...DEPLOYED_LINES, ''].join('\n');
+  assert.deepEqual(lines.slice(at + 3, at + 3 + COMMAND_LINES.length), COMMAND_LINES, 'the docs and archive lines through the kit command follow the local line');
+  return [...header, 'set -e', comment, LOCAL_LINE, ...COMMAND_LINES, ''].join('\n');
 };
 // A claim that the hook or the installer runs the scripts' own tests.
 const scriptTestsClaim = (text) => text.replace(/\s+/g, ' ').match(/scripts\/?`?\s+tests?\b|regressions to the scripts/i)?.[0] ?? null;
 const hookText = (lines, eol) => lines.map((l) => `${l}${eol}`).join('');
 const line = (path, role) => `node "${role ? shown(path) : path}" --check${role ? ` # ${role}` : ''}\n`;
 
-describe('spec:script-family/S9 install-git-hooks — run from the kit folder: the name-free marker and the fixed deployed lines', () => {
-  it('beside no package.json, a malformed one or a named one, the hook carries the name-free marker, the docs and archive lines at their deployed paths and no node --test line', inProject(({ root }) => {
+describe('spec:script-family/S9 install-git-hooks — run from the kit folder: the name-free marker and the kit-command lines', () => {
+  it('beside no package.json, a malformed one or a named one, the hook carries the name-free marker, the docs and archive lines through the kit command and no node --test line', inProject(({ root }) => {
     for (const pkg of [null, MALFORMED_PACKAGE_JSON, NAMED_PACKAGE_JSON]) {
       if (pkg !== null) writeFileSync(join(root, 'package.json'), pkg);
       installs(root);
       const lines = readHook(root).split('\n');
-      for (const fixed of DEPLOYED_LINES) assert.ok(lines.includes(fixed), `${pkg}: the hook runs ${fixed}, got ${JSON.stringify(lines)}`);
+      for (const fixed of COMMAND_LINES) assert.ok(lines.includes(fixed), `${pkg}: the hook runs ${fixed}, got ${JSON.stringify(lines)}`);
       assert.deepEqual(lines.filter((l) => l.startsWith('node --test')), [], `${pkg}: the hook runs no suite`);
       assert.deepEqual(lines.filter((l) => l.endsWith(':install-git-hooks.mjs')), [NAME_FREE], `${pkg}: one marker line, naming no project`);
     }
@@ -143,6 +144,40 @@ describe('spec:script-family/S9 install-git-hooks — run from the kit folder: t
       assert.equal(scriptTestsClaim(text), null, `${where} claims scripts/ tests`);
     }
   }));
+});
+
+// A header comment as one line of words: each line's comment mark dropped, so a phrase wrapped over two lines reads whole.
+const wordsOf = (lines) => lines.map((l) => l.replace(/^(\/\/|#) ?/, '')).join(' ');
+
+describe('spec:kit-command/S5 install-git-hooks — the hook names only the stable kit command', () => {
+  it('the five command lines in order between the local line and the role and guard lines, none naming a module path, each name a KIT_COMMANDS key', async () => {
+    const { KIT_COMMANDS } = await import('../run.mjs');
+    inProject(({ root }) => {
+      const [rules, guard] = ['tools/rules-cli.mjs', 'guard.mjs'].map((rel) => stub(root, rel));
+      installs(root, ['--rules-check', rules, '--commit-guard', guard]);
+      const lines = readHook(root).split('\n');
+      assert.deepEqual(lines.slice(lines.indexOf(LOCAL_LINE) + 1).join('\n'), [...COMMAND_LINES, ''].join('\n') + line(rules, 'rules-check') + line(guard));
+      assert.deepEqual(lines.filter((l) => /scripts\/agent-workflow\/(docs-size|archives)\//.test(l)), [], 'no line names a module path of docs-size or archives');
+      const names = lines.flatMap((l) => l.match(/^node scripts\/agent-workflow\/run\.mjs (\S+)/)?.slice(1) ?? []);
+      assert.deepEqual(names, ['docs-size', 'docs-size', 'archive-changelog', 'archive-issues', 'archive-decisions']);
+      assert.deepEqual(names.filter((name) => !Object.hasOwn(KIT_COMMANDS, name)), [], 'every name the lines use is a key of KIT_COMMANDS');
+    })();
+  });
+
+  it('the installer\'s own header comment and the hook\'s name node scripts/agent-workflow/run.mjs install-git-hooks; the installer imports nothing', async () => {
+    const { KIT_COMMANDS } = await import('../run.mjs');
+    assert.ok(Object.hasOwn(KIT_COMMANDS, 'install-git-hooks'));
+    const source = readFileSync(INSTALLER_SRC, 'utf8');
+    const own = source.split('\n').slice(1, source.split('\n').findIndex((l, at) => at > 0 && !l.startsWith('//')));
+    let hookHeader = [];
+    inProject(({ root }) => { installs(root); const lines = readHook(root).split('\n'); hookHeader = lines.slice(1, lines.indexOf('set -e')); })();
+    for (const [where, text] of [['the installer header comment', wordsOf(own)], ['the hook header comment', wordsOf(hookHeader)]]) {
+      assert.ok(text.includes(`${COMMAND} install-git-hooks`), `${where} names ${COMMAND} install-git-hooks: ${text}`);
+    }
+    const specs = [...source.matchAll(/\bfrom\s+(['"])([^'"]+)\1|\bimport\s*\(\s*(['"])([^'"]+)\3/g)].map((m) => m[2] ?? m[4]);
+    assert.ok(specs.length >= 5, `the scan found the installer's imports: ${specs}`);
+    assert.deepEqual(specs.filter((spec) => !spec.startsWith('node:')), [], 'the installer imports nothing but Node\'s own modules');
+  });
 });
 
 describe('install-git-hooks — the hooks path comes from git plumbing (C7)', () => {

@@ -1,13 +1,15 @@
 // migrate-gates.test.mjs — spec for the consented legacy gates.json migration (strip-the-kit D8).
 // The migration is ATOMIC and COMPLETE: canonical legacy entries removed + the unit-tests cmd
 // extended with the lcov reporters + the coverage-check gate added LAST; customized entries are
-// NEVER auto-touched (loud report + recovery); preview writes NOTHING; apply is tmp+rename.
+// NEVER auto-touched (loud report + recovery); preview writes NOTHING; apply is tmp+rename. A kit-check
+// gate over a current kit folder is switched to the stable kit command as one more action (spec kit-command S9).
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   LEGACY_FORMS,
@@ -21,6 +23,7 @@ import {
   formatPreview,
   main,
 } from './migrate-gates.mjs';
+import { readFamily } from '../family.mjs';
 
 // An INSTALLED kit tools dir carries both core checks as real files. That is a fixture
 // requirement, not decoration: canonicity is a realpath anchor, so a core check whose file is not
@@ -513,5 +516,91 @@ describe('migrate-gates — preview writes NOTHING; apply is atomic and complete
     assert.equal(main(['--cwd', root, '--kit-tools', root], io2), 1);
     assert.match(io2.err.join('\n'), /coverage-check\.mjs/);
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('spec:kit-command/S9 a kit-check gate is switched as an action of the migration, any other form named', () => {
+  const TREE = dirname(dirname(fileURLToPath(import.meta.url)));
+  // A project whose kit folder holds every deployed entry of the manifest, byte-equal to this tree's.
+  const kitProject = (gates) => {
+    const root = mkProject(gates);
+    for (const { path } of readFamily(TREE).filter((entry) => entry.role === 'deployed')) {
+      mkdirSync(dirname(join(root, 'scripts', 'agent-workflow', path)), { recursive: true });
+      copyFileSync(join(TREE, path), join(root, 'scripts', 'agent-workflow', path));
+    }
+    return root;
+  };
+  const declared = (root) => readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8');
+  const run = (root, args) => { const io = quiet(); const code = main(['--cwd', root, '--kit-tools', KIT_TOOLS, ...args], io); return { code, out: io.out.join('\n'), err: io.err.join('\n') }; };
+  const repointLines = (text, name) => text.split('\n').filter((l) => l.includes(`node scripts/agent-workflow/run.mjs ${name}`) && !/^\s*(SWITCH|CUSTOMIZED)\b/.test(l) && !l.includes('apply exactly this migration'));
+  const DOCS = { id: 'docs', title: 'D', cmd: 'node scripts/check-docs-size.mjs --check-index' };
+  const SWITCHED = 'node scripts/agent-workflow/run.mjs docs-size --check-index';
+  const LINT = { id: 'lint', title: 'L', cmd: 'npm run lint' };
+  const KIT_SCRIPTS = ['--kit-script', 'scripts/check-docs-size.mjs', '--kit-script', 'scripts/archive-issues.mjs'];
+
+  it('the preview prints SWITCH and the hint carrying every --kit-script, no nothing-to-migrate line, writes nothing; the hint switches exactly that gate', () => {
+    const root = kitProject([DOCS, LINT]);
+    const before = declared(root);
+    const r = run(root, KIT_SCRIPTS);
+    assert.equal(r.code, 0, r.err);
+    const switches = r.out.split('\n').filter((l) => /^\s*SWITCH\b/.test(l));
+    assert.equal(switches.length, 1, r.out);
+    for (const part of ['SWITCH docs', SWITCHED, DOCS.cmd]) assert.ok(switches[0].includes(part), `${switches[0]} carries ${part}`);
+    assert.doesNotMatch(r.out, /nothing to migrate/);
+    assert.equal(declared(root), before, 'the preview writes nothing');
+    const hint = r.out.split('\n').find((l) => l.includes('apply exactly this migration: '))?.split('apply exactly this migration: ')[1] ?? '';
+    assert.equal(hint.split('--kit-script').length - 1, 2, hint);
+    for (const value of ['scripts/check-docs-size.mjs', 'scripts/archive-issues.mjs']) assert.ok(hint.includes(value), `${hint} carries ${value}`);
+    const applied = spawnSync('bash', ['-c', hint], { encoding: 'utf8' });
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.deepEqual(gatesOf(root), [{ ...DOCS, cmd: SWITCHED }, LINT], 'the hint switched exactly the gate the preview named SWITCH');
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('--apply writes each switch at its place, beside the legacy migration\'s own actions', () => {
+    const issues = { id: 'issues', title: 'I', cmd: 'node scripts/agent-workflow/archives/archive-issues.mjs --check' };
+    const root = kitProject([LEGACY_LEDGER, DOCS, UNIT, issues]);
+    const r = run(root, ['--kit-script', 'scripts/check-docs-size.mjs', '--apply']);
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(gatesOf(root), [
+      { ...DOCS, cmd: SWITCHED },
+      { ...UNIT, cmd: `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs` },
+      { ...issues, cmd: 'node scripts/agent-workflow/run.mjs archive-issues --check' },
+      { id: 'coverage-check', title: 'Changed-line coverage + red-proof verification (the final-run checker)', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` },
+    ]);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a --kit-script value that is not the flat path of a known name exits 2, writing nothing, where a known one runs', () => {
+    const root = kitProject([DOCS]);
+    const before = declared(root);
+    assert.equal(run(root, ['--kit-script', 'scripts/check-docs-size.mjs']).code, 0, 'the positive control: a known name\'s flat path is taken');
+    for (const value of ['scripts/agent-workflow/docs-size/check-docs-size.mjs', 'scripts/nope.mjs', 'check-docs-size.mjs', 'scripts/run.mjs', 'scripts/docs-size/check-docs-size.mjs']) {
+      for (const tail of [[], ['--apply']]) {
+        const r = run(root, ['--kit-script', value, ...tail]);
+        assert.equal(r.code, 2, `${value} ${tail}: ${r.out}${r.err}`);
+        assert.match(r.err, /--kit-script/, `a usage error: ${r.err}`);
+        assert.equal(declared(root), before, `${value} ${tail} wrote nothing`);
+      }
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a kit check beside a dead-tool reference stays CUSTOMIZED with its recovery and the guard warning and gains its repoint line; a repoint alone joins neither', () => {
+    const wrapped = { id: 'wrapped', title: 'W', cmd: 'node scripts/check-docs-size.mjs && node /kit/tools/review-ledger.mjs --check' };
+    const elsewhere = { id: 'elsewhere', title: 'E', cmd: 'node scripts/archives/archive-issues.mjs --check' };
+    for (const [one, name, customized] of [[wrapped, 'docs-size', true], [elsewhere, 'archive-issues', false]]) {
+      const root = kitProject([one]);
+      for (const tail of [[], ['--apply']]) {
+        const r = run(root, tail);
+        assert.equal(r.code, 0, r.err);
+        assert.equal(repointLines(r.out, name).filter((l) => l.includes(one.id)).length, 1, `${one.id} ${tail}: one repoint line\n${r.out}`);
+        for (const pattern of [new RegExp(`CUSTOMIZED \\(untouched\\): ${one.id}`), /recovery \(apply by hand/, /do NOT install the commit guard/]) {
+          assert.equal(pattern.test(r.out), customized, `${one.id} ${tail}: ${pattern}\n${r.out}`);
+        }
+        assert.deepEqual(gatesOf(root), [one], `${one.id} ${tail}: the gate is never rewritten`);
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

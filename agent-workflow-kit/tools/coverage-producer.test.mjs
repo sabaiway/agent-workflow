@@ -35,8 +35,8 @@ const PRIOR_FLAG_SET_V1 =
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 // The kit's in-package MIRROR of the memory canon. scripts/sync-mirrors.mjs copies the canon tree
 // verbatim and test/scripts-mirror.test.mjs guards that half, so mirror-equality here IS
-// canon-equality — reached without importing either side, at the gates module's path the mirror's manifest names.
-const MIGRATE_PATH = readFamily().find(({ module, role }) => module === 'gates' && role === 'skill-home').path;
+// canon-equality — reached without importing either side, at gates/migrate-gates.mjs, an entry of the mirror's manifest.
+const MIGRATE_PATH = readFamily().find(({ path }) => path === 'gates/migrate-gates.mjs').path;
 const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', ...MIGRATE_PATH.split('/'));
 
 // The delimiters are matched as TEXT in both sources — the region is authored twice on purpose.

@@ -243,8 +243,8 @@ describe('spec:distribution-files/S19 write order through a recording writer', (
   const tree = (K, bodies = Object.fromEntries(K.order.slice(0, -1).map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]]))) => ({ bodies, priors: priorsWith(...K.order), due: K.order.filter((n) => n in bodies) });
   it("one plain run's refreshes, replacements and placements: the installer, then each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
     const K = await kitLayout(), { bodies, priors, due } = tree(K);
-    assert.deepEqual(K.order.slice(0, 4).map((n) => SRC.get(n)), [SRC.get(K.installer), 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/index.mjs']);
-    assert.deepEqual(K.order.slice(4).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
+    assert.deepEqual(K.order.slice(0, 5).map((n) => SRC.get(n)), [SRC.get(K.installer), 'run.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/index.mjs']);
+    assert.deepEqual(K.order.slice(5).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
     const order = withTree(bodies, (dir) => { const { order: written, deps } = recorder(dir); run(dir, { would: K.would, deps: { ...deps, priors } }); return written; }, { family: K.order });
     assert.deepEqual(order, due);
   });
@@ -300,14 +300,15 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
     assert.deepEqual([code, REPLACE_STEP.test(stdout), existsSync(join(dir, '.agent-workflow'))], [0, false, false], stdout);
     return { tokens: tokensOf(stdout), details: detailsOf(stdout, 'scripts') };
   };
-  it('the hook its installer writes runs the docs checker and archive lines at their deployed paths and no suite, a commit passes; an edited installer is made the bundled bytes by one plain run; an absent family file placed with no command', { timeout: 120_000 }, async () => {
+  it('the hook its installer writes runs the docs checker and archive lines through the stable kit command and no suite, a commit passes; an edited installer is made the bundled bytes by one plain run; an absent family file placed with no command', { timeout: 120_000 }, async () => {
     const K = await kitLayout();
     withTree({}, (dir) => {
       for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.com'], ['config', 'user.name', 'fixture']]) ok(dir, 'git', ...args);
       for (const [doc, type, title] of [['changelog.md', 'log', 'Changelog'], ['known_issues.md', 'issues', 'Known issues']]) writeFileSync(join(dir, 'docs', 'ai', doc), `---\ntype: ${type}\nmaxLines: 200\n---\n\n# ${title}\n`);
       const checker = rel(K.at('docs-size/check-docs-size.mjs')), hook = () => readFileSync(join(dir, '.git', 'hooks', 'pre-commit'), 'utf8').split('\n');
       for (const args of [[checker, '--write-index'], [rel(K.installer)]]) ok(dir, process.execPath, ...args);
-      const lines = [`node ${checker}`, `node ${checker} --check-index`, ...['changelog', 'issues', 'decisions'].map((name) => `node ${rel(K.at(`archives/archive-${name}.mjs`))} --check`)];
+      const command = `node ${rel(K.at('run.mjs'))}`;
+      const lines = [`${command} docs-size`, `${command} docs-size --check-index`, ...['changelog', 'issues', 'decisions'].map((name) => `${command} archive-${name} --check`)];
       assert.deepEqual([lines.filter((l) => !hook().includes(l)), hook().filter((l) => /--test\b|\.test\.mjs/.test(l))], [[], []], hook().join('\n'));
       passes(commit(dir, 'one'));
       put(dir, { [K.installer]: EDIT(K.installer) });

@@ -13,9 +13,12 @@
 // provenance): a legacy entry is `node <path>/review-ledger.mjs --check` or
 // `node <path>/fold-completeness.mjs --check` (quoted or bare path, ONE plain invocation); the
 // canonical unit-tests entry is id `unit-tests` with a cmd starting `node --test `. ANYTHING
-// else is a CUSTOMIZED entry — never auto-touched: the preview reports it loudly and prints the
-// paste-ready recovery so the maintainer applies the intent by hand; the commit guard is NOT to
-// be installed until the declaration is final-run-capable.
+// else, but a kit-check gate the switch below rewrites, is a CUSTOMIZED entry — never auto-touched: the
+// preview reports it loudly and prints the paste-ready recovery so the maintainer applies the intent by
+// hand; the commit guard is NOT to be installed until the declaration is final-run-capable.
+//
+// A kit-check gate over a current kit folder that the rules above do not hold customized is SWITCHED to the stable kit command (spec kit-command, read by
+// ./kit-command-gates.mjs; `--kit-script scripts/<file>` names a flat file as the kit's); any other form is named.
 //
 // Write discipline (the family's consented-writer contract): preview (dry-run) is the DEFAULT
 // and writes NOTHING; `--apply` rewrites docs/ai/gates.json via exclusive tmp+rename in the same
@@ -31,6 +34,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { FLAT_KIT_SCRIPTS, planKitCommandGates, repointsOf } from './kit-command-gates.mjs';
 
 export const MIGRATE_GATES_STOP = 'MIGRATE_GATES_STOP';
 const stop = (message) =>
@@ -274,16 +278,17 @@ const CORE_CHECK_NAMES = Object.freeze(['coverage-check', 'review-state']);
 const coreCheckTools = (kitToolsDir) =>
   Object.fromEntries(CORE_CHECK_NAMES.map((name) => [name, checkerClaimTool(`${name}.mjs`, join(kitToolsDir, `${name}.mjs`))]));
 
-// buildMigrationPlan(gates, kitToolsDir, projectDir) → the PURE migration plan.
-// plan rows: { action: 'keep' | 'remove' | 'extend' | 'move' | 'add', entry, reason }.
+// buildMigrationPlan(gates, kitToolsDir, projectDir, kitScripts) → the migration plan.
+// plan rows: { action: 'keep' | 'remove' | 'extend' | 'switch' | 'move' | 'add', entry, reason }.
 // finalCapable mirrors the run-gates --final acceptance shape: the canonical review-state check
 // must be PRESENT (the checker itself is guaranteed last by the plan) — missing means the result
 // is NOT final-run-capable and the preview says so loudly with the paste-ready candidate. An
 // EXTERNAL-COPY core check withholds that claim too: the runner anchors on the installed copy.
-export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
+export const buildMigrationPlan = (gates, kitToolsDir, projectDir, kitScripts = []) => {
   if (typeof projectDir !== 'string') {
     throw stop('buildMigrationPlan needs the project root — a declared cmd may name a core check by a RELATIVE path, and only the project root resolves it the way the runner does');
   }
+  const kit = planKitCommandGates(gates, projectDir, kitScripts);
   const tools = coreCheckTools(kitToolsDir);
   const claimOf = (name, cmd) => classifyCheckerClaim(tools[name], cmd, projectDir);
   const plan = [];
@@ -296,7 +301,7 @@ export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
   let unitTestsExtended = false;
   let hasReviewState = false;
   const coverageCmd = `node "${join(kitToolsDir, 'coverage-check.mjs')}" --check`;
-  for (const gate of gates) {
+  for (const [at, gate] of gates.entries()) {
     const legacy = LEGACY_FORMS.find((f) => f.re.test(gate.cmd.trim()));
     if (legacy) {
       plan.push({ action: 'remove', entry: gate, reason: `the ${legacy.name} check died with its tool (strip-the-kit)` });
@@ -317,7 +322,7 @@ export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
     }
     // The third outcome: this IS the tool, from a copy the caller did not name. A vendored
     // deployment declared it deliberately, so it is PRESERVED as written — a plain keep row, never
-    // a new action kind (resultingGates carries only keep|extend|move|add and would silently drop
+    // a new action kind (resultingGates carries only keep|extend|switch|move|add and would silently drop
     // one) — and it counts as DECLARED, which is what stops the checker being added on top of it
     // and stops its id reading as a squatter. What it does not buy is the final-capability claim:
     // run-gates --final anchors on the installed copy by realpath and would refuse this cmd.
@@ -355,12 +360,18 @@ export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
       continue;
     }
     // A dead-tool reference or a core-check LOOKALIKE in a non-canonical form — reported, never touched.
-    if (/review-ledger|fold-completeness|verification-profile|seed-gates|sarif|coverage-check\.mjs|review-state\.mjs/.test(gate.cmd)) {
-      customized.push(gate);
+    const deadTool = /review-ledger|fold-completeness|verification-profile|seed-gates|sarif|coverage-check\.mjs|review-state\.mjs/.test(gate.cmd);
+    if (deadTool) customized.push(gate);
+    if (kit.gates[at] !== gate && !deadTool) {
+      plan.push({ action: 'switch', entry: kit.gates[at], reason: `was: ${gate.cmd} — the kit check runs through the stable kit command` });
+      continue;
     }
     plan.push({ action: 'keep', entry: gate, reason: null });
   }
-  const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend');
+  // A gate the kit reading would switch but the rules above keep untouched is named with its repoint instead.
+  const switchedEntries = new Set(plan.filter((r) => r.action === 'switch').map((r) => r.entry));
+  const repoints = [...kit.repoints, ...gates.flatMap((gate, at) => (kit.gates[at] !== gate && !switchedEntries.has(kit.gates[at]) ? repointsOf(gate) : []))];
+  const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend' || r.action === 'switch');
   const checkerRow = checkerRows[checkerRows.length - 1] ?? null;
   const externalCoverageChecks = externalCoreChecks.filter((c) => c.name === 'coverage-check');
   // The checker READS an lcov; something has to WRITE it FIRST. Adding the checker over a
@@ -451,11 +462,13 @@ export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
     canonicalCheckerInert,
     reviewStateCandidate,
     collision,
+    repoints,
+    withheld: kit.withheld,
   };
 };
 
 export const resultingGates = (plan) => {
-  const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend').map((r) => r.entry);
+  const kept = plan.filter((r) => r.action === 'keep' || r.action === 'extend' || r.action === 'switch').map((r) => r.entry);
   const moved = plan.filter((r) => r.action === 'move').map((r) => r.entry);
   const added = plan.filter((r) => r.action === 'add').map((r) => r.entry);
   return [...kept, ...moved, ...added]; // move/add go LAST — the checker ends up the last declared gate
@@ -471,8 +484,10 @@ const customizedRecovery = (gate) =>
     ? `declare the canonical suite gate by hand so the coverage contract is verifiable: node --test ${UNIT_TESTS_COVERAGE_FLAGS} <your test paths> — ${MARKER_LANE}`
     : 'remove the entry, or repoint it at a living check — the review-ledger / fold-completeness tools no longer exist.';
 
-const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, hasProducer = false, checkerWithheld = false, canonicalCheckerInert = false, duplicateCheckers = 0, externalCoreChecks = [], reviewStateCandidate }) => {
+const warningLines = ({ customized, finalCapable, hasReviewState = finalCapable, hasProducer = false, checkerWithheld = false, canonicalCheckerInert = false, duplicateCheckers = 0, externalCoreChecks = [], reviewStateCandidate, repoints = [], withheld = [] }) => {
   const lines = [];
+  for (const { id, path } of withheld) lines.push(`  WARNING: ${id} runs a kit check, but the kit folder is not current (${path}) — kept as declared; refresh the kit's scripts, then re-run this migration.`);
+  for (const { id, repoint } of repoints) lines.push(`  REPOINT (untouched): ${id}: run ${repoint} in place of its invocation of that check, its arguments kept.`);
   for (const gate of customized) {
     lines.push(`  CUSTOMIZED (untouched): ${gate.id}: ${gate.cmd}`);
     lines.push(`    recovery (apply by hand if the intent still stands): ${customizedRecovery(gate)}`);
@@ -622,7 +637,7 @@ const writeAtomic = (cwd, body, lstatFn) => {
 };
 
 export const parseArgs = (argv) => {
-  const args = { cwd: process.cwd(), apply: false, kitTools: null, help: false };
+  const args = { cwd: process.cwd(), apply: false, kitTools: null, kitScripts: [], help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
@@ -636,6 +651,10 @@ export const parseArgs = (argv) => {
       i += 1;
       if (!argv[i]) throw usageFail('--kit-tools needs the installed kit tools directory');
       args.kitTools = argv[i];
+    } else if (a === '--kit-script') {
+      i += 1;
+      if (!FLAT_KIT_SCRIPTS.includes(argv[i])) throw usageFail(`--kit-script takes one of ${FLAT_KIT_SCRIPTS.join(', ')}, got ${JSON.stringify(argv[i] ?? '')}`);
+      args.kitScripts.push(argv[i]);
     } else throw usageFail(`unknown argument: ${a}`);
   }
   return args;
@@ -644,13 +663,15 @@ export const parseArgs = (argv) => {
 const HELP = `migrate-gates — the consented legacy gates.json migration (strip-the-kit D8).
 
 Usage:
-  node migrate-gates.mjs --kit-tools <installed-kit-tools-dir> [--cwd <project>] [--apply]
+  node migrate-gates.mjs --kit-tools <installed-kit-tools-dir> [--cwd <project>] [--kit-script scripts/<file>]... [--apply]
 
 Default is a dry-run PREVIEW (writes nothing). --apply rewrites ${GATES_REL} atomically:
 canonical legacy entries (review-ledger / fold-completeness --check, matched by their documented
 single-invocation forms) are REMOVED; the canonical unit-tests cmd gains the built-in lcov
 reporters; the coverage-check gate is ADDED last (resolved, QUOTED path) — and WITHHELD, loudly,
-when no declared gate produces the lcov it reads. Customized entries are
+when no declared gate produces the lcov it reads. A kit-check gate over a current kit folder is
+SWITCHED in place to node scripts/agent-workflow/run.mjs <name>, unless it is a customized entry below,
+a flat scripts/<file> only when --kit-script names it; any other form naming a kit check is kept, named with its repoint. Customized entries are
 NEVER auto-touched — the preview names each with a paste-ready recovery, and the commit guard
 must not be installed until they are resolved.`;
 
@@ -682,14 +703,14 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
       return 0;
     }
     const parsed = declaration.outcome === 'loaded' ? declaration.parsed : { gates: [] };
-    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools, resolve(args.cwd)), retiredStores };
+    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools, resolve(args.cwd), args.kitScripts), retiredStores };
     if (analysis.collision) {
       throw stop(
         `id collision — a NON-canonical entry already uses id "${analysis.collision}"; resolve it by hand first ` +
           '(two rows under the checker id would be ambiguous — the canonical checker is never added alongside a customized twin)',
       );
     }
-    const applyHint = `node "${fileURLToPath(import.meta.url)}" --kit-tools "${kitTools}" --cwd "${args.cwd}" --apply`;
+    const applyHint = `node "${fileURLToPath(import.meta.url)}" --kit-tools "${kitTools}" --cwd "${args.cwd}"${args.kitScripts.map((value) => ` --kit-script "${value}"`).join('')} --apply`;
     if (!args.apply) {
       out(formatPreview(analysis, applyHint));
       return 0;

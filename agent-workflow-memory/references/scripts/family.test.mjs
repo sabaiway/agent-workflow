@@ -11,13 +11,13 @@ import { spawnSync } from 'node:child_process';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = 'family.json';
 const TREE = {
-  '': ['family.json', 'family.mjs', 'family.test.mjs'],
+  '': ['family.json', 'family.mjs', 'family.test.mjs', 'run.mjs', 'run.test.mjs'],
   'docs-size': ['check-docs-size.mjs', 'index.mjs', 'check-docs-size.test.mjs', 'check-docs-size-cli.test.mjs', 'check-docs-size-ensure.test.mjs'],
   'spec-schema': ['spec-schema.mjs', 'index.mjs', 'spec-schema.test.mjs'],
   archives: ['archive-changelog.mjs', 'archive-issues.mjs', 'archive-decisions.mjs', 'archive-caps.mjs', 'index.mjs', 'archive-changelog.test.mjs',
     'archive-issues.test.mjs', 'archive-decisions.test.mjs', 'archive-caps.test.mjs', 'archive-conservation.test.mjs', 'archiver-structure.test.mjs'],
   'git-hooks': ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'],
-  gates: ['migrate-gates.mjs', 'migrate-gates.test.mjs', 'migrate-gates-branches.test.mjs'],
+  gates: ['migrate-gates.mjs', 'kit-command-gates.mjs', 'migrate-gates.test.mjs', 'migrate-gates-branches.test.mjs', 'kit-command-gates.test.mjs'],
   shared: ['markdown-blocks.mjs', 'project-root.mjs', 'index.mjs', 'markdown-blocks.test.mjs', 'project-root.test.mjs'],
   'test-support': ['_expect-shim.mjs', 'index.mjs'],
 };
@@ -25,7 +25,7 @@ const MODULES = Object.keys(TREE).filter(Boolean);
 const FILES = Object.entries(TREE).flatMap(([module, names]) => names.map((name) => (module ? `${module}/${name}` : name))).sort();
 const INDEXED = ['archives', 'docs-size', 'shared', 'spec-schema', 'test-support'];
 const SUPPORT = ['archives/index.mjs', 'test-support/_expect-shim.mjs', 'test-support/index.mjs'];
-const SKILL_HOME = ['docs-size/index.mjs', 'family.mjs', 'gates/migrate-gates.mjs'];
+const SKILL_HOME = ['docs-size/index.mjs', 'family.mjs', 'gates/kit-command-gates.mjs', 'gates/migrate-gates.mjs'];
 const roleOf = (path) => (path.endsWith('.test.mjs') ? 'suite' : SUPPORT.includes(path) ? 'support' : SKILL_HOME.includes(path) ? 'skill-home' : 'deployed');
 const moduleOf = (path) => (path.includes('/') ? path.split('/')[0] : null);
 const readFamily = async (dir) => (await import('./family.mjs')).readFamily(dir);
@@ -46,9 +46,9 @@ const bijectionProblems = (files, paths) => [
 ];
 
 describe('spec:script-family/S1 the canon tree and the manifest are one bijection', () => {
-  it('the tree holds exactly the 35 files of the seven modules, each file but family.json one manifest entry', async () => {
+  it('the tree holds exactly the 39 files: five top-level and those of the seven modules, each file but family.json one manifest entry', async () => {
     assert.deepEqual(walk(HERE), [...FILES, ...MODULES.map((module) => `${module}/`)].sort());
-    assert.equal(FILES.length, 35);
+    assert.equal(FILES.length, 39);
     const files = walk(HERE).filter((node) => !node.endsWith('/'));
     const paths = (await readFamily(HERE)).map((entry) => entry.path);
     assert.deepEqual(bijectionProblems(files, paths), []);
@@ -73,10 +73,11 @@ describe('spec:script-family/S2 the manifest roles and the seed set', () => {
     const family = await readFamily(HERE);
     assert.deepEqual(family.filter((entry) => entry.role !== roleOf(entry.path)).map((entry) => `${entry.path}: ${entry.role}`), []);
     const deployed = FILES.filter((path) => roleOf(path) === 'deployed' && path !== MANIFEST);
-    const named = FILES.filter((path) => ['docs-size', 'spec-schema', 'archives', 'git-hooks', 'shared'].includes(moduleOf(path)) && !path.endsWith('.test.mjs')
-      && (!path.endsWith('/index.mjs') || ['spec-schema', 'shared'].includes(moduleOf(path))));
+    const named = FILES.filter((path) => path === 'run.mjs' || (['docs-size', 'spec-schema', 'archives', 'git-hooks', 'shared'].includes(moduleOf(path))
+      && !path.endsWith('.test.mjs') && (!path.endsWith('/index.mjs') || ['spec-schema', 'shared'].includes(moduleOf(path)))));
     assert.deepEqual(deployed, named);
     assert.deepEqual(family.filter((entry) => entry.role === 'deployed').map((entry) => entry.path).sort(), deployed);
+    assert.equal(family.find((entry) => entry.path === 'run.mjs')?.seed, false, 'run.mjs is deployed and no seed');
   });
 
   it('a deployment of exactly the seed files loads each, and losing any seed but the rotator breaks a load', async () => {
@@ -249,7 +250,7 @@ describe('spec:script-family/S4 the index is the one door, and every non-suite f
     }
   });
 
-  it('crossing imports name an index, inside a module ./, no runtime file reaches test-support/, every non-suite file is loaded by its suites', async () => {
+  it('crossing imports name an index, inside a module ./, no runtime file reaches test-support/, a deployed file only deployed files, every non-suite file is loaded by its suites', async () => {
     const family = await readFamily(HERE);
     const roles = new Map(family.map((entry) => [entry.path, entry.role]));
     const edges = new Map();
@@ -264,6 +265,7 @@ describe('spec:script-family/S4 the index is the one door, and every non-suite f
         if (same && !spec.startsWith('./')) offenders.push(`${path} -> ${spec}: an import inside a module is ./`);
         if (!same && moduleOf(to.path) && !to.path.endsWith('/index.mjs')) offenders.push(`${path} -> ${spec}: a crossing import names the module's index.mjs`);
         if (moduleOf(to.path) === 'test-support' && ['deployed', 'skill-home'].includes(roles.get(path))) offenders.push(`${path} -> ${spec}: a runtime file imports test-support/`);
+        if (roles.get(path) === 'deployed' && roles.get(to.path) !== 'deployed') offenders.push(`${path} -> ${spec}: a deployed file imports only deployed files`);
       }
       edges.set(path, targets);
     }
@@ -271,10 +273,10 @@ describe('spec:script-family/S4 the index is the one door, and every non-suite f
     const closure = (start, seen = new Set()) => { for (const next of edges.get(start) ?? []) if (!seen.has(next)) { seen.add(next); closure(next, seen); } return seen; };
     const suites = FILES.filter((path) => path.endsWith('.test.mjs'));
     const unloaded = FILES.filter((path) => path.endsWith('.mjs') && !path.endsWith('.test.mjs')).filter((path) => {
-      const loaders = path === 'family.mjs' ? ['family.test.mjs']
+      const loaders = moduleOf(path) === null ? [path.replace(/\.mjs$/, '.test.mjs')]
         : moduleOf(path) === 'test-support' ? suites : suites.filter((suite) => moduleOf(suite) === moduleOf(path));
       return !loaders.some((suite) => closure(suite).has(path));
     });
-    assert.deepEqual(unloaded, [], 'each non-suite file is loaded by a suite of its own module (the shim by a suite that uses it)');
+    assert.deepEqual(unloaded, [], 'each non-suite file is loaded by a suite of its own module (the shim by a suite that uses it, a top-level file by its own suite)');
   });
 });

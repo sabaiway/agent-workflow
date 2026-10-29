@@ -851,7 +851,38 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   judge nothing" is false for the `--override` equality stop (`:159`, `:165`): "they and a usage … error print none".
   Fix direction: the four text replacements, in the spec's next revision. Residual exposure, NOT live: specs only.
 
+- **KIT-COMMAND-S4-SPECS-NAME-THE-COMMAND** — invariant: every sentence of the specs S4 revises is true of the tree
+  with the stable kit command in it. Origin: the lens, round 1 of the KIT-SCRIPTS S3 spec review (split out of
+  KIT-COMMAND-SPEC-REVIEW-MINORS): `distribution-files/scripts.md:14` ("one module folder each") and `node-evidence.md:68`
+  (the hook-line residual) do not name the top-level command. Fix direction: both in story S4's spec session (both files
+  are in S4's shared list). Residual exposure, NOT live: unreleased.
+
+- **KIT-COMMAND-GATES-TOKEN-SPLIT** — invariant: every path token of a gate's cmd that names a kit check gets its
+  repoint line. Origin: the lens, round 1 of the KIT-SCRIPTS S3 diff review:
+  `agent-workflow-memory/references/scripts/gates/kit-command-gates.mjs:31` (`TOKENS` splits on whitespace and double
+  quotes only), so `node scripts/check-docs-size.mjs; …`, `…mjs&&`, `…mjs|tee`, `…mjs>out` and a single-quoted path
+  are named by no line. Narrow fix: none needed now — the spec names only double quotes and the code holds it. Fix
+  direction: the spec and the code cut a token at `;&|<>()` and drop surrounding single quotes, red first, in story
+  S4 (its move of the flat files is where an unnamed gate breaks). Residual exposure, NOT live: unreleased.
+
+- **KIT-COMMAND-MIGRATE-GATES-MINORS** — invariant: the migration's reading of a matched customized gate is pinned,
+  and its output never reads as done while a line asks for a hand. Origin: the lens, round 1 of the KIT-SCRIPTS S3
+  diff review: `agent-workflow-memory/references/scripts/gates/migrate-gates.mjs:365` (`!deadTool`) and `:373` have
+  no red test — the S9 dead-tool fixture is a compound cmd that is never matched — and spec S6 names no exception for
+  a matched gate the rules hold customized (id `unit-tests`, a dead-tool flag); `:558-563` print "nothing to migrate
+  — … already final-run-capable" above REPOINT or kit-not-current WARNING lines. Fix direction: one `main()` case for
+  a matched customized gate (no SWITCH, its CUSTOMIZED line and recovery, one REPOINT) with one S6 sentence through a
+  spec revision and its review; the no-op line takes the "the warnings below still need a hand" variant when repoints
+  or withheld gates exist. Residual exposure, NOT live: unreleased.
+
 ## Closed
+
+- **KIT-COMMAND-SPEC-REVIEW-MINORS** — invariant: every sentence of the draft spec kit-command and of script-family
+  revision 2 is true of the code it governs. Raised by the lens in the two rounds of the KIT-SCRIPTS S3 spec review.
+  Closed in S3's tests session, before any binding: a name is known only as an own key of `KIT_COMMANDS` (S4 adds
+  `constructor` and `toString`); script-family's index rule and S4 add that a deployed file imports only deployed
+  files; S1 pins the direct-run guard's fail-closed arm in-process; S8 reads a token with its surrounding double quotes
+  dropped and adds a quoted compound cell. Its S4-bound minor moved to KIT-COMMAND-S4-SPECS-NAME-THE-COMMAND.
 
 - **SCRIPT-FAMILY-DRAFT-WORDING-MINORS** — invariant: every sentence of the draft spec script-family is true of the
   tree it lays out and each scenario is bindable to one test. Raised by the lens at the last-round re-read of the

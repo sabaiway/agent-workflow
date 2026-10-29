@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Idempotent installer for the project's git hooks.
+// Idempotent installer for the project's git hooks: `node scripts/agent-workflow/run.mjs install-git-hooks`.
 //
 // Installs the `pre-commit` hook running the docs cap-validator + index-freshness
-// gate + changelog/issues/decisions rotation-freshness checks, each at its fixed deployed
-// path under `scripts/agent-workflow/`, so docs files cannot drift over their declared
+// gate + changelog/issues/decisions rotation-freshness checks, each through the stable kit
+// command `node scripts/agent-workflow/run.mjs <name>`, so docs files cannot drift over their declared
 // `maxLines`, the auto-generated `index.md` navigator cannot silently fall out of sync, and
 // stale archive entries never reach a commit. The hook runs no suite.
 // First after `set -e` it runs the project's own `scripts/pre-commit.local` with bash when present.
@@ -153,7 +153,7 @@ const carriedGuardPath = (existingHook) => {
 
 const preCommitContent = (guardPath, rolePaths = []) => `#!/usr/bin/env bash
 ${MAGIC_MARKER}
-# Auto-installed by scripts/agent-workflow/git-hooks/install-git-hooks.mjs (run it by hand or from the kit).
+# Auto-installed by node scripts/agent-workflow/run.mjs install-git-hooks (run it by hand or from the kit).
 # Runs the docs cap-validator + index-freshness gate + rotation-freshness checks
 # before every commit, so files cannot drift over their declared maxLines, the
 # auto-generated index.md cannot silently go stale, and stale archive entries
@@ -161,11 +161,11 @@ ${MAGIC_MARKER}
 set -e
 # Your own commit checks go in scripts/pre-commit.local; it runs first, with bash, when present.
 if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi
-node scripts/agent-workflow/docs-size/check-docs-size.mjs
-node scripts/agent-workflow/docs-size/check-docs-size.mjs --check-index
-node scripts/agent-workflow/archives/archive-changelog.mjs --check
-node scripts/agent-workflow/archives/archive-issues.mjs --check
-node scripts/agent-workflow/archives/archive-decisions.mjs --check
+node scripts/agent-workflow/run.mjs docs-size
+node scripts/agent-workflow/run.mjs docs-size --check-index
+node scripts/agent-workflow/run.mjs archive-changelog --check
+node scripts/agent-workflow/run.mjs archive-issues --check
+node scripts/agent-workflow/run.mjs archive-decisions --check
 ${rolePaths.map((path, at) => (path ? `node "${path}" --check # ${ROLES[at].role}\n` : '')).join('')}${guardPath ? `node "${guardPath}" --check\n` : ''}`;
 
 const main = async () => {

@@ -211,6 +211,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      kit-mirrored via sync-mirrors.
     // 51 = 61 − the 25 flat references/scripts/ files + family.json and the 14 deployed and
     //      skill-home entries of its manifest (story S2 of KIT-SCRIPTS: no suite, no support file).
-    assert.equal(packed.length, 51, `tarball file count drifted (${packed.length} ≠ 51)`);
+    // 53 = 51 + references/scripts/run.mjs (the stable kit command, deployed) and
+    //      references/scripts/gates/kit-command-gates.mjs (skill-home) — story S3 of KIT-SCRIPTS.
+    assert.equal(packed.length, 53, `tarball file count drifted (${packed.length} ≠ 53)`);
   });
 });

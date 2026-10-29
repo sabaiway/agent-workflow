@@ -19,8 +19,8 @@ import { stripGitLocationEnv } from '../tools/git-env.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS = join(HERE, '..', 'tools');
-// The kit's own migration, at the gates module's path the mirror's manifest names.
-const MIGRATE = join(HERE, '..', 'references', 'scripts', ...readFamily().find(({ module, role }) => module === 'gates' && role === 'skill-home').path.split('/'));
+// The kit's own migration, at gates/migrate-gates.mjs, an entry of the mirror's manifest.
+const MIGRATE = join(HERE, '..', 'references', 'scripts', ...readFamily().find(({ path }) => path === 'gates/migrate-gates.mjs').path.split('/'));
 
 // Host AW_* overrides are producer test seams — a leaked one must never redirect the E2E; an inherited
 // GIT_* location variable must never point a fixture's git at another repository.
