@@ -14,7 +14,7 @@ const FAMILY_ROOT = join(ROOT, '..');
 const MEMORY = join(FAMILY_ROOT, 'agent-workflow-memory');
 const CORPUS = join(ROOT, 'test', 'fixtures', 'specs');
 // Dynamic import: the suite LOADS without the canon/reader (red-proof observes it failing pre-fix).
-const reader = await import(join(MEMORY, 'references', 'scripts', 'spec-schema.mjs')).catch(() => ({}));
+const reader = await import(join(MEMORY, 'references', 'scripts', 'spec-schema', 'index.mjs')).catch(() => ({}));
 const { readSpecDocument, SPEC_SCHEMA } = reader;
 const readOr = (path) => {
   try {

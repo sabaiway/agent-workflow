@@ -14,7 +14,7 @@
 // Pure functions. No filesystem, no argv, no side effects on import — the CLI half owns all of that.
 // Dependency-free, Node >= 22.
 
-import { readSpecDocument } from '../references/scripts/spec-schema.mjs';
+import { readSpecDocument } from '../references/scripts/spec-schema/index.mjs';
 
 // One `## Module` bullet, carried with the document that made the claim so a refusal can name the
 // owner. The two forms are the ones the spec schema already validates and there is no third here:

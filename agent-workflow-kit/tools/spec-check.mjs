@@ -3,7 +3,7 @@
 // It answers ONE question per document: given what the session says it changed, does the store on
 // disk say the same thing? The change source is EXPLICIT (parsed ops, never git), and "well-formed"
 // has no second definition here — every per-document verdict is RELAYED from the ONE reader
-// (references/scripts/spec-schema.mjs) and its 2a `structure` extraction. This module adds only what
+// (references/scripts/spec-schema/index.mjs) and its 2a `structure` extraction. This module adds only what
 // text alone cannot decide: does the post-state on disk match the declared op, is the document
 // listed by its parent, does its scenario marker really occur once in the file it names, and — under
 // --all — the five invariants that span documents.
@@ -22,7 +22,7 @@
 // No IO of its own: { read, probe, realpath, list } are injected. Dependency-free, Node >= 22.
 
 import { dirname as pathDirname, isAbsolute, relative, sep } from 'node:path';
-import { SPEC_SCHEMA, readSpecDocument, classifyPath } from '../references/scripts/spec-schema.mjs';
+import { SPEC_SCHEMA, readSpecDocument, classifyPath } from '../references/scripts/spec-schema/index.mjs';
 import { SPEC_OPS_GRAMMAR, buildClosure, listingParentOf, slugOf } from './spec-check-ops.mjs';
 
 const STORE = SPEC_OPS_GRAMMAR.storePrefix;

@@ -10,7 +10,7 @@
 //                  fix ships now, only the generalization defers.
 //   blocking       no correct narrow fix exists -> the phase does not close; there is no queue arm.
 //
-// Markdown is read through the family's ONE block model (references/scripts/markdown-blocks.mjs, the
+// Markdown is read through the family's ONE block model (references/scripts/shared/index.mjs, the
 // module the archivers already read through): fenced regions, ATX headings at 0-3 columns of indent,
 // CRLF and the backtick-info-string rule are ITS problem, not a second hand-rolled grammar here. A
 // document it refuses is a loud refusal, never a silent empty read.
@@ -21,7 +21,7 @@
 // Pure string functions - every input is text; the CLI half (fold-scope-cli.mjs) owns the fs.
 // Dependency-free, Node >= 22.
 
-import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { PLAN_HEADINGS, bulletBlocks } from './plan-shape.mjs';
 
 export { bulletBlocks };

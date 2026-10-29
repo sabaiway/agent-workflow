@@ -20,7 +20,7 @@ const BOOTSTRAP_MD = readFileSync(join(KIT_ROOT, 'references', 'modes', 'bootstr
 const UPGRADE_MD = readFileSync(join(KIT_ROOT, 'references', 'modes', 'upgrade.md'), 'utf8');
 const HANDOFF_MD = readFileSync(join(KIT_ROOT, 'references', 'shared', 'composition-handoff.md'), 'utf8');
 
-const GENERATOR_RE = /node \$\{CLAUDE_SKILL_DIR\}\/(references\/scripts\/[A-Za-z0-9_.-]+) --ensure-index --root=<[a-z-]+>/;
+const GENERATOR_RE = /node \$\{CLAUDE_SKILL_DIR\}\/(references\/scripts\/(?:[a-z-]+\/)?[A-Za-z0-9_.-]+) --ensure-index --root=<[a-z-]+>/;
 const ONLY_INDEX_RE = /node \$\{CLAUDE_SKILL_DIR\}\/(tools\/[A-Za-z0-9_.-]+) --reconcile --only index --cwd <[a-z-]+>/;
 
 const documented = (prose, pattern, what) => {

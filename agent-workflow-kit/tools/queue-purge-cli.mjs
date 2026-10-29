@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { constants, openSync, closeSync, fstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { EXIT, appendBlock, readArchive } from './queue-purge-archive.mjs';
 import { snapshotQueue, checkPurge } from './queue-purge.mjs';

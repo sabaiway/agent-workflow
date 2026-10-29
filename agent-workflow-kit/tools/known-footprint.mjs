@@ -15,9 +15,11 @@
 // references/contracts.md carries the human-readable mirror table, kept in sync by review.
 //
 // Pure, dependency-free, Node >= 22. The only fs touch is expandGlob (readdir/stat of a glob parent),
-// injected so the registry stays unit-testable without the real filesystem.
+// injected so the registry stays unit-testable without the real filesystem; the kit folder's path is
+// node-evidence.mjs's, the kit's one door to the script family (which reads its manifest on import).
 
 import { readdirSync, statSync } from 'node:fs';
+import { KIT_SCRIPTS_DIR } from './node-evidence.mjs';
 
 // A typed STOP — a deliberate refusal we surface (never a silent skip, never a fail-open). Shared by
 // the writer tool (hide-footprint.mjs imports it) so both speak one error vocabulary. The codebase's
@@ -41,13 +43,14 @@ export const stop = (message, fields = {}) =>
 // follow-up-reconcile gap this entry closes. Never provisioned into a worktree (worktrees.mjs). `/docs/plans/` + both `.claude/settings*.json` are listed because a pure
 // hidden deploy has no tracked `.gitignore`; the classifier drops any candidate a tracked `.gitignore`
 // already covers, so in a repo that DOES track those ignores they are never re-written.
-// The enumeration must cover EVERY file the deploy copies into `scripts/` (bootstrap step 8 copies
-// `references/scripts/*.mjs` + `*.test.mjs` wholesale): a name missing here is a file a hidden
-// deployment leaves visible in `git status` — the exact leak this registry exists to prevent.
+// The kit folder is the kit's whole, so one directory pattern covers every file placed in it; the
+// flat names stay enumerated until an existing flat deployment moves (story S4): a name missing here
+// is a file a hidden deployment leaves visible in `git status` — the exact leak this registry exists to prevent.
 export const KIT_OWN_PATHS = [
   '/AGENTS.md',
   '/CLAUDE.md',
   '/docs/ai/',
+  `/${KIT_SCRIPTS_DIR}/`,
   '/scripts/_expect-shim.mjs',
   '/scripts/archive-caps.mjs',
   '/scripts/archive-caps.test.mjs',

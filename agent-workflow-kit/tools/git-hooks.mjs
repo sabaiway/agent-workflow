@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // git-hooks.mjs — the thin writer of the three git-hook items (`enforcement`, `commit-guard`,
-// `hook-checks`): it copies the bundled scripts create-only and spawns the project's own
-// scripts/install-git-hooks.mjs as it stands, which decides the hook at the write. The leaf
+// `hook-checks`): it copies the deployed scripts create-only into the kit folder and spawns the project's
+// own installer (INSTALLER_REL) as it stands, which decides the hook at the write. The leaf
 // decides nothing about the hook: the danger check binds the copies and the installer bytes this dry run
 // answers, never git's hooks dir. It is also the home of the one pre-commit reader, which the
 // commit-guard and hook-checks applies run after the installer to verify the arm.
@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, NODE_EVIDENCE_SCRIPTS, SCRIPTS_DIR } from './node-evidence.mjs';
+import { DEPLOYED_SCRIPTS, INSTALLER_REL, NODE_EVIDENCE_SCRIPTS, SCRIPTS_DIR } from './node-evidence.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -20,9 +20,7 @@ import { readLayoutSetup } from './source-size-core.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 export const SCRIPTS_REL = SCRIPTS_DIR;
-export { BUNDLED_SCRIPT_NAMES, INSTALLER_REL };
-const bundleDir = (toolsDir) => join(toolsDir, '..', 'references', 'scripts');
-const INSTALLER_NAME = 'install-git-hooks.mjs';
+export { DEPLOYED_SCRIPTS, INSTALLER_REL };
 
 const EXIT_OK = 0;
 const EXIT_INCOMPLETE = 1;
@@ -44,8 +42,18 @@ const nodeAt = (path, lstat) => {
     throw error;
   }
 };
+// The rollback's read: a path it cannot lstat is never one it removes.
+const nodeOrNull = (path, lstat) => {
+  try {
+    return nodeAt(path, lstat);
+  } catch {
+    return null;
+  }
+};
 const isPlainDir = (node) => node !== null && node.isDirectory() && !node.isSymbolicLink();
 const isFile = (node) => node !== null && node.isFile() && !node.isSymbolicLink();
+// Each folder between the root and rel, shallowest first: scripts/, the kit folder, a module folder.
+const foldersOf = (rel) => rel.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'));
 
 // The absolute hooks dir git itself reports (a linked worktree's own, core.hooksPath), or null outside a git tree.
 export const resolveGitHooksPath = (projectDir, env = process.env) => {
@@ -54,7 +62,7 @@ export const resolveGitHooksPath = (projectDir, env = process.env) => {
   return resolve(projectDir, result.stdout.toString('utf8').replace(/\r?\n$/, ''));
 };
 
-export const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs$/m;
+export const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs\r?$/m;
 const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Armed means the exact line the installer writes on the kit's own guard path; a commented or lookalike line is not.
 export const canonicalGuardLineRe = (toolsDir = TOOLS) => new RegExp(`^node "${escapeRe(join(toolsDir, 'commit-guard.mjs'))}" --check$`, 'm');
@@ -124,8 +132,8 @@ export const unsafeToolsPath = (toolsDir, platform) => (ROLES.some(({ tool }) =>
   ? `the kit's tools path ${toolsDir} carries ", $, a backtick, a backslash, CR or LF — a hook line would not run the file it names` : null);
 
 // hook-checks: the lines it arms, from the two answers and the hook; the installer runs as it stands.
-const planHookChecks = ({ root, toolsDir, installer, scriptsNode, kinds, readFile, deps }) => {
-  if (!isPlainDir(scriptsNode) || kinds.get(INSTALLER_NAME) !== 'file') throw refusal(`${installer} is absent — nothing here places the hook installer`);
+const planHookChecks = ({ root, toolsDir, installer, installerNode, readFile, deps }) => {
+  if (!isFile(installerNode)) throw refusal(`${installer} is absent — nothing here places the hook installer`);
   const unsafe = unsafeToolsPath(toolsDir, deps.platform);
   if (unsafe !== null) throw refusal(unsafe);
   const hook = readPreCommitState(root, { toolsDir, platform: deps.platform, gitHooksPath: deps.gitHooksPath });
@@ -137,81 +145,86 @@ const planHookChecks = ({ root, toolsDir, installer, scriptsNode, kinds, readFil
     throw refusal(`nothing to plan — ${ROLES.map(({ key, role }) => `the ${role} line: ${hook[`${key}Armed`] ? 'armed' : `not armable (${answers[key].why})`}`).join('; ')}`);
   }
   const flags = roles.flatMap(({ flag, tool }) => [flag, tool(toolsDir)]);
-  return { root, variant: 'hook-checks', scriptsCreated: false, copies: [], roles: roles.map(({ key }) => key),
+  return { root, variant: 'hook-checks', folders: [], copies: [], roles: roles.map(({ key }) => key),
     runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], bytes: readFile(installer) } };
 };
 
 // The dry run: what the apply copies and the installer it runs, with the bytes of each.
 export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSync, readFile = readFileSync, ...deps }) => {
-  const scripts = join(root, SCRIPTS_REL);
-  const scriptsNode = nodeAt(scripts, lstat);
-  if (scriptsNode !== null && !isPlainDir(scriptsNode)) throw refusal(`${scripts} is not a plain directory`);
-  const kinds = new Map();
-  const names = variant === 'enforcement' ? BUNDLED_SCRIPT_NAMES : [INSTALLER_REL.slice(SCRIPTS_REL.length + 1)];
-  for (const name of scriptsNode === null ? [] : names) {
-    const path = join(scripts, name);
-    const node = nodeAt(path, lstat);
-    if (node !== null && !isFile(node)) throw refusal(`${path} is not a regular file`);
-    kinds.set(name, node === null ? 'absent' : 'file');
+  const enforcing = variant === 'enforcement';
+  const nodes = new Map();
+  const folders = [];
+  // Never beneath an absent folder: a folder on the way absent, every path under it is absent.
+  const probe = (rel, isKind, kind) => {
+    if (nodes.has(rel)) return nodes.get(rel);
+    const path = join(root, rel);
+    const node = foldersOf(rel).some((folder) => nodes.get(folder) === null) ? null : nodeAt(path, lstat);
+    if (node !== null && !isKind(node)) throw refusal(`${path} is not ${kind}`);
+    nodes.set(rel, node);
+    return node;
+  };
+  for (const rel of enforcing ? DEPLOYED_SCRIPTS.map(({ deployed }) => deployed) : [INSTALLER_REL]) {
+    for (const folder of foldersOf(rel)) if (!nodes.has(folder)) (folders.push(folder), probe(folder, isPlainDir, 'a plain directory'));
+    probe(rel, isFile, 'a regular file');
   }
   const installer = join(root, INSTALLER_REL);
-  if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, scriptsNode, kinds, readFile, deps });
-  const deployed = NODE_EVIDENCE_SCRIPTS.some((name) => kinds.get(name) === 'file');
-  const copies = variant === 'enforcement' && !deployed ? BUNDLED_SCRIPT_NAMES.map((name) => {
-    if (kinds.get(name) === 'file') return { name, path: join(scripts, name), action: 'kept' };
-    return { name, path: join(scripts, name), action: 'created', bytes: readFile(join(bundleDir(toolsDir), name)) };
-  }) : [];
-  const placed = copies.find(({ path, action }) => path === installer && action === 'created');
-  if (!placed && !isFile(nodeAt(installer, lstat))) throw refusal(`${installer} is absent — nothing here places the hook installer`);
+  if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, installerNode: nodes.get(INSTALLER_REL), readFile, deps });
+  // A flat evidence name is no copy path: another node kind there is not evidence, never a refusal.
+  const evidence = (rel) => (nodes.has(rel) ? isFile(nodes.get(rel)) : nodes.get(SCRIPTS_REL) !== null && isFile(nodeAt(join(root, rel), lstat)));
+  const deployed = enforcing && NODE_EVIDENCE_SCRIPTS.some((name) => evidence(`${SCRIPTS_REL}/${name}`));
+  const copies = enforcing && !deployed ? DEPLOYED_SCRIPTS.map(({ deployed: rel, bundled }) =>
+    ({ rel, path: join(root, rel), action: 'created', bytes: readFile(join(toolsDir, '..', bundled)) })) : [];
+  const placed = copies.find(({ rel }) => rel === INSTALLER_REL);
+  if (!placed && !isFile(nodes.get(INSTALLER_REL))) throw refusal(`${installer} is absent — nothing here places the hook installer`);
   const guard = variant === 'commit-guard' ? ['--commit-guard', join(toolsDir, 'commit-guard.mjs')] : [];
   return {
     root,
     variant,
-    scriptsCreated: scriptsNode === null,
+    folders: copies.length === 0 ? [] : folders.filter((folder) => nodes.get(folder) === null),
     copies,
     runs: { argv: ['node', installer, ...guard], shown: ['node', INSTALLER_REL, ...guard], bytes: placed ? placed.bytes : readFile(installer) },
   };
 };
 
 export const formatPlan = (plan) => [
-  ...plan.copies.map(({ name, action, bytes }) => `copy: ${SCRIPTS_REL}/${name} ${action}${action === 'created' ? ` sha256:${sha(bytes)}` : ''}`),
+  ...plan.copies.map(({ rel, action, bytes }) => `copy: ${rel} ${action}${action === 'created' ? ` sha256:${sha(bytes)}` : ''}`),
   `runs: ${plan.runs.shown.map(shellQuoteArg).join(' ')} sha256:${sha(plan.runs.bytes)}`,
 ];
 
-// Removes exactly the files this run created, then scripts/ when this run created it and it is empty;
-// every path it cannot remove is answered for the caller to name.
+// Removes exactly the files this run created, then each folder this run created, deepest first, when it is
+// empty; a path is removed only while every folder above it is the plain directory this apply observed,
+// and every path it cannot remove is answered for the caller to name.
 const rollBack = (plan, created, io) => {
-  const scripts = join(plan.root, SCRIPTS_REL);
   const left = [];
-  const dirNow = () => nodeAt(scripts, io.lstat);
-  for (const path of created) {
-    const dir = dirNow();
-    const node = nodeAt(path, io.lstat);
-    if (!isPlainDir(dir) || dir.ino !== created.dirIno || !isFile(node)) {
+  const observed = (folder) => {
+    const node = nodeOrNull(join(plan.root, folder), io.lstat);
+    return isPlainDir(node) && node.ino === created.inos.get(folder);
+  };
+  const intact = (rel) => foldersOf(rel).every(observed);
+  const remove = (path, act) => {
+    try {
+      act(path);
+    } catch {
+      left.push(path);
+    }
+  };
+  for (const { rel, path } of created.files) {
+    if (intact(rel) && isFile(nodeOrNull(path, io.lstat))) remove(path, io.unlink);
+    else left.push(path);
+  }
+  for (const folder of created.folders.filter((rel) => created.inos.has(rel)).reverse()) {
+    const path = join(plan.root, folder);
+    if (!intact(folder) || !observed(folder)) {
       left.push(path);
       continue;
     }
-    try {
-      io.unlink(path);
-    } catch {
-      left.push(path);
-    }
-  }
-  if (plan.scriptsCreated && created.dirIno !== undefined) {
-    const dir = dirNow();
     let empty = false;
     try {
-      empty = isPlainDir(dir) && dir.ino === created.dirIno && io.readdir(scripts).length === 0;
+      empty = io.readdir(path).length === 0;
     } catch {
       empty = false;
     }
-    if (empty) {
-      try {
-        io.rmdir(scripts);
-      } catch {
-        left.push(scripts);
-      }
-    } else if (!isPlainDir(dir) || dir.ino !== created.dirIno) left.push(scripts);
+    if (empty) remove(path, io.rmdir);
   }
   return left;
 };
@@ -238,30 +251,32 @@ export const applyGitHooks = (plan, io = {}) => {
     log: console.log, error: console.error, writeFile: writeProjectFileCreateOnly, toolsDir: TOOLS, platform: process.platform,
     spawn: (argv, options) => spawnSync(argv[0], argv.slice(1), options), ...io };
   if (plan.variant === 'hook-checks') return applyHookChecks(plan, resolved);
-  const created = [];
+  // A folder the dry run found absent and that still is absent here is one this run creates; a plan with no copies names none.
+  const created = { files: [], inos: new Map(), folders: (plan.folders ?? []).filter((rel) => nodeOrNull(join(plan.root, rel), resolved.lstat) === null) };
   const leftovers = [];
   const fail = (lines) => {
     for (const line of lines) resolved.error(line);
     for (const path of [...rollBack(plan, created, resolved), ...leftovers]) resolved.error(`not removed: ${path}`);
     return EXIT_INCOMPLETE;
   };
-  const scripts = join(plan.root, SCRIPTS_REL);
-  const noteDir = () => {
-    const dir = nodeAt(scripts, resolved.lstat);
-    if (created.dirIno === undefined && isPlainDir(dir)) created.dirIno = dir.ino;
+  const noteFolders = (rel) => {
+    for (const folder of foldersOf(rel).filter((at) => !created.inos.has(at))) {
+      const node = nodeOrNull(join(plan.root, folder), resolved.lstat);
+      if (isPlainDir(node)) created.inos.set(folder, node.ino);
+    }
   };
   for (const copy of plan.copies.filter(({ action }) => action === 'created')) {
     let result;
     try {
-      result = resolved.writeFile(plan.root, `${SCRIPTS_REL}/${copy.name}`, copy.bytes);
+      result = resolved.writeFile(plan.root, copy.rel, copy.bytes);
     } catch (error) {
-      noteDir();
-      return fail([error?.message ?? String(error)]);
+      noteFolders(copy.rel);
+      return fail([`${copy.path}: ${error?.message ?? String(error)}`]);
     }
-    noteDir();
+    noteFolders(copy.rel);
     if (result.tmpLeftBehind) leftovers.push(result.tmpLeftBehind);
     if (!result.created) return fail([`${copy.path} appeared after the check — the file found there stands`]);
-    created.push(copy.path);
+    created.files.push(copy);
   }
   const child = resolved.spawn(plan.runs.argv, { cwd: plan.root, env: resolved.env, stdio: 'inherit' });
   if (child.status !== 0) return fail([`installer exited ${child.status ?? child.signal ?? child.error?.code}`]);

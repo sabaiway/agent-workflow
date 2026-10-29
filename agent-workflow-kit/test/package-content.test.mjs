@@ -17,8 +17,8 @@ import { scanText } from '../tools/release-scan.mjs';
 // tests + runtime files retained. This file lives in test/ (outside files[]) so it never ships;
 // the local gate + publish CI run it via the `test/*.test.mjs` glob.
 //
-// CAUTION: never broaden the negation to `!references/**` or `!bridges/**` — references/scripts
-// tests are deployed into a consumer repo and bridges/.../agy.test.mjs is part of the
+// CAUTION: never broaden the negation to `!references/**` or `!bridges/**` — the script family's
+// runtime files are deployed into a consumer repo and bridges/.../agy.test.mjs is part of the
 // byte-identical bridge mirror the installed kit links from. Both are payload, asserted below.
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -69,13 +69,6 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
 
   it('retains the deploy/mirror payload tests (reverse pins)', () => {
     const required = [
-      'references/scripts/archive-caps.test.mjs',
-      'references/scripts/archive-changelog.test.mjs',
-      'references/scripts/archive-decisions.test.mjs',
-      'references/scripts/archive-issues.test.mjs',
-      'references/scripts/check-docs-size-ensure.test.mjs',
-      'references/scripts/check-docs-size.test.mjs',
-      'references/scripts/spec-schema.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review.test.mjs',
       'bridges/antigravity-cli-bridge/bin/agy-review-await-guard.test.mjs',
@@ -89,15 +82,20 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
   });
 
+  it('packs the mirrored script family from its manifest: family.json, family.mjs, every deployed and skill-home entry, no suite, no support entry', async () => {
+    const scripts = packed.filter((p) => p.startsWith('references/scripts/'));
+    assert.deepEqual(scripts.filter((p) => p.endsWith('.test.mjs')), [], 'no suite of the script family may ship');
+    const { readFamily } = await import('../references/scripts/family.mjs');
+    const family = readFamily(join(ROOT, 'references', 'scripts'));
+    const support = family.filter((e) => e.role === 'support').map((e) => `references/scripts/${e.path}`);
+    assert.deepEqual(scripts.filter((p) => support.includes(p)), [], 'no support entry may ship');
+    const shipped = family.filter((e) => e.role === 'deployed' || e.role === 'skill-home').map((e) => `references/scripts/${e.path}`);
+    assert.ok(shipped.includes('references/scripts/family.mjs'), 'the manifest marks family.mjs skill-home');
+    assert.deepEqual([...scripts].sort(), ['references/scripts/family.json', ...shipped].sort());
+  });
+
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
-      'references/scripts/archive-caps.mjs',
-      'references/scripts/archive-changelog.mjs',
-      'references/scripts/archive-decisions.mjs',
-      'references/scripts/archive-issues.mjs',
-      'references/scripts/check-docs-size.mjs',
-      'references/scripts/_expect-shim.mjs',
-      'references/scripts/install-git-hooks.mjs',
       'bin/install.mjs',
       'capability.json',
       'SKILL.md',
@@ -222,11 +220,11 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // row that cannot run, and the requirement would silently stop being one.
       'tools/spec-coverage.mjs',
       'tools/spec-coverage-cli.mjs',
-      // and the block tokenizer fold-scope.mjs reads its markdown through: a TOOL now imports this
-      // deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
-      'references/scripts/markdown-blocks.mjs',
+      // and the block tokenizer fold-scope.mjs reads its markdown through, by its module's index: a TOOL
+      // imports this deployed payload leaf, so a drop breaks the checker at load, not merely an archiver run.
+      'references/scripts/shared/index.mjs', 'references/scripts/shared/markdown-blocks.mjs',
       // the spec reader the deployed navigator collapse imports: a drop breaks check-docs-size at load
-      'references/scripts/spec-schema.mjs',
+      'references/scripts/spec-schema/index.mjs', 'references/scripts/spec-schema/spec-schema.mjs',
       // the activity/slot registry the recipe lattice and the config validator both read
       'tools/carriers.mjs',
       // the explicit review-roster grammar/resolver and their extracted README/posture siblings
@@ -902,8 +900,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 386 = 388 - tools/migrate-adr-store.mjs and references/modes/migrate-adr-store.md, the retired opt-in mode - story S13 of DISTRIBUTION-FILES-STAY-CURRENT; 384 = 386 - tools/distribution-files/{replace-set,kept-aside}.mjs, the retired replace step - story S14 of it
     // 386 = 384 + tools/source-size/piles.mjs (the pile offer) and tools/source-size/piles-cli.mjs (its writer) - story S12 of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING
     // 384 = 386 - tools/{lens-region,rules-regions,rules-insert}.mjs and tools/project-rules/memory-map-row.mjs + references/rules/{communication,story-sessions}.md - story S1 of KIT-TEXT-LIVES-IN-KIT-FILES-AND-ONE-BLOCK; 386 = 384 + tools/transition/index.mjs and migrations/5.0.0-kit-text-in-kit-files.md - story S2 of it
+    // 376 = 386 - the 25 flat references/scripts/ files + family.json and the 14 deployed and skill-home entries of its manifest - story S2 of KIT-SCRIPTS
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired leaf ships`);
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [376, []], `tarball file count drifted (${packed.length}\u2260 376), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

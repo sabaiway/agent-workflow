@@ -5,7 +5,7 @@ import {
   WARM_REL as ROTATOR_WARM_REL,
   COLD_REL as ROTATOR_COLD_REL,
   ADR_DIR_REL as ROTATOR_ADR_DIR_REL,
-} from '../references/scripts/archive-decisions.mjs';
+} from '../references/scripts/archives/index.mjs';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -366,7 +366,7 @@ describe('surveyAdrLayout — the old-unrotated arm', () => {
   const dir = '/proj';
   const HOT = join(dir, 'docs/ai/decisions.md');
   const STORE = join(dir, 'docs/ai/adr');
-  const ROTATOR = join(dir, 'scripts/archive-decisions.mjs');
+  const ROTATOR = join(dir, 'scripts/agent-workflow/archives/archive-decisions.mjs');
   const MONOLITH = join(dir, 'docs/ai/history/decisions-archive.md');
   const OLD_ROTATOR = "export const HOT_REL = 'docs/ai/decisions.md';\nexport const WARM_REL = 'docs/ai/history/decisions-archive.md';\n";
   const NEW_ROTATOR = `${OLD_ROTATOR}export const ADR_DIR_REL = 'docs/ai/adr';\n`;

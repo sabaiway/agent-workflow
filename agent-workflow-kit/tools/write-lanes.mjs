@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
-import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_DIR } from './node-evidence.mjs';
+import { DEPLOYED_SCRIPTS, INSTALLER_REL } from './node-evidence.mjs';
 import { dqUnsafePath } from './checker-claim.mjs';
 import { isLineUnsafe } from './source-size-refusal.mjs';
 import { SOURCE_SIZE_GATE_ID } from './source-size-gate-cmd.mjs';
@@ -112,7 +112,7 @@ const getStartupPaths = ({ env, home, platform }) => targetsFor({
 }).filter(({ path }) => path !== null).map(({ path }) => path);
 
 const preCommitOf = (facts) => join(facts.hooksDir ?? join(facts.root, '.git', 'hooks'), 'pre-commit');
-const getEnforcementPaths = (facts) => [...BUNDLED_SCRIPT_NAMES.map((name) => join(facts.root, SCRIPTS_DIR, name)), preCommitOf(facts)];
+const getEnforcementPaths = (facts) => [...DEPLOYED_SCRIPTS.map(({ deployed }) => join(facts.root, deployed)), preCommitOf(facts)];
 const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER_REL)];
 
 const formatCommand = (argv) => argv.map(quoteArg).join(' ');

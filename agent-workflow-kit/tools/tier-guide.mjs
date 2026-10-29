@@ -2,7 +2,7 @@
 // spec:tier-guide — docs/ai/specs/kit/tier/tier-guide/index.md
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { readTierFacts } from './tier-guide-facts.mjs';

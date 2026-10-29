@@ -11,7 +11,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSyn
 import { homedir } from 'node:os';
 import { dirname, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { AFTER_INSTALL, NO_APPLY_LINE, SKILL_FILES, SKILL_PINS, claudeDirOf, printable, skillLine, skillState,
   skillTargets } from './jev-facts.mjs';

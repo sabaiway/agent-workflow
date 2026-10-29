@@ -201,9 +201,11 @@ export const writeHostConfigFileAtomic = (dir, filename, body, deps = {}, opts =
 // writeProjectFileCreateOnly(root, rel, body, deps, opts) → { writtenPath: rel, created }. Gate =
 // create+verify the target's PARENT dir inside the project (a symlinked `scripts/` is a STOP, not a
 // write through it); root = the project dir; the write is create-only, so an existing file is left
-// exactly as it is and `created` says so.
+// exactly as it is and `created` says so. The folders above the parent are walked for a link first, so
+// the parent's `mkdir -p` never makes a folder through one.
 export const writeProjectFileCreateOnly = (root, rel, body, deps = {}, opts = {}) => {
   const dst = join(root, rel);
+  if (dirname(dst) !== root) assertContainedRealPath(root, dirname(dirname(dst)), { lstat: deps.lstat ?? lstatSync });
   assertCreatableDirSafe(dirname(dst), deps, opts);
   const { created, tmpLeftBehind } = writeContainedFileAtomic(root, dst, body, deps, { ...opts, createOnly: true, label: rel });
   return { writtenPath: rel, created, tmpLeftBehind };

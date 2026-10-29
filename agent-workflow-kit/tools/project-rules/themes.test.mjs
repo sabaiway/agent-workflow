@@ -4,7 +4,7 @@ import { isAbsolute, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { parseFrontmatter } from '../../references/scripts/check-docs-size.mjs';
+import { parseFrontmatter } from '../../references/scripts/docs-size/index.mjs';
 import { THEME_NAMES, load, need } from './rules-harness.test.mjs';
 
 const KIT_ROOT = new URL('../../', import.meta.url);

@@ -6,10 +6,10 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, symlinkSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeHostConfigFileAtomic, writeContainedFileAtomic, assertDocsAiDeployment, ATOMIC_WRITE_STOP } from './atomic-write.mjs';
+import { writeHostConfigFileAtomic, writeContainedFileAtomic, writeProjectFileCreateOnly, assertDocsAiDeployment, ATOMIC_WRITE_STOP } from './atomic-write.mjs';
 
 const isStop = (e) => e && e.code === ATOMIC_WRITE_STOP;
 const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
@@ -156,5 +156,16 @@ describe('writeContainedFileAtomic — root-parameterized guards', () => {
     };
     assert.throws(() => writeContainedFileAtomic(root, dst, 'b', deps), /EIO/);
     assert.deepEqual(removed, ['/root/x.conf.fixed.tmp'], 'the tmp is removed on any post-create failure');
+  });
+});
+
+describe('writeProjectFileCreateOnly — no folder made through a link', () => {
+  it('refuses a linked folder above the target folder before mkdir, the outside folder left empty', () => {
+    const [root, outside] = [join(tmp, 'root'), join(tmp, 'outside')];
+    mkdirSync(root);
+    mkdirSync(outside);
+    symlinkSync(outside, join(root, 'a'));
+    assert.throws(() => writeProjectFileCreateOnly(root, 'a/b/c.mjs', 'x'), /symlink at .*[\\/]a /);
+    assert.deepEqual(readdirSync(outside), []);
   });
 });

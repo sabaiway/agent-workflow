@@ -52,7 +52,7 @@ export const UPGRADE_RUNLIST = Object.freeze([
   ),
   entry(
     'gates-migration',
-    'node ${CLAUDE_SKILL_DIR}/references/scripts/migrate-gates.mjs --kit-tools ${CLAUDE_SKILL_DIR}/tools --cwd <project>',
+    'node ${CLAUDE_SKILL_DIR}/references/scripts/gates/migrate-gates.mjs --kit-tools ${CLAUDE_SKILL_DIR}/tools --cwd <project>',
     'preview first — apply only on an explicit yes, re-run with --apply',
     ['preview', 'INERT', 'CUSTOMIZED'],
   ),

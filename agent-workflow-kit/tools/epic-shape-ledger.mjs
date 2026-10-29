@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { parseHeader, checkEpic } from './epic-shape.mjs';
 import { auditQueue } from './queue-audit.mjs';
 import { hasPathOverlap, findReachable, listStories, unique } from './claim-relation.mjs';

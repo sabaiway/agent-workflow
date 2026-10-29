@@ -66,8 +66,10 @@ jobs:
       - name: Unit tests (tracked content)
         run: |
           node --test \
-            agent-workflow-memory/{scripts,references/scripts,bin}/*.test.mjs \
-            agent-workflow-kit/{tools,tools/manifest,tools/project-rules,tools/source-size,references/scripts,bin}/*.test.mjs \
+            agent-workflow-memory/{scripts,bin}/*.test.mjs \
+            'agent-workflow-memory/references/scripts/**/*.test.mjs' \
+            agent-workflow-kit/{tools,tools/manifest,tools/project-rules,tools/source-size,bin}/*.test.mjs \
+            'agent-workflow-kit/references/scripts/**/*.test.mjs' \
             agent-workflow-kit/tools/*.test/*.test.mjs \
             agent-workflow-kit/test/*.test.mjs \
             agent-workflow-engine/test/*.test.mjs \

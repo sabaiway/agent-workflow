@@ -44,7 +44,10 @@
     "scripts/",
     "migrations/",
     "!bin/*.test.mjs",
-    "!scripts/*.test.mjs"
+    "!scripts/*.test.mjs",
+    "!references/scripts/**/*.test.mjs",
+    "!references/scripts/archives/index.mjs",
+    "!references/scripts/test-support/**"
   ],
   "engines": {
     "node": ">=22"

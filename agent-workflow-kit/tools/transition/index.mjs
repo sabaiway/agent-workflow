@@ -6,7 +6,7 @@
 // Contract: docs/ai/specs/kit/transition/.
 
 import { join, resolve } from 'node:path';
-import { tokenizeMarkdown } from '../../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
 import { writeContainedFileAtomic } from '../atomic-write.mjs';
 import { isDirectRun } from '../direct-run.mjs';
 import { probeRegularFileNoFollow, readRegularFileNoFollow } from '../fs-read-nofollow.mjs';

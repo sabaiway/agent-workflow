@@ -115,7 +115,7 @@ jobs:
         run: npm pack --dry-run
 
       - name: Test shipped enforcement scripts
-        run: node --test references/scripts/*.test.mjs
+        run: node --test references/scripts/{,*/}*.test.mjs
 
       - name: Publish (dry run)
         if: ${{ inputs.dry_run }}

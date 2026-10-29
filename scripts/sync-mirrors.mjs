@@ -50,11 +50,8 @@ const MEMORY_DIR = 'agent-workflow-memory';
 const KIT_DIR = 'agent-workflow-kit';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
-// This repo dogfoods the deployed enforcement scripts from its OWN root scripts/ (a consumer's
-// scripts/). The root subset is DIRECTIONAL (Decision 12): a memory-canon script whose basename is
-// ALSO present at root is kept byte+exec-identical; root-only tooling (sync-mirrors*, release/*, any
-// non-canon script) is NEVER flagged or deleted, and a canon file absent from root is never added.
-const ROOT_SCRIPTS_REL = 'scripts';
+// The script family is one nested tree (spec script-family): this repo's flat root scripts/ is no
+// mirror — a basename-keyed copy would carry a body with nested imports into a flat folder.
 
 // The byte-identical template set (15 top-level + 1 adr/ + 3 pages/ + 1 specs/). One explicit list,
 // consumed by BOTH the sync below and template-parity.test.mjs — never two lists that can drift apart.
@@ -171,30 +168,6 @@ const planTemplatesSync = (root) => {
   return { changes, identical };
 };
 
-// Plan the root-scripts subset: memory canon → this repo's root scripts/ (Decision 12). NOT
-// planTreeSync set-equality — that would DELETE release/* and sync-mirrors.mjs itself. Only a canon
-// file whose basename ALSO exists at root is a candidate; a root-only or absent-at-root file is
-// untouched. An absent canon dir is a loud failure (never treat a missing canon as empty).
-export const planRootSubsetSync = (root) => {
-  const canonRoot = join(root, MEMORY_DIR, SCRIPTS_REL);
-  if (!existsSync(canonRoot)) {
-    throw fail(1, `canon dir is missing: ${MEMORY_DIR}/${SCRIPTS_REL} — refusing to sync`);
-  }
-  const rootScripts = join(root, ROOT_SCRIPTS_REL);
-  const changes = [];
-  let identical = 0;
-  for (const rel of walkFiles(canonRoot)) {
-    const rootPath = join(rootScripts, rel);
-    if (!existsSync(rootPath)) continue; // canon file not part of the root subset — never ADD it
-    if (fileNeedsCopy(join(canonRoot, rel), rootPath)) {
-      changes.push({ action: 'copy', rel: join(ROOT_SCRIPTS_REL, rel), from: join(canonRoot, rel), to: rootPath });
-    } else {
-      identical += 1;
-    }
-  }
-  return { changes, identical };
-};
-
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
   const plans = [];
@@ -203,7 +176,6 @@ export const planAllMirrors = (root) => {
   }
   plans.push({ family: 'reference-scripts', ...planTreeSync(root, join(MEMORY_DIR, SCRIPTS_REL), join(KIT_DIR, SCRIPTS_REL)) });
   plans.push({ family: 'templates', ...planTemplatesSync(root) });
-  plans.push({ family: 'root-scripts', ...planRootSubsetSync(root) });
   return plans;
 };
 

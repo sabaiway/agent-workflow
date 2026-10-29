@@ -22,6 +22,7 @@ import {
 } from './coverage-producer.mjs';
 import { execCmdFor } from './gates-init.mjs';
 import { validateDeclaration, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
+import { readFamily } from '../references/scripts/family.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OWN_SOURCE = join(HERE, 'coverage-producer.mjs');
@@ -34,8 +35,9 @@ const PRIOR_FLAG_SET_V1 =
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 // The kit's in-package MIRROR of the memory canon. scripts/sync-mirrors.mjs copies the canon tree
 // verbatim and test/scripts-mirror.test.mjs guards that half, so mirror-equality here IS
-// canon-equality — reached without importing either side.
-const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', 'migrate-gates.mjs');
+// canon-equality — reached without importing either side, at the gates module's path the mirror's manifest names.
+const MIGRATE_PATH = readFamily().find(({ module, role }) => module === 'gates' && role === 'skill-home').path;
+const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', ...MIGRATE_PATH.split('/'));
 
 // The delimiters are matched as TEXT in both sources — the region is authored twice on purpose.
 const BEGIN = '// coverage-producer canon >>> BEGIN drift-guarded region';

@@ -85,6 +85,8 @@ import { toViewModel } from './view-model.mjs';
 import { render } from './renderers.mjs';
 // The feature-spec adoption state (contract: kit/spec-adoption) — read-only leaves, no cycle.
 import { ADOPTION, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
+// The kit's one door to the script family: where a deployment holds the decisions rotator.
+import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
 
 // ── manifestState values — re-export the EXACT public subset family-registry exported before B1 ─────
 // (the 7 state constants + DISPLAY_NAMES) so every existing importer (uninstall.mjs, the test suites)
@@ -356,7 +358,7 @@ export const ADR_LAYOUT_PATHS = Object.freeze({
   // The DEPLOYED rotator is the discriminator: the new-scheme file names the store path, the
   // pre-migration one does not. Never "has decisions.md, lacks adr/" — that shape false-positives a
   // tree whose NEW rotator already reds its own gate, and every No-Node project.
-  rotator: 'scripts/archive-decisions.mjs',
+  rotator: DEPLOYED_SCRIPTS.find(({ path }) => path === 'archives/archive-decisions.mjs').deployed,
   storeMarker: 'docs/ai/adr',
 });
 const ENOENT = 'ENOENT';

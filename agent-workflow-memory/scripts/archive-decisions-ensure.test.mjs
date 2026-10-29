@@ -11,16 +11,17 @@
 // `<name>.` and never ends in `.md` (e.g. decisions.md.4242-1a2b3c4d.tmp), then renames it onto the target.
 import { it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, renameSync, appendFileSync, fstatSync, writeSync, fsyncSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, renameSync, appendFileSync, fstatSync, writeSync, fsyncSync, cpSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 // The rotator under test: memory's canon, or the byte-equal copy AW_ARCHIVE_DECISIONS names, so a mirror runs this suite too.
 const ROTATOR = process.env.AW_ARCHIVE_DECISIONS;
 const {
   runCli, HOT_REL, WARM_REL, COLD_REL, ADR_DIR_REL, NAV_REL, parseDecisionsText, explode, renderRecord, lineCountOf,
-} = await import(ROTATOR ? pathToFileURL(ROTATOR).href : '../references/scripts/archive-decisions.mjs');
+} = await import(ROTATOR ? pathToFileURL(ROTATOR).href : '../references/scripts/archives/index.mjs');
 
 const tempDirs = [];
 const makeRoot = () => { const dir = mkdtempSync(join(tmpdir(), 'ensure-')); tempDirs.push(dir); return dir; };
@@ -458,4 +459,53 @@ it('a partial snapshot directory the rotator cannot remove is named when no snap
   const r = ens(root, { fallbackBase: makeRoot(), fs: { writeFileSync: write, rmSync: rm } });
   assert.equal(r.code, 1, r.errText);
   assert.match(r.errText, /its partial directory was left: injected fs/);
+});
+
+// The script tree a deployment copies from: the canon, or the tree AW_ARCHIVE_DECISIONS's <tree>/archives/ file sits in.
+const TREE = ROTATOR ? dirname(dirname(ROTATOR)) : fileURLToPath(new URL('../references/scripts/', import.meta.url));
+const KIT = 'scripts/agent-workflow';
+const deploy = (root, modules) => modules.forEach((m) => cpSync(join(TREE, m), join(root, KIT, m), { recursive: true, filter: (src) => !src.endsWith('.test.mjs') }));
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+const node = (args) => spawnSync(process.execPath, args, { cwd: makeRoot(), encoding: 'utf8', env });
+const deployed = (root, args) => node([join(root, KIT, 'archives', 'archive-decisions.mjs'), ...args]);
+const SPECIFIERS = [/\b(?:import|export)\s[^'"`;]*?\bfrom\s*(['"])([^'"\n]+)\1/g, /\bimport\s*(['"])([^'"\n]+)\1/g, /\bimport\(\s*(['"])([^'"\n]+)\1\s*[,)]/g];
+
+it('S14 a deployed rotator runs the deployed docs checker when it stands, notes its command when not, and prints its own deployed path (spec:adr-navigator/S14)', () => {
+  const INDEX = join('docs', 'ai', 'index.md');
+  const stands = makeRoot();
+  deploy(stands, ['archives', 'shared', 'docs-size', 'spec-schema']);
+  hot(stands, [block('005')]);
+  const w = deployed(stands, ['--write-navigator', '--today=2026-07-09']);
+  assert.equal(w.status, 0, w.stdout + w.stderr);
+  assert.ok(existsSync(join(stands, INDEX)), `the deployed docs checker wrote no index: ${w.stdout}${w.stderr}`);
+  const fresh = node([join(stands, KIT, 'docs-size', 'check-docs-size.mjs'), '--check-index', `--root=${stands}`]);
+  assert.equal(fresh.status, 0, fresh.stdout + fresh.stderr);
+
+  const absent = makeRoot();
+  deploy(absent, ['archives', 'shared']);
+  hot(absent, [block('005')]);
+  const a = deployed(absent, ['--write-navigator', '--today=2026-07-09']);
+  assert.equal(a.status, 0, a.stdout + a.stderr);
+  assert.ok(existsSync(join(absent, NAV_REL)), 'the navigator was not written');
+  assert.ok(!existsSync(join(absent, INDEX)), 'an index was written with no docs checker deployed');
+  assert.ok(a.stderr.includes('node scripts/agent-workflow/docs-size/check-docs-size.mjs --write-index'), a.stderr);
+
+  const source = readFileSync(join(TREE, 'archives', 'archive-decisions.mjs'), 'utf8');
+  const specifiers = SPECIFIERS.flatMap((re) => [...source.matchAll(re)].map((m) => m[2]));
+  assert.ok(specifiers.length > 0, 'no import found in the rotator — the scan is vacuous');
+  assert.deepEqual(specifiers.filter((s) => s.includes('docs-size')), [], 'the rotator imports a file of the docs-size module');
+
+  const monolith = makeRoot();
+  deploy(monolith, ['archives', 'shared']);
+  legacy(monolith, [block('005')], [block('003')]);
+  const overCap = makeRoot();
+  deploy(overCap, ['archives', 'shared']);
+  hotK(overCap, 1);
+  for (const [root, count] of [[monolith, 1], [overCap, 2]]) {
+    const c = deployed(root, ['--check']);
+    assert.equal(c.status, 1, c.stdout + c.stderr);
+    const commands = [...c.stderr.matchAll(/`(node [^`]+)`/g)].map((m) => m[1]);
+    assert.equal(commands.length, count, c.stderr);
+    for (const command of commands) assert.match(command, /^node scripts\/agent-workflow\/archives\/archive-decisions\.mjs( |$)/, c.stderr);
+  }
 });

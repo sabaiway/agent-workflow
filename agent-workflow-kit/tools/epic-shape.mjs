@@ -1,4 +1,4 @@
-import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { bulletBlocks, getLineCount, unique } from './plan-shape.mjs';
 
 export const EPIC_SECTIONS = Object.freeze([

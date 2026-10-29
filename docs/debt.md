@@ -853,6 +853,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 ## Closed
 
+- **SCRIPT-FAMILY-DRAFT-WORDING-MINORS** — invariant: every sentence of the draft spec script-family is true of the
+  tree it lays out and each scenario is bindable to one test. Raised by the lens at the last-round re-read of the
+  KIT-SCRIPTS S2 spec review. Closed in S2's tests session, before any binding: the four text replacements in the draft
+  (the finder's project paths beside the rotator's spawn edge, S4 narrowed to the canon's own imports and S11 added,
+  the nested publish.yml glob named, the installer's own header comment in the hook bullet) and plan T12.
+
 - **KIT-REFRESH-LEAVES-EMPTY-DIRECTORIES-TO-THE-USER** — invariant: a kit refresh leaves the home converged with no
   hand step. Raised at the 2026-10-28 host refresh to kit 20.0.0, which kept 70 emptied directories and printed 26
   "yours to remove by hand" lines on every run. Closed in kit 20.0.1 (AD-217): `payload-prune.mjs` removes each

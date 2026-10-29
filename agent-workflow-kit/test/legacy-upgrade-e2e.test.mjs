@@ -14,14 +14,18 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { buildForeignFixture } from '../../scripts/testing/foreign-fixture.mjs';
+import { readFamily } from '../references/scripts/family.mjs';
+import { stripGitLocationEnv } from '../tools/git-env.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS = join(HERE, '..', 'tools');
-const MIGRATE = join(HERE, '..', 'references', 'scripts', 'migrate-gates.mjs');
+// The kit's own migration, at the gates module's path the mirror's manifest names.
+const MIGRATE = join(HERE, '..', 'references', 'scripts', ...readFamily().find(({ module, role }) => module === 'gates' && role === 'skill-home').path.split('/'));
 
-// Host AW_* overrides are producer test seams — a leaked one must never redirect the E2E.
+// Host AW_* overrides are producer test seams — a leaked one must never redirect the E2E; an inherited
+// GIT_* location variable must never point a fixture's git at another repository.
 const cleanEnv = () => {
-  const env = { ...process.env };
+  const env = stripGitLocationEnv(process.env);
   for (const k of Object.keys(env)) if (k.startsWith('AW_')) delete env[k];
   return env;
 };

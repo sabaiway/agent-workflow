@@ -27,7 +27,7 @@
 
 import { readFileSync, lstatSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { CONFIG_REL, SEED_CONFIG, loadConfig } from './orchestration-config.mjs';
 import { NOTE_ROUTE, readmeState, withCurrentReadme } from './orchestration-readme.mjs';
 import { seedConfig, writeConfig } from './orchestration-write.mjs';
@@ -36,9 +36,9 @@ import { GATES_REL } from './gates-declaration.mjs';
 import { AUTONOMY_REL } from './autonomy-config.mjs';
 import { VEHICLES_REL } from './vehicle-settings.mjs';
 import { ENSURE_TOKENS, FAILURE_CAUSES } from './ensure-vocabulary.mjs';
-import { NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
+import { DEPLOYED_SCRIPTS, NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
 import { classifyDeployedScript } from './script-priors.mjs';
-import { parseFrontmatter } from '../references/scripts/check-docs-size.mjs';
+import { parseFrontmatter } from '../references/scripts/docs-size/index.mjs';
 
 // The closed vocabulary lives in its own PURE leaf so the read-only doc-parity lint can bind the
 // relayed token set without importing this module's writer graph. Re-exported here because every
@@ -231,7 +231,9 @@ export const nodeEvidenceRefusal = (op, cwd, lstat) => {
 // the one-generator rule exists to prevent. Under a hook module that is not the bundled one, the
 // project's own checker judges the navigator and a write it rejects is put back (spec docs-navigator).
 const INDEX_REL = 'docs/ai/index.md';
-const GENERATOR_PATH = ['references', 'scripts', 'check-docs-size.mjs'];
+// The docs checker is the docs-size module's one deployed entry: bundled, it is the generator; deployed,
+// the kept probe. A flat scripts/check-docs-size.mjs is no deployed checker (story S4 reads it).
+const CHECKER = DEPLOYED_SCRIPTS.find(({ module }) => module === 'docs-size');
 const ENSURE_INDEX_OUTCOME = /^ensure-index: (regenerated|already-current)\b/m;
 const ENSURE_INDEX_REFUSAL = /^ensure-index: (write-refused|probe-failed)\b/m;
 // The probe has no machine line, so its two ANSWERS are matched against the canonical sentences it
@@ -247,28 +249,68 @@ const describeExit = (result) => (result.signal ? `on signal ${result.signal}` :
 const bothStreams = (result) => `${String(result.stdout ?? '')}${String(result.stderr ?? '')}`.trim();
 const describeExitWithOutput = (result, subject = 'it') => `${subject} exited ${describeExit(result)}${bothStreams(result) ? `: ${bothStreams(result)}` : ''}`;
 
-const HOOK_MODULES = ['check-docs-size.mjs', 'spec-schema.mjs'];
-const KEPT_JUDGE = `the project's own checker (${SCRIPTS_DIR}/check-docs-size.mjs --check-index)`;
+const KEPT_JUDGE = `the project's own checker (${CHECKER.deployed} --check-index)`;
 const KEPT_FITS = `in sync under ${KEPT_JUDGE} and within the maxLines it stamps`;
 const KEPT_ROUTE = "the spec layer's write of the bundled modules the project's hook loads, then this step again";
 const KEPT_PROBE_TIMEOUT_MS = 30_000;
 const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const readStampedCap = (text) => { const value = parseFrontmatter(text)?.maxLines; const cap = value ? Number(value) : NaN; return Number.isNaN(cap) ? undefined : cap; };
 
-const surveyHookModule = (cwd, kitRoot, name, read, lstat) => {
-  const rel = `${SCRIPTS_DIR}/${name}`;
-  const probe = (() => { try { return probeSeedTarget(join(cwd, rel), lstat); } catch (err) { if (err?.code === 'ENOTDIR') return { present: false }; throw err; } })();
-  if (probe.wrongKind || !probe.present) return { rel, state: probe.wrongKind ? 'wrong-kind' : 'absent', wrongKind: probe.wrongKind };
-  const deployed = read(join(cwd, rel));
-  try {
-    return { rel, state: classifyDeployedScript(deployed, name, read(join(kitRoot, ...GENERATOR_PATH.slice(0, 2), name))) };
-  } catch (err) {
-    return { rel, state: 'bundle-unreadable', error: causeOf(err) };
+const DEPLOYED_BY_PATH = new Map(DEPLOYED_SCRIPTS.map((entry) => [entry.path, entry]));
+const RELATIVE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
+const pathIn = (root, rel) => join(root, ...rel.split('/'));
+
+// The one reading of the family's bundled imports, shared by the index, scripts and specs ops: the deployed
+// manifest paths `bundle` (the bytes at manifest path `path`) imports by a relative specifier.
+export const bundledImportsOf = (path, bundle) => [...String(bundle).matchAll(RELATIVE_IMPORT)]
+  .map(([, spec]) => posix.join(posix.dirname(path), spec)).filter((dep) => DEPLOYED_BY_PATH.has(dep));
+// Each of `files` ({ path, imports }) after every one of them it imports, by manifest path in code-unit order
+// otherwise, so each file a run leaves loads. A cycle is a broken bundle, never a silent order.
+export const dependenciesFirst = (files) => {
+  const left = new Map(files.map((f) => [f.path, f]));
+  const out = [];
+  while (left.size > 0) {
+    const next = [...left.values()].sort((a, b) => (a.path < b.path ? -1 : 1)).find((f) => f.imports.every((dep) => !left.has(dep)));
+    if (!next) throw new Error(`the bundled scripts import one another in a cycle: ${[...left.keys()].join(', ')} — reinstall the kit`);
+    out.push(next);
+    left.delete(next.path);
   }
+  return out;
+};
+
+// The modules the project's hook loads, the checker first: the deployed files of the docs-size and
+// spec-schema modules, and the shared files the checker reaches through its bundled relative imports.
+const hookModulesOf = (bundleOf) => {
+  const reached = new Set([CHECKER.path]);
+  for (const path of reached) for (const dep of bundledImportsOf(path, bundleOf(DEPLOYED_BY_PATH.get(path)).bytes ?? '')) reached.add(dep);
+  const loaded = ({ module, path }) => module === 'docs-size' || module === 'spec-schema' || (module === 'shared' && reached.has(path));
+  return [CHECKER, ...DEPLOYED_SCRIPTS.filter((entry) => entry !== CHECKER && loaded(entry))];
+};
+
+// A regular file where a folder on the way belongs (ENOTDIR) holds no module.
+const probeHookModule = (cwd, entry, lstat) => { try { return probeSeedTarget(pathIn(cwd, entry.deployed), lstat); } catch (err) { if (err?.code === 'ENOTDIR') return { present: false }; throw err; } };
+
+// → one { rel, state } per hook module: absent, wrong-kind, bundle-unreadable or the classifier's word.
+// No deployed checker → that one entry, absent; every kind is probed before any project file is read.
+const surveyHook = (cwd, kitRoot, read, lstat) => {
+  const checker = probeHookModule(cwd, CHECKER, lstat);
+  if (checker.wrongKind || !checker.present) return [{ rel: CHECKER.deployed, state: checker.wrongKind ? 'wrong-kind' : 'absent', wrongKind: checker.wrongKind }];
+  const bundles = new Map();
+  const readBundle = (entry) => { try { return { bytes: read(pathIn(kitRoot, entry.bundled)) }; } catch (err) { return { error: causeOf(err) }; } };
+  const bundleOf = (entry) => (bundles.has(entry.path) ? bundles : bundles.set(entry.path, readBundle(entry))).get(entry.path);
+  const probes = hookModulesOf(bundleOf).map((entry) => ({ entry, rel: entry.deployed, probe: entry === CHECKER ? checker : probeHookModule(cwd, entry, lstat) }));
+  const wrong = probes.find(({ probe }) => probe.wrongKind);
+  if (wrong) return [{ rel: wrong.rel, state: 'wrong-kind', wrongKind: wrong.probe.wrongKind }];
+  return probes.map(({ entry, rel, probe }) => {
+    if (!probe.present) return { rel, state: 'absent' };
+    const deployed = read(pathIn(cwd, entry.deployed));
+    const { bytes, error } = bundleOf(entry);
+    return error === undefined ? { rel, state: classifyDeployedScript(deployed, entry.path, bytes) } : { rel, state: 'bundle-unreadable', error };
+  });
 };
 
 const judgeKept = ({ cwd, spawn, read, lstat, deps }) => {
-  const result = spawn(process.execPath, [join(cwd, SCRIPTS_DIR, 'check-docs-size.mjs'), '--check-index'], { cwd, encoding: 'utf8', timeout: deps.keptProbeTimeoutMs ?? KEPT_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const result = spawn(process.execPath, [pathIn(cwd, CHECKER.deployed), '--check-index'], { cwd, encoding: 'utf8', timeout: deps.keptProbeTimeoutMs ?? KEPT_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' });
   if (result.error) return { error: `${causeOf(result.error)}${result.signal ? `, killed on signal ${result.signal}` : ''}` };
   if (result.status !== 0) return { accepted: false, said: describeExitWithOutput(result), half: 'its index check' };
   const text = lstatNoFollow(join(cwd, INDEX_REL), lstat)?.isFile() ? String(read(join(cwd, INDEX_REL), 'utf8')) : null;
@@ -329,7 +371,7 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
   const spawn = deps.spawnSync ?? spawnSync;
-  const generator = join(kitRoot, ...GENERATOR_PATH);
+  const generator = pathIn(kitRoot, CHECKER.bundled);
   const drive = (mode) => spawn(process.execPath, [generator, mode, `--root=${cwd}`], { encoding: 'utf8' });
   const unlaunchable = (result) =>
     loud('index', 'generator-unlaunchable', `${INDEX_REL}: the bundled generator could not be started, so nothing was probed or written — reinstall the kit. ${causeOf(result.error)}`);
@@ -338,7 +380,7 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   if (probe.wrongKind) {
     return loud('index', 'wrong-node-kind', `${INDEX_REL}: exists but is ${probe.wrongKind} — the navigator is a generated file and this is not one; nothing was read or written, resolve it by hand and re-run`);
   }
-  const hook = HOOK_MODULES.reduce((acc, name) => (acc[0]?.state === 'absent' || acc[0]?.wrongKind ? acc : [...acc, surveyHookModule(cwd, kitRoot, name, read, lstat)]), []);
+  const hook = surveyHook(cwd, kitRoot, read, lstat);
   const wrong = hook.find((entry) => entry.state === 'wrong-kind');
   if (wrong) return loud('index', 'wrong-node-kind', `${wrong.rel}: exists but is ${wrong.wrongKind} — the project's hook loads it, so nothing was read or written; resolve it by hand and re-run`);
   const kept = hook[0].state !== 'absent' && !hook.every((entry) => entry.state === 'current');

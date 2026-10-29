@@ -20,8 +20,10 @@ const WORDS = /\bjev\b|typesafe/i;
 const FACTS = ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
   'printable', 'skillLine', 'skillState', 'skillTargets'];
 const NAMED = new Map([['node:fs', ['lstatSync', 'readFileSync', 'readdirSync', 'statSync']], ['node:os', ['homedir', 'hostname']],
-  ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/markdown-blocks.mjs', ['fail']],
+  ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/shared/index.mjs', ['fail']],
   ['tools/jev-facts.mjs', FACTS]]);
+// The shared module's files (its index, markdown-blocks.mjs and project-root.mjs) count as one module, its index.
+const moduleOf = (identity) => (identity.startsWith('references/scripts/shared/') ? 'references/scripts/shared/index.mjs' : identity);
 // The one module the graph may reach beyond the guide's own imports, and only through the facts leaf.
 const THROUGH_FACTS = 'node:crypto';
 const TOKENS = ['import(', 'require(', 'process.getBuiltinModule', 'process.binding', 'fetch', 'WebSocket', 'plugins',
@@ -135,7 +137,7 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
     const graph = [...graphOf(GUIDE)];
     assert.ok(graph.includes('tools/direct-run.mjs'), 'the walk reaches the direct-run leaf');
     assert.ok(graph.includes('tools/jev-facts.mjs'), 'the walk reaches the facts leaf');
-    assert.deepEqual(graph.filter((identity) => !NAMED.has(identity) && identity !== THROUGH_FACTS), []);
+    assert.deepEqual(graph.filter((identity) => !NAMED.has(moduleOf(identity)) && identity !== THROUGH_FACTS), []);
     assert.ok(!statementsOf(sourceOf()).some((statement) => identityOf(specifierOf(statement), GUIDE) === THROUGH_FACTS), 'not the guide\'s own import');
     assert.ok(graphOf(join(KIT, 'tools', 'jev-facts.mjs')).has(THROUGH_FACTS), 'reached through the facts leaf');
     assert.ok(!graph.includes('tools/jev-connect.mjs') && !graph.includes('tools/jev-skill.mjs'));

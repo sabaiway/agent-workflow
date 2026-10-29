@@ -22,6 +22,7 @@ import { shellQuoteArg } from './repo-lex.mjs';
 import { homeRelative, mergeAllowWrite } from './bridge-state-dirs.mjs';
 import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 import { THEMES, themePaths } from './project-rules/index.mjs';
+import { readFamily } from '../references/scripts/family.mjs';
 
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const worktrees = await import('./worktrees.mjs');
@@ -1069,10 +1070,18 @@ describe('spec:init-project/S29 the danger check over the three writers by proof
 
 describe('spec:init-project/S36 the danger check over the two git-hook writers by proof', () => {
   const bundle = join(TOOLS, '../references/scripts');
-  const names = fs.readdirSync(bundle).filter((name) => name.endsWith('.mjs')).sort();
-  const installer = 'scripts/install-git-hooks.mjs';
-  const bytes = fs.readFileSync(join(bundle, basename(installer)));
+  // The kit mirror's deployed entries, each copied to scripts/agent-workflow/<path>.
+  const names = readFamily(bundle).filter(({ role }) => role === 'deployed').map(({ path }) => path);
+  const kit = 'scripts/agent-workflow';
+  const installer = `${kit}/git-hooks/install-git-hooks.mjs`;
+  const bytes = fs.readFileSync(join(bundle, 'git-hooks/install-git-hooks.mjs'));
   const kept = 'markdown-blocks.test.mjs';
+  // Each folder a fresh copy creates, deepest first per path in copy order; scripts/ only while absent.
+  const createdFolders = (scriptsStands) => [...new Set(names.flatMap((name) => {
+    const folders = [];
+    for (let at = dirname(`${kit}/${name}`); at !== '.'; at = dirname(at)) folders.push(at);
+    return folders;
+  }))].filter((folder) => !scriptsStands || folder !== 'scripts');
   const initGit = (f) => {
     const git = findOnPath('git', { getenv: process.env }).path;
     assert.ok(git, 'git is on the host PATH');
@@ -1083,7 +1092,7 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
   };
   const project = (t, deployed = false) => {
     const f = initGit(fixture(t));
-    if (deployed) for (const name of ['archive-decisions.mjs', basename(installer)]) put(join(f.root, 'scripts', name), fs.readFileSync(join(bundle, name)));
+    if (deployed) for (const name of ['archives/archive-decisions.mjs', 'git-hooks/install-git-hooks.mjs']) put(join(f.root, kit, name), fs.readFileSync(join(bundle, name)));
     return f;
   };
   const runLine = (variant) => `runs: node ${installer}${variant === 'commit-guard'
@@ -1099,9 +1108,8 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
   for (const standing of [false, true]) it(`enforcement: fresh git root, kept test ${standing}, ordered bundled writes and run`, (t) => {
     const f = project(t);
     if (standing) put(join(f.root, 'scripts', kept), 'foreign bytes\n');
-    preview(f, 'enforcement', [...names.filter((name) => !standing || name !== kept)
-      .map((name) => `writes: scripts/${name} sha256:${sha(fs.readFileSync(join(bundle, name)))}`),
-    ...(!standing ? ['writes: scripts/ created'] : []), runLine('enforcement')]);
+    preview(f, 'enforcement', [...names.map((name) => `writes: ${kit}/${name} sha256:${sha(fs.readFileSync(join(bundle, name)))}`),
+      ...createdFolders(standing).map((folder) => `writes: ${folder}/ created`), runLine('enforcement')]);
   });
   it('enforcement: character-device settings mask does not halt main or print masked', (t) => {
     const f = project(t);
@@ -1190,7 +1198,7 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
     const cli = capture(f);
     assert.equal(danger.main([...argvFor('enforcement', f), '--apply', '--expect', result.digest], cli.io), 6);
     assert.deepEqual(cli.errors, ['apply exited 1']);
-    for (const name of names.filter((name) => name !== kept)) assert.equal(fs.existsSync(join(f.root, 'scripts', name)), false, name);
+    for (const name of names) assert.equal(fs.existsSync(join(f.root, kit, name)), false, name);
     assert.equal(fs.readFileSync(join(f.root, 'scripts', kept), 'utf8'), 'foreign bytes\n');
     assert.equal(fs.readFileSync(hookPath, 'utf8'), '#!/bin/sh\nexit 0\n');
   });
@@ -1207,8 +1215,8 @@ describe('spec:init-project/S63 the danger check over hook-checks by proof', () 
   const [ambient, reset] = [{ ...process.env }, (keep, env) => { for (const key of Object.keys(process.env)) if (!keep(key)) delete process.env[key]; Object.assign(process.env, env); }];
   before(() => reset((key) => !/^git_/i.test(key), { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }));
   after(() => reset((key) => key in ambient, ambient));
-  const [INSTALLER, RULE] = ['scripts/install-git-hooks.mjs', '# Project layout\n'];
-  const [bundled, prior] = [`references/${INSTALLER}`, 'test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt'].map((path) => fs.readFileSync(join(TOOLS, '..', path)));
+  const [INSTALLER, RULE] = ['scripts/agent-workflow/git-hooks/install-git-hooks.mjs', '# Project layout\n'];
+  const [bundled, prior] = ['references/scripts/git-hooks/install-git-hooks.mjs', 'test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt'].map((path) => fs.readFileSync(join(TOOLS, '..', path)));
   const [rules, layout] = [['--rules-check', join(TOOLS, 'project-rules/rules-cli.mjs')], ['--layout-check', join(TOOLS, 'source-size-check.mjs')]];
   const deployment = (t, installer, { theme = true, config } = {}) => {
     const f = fixture(t);

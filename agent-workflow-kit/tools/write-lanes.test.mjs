@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -56,8 +56,9 @@ const createFacts = (t) => {
   t.after(() => rmSync(home, { recursive: true, force: true }));
   return { toolsDir: TOOLS, root: ROOT, env: {}, home, platform: 'linux', tuple: 'apt-get:bubblewrap,socat' };
 };
-const getScriptPaths = () => readdirSync(join(PACKAGE_ROOT, 'references', 'scripts'))
-  .filter((name) => name.endsWith('.mjs')).sort().map((name) => join(ROOT, 'scripts', name));
+const KIT_INSTALLER = join(ROOT, 'scripts', 'agent-workflow', 'git-hooks', 'install-git-hooks.mjs');
+const getScriptPaths = async () => (await import('../references/scripts/family.mjs')).readFamily(join(PACKAGE_ROOT, 'references', 'scripts'))
+  .filter(({ role }) => role === 'deployed').map(({ path }) => join(ROOT, 'scripts', 'agent-workflow', path));
 const expectedArgv = (FACTS, claudeDir = join(FACTS.home, '.claude')) => {
   const table = [
     ['velocity-core', 'velocity-profile.mjs', ['--cwd', ROOT], ['--apply', '--cwd', ROOT]],
@@ -261,7 +262,7 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
     }
   });
 
-  it('writesOf matches every form (a) target, is null for form (c) and chat, and selects startup files in an empty temp home', (t) => {
+  it('writesOf matches every form (a) target, is null for form (c) and chat, and selects startup files in an empty temp home', async (t) => {
     const FACTS = createFacts(t);
     const settings = [join(ROOT, '.claude', 'settings.json')];
     const hook = [join(ROOT, '.claude', 'hooks', 'agent-workflow-gates.mjs'), ...settings];
@@ -277,9 +278,8 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
       'gate-hook.not-current': [hook[0]],
       'state-block': [join(ROOT, '.claude', 'hooks', 'state-block-guard.mjs'), ...settings],
       'state-block.not-current': [join(ROOT, '.claude', 'hooks', 'state-block-guard.mjs')],
-      enforcement: [...getScriptPaths(), join(ROOT, '.git', 'hooks', 'pre-commit')],
-      'commit-guard': [join(ROOT, '.git', 'hooks', 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')],
-      'hook-checks': [join(ROOT, '.git', 'hooks', 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')],
+      'commit-guard': [join(ROOT, '.git', 'hooks', 'pre-commit'), KIT_INSTALLER],
+      'hook-checks': [join(ROOT, '.git', 'hooks', 'pre-commit'), KIT_INSTALLER],
       'mcp-channel': mcp,
       'mcp-channel.differing': mcp,
       agents,
@@ -294,9 +294,10 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
     };
     const nullVariants = [...new Set([...FORM_C, ...Object.keys(SEVERITIES).filter((v) => !WITH_FORMS.includes(v))])];
     const writesOf = need(lanes, 'writesOf');
-    for (const variant of FORM_A) {
+    for (const variant of FORM_A.filter((v) => v !== 'enforcement')) {
       assert.deepEqual(writesOf(variant, FACTS), expected[variant], variant);
     }
+    assert.deepEqual(writesOf('enforcement', FACTS), [...await getScriptPaths(), join(ROOT, '.git', 'hooks', 'pre-commit')], 'enforcement');
     for (const variant of nullVariants) {
       assert.equal(writesOf(variant, FACTS), null, variant);
     }
@@ -307,16 +308,15 @@ describe('spec:init-project/S3 each form uses unquoted injected tool paths and d
     assert.deepEqual(writesOf('jev-connect', { ...FACTS, platform: 'win32', env: { SHELL: '/bin/bash' } }), []);
   });
 
-  it('enforcement and commit-guard name pre-commit in a hooksDir inside or outside the project without a throw', (t) => {
+  it('enforcement, commit-guard and hook-checks name pre-commit in a hooksDir inside or outside the project without a throw', async (t) => {
     const FACTS = createFacts(t);
-    const scripts = getScriptPaths();
     const writesOf = need(lanes, 'writesOf');
-    for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) {
-      const facts = { ...FACTS, hooksDir };
-      const preCommit = join(hooksDir, 'pre-commit');
-      assert.deepEqual(writesOf('enforcement', facts), [...scripts, preCommit]);
-      assert.deepEqual(writesOf('commit-guard', facts), [preCommit, join(ROOT, 'scripts', 'install-git-hooks.mjs')]);
+    const hooksDirs = [join(ROOT, '.githooks'), '/elsewhere/hooks'];
+    for (const hooksDir of hooksDirs) {
+      for (const variant of ['commit-guard', 'hook-checks']) assert.deepEqual(writesOf(variant, { ...FACTS, hooksDir }), [join(hooksDir, 'pre-commit'), KIT_INSTALLER], variant);
     }
+    const scripts = await getScriptPaths();
+    for (const hooksDir of hooksDirs) assert.deepEqual(writesOf('enforcement', { ...FACTS, hooksDir }), [...scripts, join(hooksDir, 'pre-commit')]);
   });
 });
 
@@ -543,6 +543,6 @@ describe('spec:init-project/S62 hook-checks in the lanes by proof', () => {
     }
   });
   it('writesOf names exactly the pre-commit of a hooksDir inside or outside the project and the deployed installer', (t) => {
-    for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) assert.deepEqual(lanes.writesOf('hook-checks', { ...createFacts(t), hooksDir }), [join(hooksDir, 'pre-commit'), join(ROOT, 'scripts', 'install-git-hooks.mjs')]);
+    for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) assert.deepEqual(lanes.writesOf('hook-checks', { ...createFacts(t), hooksDir }), [join(hooksDir, 'pre-commit'), KIT_INSTALLER]);
   });
 });

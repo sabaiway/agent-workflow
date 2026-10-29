@@ -81,14 +81,12 @@ describe('memory package content — DAG guard (knows nobody)', () => {
 
 // Tarball-content guard. `files[]` whitelists whole directories, so the package's OWN colocated
 // *.test.mjs (bin/, scripts/) used to ride into the published npm tarball. Phase-1 SCOPED negation
-// entries strip them — but `!scripts/*.test.mjs` deliberately does NOT cross `/`, so it never
-// touches references/scripts/*.test.mjs, which are deploy PAYLOAD (copied into a consumer repo's
-// scripts/). A blanket `!references/**` would silently drop them and the deploy gate would NOT
-// catch it (it reads the checkout, never the tarball). This guard pins the exact shape: own tests
-// gone, payload tests + runtime files retained. This file is itself stripped from the tarball by
-// Phase 1, but runs from the checkout via the gate + publish-CI `scripts/*.test.mjs` glob.
-//
-// CAUTION: never broaden the negation to `!references/**` — those tests are deploy payload.
+// entries strip them. The script family under references/scripts/ ships exactly what its manifest
+// marks deployed or skill-home, beside the manifest itself: no suite and no support file. A blanket
+// `!references/**` would silently drop the runtime files and the deploy gate would NOT catch it (it
+// reads the checkout, never the tarball). This guard pins the exact shape. This file is itself
+// stripped from the tarball by Phase 1, but runs from the checkout via the gate + publish-CI
+// `scripts/*.test.mjs` glob.
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const packMemory = () => {
@@ -135,35 +133,20 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     assert.deepEqual(leaks, [], 'own tests must not ship; only references/ deploy-payload tests may');
   });
 
-  it('retains the deploy payload tests (reverse pins)', () => {
-    const required = [
-      'references/scripts/archive-caps.mjs',
-      'references/scripts/archive-caps.test.mjs',
-      'references/scripts/archive-changelog.test.mjs',
-      'references/scripts/archive-conservation.test.mjs',
-      'references/scripts/archive-decisions.test.mjs',
-      'references/scripts/archive-issues.test.mjs',
-      'references/scripts/archiver-structure.test.mjs',
-      'references/scripts/check-docs-size-ensure.test.mjs',
-      'references/scripts/check-docs-size.test.mjs',
-      'references/scripts/markdown-blocks.test.mjs',
-      'references/scripts/spec-schema.test.mjs',
-    ];
-    const missing = required.filter((p) => !packed.includes(p));
-    assert.deepEqual(missing, [], 'a deploy payload test was dropped from the tarball');
+  it('packs the script family from its manifest: family.json, family.mjs and every deployed and skill-home entry, no suite and no support entry (spec:script-family/S7)', async () => {
+    const scripts = packed.filter((p) => p.startsWith('references/scripts/'));
+    assert.deepEqual(scripts.filter((p) => p.endsWith('.test.mjs')), [], 'no suite of the script family may ship');
+    const { readFamily } = await import('../references/scripts/family.mjs');
+    const family = readFamily(join(PKG_ROOT, 'references', 'scripts'));
+    const support = family.filter((e) => e.role === 'support').map((e) => `references/scripts/${e.path}`);
+    assert.deepEqual(scripts.filter((p) => support.includes(p)), [], 'no support entry may ship');
+    const shipped = family.filter((e) => e.role === 'deployed' || e.role === 'skill-home').map((e) => `references/scripts/${e.path}`);
+    assert.ok(shipped.includes('references/scripts/family.mjs'), 'the manifest marks family.mjs skill-home');
+    assert.deepEqual([...scripts].sort(), ['references/scripts/family.json', ...shipped].sort());
   });
 
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
-      'references/scripts/archive-changelog.mjs',
-      'references/scripts/archive-decisions.mjs',
-      'references/scripts/archive-issues.mjs',
-      'references/scripts/check-docs-size.mjs',
-      'references/scripts/markdown-blocks.mjs',
-      'references/scripts/spec-schema.mjs',
-      'references/scripts/_expect-shim.mjs',
-      'references/scripts/install-git-hooks.mjs',
-      'references/scripts/migrate-gates.mjs',
       'bin/install.mjs',
       'capability.json',
       'SKILL.md',
@@ -226,6 +209,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 61 = 59 + references/scripts/archive-caps.mjs (the frozen tier table every rolling archive
     //      stamps from — floors, ceilings and the capFor stamp) + its deploy-payload test; both
     //      kit-mirrored via sync-mirrors.
-    assert.equal(packed.length, 61, `tarball file count drifted (${packed.length} ≠ 61)`);
+    // 51 = 61 − the 25 flat references/scripts/ files + family.json and the 14 deployed and
+    //      skill-home entries of its manifest (story S2 of KIT-SCRIPTS: no suite, no support file).
+    assert.equal(packed.length, 51, `tarball file count drifted (${packed.length} ≠ 51)`);
   });
 });

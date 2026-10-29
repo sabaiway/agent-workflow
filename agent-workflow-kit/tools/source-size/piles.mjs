@@ -7,7 +7,7 @@
 
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { tokenizeMarkdown } from '../../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
 import { auditQueue, canonicalHeading, checkQueue } from '../queue-audit.mjs';
 import { parseArgv } from '../queue-audit-cli.mjs';
 import { bandOf } from './layout.mjs';

@@ -54,7 +54,10 @@
     "!bin/*.test.mjs",
     "!tools/**/*.test.mjs",
     "!tools/manifest/fixtures/**",
-    "!tools/project-rules/fixtures/**"
+    "!tools/project-rules/fixtures/**",
+    "!references/scripts/**/*.test.mjs",
+    "!references/scripts/archives/index.mjs",
+    "!references/scripts/test-support/**"
   ],
   "engines": {
     "node": ">=22"

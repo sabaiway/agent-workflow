@@ -168,11 +168,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ inputs.dir }}" = "agent-workflow-kit" ]; then
-            node --test tools/*.test.mjs tools/manifest/*.test.mjs tools/project-rules/*.test.mjs tools/source-size/*.test.mjs tools/*.test/*.test.mjs references/scripts/*.test.mjs bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
+            node --test tools/*.test.mjs tools/manifest/*.test.mjs tools/project-rules/*.test.mjs tools/source-size/*.test.mjs tools/*.test/*.test.mjs 'references/scripts/**/*.test.mjs' bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
           elif [ "${{ inputs.dir }}" = "agent-workflow-engine" ]; then
             node --test test/*.test.mjs
           else
-            node --test scripts/*.test.mjs bin/*.test.mjs references/scripts/*.test.mjs
+            node --test scripts/*.test.mjs bin/*.test.mjs 'references/scripts/**/*.test.mjs'
           fi
 
       # Pack the REAL tarball ONCE, to $RUNNER_TEMP (outside the package dir, so the exact-count

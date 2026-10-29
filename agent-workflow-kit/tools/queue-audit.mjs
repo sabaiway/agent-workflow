@@ -25,7 +25,7 @@
 // explain why something was CUT, and reading that as the row's own state would delete live work. Only
 // the title and a bold status line are status positions.
 //
-// Markdown is read through the family's ONE block model (references/scripts/markdown-blocks.mjs) and
+// Markdown is read through the family's ONE block model (references/scripts/shared/index.mjs) and
 // the ONE bullet scan the other queue reader uses (fold-scope.mjs) — fences, CRLF, indented headings
 // and the backtick-info-string rule are THEIR problem, never a second hand-rolled grammar here. A
 // document either of them refuses is a loud refusal, never a silent empty read.
@@ -34,7 +34,7 @@
 // nothing. Dependency-free, Node >= 22. No side effects on import.
 
 
-import { tokenizeMarkdown, fail } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown, fail } from '../references/scripts/shared/index.mjs';
 import { bulletBlocks } from './fold-scope.mjs';
 import { CARRY_WORK, CLASSES, DEFAULTS, UNREAD_ITEM, authorisesRemoval, classifyRow, titleOf } from './queue-audit-rows.mjs';
 import { nameFindings } from './queue-row-name.mjs';

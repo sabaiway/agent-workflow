@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, openSync, closeSync, fstatSync, fsyncSync, readFileSync, writeFileSync, writeSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { canonicalHeading } from './queue-audit.mjs';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 
 export const EXIT = Object.freeze({ accept: 0, refuse: 1, usage: 2 });
 const MAGIC = 'queue-purge: 1';

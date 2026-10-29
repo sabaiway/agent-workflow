@@ -6,7 +6,7 @@
 // It imports nothing under test, so a suite that reaches for it still LOADS when the modules under
 // test are absent — the red proof stays observable.
 
-import { SPEC_SCHEMA } from '../references/scripts/spec-schema.mjs';
+import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 
 export const STORE = SPEC_SCHEMA.storePrefix;
 export const ROOT = '/repo';

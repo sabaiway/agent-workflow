@@ -1,53 +1,83 @@
 // ensure-specs.mjs — the SIXTH upgrade ensure: the spec layer (memory 4.6.0, AD-112) kept current on an
-// EXISTING deployment. Four deployed scripts (the pairs script-priors.mjs names; every other kit script
-// is the scripts ensure's) and one store root, by the scripts op's rule (distribution-files/): every
-// file is surveyed by proof first, then on every plain run a prior body is refreshed and an edited one
-// replaced in place, an absent one placed create-only and an absent store root seeded create-only, with
-// no question and no copy kept; a current file is left. The writes run in a FIXED order:
-//   1. the reader pair   scripts/spec-schema.mjs + .test.mjs
-//   2. the checker pair  scripts/check-docs-size.mjs + .test.mjs
-//   3. the store root    docs/ai/specs/index.md (placeholders rendered)
-// Why the order: the kit's bundled navigator generator collapses `specs/` into one row, while the
-// project's pre-commit hook runs ITS deployed checker — an older one renders the store row by row and
-// reds `--check-index`. So the checker is written before the spec store, and a write that fails stops
-// every later one. The pair lines and the hook-run line are the scripts op's own, from the module's
-// index. Each write is idempotent, so a stopped run converges on the next.
+// EXISTING deployment. Its scripts are the reader pair (the deployed entries of the spec-schema module)
+// and the checker pair (the docs-size module's), each at its deployed path in the kit folder
+// scripts/agent-workflow/, with the bundled files they import; every other kit script is the scripts
+// ensure's. They and one store root follow the scripts op's rule (distribution-files/): every file is
+// surveyed by proof first, then on every plain run a prior body is refreshed and an edited one replaced
+// in place, an absent one placed create-only and an absent store root seeded create-only, with no
+// question and no copy kept; a current file is left. The writes run in a FIXED order:
+//   1. the files the pairs import   scripts/agent-workflow/shared/... (dependencies first)
+//   2. the reader pair              scripts/agent-workflow/spec-schema/...
+//   3. the checker pair             scripts/agent-workflow/docs-size/check-docs-size.mjs
+//   4. the store root               docs/ai/specs/index.md (placeholders rendered)
+// Why the order: every file is written after the files it imports, so each pair file it leaves loads;
+// the kit's bundled navigator generator collapses `specs/` into one row, while the project's pre-commit
+// hook runs ITS deployed checker — an older one renders the store row by row and reds `--check-index`.
+// So the checker is written before the spec store, and a write that fails stops every later one. The
+// pair lines and the hook-run line are the scripts op's own, from the module's index. Each write is
+// idempotent, so a stopped run converges on the next.
 //
 // Dependency-free, Node >= 22. Every fs primitive is injectable (deps.*). No side effects on import.
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { CHECKER_PAIR, READER_PAIR, classifyDeployedScript } from './script-priors.mjs';
-import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
+import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
+import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { SCRIPT_PRIORS, classifyDeployedScript } from './script-priors.mjs';
+import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
 import { fileLine, hookLine } from './distribution-files/index.mjs';
 
 const OP = 'specs';
-const SCRIPTS_DIR = 'scripts';
-const BUNDLED_SCRIPTS = ['references', 'scripts'];
+const READER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'spec-schema');
+const CHECKER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'docs-size');
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
 
 const causeOf = (err) => String((err && err.message) || err);
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const kindOfDir = (st) => (st.isSymbolicLink() ? 'a symlink' : st.isFile() ? 'a regular file' : 'not a directory');
+const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: exists but is ${kind} — nothing was read or written; resolve it by hand, then re-run`);
 
-// ── the survey: five paths classified, nothing written ────────────────────────────────────────────
+// ── the survey: the pairs, the files they import and the store root classified, nothing written ───
 
-// One deployed script → { rel, name, state, bundle }; `wrongKind` carries the node kind for the
-// refusal, `prior`/`custom` come from the catalog classifier against the bundled body.
-const surveyScript = ({ cwd, kitRoot, name, read, lstat }) => {
-  const rel = `${SCRIPTS_DIR}/${name}`;
-  let bundle;
-  try {
-    bundle = read(join(kitRoot, ...BUNDLED_SCRIPTS, name));
-  } catch (err) {
-    return { rel, name, state: 'bundle-unreadable', error: causeOf(err) };
+// The bundled side: the pairs and their whole import closure in write order → { files } | { refusal }.
+const readBundles = (kitRoot, read) => {
+  const byPath = new Map();
+  const queue = [...READER, ...CHECKER];
+  for (const entry of queue) {
+    if (byPath.has(entry.path)) continue;
+    let bundle;
+    try {
+      bundle = read(join(kitRoot, entry.bundled));
+    } catch (err) {
+      return { refusal: composeFailure(OP, 'bundle-unreadable', `${entry.deployed}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
+    }
+    const imports = bundledImportsOf(entry.path, bundle);
+    byPath.set(entry.path, { path: entry.path, rel: entry.deployed, bundle, imports });
+    queue.push(...DEPLOYED_SCRIPTS.filter((e) => imports.includes(e.path)));
   }
-  const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat);
-  if (probe.wrongKind) return { rel, name, state: 'wrong-kind', wrongKind: probe.wrongKind, bundle };
-  if (!probe.present) return { rel, name, state: 'absent', bundle };
-  return { rel, name, state: classifyDeployedScript(read(join(cwd, SCRIPTS_DIR, name)), name, bundle), bundle };
+  const of = (entries) => (path) => entries.some((e) => e.path === path);
+  const group = (keep) => dependenciesFirst([...byPath.values()].filter((f) => keep(f.path)));
+  return { files: [...group((p) => !of(READER)(p) && !of(CHECKER)(p)), ...group(of(READER)), ...group(of(CHECKER))] };
+};
+
+// Each folder on the way to a pair file or a file it imports, lstat-ed without following a link → a refusal or null.
+const folderRefusal = (cwd, files, lstat) => {
+  const folders = new Set(files.flatMap((f) => f.rel.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/'))));
+  for (const rel of folders) {
+    const st = lstatNoFollow(join(cwd, rel), lstat);
+    if (st !== null && (!st.isDirectory() || st.isSymbolicLink())) return wrongKind(`${rel}/`, kindOfDir(st));
+  }
+  return null;
+};
+
+// One deployed script → its state against the bundled body, by the catalog seam keyed by manifest path.
+const surveyScript = (cwd, f, deps, read, lstat) => {
+  const probe = probeSeedTarget(join(cwd, f.rel), lstat);
+  if (probe.wrongKind) return { ...f, state: 'wrong-kind', wrongKind: probe.wrongKind };
+  if (!probe.present) return { ...f, state: 'absent' };
+  return { ...f, state: classifyDeployedScript(read(join(cwd, f.rel)), f.path, f.bundle, deps.priors ?? SCRIPT_PRIORS) };
 };
 
 const surveyStoreRoot = (cwd, lstat) => {
@@ -89,7 +119,7 @@ const renderStoreRoot = (kitRoot, read, today) => {
 };
 
 // One write per due path in write order: a prior refreshed and an edit replaced by the atomic write,
-// an absent pair file and the store root written create-only. → { fates, notes, failure? }
+// an absent script and the store root written create-only. → { fates, notes, failure? }
 const writeAll = ({ cwd, due, storeBody, deps, read }) => {
   const fates = new Map();
   const notes = [];
@@ -98,15 +128,15 @@ const writeAll = ({ cwd, due, storeBody, deps, read }) => {
     let result;
     try {
       result = isStore ? writeProjectFileCreateOnly(cwd, f.rel, storeBody, deps, { noun: 'the spec store root' })
-        : f.state === 'absent' ? writeProjectFileCreateOnly(cwd, f.rel, String(f.bundle), deps, { noun: 'a seeded spec-layer script' })
-        : writeContainedFileAtomic(cwd, join(cwd, f.rel), String(f.bundle), deps, { label: f.rel });
+        : f.state === 'absent' ? writeProjectFileCreateOnly(cwd, f.rel, f.bundle, deps, { noun: 'a seeded spec-layer script' })
+        : writeContainedFileAtomic(cwd, join(cwd, f.rel), f.bundle, deps, { label: f.rel });
     } catch (err) {
       if (!isStore) fates.set(f.rel, 'refused');
       return { fates, notes, failure: ['write-refused', `${f.rel}: ${causeOf(err)}`] };
     }
     notes.push(...tmpNote(f.rel, result.tmpLeftBehind));
     const stood = f.state === 'absent' && !result.created;
-    if (stood && !isStore && classifyDeployedScript(read(join(cwd, f.rel)), f.name, f.bundle) !== 'current') {
+    if (stood && !isStore && classifyDeployedScript(read(join(cwd, f.rel)), f.path, f.bundle) !== 'current') {
       fates.set(f.rel, 'refused');
       return { fates, notes, failure: ['race-unresolved', `${f.rel}: appeared while this run was placing it and does not carry the bundled body — nothing further written, re-run when the tree is settled`] };
     }
@@ -120,14 +150,14 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const read = deps.readFile ?? readFileSync;
   const refusal = nodeEvidenceRefusal(OP, cwd, lstat);
   if (refusal) return refusal;
-  const survey = (name) => surveyScript({ cwd, kitRoot, name, read, lstat });
-  const files = [...READER_PAIR.map(survey), ...CHECKER_PAIR.map(survey)];
+  const bundled = readBundles(kitRoot, read);
+  if (bundled.refusal) return bundled.refusal;
+  const folders = folderRefusal(cwd, bundled.files, lstat);
+  if (folders) return folders;
+  const files = bundled.files.map((f) => surveyScript(cwd, f, deps, read, lstat));
   const store = surveyStoreRoot(cwd, lstat);
-  for (const f of files) {
-    if (f.state === 'bundle-unreadable') return composeFailure(OP, 'bundle-unreadable', `${f.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${f.error}`);
-  }
   for (const f of [...files, store]) {
-    if (f.state === 'wrong-kind') return composeFailure(OP, 'wrong-node-kind', `${f.rel}: exists but is ${f.wrongKind} — nothing was read or written; resolve it by hand, then re-run`);
+    if (f.state === 'wrong-kind') return wrongKind(f.rel, f.wrongKind);
   }
 
   const due = [...files.filter((f) => f.state !== 'current'), ...(store.state === 'absent' ? [store] : [])];

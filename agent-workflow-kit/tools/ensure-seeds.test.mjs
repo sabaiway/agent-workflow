@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,13 +114,18 @@ describe('spec:node-evidence/S6 the scripts ensure proceeds on a deployed script
     assert.deepEqual([r?.token, r?.failed, existsSync(join(dir, 'scripts'))], ['skipped-no-node-evidence', false, false]);
     assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files \(archive-caps\.mjs, .*spec-schema\.mjs\), no regular file present/);
   }, { node: false }));
-  it('a deployed kit script without a package.json is Node evidence: the op places every other kit script, token seeded, no entries field', () => withProject((dir) => {
-    const [bundle, at] = [join(KIT_ROOT, 'references', 'scripts'), (n) => join(dir, 'scripts', n)];
-    mkdirSync(join(dir, 'scripts'));
-    writeFileSync(at('archive-caps.mjs'), readFileSync(join(bundle, 'archive-caps.mjs')));
-    const [r, family] = [run(dir), readdirSync(bundle).filter((n) => n.endsWith('.mjs') && !/^(?:spec-schema|check-docs-size)(?:\.test)?\.mjs$/.test(n))];
-    assert.deepEqual([r?.token, r?.failed, 'entries' in (r ?? {}), family.filter((n) => !existsSync(at(n)) || !readFileSync(at(n)).equals(readFileSync(join(bundle, n))))], ['seeded', false, false, []], r?.lines?.join('\n'));
-  }, { node: false }));
+  it('a deployed kit script without a package.json is Node evidence: the op places every other kit script, token seeded, no entries field', async () => {
+    // The kit folder's family: the manifest's deployed entries less the spec layer's modules, at their deployed paths.
+    const { DEPLOYED_SCRIPTS } = await import('./node-evidence.mjs');
+    const family = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size');
+    const caps = family.find((e) => e.path === 'archives/archive-caps.mjs');
+    withProject((dir) => {
+      mkdirSync(dirname(join(dir, caps.deployed)), { recursive: true });
+      writeFileSync(join(dir, caps.deployed), readFileSync(join(KIT_ROOT, caps.bundled)));
+      const r = run(dir), at = (e) => join(dir, e.deployed);
+      assert.deepEqual([r?.token, r?.failed, 'entries' in (r ?? {}), family.filter((e) => !existsSync(at(e)) || !readFileSync(at(e)).equals(readFileSync(join(KIT_ROOT, e.bundled)))).map((e) => e.path)], ['seeded', false, false, []], r?.lines?.join('\n'));
+    }, { node: false });
+  });
   it('an unreadable Node probe fails closed: node-evidence-unverifiable, nothing written', () => withProject((dir) => {
     const r = run(dir, { lstat: (p) => { if (p.endsWith('package.json')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return lstatSync(p); } });
     assert.match(r?.lines?.[0] ?? '', /^node-evidence-unverifiable — scripts\/: whether Node runs here could not be read \(EACCES on package\.json\)/);

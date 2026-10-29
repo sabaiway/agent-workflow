@@ -14,11 +14,11 @@
 // some other path, so one document has exactly ONE accepted spelling and a dedup can be an equality.
 // The store root is never an op target — it is the navigator, not a contract.
 //
-// The D-schema values come from the ONE reader (references/scripts/spec-schema.mjs): no second
+// The D-schema values come from the ONE reader (references/scripts/spec-schema/index.mjs): no second
 // source of the prefix, the navigator filename or the slug pattern. Pure strings in, ops out — the
 // filesystem belongs to spec-check.mjs. Dependency-free, Node >= 22.
 
-import { SPEC_SCHEMA } from '../references/scripts/spec-schema.mjs';
+import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 
 const STORE = SPEC_SCHEMA.storePrefix;
 const NAV = SPEC_SCHEMA.navigatorFile;

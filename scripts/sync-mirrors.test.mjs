@@ -9,7 +9,6 @@ import {
   MIRROR_TEMPLATE_FILES,
   TEMPLATE_HARD_EXCLUDES,
   planAllMirrors,
-  planRootSubsetSync,
   syncBridgeMirror,
   runCli,
 } from './sync-mirrors.mjs';
@@ -246,57 +245,77 @@ describe('syncBridgeMirror — the root-parameterized --bump hook (D5)', () => {
 });
 
 describe('planAllMirrors covers every family', () => {
-  it('reports one plan per bridge + reference-scripts + templates + root-scripts', () => {
+  it('reports one plan per bridge + reference-scripts + templates, and no root-scripts family (the family retires with the flat copies, spec script-family)', () => {
     const root = makeRoot();
     seedFamily(root);
     const families = planAllMirrors(root).map((plan) => plan.family);
-    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates', 'root-scripts']);
+    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates']);
   });
 });
 
-// Decision 12 — the root-scripts subset is DIRECTIONAL: memory canon → this repo's root scripts/.
-// A canon script whose basename is also at root is kept byte+exec-identical; root-only tooling
-// (sync-mirrors*, release/*, any non-canon script) is never flagged or deleted; a canon file absent
-// from root is never added. It is NOT planTreeSync set-equality (which would delete release/*).
-describe('root-scripts subset (Decision 12) — directional, never destructive to root-only tooling', () => {
-  const seedRoot = (root) => {
-    // A canon whose members are: tool.mjs (present at root, drifted) + canon-only.mjs (absent at root).
+// The script family is one nested tree: the kit mirror is the canon tree file for file, and the
+// basename-keyed copy into this repository's flat scripts/ retired. The temp root's scripts/ stands
+// in for that flat folder: a file of it whose basename the canon also carries is drifted and
+// unreadable, so a sync that read it fails and a sync that wrote it changes its bytes.
+describe('spec:script-family/S6 the reference-scripts tree syncs whole and leaves the flat scripts/ alone', () => {
+  const MODULE_FILE = 'shared/markdown-blocks.mjs';
+  const seedTree = (root) => {
     const canon = join(root, 'agent-workflow-memory', 'references', 'scripts');
-    writeFileSync(join(canon, 'canon-only.mjs'), 'export const x = 1;\n');
-    // The root subset the consumer dogfoods, plus root-ONLY tooling that must be immune.
-    const rootScripts = join(root, 'scripts', 'release');
-    mkdirSync(rootScripts, { recursive: true });
-    writeFileSync(join(root, 'scripts', 'tool.mjs'), 'export const tool = 999; // drifted at root\n');
-    writeFileSync(join(root, 'scripts', 'sync-mirrors.mjs'), '// root-only tool\n');
-    writeFileSync(join(rootScripts, 'dispatch-publish.mjs'), '// root-only release tool\n');
+    const mirror = join(root, 'agent-workflow-kit', 'references', 'scripts');
+    for (const dir of [join(canon, 'shared'), join(canon, 'archives'), join(mirror, 'stale')]) mkdirSync(dir, { recursive: true });
+    writeFileSync(join(canon, 'family.json'), '{"schema":1,"entries":[]}\n');
+    writeFileSync(join(mirror, 'family.json'), '{"schema":1,"entries":[]}\n');
+    writeFileSync(join(canon, 'family.mjs'), 'export const FAMILY_FILE = "family.json";\n');
+    writeFileSync(join(mirror, 'family.mjs'), 'export const FAMILY_FILE = "stale";\n');
+    writeFileSync(join(canon, MODULE_FILE), 'export const blocks = 1;\n');
+    writeFileSync(join(canon, 'archives', 'archive-decisions.mjs'), '#!/usr/bin/env node\n');
+    chmodSync(join(canon, 'archives', 'archive-decisions.mjs'), 0o755);
+    writeFileSync(join(mirror, 'archive-decisions.mjs'), '// the old flat copy\n');
+    writeFileSync(join(mirror, 'stale', 'old.mjs'), '// a module the canon dropped\n');
+    const flat = join(root, 'scripts');
+    mkdirSync(flat, { recursive: true });
+    const standIns = { 'family.mjs': '// flat stand-in, drifted\n', 'tool.mjs': '// flat stand-in, drifted\n', 'sync-mirrors.mjs': '// root-only tool\n' };
+    for (const [name, body] of Object.entries(standIns)) writeFileSync(join(flat, name), body);
+    return { canon, mirror, flat, standIns };
   };
 
-  it('--check flags a drifted root subset file but NEVER touches release/* or sync-mirrors.mjs', () => {
+  it('copies a changed or absent canon file, deletes an extraneous mirror file, and reads and writes no file of the flat scripts/', () => {
     const root = makeRoot();
     seedFamily(root);
-    seedRoot(root);
-    const { code, text } = run(['--check'], root);
-    assert.equal(code, 1, 'a drifted root subset file is a would-be change');
-    assert.match(text, /root-scripts: would copy scripts\/tool\.mjs/);
-    assert.doesNotMatch(text, /release/, 'release/* is never a root-scripts change');
-    assert.doesNotMatch(text, /root-scripts: would (copy|delete) scripts\/sync-mirrors\.mjs/, 'sync-mirrors.mjs is never flagged');
+    const { canon, mirror, flat, standIns } = seedTree(root);
+    const sealed = Object.keys(standIns).map((name) => join(flat, name));
+    for (const path of sealed) chmodSync(path, 0o000);
+    let check;
+    let apply;
+    try {
+      check = run(['--check'], root);
+      apply = run([], root);
+    } finally {
+      for (const path of sealed) chmodSync(path, 0o644);
+    }
+    assert.equal(check.errText, '', 'the check read nothing it could not');
+    for (const rel of ['family.mjs', MODULE_FILE, 'archives/archive-decisions.mjs']) {
+      assert.match(check.text, new RegExp(`^reference-scripts: would copy agent-workflow-kit/references/scripts/${rel}$`, 'm'));
+    }
+    for (const rel of ['archive-decisions.mjs', 'stale/old.mjs']) {
+      assert.match(check.text, new RegExp(`^reference-scripts: would delete agent-workflow-kit/references/scripts/${rel}$`, 'm'));
+    }
+    assert.doesNotMatch(`${check.text}\n${apply.text}`, /root-scripts|(?:copy|copied|delete|deleted) scripts\//, 'no flat scripts/ path is planned');
+    assert.equal(apply.code, 0, `the sync failed:\n${apply.text}\n${apply.errText}`);
+    for (const rel of ['family.json', 'family.mjs', MODULE_FILE, 'archives/archive-decisions.mjs']) {
+      assert.ok(readFileSync(join(mirror, rel)).equals(readFileSync(join(canon, rel))), `${rel} is the canon's bytes`);
+    }
+    assert.notEqual(statSync(join(mirror, 'archives', 'archive-decisions.mjs')).mode & 0o111, 0, 'the nested copy keeps the exec bit');
+    assert.ok(!existsSync(join(mirror, 'archive-decisions.mjs')) && !existsSync(join(mirror, 'stale', 'old.mjs')), 'the extraneous mirror files are gone');
+    for (const [name, body] of Object.entries(standIns)) assert.equal(readFileSync(join(flat, name), 'utf8'), body, `scripts/${name} is untouched`);
+    assert.ok(!existsSync(join(flat, 'shared')) && !existsSync(join(flat, 'markdown-blocks.mjs')), 'no canon file is added to the flat scripts/');
   });
 
   it('a missing memory canon scripts dir fails loud (never treats a missing canon as empty)', () => {
     const root = makeRoot();
-    assert.throws(() => planRootSubsetSync(root), /canon dir is missing/);
-  });
-
-  it('apply COPIES the canon into the root subset, never adds a canon-only file, never deletes root-only tooling', () => {
-    const root = makeRoot();
     seedFamily(root);
-    seedRoot(root);
-    const { code } = run([], root);
-    assert.equal(code, 0);
-    assert.equal(readFileSync(join(root, 'scripts', 'tool.mjs'), 'utf8'), 'export const tool = 1;\n', 'the root subset file is now the canon version');
-    assert.ok(!existsSync(join(root, 'scripts', 'canon-only.mjs')), 'a canon file absent from root is NOT added');
-    assert.ok(existsSync(join(root, 'scripts', 'release', 'dispatch-publish.mjs')), 'root-only release/* is never deleted');
-    assert.ok(existsSync(join(root, 'scripts', 'sync-mirrors.mjs')), 'root-only sync-mirrors.mjs is never deleted');
+    rmSync(join(root, 'agent-workflow-memory', 'references', 'scripts'), { recursive: true });
+    assert.throws(() => planAllMirrors(root), /canon dir is missing: agent-workflow-memory\/references\/scripts/);
   });
 });
 

@@ -10,12 +10,13 @@ import assert from 'node:assert/strict';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main } from './ensure-configs.mjs';
 import { DRY_RUN_TOKENS, ENSURE_OPS, RELAYED_ENSURE_TOKENS, WRITE_TOKENS } from './ensure-ops.mjs';
 import { KIT_OWN_PATHS } from './known-footprint.mjs';
+import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
 import { CONFIG_REL } from './orchestration-config.mjs';
 
 const withProject = (fn, { deploy = true, node = true } = {}) => {
@@ -51,12 +52,19 @@ const tokensOf = (stdout) =>
     .filter(Boolean)
     .map(([, op, token]) => ({ op, token }));
 
-const BUNDLE = fileURLToPath(new URL('../references/scripts/', import.meta.url));
-// The spec layer at its bundled bodies, each name in `edited` holding an edit of its own instead, beside an edited kit script.
-const edit = (name) => `// my own ${name}\n`;
-const withSpecLayer = (fn, edited = ['check-docs-size.mjs']) => withProject((dir) => {
-  mkdirSync(join(dir, 'scripts'));
-  for (const name of ['spec-schema.mjs', 'spec-schema.test.mjs', 'check-docs-size.mjs', 'check-docs-size.test.mjs', 'archive-caps.mjs']) writeFileSync(join(dir, 'scripts', name), [...edited, 'archive-caps.mjs'].includes(name) ? edit(name) : readFileSync(join(BUNDLE, name)));
+const KIT = fileURLToPath(new URL('..', import.meta.url));
+// The spec layer's pair files (the spec-schema and docs-size modules' deployed entries) at their bundled bodies in the
+// kit folder, each manifest path in `edited` holding an edit of its own instead, beside an edited kit script.
+const PAIR_FILES = DEPLOYED_SCRIPTS.filter(({ module }) => module === 'spec-schema' || module === 'docs-size');
+const [CHECKER, READER, READER_INDEX] = ['docs-size/check-docs-size.mjs', 'spec-schema/spec-schema.mjs', 'spec-schema/index.mjs'];
+const entryOf = (manifestPath) => DEPLOYED_SCRIPTS.find(({ path }) => path === manifestPath);
+const KIT_SCRIPT = entryOf('archives/archive-caps.mjs');
+const edit = (path) => `// my own ${path}\n`;
+const withSpecLayer = (fn, edited = [CHECKER]) => withProject((dir) => {
+  for (const { path, deployed, bundled } of [...PAIR_FILES, KIT_SCRIPT]) {
+    mkdirSync(dirname(join(dir, deployed)), { recursive: true });
+    writeFileSync(join(dir, deployed), [...edited, KIT_SCRIPT.path].includes(path) ? edit(path) : readFileSync(join(KIT, bundled)));
+  }
   return fn(dir);
 });
 const FOOTER = '  part of this configuration run did NOT complete — the lines above name the cause, and what was and was not written.';
@@ -146,7 +154,7 @@ describe('the reconcile run', () => {
 
       const second = main(['--reconcile'], { cwd: dir });
       assert.equal(second.code, 0);
-      assert.deepEqual(tokensOf(second.stdout)[5], { op: 'scripts', token: 'not-placed' }, 'no kit script stands in scripts/ on the second run either');
+      assert.deepEqual(tokensOf(second.stdout)[5], { op: 'scripts', token: 'already-present' }, 'the seed files the spec layer placed are already the bundled body on the second run');
       for (const { op, token } of tokensOf(second.stdout)) {
         assert.equal(WRITE_TOKENS.includes(token), false, `${op} claimed "${token}" on an already-current tree`);
       }
@@ -215,7 +223,7 @@ describe('--only <op> narrows the run to exactly one operation', () => {
       const r = main(['--reconcile', '--only', 'specs'], { cwd: dir });
       assert.equal(r.code, 0, r.stderr);
       assert.deepEqual(tokensOf(r.stdout), [{ op: 'specs', token: 'seeded' }]);
-      assert.equal(existsSync(join(dir, 'scripts', 'spec-schema.mjs')), true);
+      assert.equal(existsSync(join(dir, entryOf(READER).deployed)), true);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'index.md')), false, 'the navigator op did not run');
     });
   });
@@ -267,7 +275,7 @@ describe('spec:distribution-files/S3 nothing under .agent-workflow', () => {
         writeFileSync(join(kept, 'check-docs-size.mjs'), edit('check-docs-size.mjs'));
         const before = snapshot(reserved), r = main(['--reconcile', ...flags, '--cwd', dir]);
         assert.deepEqual([r.code, snapshot(reserved)], [0, before], `${flags.join(' ')}\n${r.stdout}`);
-      }, ['check-docs-size.mjs', 'spec-schema.test.mjs']);
+      }, [CHECKER, READER_INDEX]);
       withSpecLayer((dir) => {
         const r = main(['--reconcile', ...flags, '--cwd', dir]);
         assert.deepEqual([r.code, existsSync(join(dir, '.agent-workflow'))], [0, false], `${flags.join(' ')}\n${r.stdout}`);
@@ -283,7 +291,7 @@ describe('spec:distribution-files/S8 no replace block and no replace command; --
     it(`${label} over edited pair files beside an edited kit script: no replace block or command, the failure footer only when an op failed`, () => withSpecLayer((dir) => {
       const r = main(['--reconcile', ...flags, '--cwd', dir], failing ? refusing(dir) : {}), lines = r.stdout.split('\n');
       assert.deepEqual({ code: r.code, retired: lines.filter((l) => RETIRED.test(l)), footers: lines.filter((l) => l === FOOTER).length, last: lines.at(-1) === FOOTER }, { code: failing ? 1 : 0, retired: [], footers: failing ? 1 : 0, last: failing }, r.stdout);
-    }, ['check-docs-size.mjs', 'spec-schema.test.mjs']));
+    }, [CHECKER, READER_INDEX]));
   }
   it('--replace-custom <digest> and --replace-custom=x: the usage refusal unknown argument naming the flag, exit 2, nothing run', () => withSpecLayer((dir) => {
     const before = snapshot(dir);
@@ -297,12 +305,13 @@ describe('spec:distribution-files/S8 no replace block and no replace command; --
 describe('spec:distribution-files/S9 one plain run through the command', () => {
   it('writes the edited pair files to the bundled bytes, prints the specs line, then the index line, exit 0; a second plain run writes nothing, specs already-present', () => withSpecLayer((dir) => {
     const r = main(['--reconcile', '--cwd', dir]), ops = tokensOf(r.stdout);
-    const replaced = (name) => r.stdout.includes(`\n      scripts/${name}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in `);
-    assert.deepEqual({ code: r.code, specs: ops.find((t) => t.op === 'specs')?.token, order: ops.map((t) => t.op).filter((op) => op === 'specs' || op === 'index'), lines: ['check-docs-size.mjs', 'spec-schema.mjs'].map(replaced),
-      bundled: ['check-docs-size.mjs', 'spec-schema.mjs'].map((name) => readFileSync(join(dir, 'scripts', name), 'utf8') === readFileSync(join(BUNDLE, name), 'utf8')) }, { code: 0, specs: 'seeded', order: ['specs', 'index'], lines: [true, true], bundled: [true, true] }, r.stdout);
+    const replaced = ({ deployed }) => r.stdout.includes(`\n      ${deployed}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in `);
+    const edited = [CHECKER, READER].map(entryOf);
+    assert.deepEqual({ code: r.code, specs: ops.find((t) => t.op === 'specs')?.token, order: ops.map((t) => t.op).filter((op) => op === 'specs' || op === 'index'), lines: edited.map(replaced),
+      bundled: edited.map(({ deployed, bundled }) => readFileSync(join(dir, deployed), 'utf8') === readFileSync(join(KIT, bundled), 'utf8')) }, { code: 0, specs: 'seeded', order: ['specs', 'index'], lines: [true, true], bundled: [true, true] }, r.stdout);
     const after = snapshot(dir), again = main(['--reconcile', '--cwd', dir]);
     assert.deepEqual([again.code, tokensOf(again.stdout).find((t) => t.op === 'specs')?.token, snapshot(dir)], [0, 'already-present', after], again.stdout);
-  }, ['check-docs-size.mjs', 'spec-schema.mjs']));
+  }, [CHECKER, READER]));
 });
 
 // The CLI entry itself: everything above calls main() in-process, so the guarded entry block — the

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { constants, openSync, closeSync, fstatSync, writeSync, ftruncateSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { readEpicEntries } from './epic-store.mjs';

@@ -1,5 +1,5 @@
 import { posix } from 'node:path';
-import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { parseRobustTag } from './robustness-literals.mjs';
 import { unique } from './claim-relation.mjs';
 import { checkStoryOwnership, PIN_FILE, PIN_VERBS } from './plan-shape-ownership.mjs';

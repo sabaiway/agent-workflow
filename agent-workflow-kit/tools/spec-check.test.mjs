@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SPEC_SCHEMA } from '../references/scripts/spec-schema.mjs';
+import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 import { FLAT_STORE, FRONT, ROOT, ROOT_DOC, STORE, groundOf, indexDoc, marker, op, relOf, rename, repoOf, rulesOf, specDoc } from './spec-check-harness.test.mjs';
 
 // The OP GRAMMAR, the corpus at the reader layer, and the SESSION lane. The --all lane is

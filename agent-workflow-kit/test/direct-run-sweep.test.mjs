@@ -57,18 +57,11 @@ const SWEPT_MODULES = Object.freeze([
 ]);
 // Root scripts/ mirrors are absent because this committed test must run from a fresh checkout:
 // they are host-local deployed copies matched by .git/info/exclude. The authority that keeps them
-// byte-identical to their canon is node scripts/sync-mirrors.mjs --check.
+// byte-identical to their canon is node scripts/sync-mirrors.mjs --check. The family's CLIs are named by
+// their manifest paths, in the memory canon and in the kit mirror alike.
+const FAMILY_CLIS = ['docs-size/check-docs-size.mjs', 'archives/archive-changelog.mjs', 'archives/archive-decisions.mjs', 'archives/archive-issues.mjs', 'gates/migrate-gates.mjs'];
 const STANDALONE_MODULES = Object.freeze([
-  'agent-workflow-memory/references/scripts/check-docs-size.mjs',
-  'agent-workflow-memory/references/scripts/archive-changelog.mjs',
-  'agent-workflow-memory/references/scripts/archive-decisions.mjs',
-  'agent-workflow-memory/references/scripts/archive-issues.mjs',
-  'agent-workflow-memory/references/scripts/migrate-gates.mjs',
-  'agent-workflow-kit/references/scripts/check-docs-size.mjs',
-  'agent-workflow-kit/references/scripts/archive-changelog.mjs',
-  'agent-workflow-kit/references/scripts/archive-decisions.mjs',
-  'agent-workflow-kit/references/scripts/archive-issues.mjs',
-  'agent-workflow-kit/references/scripts/migrate-gates.mjs',
+  ...['agent-workflow-memory', 'agent-workflow-kit'].flatMap((pkg) => FAMILY_CLIS.map((path) => `${pkg}/references/scripts/${path}`)),
   'agent-workflow-kit/references/hooks/state-block-guard.mjs',
   'agent-workflow-kit/references/hooks/gate-approve.mjs',
 ]);
@@ -93,9 +86,14 @@ test('the swept-module list is complete and duplicate-free', () => {
   assert.equal(new Set(SWEPT_MODULES).size, 42, 'the frozen W1 site list has no duplicate entry');
 });
 
-test('the standalone-module list is complete and duplicate-free', () => {
+test('the standalone-module list is complete and duplicate-free', async () => {
   assert.equal(STANDALONE_MODULES.length, 12, 'the frozen W2 site list is 12 files');
   assert.equal(new Set(STANDALONE_MODULES).size, 12, 'the frozen W2 site list has no duplicate entry');
+  for (const pkg of ['agent-workflow-memory', 'agent-workflow-kit']) {
+    const { readFamily } = await import(pathToFileURL(join(REPOSITORY_ROOT, pkg, 'references', 'scripts', 'family.mjs')).href);
+    const paths = readFamily().map(({ path }) => path);
+    assert.deepEqual(FAMILY_CLIS.filter((path) => !paths.includes(path)), [], `${pkg}: every family CLI is a manifest path`);
+  }
 });
 
 test('the remaining-standalone-module list is complete and duplicate-free', () => {

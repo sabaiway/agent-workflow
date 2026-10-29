@@ -62,7 +62,7 @@ describe('the mirror manifest itself — reverse pins (the sync and this guard g
 
 describe('seed adr/log.md — the generator run over the seeded HOT decisions.md (Decision 8)', () => {
   it('the seed navigator equals buildNavigator over the seeded HOT window (fresh-bootstrap --check is green)', async () => {
-    const { parseDecisionsText, buildNavigator } = await import('../references/scripts/archive-decisions.mjs');
+    const { parseDecisionsText, buildNavigator } = await import('../references/scripts/archives/index.mjs');
     const seedHot = readFileSync(join(KIT_TEMPLATES, 'decisions.md'), 'utf8');
     const seedNav = readFileSync(join(KIT_TEMPLATES, 'adr', 'log.md'), 'utf8');
     const { entries } = parseDecisionsText(seedHot, 'references/templates/decisions.md');

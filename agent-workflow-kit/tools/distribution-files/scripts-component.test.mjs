@@ -1,63 +1,68 @@
-// scripts-component.test.mjs — the scripts op's component: the tree it judges before anything else is
-// read, the seed names derived from the bundled bytes, and a declined project's standing seed files.
-// The op and SEED_NAMES are imported dynamically, so a tree without them fails each cell, never the load.
+// scripts-component.test.mjs — the scripts op's component in the kit folder: the tree it judges before anything
+// else is read, the seed paths the manifest marks, and a declined project's standing seed files.
+// The op, SEED_NAMES and the family's manifest reader are imported dynamically, so a tree without them fails each
+// cell, never the load.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { BUNDLED_SCRIPT_NAMES } from '../node-evidence.mjs';
-import { CHECKER_PAIR, INSTALLER_SET, READER_PAIR, SCRIPT_PRIORS } from '../script-priors.mjs';
 
 const { ensureScripts, SCRIPT_CHANNEL, SEED_NAMES } = await import('./scripts.mjs').catch(() => ({}));
 
 const KIT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT, 'references', 'scripts');
-const PAIRS = [...READER_PAIR, ...CHECKER_PAIR];
-const FAMILY = BUNDLED_SCRIPT_NAMES.filter((n) => !PAIRS.includes(n));
-// The family in write order: the installer set, then every other family name in code-unit order.
-const ORDER = [...INSTALLER_SET, ...FAMILY.filter((n) => !INSTALLER_SET.includes(n)).sort()];
-const bundled = (n) => readFileSync(join(BUNDLE, n));
-// Every bundled `./` import target of a bundled script: static (`from './x'`) and dynamic (`import('./x')`).
-const importsOf = (n) => [...bundled(n).toString('utf8').matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)'\.\/([^']+)'/g)].map((m) => m[1]);
-const ROTATOR = ['archive-decisions.mjs', 'archive-decisions.test.mjs'];
-const SOURCES = [...ROTATOR, ...READER_PAIR];
-const SEEDS = [...new Set([...SOURCES.flatMap(importsOf).filter((n) => FAMILY.includes(n)), ...ROTATOR])].sort();
-const SUBSETS = Array.from({ length: 2 ** SEEDS.length - 1 }, (_, i) => SEEDS.filter((_, bit) => ((i + 1) >> bit) & 1));
-// The seed files reached from `standing` through bundled `./` imports, transitively, `standing` included.
-const closureOf = (standing) => {
-  const reached = new Set(standing);
-  for (const n of reached) for (const dep of importsOf(n)) if (SEEDS.includes(dep)) reached.add(dep);
+const bundled = (p) => readFileSync(join(BUNDLE, p));
+// Every bundled relative import of a manifest path (static, dynamic or a re-export), resolved to the manifest path it names.
+const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
+const importsOf = (p) => [...bundled(p).toString('utf8').matchAll(IMPORT)].map((m) => posix.join(posix.dirname(p), m[1]));
+// The paths reached from `from` through bundled relative imports, transitively, within `within`, `from` included.
+const closureOf = (from, within) => {
+  const reached = new Set(from);
+  for (const p of reached) for (const d of importsOf(p)) if (within.includes(d)) reached.add(d);
   return reached;
 };
 
-const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const EDIT = (n) => Buffer.from(`// mine: ${n}\n`);
-const OLD = (n) => Buffer.from(`// an earlier ${n}\n`);
-// The catalog seam: OLD(name) catalogued as a body a release shipped, for every seed name.
-const PRIORS = [...SCRIPT_PRIORS, ...SEEDS.map((file) => ({ file, digest: sha(OLD(file)) }))];
-const PAIR_BODIES = Object.fromEntries(PAIRS.map((n) => [n, bundled(n)]));
-const rel = (n) => `scripts/${n}`;
+// The kit folder, read inside each cell from the kit mirror's manifest and node-evidence; every name below is a
+// manifest path. The family is the deployed entries less the spec layer's modules, in write order: the installer,
+// then each file after every family file it imports, by manifest path otherwise.
+let layout;
+let KD;
+const kitLayout = () => (layout ??= (async () => {
+  const [{ readFamily }, { KIT_SCRIPTS_DIR, INSTALLER_REL }] = await Promise.all([import('../../references/scripts/family.mjs'), import('../node-evidence.mjs')]);
+  const entries = readFamily(BUNDLE), deployed = entries.filter((e) => e.role === 'deployed'), spec = (e) => ['spec-schema', 'docs-size'].includes(e.module);
+  const installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
+  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== installer).map((e) => e.path)];
+  for (let next; (next = rest.filter((p) => importsOf(p).every((d) => !rest.includes(d))).sort()[0]);) order.push(...rest.splice(rest.indexOf(next), 1));
+  assert.deepEqual(rest, [], "the family's imports close no cycle");
+  KD = KIT_SCRIPTS_DIR;
+  return { entries, order, deployed: deployed.map((e) => e.path), seeds: deployed.filter((e) => e.seed).map((e) => e.path), pairs: deployed.filter(spec).map((e) => e.path) };
+})());
 
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const EDIT = (p) => Buffer.from(`// mine: ${p}\n`);
+const rel = (p) => `${KD}/${p}`;
 const L = {
-  refreshed: (n) => `${rel(n)}: matches a body an earlier release shipped — refreshed to the bundled one`,
-  replaced: (n) => `${rel(n)}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in ${SCRIPT_CHANNEL}`,
-  placed: (n) => `${rel(n)}: absent — placed from the bundled scripts`,
-  count: (k) => `scripts/: ${k} other kit scripts are already the bundled body — nothing written`,
+  replaced: (p) => `${rel(p)}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in ${SCRIPT_CHANNEL}`,
+  placed: (p) => `${rel(p)}: absent — placed from the bundled scripts`,
+  count: (k) => `${KD}/: ${k} other kit scripts are already the bundled body — nothing written`,
+  notAccepted: () => `${KD}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`,
 };
-const NOT_PLACED = 'scripts/: no kit script stands in it, so none is placed';
-const NOT_ACCEPTED = 'scripts/: the enforcement scripts were not accepted in this project, so no other kit script is placed';
 const HOOK_IF = 'if a commit hook runs the files written above, they may stop the next commit';
 const HOOK_ACCEPTED = 'the commit hook runs the files written above, so they may stop the next commit';
 
-const put = (dir, bodies) => {
-  mkdirSync(join(dir, 'scripts'), { recursive: true });
-  for (const [n, body] of Object.entries(bodies)) writeFileSync(join(dir, 'scripts', n), body);
+// Writes `bodies` (manifest path → bytes) under `at` of `dir`, the kit folder unless named.
+const put = (dir, bodies, at = KD) => {
+  mkdirSync(join(dir, at), { recursive: true });
+  for (const [p, body] of Object.entries(bodies)) {
+    mkdirSync(dirname(join(dir, at, p)), { recursive: true });
+    writeFileSync(join(dir, at, p), body);
+  }
 };
+const pairBodies = (K) => Object.fromEntries(K.pairs.map((p) => [p, bundled(p)]));
 // A temp project: docs/ai, a package.json unless `node` is false, then whatever `setup` lays down.
 const withTree = (setup, fn, { node = true } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'scripts-component-'));
@@ -78,87 +83,109 @@ const snapshot = (dir, at = dir, out = {}) => {
   }
   return out;
 };
-const listing = (dir) => readdirSync(join(dir, 'scripts')).sort();
-const bytesOf = (dir, n) => (existsSync(join(dir, 'scripts', n)) ? readFileSync(join(dir, 'scripts', n)) : null);
-// File bytes are compared by digest: a failed deepEqual of two Buffers diffs them byte per line and takes gigabytes.
-const digestOf = (bytes) => (bytes === null ? null : sha(bytes));
+// The manifest paths standing in the kit folder.
+const listing = (dir) => Object.keys(snapshot(join(dir, KD))).sort();
 const run = (dir, deps = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, deps });
 const spy = (paths) => (p, ...rest) => {
   paths.push(String(p));
   return readFileSync(p, ...rest);
 };
-const failedWith = (line) => ({ op: 'scripts', token: 'failed', failed: true, lines: [line] });
-const wrongKind = (at, kind) => failedWith(`wrong-node-kind — ${at}: exists but is ${kind} — nothing was read or written; resolve it by hand, then re-run`);
+// A folder moved aside and linked back, so the link's target holds what the folder held.
+const linkAway = (dir, at) => {
+  renameSync(join(dir, at), join(dir, 'elsewhere'));
+  symlinkSync(join(dir, 'elsewhere'), join(dir, at));
+};
 
 describe('spec:distribution-files/S13 the scripts component, the seed names and a declined project', () => {
-  it('no Node evidence: skipped-no-node-evidence, no path read and nothing written', () => withTree((dir) => put(dir, { 'archive-caps.test.mjs': EDIT('archive-caps.test.mjs') }), (dir) => {
-    const paths = [];
-    const before = snapshot(dir);
-    assert.equal(run(dir, { readFile: spy(paths) }).token, 'skipped-no-node-evidence');
-    assert.deepEqual([paths, snapshot(dir)], [[], before]);
-  }, { node: false }));
+  it('no Node evidence: skipped-no-node-evidence, no path read and nothing written', async () => {
+    const K = await kitLayout(), suite = K.entries.find((e) => e.role === 'suite' && e.module === 'archives').path;
+    withTree((dir) => put(dir, { [suite]: EDIT(suite) }), (dir) => {
+      const [paths, before] = [[], snapshot(dir)];
+      assert.equal(run(dir, { readFile: spy(paths) }).token, 'skipped-no-node-evidence');
+      assert.deepEqual([paths, snapshot(dir)], [[], before]);
+    }, { node: false });
+  });
 
-  it('no scripts/, an empty one, or one holding only the four spec-layer pair files: not-placed, one line, nothing written', () => {
-    for (const setup of [() => {}, (dir) => mkdirSync(join(dir, 'scripts')), (dir) => put(dir, PAIR_BODIES)]) withTree(setup, (dir) => {
-      const before = snapshot(dir);
-      const r = run(dir);
-      assert.deepEqual(r, { op: 'scripts', token: 'not-placed', failed: false, lines: [NOT_PLACED] });
-      assert.equal('entries' in r, false);
+  it("no kit folder, an empty one, one holding only the spec layer's files, or a scripts/ holding only flat kit files of an earlier release: not-placed, one line, nothing written", async () => {
+    const K = await kitLayout(), flat = ['install-git-hooks.mjs', 'archive-decisions.mjs', 'markdown-blocks.mjs', 'check-docs-size.mjs'];
+    const setups = [() => {}, (dir) => mkdirSync(join(dir, 'scripts')), (dir) => mkdirSync(join(dir, KD), { recursive: true }), (dir) => put(dir, pairBodies(K)),
+      (dir) => put(dir, Object.fromEntries(flat.map((n) => [n, EDIT(n)])), 'scripts')];
+    for (const setup of setups) withTree(setup, (dir) => {
+      const [paths, before] = [[], snapshot(dir)], r = run(dir, { readFile: spy(paths) });
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines.length, entries: 'entries' in r }, { token: 'not-placed', failed: false, lines: 1, entries: false });
+      assert.ok(r.lines[0].includes(`${KD}/`) && /no kit script stands in .*, so none is placed$/.test(r.lines[0]), r.lines[0]);
+      assert.deepEqual([paths.filter((p) => p.startsWith(dir)), snapshot(dir)], [[], before], 'nothing of the tree read, nothing written');
+    });
+  });
+
+  it('the tree the specs op seeds on a package.json-only project: already-present with the not-accepted line, nothing written and no spawn', async () => {
+    const K = await kitLayout(), seeded = [...closureOf(K.pairs, K.deployed)];
+    withTree((dir) => put(dir, Object.fromEntries(seeded.map((p) => [p, bundled(p)]))), (dir) => {
+      const spawns = [], before = snapshot(dir);
+      const r = run(dir, { spawnSync: (...args) => { spawns.push(args); return { status: 0, stdout: '', stderr: '' }; } });
+      const standing = seeded.filter((p) => K.seeds.includes(p)).length;
+      assert.ok(standing > 0, 'the spec layer carries seed files with it');
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines, spawns, entries: 'entries' in r }, { token: 'already-present', failed: false, lines: [L.count(standing), L.notAccepted()], spawns: [], entries: false });
       assert.deepEqual(snapshot(dir), before);
     });
   });
 
-  it('a symlinked scripts/, a regular file named scripts, a linked family file beside no regular one: wrong-node-kind, nothing read', () => {
+  it('a symlinked or non-directory scripts/, kit folder or module folder, or a linked family path in a kit folder holding no regular family file: wrong-node-kind naming it, nothing read or written', async () => {
+    const K = await kitLayout(), rotator = 'archives/archive-decisions.mjs';
+    const accepted = (dir, more = {}) => put(dir, { ...pairBodies(K), [K.order[0]]: bundled(K.order[0]), ...more });
+    const shared = Object.fromEntries(K.order.filter((p) => p.startsWith('shared/')).map((p) => [p, bundled(p)]));
     const rows = [
-      ['scripts/', 'a symlink', (dir) => { put(join(dir, 'real'), PAIR_BODIES); symlinkSync(join(dir, 'real', 'scripts'), join(dir, 'scripts')); }],
-      ['scripts/', 'a regular file', (dir) => writeFileSync(join(dir, 'scripts'), 'not a directory\n')],
-      [rel(SEEDS[0]), 'a symlink', (dir) => { put(dir, PAIR_BODIES); symlinkSync(join(dir, 'scripts', READER_PAIR[0]), join(dir, 'scripts', SEEDS[0])); }],
+      ['scripts', 'a symlink', (dir) => { accepted(dir); linkAway(dir, 'scripts'); }],
+      ['scripts', 'a regular file', (dir) => writeFileSync(join(dir, 'scripts'), 'not a directory\n')],
+      [KD, 'a symlink', (dir) => { accepted(dir); linkAway(dir, KD); }],
+      [KD, 'a regular file', (dir) => { mkdirSync(join(dir, 'scripts')); writeFileSync(join(dir, KD), 'not a directory\n'); }],
+      [`${KD}/shared`, 'a symlink', (dir) => { accepted(dir, shared); linkAway(dir, `${KD}/shared`); }],
+      [`${KD}/archives`, 'a regular file', (dir) => { accepted(dir); writeFileSync(join(dir, KD, 'archives'), 'not a directory\n'); }],
+      [rel(rotator), 'a symlink', (dir) => { put(dir, pairBodies(K)); mkdirSync(join(dir, KD, 'archives')); symlinkSync(join(dir, KD, K.pairs[0]), join(dir, rel(rotator))); }],
     ];
+    assert.ok(K.seeds.includes(rotator), 'the rotator is a seed path');
     for (const [at, kind, setup] of rows) withTree(setup, (dir) => {
-      const paths = [];
-      const before = snapshot(dir);
-      assert.deepEqual(run(dir, { readFile: spy(paths) }), wrongKind(at, kind));
-      assert.deepEqual([paths, snapshot(dir)], [[], before]);
+      const [paths, before] = [[], snapshot(dir)], r = run(dir, { readFile: spy(paths) });
+      const named = [`${at}:`, `${at}/:`].some((head) => r.lines[0]?.startsWith(`wrong-node-kind — ${head} exists but is ${kind} — nothing was read or written`));
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines.length, named, paths, after: snapshot(dir) }, { token: 'failed', failed: true, lines: 1, named: true, paths: [], after: before }, `${at} ${kind}: ${r.lines.join('\n')}`);
     });
   });
 
-  it('SEED_NAMES is frozen and equals the family members of the four sources\' bundled ./ imports plus the rotator and its suite', () => {
+  it("SEED_NAMES is frozen and equals the manifest's seed paths", async () => {
+    const K = await kitLayout();
     assert.ok(Array.isArray(SEED_NAMES) && Object.isFrozen(SEED_NAMES), 'SEED_NAMES is a frozen export of scripts.mjs');
-    assert.deepEqual(SEEDS, [...SEED_NAMES]);
+    assert.deepEqual([...SEED_NAMES].sort(), [...K.seeds].sort());
   });
 
-  for (const variant of ['prior', 'edited']) it(`every non-empty seed subset on ${variant} bodies beside the pairs: the standing seeds and their import closure current, nothing else placed`, () => {
-    for (const standing of SUBSETS) withTree((dir) => put(dir, { ...PAIR_BODIES, ...Object.fromEntries(standing.map((n) => [n, variant === 'prior' ? OLD(n) : EDIT(n)])) }), (dir) => {
-      const reached = [...closureOf(standing)].sort();
-      const placed = reached.filter((n) => !standing.includes(n));
-      const before = listing(dir);
-      const r = run(dir, { priors: PRIORS });
-      const fileLine = (n) => (placed.includes(n) ? L.placed(n) : variant === 'prior' ? L.refreshed(n) : L.replaced(n));
-      const at = `standing ${standing.join(', ')}`;
-      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines }, { token: placed.length > 0 ? 'seeded' : 'refreshed', failed: false, lines: [...reached.map(fileLine), NOT_ACCEPTED, HOOK_IF] }, at);
-      assert.equal('entries' in r, false, at);
-      // A run over a current store (no ADR substrate here) prints no store line, the rotator judged or not.
-      assert.deepEqual([r.lines.filter((l) => l === HOOK_IF).length, r.lines.includes(HOOK_ACCEPTED), r.lines.filter((l) => l.startsWith('ADR store: '))], [1, false, []], at);
-      for (const n of reached) assert.equal(digestOf(bytesOf(dir, n)), sha(bundled(n)), `${at}: ${n} holds the bundled bytes`);
-      for (const n of listing(dir).filter((f) => SEEDS.includes(f))) for (const dep of importsOf(n)) assert.ok(existsSync(join(dir, 'scripts', dep)), `${at}: ${n} imports ./${dep}, present`);
+  it("every non-empty subset of the seed files on edited bodies beside the spec layer's files: the standing seeds and their import closure the bundled bytes, every import resolving, nothing else placed", async () => {
+    const K = await kitLayout(), subsets = Array.from({ length: 2 ** K.seeds.length - 1 }, (_, i) => K.seeds.filter((_, bit) => ((i + 1) >> bit) & 1));
+    assert.ok(closureOf(['archives/archive-decisions.mjs'], K.seeds).has('shared/markdown-blocks.mjs'), 'a standing rotator reaches shared/markdown-blocks.mjs');
+    for (const standing of subsets) withTree((dir) => put(dir, { ...pairBodies(K), ...Object.fromEntries(standing.map((p) => [p, EDIT(p)])) }), (dir) => {
+      const [reached, before, at] = [closureOf(standing, K.seeds), listing(dir), `standing ${standing.join(', ')}`];
+      const placed = [...reached].filter((p) => !standing.includes(p)), r = run(dir);
+      const lines = [...K.order.filter((p) => reached.has(p)).map((p) => (placed.includes(p) ? L.placed(p) : L.replaced(p))), L.notAccepted(), HOOK_IF];
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines, entries: 'entries' in r }, { token: placed.length > 0 ? 'seeded' : 'refreshed', failed: false, lines, entries: false }, at);
+      for (const p of reached) assert.equal(sha(readFileSync(join(dir, KD, p))), sha(bundled(p)), `${at}: ${p} holds the bundled bytes`);
+      for (const p of listing(dir).filter((f) => K.seeds.includes(f))) for (const d of importsOf(p)) assert.ok(existsSync(join(dir, KD, d)), `${at}: ${p} imports ${d}, present`);
       assert.deepEqual(listing(dir), [...new Set([...before, ...reached])].sort(), `${at}: no other absent family file written`);
     });
   });
 
-  it('one family file outside SEED_NAMES standing accepts the component: every other family file placed create-only, seeded, one hook-run line', () => {
-    const outside = FAMILY.filter((n) => !SEEDS.includes(n)).sort()[0];
-    withTree((dir) => put(dir, { ...PAIR_BODIES, [outside]: bundled(outside) }), (dir) => {
+  it('one family file outside SEED_NAMES standing accepts the component: every other family file placed create-only, each absent module folder created, seeded, one hook-run line, no suite or support file', async () => {
+    const K = await kitLayout(), outside = K.order.filter((p) => !K.seeds.includes(p)).sort()[0], others = K.order.filter((p) => p !== outside);
+    withTree((dir) => put(dir, { ...pairBodies(K), [outside]: bundled(outside) }), (dir) => {
       const [links, renames] = [[], []];
       const record = (out, real) => (from, to) => {
-        out.push(relative(join(dir, 'scripts'), to));
+        out.push(relative(join(dir, KD), to));
         return real(from, to);
       };
-      const others = ORDER.filter((n) => n !== outside);
+      const absent = [...new Set(others.map((p) => posix.dirname(p)))].filter((m) => !existsSync(join(dir, KD, m)));
       const r = run(dir, { link: record(links, linkSync), rename: record(renames, renameSync) });
-      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines }, { token: 'seeded', failed: false, lines: [...others.map(L.placed), L.count(1), HOOK_ACCEPTED] });
-      assert.equal('entries' in r, false);
+      assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines, entries: 'entries' in r }, { token: 'seeded', failed: false, lines: [...others.map(L.placed), L.count(1), HOOK_ACCEPTED], entries: false });
       assert.deepEqual([links, renames], [others, []], 'every placement a create-only link, no replacing rename');
-      for (const n of others) assert.equal(digestOf(bytesOf(dir, n)), sha(bundled(n)), `${n} holds the bundled bytes`);
+      assert.ok(absent.length > 0 && absent.every((m) => existsSync(join(dir, KD, m))), `each absent module folder created: ${absent.join(', ')}`);
+      assert.deepEqual(listing(dir), [...K.pairs, ...K.order].sort(), 'no suite, support or skill-home file written');
+      for (const p of others) assert.equal(sha(readFileSync(join(dir, KD, p))), sha(bundled(p)), `${p} holds the bundled bytes`);
     });
   });
 });

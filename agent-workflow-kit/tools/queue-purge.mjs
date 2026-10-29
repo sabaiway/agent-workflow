@@ -1,6 +1,6 @@
 import { auditQueue, authorisesRemoval, canonicalHeading } from './queue-audit.mjs';
 import { EXIT, frameBlock, hashBytes, judgeIntact, readArchive, renderTitle, sliceSection } from './queue-purge-archive.mjs';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 
 const readInputs = ({ queueBytes, section, archiveBytes = Buffer.alloc(0) }) => {
   if (!canonicalHeading(section)) throw fail(EXIT.usage, '--section is required');

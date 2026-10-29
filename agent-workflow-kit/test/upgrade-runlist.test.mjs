@@ -27,6 +27,7 @@ import { RELAYED_ENSURE_TOKENS } from '../tools/ensure-vocabulary.mjs';
 import * as readme from '../tools/orchestration-readme.mjs';
 import { SKIPPED_READONLY } from '../tools/setup-backends.mjs';
 import { PARITY } from '../tools/refresh-parity.mjs';
+import { readFamily } from '../references/scripts/family.mjs';
 
 const kitRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const UPGRADE = readFileSync(resolve(kitRoot, 'references', 'modes', 'upgrade.md'), 'utf8');
@@ -118,10 +119,13 @@ describe('upgrade-runlist registry — the L1 seven, in order', () => {
   });
 
   it('six commands live under tools/; the ONE exception is gates-migration (references/scripts)', () => {
+    // The migration runs from the skill home: the gates module's skill-home entry of the kit mirror's manifest.
+    const migrate = readFamily().filter(({ module, role }) => module === 'gates' && role === 'skill-home').map(({ path }) => path);
+    assert.deepEqual(migrate, ['gates/migrate-gates.mjs'], 'the gates module runs one skill-home file');
     for (const e of UPGRADE_RUNLIST) {
       if (e.id === 'gates-migration') {
         assert.ok(
-          e.command.startsWith(`node ${SKILL_VAR}/references/scripts/migrate-gates.mjs`),
+          e.command.startsWith(`node ${SKILL_VAR}/references/scripts/${migrate[0]} `),
           'gates-migration runs the deployed-canon migration script, not a tools/ command',
         );
       } else {

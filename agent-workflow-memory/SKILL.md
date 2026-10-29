@@ -115,7 +115,7 @@ bootstrapping over a live system, but the user makes the final call.
 7. **Fill templates** per the table below. **Then materialize the navigator, as the last `docs/ai`
    step:** the entry point declares `docs/ai/index.md` always-loaded and it is a GENERATED artifact
    with no template, so run
-   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/docs-size/check-docs-size.mjs --ensure-index --root=<target>`
    and relay its one outcome line (`ensure-index: regenerated` / `already-current`, or a
    `write-refused` / `probe-failed` line naming the offending path — either is a STOP: resolve it
    before reporting the deploy, since the navigator the entry point declares does not exist yet). The
@@ -299,7 +299,7 @@ Fill strategy:
    declined the offer keeps it unseeded, its line saying the checker is not deployed. **Same gate, also
    stamp-independent — ensure the NAVIGATOR:** `docs/ai/index.md` is a GENERATED artifact the entry
    point declares always-loaded, so a deployment that never had one must gain it even at head — run
-   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/docs-size/check-docs-size.mjs --ensure-index --root=<target>`
    and relay its outcome line. It writes only when the navigator is missing or stale
    (`already-current` otherwise), so a re-run changes nothing; a `write-refused` (the write) or
    `probe-failed` (the tree could not be read) line names the offending path and STOPs this
@@ -333,7 +333,7 @@ Fill strategy:
    no question and no copy kept; text of your own goes outside the two workflow:kit comment lines;
    a change to a kit rule goes in its theme's file under docs/ai/rules/local/. **Then, before the stamp, re-run the navigator finalizer:** steps 4–6 may have added
    or changed `docs/ai` files, so run
-   `node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<target>`
+   `node ${CLAUDE_SKILL_DIR}/references/scripts/docs-size/check-docs-size.mjs --ensure-index --root=<target>`
    once more (idempotent — an untouched tree reports `already-current`) and relay its outcome line.
 7. **Re-stamp** `docs/ai/.memory-version` to the lineage head (atomic write — mechanics unchanged).
    Report changes **in plain human terms** (which parts of the deployment are now different,

@@ -35,7 +35,7 @@ refused with their line numbers, nothing written: the upgrade STOPs.
 a GENERATED artifact the entry point declares always-loaded, and the deploy may have just
 written a `docs/ai` file — so the finalizer runs at the LAST `docs/ai` mutation of the deploy,
 before the stamp and the report. ONE command:
-`node ${CLAUDE_SKILL_DIR}/references/scripts/check-docs-size.mjs --ensure-index --root=<project>`.
+`node ${CLAUDE_SKILL_DIR}/references/scripts/docs-size/check-docs-size.mjs --ensure-index --root=<project>`.
 Relay its one outcome line (*regenerated* / *already current*); a `write-refused` (the write) or
 `probe-failed` (the tree could not be read) line names the offending path and is a loud STOP,
 never a note. It is idempotent, so an earlier run in the

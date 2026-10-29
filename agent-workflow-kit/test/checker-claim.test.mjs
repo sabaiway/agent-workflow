@@ -19,14 +19,16 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { CHECKER_CLAIM, checkerClaimTool, classifyCheckerClaim } from '../tools/checker-claim.mjs';
+import { readFamily } from '../references/scripts/family.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OWN_SOURCE = join(HERE, '..', 'tools', 'checker-claim.mjs');
 // The kit's in-package MIRROR of the memory canon. scripts/sync-mirrors.mjs copies the canon tree
 // verbatim and test/scripts-mirror.test.mjs guards that half, so mirror-equality here IS
-// canon-equality — reached without importing either side.
-const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', 'migrate-gates.mjs');
-const MEMORY_CANON = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'scripts', 'migrate-gates.mjs');
+// canon-equality — reached without importing either side, at the gates module's path the mirror's manifest names.
+const MIGRATE_PATH = readFamily().find(({ module, role }) => module === 'gates' && role === 'skill-home').path.split('/');
+const MIRRORED_CANON = join(HERE, '..', 'references', 'scripts', ...MIGRATE_PATH);
+const MEMORY_CANON = join(HERE, '..', '..', 'agent-workflow-memory', 'references', 'scripts', ...MIGRATE_PATH);
 
 const BEGIN = '// checker-claim canon >>> BEGIN drift-guarded region';
 const END = '// checker-claim canon <<< END drift-guarded region';

@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { AFTER_INSTALL, KEY_VARIABLE, NO_APPLY_LINE, RESTART_STEP, SKILL_PINS, claudeDirOf, connectLine, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
 

@@ -24,7 +24,7 @@ import { planFor } from './jev-skill.mjs';
 import { SKILL_FILES, claudeDirOf, skillAccepted, skillState, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
-import { BUNDLED_SCRIPT_NAMES, INSTALLER_REL, SCRIPTS_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
+import { DEPLOYED_SCRIPTS, INSTALLER_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
 import { ATTRIBUTION_HIDDEN, ATTRIBUTION_KEY, writeAttribution } from './attribution.mjs';
 import { globalRemovalOf, planGlobalRemoval } from './hide-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -232,10 +232,14 @@ export const scopeOf = (variant, facts, deps = {}) => {
     for (let at = target.root; at !== target.base && covers(target.base, at); at = dirname(at)) directories.push(at);
     filePaths.push(target.path);
   }
-  const scripts = join(facts.root, SCRIPTS_REL);
   if (GIT_VARIANTS.includes(variant)) {
-    directories.splice(0, directories.length, ...(variant === 'hook-checks' ? [] : [scripts]));
-    if (variant !== 'hook-checks') filePaths.push(...BUNDLED_SCRIPT_NAMES.map((name) => join(scripts, name)));
+    // Each deployed path under the kit folder, and each folder on its way below the root.
+    const copies = variant === 'hook-checks' ? [] : DEPLOYED_SCRIPTS.map(({ deployed }) => join(facts.root, deployed));
+    directories.splice(0);
+    for (const path of copies) {
+      for (let at = dirname(path); at !== facts.root && covers(facts.root, at) && !directories.includes(at); at = dirname(at)) directories.push(at);
+    }
+    filePaths.push(...copies);
   }
   const rules = ['--rules-check', join(facts.toolsDir, 'project-rules', 'rules-cli.mjs')];
   const layout = ['--layout-check', join(facts.toolsDir, 'source-size-check.mjs')];

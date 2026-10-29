@@ -10,7 +10,7 @@
 // missing/unknown flag, a flag with no value, an unreadable path, or a section that is not there.
 
 import { readFileSync } from 'node:fs';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { CLASSES, DEFAULTS, auditQueue, checkQueue, formatReport } from './queue-audit.mjs';
 

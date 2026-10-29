@@ -1,9 +1,11 @@
-// scripts.mjs — the upgrade's `scripts` op: every kit script of a deployment, the hook installer set
-// included, kept current by the one rule. Each family file is surveyed by proof before any write:
-// absent, current, prior (a body SCRIPT_PRIORS catalogs for its name) or edited. On every plain run a
-// prior is refreshed, an edited one replaced in place and an absent one placed create-only, with no
-// question and no copy kept; a current one is left. The installer set is written first; after the last
-// write the project's own rotator brings the ADR store current (`--ensure-current`). It never imports
+// scripts.mjs — the upgrade's `scripts` op: every kit script of a deployment, the hook installer
+// included, kept current by the one rule in the kit folder scripts/agent-workflow/. The family is the
+// manifest's deployed entries (node-evidence.mjs) less the spec layer's modules. Each family file is
+// surveyed by proof before any write: absent, current, prior (a body the catalog lists for its manifest
+// path) or edited. On every plain run a prior is refreshed, an edited one replaced in place and an
+// absent one placed create-only, with no question and no copy kept; a current one is left. The
+// installer is written first, then every file after the family files it imports; after the last write
+// the project's own rotator brings the ADR store current (`--ensure-current`). It never imports
 // ensure-specs.mjs or ensure-configs.mjs: the CLI composes this op from the module's index, and
 // ensure-specs.mjs takes its channel and its lines from there.
 //
@@ -11,68 +13,77 @@
 
 import { spawnSync } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
-import { composeFailure, composeOutcome, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
-import { BUNDLED_SCRIPT_NAMES } from '../node-evidence.mjs';
-import { CHECKER_PAIR, INSTALLER_SET, READER_PAIR, SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
+import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
+import { DEPLOYED_SCRIPTS, INSTALLER_REL, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
+import { SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
 import { VEHICLES_REL } from '../vehicle-settings.mjs';
 
 const OP = 'scripts';
-const SCRIPTS_DIR = 'scripts';
-const BUNDLED = ['references', 'scripts'];
 // Where an edit meant to last goes: the installer's in the local hook file, every other file's beside it.
 export const SCRIPT_CHANNEL = 'a script or suite of your own under its own name in scripts/, or a config the script reads';
 export const LOCAL_HOOK_CHANNEL = 'the local hook file scripts/pre-commit.local, which the commit hook runs first';
 export const VEHICLE_CHANNEL = VEHICLES_REL;
 export const AGENT_CHANNEL = '.claude/agents/<name>.local.md with a name: of its own';
 export const HOOK_CHANNEL = '.claude/hooks/<name>.local.mjs';
-// The family files memory copies on Node evidence alone, accepted or not (the suite derives them).
-export const SEED_NAMES = Object.freeze(['_expect-shim.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'markdown-blocks.mjs']);
-const ROTATOR = 'archive-decisions.mjs';
-const PAIRS = new Set([...READER_PAIR, ...CHECKER_PAIR]);
-// The family in write order: the installer set, then every other bundled name in code-unit order.
-const FAMILY = Object.freeze([...INSTALLER_SET, ...BUNDLED_SCRIPT_NAMES.filter((name) => !PAIRS.has(name) && !INSTALLER_SET.includes(name)).sort()]);
-const LOCAL_IMPORT = /(?:from|import)\s*\(?\s*'\.\/([^']+)'/g;
+// The manifest paths a run of a component that is not accepted may judge: the rotator and what it loads.
+export const SEED_NAMES = Object.freeze(DEPLOYED_SCRIPTS.filter((e) => e.seed).map((e) => e.path));
+const ROTATOR = 'archives/archive-decisions.mjs';
+// The family: every deployed entry outside the specs op's modules, in manifest order.
+const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size');
+const FOLDERS = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...FAMILY.map((e) => posix.dirname(e.deployed))])];
 
 const causeOf = (err) => String((err && err.message) || err);
-const relOf = (name) => `${SCRIPTS_DIR}/${name}`;
 const kindOfDir = (st) => (st.isSymbolicLink() ? 'a symlink' : st.isFile() ? 'a regular file' : 'not a directory');
 const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: exists but is ${kind} — nothing was read or written; resolve it by hand, then re-run`);
 
 // ── the survey: the component first, then every family file by proof, nothing written ────────────
 
+// The installer first (it imports nothing), then each file after every family file it imports.
+const inWriteOrder = (files) => [...files.filter((f) => f.rel === INSTALLER_REL), ...dependenciesFirst(files.filter((f) => f.rel !== INSTALLER_REL))];
+
 // The seed files a run of a component that is not accepted judges: each standing one, and every seed
-// file reached from one through its bundled `./` imports, so every seed file the run leaves loads.
-const seedClosure = (standing, bundleOf) => {
+// file reached from one through bundled relative imports, so every seed file the run leaves loads.
+const seedClosure = (standing, byPath) => {
   const reached = new Set(standing);
-  for (const name of reached) for (const [, dep] of bundleOf(name).toString('utf8').matchAll(LOCAL_IMPORT)) if (SEED_NAMES.includes(dep)) reached.add(dep);
+  for (const path of reached) for (const dep of byPath.get(path).imports) if (SEED_NAMES.includes(dep) && byPath.has(dep)) reached.add(dep);
   return reached;
+};
+
+// Each folder on the way, lstat-ed without following a link: → { refusal } | { notPlaced } | {}.
+const surveyFolders = (cwd, lstat) => {
+  for (const rel of FOLDERS) {
+    const st = lstatNoFollow(join(cwd, rel), lstat);
+    if (st === null && (rel === SCRIPTS_DIR || rel === KIT_SCRIPTS_DIR)) return { notPlaced: true };
+    if (st !== null && (!st.isDirectory() || st.isSymbolicLink())) return { refusal: wrongKind(`${rel}/`, kindOfDir(st)) };
+  }
+  return {};
 };
 
 // → { refusal } | { notPlaced } | { files, accepted }. A family path of another node kind is judged
 // before the component, so a linked family file never reads as not-placed.
 const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
-  const dir = lstatNoFollow(join(cwd, SCRIPTS_DIR), lstat);
-  if (dir === null) return { notPlaced: true };
-  if (!dir.isDirectory() || dir.isSymbolicLink()) return { refusal: wrongKind(`${SCRIPTS_DIR}/`, kindOfDir(dir)) };
-  const probes = FAMILY.map((name) => ({ name, rel: relOf(name), probe: probeSeedTarget(join(cwd, SCRIPTS_DIR, name), lstat) }));
+  const folders = surveyFolders(cwd, lstat);
+  if (folders.refusal || folders.notPlaced) return folders;
+  const probes = FAMILY.map((e) => ({ path: e.path, rel: e.deployed, bundled: e.bundled, probe: probeSeedTarget(join(cwd, e.deployed), lstat) }));
   const wrong = probes.find((f) => f.probe.wrongKind);
   if (wrong) return { refusal: wrongKind(wrong.rel, wrong.probe.wrongKind) };
   if (!probes.some((f) => f.probe.present)) return { notPlaced: true };
-  const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.name));
-  const bundles = new Map();
-  for (const { name, rel } of probes) {
+  const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.path));
+  const byPath = new Map();
+  for (const f of probes) {
     try {
-      bundles.set(name, read(join(kitRoot, ...BUNDLED, name)));
+      const bundle = read(join(kitRoot, f.bundled));
+      byPath.set(f.path, { ...f, bundle, imports: bundledImportsOf(f.path, bundle) });
     } catch (err) {
-      return { refusal: composeFailure(OP, 'bundle-unreadable', `${rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
+      return { refusal: composeFailure(OP, 'bundle-unreadable', `${f.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
     }
   }
-  const judged = accepted ? new Set(FAMILY) : seedClosure(probes.filter((f) => f.probe.present).map((f) => f.name), (name) => bundles.get(name));
-  const files = probes.filter((f) => judged.has(f.name)).map(({ name, rel, probe }) => {
+  const judged = accepted ? new Set(byPath.keys()) : seedClosure(probes.filter((f) => f.probe.present).map((f) => f.path), byPath);
+  const files = inWriteOrder([...byPath.values()]).filter((f) => judged.has(f.path)).map(({ path, rel, bundle, probe }) => {
     const bytes = probe.present ? read(join(cwd, rel)) : undefined;
-    return { name, rel, bundle: bundles.get(name), state: probe.present ? classifyDeployedScript(bytes, name, bundles.get(name), deps.priors ?? SCRIPT_PRIORS) : 'absent' };
+    return { path, rel, bundle, state: probe.present ? classifyDeployedScript(bytes, path, bundle, deps.priors ?? SCRIPT_PRIORS) : 'absent' };
   });
   return { files, accepted };
 };
@@ -87,14 +98,14 @@ const HEADS = { prior: 'matches a body an earlier release shipped', custom: 'dif
 const channelOf = (f) => (f.state === 'derived' ? `; its model and effort are set in ${VEHICLE_CHANNEL}`
   : f.state === 'agent' ? `; a vehicle of your own goes in ${AGENT_CHANNEL}`
   : f.state === 'hook' ? `; a hook of your own goes in ${HOOK_CHANNEL}`
-  : f.state === 'custom' ? `; an edit meant to last goes in ${f.name === INSTALLER_SET[0] ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL}` : '');
+  : f.state === 'custom' ? `; an edit meant to last goes in ${f.rel === INSTALLER_REL ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL}` : '');
 export const fileLine = (f, fate, dryRun) => {
   if (fate === 'stood') return `${f.rel}: appeared while this run was placing it — the bundled body stands, nothing written`;
   const [verb, done] = VERBS[f.state];
   const tail = fate === 'written' ? done : dryRun ? `would be ${done}` : `not ${verb}; ${fate === 'refused' ? 'its write was refused (above)' : 'the run stopped before it'}`;
   return `${f.rel}: ${HEADS[f.state]} — ${tail}${channelOf(f)}`;
 };
-const NOT_ACCEPTED = `${SCRIPTS_DIR}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
+const NOT_ACCEPTED = `${KIT_SCRIPTS_DIR}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
 // The hook-run line, once after the file lines of a run that wrote (or, dry, would write) a file.
 export const hookLine = (accepted, dryRun) => (accepted
   ? (dryRun ? 'the commit hook runs the files named above, so writing them may stop the next commit' : 'the commit hook runs the files written above, so they may stop the next commit')
@@ -120,7 +131,7 @@ const writeAll = ({ cwd, files, deps, read }) => {
     }
     notes.push(...tmpNote(f.rel, result.tmpLeftBehind));
     if (f.state === 'absent' && !result.created) {
-      if (classifyDeployedScript(read(join(cwd, f.rel)), f.name, f.bundle) !== 'current') {
+      if (classifyDeployedScript(read(join(cwd, f.rel)), f.path, f.bundle) !== 'current') {
         fates.set(f.rel, 'refused');
         return { fates, notes, failure: ['race-unresolved', `${f.rel}: appeared while this run was placing it and does not carry the bundled body — nothing further written, re-run when the tree is settled`] };
       }
@@ -145,12 +156,21 @@ const writeRun = ({ cwd, files, accepted, dryRun, deps, read }) => {
 // The rotator the run just left on the bundled body brings the store current; its output is relayed
 // keyed on its contracted summary, the last standard output line.
 const STORE = 'ADR store: ';
-const ENSURE = `${SCRIPTS_DIR}/${ROTATOR} --ensure-current`;
+const ROTATOR_REL = `${KIT_SCRIPTS_DIR}/${ROTATOR}`;
+const ENSURE = `${ROTATOR_REL} --ensure-current`;
 const WOULD_STORE = `${STORE}${ENSURE} would run after the writes, bringing the store current or writing nothing when it already is`;
 const outputLines = (text) => String(text ?? '').split(/\r?\n/).filter((line) => line !== '');
+// A runner that throws before it returns a result ended with that error, as a result carrying one.
+const spawnOutcome = (spawn, args, opts) => {
+  try {
+    return spawn(process.execPath, args, opts) ?? { error: new Error('the spawn returned no result') };
+  } catch (error) {
+    return { error };
+  }
+};
 // → { brought, lines, failure? }
 const runStore = (cwd, deps) => {
-  const r = (deps.spawnSync ?? spawnSync)(process.execPath, [join(cwd, SCRIPTS_DIR, ROTATOR), '--ensure-current'], { cwd, encoding: 'utf8' });
+  const r = spawnOutcome(deps.spawnSync ?? spawnSync, [join(cwd, ROTATOR_REL), '--ensure-current'], { cwd, encoding: 'utf8' });
   const [out, err] = [outputLines(r.stdout), outputLines(r.stderr)];
   const ended = r.error ? `ended with an error (${causeOf(r.error)})` : r.signal ? `was killed by signal ${r.signal}` : r.status !== 0 ? `exited with code ${r.status}` : null;
   if (ended) return { failure: `${ENSURE} ${ended} — the ADR store was not confirmed current`, lines: [...err, ...out].map((line) => STORE + line) };
@@ -167,13 +187,13 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   if (refusal) return refusal;
   const found = survey({ cwd, kitRoot, deps, read, lstat });
   if (found.refusal) return found.refusal;
-  if (found.notPlaced) return composeOutcome(OP, 'not-placed', [`${SCRIPTS_DIR}/: no kit script stands in it, so none is placed`], false);
+  if (found.notPlaced) return composeOutcome(OP, 'not-placed', [`${KIT_SCRIPTS_DIR}/: no kit script stands in it, so none is placed`], false);
   const { files, accepted } = found;
   const current = files.filter((f) => f.state === 'current').length;
   const r = writeRun({ cwd, files, accepted, dryRun, deps, read });
-  const body = [...r.lines, ...(current > 0 ? [`${SCRIPTS_DIR}/: ${current} other kit scripts are already the bundled body — nothing written`] : []), ...(accepted ? [] : [NOT_ACCEPTED])];
+  const body = [...r.lines, ...(current > 0 ? [`${KIT_SCRIPTS_DIR}/: ${current} other kit scripts are already the bundled body — nothing written`] : []), ...(accepted ? [] : [NOT_ACCEPTED])];
   if (r.failure) return composeFailure(OP, r.failure[0], r.failure[1], ...body, ...r.tail);
-  const rotator = files.some((f) => f.name === ROTATOR);
+  const rotator = files.some((f) => f.path === ROTATOR);
   const store = !rotator ? { lines: [] } : dryRun ? { lines: [WOULD_STORE] } : runStore(cwd, deps);
   if (store.failure) return composeFailure(OP, 'adr-store-not-current', store.failure, ...body, ...r.tail, ...store.lines);
   const landed = (state) => (dryRun ? r.due : r.written).some((f) => f.state === state);

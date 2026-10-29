@@ -4,7 +4,7 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
 import { GIT_MAX_BUFFER, resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';

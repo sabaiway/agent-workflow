@@ -3,7 +3,7 @@
 // spec-check's own exported seam; this module walks nothing of its own. Read-only, Node >= 22.
 
 import { join } from 'node:path';
-import { SPEC_SCHEMA } from '../references/scripts/spec-schema.mjs';
+import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { probe as probePath, realpath as realpathOf, list as listDir } from './spec-check-cli.mjs';
 import { walkStore, readClosure } from './spec-check.mjs';

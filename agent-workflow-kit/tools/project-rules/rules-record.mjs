@@ -5,7 +5,7 @@
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeDocsAiFileAtomic } from '../atomic-write.mjs';
-import { parseFrontmatter } from '../../references/scripts/check-docs-size.mjs';
+import { parseFrontmatter } from '../../references/scripts/docs-size/index.mjs';
 import { digestOf, readRecord, readUnder } from './rules-check.mjs';
 import { RECORD_PATH, THEMES, themePaths } from './themes.mjs';
 

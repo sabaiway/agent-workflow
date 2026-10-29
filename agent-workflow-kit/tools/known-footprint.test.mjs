@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { PRIOR_FILES } from './script-priors.mjs';
 import {
   KIT_OWN_PATHS,
   KNOWN_FOOTPRINT,
@@ -134,6 +136,7 @@ describe('frozen snapshot', () => {
       '/AGENTS.md',
       '/CLAUDE.md',
       '/docs/ai/',
+      '/scripts/agent-workflow/',
       '/scripts/_expect-shim.mjs',
       '/scripts/archive-caps.mjs',
       '/scripts/archive-caps.test.mjs',
@@ -164,22 +167,27 @@ describe('frozen snapshot', () => {
       '/.claude/settings.json',
       '/.mcp.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 32, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 33, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 
-  // The frozen list above says WHAT is registered; this says the registration is COMPLETE. Bootstrap
-  // step 8 copies `references/scripts/*.mjs` (+ `*.test.mjs`) into the project's `scripts/`, so a
-  // shipped script missing from the registry is a file a hidden deployment leaves in `git status` —
-  // the leak the registry exists to prevent, and one that used to reopen with every new payload file.
-  it('every DEPLOYED enforcement script is registered (the payload is the source of truth)', () => {
-    const deployed = readdirSync(fileURLToPath(new URL('../references/scripts/', import.meta.url)))
-      .filter((name) => name.endsWith('.mjs'))
-      .map((name) => `/scripts/${name}`)
-      .sort();
+  // The frozen list above says WHAT is registered; this says the registration is COMPLETE. The family
+  // manifest names every file a deployment places in the kit folder, so a placed file no pattern covers
+  // is a file a hidden deployment leaves in `git status` — the leak the registry exists to prevent.
+  it('every DEPLOYED enforcement script is registered (the manifest is the source of truth)', () => {
+    const deployed = DEPLOYED_SCRIPTS.map((entry) => entry.deployed).sort();
     assert.ok(deployed.length > 0, 'the deploy payload must be non-empty for this guard to mean anything');
-    const missing = deployed.filter((path) => !KIT_OWN_PATHS.includes(path));
-    assert.deepEqual(missing, [], 'these ship into scripts/ but hidden mode would leave them visible');
+    assert.ok(deployed.every((path) => path.startsWith(`${KIT_SCRIPTS_DIR}/`)), 'every deployed file sits in the kit folder');
+    const missing = deployed.filter((path) => !KIT_OWN_PATHS.some((pattern) => covers(pattern, path)));
+    assert.deepEqual(missing, [], 'these ship into the kit folder but hidden mode would leave them visible');
+  });
+
+  // The flat payload stays registered until story S4 moves an existing flat deployment: every retired
+  // flat name keeps its own line, none of them under the kit folder.
+  it('the flat lines stay: one /scripts/<name> per retired flat name, none under the kit folder', () => {
+    const flat = KIT_OWN_PATHS.filter((path) => /^\/scripts\/[^/]+$/.test(path));
+    assert.deepEqual(flat, PRIOR_FILES.map((name) => `/scripts/${name}`));
+    assert.deepEqual(flat.filter((path) => covers(`/${KIT_SCRIPTS_DIR}/`, probeOf(path))), []);
   });
 
   it('KNOWN_FOOTPRINT matches the frozen expected pattern set + count', () => {

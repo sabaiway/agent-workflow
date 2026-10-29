@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { BUNDLED_HOOK_PATH, HOOK_FILE_REL, LANES_REL, buildHookSettingsEntry } from '../gate-hook.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
+import { readFamily } from '../../references/scripts/family.mjs';
 import { skillTargets } from '../jev-facts.mjs';
 import {
   APPLY, FIVE, RESTART, RUN_NONE, SUDO, TOOLS, applies, changed, facts, fixture, hashTree, init, isApply, item, lanes,
@@ -271,12 +272,12 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     const scope = lines.indexOf('scope: within the declared scope of enforcement');
     const next = lines.indexOf('preview: state-block');
     const bundle = join(TOOLS, '../references/scripts');
-    const names = readdirSync(bundle).filter((name) => name.endsWith('.mjs')).sort();
+    const names = readFamily(bundle).filter(({ role }) => role === 'deployed').map(({ path }) => path);
     assert.ok(preview >= 0 && scope > preview + names.length && next > scope);
     assert.deepEqual(lines.slice(preview + 1, preview + 1 + names.length), names.map((name) =>
-      `copy: scripts/${name} created sha256:${createHash('sha256').update(readFileSync(join(bundle, name))).digest('hex')}`));
+      `copy: scripts/agent-workflow/${name} created sha256:${createHash('sha256').update(readFileSync(join(bundle, name))).digest('hex')}`));
     for (const name of names) {
-      assert.deepEqual(readFileSync(join(f.root, 'scripts', name)), readFileSync(join(bundle, name)));
+      assert.deepEqual(readFileSync(join(f.root, 'scripts/agent-workflow', name)), readFileSync(join(bundle, name)));
     }
     assert.match(readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8'), /:install-git-hooks\.mjs$/m);
     assert.deepEqual(pending(f), []);

@@ -346,8 +346,8 @@ describe('spec:source-size/S41 — the source-size.layout item renders exactly o
   it('record-item-exact: on record it renders first, chat and optional, with the setup\'s arguments, ahead of the base arm and the hook-checks item', () => {
     const WHAT = 'the layout record is not started — starting it records any directory already beyond the layout limits, so the commit hook can judge layout';
     for (const [label, cwd, args] of [['an absent config holding a pile', piled(), RECORD], ['a minted config without layout and no gate', minted(), RECORD_LAYOUT]]) {
-      mkdirSync(join(cwd, 'scripts'));
-      copyFileSync(join(HERE, '..', 'references', 'scripts', 'install-git-hooks.mjs'), join(cwd, 'scripts', 'install-git-hooks.mjs'));
+      mkdirSync(join(cwd, 'scripts', 'agent-workflow', 'git-hooks'), { recursive: true });
+      copyFileSync(join(HERE, '..', 'references', 'scripts', 'git-hooks', 'install-git-hooks.mjs'), join(cwd, 'scripts', 'agent-workflow', 'git-hooks', 'install-git-hooks.mjs'));
       const { items, layout, arms } = run(tracked(cwd));
       assert.deepEqual([layout?.key, layout?.severity, layout?.lane, layout?.what, layout?.check, layout?.apply], ['source-size', SEVERITY_OPTIONAL, 'chat', WHAT, null, lineOf(cwd, args)], label);
       assert.deepEqual([setup(cwd), layout.what.length <= ITEM_LINE_CAP], [{ answer: 'record', args }, true], `${label}: the setup's answer, the WHAT within the item cap`);

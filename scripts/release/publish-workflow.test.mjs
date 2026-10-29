@@ -8,7 +8,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -77,5 +77,91 @@ describe('publish workflow — a draft release is published by ID, never by tag'
     assert.match(source, /existing_draft="\$\(draft_id "\$tag"\)"/u);
     const plain = bodyOf('draft_id');
     assert.doesNotMatch(plain, /\bfor\b|\bsleep\b|\bwhile\b/u, 'draft_id must stay a single read');
+  });
+});
+
+// The script family's suites sit in module folders under both trees, so a flat glob drops all but the top level.
+const REPO = join(HERE, '..', '..');
+const read = (rel) => readFileSync(join(REPO, rel), 'utf8');
+const CANON = 'agent-workflow-memory/references/scripts/';
+const MIRROR = 'agent-workflow-kit/references/scripts/';
+
+// A quoted word reaches node as one glob it expands itself; an unquoted word takes bash brace expansion first.
+const expansions = (word) => {
+  const quoted = /^(['"])(.*)\1$/u.exec(word);
+  if (quoted) return { quoted: true, globs: [quoted[2]] };
+  const globs = [];
+  const expand = (w) => {
+    const group = /\{([^{}]*)\}/u.exec(w);
+    if (!group || !group[1].includes(',')) return void globs.push(w);
+    for (const alt of group[1].split(',')) expand(w.slice(0, group.index) + alt + w.slice(group.index + group[0].length));
+  };
+  expand(word);
+  return { quoted: false, globs };
+};
+const wordsOf = (text) => text.split('\n').filter((line) => !line.trim().startsWith('#')).join(' ').split(/\s+/u).filter(Boolean);
+const treeWords = (text, root) => wordsOf(text).filter((word) => expansions(word).globs.some((glob) => glob.startsWith(root)));
+const assertOneRecursive = (text, root, where) => {
+  const seen = treeWords(text, root).map((word) => (expansions(word).quoted ? `quoted ${expansions(word).globs[0]}` : `bare ${word}`));
+  assert.deepEqual(seen, [`quoted ${root}**/*.test.mjs`], `${where} must run ${root} by one quoted recursive glob`);
+};
+// A glob reaching <prefix>references/scripts/*.test.mjs with no sibling expansion reaching the module folders.
+const flatGlobs = (text) =>
+  wordsOf(text).filter((word) => {
+    const { globs } = expansions(word);
+    return globs.some((glob) => {
+      const flat = /^(.*)references\/scripts\/\*\.test\.mjs$/u.exec(glob);
+      return flat && ![`${flat[1]}references/scripts/*/*.test.mjs`, `${flat[1]}references/scripts/**/*.test.mjs`].some((deep) => globs.includes(deep));
+    });
+  });
+// The lines of one workflow step after its `- name:` line, up to the next line at or above its indent.
+const stepBody = (text, name) => {
+  const lines = text.split('\n');
+  const at = lines.findIndex((line) => line.trim() === `- name: ${name}`);
+  assert.notEqual(at, -1, `step "${name}" is missing`);
+  const indent = lines[at].search(/\S/u);
+  const end = lines.findIndex((line, i) => i > at && line.trim() !== '' && line.search(/\S/u) <= indent);
+  return lines.slice(at + 1, end === -1 ? undefined : end).join('\n');
+};
+
+describe('spec:script-family/S10 the gate, CI and publish run every suite of both trees', () => {
+  it('the CI test step on Node 22 and on Node 24 runs the canon and the mirror by one quoted recursive glob each', () => {
+    const ci = read('.github/workflows/ci.yml');
+    const versions = (/node-version:\s*\[([^\]]*)\]/u.exec(ci)?.[1] ?? '').split(',').map((v) => v.trim().replace(/^['"]|['"]$/gu, ''));
+    assert.ok(versions.some((v) => /^22(\.|$)/u.test(v)) && versions.some((v) => /^24(\.|$)/u.test(v)), `the test matrix: ${versions}`);
+    const step = stepBody(ci, 'Unit tests (tracked content)');
+    for (const root of [CANON, MIRROR]) assertOneRecursive(step, root, 'ci.yml');
+  });
+
+  it('the publish test step of _publish-one.yml runs the kit tree and the memory tree by one quoted recursive glob each', () => {
+    const branches = {};
+    let branch = null;
+    for (const line of stepBody(source, 'Test the package before publish').split('\n').map((l) => l.trim())) {
+      if (/^(?:if|elif) \[/u.test(line)) branch = /"agent-workflow-(kit|engine)"/u.exec(line)?.[1] ?? line;
+      else if (line === 'else') branch = 'memory';
+      else if (line.startsWith('node --test')) branches[branch] = line;
+    }
+    assert.deepEqual(Object.keys(branches).sort(), ['engine', 'kit', 'memory']);
+    for (const pkg of ['kit', 'memory']) assertOneRecursive(branches[pkg], 'references/scripts/', `_publish-one.yml (${pkg})`);
+  });
+
+  it('the unit-test gate runs the canon and the mirror by one quoted recursive glob each, and no flat glob', (t) => {
+    const gates = join(REPO, 'docs', 'ai', 'gates.json');
+    // docs/ai/ is machine-local in this repository: a CI checkout carries no gate declaration to judge.
+    if (!existsSync(gates)) return t.skip('docs/ai/gates.json is machine-local and absent from this checkout');
+    const gate = JSON.parse(readFileSync(gates, 'utf8')).gates.find((g) => g.id === 'unit-tests');
+    assert.ok(gate, 'the unit-tests gate is declared');
+    for (const root of [CANON, MIRROR]) assertOneRecursive(gate.cmd, root, 'the unit-tests gate');
+    assert.deepEqual(flatGlobs(gate.cmd), [], 'the unit-tests gate names a flat references/scripts glob');
+  });
+
+  it('no workflow names a flat references/scripts/*.test.mjs glob; the kit publish.yml runs its tree by references/scripts/{,*/}*.test.mjs', () => {
+    const flat = ['.github/workflows', 'agent-workflow-kit/.github/workflows'].flatMap((dir) =>
+      readdirSync(join(REPO, dir))
+        .filter((name) => /\.ya?ml$/u.test(name))
+        .flatMap((name) => flatGlobs(read(`${dir}/${name}`)).map((word) => `${dir}/${name}: ${word}`)));
+    assert.deepEqual(flat, [], 'a workflow runs only the top level of a script tree');
+    const step = stepBody(read('agent-workflow-kit/.github/workflows/publish.yml'), 'Test shipped enforcement scripts');
+    assert.deepEqual(treeWords(step, 'references/scripts/'), ['references/scripts/{,*/}*.test.mjs']);
   });
 });

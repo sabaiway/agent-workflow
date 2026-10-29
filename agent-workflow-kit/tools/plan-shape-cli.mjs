@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { resolve } from 'node:path';
-import { tokenizeMarkdown } from '../references/scripts/markdown-blocks.mjs';
+import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { plansInFlight, PLANS_REL, readPlanEntries } from './plan-files.mjs';

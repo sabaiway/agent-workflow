@@ -85,7 +85,7 @@ import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from '
 import { readBundledAgents, writeCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 import { ATTRIBUTION_KEY, LEGACY_ATTRIBUTION_KEY, attributionHidesText, effectiveAttribution, readAttributionChoice, wrongTypedKey } from './attribution.mjs';
 import { planGlobalRemoval } from './hide-footprint.mjs';
-import { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, probeNodeEvidence } from './node-evidence.mjs';
+import { DEPLOYED_SCRIPTS, INSTALLER_REL, NODE_EVIDENCE, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
 import { surveyExecutorVehicle, readExecutorPosture, agentsAccepted, readStamp, readFsDeps, AGENTS_DIR, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
@@ -126,8 +126,8 @@ const ENFORCEMENT_KIT_ROOT = resolve(HERE, '..');
 const ENFORCEMENT_BUNDLE_ROOT = join(ENFORCEMENT_KIT_ROOT, 'references', 'scripts');
 const ENFORCEMENT_WHAT = 'the enforcement scripts are not deployed beside docs/ai (no Node evidence) \u2014 the offer copies them and installs the pre-commit hook';
 const ENFORCEMENT_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it, so the kit places no script here; with that hook moved aside (your own step) the enforcement item is offered';
-const COMMIT_GUARD_INSTALLER_VIA_ITEM = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
-const COMMIT_GUARD_INSTALLER_OWN_STEP = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
+const COMMIT_GUARD_INSTALLER_VIA_ITEM = `the hook installer (${INSTALLER_REL}) is not deployed \u2014 apply the enforcement item first, then re-run`;
+const COMMIT_GUARD_INSTALLER_OWN_STEP = `the hook installer (${INSTALLER_REL}) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run`;
 const COMMIT_GUARD_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
 const HOOK_CHECKS_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the lines this item would arm to it is your own step';
 const HOOK_CHECKS_WAIT = 'the layout line follows the source-size.layout record \u2014 apply that item first; this item\'s check line then arms the layout line too';
@@ -980,8 +980,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     if (gatesRaw === null) return; // undeclared — the gates-declaration item owns that story
     const gates = JSON.parse(gatesRaw).gates;
     if (!isFinalCapableDeclaration(gates, root)) return; // no receipt to guard yet — no offer
-    const installer = join(root, 'scripts', 'install-git-hooks.mjs');
-    if (!(deps.exists ?? existsSync)(installer)) {
+    if (!(deps.exists ?? existsSync)(join(root, INSTALLER_REL))) {
       skip('commit-guard', new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP));
       return;
     }
@@ -1010,7 +1009,7 @@ const probeHookChecks = ({ root, deps, add, skip, shared }) => {
     const waits = shared.layoutRecord === true && !hook.layoutArmed && !roles.includes('layout');
     if (roles.length === 0 && !waits) return;
     if (hook.state === 'unmanaged') throw new Error(HOOK_CHECKS_UNMANAGED_HOOK);
-    if (!(deps.exists ?? existsSync)(join(root, 'scripts', 'install-git-hooks.mjs'))) {
+    if (!(deps.exists ?? existsSync)(join(root, INSTALLER_REL))) {
       throw new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP);
     }
     const keys = [...roles, ...(waits ? ['layout'] : [])];
@@ -1045,16 +1044,16 @@ const enforcementOffer = (root, deps) => {
   if (evidence.wrongKind.length > 0) throw new Error(join(root, evidence.wrongKind[0]));
   const readDir = deps.readdir ?? readdirSync;
   const bundleRoot = deps.scriptsBundleRoot ?? ENFORCEMENT_BUNDLE_ROOT;
-  const bundleBasenames = readDir(bundleRoot).filter((name) => name.endsWith('.mjs')).sort();
-  if (NODE_EVIDENCE_SCRIPTS.some((name) => !bundleBasenames.includes(name))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
-  const scripts = join(root, 'scripts');
-  const scriptsNode = readEnforcementNode(scripts, lstat);
-  if (scriptsNode !== null && !scriptsNode.isDirectory()) throw new Error(`${scripts} is not a plain directory`);
-  for (const basename of scriptsNode === null ? [] : bundleBasenames) {
-    const destination = join(scripts, basename);
-    if (readEnforcementNode(destination, lstat) === null) continue;
-    throw new Error(`${destination} already exists; the enforcement copy would clobber it`);
-  }
+  // The bundle is complete when every segment of each deployed path stands in its folder's listing.
+  const listings = new Map();
+  const inBundle = (path) => path.split('/').every((name, at, parts) => {
+    const folder = join(bundleRoot, ...parts.slice(0, at));
+    if (!listings.has(folder)) listings.set(folder, readDir(folder));
+    return listings.get(folder).includes(name);
+  });
+  if (!DEPLOYED_SCRIPTS.every(({ path }) => inBundle(path))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
+  // Evidence none with nothing of the wrong kind already proves the destination clean: every deployed path is a
+  // probe, so each is absent and scripts/, the kit folder and each module folder are absent or plain directories.
   if (readHookState(root, deps).state === 'unmanaged') throw new Error(ENFORCEMENT_UNMANAGED_HOOK);
   return true;
 };

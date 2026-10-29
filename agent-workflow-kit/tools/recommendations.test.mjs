@@ -67,13 +67,20 @@ const FIXTURE_PYPROJECT = '[project]\nname = "fixture"\n';
 const FIXTURE_SCRIPT = '// fixture\n';
 const ENFORCEMENT_KEY = 'enforcement';
 const DEPLOYED_NODE_SCRIPT = 'archive-decisions.mjs';
-const COLLISION_SCRIPT = 'markdown-blocks.test.mjs';
+const COLLISION_SCRIPT = join('agent-workflow', 'shared', 'markdown-blocks.mjs');
 const EACCES_CODE = 'EACCES';
 const EVIDENCE_GATE_FAILURE = 'the clobber scan ran before the evidence gate';
 const KIT_ROOT = resolve(HERE, '..');
 const BUNDLED_SCRIPTS = resolve(KIT_ROOT, 'references', 'scripts');
-const COMMIT_GUARD_OWN_STEP = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
-const COMMIT_GUARD_VIA_ITEM = 'the hook installer (scripts/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
+const INSTALLER_MODULE = join('git-hooks', 'install-git-hooks.mjs');
+const KIT_INSTALLER = join('scripts', 'agent-workflow', INSTALLER_MODULE);
+const COMMIT_GUARD_OWN_STEP = 'the hook installer (scripts/agent-workflow/git-hooks/install-git-hooks.mjs) is not deployed here \u2014 deploying the enforcement scripts into this project is your own step, then re-run';
+const COMMIT_GUARD_VIA_ITEM = 'the hook installer (scripts/agent-workflow/git-hooks/install-git-hooks.mjs) is not deployed \u2014 apply the enforcement item first, then re-run';
+// The deployed installer stand-in at its kit-folder path, its folders created.
+const placeInstaller = (root, bytes = '// deployed installer stand-in\n') => {
+  mkdirSync(dirname(join(root, KIT_INSTALLER)), { recursive: true });
+  writeFileSync(join(root, KIT_INSTALLER), bytes);
+};
 const ENFORCEMENT_UNMANAGED = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it, so the kit places no script here; with that hook moved aside (your own step) the enforcement item is offered';
 const COMMIT_GUARD_UNMANAGED = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
 const FOREIGN_HOOK = '#!/bin/sh\nexit 0\n';
@@ -143,8 +150,7 @@ const finalCapableGatesJson = () => JSON.stringify({
 const guardProject = () => {
   const root = makeProject();
   writeFileSync(join(root, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
-  mkdirSync(join(root, 'scripts'), { recursive: true });
-  writeFileSync(join(root, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+  placeInstaller(root);
   mkdirSync(join(root, 'hooks'), { recursive: true });
   return root;
 };
@@ -152,7 +158,7 @@ const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () =>
 // A git deployment carrying the bundled installer and an empty hooks/; `piles` tracked files in lib/ put lib/ past the entries band.
 const layoutRoot = ({ piles = 0, installer = true, root = makeProject() } = {}) => {
   runFixtureGit(root, ['init', '-q']);
-  if (installer) cpSync(join(BUNDLED_SCRIPTS, 'install-git-hooks.mjs'), join(root, 'scripts', 'install-git-hooks.mjs'));
+  if (installer) cpSync(join(BUNDLED_SCRIPTS, INSTALLER_MODULE), join(root, KIT_INSTALLER));
   mkdirSync(join(root, 'hooks'));
   mkdirSync(join(root, 'lib'));
   for (let i = 0; i < piles; i += 1) writeFileSync(join(root, 'lib', `m${i}.mjs`), FIXTURE_SCRIPT);
@@ -590,8 +596,7 @@ const buildInventoryFixtures = () => {
   rmSync(root7, { recursive: true, force: true });
   const root8 = makeProject();
   writeFileSync(join(root8, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
-  mkdirSync(join(root8, 'scripts'), { recursive: true });
-  writeFileSync(join(root8, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+  placeInstaller(root8);
   results.push(buildRecommendations({ cwd: root8, deps: hermeticDeps(root8, { gitHooksPath: () => join(root8, 'hooks') }) }));
   rmSync(root8, { recursive: true, force: true });
   const root9 = makeProject();
@@ -852,8 +857,7 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
     writeFileSync(join(root, SETTINGS_REL), JSON.stringify(wired));
     writeFileSync(join(root, hook), '');
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());
-    mkdirSync(join(root, 'scripts'), { recursive: true });
-    writeFileSync(join(root, 'scripts', 'install-git-hooks.mjs'), '// deployed installer stand-in\n');
+    placeInstaller(root);
     mkdirSync(join(root, 'hooks'), { recursive: true });
     writeFileSync(join(root, preCommit), '');
     const deps = { ...maskingDeps(root, [hook, preCommit]), gitHooksPath: () => join(root, 'hooks') };
@@ -2252,25 +2256,28 @@ describe('recommendations \u2014 the enforcement item', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
-  it('recommendations \u2014 an existing, symlinked, or unreadable bundled destination is a stated enforcement skip', () => {
+  // Every deployed path is itself a Node-evidence probe, so the evidence gate answers a destination first: an
+  // existing one is evidence and renders nothing, a linked one is the wrong-kind skip naming it, an unreadable one
+  // the unreadable skip naming the probe.
+  it('recommendations \u2014 an existing bundled destination renders nothing; a symlinked or unreadable one is a stated enforcement skip naming it', () => {
     const cases = [
       (root, path) => {
         writeFileSync(path, FIXTURE_SCRIPT);
-        return {};
+        return [{}, (disposition) => assert.deepEqual(disposition, { item: undefined, skip: undefined })];
       },
       (root, path) => {
         writeFileSync(join(root, 'collision-target.mjs'), FIXTURE_SCRIPT);
         symlinkSync(join(root, 'collision-target.mjs'), path);
-        return {};
+        return [{}, (disposition) => assertEnforcementSkip(disposition, path)];
       },
-      (root, path) => ({ lstat: lstatUnreadableAt(path) }),
+      (root, path) => [{ lstat: lstatUnreadableAt(path) }, (disposition) => assertEnforcementSkip(disposition, `${EACCES_CODE} on ${join('scripts', COLLISION_SCRIPT)}`)],
     ];
     for (const seed of cases) {
       const root = makeNoneEvidenceProject();
-      mkdirSync(join(root, 'scripts'));
       const path = join(root, 'scripts', COLLISION_SCRIPT);
-      const extra = seed(root, path);
-      assertEnforcementSkip(enforcementFor(root, extra), path);
+      mkdirSync(dirname(path), { recursive: true });
+      const [extra, judge] = seed(root, path);
+      judge(enforcementFor(root, extra));
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -2357,7 +2364,7 @@ describe('spec:init-project/S35 the advisor\'s reader and table by proof', () =>
       }],
       ['wrong-kind path', false, (root) => mkdirSync(join(root, 'package.json'))],
       ['existing bundled basename', false, (root) => {
-        mkdirSync(join(root, 'scripts'));
+        mkdirSync(dirname(join(root, 'scripts', COLLISION_SCRIPT)), { recursive: true });
         writeFileSync(join(root, 'scripts', COLLISION_SCRIPT), FIXTURE_SCRIPT);
       }],
       ['foreign hook', false, (root) => {
@@ -2459,8 +2466,8 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   it('a final-capable declaration WITHOUT the installer names the admitted item or the user\'s own deploy step', (t) => {
     const packageRoot = guardProject();
     const scriptsRoot = removePackageEvidence(guardProject());
-    rmSync(join(packageRoot, 'scripts', 'install-git-hooks.mjs'));
-    rmSync(join(scriptsRoot, 'scripts', 'install-git-hooks.mjs'));
+    rmSync(join(packageRoot, KIT_INSTALLER));
+    rmSync(join(scriptsRoot, KIT_INSTALLER));
     writeFileSync(join(scriptsRoot, 'scripts', DEPLOYED_NODE_SCRIPT), FIXTURE_SCRIPT);
     const admittedRoot = makeNoneEvidenceProject();
     writeFileSync(join(admittedRoot, 'docs', 'ai', 'gates.json'), finalCapableGatesJson());

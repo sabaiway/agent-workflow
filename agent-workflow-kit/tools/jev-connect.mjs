@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { JEV_ENDPOINT, JEV_ERROR_MEANINGS, JEV_SAMPLE_BODY, KEY_VARIABLE, RESTART_STEP } from './jev-facts.mjs';
 

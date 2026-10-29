@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,22 +55,17 @@ const withDocs = (fn, { packageJson = true } = {}) => {
 };
 const runIndex = (dir, extra = {}) => ensureOps.ensureIndex({ cwd: dir, kitRoot: KIT_ROOT, ...extra });
 
-const GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'check-docs-size.mjs');
-const KJ = "the project's own checker (scripts/check-docs-size.mjs --check-index)";
+const GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'docs-size', 'check-docs-size.mjs');
+const KJ = "the project's own checker (scripts/agent-workflow/docs-size/check-docs-size.mjs --check-index)";
 const [FOUND_BYTES, ROUTE] = ['found bytes\n', "the spec layer's write of the bundled modules the project's hook loads, then this step again"];
 const REJECTING_CHECKER = '// rejects every navigator\nprocess.exit(1);\n';
 const ACCEPTING_CHECKER = '// accepts every navigator\n';
 const TRAPPING_CHECKER = "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 20000);\n";
 const COUNTING_CHECKER = "import { existsSync, writeFileSync } from 'node:fs';\nif (!existsSync('first-ran')) { writeFileSync('first-ran', ''); process.exit(1); }\n" + TRAPPING_CHECKER;
-const withKept = (setup, fn) => withDocs((dir) => {
-  mkdirSync(join(dir, 'scripts'));
-  for (const name of ['check-docs-size.mjs', 'check-docs-size.test.mjs', 'spec-schema.mjs', 'spec-schema.test.mjs']) {
-    writeFileSync(join(dir, 'scripts', name), readFileSync(join(KIT_ROOT, 'references', 'scripts', name)));
-  }
-  writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
-  setup(dir);
-  return fn(dir);
-});
+// The modules the project's hook loads, laid out at their deployed paths in the kit folder (S8's helpers below).
+const withKept = (setup, fn) => withKitKept(KEPT_MODULES, setup, fn);
+const keptAt = (dir, path) => join(dir, 'scripts', 'agent-workflow', ...path.split('/'));
+const [READER, CHECKER_SUITE] = ['spec-schema/spec-schema.mjs', 'docs-size/check-docs-size.test.mjs'];
 const spySpawn = (answer = () => undefined) => {
   const calls = [];
   return {
@@ -87,7 +82,7 @@ const snapshotFiles = (dir, rel = '') => new Map(
     return entry.isDirectory() ? [...snapshotFiles(dir, path)] : [[path, readFileSync(join(dir, path))]];
   }),
 );
-const writeChecker = (dir, body) => writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), body);
+const writeChecker = (dir, body) => writeFileSync(keptAt(dir, 'docs-size/check-docs-size.mjs'), body);
 const readPriorChecker = () => readFileSync(join(KIT_ROOT, 'test', 'fixtures', 'script-priors', '7.0.0', 'check-docs-size.mjs.txt'));
 const setRejected = (dir, found = true) => {
   writeChecker(dir, REJECTING_CHECKER);
@@ -110,14 +105,16 @@ const assertPutBackFailure = (r) => {
 };
 
 describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts the navigator under the project\'s checker', () => {
+  // No prior variant here: a flat-era checker body cannot load in the kit folder (its reader is not beside
+  // it), so a prior checker the kept probe accepts has no instance there; the prior is judged below.
   it('a navigator the kept probe accepts is already-current, with no write and no bundled launch', () => {
-    for (const variant of ['reader', 'prior', 'accepting', 'tab']) {
+    for (const variant of ['reader', 'accepting', 'tab']) {
       withKept((dir) => {
         assert.equal(runIndex(dir).token, 'regenerated');
         if (variant === 'reader') {
-          const path = join(dir, 'scripts', 'spec-schema.mjs');
+          const path = keptAt(dir, READER);
           writeFileSync(path, readFileSync(path, 'utf8') + '// mine\n');
-        } else writeChecker(dir, variant === 'prior' ? readPriorChecker() : ACCEPTING_CHECKER);
+        } else writeChecker(dir, ACCEPTING_CHECKER);
         if (variant === 'tab') writeFileSync(join(dir, INDEX_REL), readFileSync(join(dir, INDEX_REL), 'utf8').replace(/^maxLines: /m, `maxLines:${String.fromCharCode(9)}`));
       }, (dir) => {
         const before = readFileSync(join(dir, INDEX_REL));
@@ -155,7 +152,7 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
     for (const edited of [false, true]) {
       withKept((dir) => {
         writeChecker(dir, readPriorChecker());
-        if (edited) writeFileSync(join(dir, 'scripts', 'check-docs-size.test.mjs'), '// mine\n');
+        if (edited) writeFileSync(keptAt(dir, CHECKER_SUITE), '// mine\n');
         for (let n = 0; n < 85; n += 1) writeFileSync(join(dir, 'docs', 'ai', `extra-${n}.md`), DOC_BODY);
       }, (dir) => {
         const r = runIndex(dir);
@@ -254,18 +251,18 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
     withKept((dir) => writeChecker(dir, "import { writeFileSync } from 'node:fs';\nwriteFileSync('stub-ran', '');\nprocess.exit(1);\n"), (dir) => {
       const r = runIndex(dir, { dryRun: true });
       assert.equal(existsSync(join(dir, 'stub-ran')), false);
-      assert.equal(r.lines.at(-1), `a module the project's hook loads (scripts/check-docs-size.mjs) is not the bundled one: unless the spec-layer step of this run first refreshes every such module, the real run judges the navigator by ${KJ} and puts back a write it rejects`);
+      assert.equal(r.lines.at(-1), `a module the project's hook loads (scripts/agent-workflow/docs-size/check-docs-size.mjs) is not the bundled one: unless the spec-layer step of this run first refreshes every such module, the real run judges the navigator by ${KJ} and puts back a write it rejects`);
     });
   });
   it('a custom test file alone, and an absent checker beside any reader or a root scripts file, keep today\'s path', () => {
     for (const variant of ['test', 'absent', 'reader-dir', 'scripts-file']) {
       withKept((dir) => {
-        const path = join(dir, 'scripts', variant === 'test' ? 'check-docs-size.test.mjs' : 'check-docs-size.mjs');
-        if (variant === 'test') writeFileSync(path, readFileSync(path, 'utf8') + '// mine\n');
+        const path = keptAt(dir, variant === 'test' ? CHECKER_SUITE : 'docs-size/check-docs-size.mjs');
+        if (variant === 'test') writeFileSync(path, kb(CHECKER_SUITE).toString('utf8') + '// mine\n');
         else rmSync(path);
         if (variant === 'reader-dir') {
-          rmSync(join(dir, 'scripts', 'spec-schema.mjs'));
-          mkdirSync(join(dir, 'scripts', 'spec-schema.mjs'));
+          rmSync(keptAt(dir, READER));
+          mkdirSync(keptAt(dir, READER));
         }
         if (variant === 'scripts-file') {
           rmSync(join(dir, 'scripts'), { recursive: true, force: true });
@@ -284,23 +281,102 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
     const before = snapshotFiles(dir);
     const r = runIndex(dir, { deps: { readFile: (path, ...rest) => (path === GENERATOR ? refusePutBack('open')() : readFileSync(path, ...rest)) } });
     assert.equal(r.token, 'failed');
-    assert.match(r.lines[0], /^bundle-unreadable — scripts\/check-docs-size\.mjs: the bundled module could not be read, so nothing was written — reinstall the kit\. EACCES/);
+    assert.match(r.lines[0], /^bundle-unreadable — scripts\/agent-workflow\/docs-size\/check-docs-size\.mjs: the bundled module could not be read, so nothing was written — reinstall the kit\. EACCES/);
     assert.deepEqual(snapshotFiles(dir), before);
   }));
   it('a hook module that is a directory is wrong-node-kind with nothing written, whatever the reader beside it', () => {
-    for (const name of ['spec-schema.mjs', 'check-docs-size.mjs']) {
+    for (const name of [READER, 'docs-size/check-docs-size.mjs']) {
       withKept((dir) => {
-        rmSync(join(dir, 'scripts', name));
-        mkdirSync(join(dir, 'scripts', name));
+        rmSync(keptAt(dir, name));
+        mkdirSync(keptAt(dir, name));
       }, (dir) => {
         const before = snapshotFiles(dir);
-        const r = runIndex(dir, { deps: { readFile: (path, ...rest) => (path === join(dir, 'scripts', 'spec-schema.mjs') ? refusePutBack('open')() : readFileSync(path, ...rest)) } });
+        const r = runIndex(dir, { deps: { readFile: (path, ...rest) => (path === keptAt(dir, READER) ? refusePutBack('open')() : readFileSync(path, ...rest)) } });
         assert.equal(r.token, 'failed', name);
-        assert.equal(r.lines[0], `wrong-node-kind — scripts/${name}: exists but is a directory — the project's hook loads it, so nothing was read or written; resolve it by hand and re-run`);
+        assert.equal(r.lines[0], `wrong-node-kind — scripts/agent-workflow/${name}: exists but is a directory — the project's hook loads it, so nothing was read or written; resolve it by hand and re-run`);
         assert.deepEqual(snapshotFiles(dir), before, name);
       });
     }
   });
+});
+
+// The kit folder (docs-navigator revision 6): the bundled generator in the kit's docs-size module, and the modules the
+// project's hook loads at their deployed paths, read from the KIT mirror's manifest inside each cell.
+const KIT_GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'docs-size', 'check-docs-size.mjs');
+const KF = 'scripts/agent-workflow';
+const KEPT_PROBE = ['scripts', 'agent-workflow', 'docs-size', 'check-docs-size.mjs'];
+const TODAYS_REGENERATED = 'docs/ai/index.md: written from the source frontmatter — the navigator is in sync again';
+const kb = (p) => readFileSync(join(KIT_ROOT, 'references', 'scripts', ...p.split('/')));
+const IMPORT = /(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g;
+// The docs-size and spec-schema modules' deployed files and the shared files the checker reaches through its imports.
+const hookModules = async () => {
+  const { readFamily } = await import('../references/scripts/family.mjs');
+  const deployed = readFamily(join(KIT_ROOT, 'references', 'scripts')).filter((e) => e.role === 'deployed');
+  const all = deployed.map((e) => e.path);
+  const reached = new Set(deployed.filter((e) => e.module === 'docs-size').map((e) => e.path));
+  for (const p of reached) for (const [, spec] of kb(p).toString('utf8').matchAll(IMPORT)) if (all.includes(posix.join(posix.dirname(p), spec))) reached.add(posix.join(posix.dirname(p), spec));
+  const modules = deployed.filter((e) => e.module === 'docs-size' || e.module === 'spec-schema' || (e.module === 'shared' && reached.has(e.path))).map((e) => e.path);
+  assert.ok(modules.some((p) => p.startsWith('shared/')), 'the checker loads shared files');
+  return modules;
+};
+const KEPT_MODULES = await hookModules();
+const withKitKept = (modules, setup, fn) => withDocs((dir) => {
+  for (const p of modules) {
+    mkdirSync(join(dir, KF, posix.dirname(p)), { recursive: true });
+    writeFileSync(join(dir, KF, p), kb(p));
+  }
+  writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
+  setup(dir);
+  return fn(dir);
+});
+const launchedIn = (calls, dir) => calls.filter((args) => args[0].startsWith(join(dir, 'scripts')));
+
+describe('spec:docs-navigator/S8 the index op runs the bundled generator and the kept probe at the module paths', () => {
+  it("the bundled generator runs at the kit's references/scripts/docs-size/check-docs-size.mjs", () => withDocs((dir) => {
+    const spy = spySpawn();
+    const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+    assert.deepEqual([r.token, spy.calls.length > 0, spy.calls.filter((args) => args[0] !== KIT_GENERATOR)], ['regenerated', true, []], r.lines.join('\n'));
+  }));
+  it('the docs-size, spec-schema and shared files the checker loads are classified at their deployed paths; every one current keeps today\'s path', async () => {
+    const modules = await hookModules();
+    withKitKept(modules, () => {}, (dir) => {
+      const spy = spySpawn();
+      const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+      assert.deepEqual([r.token, r.lines[0], launchedIn(spy.calls, dir)], ['regenerated', TODAYS_REGENERATED, []]);
+    });
+    for (const p of modules) {
+      withKitKept(modules, (dir) => writeFileSync(join(dir, KF, p), `${kb(p)}// mine\n`), (dir) => {
+        const r = runIndex(dir, { dryRun: true });
+        const note = r.lines.at(-1) ?? '';
+        // The modules the note lists: the judge it names is the checker's path whatever was classified.
+        const listed = note.replace(KJ, '');
+        assert.ok(note.startsWith("a module the project's hook loads (") && listed.includes(`${KF}/${p}`), `${p}\n${r.lines.join('\n')}`);
+        assert.deepEqual(modules.filter((q) => q !== p && listed.includes(`${KF}/${q}`)), [], p);
+      });
+    }
+  });
+  it('the kept probe runs at scripts/agent-workflow/docs-size/check-docs-size.mjs with --check-index, cwd the project', async () => {
+    const modules = await hookModules();
+    withKitKept(modules, (dir) => {
+      assert.equal(runIndex(dir).token, 'regenerated');
+      writeFileSync(join(dir, ...KEPT_PROBE), ACCEPTING_CHECKER);
+    }, (dir) => {
+      const calls = [];
+      const spawn = (cmd, args, options) => { calls.push([cmd, args, options?.cwd]); return spawnSync(cmd, args, options); };
+      const r = runIndex(dir, { deps: { spawnSync: spawn } });
+      assert.deepEqual([r.token, calls.filter(([, args]) => args[0].startsWith(join(dir, 'scripts')))], ['already-current', [[process.execPath, [join(dir, ...KEPT_PROBE), '--check-index'], dir]]], r.lines.join('\n'));
+      assert.equal(calls.some(([, args]) => args[0] === KIT_GENERATOR), false, 'no bundled launch');
+    });
+  });
+  it("a tree whose only checker is a flat scripts/check-docs-size.mjs keeps today's bundled path with no kept probe", () => withDocs((dir) => {
+    mkdirSync(join(dir, 'scripts'));
+    writeFileSync(join(dir, 'scripts', 'check-docs-size.mjs'), REJECTING_CHECKER);
+    writeFileSync(join(dir, 'scripts', 'spec-schema.mjs'), '// a flat reader\n');
+    const spy = spySpawn();
+    const r = runIndex(dir, { deps: { spawnSync: spy.spawnSync } });
+    assert.deepEqual([r.token, r.lines[0], launchedIn(spy.calls, dir)], ['regenerated', TODAYS_REGENERATED, []], r.lines.join('\n'));
+    assert.deepEqual(spy.calls.filter((args) => args[0] !== KIT_GENERATOR), [], 'every launch is the bundled generator');
+  }));
 });
 
 // The vocabulary is closed at RUNTIME, not by convention. If that door ever stopped refusing, an op

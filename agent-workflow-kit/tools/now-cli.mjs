@@ -3,7 +3,7 @@
 // facts in now-facts.mjs, the phrases in now-render.mjs.
 
 import { resolve } from 'node:path';
-import { fail } from '../references/scripts/markdown-blocks.mjs';
+import { fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { FORMATS, detectSurface } from './surface.mjs';
 import { gatherNowFacts } from './now-facts.mjs';

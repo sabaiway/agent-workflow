@@ -10,7 +10,7 @@ const REPO_ROOT = resolve(HERE, '..', '..');
 // Dynamic import: the suite LOADS without the probe (red-proof observes it failing pre-fix).
 const probe = await import('./specs-scale-probe.mjs').catch(() => ({}));
 const { planTree, buildTree, runProbe, main, FAN_OUT, STORE_REL } = probe;
-const { readSpecDocument } = await import(join(REPO_ROOT, 'agent-workflow-memory/references/scripts/spec-schema.mjs'));
+const { readSpecDocument } = await import(join(REPO_ROOT, 'agent-workflow-memory/references/scripts/spec-schema/index.mjs'));
 
 const made = [];
 const mkTemp = () => {
