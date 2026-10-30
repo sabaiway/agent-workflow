@@ -752,11 +752,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   writer re-checking the node after EEXIST (`atomic-write.mjs`); no write decision changes. Named by the
   DISTRIBUTION-FILES-STAY-CURRENT S3 plan; S14 moved the specs op's re-read here when it took the scripts op's rule.
 - **FOREIGN-SPECS-NAME-THE-RETIRED-REPLACE-STEP** — invariant: no live spec sentence names a retired module or step.
-  Origin: `docs/ai/specs/kit/repo-search.md:27` says the kept-aside writer imports `RESERVED_DIR`, and
-  `docs/ai/specs/memory/standalone-scripts.md:118` names the composition root's "one yes", both retired by story S14
-  of DISTRIBUTION-FILES-STAY-CURRENT (`kept-aside.mjs` deleted, no upgrade yes for a kit file). Narrow fix: each
-  owning spec's next revision drops the clause. Residual, not live: no code or shipped text follows either sentence.
-  Named by the DISTRIBUTION-FILES-STAY-CURRENT S14 plan.
+  Origin: `docs/ai/specs/kit/repo-search.md:27` says the kept-aside writer imports `RESERVED_DIR`, retired by story
+  S14 of DISTRIBUTION-FILES-STAY-CURRENT (`kept-aside.mjs` deleted). Narrow fix: the owning spec's next revision drops
+  the clause. Residual, not live: no code or shipped text follows the sentence. Named by the
+  DISTRIBUTION-FILES-STAY-CURRENT S14 plan; standalone-scripts revision 2 (KIT-SCRIPTS S5) dropped its clause.
 - **SPECS-WRITE-LOOP-REPEATS-THE-SCRIPTS-LOOP** — invariant: one write loop and one partial note serve both ops that
   write kit files by the one rule. Origin: `agent-workflow-kit/tools/ensure-specs.mjs:78` (`partialNote`) and `:93`
   (`writeAll`) repeat `agent-workflow-kit/tools/distribution-files/scripts.mjs:94` and `:100` but for the store root's
@@ -1312,3 +1311,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   with its reason and the host refresh; at kit 20.0.0 the host 19.5.0 rules check refused the moved record (`theme
   communication is not in the registry`) until the work-tree kit was installed on the host before the commit, the
   maintainer's choice. Raised by the S10-S12 release of EVERY-PROJECT-IS-LAID-OUT-BY-MEANING.
+- **STANDALONE-HOOK-LINE-SKIPS-A-LINKED-HOOK** — invariant: after memory's standalone move removes the flat files, every
+  managed hook that still names them gets a line naming the switch. Origin: the lens, round 1 of the KIT-SCRIPTS S5 spec
+  review: spec standalone-scripts' hook line prints nothing for a symlinked or unreadable `pre-commit`, while the
+  installer reads through links and treats such a hook as managed
+  (`agent-workflow-memory/references/scripts/git-hooks/install-git-hooks.mjs:186-188`; the kit's `unreadable` state at
+  `agent-workflow-kit/tools/git-hooks.mjs:105-111`). Narrow fix: a link or an unreadable hook is named with the switch
+  command as the user's to check. Residual exposure, NOT live: unreleased, and memory's installer writes a regular hook.

@@ -95,8 +95,6 @@ const EXCLUSIONS = Object.freeze([
   { at: 'agent-workflow-kit/migrations/', whole: true, reason: HISTORY, owner: 'the kit release history' },
   { at: 'agent-workflow-memory/CHANGELOG.md', whole: true, reason: HISTORY, owner: 'the memory release history' },
   { at: 'agent-workflow-memory/migrations/', whole: true, reason: HISTORY, owner: 'the memory release history' },
-  { at: 'agent-workflow-memory/SKILL.md', whole: true, reason: 'its readers are story S5\'s', owner: S7 },
-  { at: 'agent-workflow-memory/references/contracts.md', whole: true, reason: 'its readers are story S4\'s', owner: S7 },
   { at: 'agent-workflow-kit/references/shared/deploy-tail.md', whole: true, reason: 'its readers are story S4\'s', owner: S7 },
   { at: 'agent-workflow-kit/references/modes/bootstrap.md', paths: ['scripts/<x>.mjs'], reason: 'its readers are story S4\'s', owner: S7 },
   { at: 'agent-workflow-kit/references/contracts.md', owner: S7,

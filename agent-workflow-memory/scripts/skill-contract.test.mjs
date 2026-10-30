@@ -29,99 +29,87 @@ function has(text, tokens, name) {
 }
 
 const UPGRADE = region(SKILL, '### Mode: upgrade', '## Version disclosure', 'upgrade section');
-const scriptEnsure = () => flat(region(UPGRADE, 'ensure the SCRIPTS', 'ensure the ADR-store enforcement pair', 'script ensure'));
-const pairEnsure = () => flat(region(UPGRADE, 'ensure the ADR-store enforcement pair', 'ensure the SPEC LAYER', 'ADR pair ensure'));
-const specEnsure = () => flat(region(UPGRADE, 'ensure the SPEC LAYER', 'ensure the NAVIGATOR', 'spec-layer ensure'));
+const KIT_FOLDER_COMMAND = 'node ${CLAUDE_SKILL_DIR}/scripts/kit-folder.mjs --project <target>';
+const stepTwo = () => flat(region(UPGRADE, 'ensure the THREE seeded', 'ensure the NAVIGATOR', 'step 2'));
+const equalHeadReport = () => flat(region(UPGRADE, '**Then**, if the stamp **equals** the head', '3. Show the relevant', 'equal-head report'));
+const restampReport = () => flat(region(UPGRADE, '7. **Re-stamp**', undefined, 'step 7'));
 
 describe('SKILL.md and contracts.md — the standalone upgrade keeps the deployed scripts current', () => {
-  it('spec:standalone-scripts/S1 the script ensure, its survey and its component', () => {
+  it('spec:standalone-scripts/S1 step 2 relays the script between the configs and store root, delegated to the composition root', () => {
     const at = (anchor) => UPGRADE.indexOf(anchor);
-    const order = ['ensure the THREE seeded', 'ensure the SCRIPTS', 'ensure the ADR-store enforcement pair', 'ensure the SPEC LAYER'].map(at);
-    assert.ok(order.every((x, i) => x !== -1 && (i === 0 || order[i - 1] < x)), 'three-config ensure < script ensure < ADR pair ensure < spec layer');
-    const scripts = scriptEnsure();
-    has(scripts, [
-      'every `*.mjs` of `${CLAUDE_SKILL_DIR}/references/scripts/`',
-      '`_expect-shim.mjs` included',
-      '`archive-decisions.mjs`', '`archive-decisions.test.mjs`', '`spec-schema.mjs`', '`spec-schema.test.mjs`',
-      '`markdown-blocks.mjs`', '`_expect-shim.mjs`',
-      '`ls -ld scripts`', 'no trailing slash', 'non-following', 'never a test that follows a link', 'ENOENT',
-      'any other failed probe is named with its error, nothing is written and the reconcile STOPs',
-      '`cmp`',
-      'holding any node other than a regular file',
-      'this ensure writes nothing, and the reconcile STOPs', 'An absent `scripts` holds no bundled name: the component is not accepted and this ensure writes nothing',
-      'judged once',
-      'accepted when a bundled name outside the seed names stands in `scripts/` as any node',
-      'owns every bundled name, standing or absent, and the pair ensures copy nothing',
-      'writes every standing bundled name and every bundled module a standing one imports, and places nothing else',
-      'does not run and judges no component',
-    ], 'script ensure');
-    assert.doesNotMatch(scripts, /\bkit\b/i, 'script ensure: names no kit');
-    assert.doesNotMatch(scripts, /catalog/i, 'script ensure: names no catalog');
+    const order = ['ensure the THREE seeded', KIT_FOLDER_COMMAND, 'docs/ai/specs/index.md', 'ensure the NAVIGATOR'].map(at);
+    assert.ok(order.every((value, index) => value !== -1 && (index === 0 || order[index - 1] < value)), 'three-config ensure < script < store-root seed < NAVIGATOR');
+    const steps = stepTwo();
+    has(steps, [KIT_FOLDER_COMMAND, 'relay every line', 'STOP', 'non-zero exit', "composition root's upgrade owns", 'kit folder'], 'step 2');
+    assert.match(steps, /delegated mode.{0,100}script does not run/i, 'delegated mode skips the script');
+    assert.match(steps, /STOP.{0,60}non-zero exit|non-zero exit.{0,60}STOP/, 'a failed script stops the upgrade');
+    for (const retired of ['ls -ld', 'cmp', 'references/scripts/*']) assert.equal(count(steps, retired), 0, `step 2 still names ${retired}`);
     const stepFive = flat(region(UPGRADE, '5. Reconcile drift', '6. **Never regenerate', 'step 5'));
     has(stepFive, ['never a file of `references/scripts/`'], 'step 5');
   });
 
-  it('spec:standalone-scripts/S2 the write asks no question and keeps no copy', () => {
-    const scripts = scriptEnsure();
-    has(scripts, [
-      'with no question', 'no preview and no yes precede it', 'no copy of an overwritten file is kept',
-      'overwritten in place', 'create-only',
-      'each written file is compared with `cmp` to the bundled body',
-      'names every file already written', 'rolls nothing back',
-      'never that the user edited it',
-    ], 'script write');
-    const first = scripts.indexOf('`install-git-hooks.mjs` first');
-    const suite = scripts.indexOf('`install-git-hooks.test.mjs`', first);
-    const repoExec = scripts.indexOf('`install-git-hooks-repo-exec.test.mjs`', suite);
-    const rest = scripts.indexOf('every other file by name', repoExec);
-    assert.ok(first !== -1 && suite > first && repoExec > suite && rest > repoExec, 'installer, its two suites, then every other file by name');
-    assert.doesNotMatch(scripts, /kept[- ]aside/i, 'script write: no kept-aside path');
+  it('spec:standalone-scripts/S2 bootstrap previews enforcement, applies on yes and switches the hook through run.mjs', () => {
+    const steps = flat(region(SKILL, '8. **Offer enforcement', '10. **', 'bootstrap steps 8-9'));
+    const preview = [...steps.matchAll(/`([^`]+)`/g)].map((match) => match[1])
+      .find((command) => command.startsWith(KIT_FOLDER_COMMAND) && command.includes('--dry-run') && command.includes('--enforcement'));
+    assert.ok(preview, 'step 8 previews the script with --dry-run and --enforcement');
+    has(steps, ['same line', 'without `--dry-run`', 'hidden', 'relay', 'commit-together line', 'non-zero exit', 'named', 'continues as on a no'], 'bootstrap steps 8-9');
+    assert.match(steps, /each file.{0,80}write over/, 'preview names every overwritten file');
+    assert.match(steps, /hidden.{0,180}(?:but|except|no).{0,40}commit-together line/i, 'hidden deployment suppresses the commit line');
+    for (const token of ['preview-first', 'on a yes copy']) assert.equal(count(steps, token), 1, `bootstrap steps 8-9: ${token}`);
+    const stepNine = flat(region(SKILL, '9. **', '10. **', 'bootstrap step 9'));
+    has(stepNine, ['node scripts/agent-workflow/run.mjs install-git-hooks'], 'bootstrap step 9');
   });
 
-  it('spec:standalone-scripts/S3 the ADR store is brought current by the rotator after every run', () => {
-    const pair = pairEnsure();
-    has(pair, [
-      '`node scripts/archive-decisions.mjs --ensure-current` with no question',
-      'relay its summary line',
-      'the ADR store, current after every run',
-      '`scripts/archive-decisions.mjs` and `scripts/markdown-blocks.mjs`',
-      'regular files `cmp` finds equal to their bundled bodies',
-      'in delegated mode, also when the composition root kept them current',
-      '`brought-current`', '1: refused', '3: failed after a write',
-      'whether a re-run completes the move or the closing check failed',
-      'STOPs, every written script kept and nothing put back',
-      "the composition root's upgrade owns that file",
-      'nothing of the store is touched until the first run that finds both current',
-      '`docs/ai/history/decisions-archive.md`', '`decisions-archive-early.md`', 'pending move',
-    ], 'ADR pair ensure');
+  it('spec:standalone-scripts/S3 the script owns the ADR store run and the skill relays its lines and pending move', () => {
+    const steps = stepTwo();
+    has(steps, ['ADR store: ', '--ensure-current', 'relay', 'docs/ai/history/decisions-archive.md', 'decisions-archive-early.md'], 'ADR store');
+    assert.match(steps, /pending[- ]move/, 'no Node evidence leaves a named pending move');
     const whole = flat(SKILL);
+    assert.doesNotMatch(steps, /node scripts\/(?:agent-workflow\/archives\/|archive-decisions\.mjs)/, 'step 2 runs no rotator itself');
+    assert.doesNotMatch(whole, /node scripts\/(?:agent-workflow\/archives\/|archive-decisions\.mjs)/, 'SKILL.md runs no rotator itself');
+    for (const mention of whole.matchAll(/.{0,100}--ensure-current.{0,100}/g)) {
+      assert.match(mention[0], /\bscript(?:'s)?\b/, '--ensure-current belongs to the script');
+    }
     for (const retired of ['--migrate', '--write-navigator', 'snapshot']) assert.equal(count(whole, retired), 0, `SKILL.md still names ${retired}`);
   });
 
-  it('spec:standalone-scripts/S4 the retired preserve clauses are gone and the reports name the writes', () => {
+  it('spec:standalone-scripts/S4 both reports name writes, removals, the ADR move and hook ask with wiring and grep legend', () => {
     const whole = flat(SKILL).toLowerCase();
-    for (const retired of [
-      'preserve an existing file byte-for-byte', 'never overwrites a deployed script', "composition root's own upgrade",
-      'without consent leave the tree untouched', 'remove the just-copied pair',
-    ]) assert.equal(count(whole, retired), 0, `SKILL.md still says ${retired}`);
-    const handOff = "an existing file is the script ensure's (in delegated mode, the composition root's)";
-    has(pairEnsure(), [handOff], 'ADR pair ensure');
-    has(specEnsure(), [handOff], 'spec-layer ensure');
-    const equalHead = flat(region(UPGRADE, '**Then**, if the stamp **equals** the head', '3. Show the relevant', 'equal-head report'));
+    for (const retired of ['preserve an existing file byte-for-byte', 'never overwrites a deployed script', 'migrate-gates']) {
+      assert.equal(count(whole, retired), 0, `SKILL.md still says ${retired}`);
+    }
+    const equalHead = equalHeadReport();
     assert.match(equalHead, /changed something.{0,80}what changed/i, 'equal-head report: the 80-character pin');
-    has(equalHead, ['naming each written script and the move'], 'equal-head report');
-    const restamp = flat(region(UPGRADE, '7. **Re-stamp**', undefined, 'step 7'));
-    has(restamp, ['naming each file step 2 wrote and the ADR move'], 'step 7');
-    has(scriptEnsure(), ['runs no hook installer', '`scripts/pre-commit.local` runs once the installer has run'], 'script ensure');
+    for (const [name, report] of [['equal-head report', equalHead], ['step 7', restampReport()]]) {
+      has(report, ['ADR move', 'lines after a removal', 'hook switch', 'one chat yes'], name);
+      assert.match(report, /each (?:written file|file.{0,30}(?:written|wrote))/, `${name}: every written file`);
+      assert.match(report, /each (?:removed flat file|flat file removed)/, `${name}: every removed flat file`);
+    }
+    has(flat(UPGRADE), ['`package.json`', 'documented', 'rewrites', 'wiring'], 'package wiring');
+    has(stepTwo(), [
+      'node scripts/<file>', 'node scripts/agent-workflow/run.mjs <name>', 'arguments',
+      'scripts/agent-workflow/<path>', 'suite', 'support file', 'no deployed path',
+    ], 'grep legend');
   });
 
-  it('spec:standalone-scripts/S5 the reserved names and channels, the gotcha and bootstrap step 8', () => {
+  it('spec:standalone-scripts/S5 the guide uses the kit folder unconditionally, command wiring and reserved channels', async () => {
+    const visibility = flat(region(CONTRACTS, '## Visibility contract', '## Communication contract', 'visibility'));
+    has(visibility, ['/scripts/agent-workflow/', 'whatever the enforcement answer'], 'visibility');
+    const wiring = flat(region(CONTRACTS, '- **visible**', '- **hidden**', 'visible wiring'));
+    const hook = flat(region(CONTRACTS, '- **hidden**', '**Visibility changes', 'hidden hook'));
+    for (const [name, text] of [['wiring', wiring], ['hook', hook]]) has(text, ['node scripts/agent-workflow/run.mjs'], name);
+    assert.doesNotMatch(visibility, /\/scripts\/\*\.mjs/, 'visibility names no flat ignore line');
+    const { FLAT_NAMES } = await import('./flat-scripts.mjs').catch(() => ({}));
+    assert.ok(Array.isArray(FLAT_NAMES), 'flat-scripts.mjs exports FLAT_NAMES');
+    for (const name of FLAT_NAMES) assert.ok(!visibility.includes(`scripts/${name}`), `visibility still names flat path ${name}`);
+    assert.doesNotMatch(visibility, /node scripts\/<[^>]+>/, 'the hook uses the kit command');
     const opening = flat(CONTRACTS.slice(0, CONTRACTS.indexOf('\n---')));
     assert.ok(opening.includes('Reserved names and channels'), 'contracts.md: the opening paragraph names the section');
     assert.equal(count(CONTRACTS, '## Reserved names and channels'), 1, 'contracts.md: one section heading');
     const reserved = flat(region(CONTRACTS, '## Reserved names and channels', undefined, 'reserved section'));
     has(reserved, [
-      'never a customization', 'the next upgrade overwrites it',
+      '`scripts/agent-workflow/`', 'never a customization', 'the next upgrade overwrites it',
       '`scripts/pre-commit.local`', 'under names of your own', 'a config a script reads',
       '`.agent-workflow/` is reserved', 'the substrate writes nothing there',
       'never writes `scripts/pre-commit.local` or a script of your own',
@@ -135,11 +123,24 @@ describe('SKILL.md and contracts.md — the standalone upgrade keeps the deploye
       .find((bullet) => bullet.startsWith('[`references/contracts.md`]'));
     assert.ok(contractsRef, 'References: the contracts.md line');
     has(flat(contractsRef), ['reserved names and channels'], 'References');
-    const steps = flat(region(SKILL, '8. **Offer enforcement', '10. **', 'bootstrap steps 8-9'));
+  });
+
+  it('spec:standalone-scripts/S15 residual reports relay the lines, switch only on its line and retain the hand route', async () => {
+    const report = equalHeadReport();
+    has(report, ['nothing changed', 'switch line', 'skip', 'pending-move', 'kept', 'flat path', 'relay'], 'residual report');
+    assert.match(report, /not[- ]the[- ]kit's/, "residual report: the not-the-kit's line");
+    assert.match(report, /never.{0,100}nothing changed|nothing changed.{0,100}never/, 'residuals are never a no-op');
+    assert.match(report, /ask.{0,60}(?:only (?:with|when)|when).{0,60}switch line/, 'asks the switch only with its line');
+    const steps = stepTwo();
     has(steps, [
-      'each file already standing in `scripts/` at a bundled name', 'with no copy of it kept', 'created when absent',
-      'a link, dangling or not, or a file', 'holding any node other than a regular file',
-      'nothing is copied', 'continues as on a no',
-    ], 'bootstrap steps 8-9');
+      'scripts/*.test.mjs', 'outside `FLAT_NAMES`', 'flat suite', "not the kit's", 'node --test scripts/<file>',
+      'scripts/pre-commit.local', 'git grep -n -F --untracked', "':!scripts/agent-workflow'",
+      '${CLAUDE_SKILL_DIR}/scripts/flat-scripts.mjs', 'FLAT_NAMES',
+      'visible', 'scripts/agent-workflow/', 'package.json', 'removed', 'one change', 'merge', 'branch',
+    ], 'hand route');
+    const { FLAT_NAMES } = await import('./flat-scripts.mjs').catch(() => ({}));
+    assert.ok(Array.isArray(FLAT_NAMES), 'flat-scripts.mjs exports FLAT_NAMES');
+    const outsideKitPaths = steps.replace(/scripts\/agent-workflow\/[^\s`'"]*/g, '');
+    for (const name of FLAT_NAMES) assert.ok(!outsideKitPaths.includes(name), `hand route copies flat name ${name}`);
   });
 });

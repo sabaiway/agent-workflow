@@ -151,6 +151,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
       'capability.json',
       'SKILL.md',
       'scripts/stamp-takeover.mjs',
+      'scripts/kit-folder.mjs',
+      'scripts/flat-scripts.mjs',
       'references/templates/gates.json',
       'references/templates/adr-record.md',
       'references/templates/adr/log.md',
@@ -213,6 +215,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      skill-home entries of its manifest (story S2 of KIT-SCRIPTS: no suite, no support file).
     // 53 = 51 + references/scripts/run.mjs (the stable kit command, deployed) and
     //      references/scripts/gates/kit-command-gates.mjs (skill-home) — story S3 of KIT-SCRIPTS.
-    assert.equal(packed.length, 53, `tarball file count drifted (${packed.length} ≠ 53)`);
+    // 55 = 53 + scripts/kit-folder.mjs and scripts/flat-scripts.mjs (memory's standalone move, skill-home
+    //      tooling; their suites do not ship) — story S5 of KIT-SCRIPTS.
+    assert.equal(packed.length, 55, `tarball file count drifted (${packed.length} ≠ 55)`);
   });
 });
