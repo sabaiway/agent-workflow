@@ -47,7 +47,8 @@ the canonical methodology reference on disk:
   the frozen schema (kinds, statuses, forward-only transitions, the numeric promotion
   threshold, the scenario-binding grammar, the refusal table), governing specs cited per plan, the
   feature-vs-page precedence table, spec-driven feature-sliced architecture, and the retroactive
-  onboarding path. The deployed reader `scripts/spec-schema.mjs` (memory) is pinned against it.
+  onboarding path. The deployed reader `scripts/agent-workflow/spec-schema/spec-schema.mjs` (memory) is
+  pinned against it.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded**
   methodology fragment the composition root reads into a deployed `AGENTS.md` (a short summary that
   routes to the full reference).

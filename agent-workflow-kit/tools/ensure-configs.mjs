@@ -6,13 +6,13 @@
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
 //   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
-//   scripts        scripts/<every kit script>  once a kit script outside the seed names stands there, every file not current
+//   specs          scripts/<spec layer>        reader + checker pairs and run.mjs, with no question and no copy kept:
+//                  + docs/ai/specs/index.md    a shipped prior refreshed, an edited one replaced, an absent
+//                                              one placed; then the store root seeded create-only
+//   scripts        scripts/<every kit script>  once a kit script outside the seed names, or the old flat installer, stands there, every file not current
 //                  + the installer set         written with no question and no copy kept; installer set first; on a
 //                                              declined offer only the standing seed files and the modules they import;
 //                                              then the project's rotator brings the ADR store current (--ensure-current)
-//   specs          scripts/<spec layer>        reader + checker pairs, with no question and no copy kept:
-//                  + docs/ai/specs/index.md    a shipped prior refreshed, an edited one replaced, an absent
-//                                              one placed; then the store root seeded create-only
 //   rules          docs/ai/rules/<theme>.md    the kit file seeded, refreshed on a shipped prior body, or any
 //                  + effective/ + sources.json other body replaced, with no question and no copy kept; with no
 //                                              local file the effective copy and its record rebuilt; with one
@@ -20,10 +20,6 @@
 //   index          docs/ai/index.md            regenerate-if-missing-or-stale (a GENERATED artifact); under
 //                                              a project hook module that is not the bundled one, a write
 //                                              the project's own checker rejects is put back
-//
-// Each was prose in references/modes/upgrade.md that an agent performed by hand. One command instead
-// of one per ensure is deliberate: independent runs would be as many chances to skip one, and the mode
-// doc now has a single invocation point whose outcome lines it relays.
 //
 // The contract (pinned by this module's tests):
 //   • --reconcile is REQUIRED. A bare run is a usage error, so nothing writes by accident.
@@ -33,9 +29,7 @@
 //   • The deployment gate runs ONCE, before any op: an absent/symlinked docs/ai stops the whole run
 //     with the gate's own message rather than one copy of it per op.
 //
-// Output is ENGLISH/structured (repo-artifact Hard Constraint); the agent localizes when narrating.
 // Exit codes: 0 every op fine · 1 an op failed, or the deployment gate stopped the run · 2 usage.
-// main(argv, ctx) → { code, stdout, stderr }; cwd + fs are injectable for host-independent tests.
 //
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
@@ -82,7 +76,7 @@ refreshed in place. Four ops refresh instead: the orchestration onboarding note,
 note with no question and no copy kept, every recipe kept (a differing note's line names where a note of your
 own goes); the spec-layer reader and checker pairs, with no question and no copy kept: a body a release shipped
 is refreshed, an edited one replaced (its line names where an edit meant to last goes) and an absent one placed,
-the reader pair, then the checker pair, then the spec store root seeded create-only; the project rules
+the reader pair, then the checker pair, then run.mjs, then the spec store root seeded create-only; the project rules
 kit file, refreshed while its bytes are a body a release shipped and any other body replaced by the template,
 with no question and no copy kept, the effective file rebuilt as its copy and recorded where no local file
 exists; and the navigator index — a GENERATED artifact, regenerated
@@ -91,13 +85,13 @@ the project's own checker judges the navigator and a write it rejects is put bac
 The executor ensure writes nothing: a placed .claude/agents/executor.md whose bytes differ from the
 body derived from docs/ai/vehicles.json is pending and an absent one is not placed here — the
 advisor's agents item writes the derived body.
-A fifth writes too: once a kit script outside the seed names stands in scripts/, the enforcement-script
-ensure writes every kit script that is not the bundled body, the hook installer and its two suites
-first, with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced
-(its line names where an edit meant to last goes) and an absent one placed; on a project that
-declined the enforcement offer, its standing seed files are kept current the same way, with an
-absent module they import placed, and no other kit script is placed; after the writes the project's
-scripts/archive-decisions.mjs --ensure-current brings the ADR store current, an older layout moved.
+A fifth writes too: once a kit script outside the seed names stands in scripts/agent-workflow/, or the hook installer under its old
+flat name in scripts/, the enforcement-script ensure writes every kit script that is not the bundled body, the hook installer first,
+with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced (its line names where an edit meant
+to last goes) and an absent one placed; on a project that declined the enforcement offer, its standing seed files are kept current
+the same way, with an absent module they import placed, and no other kit script is placed; after the writes the project's
+scripts/agent-workflow/archives/archive-decisions.mjs --ensure-current brings the ADR store current, an older layout moved; last, unless the run
+failed, and only while scripts/agent-workflow/run.mjs stands, each of the kit's old flat files in scripts/ is removed when its replacement stands or it has none (a dry run removes nothing).
 
 Exit codes: 0 every op fine; 1 an op failed (its line says so) or there is no deployment here; 2 usage.`;
 
@@ -151,8 +145,14 @@ const runOne = (op, args) => {
 // Run every op in ENSURE_OPS order. A throw from one op becomes THAT op's failed outcome — the
 // remaining ops still run, because a project missing its gate declaration should not also be left
 // without its autonomy seed just because the first ensure hit an unreadable file. → the outcomes.
-export const runEnsures = ({ cwd, kitRoot, dryRun, deps, only }) =>
-  (only ? [only] : ENSURE_OPS).map((op) => runOne(op, { cwd, kitRoot, dryRun, deps }));
+export const runEnsures = ({ cwd, kitRoot, dryRun, deps, only }) => {
+  const outcomes = [];
+  for (const op of only ? [only] : ENSURE_OPS) {
+    const specs = outcomes.find((result) => result.op === 'specs' && !result.failed);
+    outcomes.push(runOne(op, { cwd, kitRoot, dryRun, deps, placedScripts: op === 'scripts' ? specs?.placedScripts ?? [] : [] }));
+  }
+  return outcomes;
+};
 
 const render = (outcomes, { dryRun, only }) => {
   // The banner names the tool + the flag it ran under (both machine tokens the L2 rule exempts);

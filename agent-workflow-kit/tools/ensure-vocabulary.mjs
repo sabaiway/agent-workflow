@@ -8,13 +8,13 @@
 // read-only tool's import graph. Vocabulary here, behaviour in ensure-ops.mjs.
 
 // The FIXED order the CLI runs them in — the order references/modes/upgrade.md already prescribed.
-// `specs` sits after `scripts` (its reader pair is a scripts/ seed too) and BEFORE `index`: the store
-// root it seeds is a docs/ai file the navigator must count. `specs` writes its pairs and `scripts`
-// every kit script with no question and no copy kept, and `scripts` then
+// `specs` sits before `scripts`, so its pairs, their imports and the command run.mjs stand before `scripts`
+// removes the old flat files, and before `index`, whose navigator counts the store root it seeds. `specs` and
+// `scripts` write with no question and no copy kept, and `scripts` then
 // runs the project's rotator (`--ensure-current`), which brings the ADR store current.
 // `executor` follows `vehicles`: its body is derived from the settings file that op seeds.
 // `rules` follows `specs` and precedes `index`: the rules files it lays are docs/ai files the navigator counts.
-export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index']);
+export const ENSURE_OPS = Object.freeze(['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'specs', 'scripts', 'rules', 'index']);
 
 // Tokens that assert a WRITE happened. --dry-run may never emit one of these (the CLI's contract test
 // walks this set), and each has exactly one `would-` counterpart below. `refreshed` is the spec-layer

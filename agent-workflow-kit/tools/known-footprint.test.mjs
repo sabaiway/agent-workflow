@@ -137,37 +137,12 @@ describe('frozen snapshot', () => {
       '/CLAUDE.md',
       '/docs/ai/',
       '/scripts/agent-workflow/',
-      '/scripts/_expect-shim.mjs',
-      '/scripts/archive-caps.mjs',
-      '/scripts/archive-caps.test.mjs',
-      '/scripts/archive-changelog.mjs',
-      '/scripts/archive-changelog.test.mjs',
-      '/scripts/archive-conservation.test.mjs',
-      '/scripts/archive-decisions.mjs',
-      '/scripts/archive-decisions.test.mjs',
-      '/scripts/archive-issues.mjs',
-      '/scripts/archive-issues.test.mjs',
-      '/scripts/archiver-structure.test.mjs',
-      '/scripts/check-docs-size-cli.test.mjs',
-      '/scripts/check-docs-size-ensure.test.mjs',
-      '/scripts/check-docs-size.mjs',
-      '/scripts/check-docs-size.test.mjs',
-      '/scripts/install-git-hooks-repo-exec.test.mjs',
-      '/scripts/install-git-hooks.mjs',
-      '/scripts/install-git-hooks.test.mjs',
-      '/scripts/markdown-blocks.mjs',
-      '/scripts/markdown-blocks.test.mjs',
-      '/scripts/migrate-gates-branches.test.mjs',
-      '/scripts/migrate-gates.mjs',
-      '/scripts/migrate-gates.test.mjs',
-      '/scripts/spec-schema.mjs',
-      '/scripts/spec-schema.test.mjs',
       '/docs/plans/',
       '/.claude/settings.local.json',
       '/.claude/settings.json',
       '/.mcp.json',
     ];
-    assert.equal(KIT_OWN_PATHS.length, 33, 'KIT_OWN_PATHS count sentinel — edit deliberately');
+    assert.equal(KIT_OWN_PATHS.length, 8, 'KIT_OWN_PATHS count sentinel — edit deliberately');
     assert.deepEqual(KIT_OWN_PATHS, expected);
   });
 
@@ -182,12 +157,10 @@ describe('frozen snapshot', () => {
     assert.deepEqual(missing, [], 'these ship into the kit folder but hidden mode would leave them visible');
   });
 
-  // The flat payload stays registered until story S4 moves an existing flat deployment: every retired
-  // flat name keeps its own line, none of them under the kit folder.
-  it('the flat lines stay: one /scripts/<name> per retired flat name, none under the kit folder', () => {
-    const flat = KIT_OWN_PATHS.filter((path) => /^\/scripts\/[^/]+$/.test(path));
-    assert.deepEqual(flat, PRIOR_FILES.map((name) => `/scripts/${name}`));
-    assert.deepEqual(flat.filter((path) => covers(`/${KIT_SCRIPTS_DIR}/`, probeOf(path))), []);
+  it('no retired flat name is registered: the kit folder is the one directory pattern under /scripts/', () => {
+    const flat = PRIOR_FILES.map((name) => `/scripts/${name}`);
+    assert.deepEqual(KIT_OWN_PATHS.filter((path) => flat.includes(path)), []);
+    assert.deepEqual(KIT_OWN_PATHS.filter((path) => path.startsWith('/scripts/') && isDirPattern(path)), [`/${KIT_SCRIPTS_DIR}/`]);
   });
 
   it('KNOWN_FOOTPRINT matches the frozen expected pattern set + count', () => {

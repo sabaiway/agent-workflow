@@ -213,7 +213,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/project-rules/rules-ensure.mjs', 'tools/project-rules/rules-priors.mjs',
       'tools/project-rules/index.mjs',
       'references/rules/project-layout.md', 'references/rules/communication.md', 'references/rules/story-sessions.md',
-      'tools/distribution-files/index.mjs', 'tools/distribution-files/scripts.mjs',
+      'tools/distribution-files/index.mjs', 'tools/distribution-files/scripts.mjs', 'tools/distribution-files/retired.mjs',
       'tools/feedback-record.mjs', 'tools/feedback-record-cli.mjs',
       // the coverage requirement — no work without a specification. By NAME because a project
       // declares the CLI path as a gate command, so a payload drop hands a deployed project a gate
@@ -902,8 +902,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 384 = 386 - tools/{lens-region,rules-regions,rules-insert}.mjs and tools/project-rules/memory-map-row.mjs + references/rules/{communication,story-sessions}.md - story S1 of KIT-TEXT-LIVES-IN-KIT-FILES-AND-ONE-BLOCK; 386 = 384 + tools/transition/index.mjs and migrations/5.0.0-kit-text-in-kit-files.md - story S2 of it
     // 376 = 386 - the 25 flat references/scripts/ files + family.json and the 14 deployed and skill-home entries of its manifest - story S2 of KIT-SCRIPTS
     // 378 = 376 + references/scripts/run.mjs (the stable kit command) and references/scripts/gates/kit-command-gates.mjs - story S3 of KIT-SCRIPTS
+    // 379 = 378 + tools/distribution-files/retired.mjs (the flat-file removal) - story S4 of KIT-SCRIPTS
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [378, []], `tarball file count drifted (${packed.length}\u2260 378), or a retired leaf ships`);
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [379, []], `tarball file count drifted (${packed.length}\u2260 379), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

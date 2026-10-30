@@ -68,8 +68,8 @@ const writeOrder = (paths) => { const left = new Set(paths), out = []; while (le
 const kitFamily = async () => {
   const { readFamily } = await import('../../references/scripts/family.mjs');
   const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed');
-  const own = deployed.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size');
-  const F = { family: own.map((e) => e.path), seeds: own.filter((e) => e.seed).map((e) => e.path), pairs: deployed.filter((e) => !own.includes(e)).map((e) => e.path), shared: own.filter((e) => e.module === 'shared').map((e) => e.path) };
+  const own = deployed.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.path !== 'run.mjs');
+  const F = { family: own.map((e) => e.path), seeds: own.filter((e) => e.seed).map((e) => e.path), pairs: deployed.filter((e) => ['spec-schema', 'docs-size'].includes(e.module)).map((e) => e.path), shared: own.filter((e) => e.module === 'shared').map((e) => e.path) };
   assert.deepEqual([INSTALLER, ROTK, ISSUES].filter((p) => !F.family.includes(p)), [], 'the named files are family files');
   return F;
 };
@@ -97,7 +97,7 @@ const fakeSpawn = (answer = {}, log = []) => {
   const spawn = (cmd, args, opts) => { calls.push({ cmd, args, opts }); log.push('<spawn>'); return { status: 0, signal: null, stdout: 'already-current\n', stderr: '', ...answer }; };
   return { calls, spawn };
 };
-const run = (dir, opts = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, ...opts });
+const run = (dir, opts = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, ...opts, deps: { git: () => ({ status: 128, stdout: '', stderr: '' }), ...opts.deps } });
 const tokensOf = (out) => [...out.matchAll(/^ {2}([a-z-]+): ([a-z-]+)$/gm)].map((m) => `${m[1]}: ${m[2]}`);
 
 // The real rotator: a migration snapshots into the tree's own git dir, so every such tree is git-initialised, and
@@ -266,11 +266,11 @@ describe('spec:distribution-files/S28 a rotator that does not bring the store cu
       holdsK(dir, { [INSTALLER]: kb(INSTALLER) });
     });
   });
-  it('through main: exit code 1, scripts: failed, and specs, rules and index still print their token lines', async () => withKit(await kitFamily(), { [INSTALLER]: EDIT(INSTALLER) }, (dir) => {
+  it('through main: exit code 1, scripts: failed, and rules and index still print their token lines', async () => withKit(await kitFamily(), { [INSTALLER]: EDIT(INSTALLER) }, (dir) => {
     const rotator = { status: 3, signal: null, stdout: '', stderr: 'err one\n' };
     const spawn = (cmd, args, opts) => (String(args?.[0] ?? '').endsWith(join(KF, ...ROTK.split('/'))) ? rotator : spawnSync(cmd, args, opts));
-    const { code, stdout } = main(['--reconcile', '--cwd', dir], { deps: { spawnSync: spawn } });
+    const { code, stdout } = main(['--reconcile', '--cwd', dir], { deps: { spawnSync: spawn, git: () => ({ status: 128, stdout: '', stderr: '' }) } });
     const ops = tokensOf(stdout).map((t) => t.split(':')[0]);
-    assert.deepEqual([code, tokensOf(stdout).filter((t) => t.startsWith('scripts:')), ops.slice(ops.indexOf('scripts') + 1)], [1, ['scripts: failed'], ['specs', 'rules', 'index']], stdout);
+    assert.deepEqual([code, tokensOf(stdout).filter((t) => t.startsWith('scripts:')), ops.slice(ops.indexOf('scripts') + 1)], [1, ['scripts: failed'], ['rules', 'index']], stdout);
   }));
 });

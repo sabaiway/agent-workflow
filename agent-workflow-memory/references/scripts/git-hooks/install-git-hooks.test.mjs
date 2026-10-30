@@ -23,7 +23,7 @@ const BACKSLASH = String.fromCharCode(92);
 const SHELL_ACTIVE = [34, 36, 96, 92, 13, 10].map((code) => String.fromCharCode(code)).filter((ch) => process.platform !== 'win32' || ch !== BACKSLASH);
 const shown = (path) => (process.platform === 'win32' ? path.replaceAll(BACKSLASH, '/') : path);
 
-const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
+const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key) && key !== 'NODE_TEST_CONTEXT'));
 const envAt = (home) => ({
   ...BASE_ENV, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@e', GIT_COMMITTER_NAME: 'p', GIT_COMMITTER_EMAIL: 'p@e',
@@ -68,6 +68,7 @@ const COMMAND = 'node scripts/agent-workflow/run.mjs';
 const COMMAND_LINES = [`${COMMAND} docs-size`, `${COMMAND} docs-size --check-index`,
   ...['changelog', 'issues', 'decisions'].map((name) => `${COMMAND} archive-${name} --check`)];
 const LOCAL_LINE = 'if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi';
+const CHECKOUT_LINE = "scripts/agent-workflow/run.mjs is not in this checkout \u2014 the kit's docs and archive checks are skipped for this commit; merge the commit that adds scripts/agent-workflow/, or run the kit's upgrade in this checkout";
 // The plain hook every write carries: the shebang, the name-free marker and `# ` header lines up to set -e (their
 // wording is free, so they are read from the written hook); right after set -e one `# ` comment naming
 // scripts/pre-commit.local (read the same way) and the exact local line; then the docs and archive lines through the
@@ -82,8 +83,9 @@ const localHook = (root) => {
   const comment = lines[at + 1];
   assert.ok(comment?.startsWith('# ') && comment.includes('scripts/pre-commit.local'), `right after set -e a # comment names scripts/pre-commit.local, got ${JSON.stringify(comment)}`);
   assert.deepEqual(lines.filter((l) => l.includes('scripts/pre-commit.local')), [comment, LOCAL_LINE], 'the comment and the local line are the only lines naming scripts/pre-commit.local');
-  assert.deepEqual(lines.slice(at + 3, at + 3 + COMMAND_LINES.length), COMMAND_LINES, 'the docs and archive lines through the kit command follow the local line');
-  return [...header, 'set -e', comment, LOCAL_LINE, ...COMMAND_LINES, ''].join('\n');
+  assert.deepEqual(lines.slice(at + 3).filter((l) => l.startsWith(COMMAND)), COMMAND_LINES, 'the docs and archive lines through the kit command follow the local line');
+  const roleAt = lines.findIndex((l) => l.startsWith('node "'));
+  return lines.slice(0, roleAt < 0 ? -1 : roleAt).join('\n') + '\n';
 };
 // A claim that the hook or the installer runs the scripts' own tests.
 const scriptTestsClaim = (text) => text.replace(/\s+/g, ' ').match(/scripts\/?`?\s+tests?\b|regressions to the scripts/i)?.[0] ?? null;
@@ -150,19 +152,40 @@ describe('spec:script-family/S9 install-git-hooks — run from the kit folder: t
 const wordsOf = (lines) => lines.map((l) => l.replace(/^(\/\/|#) ?/, '')).join(' ');
 
 describe('spec:kit-command/S5 install-git-hooks — the hook names only the stable kit command', () => {
-  it('the five command lines in order between the local line and the role and guard lines, none naming a module path, each name a KIT_COMMANDS key', async () => {
+  it('the five command lines follow the checkout test after the local line and before the role and guard lines, none naming a module path, each name a KIT_COMMANDS key', async () => {
     const { KIT_COMMANDS } = await import('../run.mjs');
     inProject(({ root }) => {
       const [rules, guard] = ['tools/rules-cli.mjs', 'guard.mjs'].map((rel) => stub(root, rel));
       installs(root, ['--rules-check', rules, '--commit-guard', guard]);
       const lines = readHook(root).split('\n');
-      assert.deepEqual(lines.slice(lines.indexOf(LOCAL_LINE) + 1).join('\n'), [...COMMAND_LINES, ''].join('\n') + line(rules, 'rules-check') + line(guard));
+      assert.deepEqual(lines.filter((l) => l.startsWith('node ')), [...COMMAND_LINES, line(rules, 'rules-check').trimEnd(), line(guard).trimEnd()]);
+      assert.ok(lines.indexOf(LOCAL_LINE) < lines.indexOf(COMMAND_LINES[0]));
+      assert.ok(lines.slice(lines.indexOf(LOCAL_LINE) + 1, lines.indexOf(COMMAND_LINES[0])).some((l) => l.includes('scripts/agent-workflow/run.mjs') && !/^\s*node\b/.test(l)), 'the checkout test names only the command path before the five kit lines');
       assert.deepEqual(lines.filter((l) => /scripts\/agent-workflow\/(docs-size|archives)\//.test(l)), [], 'no line names a module path of docs-size or archives');
       const names = lines.flatMap((l) => l.match(/^node scripts\/agent-workflow\/run\.mjs (\S+)/)?.slice(1) ?? []);
       assert.deepEqual(names, ['docs-size', 'docs-size', 'archive-changelog', 'archive-issues', 'archive-decisions']);
       assert.deepEqual(names.filter((name) => !Object.hasOwn(KIT_COMMANDS, name)), [], 'every name the lines use is a key of KIT_COMMANDS');
     })();
   });
+
+  it('without run.mjs the hook prints the checkout line, skips all five checks and runs both roles and the guard; a present failing kit command stops it', inProject(({ root }) => {
+    const record = join(root, 'hook-ran');
+    const [rules, layout, guard] = ['tools/rules-cli.mjs', 'tools/source-size-check.mjs', 'guard.mjs'].map((rel) => stub(root, rel));
+    for (const [tool, name] of [[rules, 'rules'], [layout, 'layout'], [guard, 'guard']]) writeFileSync(tool, `import { appendFileSync } from 'node:fs'; appendFileSync(${JSON.stringify(record)}, '${name}\\n');\n`);
+    installs(root, ['--rules-check', rules, '--layout-check', layout, '--commit-guard', guard]);
+    const hook = join(hooksPathOf(root), 'pre-commit');
+    const absent = spawnChecked('sh', [hook], root);
+    const ranWithoutCommand = existsSync(record) ? readFileSync(record, 'utf8') : '';
+    rmSync(record, { force: true });
+    writeFileSync(join(root, 'scripts/agent-workflow/run.mjs'), "console.log('kit-failed', ...process.argv.slice(2)); process.exit(19);\n");
+    const failing = spawnChecked('sh', [hook], root);
+    assert.equal(absent.stdout + absent.stderr, `${CHECKOUT_LINE}\n`, 'exactly the checkout line, with no missing-module error');
+    assert.equal(absent.status, 0, absent.stderr);
+    assert.equal(ranWithoutCommand, 'rules\nlayout\nguard\n', 'both role lines and the guard run after skipping the five kit checks');
+    assert.equal(failing.status, 19, failing.stderr);
+    assert.equal(failing.stdout, 'kit-failed docs-size\n', 'the first failing kit line stops the remaining checks');
+    assert.equal(existsSync(record), false, 'no role or guard runs after the failed kit line');
+  }));
 
   it('the installer\'s own header comment and the hook\'s name node scripts/agent-workflow/run.mjs install-git-hooks; the installer imports nothing', async () => {
     const { KIT_COMMANDS } = await import('../run.mjs');

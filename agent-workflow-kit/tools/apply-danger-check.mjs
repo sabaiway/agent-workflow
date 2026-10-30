@@ -243,7 +243,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
   }
   const rules = ['--rules-check', join(facts.toolsDir, 'project-rules', 'rules-cli.mjs')];
   const layout = ['--layout-check', join(facts.toolsDir, 'source-size-check.mjs')];
-  const flagSets = variant === 'hook-checks' ? [rules, layout, [...rules, ...layout]]
+  const flagSets = variant === 'hook-checks' ? [[], rules, layout, [...rules, ...layout]]
     : variant === 'commit-guard' ? [['--commit-guard', join(facts.toolsDir, 'commit-guard.mjs')]] : [[]];
   const runs = GIT_VARIANTS.includes(variant) ? flagSets.map((flags) => ['node', INSTALLER_REL, ...flags]) : [];
   return {

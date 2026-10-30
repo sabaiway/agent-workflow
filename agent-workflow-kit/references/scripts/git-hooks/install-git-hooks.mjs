@@ -161,11 +161,15 @@ ${MAGIC_MARKER}
 set -e
 # Your own commit checks go in scripts/pre-commit.local; it runs first, with bash, when present.
 if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi
+if [ -f scripts/agent-workflow/run.mjs ]; then
 node scripts/agent-workflow/run.mjs docs-size
 node scripts/agent-workflow/run.mjs docs-size --check-index
 node scripts/agent-workflow/run.mjs archive-changelog --check
 node scripts/agent-workflow/run.mjs archive-issues --check
 node scripts/agent-workflow/run.mjs archive-decisions --check
+else
+  echo "scripts/agent-workflow/run.mjs is not in this checkout — the kit's docs and archive checks are skipped for this commit; merge the commit that adds scripts/agent-workflow/, or run the kit's upgrade in this checkout"
+fi
 ${rolePaths.map((path, at) => (path ? `node "${path}" --check # ${ROLES[at].role}\n` : '')).join('')}${guardPath ? `node "${guardPath}" --check\n` : ''}`;
 
 const main = async () => {

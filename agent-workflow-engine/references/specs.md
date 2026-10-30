@@ -19,7 +19,7 @@ machinery. **No new blocking checkpoints**: statuses are lifecycle markers, neve
   indexes) generated from the store, so adding or removing a valid spec changes the navigator and the
   freshness gate sees it. A file the reader refuses keeps its own visible navigator row — never
   swallowed by the aggregate.
-- "Well-formed" has ONE definition: the deployed reader `scripts/spec-schema.mjs`
+- "Well-formed" has ONE definition: the deployed reader `scripts/agent-workflow/spec-schema/spec-schema.mjs`
   (`readSpecDocument(text, rel)`), read through by the navigator collapse and by the structural
   checker alike. It is pure text — it imports nothing, opens no file, and models no markdown code
   (a fence line refuses; a spec carries no code sample, so no line is ever ambiguous); an inline

@@ -43,39 +43,14 @@ export const stop = (message, fields = {}) =>
 // follow-up-reconcile gap this entry closes. Never provisioned into a worktree (worktrees.mjs). `/docs/plans/` + both `.claude/settings*.json` are listed because a pure
 // hidden deploy has no tracked `.gitignore`; the classifier drops any candidate a tracked `.gitignore`
 // already covers, so in a repo that DOES track those ignores they are never re-written.
-// The kit folder is the kit's whole, so one directory pattern covers every file placed in it; the
-// flat names stay enumerated until an existing flat deployment moves (story S4): a name missing here
-// is a file a hidden deployment leaves visible in `git status` — the exact leak this registry exists to prevent.
+// The kit folder is the kit's whole, so one directory pattern covers every file placed in it; no flat
+// `scripts/<name>` is listed, because the upgrade's scripts op removes the kit's old flat files in the
+// run that places the kit folder (distribution-files, part flat-move: the window it leaves is stated there).
 export const KIT_OWN_PATHS = [
   '/AGENTS.md',
   '/CLAUDE.md',
   '/docs/ai/',
   `/${KIT_SCRIPTS_DIR}/`,
-  '/scripts/_expect-shim.mjs',
-  '/scripts/archive-caps.mjs',
-  '/scripts/archive-caps.test.mjs',
-  '/scripts/archive-changelog.mjs',
-  '/scripts/archive-changelog.test.mjs',
-  '/scripts/archive-conservation.test.mjs',
-  '/scripts/archive-decisions.mjs',
-  '/scripts/archive-decisions.test.mjs',
-  '/scripts/archive-issues.mjs',
-  '/scripts/archive-issues.test.mjs',
-  '/scripts/archiver-structure.test.mjs',
-  '/scripts/check-docs-size-cli.test.mjs',
-  '/scripts/check-docs-size-ensure.test.mjs',
-  '/scripts/check-docs-size.mjs',
-  '/scripts/check-docs-size.test.mjs',
-  '/scripts/install-git-hooks-repo-exec.test.mjs',
-  '/scripts/install-git-hooks.mjs',
-  '/scripts/install-git-hooks.test.mjs',
-  '/scripts/markdown-blocks.mjs',
-  '/scripts/markdown-blocks.test.mjs',
-  '/scripts/migrate-gates-branches.test.mjs',
-  '/scripts/migrate-gates.mjs',
-  '/scripts/migrate-gates.test.mjs',
-  '/scripts/spec-schema.mjs',
-  '/scripts/spec-schema.test.mjs',
   '/docs/plans/',
   '/.claude/settings.local.json',
   '/.claude/settings.json',

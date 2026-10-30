@@ -18,7 +18,7 @@
 // hand; the commit guard is NOT to be installed until the declaration is final-run-capable.
 //
 // A kit-check gate over a current kit folder that the rules above do not hold customized is SWITCHED to the stable kit command (spec kit-command, read by
-// ./kit-command-gates.mjs; `--kit-script scripts/<file>` names a flat file as the kit's); any other form is named.
+// ./kit-command-gates.mjs); any other form is named.
 //
 // Write discipline (the family's consented-writer contract): preview (dry-run) is the DEFAULT
 // and writes NOTHING; `--apply` rewrites docs/ai/gates.json via exclusive tmp+rename in the same
@@ -34,7 +34,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { FLAT_KIT_SCRIPTS, planKitCommandGates, repointsOf } from './kit-command-gates.mjs';
+import { planKitCommandGates, repointsOf } from './kit-command-gates.mjs';
 
 export const MIGRATE_GATES_STOP = 'MIGRATE_GATES_STOP';
 const stop = (message) =>
@@ -278,17 +278,17 @@ const CORE_CHECK_NAMES = Object.freeze(['coverage-check', 'review-state']);
 const coreCheckTools = (kitToolsDir) =>
   Object.fromEntries(CORE_CHECK_NAMES.map((name) => [name, checkerClaimTool(`${name}.mjs`, join(kitToolsDir, `${name}.mjs`))]));
 
-// buildMigrationPlan(gates, kitToolsDir, projectDir, kitScripts) → the migration plan.
+// buildMigrationPlan(gates, kitToolsDir, projectDir) → the migration plan.
 // plan rows: { action: 'keep' | 'remove' | 'extend' | 'switch' | 'move' | 'add', entry, reason }.
 // finalCapable mirrors the run-gates --final acceptance shape: the canonical review-state check
 // must be PRESENT (the checker itself is guaranteed last by the plan) — missing means the result
 // is NOT final-run-capable and the preview says so loudly with the paste-ready candidate. An
 // EXTERNAL-COPY core check withholds that claim too: the runner anchors on the installed copy.
-export const buildMigrationPlan = (gates, kitToolsDir, projectDir, kitScripts = []) => {
+export const buildMigrationPlan = (gates, kitToolsDir, projectDir) => {
   if (typeof projectDir !== 'string') {
     throw stop('buildMigrationPlan needs the project root — a declared cmd may name a core check by a RELATIVE path, and only the project root resolves it the way the runner does');
   }
-  const kit = planKitCommandGates(gates, projectDir, kitScripts);
+  const kit = planKitCommandGates(gates, projectDir);
   const tools = coreCheckTools(kitToolsDir);
   const claimOf = (name, cmd) => classifyCheckerClaim(tools[name], cmd, projectDir);
   const plan = [];
@@ -637,7 +637,7 @@ const writeAtomic = (cwd, body, lstatFn) => {
 };
 
 export const parseArgs = (argv) => {
-  const args = { cwd: process.cwd(), apply: false, kitTools: null, kitScripts: [], help: false };
+  const args = { cwd: process.cwd(), apply: false, kitTools: null, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--help' || a === '-h') args.help = true;
@@ -651,10 +651,6 @@ export const parseArgs = (argv) => {
       i += 1;
       if (!argv[i]) throw usageFail('--kit-tools needs the installed kit tools directory');
       args.kitTools = argv[i];
-    } else if (a === '--kit-script') {
-      i += 1;
-      if (!FLAT_KIT_SCRIPTS.includes(argv[i])) throw usageFail(`--kit-script takes one of ${FLAT_KIT_SCRIPTS.join(', ')}, got ${JSON.stringify(argv[i] ?? '')}`);
-      args.kitScripts.push(argv[i]);
     } else throw usageFail(`unknown argument: ${a}`);
   }
   return args;
@@ -663,7 +659,7 @@ export const parseArgs = (argv) => {
 const HELP = `migrate-gates — the consented legacy gates.json migration (strip-the-kit D8).
 
 Usage:
-  node migrate-gates.mjs --kit-tools <installed-kit-tools-dir> [--cwd <project>] [--kit-script scripts/<file>]... [--apply]
+  node migrate-gates.mjs --kit-tools <installed-kit-tools-dir> [--cwd <project>] [--apply]
 
 Default is a dry-run PREVIEW (writes nothing). --apply rewrites ${GATES_REL} atomically:
 canonical legacy entries (review-ledger / fold-completeness --check, matched by their documented
@@ -671,7 +667,7 @@ single-invocation forms) are REMOVED; the canonical unit-tests cmd gains the bui
 reporters; the coverage-check gate is ADDED last (resolved, QUOTED path) — and WITHHELD, loudly,
 when no declared gate produces the lcov it reads. A kit-check gate over a current kit folder is
 SWITCHED in place to node scripts/agent-workflow/run.mjs <name>, unless it is a customized entry below,
-a flat scripts/<file> only when --kit-script names it; any other form naming a kit check is kept, named with its repoint. Customized entries are
+a flat scripts/<file> only when nothing stands at that path; any other form naming a kit check is kept, named with its repoint. Customized entries are
 NEVER auto-touched — the preview names each with a paste-ready recovery, and the commit guard
 must not be installed until they are resolved.`;
 
@@ -703,14 +699,14 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
       return 0;
     }
     const parsed = declaration.outcome === 'loaded' ? declaration.parsed : { gates: [] };
-    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools, resolve(args.cwd), args.kitScripts), retiredStores };
+    const analysis = { ...buildMigrationPlan(parsed.gates, kitTools, resolve(args.cwd)), retiredStores };
     if (analysis.collision) {
       throw stop(
         `id collision — a NON-canonical entry already uses id "${analysis.collision}"; resolve it by hand first ` +
           '(two rows under the checker id would be ambiguous — the canonical checker is never added alongside a customized twin)',
       );
     }
-    const applyHint = `node "${fileURLToPath(import.meta.url)}" --kit-tools "${kitTools}" --cwd "${args.cwd}"${args.kitScripts.map((value) => ` --kit-script "${value}"`).join('')} --apply`;
+    const applyHint = `node "${fileURLToPath(import.meta.url)}" --kit-tools "${kitTools}" --cwd "${args.cwd}" --apply`;
     if (!args.apply) {
       out(formatPreview(analysis, applyHint));
       return 0;

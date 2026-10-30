@@ -1,9 +1,3 @@
-// script-priors.test.mjs — the append-only catalog of shipped enforcement-script bodies, verified
-// EXHAUSTIVELY against the fixture bytes: every catalog digest is the sha256 of its fixture and every
-// fixture on disk has a catalog row, so neither side can drift behind the other. Then the three
-// classification arms over real bytes (the bundle, every fixture, one flipped byte), and the 8.3.0
-// installer by proof: replaced in the kit folder by ensureScripts, and its guarded hook taken over by the bundled one.
-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -14,18 +8,16 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hermeticGitEnv } from './git-env.mjs';
+import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { KIT_LIMITS } from './source-size/index.mjs';
 
-const { SCRIPT_PRIORS, PRIOR_FILES, READER_PAIR, CHECKER_PAIR, INSTALLER_SET, classifyDeployedScript, digestOf } = await import('./script-priors.mjs').catch(() => ({}));
+const scriptPriors = await import('./script-priors.mjs').catch(() => ({}));
+const { SCRIPT_PRIORS, PRIOR_FILES, READER_PAIR, CHECKER_PAIR, INSTALLER_SET, classifyDeployedScript, digestOf } = scriptPriors;
 const { ensureScripts } = await import('./distribution-files/index.mjs').catch(() => ({}));
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
 const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
-// The append-only pin, INDEPENDENT of the module: every row the catalog has ever carried, as a
-// literal, held as an immutable PREFIX of SCRIPT_PRIORS. A count alone would let a row and its
-// fixture be replaced together — the digests would still agree — and a shipped body would silently
-// become "custom" on every deployment that carries it. A release that changes ANY PRIOR_FILES member
-// appends the outgoing body's row HERE too; a row is never edited or removed.
 const FROZEN_PRIORS = [
   ['check-docs-size.mjs', '4.0.0', '4.3.0', '84fb3673b034d4b2ba5bedf4a3e47899f98da3971c17902d1f2a548d07dc53bf'],
   ['check-docs-size.mjs', '4.4.0', '4.5.0', '7a5cd7f98571c3248d0378623172e9c60073b8d8761bce7a95c263f99bfb3a42'],
@@ -50,11 +42,17 @@ const FROZEN_PRIORS = [
   ['spec-schema.mjs', '8.0.0', '8.6.3', '238e9a0ab3839f56b9f488b8c3232e8289c90d9808c772864dd5a95405b8488c'],
   ['spec-schema.test.mjs', '8.0.0', '8.6.3', '192661dd459c130004b2639d506676ee023fb24e862aad09656adc8c1418af04'],
 ];
-const CATALOG_ROWS = FROZEN_PRIORS.length;
+const CATALOG_ROWS = 45;
+const LAST_FLAT_RELEASE = '1af99af';
+const LAST_FLAT_VERSION = '9.0.0';
+const OTHER_BYTES = Buffer.from('not a shipped script body\n');
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fixturePath = (row) => join(FIXTURES, row.firstShipped, `${row.file}.txt`);
-// The bundle is laid out by meaning: a catalog file name is read at the manifest path that ends in it.
+const readFixtures = () => readdirSync(FIXTURES).flatMap((firstShipped) => readdirSync(join(FIXTURES, firstShipped))
+  .map((name) => ({ file: name.replace(/\.txt$/, ''), firstShipped })));
+const DEPLOYED_BY_NAME = new Map(DEPLOYED_SCRIPTS.map((entry) => [posix.basename(entry.path), entry]));
+const deployedBundleBytes = (file) => DEPLOYED_BY_NAME.has(file) ? readFileSync(join(KIT_ROOT, DEPLOYED_BY_NAME.get(file).bundled)) : OTHER_BYTES;
 const { readFamily } = await import('../references/scripts/family.mjs').catch(() => ({}));
 const MANIFEST_PATH = new Map((readFamily?.(BUNDLE) ?? []).map((entry) => [posix.basename(entry.path), entry.path]));
 const bundleBytes = (file) => readFileSync(join(BUNDLE, MANIFEST_PATH.get(file) ?? file));
@@ -85,18 +83,15 @@ describe('SCRIPT_PRIORS — the catalog and its fixtures agree both ways', () =>
   });
 
   it('every fixture on disk has exactly one catalog row', () => {
-    const onDisk = [];
-    for (const version of readdirSync(FIXTURES)) {
-      for (const name of readdirSync(join(FIXTURES, version))) onDisk.push(`${version}/${name}`);
-    }
+    const onDisk = readFixtures().map((row) => `${row.firstShipped}/${row.file}.txt`);
     const catalogued = SCRIPT_PRIORS.map((row) => `${row.firstShipped}/${row.file}.txt`);
     assert.deepEqual(onDisk.sort(), catalogued.sort());
     assert.equal(new Set(catalogued).size, catalogued.length, 'no row is listed twice');
   });
 
   it('no prior digest is the bundled body — the outgoing body is appended only once it has changed', () => {
-    for (const file of PRIOR_FILES) {
-      const current = sha256(bundleBytes(file));
+    for (const file of DEPLOYED_BY_NAME.keys()) {
+      const current = sha256(deployedBundleBytes(file));
       for (const row of SCRIPT_PRIORS.filter((r) => r.file === file)) {
         assert.notEqual(row.digest, current, `${row.firstShipped}/${file} is the current bundle`);
       }
@@ -112,9 +107,9 @@ describe('classifyDeployedScript — current | prior | custom over real bytes', 
   });
 
   it('every fixture body classifies prior', () => {
-    for (const row of SCRIPT_PRIORS) {
-      assert.equal(classifyDeployedScript(readFileSync(fixturePath(row)), row.file, bundleBytes(row.file)), 'prior', fixturePath(row));
-    }
+    const fixtures = readFixtures();
+    assert.deepEqual(fixtures.map((row) => [fixturePath(row), classifyDeployedScript(readFileSync(fixturePath(row)), row.file, deployedBundleBytes(row.file))]),
+      fixtures.map((row) => [fixturePath(row), 'prior']));
   });
 
   it('one flipped byte in a prior body classifies custom, and so does a file the catalog never lists', () => {
@@ -189,10 +184,9 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
   const rowsOf = (from, to) => FROZEN_PRIORS.slice(from, to).map(([file, firstShipped, lastShipped, digest]) => ({ file, firstShipped, lastShipped, digest }));
   const [suiteRows, setRows] = [rowsOf(13, 16), rowsOf(16, 19)];
   const inTemp = (cell) => { const dir = realpathSync(mkdtempSync(join(tmpdir(), 'script-priors-'))); try { cell(dir); } finally { rmSync(dir, { recursive: true, force: true }); } };
-  // Every child drops each inherited GIT_ variable and runs on the project's own hermetic config; one that
-  // never started or was killed fails the cell outright.
-  const spawnChecked = (command, args, cwd) => {
-    const r = spawnSync(command, args, { cwd, env: hermeticGitEnv(process.env, cwd), encoding: 'utf8' });
+  const spawnChecked = (command, args, cwd, encoding = 'utf8') => {
+    const { NODE_TEST_CONTEXT, ...env } = hermeticGitEnv(process.env, cwd);
+    const r = spawnSync(command, args, { cwd, env, encoding });
     assert.ok(!r.error && r.signal === null, `${command} ${args.join(' ')} did not run to an exit (${r.error?.code ?? r.signal})`);
     assert.equal(r.status, 0, `${command} ${args.join(' ')}: ${r.stdout}${r.stderr}`);
     return r;
@@ -207,6 +201,34 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
     lines.splice(at + 1, 2);
     return lines.join('\n');
   };
+  it('appends exactly the 23 last-flat bodies after the frozen prefix, with fixture folders, digests and lastShipped 9.0.0', () => {
+    assert.deepEqual(Object.keys(scriptPriors).sort(), ['CHECKER_PAIR', 'INSTALLER_SET', 'PRIOR_FILES', 'READER_PAIR', 'SCRIPT_PRIORS', 'classifyDeployedScript', 'digestOf']);
+    for (const folder of [FIXTURES, ...readdirSync(FIXTURES).map((version) => join(FIXTURES, version))]) {
+      assert.ok(readdirSync(folder).length <= KIT_LIMITS['entries-per-directory'].value, folder);
+    }
+    const fixtures = readFixtures();
+    const current = [];
+    const expected = FLAT.flatMap((file) => {
+      const canon = spawnChecked('git', ['show', `${LAST_FLAT_RELEASE}:agent-workflow-memory/references/scripts/${file}`], KIT_ROOT, null).stdout;
+      const mirror = spawnChecked('git', ['show', `${LAST_FLAT_RELEASE}:agent-workflow-kit/references/scripts/${file}`], KIT_ROOT, null).stdout;
+      assert.ok(canon.equals(mirror), `${file}: the kit mirror equals the canon's raw bytes`);
+      if (DEPLOYED_BY_NAME.has(file) && canon.equals(deployedBundleBytes(file))) {
+        current.push(file);
+        assert.deepEqual(SCRIPT_PRIORS.filter((row) => row.file === file && row.digest === sha256(canon)), [], `${file}: no row for the bundled body`);
+        assert.deepEqual(fixtures.filter((row) => row.file === file && sha256(readFileSync(fixturePath(row))) === sha256(canon)), [], `${file}: no fixture for the bundled body`);
+        return [];
+      }
+      const matches = fixtures.filter((row) => row.file === file && readFileSync(fixturePath(row)).equals(canon));
+      assert.equal(matches.length, 1, `${file}: exactly one fixture equals the canon's raw bytes`);
+      const row = { ...matches[0], lastShipped: LAST_FLAT_VERSION, digest: sha256(canon) };
+      assert.equal(classifyDeployedScript(canon, `scripts/${file}`, OTHER_BYTES), 'custom', 'the classifier consults only the given name');
+      return [row];
+    });
+    assert.deepEqual(current.sort(), ['markdown-blocks.mjs', 'spec-schema.mjs']);
+    assert.equal(expected.length, CATALOG_ROWS - FROZEN_PRIORS.length);
+    const sortRows = (rows) => [...rows].sort((left, right) => left.file.localeCompare(right.file));
+    assert.deepEqual(sortRows(SCRIPT_PRIORS.slice(FROZEN_PRIORS.length)), sortRows(expected));
+  });
   it("PRIOR_FILES is frozen and the 25 flat names, none of them a bundled file any longer; READER_PAIR, CHECKER_PAIR and INSTALLER_SET frozen flat names; the installer set's rows carry their fixture's sha256", () => {
     assert.ok(Object.isFrozen(PRIOR_FILES), 'PRIOR_FILES is a frozen export');
     assert.deepEqual([...PRIOR_FILES], [...FLAT], 'PRIOR_FILES is the 25 flat names');

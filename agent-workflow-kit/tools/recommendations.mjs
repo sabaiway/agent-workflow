@@ -75,7 +75,7 @@ import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySo
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
-import { hookCheckAnswers, plannedRoles, readPreCommitState, unsafeToolsPath } from './git-hooks.mjs';
+import { hookCheckAnswers, missingHookCommandFile, plannedRoles, readPreCommitState, unsafeToolsPath } from './git-hooks.mjs';
 export { resolveGitHooksPath, readPreCommitState, canonicalGuardLineRe, INSTALLER_MARKER_RE } from './git-hooks.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
@@ -131,6 +131,7 @@ const COMMIT_GUARD_INSTALLER_OWN_STEP = `the hook installer (${INSTALLER_REL}) i
 const COMMIT_GUARD_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the guard line to it is your own step';
 const HOOK_CHECKS_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 the installer never overwrites it; adding the lines this item would arm to it is your own step';
 const HOOK_CHECKS_WAIT = 'the layout line follows the source-size.layout record \u2014 apply that item first; this item\'s check line then arms the layout line too';
+const HOOK_CHECKS_COMMAND = "the hook runs the kit's checks by flat paths this upgrade removes — once they are gone every commit stops until this item is applied";
 const LAYOUT_RECORD_RECIPE = 'the hook is per clone and the config per branch: a branch or linked worktree with no size config is judged under the kit\'s values and stops on its piles until it takes the record (a hidden deployment\'s linked worktree carries none); one with an older config without layout is not judged on layout; one whose config is schema 1 or unminted stops every commit on that config\'s own stop until it takes the current config';
 const LAYOUT_HELD = {
   stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 record that growth first with the reasoned --write-baseline its stop names, then re-run',
@@ -1005,16 +1006,19 @@ const probeHookChecks = ({ root, deps, add, skip, shared }) => {
     if (unsafe !== null) throw new Error(unsafe);
     const hook = readHookState(root, deps);
     if (hook.state === 'no-hooks-dir') return;
+    const switchCommand = hook.state === 'managed' && !hook.command;
     const roles = plannedRoles(hookCheckAnswers(root, deps), hook).map(({ key }) => key);
     const waits = shared.layoutRecord === true && !hook.layoutArmed && !roles.includes('layout');
-    if (roles.length === 0 && !waits) return;
+    if (roles.length === 0 && !waits && !switchCommand) return;
     if (hook.state === 'unmanaged') throw new Error(HOOK_CHECKS_UNMANAGED_HOOK);
     if (!(deps.exists ?? existsSync)(join(root, INSTALLER_REL))) {
       throw new Error(enforcementAdmits(root, deps) ? COMMIT_GUARD_INSTALLER_VIA_ITEM : COMMIT_GUARD_INSTALLER_OWN_STEP);
     }
+    const missing = switchCommand ? missingHookCommandFile(root, deps) : undefined;
+    if (missing) throw new Error(`${missing} is not a regular file — re-run /agent-workflow-kit upgrade, then apply this item again`);
     const keys = [...roles, ...(waits ? ['layout'] : [])];
     const checks = HOOK_CHECK_NAMES[keys.length === 2 ? 'both' : keys[0]];
-    add('hook-checks', fillTemplate(WHATS['hook-checks'], { checks }), formsApply('hook-checks', root), 'hook-checks', waits ? HOOK_CHECKS_WAIT : null);
+    add('hook-checks', switchCommand ? HOOK_CHECKS_COMMAND : fillTemplate(WHATS['hook-checks'], { checks }), formsApply('hook-checks', root), 'hook-checks', waits ? HOOK_CHECKS_WAIT : null);
   } catch (err) {
     skip('hook-checks', err);
   }

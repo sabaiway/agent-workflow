@@ -1,10 +1,3 @@
-// ensure-configs.test.mjs — the CLI contract of the ONE ensure command.
-//
-// The ops themselves are covered in ensure-ops.test.mjs. What is pinned HERE is everything the mode
-// doc now relies on when it invokes this tool exactly once: --reconcile is required, --dry-run writes
-// nothing at all, the ops run in a FIXED order, `--only <op>` narrows the run to exactly one of
-// them, one op's failure never skips the rest, and the exit code says whether anything failed.
-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -14,7 +7,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { main } from './ensure-configs.mjs';
-import { DRY_RUN_TOKENS, ENSURE_OPS, RELAYED_ENSURE_TOKENS, WRITE_TOKENS } from './ensure-ops.mjs';
+import { bundledImportsOf, DRY_RUN_TOKENS, ENSURE_OPS, RELAYED_ENSURE_TOKENS, WRITE_TOKENS } from './ensure-ops.mjs';
 import { KIT_OWN_PATHS } from './known-footprint.mjs';
 import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
 import { CONFIG_REL } from './orchestration-config.mjs';
@@ -148,13 +141,13 @@ describe('the reconcile run', () => {
       assert.equal(first.code, 0);
       // The ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
       // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
       const second = main(['--reconcile'], { cwd: dir });
       assert.equal(second.code, 0);
-      assert.deepEqual(tokensOf(second.stdout)[5], { op: 'scripts', token: 'already-present' }, 'the seed files the spec layer placed are already the bundled body on the second run');
+      assert.deepEqual(tokensOf(second.stdout).find((t) => t.op === 'scripts'), { op: 'scripts', token: 'already-present' }, 'the seed files the spec layer placed are already the bundled body on the second run');
       for (const { op, token } of tokensOf(second.stdout)) {
         assert.equal(WRITE_TOKENS.includes(token), false, `${op} claimed "${token}" on an already-current tree`);
       }
@@ -172,7 +165,7 @@ describe('the reconcile run', () => {
   it('spec:executor-vehicle/S6 — nine ops with executor fifth after vehicles, rules between specs and index, and --help says nine', () => {
     assert.equal(ENSURE_OPS.length, 9);
     assert.deepEqual([ENSURE_OPS[3], ENSURE_OPS[4]], ['vehicles', 'executor']);
-    assert.deepEqual(ENSURE_OPS.slice(6), ['specs', 'rules', 'index']);
+    assert.deepEqual(ENSURE_OPS.slice(5), ['specs', 'scripts', 'rules', 'index']);
     withProject((dir) => {
       const r = main(['--reconcile'], { cwd: dir });
       const tokens = tokensOf(r.stdout);
@@ -201,6 +194,30 @@ describe('the reconcile run', () => {
         assert.equal(existsSync(join(dir, CONFIG_REL)), true);
       });
     });
+  }
+});
+
+describe('spec:distribution-files/S36 the op order on a flat tree without package.json', () => {
+  const flat = [['spec-schema.mjs', 'references/scripts/spec-schema/spec-schema.mjs'], ['spec-schema.test.mjs', 'test/fixtures/script-priors/8.7.0/spec-schema.test.mjs.txt'],
+    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']];
+  for (const [label, flags] of [['one plain run places the pairs, closure and command before removing the flat pairs', []], ['--only scripts places and removes nothing, keeping each flat file with its line naming run.mjs', ['--only', 'scripts']]]) {
+    it(label, () => withProject((dir) => {
+      mkdirSync(join(dir, 'scripts'));
+      for (const [name, source] of flat) writeFileSync(join(dir, 'scripts', name), readFileSync(join(KIT, source)));
+      const before = snapshot(dir), r = main(['--reconcile', ...flags], { cwd: dir, deps: { git: () => ({ status: 128 }) } });
+      assert.equal(r.code, 0, `${r.stderr}\n${r.stdout}`);
+      if (flags.length) {
+        assert.deepEqual(snapshot(dir), before);
+        for (const [name] of flat) assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`), r.stdout);
+      } else {
+        const paths = new Set([...PAIR_FILES.map(({ path }) => path), 'run.mjs']);
+        for (const path of paths) for (const dep of bundledImportsOf(path, readFileSync(join(KIT, entryOf(path).bundled)))) paths.add(dep);
+        for (const path of paths) { const { deployed, bundled } = entryOf(path); assert.equal(existsSync(join(dir, deployed)), true, deployed); assert.deepEqual([lstatSync(join(dir, deployed)).isFile(), readFileSync(join(dir, deployed))], [true, readFileSync(join(KIT, bundled))], deployed); }
+        for (const [name] of flat) { assert.equal(existsSync(join(dir, 'scripts', name)), false, name); assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: removed — the kit's scripts live in scripts/agent-workflow/`), r.stdout); }
+        assert.deepEqual(tokensOf(r.stdout).map(({ op }) => op), [...ENSURE_OPS]);
+        assert.ok(r.stdout.indexOf('\n  specs:') < r.stdout.indexOf('\n  scripts:'), r.stdout);
+      }
+    }, { node: false }));
   }
 });
 
@@ -406,8 +423,8 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      const expected = ['malformed-preserved', 'seeded', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated'];
-      assert.deepEqual(tokens, ['orchestration', 'gates', 'autonomy', 'vehicles', 'executor', 'scripts', 'specs', 'rules', 'index'].map((op, i) => ({ op, token: expected[i] })));
+      const expected = ['malformed-preserved', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated'];
+      assert.deepEqual(tokens, ENSURE_OPS.map((op, i) => ({ op, token: expected[i] })));
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
       assert.doesNotMatch(r.stdout, /nothing was written for those/, 'the summary claims nothing about what landed — an op can stop partway');
       assert.equal(readFileSync(join(dir, CONFIG_REL), 'utf8'), '{ not json');
@@ -427,7 +444,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'not-placed', 'seeded', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });

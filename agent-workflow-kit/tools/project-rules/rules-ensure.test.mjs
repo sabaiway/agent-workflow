@@ -102,7 +102,7 @@ const helpClause = () => fold(main(['--help']).stdout).match(/project rules kit 
 describe('spec:project-rules/S16 rules sits in ENSURE_OPS after specs and before index, the ensure command runs it through the project-rules index, and the header row and the --help clause say any other body is replaced with no question and no copy kept', () => {
   it('nine ops with rules between specs and index, and the op table holds the index ensureRules', async () => {
     assert.equal(ENSURE_OPS.length, 9);
-    assert.deepEqual(ENSURE_OPS.slice(6), ['specs', 'rules', 'index']);
+    assert.deepEqual(ENSURE_OPS.slice(6), ['scripts', 'rules', 'index']);
     assert.equal(ENSURE_IMPLEMENTATIONS.rules, need(await load('./index.mjs'), 'ensureRules'));
   });
   it('the header row of the op and the --help clause naming the project rules kit file say any other body is replaced with no question and no copy kept, never that an edited one is kept', () => {

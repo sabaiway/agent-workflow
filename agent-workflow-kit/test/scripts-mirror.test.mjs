@@ -98,7 +98,7 @@ describe('spec:script-family/S11 imports from outside the trees name a module in
         const parts = relative(tree, target).split(sep);
         const where = `${relative(REPO, file)} -> ${specifier}`;
         crossings.push(where);
-        const door = parts.length === 1 ? ['family.mjs', 'family.json'].includes(parts[0]) : parts.length === 2 && parts[1] === 'index.mjs';
+        const door = parts.length === 1 || (parts.length === 2 && parts[1] === 'index.mjs');
         if (!door) offenders.push(`${where} (not a module index)`);
         if (parts[0] === 'test-support' && !file.endsWith('.test.mjs')) offenders.push(`${where} (a runtime file imports test-support/)`);
       }

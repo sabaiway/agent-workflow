@@ -70,6 +70,8 @@ export const LIBRARY_ONLY_MODULES = Object.freeze({
   // The read half of the checker-gates verb: the same step-3 `tier` item runs the verb that uses it.
   'checker-gates-read.mjs': '/agent-workflow-kit upgrade',
   'profile-gap-screen.mjs': '/agent-workflow-kit recommendations',
+  // Named by references/modes/upgrade.md as the list of the old flat names; the upgrade's scripts op removes them.
+  'script-priors.mjs': '/agent-workflow-kit upgrade',
 });
 
 // The frozen refusal line. One line, names the module, names the command.

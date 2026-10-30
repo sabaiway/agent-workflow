@@ -28,7 +28,7 @@ engine is absent, the kit's reconcile **fails loudly** (never silently) and writ
   the scenario-binding grammar, the refusal table the deployed reader enforces), governing specs
   cited per plan, the feature-vs-page precedence table, spec-driven feature-sliced architecture,
   and the retroactive onboarding path. The memory substrate's deployed reader
-  `scripts/spec-schema.mjs` is pinned against this canon by the engine's own test.
+  `scripts/agent-workflow/spec-schema/spec-schema.mjs` is pinned against this canon by the engine's own test.
 - [`references/methodology-slot.md`](references/methodology-slot.md) — the **bounded** fragment the
   composition root reads into a deployed project's `AGENTS.md`. A short summary that routes to the
   full reference, not the full reference itself.

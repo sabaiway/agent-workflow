@@ -1,11 +1,13 @@
 // scripts.mjs — the upgrade's `scripts` op: every kit script of a deployment, the hook installer
 // included, kept current by the one rule in the kit folder scripts/agent-workflow/. The family is the
-// manifest's deployed entries (node-evidence.mjs) less the spec layer's modules. Each family file is
+// manifest's deployed entries (node-evidence.mjs) less the spec layer's modules and the command run.mjs,
+// which the specs op places. Each family file is
 // surveyed by proof before any write: absent, current, prior (a body the catalog lists for its manifest
 // path) or edited. On every plain run a prior is refreshed, an edited one replaced in place and an
 // absent one placed create-only, with no question and no copy kept; a current one is left. The
 // installer is written first, then every file after the family files it imports; after the last write
-// the project's own rotator brings the ADR store current (`--ensure-current`). It never imports
+// the project's own rotator brings the ADR store current (`--ensure-current`); last, retired.mjs removes
+// the kit's old flat files from scripts/ (distribution-files, part flat-move). It never imports
 // ensure-specs.mjs or ensure-configs.mjs: the CLI composes this op from the module's index, and
 // ensure-specs.mjs takes its channel and its lines from there.
 //
@@ -17,8 +19,9 @@ import { join, posix } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
 import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
 import { DEPLOYED_SCRIPTS, INSTALLER_REL, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
-import { SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
+import { PRIOR_FILES, SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
 import { VEHICLES_REL } from '../vehicle-settings.mjs';
+import { retireScripts } from './retired.mjs';
 
 const OP = 'scripts';
 // Where an edit meant to last goes: the installer's in the local hook file, every other file's beside it.
@@ -30,8 +33,8 @@ export const HOOK_CHANNEL = '.claude/hooks/<name>.local.mjs';
 // The manifest paths a run of a component that is not accepted may judge: the rotator and what it loads.
 export const SEED_NAMES = Object.freeze(DEPLOYED_SCRIPTS.filter((e) => e.seed).map((e) => e.path));
 const ROTATOR = 'archives/archive-decisions.mjs';
-// The family: every deployed entry outside the specs op's modules, in manifest order.
-const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size');
+// The family: every deployed entry outside the specs op's files (its two modules and the command), in manifest order.
+const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module && e.module !== 'spec-schema' && e.module !== 'docs-size');
 const FOLDERS = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...FAMILY.map((e) => posix.dirname(e.deployed))])];
 
 const causeOf = (err) => String((err && err.message) || err);
@@ -55,7 +58,6 @@ const seedClosure = (standing, byPath) => {
 const surveyFolders = (cwd, lstat) => {
   for (const rel of FOLDERS) {
     const st = lstatNoFollow(join(cwd, rel), lstat);
-    if (st === null && (rel === SCRIPTS_DIR || rel === KIT_SCRIPTS_DIR)) return { notPlaced: true };
     if (st !== null && (!st.isDirectory() || st.isSymbolicLink())) return { refusal: wrongKind(`${rel}/`, kindOfDir(st)) };
   }
   return {};
@@ -65,12 +67,18 @@ const surveyFolders = (cwd, lstat) => {
 // before the component, so a linked family file never reads as not-placed.
 const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
   const folders = surveyFolders(cwd, lstat);
-  if (folders.refusal || folders.notPlaced) return folders;
+  if (folders.refusal) return folders;
   const probes = FAMILY.map((e) => ({ path: e.path, rel: e.deployed, bundled: e.bundled, probe: probeSeedTarget(join(cwd, e.deployed), lstat) }));
   const wrong = probes.find((f) => f.probe.wrongKind);
   if (wrong) return { refusal: wrongKind(wrong.rel, wrong.probe.wrongKind) };
-  if (!probes.some((f) => f.probe.present)) return { notPlaced: true };
-  const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.path));
+  const flatInstaller = probeSeedTarget(join(cwd, SCRIPTS_DIR, posix.basename(INSTALLER_REL)), lstat);
+  const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.path)) || (flatInstaller.present && !flatInstaller.wrongKind);
+  const flatSeeds = FAMILY.filter((e) => e.seed && PRIOR_FILES.includes(posix.basename(e.path))).filter((e) => {
+    const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, posix.basename(e.path)), lstat);
+    return probe.present && !probe.wrongKind;
+  }).map((e) => e.path);
+  const standing = [...probes.filter((f) => f.probe.present).map((f) => f.path), ...flatSeeds];
+  if (!accepted && standing.length === 0) return { notPlaced: true };
   const byPath = new Map();
   for (const f of probes) {
     try {
@@ -80,7 +88,7 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
       return { refusal: composeFailure(OP, 'bundle-unreadable', `${f.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
     }
   }
-  const judged = accepted ? new Set(byPath.keys()) : seedClosure(probes.filter((f) => f.probe.present).map((f) => f.path), byPath);
+  const judged = accepted ? new Set(byPath.keys()) : seedClosure(standing, byPath);
   const files = inWriteOrder([...byPath.values()]).filter((f) => judged.has(f.path)).map(({ path, rel, bundle, probe }) => {
     const bytes = probe.present ? read(join(cwd, rel)) : undefined;
     return { path, rel, bundle, state: probe.present ? classifyDeployedScript(bytes, path, bundle, deps.priors ?? SCRIPT_PRIORS) : 'absent' };
@@ -180,14 +188,17 @@ const runStore = (cwd, deps) => {
 
 // ── the op ────────────────────────────────────────────────────────────────────────────────────────
 
-export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
+export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {}, placedScripts = [] }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
   const refusal = nodeEvidenceRefusal(OP, cwd, lstat);
   if (refusal) return refusal;
   const found = survey({ cwd, kitRoot, deps, read, lstat });
   if (found.refusal) return found.refusal;
-  if (found.notPlaced) return composeOutcome(OP, 'not-placed', [`${KIT_SCRIPTS_DIR}/: no kit script stands in it, so none is placed`], false);
+  if (found.notPlaced) {
+    const retired = retireScripts({ cwd, kitRoot, dryRun, deps, placedScripts });
+    return composeOutcome(OP, retired.removed.length ? (dryRun ? 'would-refresh' : 'refreshed') : 'not-placed', [`${KIT_SCRIPTS_DIR}/: no kit script stands in it, so none is placed`, ...retired.lines], false);
+  }
   const { files, accepted } = found;
   const current = files.filter((f) => f.state === 'current').length;
   const r = writeRun({ cwd, files, accepted, dryRun, deps, read });
@@ -197,7 +208,9 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const store = !rotator ? { lines: [] } : dryRun ? { lines: [WOULD_STORE] } : runStore(cwd, deps);
   if (store.failure) return composeFailure(OP, 'adr-store-not-current', store.failure, ...body, ...r.tail, ...store.lines);
   const landed = (state) => (dryRun ? r.due : r.written).some((f) => f.state === state);
+  const placements = (dryRun ? r.due : r.written).filter((f) => f.state === 'absent').map((f) => f.rel);
+  const retired = retireScripts({ cwd, kitRoot, dryRun, deps, placedScripts: [...placedScripts, ...placements], placements });
   const token = landed('absent') ? (dryRun ? 'would-seed' : 'seeded')
-    : landed('prior') || landed('custom') || store.brought ? (dryRun ? 'would-refresh' : 'refreshed') : 'already-present';
-  return composeOutcome(OP, token, [...body, ...r.tail, ...store.lines], false);
+    : landed('prior') || landed('custom') || store.brought || retired.removed.length ? (dryRun ? 'would-refresh' : 'refreshed') : 'already-present';
+  return composeOutcome(OP, token, [...body, ...r.tail, ...store.lines, ...retired.lines], false);
 };

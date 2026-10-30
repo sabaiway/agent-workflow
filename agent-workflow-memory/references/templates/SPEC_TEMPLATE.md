@@ -16,7 +16,7 @@ revision: 1
 > (the slug mirrors the feature-slice or module name, `^[a-z0-9]+(-[a-z0-9]+)*$`) and replace every
 > section. NOT deployed on bootstrap — it stays in the skill home like `adr-record.md`. The full
 > schema (kinds, statuses, transitions, promotion, precedence) is the engine canon `references/specs.md`;
-> the deployed reader `scripts/spec-schema.mjs` is what decides well-formed.
+> the deployed reader `scripts/agent-workflow/spec-schema/spec-schema.mjs` is what decides well-formed.
 
 ## Contract
 

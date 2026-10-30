@@ -23,7 +23,7 @@ const WIN32 = ['--import', 'data:text/javascript,Object.defineProperty(process,"
 const BACKSLASH = String.fromCharCode(92);
 const shown = (path) => (process.platform === 'win32' ? path.replaceAll(BACKSLASH, '/') : path);
 
-const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
+const BASE_ENV = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key) && key !== 'NODE_TEST_CONTEXT'));
 const envAt = (home, extra = {}) => ({
   ...BASE_ENV, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), LC_ALL: 'C', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null',
   GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', ...extra,
@@ -99,7 +99,14 @@ describe('install-git-hooks — the in-place installer under a GIT_DIR-pinned fi
     const ok = (args, pre) => { const r = runAt(fx.gitDir, args, pre); assert.equal(r.status, 0, r.stderr); return r; };
     ok(['--commit-guard', guard, '--layout-check', layout, '--rules-check', rules]);
     const tail = `node "${shown(rules)}" --check # rules-check\nnode "${shown(layout)}" --check # layout-check\nnode "${guard}" --check\n`;
-    assert.ok(hookOf(fx).endsWith(`node scripts/agent-workflow/run.mjs archive-decisions --check\n${tail}`), hookOf(fx));
+    assert.ok(hookOf(fx).endsWith(tail), hookOf(fx));
+    const lines = hookOf(fx).slice(0, -tail.length).trimEnd().split('\n');
+    const local = lines.findIndex((l) => l.includes('then bash scripts/pre-commit.local;')), first = lines.indexOf('node scripts/agent-workflow/run.mjs docs-size'), fifth = lines.indexOf('node scripts/agent-workflow/run.mjs archive-decisions --check');
+    const checkoutBefore = lines.slice(local + 1, first), after = lines.slice(fifth + 1);
+    assert.ok(local >= 0 && first > local && fifth > first, 'local, checkout test, five kit lines, then the role-and-guard tail');
+    assert.ok(checkoutBefore.some((l) => l.includes('scripts/agent-workflow/run.mjs') && !/^\s*node\b/.test(l)), 'the checkout test names the command before its first invocation');
+    assert.ok(after.length > 0 && after.every((l) => !/^\s*node\b/.test(l)), 'only checkout-test lines follow the fifth command before the tail');
+    assert.ok(lines.some((l) => l.includes('scripts/agent-workflow/run.mjs is not in this checkout') && l.includes('merge the commit') && l.includes('upgrade in this checkout')), 'the hook carries the checkout line');
     assert.doesNotMatch(hookOf(fx), /^node --test/m, 'the hook runs no suite');
     assert.match(ok([]).stdout, /already up to date/, 'the flagless re-run carries all three');
     const before = hookOf(fx);
@@ -170,7 +177,6 @@ describe('install-git-hooks — the in-place installer under a GIT_DIR-pinned fi
   });
 });
 
-// The commit lane also drops NODE_TEST_CONTEXT, so no child the hook runs inherits the outer runner's context.
 const IDENTITY = { GIT_AUTHOR_NAME: 'p', GIT_AUTHOR_EMAIL: 'p@e', GIT_COMMITTER_NAME: 'p', GIT_COMMITTER_EMAIL: 'p@e' };
 const bareAt = (home, extra = {}) => { const { NODE_TEST_CONTEXT: _, ...env } = envAt(home, { ...IDENTITY, ...extra }); return env; };
 const passes = (r) => (assert.equal(r.status, 0, r.stderr), r);

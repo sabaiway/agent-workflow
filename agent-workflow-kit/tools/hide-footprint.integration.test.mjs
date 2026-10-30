@@ -9,15 +9,16 @@ import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hideFootprint, excludePath, main, START_MARKER, START_MARKER as S, END_MARKER as E } from './hide-footprint.mjs';
 import { MASKS_FENCE_START as MS, MASKS_FENCE_END as ME } from './sandbox-masks.mjs';
-
+import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { PRIOR_FILES } from './script-priors.mjs';
+import { hermeticGitEnv, stripGitLocationEnv } from './git-env.mjs';
+const inheritedEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
 let gitOk = true;
-before(() => {
-  try { execFileSync('git', ['--version'], { encoding: 'utf8' }); } catch { gitOk = false; }
-});
+before(() => { try { execFileSync('git', ['--version'], { env: stripGitLocationEnv(inheritedEnvironment), encoding: 'utf8' }); } catch { gitOk = false; } });
 
 const made = [];
 const mkdtemp = (tag) => { const d = mkdtempSync(join(tmpdir(), tag)); made.push(d); return d; };
@@ -29,8 +30,7 @@ const setup = () => {
   const dir = mkdtemp('aw-repo-');
   const gcfg = join(home, '.gitconfig');
   writeFileSync(gcfg, '');
-  const env = {
-    ...process.env, HOME: home, GIT_CONFIG_GLOBAL: gcfg, GIT_CONFIG_NOSYSTEM: '1',
+  const env = { ...hermeticGitEnv(inheritedEnvironment, home), GIT_CONFIG_GLOBAL: gcfg,
     GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@e', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@e',
   };
   const git = (args, cwd = dir) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -146,21 +146,21 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
     assert.equal(git(['ls-files', '--', '.mcp.json']).trim(), '.mcp.json', 'still tracked');
   });
 
-  // The spec layer (spec layer 1a): a BOOTSTRAPPED layout — the deployed reader pair under scripts/ and
-  // a spec under docs/ai/specs/ — is hidden with no new machinery: the pair is enumerated in
-  // KIT_OWN_PATHS and the anchored /docs/ai/ pattern subsumes the store. Real git check-ignore, not a
-  // registry read, is what proves it.
-  it('a bootstrapped spec layer is hidden: real check-ignore on both spec-schema files and docs/ai/specs/x.md', () => {
+  it('a bootstrapped spec layer is hidden: real check-ignore on both kit-folder spec-schema files and docs/ai/specs/x.md', () => {
     const { dir, git, deps } = env;
+    const pair = DEPLOYED_SCRIPTS.filter(({ module }) => module === 'spec-schema');
+    assert.equal(pair.length, 2, 'the spec-schema module deploys a pair');
     writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
-    mkdirSync(join(dir, 'scripts'), { recursive: true });
     mkdirSync(join(dir, 'docs', 'ai', 'specs'), { recursive: true });
-    writeFileSync(join(dir, 'scripts', 'spec-schema.mjs'), 'export const SPEC_SCHEMA = {};\n');
-    writeFileSync(join(dir, 'scripts', 'spec-schema.test.mjs'), 'import "./spec-schema.mjs";\n');
+    for (const { deployed, bundled } of pair) {
+      mkdirSync(dirname(join(dir, deployed)), { recursive: true });
+      writeFileSync(join(dir, deployed), readFileSync(new URL(`../${bundled}`, import.meta.url)));
+    }
     writeFileSync(join(dir, 'docs', 'ai', 'specs', 'x.md'), '---\ntype: spec\n---\n# Spec: x\n');
     const r = hideFootprint({ dir }, deps);
-    assert.ok(r.wrote.includes('/scripts/spec-schema.mjs') && r.wrote.includes('/scripts/spec-schema.test.mjs'), 'the reader pair is in the written set');
-    for (const probe of ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'docs/ai/specs/x.md']) {
+    assert.ok(r.wrote.includes(`/${KIT_SCRIPTS_DIR}/`), 'the kit folder is in the written set');
+    assert.deepEqual(r.wrote.filter((path) => PRIOR_FILES.some((name) => path === `/scripts/${name}`)), []);
+    for (const probe of [...pair.map(({ deployed }) => deployed), 'docs/ai/specs/x.md']) {
       assert.match(checkIgnoreSource(git, dir, probe) ?? '', /info\/exclude/, `${probe} is really ignored`);
     }
     assert.equal(git(['status', '--porcelain', '--untracked-files=all']).trim(), '', 'nothing of the spec layer is visible to git');

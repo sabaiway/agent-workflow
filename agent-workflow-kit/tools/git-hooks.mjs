@@ -14,6 +14,7 @@ import { writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { DEPLOYED_SCRIPTS, INSTALLER_REL, NODE_EVIDENCE_SCRIPTS, SCRIPTS_DIR } from './node-evidence.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
+import { KIT_COMMAND_PATH, KIT_COMMANDS } from '../references/scripts/run.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { checkRules } from './project-rules/index.mjs';
 import { readLayoutSetup } from './source-size-core.mjs';
@@ -64,6 +65,7 @@ export const resolveGitHooksPath = (projectDir, env = process.env) => {
 
 export const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs\r?$/m;
 const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const COMMAND_LINE_RE = new RegExp(`^node ${escapeRe(KIT_COMMAND_PATH)} docs-size\\r?$`, 'm');
 // Armed means the exact line the installer writes on the kit's own guard path; a commented or lookalike line is not.
 export const canonicalGuardLineRe = (toolsDir = TOOLS) => new RegExp(`^node "${escapeRe(join(toolsDir, 'commit-guard.mjs'))}" --check$`, 'm');
 
@@ -96,7 +98,7 @@ const roleStates = (hook, toolsDir, platform) => Object.fromEntries(ROLES.flatMa
 
 // The one reader of git's pre-commit: whose hook it is, and which canonical lines arm it.
 export const readPreCommitState = (root, deps = {}) => {
-  const unarmed = (fields) => ({ ...fields, armed: false, ...roleStates(null) });
+  const unarmed = (fields) => ({ ...fields, armed: false, command: false, ...roleStates(null) });
   const hooksPath = (deps.gitHooksPath ?? resolveGitHooksPath)(root, deps.env);
   if (hooksPath === null) return unarmed({ state: 'no-hooks-dir' });
   const path = join(hooksPath, 'pre-commit');
@@ -109,8 +111,12 @@ export const readPreCommitState = (root, deps = {}) => {
     return unarmed({ state: 'unreadable', code: error?.code ?? String(error?.message ?? error), path });
   }
   return { state: INSTALLER_MARKER_RE.test(hook) ? 'managed' : 'unmanaged', armed: canonicalGuardLineRe(deps.toolsDir).test(hook),
-    ...roleStates(hook, deps.toolsDir ?? TOOLS, deps.platform) };
+    command: COMMAND_LINE_RE.test(hook), ...roleStates(hook, deps.toolsDir ?? TOOLS, deps.platform) };
 };
+
+export const missingHookCommandFile = (root, deps = {}) => [INSTALLER_REL, KIT_COMMAND_PATH,
+  ...Object.values(KIT_COMMANDS).map((target) => join(dirname(KIT_COMMAND_PATH), target))]
+  .map((rel) => join(root, rel)).find((path) => !isFile(nodeAt(path, deps.lstat ?? lstatSync)));
 
 // The two read-only answers the hook-checks dry run and the advisor's probe ask, on the tree on disk.
 export const hookCheckAnswers = (root, deps = {}) => {
@@ -132,20 +138,23 @@ export const unsafeToolsPath = (toolsDir, platform) => (ROLES.some(({ tool }) =>
   ? `the kit's tools path ${toolsDir} carries ", $, a backtick, a backslash, CR or LF — a hook line would not run the file it names` : null);
 
 // hook-checks: the lines it arms, from the two answers and the hook; the installer runs as it stands.
-const planHookChecks = ({ root, toolsDir, installer, installerNode, readFile, deps }) => {
+const planHookChecks = ({ root, toolsDir, installer, installerNode, lstat, readFile, deps }) => {
   if (!isFile(installerNode)) throw refusal(`${installer} is absent — nothing here places the hook installer`);
   const unsafe = unsafeToolsPath(toolsDir, deps.platform);
   if (unsafe !== null) throw refusal(unsafe);
   const hook = readPreCommitState(root, { toolsDir, platform: deps.platform, gitHooksPath: deps.gitHooksPath });
   if (hook.state === 'unreadable') throw refusal(`${hook.path} is unreadable (${hook.code}) — the pre-commit hook cannot be judged`);
   if (hook.state === 'no-hooks-dir') throw refusal('nothing to plan — git reports no hooks dir here (not a git checkout), so there is no hook to arm');
+  const switchCommand = hook.state === 'managed' && !hook.command;
+  const missing = switchCommand ? missingHookCommandFile(root, { lstat }) : undefined;
+  if (missing) throw refusal(`${missing} is not a regular file — re-run /agent-workflow-kit upgrade, then apply this item again`);
   const answers = hookCheckAnswers(root, deps);
   const roles = plannedRoles(answers, hook);
-  if (roles.length === 0) {
+  if (roles.length === 0 && !switchCommand) {
     throw refusal(`nothing to plan — ${ROLES.map(({ key, role }) => `the ${role} line: ${hook[`${key}Armed`] ? 'armed' : `not armable (${answers[key].why})`}`).join('; ')}`);
   }
   const flags = roles.flatMap(({ flag, tool }) => [flag, tool(toolsDir)]);
-  return { root, variant: 'hook-checks', folders: [], copies: [], roles: roles.map(({ key }) => key),
+  return { root, variant: 'hook-checks', folders: [], copies: [], switchCommand, roles: roles.map(({ key }) => key),
     runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], bytes: readFile(installer) } };
 };
 
@@ -168,7 +177,7 @@ export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSyn
     probe(rel, isFile, 'a regular file');
   }
   const installer = join(root, INSTALLER_REL);
-  if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, installerNode: nodes.get(INSTALLER_REL), readFile, deps });
+  if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, installerNode: nodes.get(INSTALLER_REL), lstat, readFile, deps });
   // A flat evidence name is no copy path: another node kind there is not evidence, never a refusal.
   const evidence = (rel) => (nodes.has(rel) ? isFile(nodes.get(rel)) : nodes.get(SCRIPTS_REL) !== null && isFile(nodeAt(join(root, rel), lstat)));
   const deployed = enforcing && NODE_EVIDENCE_SCRIPTS.some((name) => evidence(`${SCRIPTS_REL}/${name}`));
@@ -238,6 +247,7 @@ const applyHookChecks = (plan, resolved) => {
   const failure = child.status !== 0 ? `installer exited ${child.status ?? child.signal ?? child.error?.code}`
     : hook.state === 'no-hooks-dir' ? null
       : hook.state === 'unreadable' ? `${preCommit} is unreadable (${hook.code}) after the installer exited 0`
+        : plan.switchCommand && !hook.command ? `${preCommit} carries no kit-command line after the installer exited 0 — ${UPGRADE_ROUTE}`
         : ROLES.filter(({ key }) => plan.roles.includes(key)).map(({ key, role }) => (!hook[`${key}Armed`]
           ? `${preCommit} carries no ${role} line after the installer exited 0 — ${UPGRADE_ROUTE}`
           : hook[`${key}Foreign`] ? `${preCommit} still carries a ${role} line on a path other than this kit's after the installer exited 0` : null)).find(Boolean) ?? null;

@@ -60,6 +60,8 @@ const need = (mod, name) => {
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 import { makeProject as makeProfileProject } from './tier-preview.test/harness.test.mjs';
 import { CENSUS_VERDICT } from './tracked-tree-census.mjs';
+import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PACKAGE_JSON = '{"name":"fixture"}\n';
@@ -117,7 +119,8 @@ const makeProject = () => {
 };
 
 const runFixtureGit = (root, args) => {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', env: hermeticGitEnv(process.env, root), maxBuffer: GIT_MAX_BUFFER });
+  const env = hermeticGitEnv(process.env, root); delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', env, maxBuffer: GIT_MAX_BUFFER });
   if (result.error) throw result.error;
   assert.equal(result.signal, null, `git ${args.join(' ')} received ${result.signal}`);
   assert.equal(result.status, 0, result.stderr);
@@ -2304,7 +2307,7 @@ describe('recommendations \u2014 the enforcement item', () => {
 });
 
 describe('spec:init-project/S35 the advisor\'s reader and table by proof', () => {
-  const UNARMED = { rulesArmed: false, rulesForeign: false, layoutArmed: false, layoutForeign: false };
+  const UNARMED = { command: false, rulesArmed: false, rulesForeign: false, layoutArmed: false, layoutForeign: false };
   it('readPreCommitState distinguishes no hooks dir, absent, managed and unmanaged, armed only by the canonical line, its four role fields false with no role line', (t) => {
     const root = makeNoneEvidenceProject();
     t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -2677,7 +2680,7 @@ describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', (
   const roleLine = (tool, role) => `node "${tool}" --check # ${role}\n`;
   const RULES = roleLine(join(HERE, 'project-rules', 'rules-cli.mjs'), 'rules-check');
   const LAYOUT = roleLine(join(HERE, 'source-size-check.mjs'), 'layout-check');
-  const hook = (text) => (root) => writeFileSync(join(root, 'hooks', 'pre-commit'), text);
+  const hook = (text) => (root) => writeFileSync(join(root, 'hooks', 'pre-commit'), text + (text.startsWith(MANAGED_GUARDLESS) ? 'node scripts/agent-workflow/run.mjs docs-size\n' : ''));
   const boom = (name) => () => { throw new Error(`${name} exploded`); };
   // The leaf's own dry run over the same tree: the checks it would arm, or null on its nothing-to-plan refusal.
   const leafChecks = (root, extra) => {
@@ -2761,6 +2764,38 @@ describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', (
     const state = need(recommendations, 'readPreCommitState')(root, { gitHooksPath: () => hooks });
     assert.deepEqual([state.state, state.layoutArmed, state.rulesArmed], ['managed', true, false]);
     assert.deepEqual(run(), []);
+  });
+});
+
+describe('spec:init-project/S75 the advisor\'s hook-checks item over the managed flat hook', () => {
+  const targets = [KIT_COMMAND_PATH, ...Object.values(KIT_COMMANDS).map((path) => `scripts/agent-workflow/${path}`)];
+  const flatProject = (t) => {
+    const root = makeProject(); t.after(() => rmSync(root, { recursive: true, force: true })); runFixtureGit(root, ['init', '-q']);
+    const env = gitPathEnv(root); delete env.NODE_TEST_CONTEXT;
+    mkdirSync(join(root, 'scripts'), { recursive: true }); cpSync(join(KIT_ROOT, 'test/fixtures/script-priors/8.4.0/install-git-hooks.mjs.txt'), join(root, 'scripts/install-git-hooks.mjs'));
+    const installed = spawnSync(process.execPath, [join(root, 'scripts/install-git-hooks.mjs')], { cwd: root, env, encoding: 'utf8' }); assert.equal(installed.status, 0, installed.stderr);
+    for (const path of targets) { mkdirSync(dirname(join(root, path)), { recursive: true }); cpSync(join(BUNDLED_SCRIPTS, path.slice('scripts/agent-workflow/'.length)), join(root, path)); }
+    writeFileSync(join(root, 'docs/ai/source-size.json'), JSON.stringify({ schema: 1, defaults: SOURCE_SIZE_DEFAULTS, roots: ['src'], exclude: [], extensions: ['.mjs'] }));
+    const run = (extra = {}) => buildRecommendations({ cwd: root, deps: hermeticDeps(root, { env, gitHooksPath: () => join(root, '.git/hooks'), ...extra }) });
+    return { root, env, run };
+  };
+  it('renders on every run with no armable role, with harness applySlot lines and the facts about removed flat paths and stopped commits; a current hook renders no item', (t) => {
+    const { root, env, run } = flatProject(t);
+    assert.deepEqual(Object.values(need(gitHooks, 'hookCheckAnswers')(root, { env })).map(({ armable }) => armable), [false, false]);
+    for (const built of [run(), run()]) {
+      assert.equal(built.items.some((item) => item.variant === 'source-size.layout'), false);
+      assert.deepEqual(built.skips.filter((entry) => entry.key === 'hook-checks'), []); const items = built.items.filter((item) => item.key === 'hook-checks'); assert.equal(items.length, 1);
+      const item = items[0]; assert.deepEqual([item.severity, item.lane], [SEVERITY_OPTIONAL, 'harness']); assert.deepEqual({ check: item.check, apply: item.apply }, need(lanes, 'applySlot')('hook-checks', { toolsDir: HERE, root, env, home: root, platform: process.platform }));
+      const text = [item.what, item.detail].join(' '); assert.match(text, /flat paths/u); assert.match(text, /(?:this upgrade.*remov|remov.*this upgrade)/u); assert.match(text, /every commit stops/u); assert.match(text, /until.*appl/u);
+    }
+    assert.equal(spawnSync(process.execPath, [join(root, KIT_INSTALLER)], { cwd: root, env }).status, 0); assert.deepEqual(run().items.filter((item) => item.key === 'hook-checks'), []);
+  });
+  for (const missing of targets.filter((path) => path !== KIT_INSTALLER)) it(`states a skip naming absent ${missing} and the upgrade re-run, with no item`, (t) => {
+    const { root, run } = flatProject(t); rmSync(join(root, missing));
+    for (const rules of [false, true]) for (const layout of [false, true]) {
+      const built = run({ checkRules: () => [{ theme: 'project-layout', verdict: rules ? 'current' : 'absent' }], readLayoutSetup: () => ({ answer: layout ? 'armable' : 'held' }) });
+      assert.deepEqual(built.items.filter((item) => item.key === 'hook-checks'), []); const skips = built.skips.filter((entry) => entry.key === 'hook-checks'); assert.equal(skips.length, 1); assert.ok(skips[0].reason.includes(missing), skips[0].reason); assert.match(skips[0].reason, /upgrade/u); assert.match(skips[0].reason, /(?:re-run|again)/u);
+    }
   });
 });
 

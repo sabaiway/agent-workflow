@@ -1,4 +1,3 @@
-// scripts.test.mjs — the upgrade's `scripts` op by its cells, from the plain-run rule to the shipped text.
 // The op's leaf is imported dynamically, so a tree without it fails each cell, never the load.
 
 import { after, describe, it } from 'node:test';
@@ -12,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { main } from '../ensure-configs.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
-import { SCRIPT_PRIORS } from '../script-priors.mjs';
+import { SCRIPT_PRIORS, PRIOR_FILES } from '../script-priors.mjs';
 
 const { ensureScripts, SCRIPT_CHANNEL, LOCAL_HOOK_CHANNEL } = await import('./scripts.mjs').catch(() => ({}));
 
@@ -40,7 +39,7 @@ const kitLayout = () => (layout ??= (async () => {
   const kit = posix.relative('scripts', KIT_SCRIPTS_DIR), installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
   const at = (path) => { assert.ok(deployed.some((e) => e.path === path), `${path} is a deployed entry of the manifest`); SRC.set(`${kit}/${path}`, path); return `${kit}/${path}`; };
   const importsOf = (path) => [...readFileSync(join(BUNDLE, path), 'utf8').matchAll(IMPORT)].map((m) => posix.join(posix.dirname(path), m[1]));
-  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== installer).map((e) => e.path)];
+  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== 'run.mjs' && e.path !== installer).map((e) => e.path)];
   for (let next; (next = rest.filter((p) => importsOf(p).every((d) => !rest.includes(d))).sort()[0]);) order.push(...rest.splice(rest.indexOf(next), 1));
   assert.deepEqual(rest, [], "the family's imports close no cycle");
   INSTALLERS.add(at(installer));
@@ -103,7 +102,7 @@ const run = (dir, { would, ...opts } = {}) => {
     done.push(to);
     return out;
   };
-  const r = ensureScripts({ cwd: dir, kitRoot: KIT, ...opts, deps: { ...deps, rename: counted(deps.rename ?? renameSync), link: counted(deps.link ?? linkSync) } });
+  const r = ensureScripts({ cwd: dir, kitRoot: KIT, ...opts, deps: { git: () => ({ status: 128, stdout: '', stderr: '' }), ...deps, rename: counted(deps.rename ?? renameSync), link: counted(deps.link ?? linkSync) } });
   assertHookRun(r, done.length, opts.dryRun, would);
   return r;
 };
@@ -117,7 +116,7 @@ const recorder = (dir, { refuseAt = 0 } = {}, order = []) => {
   return { order, deps: { rename: record(renameSync), link: record(linkSync) } };
 };
 
-const cli = (dir, flags = [], ctx = {}) => main(['--reconcile', ...flags, '--cwd', dir], ctx);
+const cli = (dir, flags = [], ctx = {}) => main(['--reconcile', ...flags, '--cwd', dir], { ...ctx, deps: { git: () => ({ status: 128, stdout: '', stderr: '' }), ...ctx.deps } });
 const tokensOf = (out) => [...out.matchAll(/^ {2}([a-z-]+): ([a-z-]+)$/gm)].map((m) => `${m[1]}: ${m[2]}`);
 const opsOf = (out) => tokensOf(out).map((t) => t.split(':')[0]);
 // The detail lines one op printed under its token line.
@@ -243,8 +242,8 @@ describe('spec:distribution-files/S19 write order through a recording writer', (
   const tree = (K, bodies = Object.fromEntries(K.order.slice(0, -1).map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]]))) => ({ bodies, priors: priorsWith(...K.order), due: K.order.filter((n) => n in bodies) });
   it("one plain run's refreshes, replacements and placements: the installer, then each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
     const K = await kitLayout(), { bodies, priors, due } = tree(K);
-    assert.deepEqual(K.order.slice(0, 5).map((n) => SRC.get(n)), [SRC.get(K.installer), 'run.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/index.mjs']);
-    assert.deepEqual(K.order.slice(5).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
+    assert.deepEqual(K.order.slice(0, 4).map((n) => SRC.get(n)), [SRC.get(K.installer), 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/index.mjs']);
+    assert.deepEqual(K.order.slice(4).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
     const order = withTree(bodies, (dir) => { const { order: written, deps } = recorder(dir); run(dir, { would: K.would, deps: { ...deps, priors } }); return written; }, { family: K.order });
     assert.deepEqual(order, due);
   });
@@ -321,7 +320,7 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
       rmSync(join(dir, rel(K.last)));
       assert.deepEqual(plainRun(dir), { tokens: ['scripts: seeded'], details: [L.placed(K.last), L.count(K.order.length - 1, K.dir), HOOK] });
       holds(dir, { [K.last]: bundled(K.last) });
-    }, { family: K.order, setup: (dir) => put(dir, Object.fromEntries(K.pairs.map((n) => [n, bundled(n)]))) });
+    }, { family: K.order, setup: (dir) => put(dir, Object.fromEntries([...K.pairs, K.at('run.mjs')].map((n) => [n, bundled(n)]))) });
   });
 });
 
@@ -346,11 +345,12 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
   const has = (body, yes, no = []) => assert.deepEqual([yes.filter((p) => !body.includes(p)), no.filter((p) => body.includes(p))], [[], []], 'missing phrases, then claimed ones');
   const [RETIRED, STORE_RUN] = [['old-adr-layout-migration-instructed', 'adr-layout-unverifiable'], 'archive-decisions.mjs --ensure-current'];
   it('upgrade.md: the scripts token arm, the enforcement-script paragraph and the owns sentence state the one rule and the store run', () => {
-    const doc = text('references', 'modes', 'upgrade.md'), at = doc.indexOf('**What the enforcement-script ensure does.**');
+    const doc = text('references', 'modes', 'upgrade.md'), at = doc.indexOf('**What the enforcement-script ensure does.**'), paragraph = at === -1 ? '' : doc.slice(at, doc.indexOf('\n', at));
     has(doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`seeded`', '`refreshed`', '`already-present`', '`not-placed`', '`skipped-no-node-evidence`'], ['`pending`', 'customized-preserved']);
-    has(at === -1 ? '' : doc.slice(at, doc.indexOf('\n', at)), ['a kit script outside the seed names', 'no question and no copy kept', 'where a lasting edit goes', 'the commit hook runs the files written',
-      'keeps the standing seed files current with the modules they import', 'places no other kit script', 'hook-run line as a condition', `\`scripts/${STORE_RUN}\``, 'after the writes', 'its refusal stops the upgrade', '`--write-baseline`',
+    has(paragraph, ['a kit script outside the seed names', 'no question and no copy kept', 'where a lasting edit goes', 'the commit hook runs the files written',
+      'keeps the standing seed files current with the modules they import', 'places no other kit script', 'hook-run line as a condition', '--ensure-current', 'after the writes', 'its refusal stops the upgrade', '`--write-baseline`',
       'the `enforcement` check line and apply, by the consent route'], ['withheld', 'customized', 'preserved', 'kept aside', 'held back', 'one yes', 'replace block', 'migrate-adr-store']);
+    assert.deepEqual(PRIOR_FILES.filter((name) => paragraph.includes(`scripts/${name}`)), [], 'the enforcement-script paragraph names no flat kit file');
     has(doc, ["rewrites only what it owns, and the scripts op's store run moves ADR entries, rewrites their inbound links"], [...RETIRED, 'never auto-migrated', 'legacy-ADR', 'cannot READ', 'the layout it read']);
     has(text('tools', 'upgrade-runlist.mjs'), [], RETIRED);
   });
@@ -363,7 +363,7 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
     has(at === -1 ? '' : rows.slice(at, at + 4).join('\n'), ['with no question and no copy kept', 'brings the ADR store current (--ensure-current)'], ['held back']);
     const help = main(['--help']).stdout, from = help.indexOf('\n  --only <op>'), fifth = help.indexOf('A fifth');
     has(help.slice(from, help.indexOf('\n  --cwd', from)), [], ['survey']);
-    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
+    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/agent-workflow/archives/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
   });
   it('no shipped file but a test names migrate-adr-store; renderers.mjs and status.md name the upgrade for an older layout', () => {
     const isTest = (path) => path.split(/[\\/]/).some((segment) => /\.test(\.mjs)?$/.test(segment));
@@ -383,17 +383,18 @@ describe('spec:distribution-files/S5 one directory, one door', () => {
   const HERE = join(KIT, 'tools', 'distribution-files'), DIR = HERE + sep;
   const specifiers = (source) => [...source.matchAll(/\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1] ?? m[2]);
   const kitModules = (at) => readdirSync(at, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (join(at, e.name) + sep === DIR ? [] : kitModules(join(at, e.name))) : e.isFile() && e.name.endsWith('.mjs') ? [join(at, e.name)] : []));
-  it('the index exports exactly ensureScripts, SCRIPT_CHANNEL, fileLine and hookLine, each the very export of scripts.mjs; replace-set.mjs and kept-aside.mjs are absent', async () => {
+  it('the index exports exactly ensureScripts, SCRIPT_CHANNEL, fileLine and hookLine, each the very export of scripts.mjs, nothing of retired.mjs; replace-set.mjs and kept-aside.mjs are absent', async () => {
     const [door, leaf] = await Promise.all(['./index.mjs', './scripts.mjs'].map((path) => import(path).catch(() => ({}))));
     assert.deepEqual(Object.keys(door).sort(), ['SCRIPT_CHANNEL', 'ensureScripts', 'fileLine', 'hookLine']);
     assert.deepEqual(Object.keys(door).filter((name) => door[name] !== leaf[name]), []);
     assert.deepEqual(['replace-set.mjs', 'kept-aside.mjs'].filter((name) => existsSync(join(HERE, name))), []);
   });
-  it('no kit module outside the directory imports a file of it but the index; no file of it imports ensure-specs.mjs or ensure-configs.mjs', () => {
-    const consumers = ['ensure-configs.mjs', 'ensure-specs.mjs'].map((name) => join(KIT, 'tools', name));
+  it('scripts.mjs alone imports retired.mjs; no kit module outside the directory imports past the index; no non-test file of it imports ensure-specs.mjs, ensure-configs.mjs or family-registry.mjs', () => {
+    const consumers = ['ensure-configs.mjs', 'ensure-specs.mjs', 'family-registry.mjs'].map((name) => join(KIT, 'tools', name));
     const offenders = kitModules(KIT).flatMap((file) => specifiers(readFileSync(file, 'utf8')).filter((spec) => spec.startsWith('.')).map((spec) => resolve(dirname(file), spec))
       .filter((target) => target.startsWith(DIR) && target !== join(HERE, 'index.mjs')).map((target) => `${relative(KIT, file)} → ${relative(KIT, target)}`));
     const inward = readdirSync(HERE).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs')).flatMap((name) => specifiers(readFileSync(join(HERE, name), 'utf8')).filter((spec) => consumers.includes(resolve(HERE, spec))).map((spec) => `${name} → ${spec}`));
-    assert.deepEqual([offenders, inward], [[], []]);
+    const importers = readdirSync(HERE).filter((name) => name.endsWith('.mjs') && !name.endsWith('.test.mjs')).filter((name) => specifiers(readFileSync(join(HERE, name), 'utf8')).some((spec) => resolve(HERE, spec) === join(HERE, 'retired.mjs')));
+    assert.deepEqual([offenders, inward, existsSync(join(HERE, 'retired.mjs')), importers], [[], [], true, ['scripts.mjs']]);
   });
 });

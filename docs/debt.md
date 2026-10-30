@@ -851,20 +851,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   judge nothing" is false for the `--override` equality stop (`:159`, `:165`): "they and a usage … error print none".
   Fix direction: the four text replacements, in the spec's next revision. Residual exposure, NOT live: specs only.
 
-- **KIT-COMMAND-S4-SPECS-NAME-THE-COMMAND** — invariant: every sentence of the specs S4 revises is true of the tree
-  with the stable kit command in it. Origin: the lens, round 1 of the KIT-SCRIPTS S3 spec review (split out of
-  KIT-COMMAND-SPEC-REVIEW-MINORS): `distribution-files/scripts.md:14` ("one module folder each") and `node-evidence.md:68`
-  (the hook-line residual) do not name the top-level command. Fix direction: both in story S4's spec session (both files
-  are in S4's shared list). Residual exposure, NOT live: unreleased.
-
-- **KIT-COMMAND-GATES-TOKEN-SPLIT** — invariant: every path token of a gate's cmd that names a kit check gets its
-  repoint line. Origin: the lens, round 1 of the KIT-SCRIPTS S3 diff review:
-  `agent-workflow-memory/references/scripts/gates/kit-command-gates.mjs:31` (`TOKENS` splits on whitespace and double
-  quotes only), so `node scripts/check-docs-size.mjs; …`, `…mjs&&`, `…mjs|tee`, `…mjs>out` and a single-quoted path
-  are named by no line. Narrow fix: none needed now — the spec names only double quotes and the code holds it. Fix
-  direction: the spec and the code cut a token at `;&|<>()` and drop surrounding single quotes, red first, in story
-  S4 (its move of the flat files is where an unnamed gate breaks). Residual exposure, NOT live: unreleased.
-
 - **KIT-COMMAND-MIGRATE-GATES-MINORS** — invariant: the migration's reading of a matched customized gate is pinned,
   and its output never reads as done while a line asks for a hand. Origin: the lens, round 1 of the KIT-SCRIPTS S3
   diff review: `agent-workflow-memory/references/scripts/gates/migrate-gates.mjs:365` (`!deadTool`) and `:373` have
@@ -875,7 +861,86 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   spec revision and its review; the no-op line takes the "the warnings below still need a hand" variant when repoints
   or withheld gates exist. Residual exposure, NOT live: unreleased.
 
+- **KIT-TEXTS-GUARD-QUOTED-NAME** — invariant: the kit-texts guard flags a refused command name however the text
+  quotes it. Origin: codex, the KIT-SCRIPTS S6 code review (verdict ship, one minor):
+  `scripts/testing/kit-texts.test.mjs:25` (`RUN_RE`) captures no name after a quote, so
+  `node scripts/agent-workflow/run.mjs "check-docs-size"` is spared although the command refuses it, exit 2; proved
+  by a probe of the regex, and no packed text holds a quoted name today. Fix direction: read a name in single, double
+  or back quotes, with a Markdown and a JSON case in the suite, through a script-family revision of S12 and its
+  review. Residual exposure, NOT live: unreleased, no current hit.
+
+- **GIT-HOOKS-LIMIT-2-NAMES-THE-OLD-FAILURE** — invariant: the part git-hooks' stated limit (2) describes what a hook
+  below the work-tree top does. Origin: the KIT-SCRIPTS S4 spec review's last re-read (lens) — kit-command revision 2
+  runs the five kit lines behind a test of `scripts/agent-workflow/run.mjs` from the work-tree top, so a project root
+  in a monorepo subfolder now commits with those checks skipped and a line naming a fix (merge or upgrade) that does
+  not apply, while limit (2) (`docs/ai/specs/kit/install/init-project/git-hooks.md:54`) still says such a hook fails
+  every commit. Narrow fix: limit (2) states the skip, its line and that neither named fix applies there.
+
+- **KIT-SCRIPTS-S4-MOVE-MINORS** — invariant: every line the move prints is true of the tree it judges, and a removal
+  runs only on proof that the kit folder holds the replacement through plain folders. Origin: round 1 of the
+  KIT-SCRIPTS S4 diff review (codex ship, lens ship, each with minors), all in
+  `agent-workflow-kit/tools/distribution-files/retired.mjs` unless named: (1) `:31` the suite line prints
+  `node --test scripts/<file>` unquoted, so a name holding a space splits (codex); (2) `:46` reads git's exit 128 as
+  "outside a git work tree", false under a refused (dubious-ownership) repository (codex); (3) `:13,58,83` `isRegular`
+  lstats only the leaf, so a replacement under a linked `docs-size/` or `spec-schema/` folder counts as standing, and
+  the scripts op's `FOLDERS` (`scripts.mjs:38`) leaves those folders out (lens); (4) `:51` a dry run of a hidden
+  deployment whose kit folder does not exist yet prints the commit line — probed: with `/scripts/agent-workflow/` in
+  the exclude, `git check-ignore -q scripts/agent-workflow` exits 1 while the folder is absent and 0 with a trailing
+  slash (lens); (5) `:16-21,71-77` an unreadable bundled body is named as the flat file's read error (lens; the code
+  record's own note); (6) `agent-workflow-memory/references/scripts/gates/kit-command-gates.mjs:28` `CHECK_FILE`
+  admits only `\s"';&|<>()` after a file name, so a backtick or a comma after it gets no repoint line, while spec
+  kit-command says only "standing whole" (lens, nit); (7) `retired.test.mjs:256-271` the failed-specs cell stays green
+  with the `!result.failed` filter (`ensure-configs.mjs:151`) removed, since a failed outcome carries no
+  `placedScripts` (lens, nit); (8) `move.integration.test.mjs:12` imports `KIT_COMMANDS` and never uses it (agy,
+  nit). Narrow fixes: (1) quote the path with the kit's shell quoting; (2) name exit 128 as not
+  confirmed with git's message; (3) lstat each folder of the replacement path; (4) ask about
+  `scripts/agent-workflow/` with the trailing slash, a dry-run hidden cell red first; (5) read the bundle outside the
+  flat file's `try` or name the bundled path; (6) add the backtick and comma or state the follow set in the spec;
+  (7) a failing specs outcome that carries `placedScripts`; (8) drop the import. Residual exposure, NOT live: unreleased (RELEASE HOLD
+  until KIT-SCRIPTS S7).
+
+- **PLAN-SHAPE-GATE-READS-NO-WAIVER** — invariant: a plan-shape finding the maintainer waived for one plan does not
+  block that plan's commit. Origin: `agent-workflow-kit/tools/plan-shape.mjs:17` (`MAX_LEDGER_ROWS` 25, no waiver
+  path); the KIT-SCRIPTS S4 plan carried 55 rows under the maintainer's waiver, the gate stayed red, and
+  `commit-guard --check` refuses any red final receipt — met by the S6 landing and the S4 diff review. Narrow fix
+  taken: the finished, reviewed plan renamed to the scratch form before `--final` (the maintainer's choice, option
+  1), its only findings the waived cap and T43's `story-owns`. Fix direction: a recorded waiver in a strict config
+  that plan-shape reads, through a spec and its review. Residual exposure, NOT live: one plan, already reviewed.
+
+- **KIT-READMES-PROMISE-DEPLOYED-SUITES** — invariant: no kit text says the deployed `scripts/` carries or runs
+  suites. Origin: the lens, round 1 of the KIT-SCRIPTS S6 diff review (verdict ship, one minor, outside the diff):
+  `agent-workflow-kit/README.md:125` and `README.md:151` call the deployed `scripts/` and hook "(dependency-free,
+  `node --test`)", `agent-workflow-kit/README.md:291` says "enforcement scripts (`node --test`, …)", while spec
+  script-family keeps every suite off the deployed role and the hook runs no suite. The kit-texts guard reads path and
+  command forms only, so it cannot see these lines. Narrow fix: drop `node --test` in the three places, keeping
+  "dependency-free", in story S7 before the held release. Residual exposure, NOT live: unreleased (RELEASE HOLD until
+  KIT-SCRIPTS S7).
+
 ## Closed
+
+- **KIT-COMMAND-S4-SPECS-NAME-THE-COMMAND** — invariant: every sentence of the specs S4 revises is true of the tree
+  with the stable kit command in it. Raised by the lens, round 1 of the KIT-SCRIPTS S3 spec review. Closed in story
+  S4: distribution-files part scripts revision 7 names `run.mjs` at the kit folder's top (`scripts.md:17`) and
+  node-evidence revision 9 names `node scripts/agent-workflow/run.mjs <name>` in the hook residual
+  (`node-evidence.md:68`).
+
+- **KIT-COMMAND-GATES-TOKEN-SPLIT** — invariant: every path token of a gate's cmd that names a kit check gets its
+  repoint line. Raised by the lens, round 1 of the KIT-SCRIPTS S3 diff review. Closed in story S4: kit-command
+  revision 2 reads the repoints by a plain search for each target's file name standing whole
+  (`kit-command-gates.mjs:28`, `CHECK_FILE`), S8's cells for `;`, `&&`, `|`, `>`, `)`, `(` and single quotes red in
+  the tests session and green after the code session.
+
+- **HOLDERS-ABSENT-LOCAL-HOOK-IS-NO-CANDIDATE** — invariant: an absent `scripts/pre-commit.local` is no candidate of
+  the holders scan. Raised by agy at the KIT-SCRIPTS S4 spec review's last re-read. Closed in story S4 by subtraction:
+  the one-run move cut the holders scan (`holders.mjs`, `scanHolders`), so the part flat-move lists no candidate.
+
+- **KIT-TEXTS-SPEC-REVIEW-MINORS** — invariant: every sentence of script-family revision 3's kit-texts bullet and S12
+  is true of the packed texts and bindable to one test. Raised in round 2 of the KIT-SCRIPTS S6 spec review (all three
+  members ship). Closed in S6's tests session, before any binding: the history exclusion names the kit's and memory's
+  `CHANGELOG.md` and `migrations/` (the engine packs no `migrations/` and its changelog holds no hit yet); S12 spares
+  the manifest's `run.mjs` JSON value; the bullet flags `run.mjs` at any deployment path but
+  `scripts/agent-workflow/run.mjs` and `node` running a bare check file, S12 naming `node scripts/run.mjs docs-size`
+  and `node check-docs-size.mjs --check-index`.
 
 - **KIT-COMMAND-SPEC-REVIEW-MINORS** — invariant: every sentence of the draft spec kit-command and of script-family
   revision 2 is true of the code it governs. Raised by the lens in the two rounds of the KIT-SCRIPTS S3 spec review.

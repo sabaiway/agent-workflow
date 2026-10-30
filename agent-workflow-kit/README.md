@@ -363,7 +363,7 @@ agent-workflow-kit/
 │   ├── modes/       ← one file per mode (deploy/upgrade/… procedures)
 │   ├── shared/      ← shared contracts (footer · hand-off · tail)
 │   ├── templates/   ← AGENTS.md + every docs/ai file
-│   ├── scripts/     ← caps / archive / index + tests
+│   ├── scripts/     ← the script family: manifest, stable command, modules
 │   └── contracts.md ← visibility / language / attribution rules
 ├── tools/           ← family tooling:
 │   ├── manifest/    ← capability-manifest schema + validator

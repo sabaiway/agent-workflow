@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PRIOR_FILES } from '../script-priors.mjs';
 
 const { ensureScripts, SCRIPT_CHANNEL, SEED_NAMES } = await import('./scripts.mjs').catch(() => ({}));
 
@@ -35,7 +36,7 @@ const kitLayout = () => (layout ??= (async () => {
   const [{ readFamily }, { KIT_SCRIPTS_DIR, INSTALLER_REL }] = await Promise.all([import('../../references/scripts/family.mjs'), import('../node-evidence.mjs')]);
   const entries = readFamily(BUNDLE), deployed = entries.filter((e) => e.role === 'deployed'), spec = (e) => ['spec-schema', 'docs-size'].includes(e.module);
   const installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
-  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== installer).map((e) => e.path)];
+  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== 'run.mjs' && e.path !== installer).map((e) => e.path)];
   for (let next; (next = rest.filter((p) => importsOf(p).every((d) => !rest.includes(d))).sort()[0]);) order.push(...rest.splice(rest.indexOf(next), 1));
   assert.deepEqual(rest, [], "the family's imports close no cycle");
   KD = KIT_SCRIPTS_DIR;
@@ -63,6 +64,14 @@ const put = (dir, bodies, at = KD) => {
   }
 };
 const pairBodies = (K) => Object.fromEntries(K.pairs.map((p) => [p, bundled(p)]));
+const flatBody = (name) => {
+  if (name === 'spec-schema.mjs') return bundled('spec-schema/spec-schema.mjs');
+  if (name === 'markdown-blocks.mjs') return bundled('shared/markdown-blocks.mjs');
+  const fixtures = join(KIT, 'test', 'fixtures', 'script-priors');
+  const version = readdirSync(fixtures).filter((v) => existsSync(join(fixtures, v, `${name}.txt`))).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1);
+  assert.ok(version, `a last-flat-release fixture for ${name}`);
+  return readFileSync(join(fixtures, version, `${name}.txt`));
+};
 // A temp project: docs/ai, a package.json unless `node` is false, then whatever `setup` lays down.
 const withTree = (setup, fn, { node = true } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'scripts-component-'));
@@ -85,7 +94,7 @@ const snapshot = (dir, at = dir, out = {}) => {
 };
 // The manifest paths standing in the kit folder.
 const listing = (dir) => Object.keys(snapshot(join(dir, KD))).sort();
-const run = (dir, deps = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, deps });
+const run = (dir, deps = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, deps: { git: () => ({ status: 128, stdout: '', stderr: '' }), ...deps } });
 const spy = (paths) => (p, ...rest) => {
   paths.push(String(p));
   return readFileSync(p, ...rest);
@@ -106,10 +115,10 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
     }, { node: false });
   });
 
-  it("no kit folder, an empty one, one holding only the spec layer's files, or a scripts/ holding only flat kit files of an earlier release: not-placed, one line, nothing written", async () => {
-    const K = await kitLayout(), flat = ['install-git-hooks.mjs', 'archive-decisions.mjs', 'markdown-blocks.mjs', 'check-docs-size.mjs'];
+  it("no kit folder, an empty one, or one holding only the spec layer's pair files and run.mjs: not-placed, one line, nothing written", async () => {
+    const K = await kitLayout();
     const setups = [() => {}, (dir) => mkdirSync(join(dir, 'scripts')), (dir) => mkdirSync(join(dir, KD), { recursive: true }), (dir) => put(dir, pairBodies(K)),
-      (dir) => put(dir, Object.fromEntries(flat.map((n) => [n, EDIT(n)])), 'scripts')];
+      (dir) => put(dir, { 'run.mjs': bundled('run.mjs') }), (dir) => put(dir, { ...pairBodies(K), 'run.mjs': bundled('run.mjs') })];
     for (const setup of setups) withTree(setup, (dir) => {
       const [paths, before] = [[], snapshot(dir)], r = run(dir, { readFile: spy(paths) });
       assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines.length, entries: 'entries' in r }, { token: 'not-placed', failed: false, lines: 1, entries: false });
@@ -118,9 +127,40 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
     });
   });
 
+  it("only flat spec-pair, suite and support files beside run.mjs: refreshed, not-placed first, suites and support removed, pairs kept, nothing written under the kit folder", async () => {
+    const K = await kitLayout(), pairs = ['spec-schema.mjs', 'check-docs-size.mjs'];
+    const removed = PRIOR_FILES.filter((name) => !K.deployed.some((p) => posix.basename(p) === name));
+    const flat = Object.fromEntries([...pairs, ...removed].map((name) => [name, flatBody(name)]));
+    withTree((dir) => { put(dir, flat, 'scripts'); put(dir, { 'run.mjs': bundled('run.mjs') }); }, (dir) => {
+      const before = snapshot(join(dir, KD)), r = run(dir);
+      assert.deepEqual([r.token, r.failed, 'entries' in r], ['refreshed', false, false]);
+      assert.equal(r.lines[0], `${KD}/: no kit script stands in it, so none is placed`);
+      for (const name of removed) {
+        assert.equal(existsSync(join(dir, 'scripts', name)), false, `${name} removed`);
+        assert.equal(r.lines.filter((l) => l === `scripts/${name}: removed — the kit's scripts live in scripts/agent-workflow/`).length, 1);
+      }
+      for (const name of pairs) {
+        assert.equal(sha(readFileSync(join(dir, 'scripts', name))), sha(flat[name]));
+        const path = K.pairs.find((p) => posix.basename(p) === name);
+        assert.equal(r.lines.filter((l) => l === `scripts/${name}: kept — scripts/agent-workflow/${path} is not placed yet`).length, 1);
+      }
+      assert.deepEqual(snapshot(join(dir, KD)), before, 'nothing written under the kit folder');
+    });
+  });
+
+  it("only flat spec-pair, suite and support files with no kit folder: not-placed, nothing removed, every kit file kept naming run.mjs", async () => {
+    const K = await kitLayout(), names = PRIOR_FILES.filter((name) => ['spec-schema.mjs', 'check-docs-size.mjs'].includes(name) || !K.deployed.some((p) => posix.basename(p) === name));
+    withTree((dir) => put(dir, Object.fromEntries(names.map((name) => [name, flatBody(name)])), 'scripts'), (dir) => {
+      const before = snapshot(dir), r = run(dir);
+      assert.deepEqual([r.token, r.failed, snapshot(dir)], ['not-placed', false, before]);
+      assert.equal(r.lines[0], `${KD}/: no kit script stands in it, so none is placed`);
+      assert.deepEqual(r.lines.slice(1), names.map((name) => `scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`));
+    });
+  });
+
   it('the tree the specs op seeds on a package.json-only project: already-present with the not-accepted line, nothing written and no spawn', async () => {
     const K = await kitLayout(), seeded = [...closureOf(K.pairs, K.deployed)];
-    withTree((dir) => put(dir, Object.fromEntries(seeded.map((p) => [p, bundled(p)]))), (dir) => {
+    withTree((dir) => put(dir, Object.fromEntries([...seeded, 'run.mjs'].map((p) => [p, bundled(p)]))), (dir) => {
       const spawns = [], before = snapshot(dir);
       const r = run(dir, { spawnSync: (...args) => { spawns.push(args); return { status: 0, stdout: '', stderr: '' }; } });
       const standing = seeded.filter((p) => K.seeds.includes(p)).length;

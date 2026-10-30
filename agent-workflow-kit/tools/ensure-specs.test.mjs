@@ -1,7 +1,7 @@
 // ensure-specs.test.mjs — the spec-layer ensure by its cells: every plain run writes the pair files, the
 // files they import and the store root by the part scripts' rule (a prior refreshed, an edit replaced in
 // place, an absent file placed, the store root seeded create-only) in the write order the pairs' imports,
-// reader pair, checker pair, store root, with the part's lines and the one hook-run line; the single run token
+// reader pair, checker pair, run.mjs, store root, with the part's lines and the one hook-run line; the single run token
 // by precedence; and every fail-closed arm writing nothing (or saying exactly what it had already written).
 // Real temp projects in the kit folder; a prior body is built through the deps.priors seam, since the catalog
 // names no file there.
@@ -90,8 +90,8 @@ const STORE_LINES = {
   stopped: `${STORE}: absent — not created`,
 };
 // A table names a state per group of the kit folder — `shared` (the files the pairs import), `reader` and
-// `checker`, in write order — as one state for the whole group or one per position, absent past the given ones.
-const statesOf = (K, table) => [['shared', K.closure], ['reader', K.reader], ['checker', K.checker]]
+// `checker` and `command`, in write order — as one state for the whole group or one per position, absent past the given ones.
+const statesOf = (K, table) => [['shared', K.closure], ['reader', K.reader], ['checker', K.checker], ['command', K.command]]
   .flatMap(([group, paths]) => paths.map((p, i) => [p, typeof table[group] === 'string' ? table[group] : table[group]?.[i] ?? 'absent']));
 // Every line of a run over `table` that lands every write (or, dry, would).
 const linesFor = (K, table, dry = false) => {
@@ -146,11 +146,13 @@ const kitPairs = async () => {
   const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed');
   const all = deployed.map((e) => e.path);
   const [reader, checker] = ['spec-schema', 'docs-size'].map((m) => writeOrder(deployed.filter((e) => e.module === m).map((e) => e.path)));
+  const command = deployed.filter((e) => e.path === 'run.mjs').map((e) => e.path);
+  assert.deepEqual(command, ['run.mjs']);
   const reached = new Set([...reader, ...checker]);
   for (const p of reached) for (const dep of importsOf(p, all)) reached.add(dep);
   const closure = writeOrder([...reached].filter((p) => !reader.includes(p) && !checker.includes(p)));
   assert.ok(reader.length > 1 && checker.length > 0 && closure.length > 1, 'two reader files, a checker and at least two files they import');
-  return { reader, checker, closure, order: [...closure, ...reader, ...checker] };
+  return { reader, checker, closure, command, order: [...closure, ...reader, ...checker, ...command] };
 };
 const relK = (p) => `${KF}/${p}`;
 const OLDK = (p) => `// an earlier ${p}\n`;
@@ -179,17 +181,17 @@ const withTable = (K, table, fn, opts) => withProject(table, (dir) => {
 }, opts);
 // A run whose catalog seam lists OLDK of every file of the kit folder the spec layer judges.
 const runK = (K, dir, extra = {}) => run(dir, { ...extra, deps: { today: TODAY, priors: priorsK(...K.order), ...extra.deps } });
-const CONVERGED = { shared: 'current', reader: 'current', checker: 'current', store: 'present' };
+const CONVERGED = { shared: 'current', reader: 'current', checker: 'current', command: 'current', store: 'present' };
 // Every pair file loads in a child node: its imports resolve where the run left them.
 const loads = (dir, paths) => {
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', paths.map((p) => `await import(${JSON.stringify(pathToFileURL(join(dir, relK(p))).href)});`).join('\n')], { cwd: dir, encoding: 'utf8' });
   assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
 };
 // Prior, edited and absent pair files, an absent and an edited file they import, and (by default) no store root.
-const MIXED = (K) => ({ [K.closure[0]]: 'absent', [K.closure[1]]: 'custom', [K.reader[0]]: 'prior', [K.reader[1]]: 'absent', [K.checker[0]]: 'custom' });
+const MIXED = (K) => ({ [K.closure[0]]: 'absent', [K.closure[1]]: 'custom', [K.reader[0]]: 'prior', [K.reader[1]]: 'absent', [K.checker[0]]: 'custom', [K.command[0]]: 'absent' });
 
 describe('spec:distribution-files/S1 the write order and the failures of one plain run', () => {
-  it('prior, edited and absent pair files at their deployed paths, an absent and an edited file the checker imports and an absent store root: the closure, the reader pair, the checker pair, the store root, and every pair file loads', async () => {
+  it('prior, edited and absent pair files at their deployed paths, an absent and an edited file the checker imports and an absent store root: the closure, the reader pair, the checker pair, run.mjs, the store root, and every pair file loads', async () => {
     const K = await kitPairs();
     withKit(K, MIXED(K), (dir) => {
       const { order, deps } = recorder(dir);
@@ -207,6 +209,7 @@ describe('spec:distribution-files/S1 the write order and the failures of one pla
       const r = run(dir, { deps: { ...recorder(dir, { refuseAt: 1 }).deps, priors: priorsK(K.reader[0]) } });
       assert.match(r.lines[0] ?? '', new RegExp(`^write-refused — ${relK(K.closure[0]).replace(/[.]/g, '\\.')}: `), r.lines.join('\n'));
       assert.deepEqual([r.token, ...[K.reader[0], K.reader[1], K.checker[0]].map((p) => read(dir, relK(p))), existsSync(join(dir, STORE))], ['failed', OLDK(K.reader[0]), null, CUSTOM, false]);
+      assert.deepEqual([read(dir, relK(K.command[0])), r.lines.includes(pairLine(K.command[0], 'absent', 'stopped', KF))], [null, true], r.lines.join('\n'));
     });
   });
   it('a write refused at the second file: write-refused, the first written and kept, PARTWAY counting it, every later file not refreshed, replaced or placed, no store root', async () => {
@@ -217,7 +220,7 @@ describe('spec:distribution-files/S1 the write order and the failures of one pla
       const r = run(dir, { deps: { ...recorder(dir, { refuseAt: 2 }).deps, priors: priorsK(K.reader[0]) } });
       const lines = K.order.map((p) => (states[p] ? pairLine(p, states[p], ['written', 'refused'][due.indexOf(p)] ?? 'stopped', KF) : pairLine(p, 'current', 'written', KF)));
       assert.deepEqual({ token: r.token, lines: r.lines }, { token: 'failed', lines: [`write-refused — ${relK(due[1])}: EACCES: refused`, ...lines, STORE_LINES.stopped, HOOK, PARTWAY] });
-      assert.deepEqual([...due.map((p) => read(dir, relK(p))), existsSync(join(dir, STORE))], [kb(due[0]), CUSTOM, OLDK(K.reader[0]), null, CUSTOM, false]);
+      assert.deepEqual([...due.map((p) => read(dir, relK(p))), existsSync(join(dir, STORE))], [kb(due[0]), CUSTOM, OLDK(K.reader[0]), null, CUSTOM, null, false]);
       assertNoRetired(r);
     });
   });
@@ -240,6 +243,7 @@ describe('spec:distribution-files/S1 the write order and the failures of one pla
       const r = run(dir, { deps: { today: TODAY, readFile, priors: priorsK(K.reader[0]) } });
       assert.match(r.lines[0] ?? '', /^template-unreadable — docs\/ai\/specs\/index\.md: /, r.lines.join('\n'));
       assert.deepEqual([r.token, snapshot(dir), r.lines.filter((l) => l === HOOK)], ['failed', before, []]);
+      assert.ok(r.lines.includes(pairLine(K.command[0], 'absent', 'stopped', KF)), r.lines.join('\n'));
     });
   });
   it('an edited or prior pair file changed after the survey and before its own write still ends the bundled bytes (last writer wins)', async () => {
@@ -254,7 +258,7 @@ describe('spec:distribution-files/S1 the write order and the failures of one pla
   });
   it('an absent pair file that appears with the bundled body before its create-only write stands, and the later writes proceed', async () => {
     const K = await kitPairs();
-    withKit(K, { [K.reader[1]]: 'absent', [K.checker[0]]: 'prior' }, (dir) => {
+    withKit(K, { [K.reader[1]]: 'absent', [K.checker[0]]: 'prior', [K.command[0]]: 'absent' }, (dir) => {
       const r = run(dir, { deps: { ...appearing(relK(K.reader[1]), kb(K.reader[1])), priors: priorsK(K.checker[0]) } });
       assert.equal(r.token, 'seeded', r.lines.join('\n'));
       assert.ok(r.lines.includes(`${relK(K.reader[1])}: appeared while this run was placing it — the bundled body stands, nothing written`), r.lines.join('\n'));
@@ -264,11 +268,11 @@ describe('spec:distribution-files/S1 the write order and the failures of one pla
   });
   it('one that appears with other bytes is race-unresolved: it stands, nothing further written, the later files named not refreshed and not created', async () => {
     const K = await kitPairs();
-    withKit(K, { [K.reader[1]]: 'absent', [K.checker[0]]: 'prior' }, (dir) => {
+    withKit(K, { [K.reader[1]]: 'absent', [K.checker[0]]: 'prior', [K.command[0]]: 'absent' }, (dir) => {
       const r = run(dir, { deps: { ...appearing(relK(K.reader[1]), CUSTOM), priors: priorsK(K.checker[0]) } });
       assert.match(r.lines[0] ?? '', new RegExp(`^race-unresolved — ${relK(K.reader[1]).replace(/[.]/g, '\\.')}: `), r.lines.join('\n'));
-      assert.deepEqual([r.token, read(dir, relK(K.reader[1])), read(dir, relK(K.checker[0])), existsSync(join(dir, STORE))], ['failed', CUSTOM, OLDK(K.checker[0]), false]);
-      for (const line of [pairLine(K.checker[0], 'prior', 'stopped', KF), STORE_LINES.stopped]) assert.ok(r.lines.includes(line), `${line}\n${r.lines.join('\n')}`);
+      assert.deepEqual([r.token, read(dir, relK(K.reader[1])), read(dir, relK(K.checker[0])), read(dir, relK(K.command[0])), existsSync(join(dir, STORE))], ['failed', CUSTOM, OLDK(K.checker[0]), null, false]);
+      for (const line of [pairLine(K.checker[0], 'prior', 'stopped', KF), pairLine(K.command[0], 'absent', 'stopped', KF), STORE_LINES.stopped]) assert.ok(r.lines.includes(line), `${line}\n${r.lines.join('\n')}`);
       assert.doesNotMatch(r.lines.join('\n'), /— (refreshed|placed|created) /, 'no line claims a write that did not happen');
     });
   });
@@ -304,7 +308,7 @@ describe('spec:distribution-files/S2 the hook-run line and the lines of the part
     for (const dryRun of [false, true]) withTable(K, table, (dir) => {
       const fate = dryRun ? undefined : 'written';
       assert.deepEqual(runK(K, dir, { dryRun }).lines, [...K.closure.map((p) => pairLine(p, 'current', 'written', KF)), fileLine(file(K.reader[0], 'prior'), fate, dryRun), fileLine(file(K.reader[1], 'absent'), fate, dryRun),
-        fileLine(file(K.checker[0], 'custom'), fate, dryRun), STORE_LINES.present, hookLine(false, dryRun)]);
+        fileLine(file(K.checker[0], 'custom'), fate, dryRun), fileLine(file(K.command[0], 'absent'), fate, dryRun), STORE_LINES.present, hookLine(false, dryRun)]);
     });
     assert.deepEqual([hookLine(false, false), hookLine(false, true), SCRIPT_CHANNEL, fileLine(file(K.checker[0], 'custom'), 'written', false).endsWith(`; an edit meant to last goes in ${SCRIPT_CHANNEL}`)], [HOOK, DRY_HOOK, CHANNEL, true]);
   });
@@ -314,8 +318,8 @@ describe('spec:distribution-files/S2 the hook-run line and the lines of the part
 // spec-schema.mjs, the reader's second file its index, and the checker test's place is taken by the files the
 // checker imports. The rule writes every one of them on one plain run.
 const FORMERLY_WITHHELD = [
-  ['a custom checker .mjs beside prior files it imports', { shared: 'prior', reader: 'current', checker: ['custom'] }],
-  ['a custom reader .mjs before a prior checker and the prior files it imports', { shared: 'prior', reader: ['custom', 'current'], checker: ['prior'] }],
+  ['a custom checker .mjs beside prior files it imports', { shared: 'prior', reader: 'current', checker: ['custom'], command: 'prior' }],
+  ['a custom reader .mjs before a prior checker and the prior files it imports', { shared: 'prior', reader: ['custom', 'current'], checker: ['prior'], command: 'custom' }],
   ['a custom reader index beside an absent reader .mjs', { shared: 'prior', reader: ['absent', 'custom'], checker: ['absent'] }],
   ['a custom checker beside a present store root', { shared: 'current', reader: 'current', checker: ['custom'], store: 'present' }],
   ['a custom reader index beside a prior reader .mjs', { shared: 'prior', reader: ['prior', 'custom'], checker: ['prior'] }],
@@ -385,11 +389,11 @@ const ROWS = [
   { label: 'everything absent (a pre-spec deployment with no checker at all)', table: {}, token: 'seeded', after: both },
   { label: 'everything current + store present (a converged tree)', table: CONVERGED, token: 'already-present', after: () => (dir, before) => assert.deepEqual(snapshot(dir), before) },
   { label: 'pairs current, store absent (only the root is missing)', table: { ...CONVERGED, store: 'absent' }, token: 'seeded', after: () => storeSeeded },
-  { label: 'reader current, the checker and the files it imports on an earlier body, store present', table: { shared: 'prior', reader: 'current', checker: 'prior', store: 'present' }, token: 'refreshed', after: (K) => (dir) => allCurrentK(dir, K) },
+  { label: 'reader current, the checker and the files it imports on an earlier body, store present', table: { shared: 'prior', reader: 'current', checker: 'prior', command: 'prior', store: 'present' }, token: 'refreshed', after: (K) => (dir) => allCurrentK(dir, K) },
   { label: 'reader absent, the checker and the files it imports on an earlier body', table: { shared: 'prior', checker: 'prior' }, token: 'seeded', after: both },
   { label: 'checker absent beside the current files it imports', table: { shared: 'current', reader: 'current', checker: ['absent'] }, token: 'seeded', after: both },
-  { label: 'the reader pair on earlier bodies, the checker current, store present', table: { shared: 'current', reader: ['prior', 'prior'], checker: 'current', store: 'present' }, token: 'refreshed', after: (K) => (dir) => allCurrentK(dir, K) },
-  { label: 'every script on an earlier body + store absent: the whole chain refreshes, then the store seeds', table: { shared: 'prior', reader: 'prior', checker: 'prior' }, token: 'seeded', after: both },
+  { label: 'the reader pair on earlier bodies, the checker current, store present', table: { shared: 'current', reader: ['prior', 'prior'], checker: 'current', command: 'current', store: 'present' }, token: 'refreshed', after: (K) => (dir) => allCurrentK(dir, K) },
+  { label: 'every script on an earlier body + store absent: the whole chain refreshes, then the store seeds', table: { shared: 'prior', reader: 'prior', checker: 'prior', command: 'prior' }, token: 'seeded', after: both },
 ];
 
 describe('the state table — the writes and the run token', () => {
@@ -535,7 +539,7 @@ describe('fail-closed arms', () => {
 
   it('a file that appears under the seed stands, and a temp file the cleanup could not remove is named', async () => {
     const K = await kitPairs();
-    withTable(K, { shared: 'current', reader: 'current', checker: 'current' }, (dir) => {
+    withTable(K, { ...CONVERGED, store: 'absent' }, (dir) => {
       const deps = {
         link: (from, to) => { writeFileSync(to, '# theirs\n'); throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' }); },
         rm: () => { throw new Error('EBUSY'); },

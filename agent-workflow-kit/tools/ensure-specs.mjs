@@ -1,6 +1,6 @@
 // ensure-specs.mjs — the SIXTH upgrade ensure: the spec layer (memory 4.6.0, AD-112) kept current on an
 // EXISTING deployment. Its scripts are the reader pair (the deployed entries of the spec-schema module)
-// and the checker pair (the docs-size module's), each at its deployed path in the kit folder
+// and the checker pair (the docs-size module's), plus the command, each at its deployed path in the kit folder
 // scripts/agent-workflow/, with the bundled files they import; every other kit script is the scripts
 // ensure's. They and one store root follow the scripts op's rule (distribution-files/): every file is
 // surveyed by proof first, then on every plain run a prior body is refreshed and an edited one replaced
@@ -9,7 +9,8 @@
 //   1. the files the pairs import   scripts/agent-workflow/shared/... (dependencies first)
 //   2. the reader pair              scripts/agent-workflow/spec-schema/...
 //   3. the checker pair             scripts/agent-workflow/docs-size/check-docs-size.mjs
-//   4. the store root               docs/ai/specs/index.md (placeholders rendered)
+//   4. the command                  scripts/agent-workflow/run.mjs
+//   5. the store root               docs/ai/specs/index.md (placeholders rendered)
 // Why the order: every file is written after the files it imports, so each pair file it leaves loads;
 // the kit's bundled navigator generator collapses `specs/` into one row, while the project's pre-commit
 // hook runs ITS deployed checker — an older one renders the store row by row and reds `--check-index`.
@@ -30,6 +31,7 @@ import { fileLine, hookLine } from './distribution-files/index.mjs';
 const OP = 'specs';
 const READER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'spec-schema');
 const CHECKER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'docs-size');
+const COMMAND = DEPLOYED_SCRIPTS.find((e) => !e.module);
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
@@ -44,7 +46,7 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 // The bundled side: the pairs and their whole import closure in write order → { files } | { refusal }.
 const readBundles = (kitRoot, read) => {
   const byPath = new Map();
-  const queue = [...READER, ...CHECKER];
+  const queue = [...READER, ...CHECKER, COMMAND];
   for (const entry of queue) {
     if (byPath.has(entry.path)) continue;
     let bundle;
@@ -59,7 +61,7 @@ const readBundles = (kitRoot, read) => {
   }
   const of = (entries) => (path) => entries.some((e) => e.path === path);
   const group = (keep) => dependenciesFirst([...byPath.values()].filter((f) => keep(f.path)));
-  return { files: [...group((p) => !of(READER)(p) && !of(CHECKER)(p)), ...group(of(READER)), ...group(of(CHECKER))] };
+  return { files: [...group((p) => !of(READER)(p) && !of(CHECKER)(p) && p !== COMMAND.path), ...group(of(READER)), ...group(of(CHECKER)), ...group((p) => p === COMMAND.path)] };
 };
 
 // Each folder on the way to a pair file or a file it imports, lstat-ed without following a link → a refusal or null.
@@ -108,8 +110,6 @@ const composeLines = ({ files, store, fates, dryRun }) => [
 const partialNote = (count) =>
   (count > 0 ? [`the writes stopped PARTWAY — the ${count} file(s) named above were already written and are NOT rolled back`] : []);
 
-// ── the ensure ────────────────────────────────────────────────────────────────────────────────────
-
 // The store body is read and rendered BEFORE the first write, so a missing or unrenderable template
 // refuses with nothing written.
 const renderStoreRoot = (kitRoot, read, today) => {
@@ -145,6 +145,11 @@ const writeAll = ({ cwd, due, storeBody, deps, read }) => {
   return { fates, notes };
 };
 
+const placedAnswer = (files) => {
+  const placedScripts = files.filter((f) => f.path && f.state === 'absent').map((f) => f.rel);
+  return placedScripts.length ? { placedScripts } : {};
+};
+
 export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
@@ -165,7 +170,7 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const refreshes = (fs) => fs.some((f) => f.state === 'prior' || f.state === 'custom');
   if (dryRun) {
     const token = seeds(due) ? 'would-seed' : refreshes(due) ? 'would-refresh' : 'already-present';
-    return composeOutcome(OP, token, [...composeLines({ files, store, fates: new Map(), dryRun }), ...(due.length > 0 ? [hookLine(false, true)] : [])], false);
+    return { ...composeOutcome(OP, token, [...composeLines({ files, store, fates: new Map(), dryRun }), ...(due.length > 0 ? [hookLine(false, true)] : [])], false), ...placedAnswer(files) };
   }
 
   let storeBody = null;
@@ -180,5 +185,5 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const written = due.filter((f) => fates.get(f.rel) === 'written');
   const lines = [...composeLines({ files, store, fates, dryRun }), ...(written.length > 0 ? [hookLine(false, false)] : []), ...notes];
   if (failure) return composeFailure(OP, failure[0], failure[1], ...lines, ...partialNote(written.length));
-  return composeOutcome(OP, seeds(written) ? 'seeded' : refreshes(written) ? 'refreshed' : 'already-present', lines, false);
+  return { ...composeOutcome(OP, seeds(written) ? 'seeded' : refreshes(written) ? 'refreshed' : 'already-present', lines, false), ...placedAnswer(written) };
 };
