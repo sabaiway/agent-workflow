@@ -45,7 +45,7 @@ describe('SKILL.md and contracts.md — the standalone upgrade keeps the deploye
     assert.match(steps, /STOP.{0,60}non-zero exit|non-zero exit.{0,60}STOP/, 'a failed script stops the upgrade');
     for (const retired of ['ls -ld', 'cmp', 'references/scripts/*']) assert.equal(count(steps, retired), 0, `step 2 still names ${retired}`);
     const stepFive = flat(region(UPGRADE, '5. Reconcile drift', '6. **Never regenerate', 'step 5'));
-    has(stepFive, ['never a file of `references/scripts/`'], 'step 5');
+    has(stepFive, ['never a file of `references/scripts/`', "in delegated mode the composition root's upgrade"], 'step 5');
   });
 
   it('spec:standalone-scripts/S2 bootstrap previews enforcement, applies on yes and switches the hook through run.mjs', () => {

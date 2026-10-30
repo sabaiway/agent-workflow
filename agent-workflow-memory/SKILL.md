@@ -284,7 +284,8 @@ Fill strategy:
    (step 5). Then apply `${CLAUDE_SKILL_DIR}/migrations/<version>-<slug>.md` in **semver order**,
    only those newer than the stamp. Migrations are **idempotent**.
 5. Reconcile drift: add any substrate files the project is missing (never a file of
-   `references/scripts/`: step 2's ensures own those, in delegated mode too); **never clobber
+   `references/scripts/`: step 2's script owns those; in delegated mode the composition root's upgrade
+   does); **never clobber
    project-authored content** (their `decisions.md`, `known_issues.md`, page specs stay). For a
    pre-1.1.0 deployment with no *Communication language* block, ask + insert
    (`migrations/1.1.0-communication-language.md`); pre-1.2.0 with no *Attribution* block, ask +
