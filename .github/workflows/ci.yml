@@ -43,6 +43,8 @@ jobs:
         node-version: ['22.0.0', '24']
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the kit's script-priors suite reads the last flat release by git show
 
       - uses: actions/setup-node@v5
         with:
@@ -88,6 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # one checkout form for both CI jobs
 
       - uses: actions/setup-node@v5
         with:

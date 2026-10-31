@@ -326,7 +326,7 @@ describe('_publish-one.yml Release step — Issue-007 no-op branch invariants', 
     assert.match(
       beforeMarker,
       /git -C "\$GITHUB_WORKSPACE" fetch --depth=1 origin "refs\/tags\/\$tag"/,
-      'the shallow+tagless checkout fetches the tag commit explicitly',
+      'the tag commit is fetched explicitly before the subtree diff',
     );
     assert.match(
       beforeMarker,

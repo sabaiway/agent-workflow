@@ -62,6 +62,8 @@ jobs:
         working-directory: ${{ inputs.dir }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the kit's script-priors suite reads the last flat release by git show
 
       - uses: actions/setup-node@v5
         with:
@@ -245,7 +247,7 @@ jobs:
           # published and its tag legitimately points at the PRIOR release commit — nothing to
           # publish, nothing to repair. This decision runs BEFORE the repair-curl below: the
           # no-op branch mutates nothing and downloads nothing. Two traps handled explicitly:
-          # the checkout is shallow and TAGLESS, so the tag's commit must be fetched first; and
+          # the tag may postdate the checkout, so its commit is fetched explicitly first; and
           # this step runs under working-directory ${{ inputs.dir }}, so the subtree comparison
           # is WORKSPACE-ROOTED (git -C + a root-relative pathspec — an in-dir relative pathspec
           # would match nothing, see an empty diff, and false-no-op a CHANGED package).
@@ -311,8 +313,8 @@ jobs:
             echo "::error::Tag $tag already points at $tag_sha, not this commit $GITHUB_SHA — refusing to move it (immutable releases). Ship a new version."
             exit 1
           fi
-          # Materialize the tag LOCALLY at THIS commit (idempotent). actions/checkout fetches no tags, so a
-          # remote-only tag (a repair re-run) is otherwise absent locally. `gh release create --verify-tag`
+          # Materialize the tag LOCALLY at THIS commit (idempotent): a tag created after the checkout may be
+          # absent locally, and the conditional push below sends this local tag. `gh release create --verify-tag`
           # checks the REMOTE (gh 2.93.0), but keeping a matching local tag removes any reliance on that and
           # lets local git see it. Push to the remote only when the remote does not already have the tag.
           git tag -f "$tag" "$GITHUB_SHA"

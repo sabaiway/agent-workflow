@@ -155,6 +155,20 @@ describe('spec:script-family/S10 the gate, CI and publish run every suite of bot
     assert.deepEqual(flatGlobs(gate.cmd), [], 'the unit-tests gate names a flat references/scripts glob');
   });
 
+  it('every checkout of a workflow that runs the kit suites fetches the whole history, since script-priors reads the last flat release by git show', () => {
+    for (const rel of ['.github/workflows/ci.yml', '.github/workflows/_publish-one.yml']) {
+      const lines = read(rel).split('\n');
+      const checkouts = lines.flatMap((line, at) => (/^\s*- uses: actions\/checkout@/u.test(line) ? [at] : []));
+      assert.ok(checkouts.length > 0, `${rel}: a checkout step`);
+      for (const at of checkouts) {
+        const indent = lines[at].indexOf('-');
+        const end = lines.findIndex((line, i) => i > at && line.trim() !== '' && line.search(/\S/u) <= indent);
+        const body = lines.slice(at + 1, end === -1 ? undefined : end).map((line) => line.trim());
+        assert.ok(body.some((line) => /^fetch-depth: 0(?:\s+#.*)?$/u.test(line)), `${rel}:${at + 1}: the checkout fetches the whole history`);
+      }
+    }
+  });
+
   it('no workflow names a flat references/scripts/*.test.mjs glob; the kit publish.yml runs its tree by references/scripts/{,*/}*.test.mjs', () => {
     const flat = ['.github/workflows', 'agent-workflow-kit/.github/workflows'].flatMap((dir) =>
       readdirSync(join(REPO, dir))

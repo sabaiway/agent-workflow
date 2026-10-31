@@ -906,6 +906,14 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   1), its only findings the waived cap and T43's `story-owns`. Fix direction: a recorded waiver in a strict config
   that plan-shape reads, through a spec and its review. Residual exposure, NOT live: one plan, already reviewed.
 
+- **WORKFLOW-CHECKOUT-CELL-MISSES-A-NAMED-STEP** — invariant: every checkout step of a workflow that runs the kit
+  suites fetches the whole history. Origin: the lens, the KIT-SCRIPTS S10 publish fix review:
+  `scripts/release/publish-workflow.test.mjs:161` selects only `- uses: actions/checkout@` lines, so a checkout written
+  as a named step (`- name: …` then `uses: actions/checkout@v5`, or `with:` before `uses:`) without `fetch-depth: 0`
+  passes the cell while its `git show 1af99af` fails on the runner. Narrow fix: take each step's body from its `- ` line
+  to the next item at the same indent and judge every step whose body holds `uses: actions/checkout@`, a named-step
+  fixture red first. Residual exposure, NOT live: no checkout in `ci.yml` or `_publish-one.yml` is a named step.
+
 ## Closed
 
 - **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
