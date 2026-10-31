@@ -148,6 +148,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
   it('retains every deployed runtime payload file and entry point', () => {
     const required = [
       'bin/install.mjs',
+      'bin/payload-prune.mjs',
       'capability.json',
       'SKILL.md',
       'scripts/stamp-takeover.mjs',
@@ -217,6 +218,8 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      references/scripts/gates/kit-command-gates.mjs (skill-home) — story S3 of KIT-SCRIPTS.
     // 55 = 53 + scripts/kit-folder.mjs and scripts/flat-scripts.mjs (memory's standalone move, skill-home
     //      tooling; their suites do not ship) — story S5 of KIT-SCRIPTS.
-    assert.equal(packed.length, 55, `tarball file count drifted (${packed.length} ≠ 55)`);
+    // 56 = 55 + bin/payload-prune.mjs (the prune canon the installer converges its home with; the kit
+    //      ships its generated copy) — story S8 of KIT-SCRIPTS.
+    assert.equal(packed.length, 56, `tarball file count drifted (${packed.length} ≠ 56)`);
   });
 });

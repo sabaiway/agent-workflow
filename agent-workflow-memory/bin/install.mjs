@@ -20,6 +20,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve, relative, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+import { assertInstallableHome, prunePayload, rerunCommand } from './payload-prune.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -213,8 +214,9 @@ Usage:
   npx @sabaiway/agent-workflow-memory --help
 
 Installs/refreshes the memory substrate at ~/.claude/skills/agent-workflow-memory
-  (override with --dir <path> or AGENT_WORKFLOW_MEMORY_DIR). init is additive —
-  it never deletes your settings and never writes through a symlink. If the installed
+  (override with --dir <path> or AGENT_WORKFLOW_MEMORY_DIR). init removes what the package
+  no longer carries from the payload folders of its home, installs only into a new or empty
+  folder or an existing memory home, and never writes through a symlink. If the installed
   substrate is newer than the version you ran, init refuses (no network — it compares
   the version on disk) and points you at @latest; --allow-downgrade overrides that refusal.
 
@@ -271,10 +273,18 @@ const main = async () => {
     process.exit(1);
   }
 
+  const owner = { name: 'agent-workflow-memory', prefix: '[agent-workflow-memory]', noun: 'memory home',
+    rerun: rerunCommand('npx @sabaiway/agent-workflow-memory@latest init', target, !args.dir && !process.env.AGENT_WORKFLOW_MEMORY_DIR) };
+  assertInstallableHome(target, owner);
   await mkdir(target, { recursive: true });
+  // SKILL.md lands first and alone, so a run stopped after it leaves a home the next run admits.
+  await copyRecursive(resolve(PKG_ROOT, 'SKILL.md'), resolve(target, 'SKILL.md'), target);
   await Promise.all(
-    PAYLOAD.map((entry) => copyRecursive(resolve(PKG_ROOT, entry), resolve(target, entry), target)),
+    PAYLOAD.filter((entry) => entry !== 'SKILL.md')
+      .map((entry) => copyRecursive(resolve(PKG_ROOT, entry), resolve(target, entry), target)),
   );
+  const prune = prunePayload({ packageRoot: PKG_ROOT, home: target, payload: PAYLOAD, owner }, { assertContainedRealPath, lstatNoFollow });
+  prune.lines.forEach((line) => console.log(line));
   // Verb keyed on the OBSERVED version relation (cmp), never on mere presence (AD-034): null (fresh
   // install, or a legacy/unstamped one whose prior version is unknowable) → "installed"; -1 → a real
   // update; 0 → already current (the copy still ran — see the note below); 1 is reachable only under
@@ -284,7 +294,7 @@ const main = async () => {
     : cmp === 1 ? 'downgraded the substrate to'
     : cmp === -1 ? 'updated the substrate to'
     : 'installed';
-  console.log(`[agent-workflow-memory] ${verb} v${version} -> ${tildify(target)}`);
+  console.log(prune.ok ? `[agent-workflow-memory] ${verb} v${version} -> ${tildify(target)}` : prune.nonConvergence);
 
   maybeAdviseAdrMigration(installedVersion, version); // generic major-crossing ADR-store advisory (AD-051)
 
@@ -298,6 +308,12 @@ const main = async () => {
         `expected a NEWER version, invoke the @latest tag explicitly:\n` +
         `    npx @sabaiway/agent-workflow-memory@latest init`,
     );
+  }
+
+  // The non-convergence line already took the verb's place.
+  if (!prune.ok) {
+    process.exitCode = 1;
+    return;
   }
 
   console.log(`

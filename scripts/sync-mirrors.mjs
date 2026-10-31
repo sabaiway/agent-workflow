@@ -1,15 +1,16 @@
 #!/usr/bin/env node
-// sync-mirrors.mjs — the canon → mirror synchronizer for the three byte-identical mirror
+// sync-mirrors.mjs — the canon → mirror synchronizer for the four byte-identical mirror
 // families (repo-local, tracked; repo-only tooling — never shipped in any tarball).
 //
 // The kit ships byte-identical MIRROR copies of content whose canon lives elsewhere in the
-// monorepo. Three test files DETECT drift (bridges-mirror.test.mjs, scripts-mirror.test.mjs,
-// template-parity.test.mjs) — this script is the deterministic FIXER for the same three
-// families:
+// monorepo. Three test files DETECT drift of the first three (bridges-mirror.test.mjs,
+// scripts-mirror.test.mjs, template-parity.test.mjs), and this script's own real-tree --check
+// case detects all four — this script is the deterministic FIXER for the four families:
 //
 //   1. repo-root bridge dirs        → agent-workflow-kit/bridges/<name>/       (full tree)
 //   2. memory references/scripts/   → kit references/scripts/                  (full tree)
 //   3. memory references/templates/ → kit references/templates/                (manifest list ONLY)
+//   4. memory bin/payload-prune.mjs → kit tools/payload-prune.mjs              (one file)
 //
 //   node scripts/sync-mirrors.mjs [--check] [--root <dir>]
 //
@@ -50,6 +51,9 @@ const MEMORY_DIR = 'agent-workflow-memory';
 const KIT_DIR = 'agent-workflow-kit';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
+// The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
+const PRUNE_CANON = `${MEMORY_DIR}/bin/payload-prune.mjs`;
+const PRUNE_COPY = `${KIT_DIR}/tools/payload-prune.mjs`;
 // The script family is one nested tree (spec script-family): this repo's flat root scripts/ is no
 // mirror — a basename-keyed copy would carry a body with nested imports into a flat folder.
 
@@ -168,6 +172,17 @@ const planTemplatesSync = (root) => {
   return { changes, identical };
 };
 
+// Plan a single-file family. A missing canon file is a loud failure, like a missing canon dir.
+const planFileSync = (root, canonRel, mirrorRel) => {
+  const canonPath = join(root, canonRel);
+  if (!existsSync(canonPath)) {
+    throw fail(1, `canon file is missing: ${canonRel} — refusing to sync`);
+  }
+  const mirrorPath = join(root, mirrorRel);
+  if (!fileNeedsCopy(canonPath, mirrorPath)) return { changes: [], identical: 1 };
+  return { changes: [{ action: 'copy', rel: mirrorRel, from: canonPath, to: mirrorPath }], identical: 0 };
+};
+
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
   const plans = [];
@@ -176,6 +191,7 @@ export const planAllMirrors = (root) => {
   }
   plans.push({ family: 'reference-scripts', ...planTreeSync(root, join(MEMORY_DIR, SCRIPTS_REL), join(KIT_DIR, SCRIPTS_REL)) });
   plans.push({ family: 'templates', ...planTemplatesSync(root) });
+  plans.push({ family: 'payload-prune', ...planFileSync(root, PRUNE_CANON, PRUNE_COPY) });
   return plans;
 };
 

@@ -21,8 +21,9 @@ npx @sabaiway/agent-workflow-memory@latest init
 ```
 
 Installs/refreshes the skill at `~/.claude/skills/agent-workflow-memory` (override with
-`--dir <path>` or `AGENT_WORKFLOW_MEMORY_DIR`). `init` is additive — it never deletes your
-settings and never writes through a symlink. Re-running updates the skill's own files; that is
+`--dir <path>` or `AGENT_WORKFLOW_MEMORY_DIR`). `init` removes what the package no longer
+carries from the payload folders of its home, installs only into a new or empty folder or an
+existing memory home, and never writes through a symlink. Re-running updates the skill's own files; that is
 how you upgrade the *skill*. Migrating a *project's* deployment is a separate in-agent step
 (below).
 

@@ -48,6 +48,11 @@ const seedFamily = (root) => {
     for (const rel of TEMPLATE_HARD_EXCLUDES) writeFileSync(join(templates, rel), `${side} divergent ${rel}\n`);
     writeFileSync(join(templates, 'local-extra.md'), `${side} extra outside the manifest\n`);
   }
+  for (const rel of ['agent-workflow-memory/bin/payload-prune.mjs', 'agent-workflow-kit/tools/payload-prune.mjs']) {
+    mkdirSync(join(root, rel, '..'), { recursive: true });
+    writeFileSync(join(root, rel), 'export const prunePayload = () => ({});\n');
+    chmodSync(join(root, rel), 0o644);
+  }
 };
 
 const run = (argv, root) => {
@@ -249,7 +254,7 @@ describe('planAllMirrors covers every family', () => {
     const root = makeRoot();
     seedFamily(root);
     const families = planAllMirrors(root).map((plan) => plan.family);
-    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates']);
+    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates', 'payload-prune']);
   });
 });
 
@@ -316,6 +321,50 @@ describe('spec:script-family/S6 the reference-scripts tree syncs whole and leave
     seedFamily(root);
     rmSync(join(root, 'agent-workflow-memory', 'references', 'scripts'), { recursive: true });
     assert.throws(() => planAllMirrors(root), /canon dir is missing: agent-workflow-memory\/references\/scripts/);
+  });
+});
+
+describe('spec:upgrade-delivery/S20 payload-prune mirror', () => {
+  const CANON = 'agent-workflow-memory/bin/payload-prune.mjs';
+  const COPY = 'agent-workflow-kit/tools/payload-prune.mjs';
+  for (const absent of [false, true]) {
+    it(`${absent ? 'an absent copy' : 'an edited canon'} is reported without writes and restored by a run`, () => {
+      const root = makeRoot();
+      seedFamily(root);
+      const before = readFileSync(join(root, COPY));
+      if (absent) rmSync(join(root, COPY));
+      else writeFileSync(join(root, CANON), 'export const prunePayload = () => ({ ok: true });\n');
+      const check = run(['--check'], root);
+      assert.equal(check.code, 1);
+      assert.ok(check.out.includes(`payload-prune: would copy ${COPY}`), check.text);
+      if (absent) assert.equal(existsSync(join(root, COPY)), false);
+      else assert.deepEqual(readFileSync(join(root, COPY)), before);
+      const apply = run([], root);
+      assert.equal(apply.code, 0, apply.errText);
+      assert.ok(apply.out.includes(`payload-prune: copied ${COPY}`), apply.text);
+      assert.deepEqual(readFileSync(join(root, COPY)), readFileSync(join(root, CANON)));
+    });
+  }
+  it('detects and restores exec-bit drift with identical bytes', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    chmodSync(join(root, CANON), 0o755);
+    const check = run(['--check'], root);
+    assert.equal(check.code, 1);
+    assert.equal(statSync(join(root, COPY)).mode & 0o111, 0);
+    assert.equal(run([], root).code, 0);
+    assert.equal(statSync(join(root, COPY)).mode & 0o111, 0o111);
+  });
+  it('fails loud when the canon is missing and writes nothing', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    const before = readFileSync(join(root, COPY));
+    rmSync(join(root, CANON));
+    const result = run(['--check'], root);
+    assert.equal(result.code, 1);
+    assert.match(result.errText, /canon file is missing: agent-workflow-memory\/bin\/payload-prune\.mjs/);
+    assert.deepEqual(readFileSync(join(root, COPY)), before);
+    assert.equal(existsSync(join(root, CANON)), false);
   });
 });
 

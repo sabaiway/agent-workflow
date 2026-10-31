@@ -36,8 +36,8 @@ import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { copyTreeRefresh } from '../tools/fs-safe.mjs';
-import { assertInstallableHome, prunePayload } from '../tools/payload-prune.mjs';
+import { assertContainedRealPath, copyTreeRefresh } from '../tools/fs-safe.mjs';
+import { assertInstallableHome, prunePayload, rerunCommand } from '../tools/payload-prune.mjs';
 // Dependency-free semver, shared with the family registry's bridge freshness probe (one leaf, no
 // second drifting copy). The null-on-unparseable contract is load-bearing here: legacy installs
 // predate any version stamp, so an unparseable side means "no gate", never a false ordering.
@@ -129,10 +129,9 @@ const lstatNoFollow = (path) => {
   }
 };
 
-// The symlink-traversal guard + the recursive refresh copy now live in tools/fs-safe.mjs (shared,
-// dependency-injectable, unit-tested in isolation). install.mjs consumes copyTreeRefresh, which guards
-// every dest via assertContainedRealPath internally. The local lstatNoFollow above stays for the
-// pre-flight check on the target root itself (a nicer error than letting the copy throw).
+// The symlink-traversal guard + the recursive refresh copy live in tools/fs-safe.mjs (shared, unit-tested
+// in isolation); copyTreeRefresh guards every dest via assertContainedRealPath. The local lstatNoFollow
+// above serves the pre-flight check on the target root and is the prune's no-follow probe.
 
 const parseArgs = (argv) => {
   const dirFlag = argv.indexOf('--dir');
@@ -361,15 +360,15 @@ const main = async () => {
     process.exit(1);
   }
 
-  assertInstallableHome(target);
+  const owner = { name: 'agent-workflow-kit', prefix: '[agent-workflow-kit]', noun: 'kit home',
+    rerun: rerunCommand('npx @sabaiway/agent-workflow-kit@latest init', target, !args.dir && !process.env.AGENT_WORKFLOW_KIT_DIR) };
+  assertInstallableHome(target, owner);
   await mkdir(target, { recursive: true });
   for (const entry of PAYLOAD.filter((e) => existsSync(resolve(PKG_ROOT, e)))) {
     copyTreeRefresh(resolve(PKG_ROOT, entry), resolve(target, entry), target);
   }
-  const prune = prunePayload({ packageRoot: PKG_ROOT, home: target, payload: PAYLOAD });
-  for (const line of prune.lines) {
-    console.log(line);
-  }
+  const prune = prunePayload({ packageRoot: PKG_ROOT, home: target, payload: PAYLOAD, owner }, { assertContainedRealPath, lstatNoFollow });
+  prune.lines.forEach((line) => console.log(line));
   // Verb keyed on the OBSERVED version relation (cmp), never on mere presence: null (fresh install,
   // or a legacy/unstamped one whose prior version is unknowable) → "installed"; -1 → a real update;
   // 0 → already current (the copy still ran — see the note below); 1 is reachable only under

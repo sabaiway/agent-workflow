@@ -1318,3 +1318,16 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (`agent-workflow-memory/references/scripts/git-hooks/install-git-hooks.mjs:186-188`; the kit's `unreadable` state at
   `agent-workflow-kit/tools/git-hooks.mjs:105-111`). Narrow fix: a link or an unreadable hook is named with the switch
   command as the user's to check. Residual exposure, NOT live: unreleased, and memory's installer writes a regular hook.
+- **ENGINE-INSTALLER-HOME-DOES-NOT-CONVERGE** — invariant: every family installer converges its skill home to its
+  package. Origin: the KIT-SCRIPTS S8 author (2026-10-30): the engine's copy is additive
+  (`agent-workflow-engine/bin/install.mjs:146`, its help "init is additive" at `:184`), so a file the engine package no
+  longer carries stays in its home. Narrow fix: the engine installer takes the prune canon story S8 places in memory,
+  by a generated copy as the kit does. Residual exposure, live but inert: no engine release has dropped a file a reader
+  resolves by glob.
+- **PLAN-SHAPE-ASKS-A-RAISE-THE-WRITER-WILL-NOT-RECORD** — invariant: plan-shape asks a reasoned baseline raise only
+  for a size the source-size writer records. Origin: the KIT-SCRIPTS S9 spec review (2026-10-30): `plan-shape.mjs:302-305`
+  refuses a `modify` budget above the cap with no `--write-baseline --reason` bullet naming the path, while the writer
+  keeps no record for a size inside the tolerance band (`source-size-ratchet.test.mjs:286,290`), so a plan for an
+  in-band file (426 of 400 + 10%) must carry a raise bullet that records nothing. Narrow fix: the budget-cap check takes
+  the band's ceiling (cap × (1 + tolerance)) for an unrecorded file. Residual exposure, live but inert: the bullet is
+  worded as a no-op and the check passes.
