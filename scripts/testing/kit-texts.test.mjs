@@ -87,25 +87,13 @@ const pack = (dir) => {
 };
 const textsOf = (paths) => paths.filter((p) => /\.(md|json)$/.test(p));
 
-// The frozen exclusions: history, and the lines story S7 takes off this list (the spec's Out of scope).
+// The frozen exclusions: history alone.
 const HISTORY = 'history: a release record states what shipped then';
-const S7 = 'story S7 of KIT-SCRIPTS';
 const EXCLUSIONS = Object.freeze([
   { at: 'agent-workflow-kit/CHANGELOG.md', whole: true, reason: HISTORY, owner: 'the kit release history' },
   { at: 'agent-workflow-kit/migrations/', whole: true, reason: HISTORY, owner: 'the kit release history' },
   { at: 'agent-workflow-memory/CHANGELOG.md', whole: true, reason: HISTORY, owner: 'the memory release history' },
   { at: 'agent-workflow-memory/migrations/', whole: true, reason: HISTORY, owner: 'the memory release history' },
-  { at: 'agent-workflow-kit/references/shared/deploy-tail.md', whole: true, reason: 'its readers are story S4\'s', owner: S7 },
-  { at: 'agent-workflow-kit/references/modes/bootstrap.md', paths: ['scripts/<x>.mjs'], reason: 'its readers are story S4\'s', owner: S7 },
-  { at: 'agent-workflow-kit/references/contracts.md', owner: S7,
-    paths: ['scripts/<x>.mjs', 'scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'],
-    reason: 'the placeholder\'s readers and the spec-layer pair set are story S4\'s (spec distribution-files, S26)' },
-  ...['agent-workflow-kit', 'agent-workflow-memory'].map((pkg) => ({
-    at: `${pkg}/references/templates/adr-record.md`,
-    paths: ['scripts/archive-decisions.mjs'],
-    reason: 'a deployment holding only the seed files has no run.mjs until it joins the seed set',
-    owner: S7,
-  })),
 ].map(Object.freeze));
 
 const under = (x, file) => file === x.at || (x.at.endsWith('/') && file.startsWith(x.at));

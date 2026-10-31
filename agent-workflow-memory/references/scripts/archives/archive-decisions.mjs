@@ -95,8 +95,8 @@ import { tokenizeMarkdown, findProjectRoot } from '../shared/index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = findProjectRoot(import.meta.url);
-// The command this rotator prints for itself names its fixed deployed path.
-const SELF = 'node scripts/agent-workflow/archives/archive-decisions.mjs';
+// The command this rotator prints for itself is the stable kit command (spec kit-command).
+const SELF = 'node scripts/agent-workflow/run.mjs archive-decisions';
 
 export const HOT_REL = 'docs/ai/decisions.md';
 // The retired monolith tiers — still READ during migration (their entries explode into records) and
@@ -893,14 +893,14 @@ export const writeSnapshot = (root, files, deps = {}) => {
 // A declared spawn edge to the docs-size module's CLI, resolved from this file's own directory — never an import.
 
 const CHECK_DOCS_SIBLING = resolve(__dirname, '..', 'docs-size', 'check-docs-size.mjs');
-const INDEX_INSTRUCT = 'run `node scripts/agent-workflow/docs-size/check-docs-size.mjs --write-index` to refresh docs/ai/index.md';
+const INDEX_INSTRUCT = 'run `node scripts/agent-workflow/run.mjs docs-size --write-index` to refresh docs/ai/index.md';
 
 export const defaultRegenerateIndex = (root, today, deps = {}) => {
   const exists = deps.existsSync ?? existsSync;
   const spawn = deps.spawnSync ?? spawnSync;
   const sibling = deps.sibling ?? CHECK_DOCS_SIBLING;
   if (!exists(sibling)) {
-    return { ok: false, detail: `the index generator is not beside this script — ${INDEX_INSTRUCT}` };
+    return { ok: false, detail: `the index generator is not beside this script — an upgrade places the docs checker; then ${INDEX_INSTRUCT}` };
   }
   const r = spawn(process.execPath, [sibling, '--write-index', '--report', `--root=${root}`, `--today=${today}`], { encoding: 'utf8' });
   if (r.error || r.status !== 0) {

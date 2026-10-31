@@ -470,7 +470,7 @@ const node = (args) => spawnSync(process.execPath, args, { cwd: makeRoot(), enco
 const deployed = (root, args) => node([join(root, KIT, 'archives', 'archive-decisions.mjs'), ...args]);
 const SPECIFIERS = [/\b(?:import|export)\s[^'"`;]*?\bfrom\s*(['"])([^'"\n]+)\1/g, /\bimport\s*(['"])([^'"\n]+)\1/g, /\bimport\(\s*(['"])([^'"\n]+)\1\s*[,)]/g];
 
-it('S14 a deployed rotator runs the deployed docs checker when it stands, notes its command when not, and prints its own deployed path (spec:adr-navigator/S14)', () => {
+it('S14 a deployed rotator runs the deployed docs checker when it stands, notes the stable command when it fails or is absent, and prints its own commands as the stable command (spec:adr-navigator/S14)', () => {
   const INDEX = join('docs', 'ai', 'index.md');
   const stands = makeRoot();
   deploy(stands, ['archives', 'shared', 'docs-size', 'spec-schema']);
@@ -481,14 +481,15 @@ it('S14 a deployed rotator runs the deployed docs checker when it stands, notes 
   const fresh = node([join(stands, KIT, 'docs-size', 'check-docs-size.mjs'), '--check-index', `--root=${stands}`]);
   assert.equal(fresh.status, 0, fresh.stdout + fresh.stderr);
 
-  const absent = makeRoot();
-  deploy(absent, ['archives', 'shared']);
-  hot(absent, [block('005')]);
-  const a = deployed(absent, ['--write-navigator', '--today=2026-07-09']);
-  assert.equal(a.status, 0, a.stdout + a.stderr);
-  assert.ok(existsSync(join(absent, NAV_REL)), 'the navigator was not written');
-  assert.ok(!existsSync(join(absent, INDEX)), 'an index was written with no docs checker deployed');
-  assert.ok(a.stderr.includes('node scripts/agent-workflow/docs-size/check-docs-size.mjs --write-index'), a.stderr);
+  const [absent, fails] = [makeRoot(), makeRoot()].map((root) => { deploy(root, ['archives', 'shared']); hot(root, [block('005')]); return root; });
+  put(fails, `${KIT}/docs-size/check-docs-size.mjs`, 'process.exit(3);\n');
+  for (const [root, upgrade] of [[absent, true], [fails, false]]) {
+    const r = deployed(root, ['--write-navigator', '--today=2026-07-09']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(existsSync(join(root, NAV_REL)) && !existsSync(join(root, INDEX)), `the navigator was not written, or an index was: ${r.stderr}`);
+    const note = r.stderr.split('\n').find((line) => line.includes('docs/ai/index.md NOT regenerated')) ?? '';
+    assert.match(note, upgrade ? /^(?!.*docs-size\/|.*check-docs-size).*\bupgrade\b.*node scripts\/agent-workflow\/run\.mjs docs-size --write-index(?![\w-])/ : /^(?!.*docs-size\/|.*check-docs-size|.*upgrade).*node scripts\/agent-workflow\/run\.mjs docs-size --write-index(?![\w-])/, r.stderr);
+  }
 
   const source = readFileSync(join(TREE, 'archives', 'archive-decisions.mjs'), 'utf8');
   const specifiers = SPECIFIERS.flatMap((re) => [...source.matchAll(re)].map((m) => m[2]));
@@ -501,11 +502,10 @@ it('S14 a deployed rotator runs the deployed docs checker when it stands, notes 
   const overCap = makeRoot();
   deploy(overCap, ['archives', 'shared']);
   hotK(overCap, 1);
-  for (const [root, count] of [[monolith, 1], [overCap, 2]]) {
-    const c = deployed(root, ['--check']);
+  const CMD = 'node scripts/agent-workflow/run.mjs archive-decisions';
+  for (const [root, args, commands] of [[monolith, ['--check'], [`${CMD} --migrate --apply`]], [overCap, ['--check'], [CMD, `${CMD} --write-navigator`]], [monolith, ['--today=2026-07-09'], [`${CMD} --migrate --apply`]]]) {
+    const c = deployed(root, args);
     assert.equal(c.status, 1, c.stdout + c.stderr);
-    const commands = [...c.stderr.matchAll(/`(node [^`]+)`/g)].map((m) => m[1]);
-    assert.equal(commands.length, count, c.stderr);
-    for (const command of commands) assert.match(command, /^node scripts\/agent-workflow\/archives\/archive-decisions\.mjs( |$)/, c.stderr);
+    assert.deepEqual([...c.stderr.matchAll(/`(node [^`]+)`/g)].map((m) => m[1]), commands, c.stderr);
   }
 });

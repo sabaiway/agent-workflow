@@ -291,7 +291,7 @@ describe('spec:distribution-files/S10 the upgrade asks no yes for the spec layer
   });
 });
 
-const PAIR_FILES = ['scripts/spec-schema.mjs', 'scripts/spec-schema.test.mjs', 'scripts/check-docs-size.mjs', 'scripts/check-docs-size.test.mjs'];
+const FLAT_PAIR_PATH = /(?<![\w./-])scripts\/(?:spec-schema|check-docs-size)(?:\.test)?\.mjs/g, KIT_FOLDER = /(?<![\w./-])scripts\/agent-workflow\/(?![\w<.-])/;
 // A clause (split at ; and a sentence end) that says an upgrade keeps an edit aside, or names where a kept-aside copy is.
 const keepAsideClauses = (text) => text.replace(/\s+/g, ' ').split(/;|[.?!](?=\s|$)/).filter((clause) => !/an earlier release/i.test(clause) && ((/\b(?:keeps?|kept|keeping)\b.*\baside\b/i.test(clause) && /upgrade|\bedit/i.test(clause)) || /\.agent-workflow\/kept-aside\//.test(clause)));
 const hasLocalPart = (path) => path.split(/[\\/]/).some((segment) => segment.split('.').includes('local'));
@@ -307,7 +307,7 @@ describe('spec:distribution-files/S26 the guide names the reserved names and cha
     assert.deepEqual(['written current on every upgrade with no question and no copy kept', String(readme.NOTE_ROUTE)].filter((words) => !(section.replaceAll('`', '').split('. ').find((one) => one.includes('docs/ai/orchestration.json') && one.includes('onboarding note')) ?? '').includes(words)), [], "the orchestration config's onboarding note is the kit's, its route in the same sentence");
     const copy = ['the vendor skill copy the kit installs into the three agent skill roots', 'when it matches a pin the kit shipped', 'beside a copy at a kit pin', "a copy matching none is the user's, left and named"];
     assert.deepEqual([...copy.filter((words) => !section.includes(words)), ...['jev', 'typesafe'].filter((word) => section.toLowerCase().includes(word))], [], 'the vendor skill copy, by neither jev word');
-    assert.deepEqual([...PAIR_FILES, ...readdirSync(resolve(kitRoot, 'references', 'agents'))].filter((path) => !section.includes(path)).concat([/\bname:`? of its own\b/, /\bno review roster names\b/, /<name>\.local\.mjs`[^.;]*\b(?:you|the user) wires?\b/].filter((re) => !re.test(section)).map(String)), [], 'every kit script and bundled agent file written over, the four spec-layer pair files included; the sixth channel takes a name: of its own that no review roster names; the seventh is a hook the user wires');
+    assert.deepEqual(['scripts/agent-workflow/run.mjs', ...readdirSync(resolve(kitRoot, 'references', 'agents'))].filter((path) => !section.includes(path)).concat([KIT_FOLDER, /\bname:`? of its own\b/, /\bno review roster names\b/, /<name>\.local\.mjs`[^.;]*\b(?:you|the user) wires?\b/].filter((re) => !re.test(section)).map(String), [...section.matchAll(FLAT_PAIR_PATH)].map((m) => m[0])), [], 'every kit script and bundled agent file written over, the kit folder named whole with the command in it and no flat pair path; the sixth channel takes a name: of its own that no review roster names; the seventh is a hook the user wires');
   });
   it('no clause of contracts.md says an upgrade keeps an edit aside or names a current kept-aside copy', () => {
     assert.deepEqual(keepAsideClauses(CONTRACTS), []);

@@ -122,7 +122,7 @@ your-repo/
 ```
 
 The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are the **Node path**
-(dependency-free, `node --test`). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
+(dependency-free). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or **hidden**
 (same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the repo "looks
@@ -288,7 +288,7 @@ block aside, which is written current on every run).
 - **Plan lifecycle** — a capped plan (goal and boundary, module ledger, verification), ephemeral plan files, and a mandatory Cleanup phase.
 - **No silent failures** — every guard that rejects an action logs structured context.
 
-The dependency-free **Node** enforcement scripts (`node --test`, no package manager assumed) and their hook are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
+The dependency-free **Node** enforcement scripts (no package manager assumed) and their hook are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 ---
 

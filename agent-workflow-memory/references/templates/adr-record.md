@@ -65,8 +65,8 @@ the **new** ADR; governance is then computed automatically (no predecessor-file 
 
 ## Commands
 
-- `node scripts/archive-decisions.mjs` — rotate: explode the oldest HOT entries beyond the cap into
+- `node scripts/agent-workflow/run.mjs archive-decisions` — rotate: explode the oldest HOT entries beyond the cap into
   `adr/` records, then regenerate the navigator + `docs/ai/index.md`.
-- `node scripts/archive-decisions.mjs --write-navigator` — regenerate `docs/ai/adr/log.md` (and the
+- `node scripts/agent-workflow/run.mjs archive-decisions --write-navigator` — regenerate `docs/ai/adr/log.md` (and the
   index) after authoring an ADR or editing a supersession, so `--check` stays green.
-- `node scripts/archive-decisions.mjs --check` — verify HOT cap + store integrity + navigator freshness.
+- `node scripts/agent-workflow/run.mjs archive-decisions --check` — verify HOT cap + store integrity + navigator freshness.

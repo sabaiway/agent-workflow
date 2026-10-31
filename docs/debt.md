@@ -906,14 +906,20 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   1), its only findings the waived cap and T43's `story-owns`. Fix direction: a recorded waiver in a strict config
   that plan-shape reads, through a spec and its review. Residual exposure, NOT live: one plan, already reviewed.
 
-- **KIT-READMES-PROMISE-DEPLOYED-SUITES** — invariant: no kit text says the deployed `scripts/` carries or runs
-  suites. Origin: the lens, round 1 of the KIT-SCRIPTS S6 diff review (verdict ship, one minor, outside the diff):
-  `agent-workflow-kit/README.md:125` and `README.md:151` call the deployed `scripts/` and hook "(dependency-free,
-  `node --test`)", `agent-workflow-kit/README.md:291` says "enforcement scripts (`node --test`, …)", while spec
-  script-family keeps every suite off the deployed role and the hook runs no suite. The kit-texts guard reads path and
-  command forms only, so it cannot see these lines. Narrow fix: drop `node --test` in the three places, keeping
-  "dependency-free", in story S7 before the held release. Residual exposure, NOT live: unreleased (RELEASE HOLD until
-  KIT-SCRIPTS S7).
+- **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
+  and when they arrive is true of the release it ships in. Origin: the lens, round 1 of the KIT-SCRIPTS S9 diff review
+  (verdict ship, one minor, outside the diff): `README.md:146,150` and `agent-workflow-kit/README.md:120,124` draw
+  `scripts/ <- caps · index · archive (installed on a yes)` and call "the `scripts/` + pre-commit hook" the Node path,
+  while since story S7 a declined project with Node evidence gets every seed entry (`upgrade.md:45`), and since 16.0.0
+  the spec-layer ensure places its absent files with no question, now with `run.mjs` (`ensure-specs.mjs:1-13`), all in
+  `scripts/agent-workflow/`. The kit-texts guard
+  reads no bare `scripts/` (`kit-texts.test.mjs:23-24`), and `enforcement-offer-docs.test.mjs:27,33-34` pins four
+  "installed on a yes" in each README. Narrow fix: the scripts row and the Node-path sentence name the kit folder and
+  the seed placement, the hook row keeps "installed on a yes", the pins' counts move test-first, before the held
+  release (story S10).
+  Residual exposure, partly live: published 20.2.0 already places the docs checker pair (caps · index) on a plain
+  upgrade with Node evidence, with no yes, in flat `scripts/`; the seed rotator and the kit folder are unreleased
+  (RELEASE HOLD until KIT-SCRIPTS S10).
 
 ## Closed
 

@@ -90,7 +90,9 @@ const LK = {
 const NOT_ACCEPTED_K = `${KF}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`;
 const WOULD_K = `${S}${KF}/${ROTK} --ensure-current would run after the writes, bringing the store current or writing nothing when it already is`;
 const FAIL_K = (how) => `adr-store-not-current — ${KF}/${ROTK} --ensure-current ${how} — the ADR store was not confirmed current`;
-const [NOTE_CMD, NOTE_K] = ['node scripts/agent-workflow/docs-size/check-docs-size.mjs --write-index', '<the index note naming the deployed docs checker>'];
+// The rotator's index note with no docs-size module beside it: the upgrade step, then the stable command, and no module path.
+const NOTE = (l) => l.startsWith(`${S}[archive-decisions] docs/ai/index.md NOT regenerated — `) && /\bupgrade\b.*node scripts\/agent-workflow\/run\.mjs docs-size --write-index(?![\w-])/.test(l) && !/docs-size\/|check-docs-size\.mjs/.test(l);
+const NOTE_K = '<the index note naming the upgrade step and the stable command>';
 // A recording spawnSync: each call's cmd, args and opts, and `<spawn>` in `log`; it answers an already-current exit 0 under `answer`.
 const fakeSpawn = (answer = {}, log = []) => {
   const calls = [];
@@ -108,10 +110,10 @@ const env = Object.fromEntries(Object.entries(hermeticGitEnv(process.env, home))
 const seam = (cmd, args, opts) => spawnSync(cmd, args, { ...opts, env });
 const sh = (dir, cmd, ...args) => spawnSync(cmd, args, { cwd: dir, env, encoding: 'utf8' });
 const SNAP = '<the snapshot line>';
-// The lines with the one snapshot line under the tree's own .git read as SNAP, and the rotator's index note that
-// names the docs checker at its deployed path read as NOTE_K.
+// The lines with the one snapshot line under the tree's own .git read as SNAP, and the raw index note read as NOTE_K
+// only when the whole line is that note; any other note stays raw, so the comparison shows it.
 const linesOfK = (dir, r) => r.lines.map((l) => (l.startsWith(`${S}snapshot: ${join(realpathSync(dir), '.git', 'agent-workflow-adr-migration-snapshot-')}`) ? SNAP
-  : l.startsWith(S) && l.includes('docs/ai/index.md') && l.includes(NOTE_CMD) ? NOTE_K : l));
+  : NOTE(l) ? NOTE_K : l));
 const spawned = (calls) => calls.map(({ cmd, args, opts }) => [cmd, args, opts?.cwd, 'timeout' in (opts ?? {}), 'env' in (opts ?? {})]);
 
 describe("spec:distribution-files/S17 the store run's spawn and when it runs", () => {
@@ -203,7 +205,7 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
 });
 
 describe('spec:distribution-files/S27 the store moved by real rotator runs', () => {
-  it('a monolith beside decisions.md and no adr/, the rotator edited and no docs-size module: written, migrated, the index note naming the deployed checker, the monolith gone, --check green', { timeout: 120_000 }, async () => {
+  it('a monolith beside decisions.md and no adr/, the rotator edited and no docs-size module: written, migrated, the index note naming the upgrade step and the stable command, the monolith gone, --check green', { timeout: 120_000 }, async () => {
     const F = await kitFamily();
     gitKit(F, { [ROTK]: EDIT(ROTK) }, both, (dir) => {
       const r = run(dir, { deps: { spawnSync: seam } });

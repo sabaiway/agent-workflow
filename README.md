@@ -148,7 +148,7 @@ your-repo/
 ```
 
 The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are the **Node path**
-(dependency-free, `node --test`). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
+(dependency-free). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or
 **hidden** (same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the
