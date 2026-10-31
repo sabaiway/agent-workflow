@@ -28,10 +28,13 @@ const INSTALLED_ON_YES = 'installed on a yes';
 const OFFER_ACCEPTED = 'and the enforcement offer was accepted';
 const SCRIPTS_IN_PLACE = 'and the enforcement scripts are in place';
 const WHERE_INSTALLED = 'where installed';
+const KIT_FOLDER_ROW = '+ scripts/agent-workflow/ ';
+const FLAT_NODE_PATH = 'the `scripts/` + pre-commit hook are the **Node path**';
+const SEED_PLACEMENT = 'an upgrade places the caps and index check and the ADR rotator even after a no';
 const RECON_PROXIES = ['(Node projects)', 'If the project has no Node', 'No Node runtime'];
 const INSTALL_CLAIM_PINS = [
-  [FAMILY_README, INSTALLED_ON_YES, 4],
-  [KIT_README, INSTALLED_ON_YES, 4],
+  [FAMILY_README, INSTALLED_ON_YES, 3],
+  [KIT_README, INSTALLED_ON_YES, 3],
   ['agent-workflow-memory/README.md', INSTALLED_ON_YES, 1],
   ['agent-workflow-kit/references/contracts.md', SCRIPTS_IN_PLACE, 1],
   ['agent-workflow-memory/references/contracts.md', OFFER_ACCEPTED, 1],
@@ -41,6 +44,11 @@ const INSTALL_CLAIM_PINS = [
   ['agent-workflow-kit/references/templates/decisions.md', INSTALLED_ON_YES, 2],
   ['agent-workflow-memory/references/templates/agent_rules.md', WHERE_INSTALLED, 1],
   ['agent-workflow-kit/references/templates/agent_rules.md', WHERE_INSTALLED, 1],
+];
+const README_SCRIPTS_PINS = [
+  [KIT_FOLDER_ROW, 1],
+  [FLAT_NODE_PATH, 0],
+  [SEED_PLACEMENT, 1],
 ];
 const BY_HAND_CLAIMS = [
   [KIT_README, 'Non-Node projects keep the same policy by hand'],
@@ -124,6 +132,15 @@ describe('enforcement offer docs \u2014 bootstrap.md, deploy-tail.md, memory SKI
   it('every install claim in the family is conditional on a yes', () => {
     for (const [relativePath, literal, count] of INSTALL_CLAIM_PINS) {
       assert.equal(occurrences(readFamily(relativePath), literal), count, `${relativePath}: ${literal}`);
+    }
+  });
+
+  it('each README draws the scripts in the kit folder and says what an upgrade places after a no', () => {
+    for (const relativePath of [FAMILY_README, KIT_README]) {
+      const text = readFamily(relativePath);
+      for (const [literal, count] of README_SCRIPTS_PINS) {
+        assert.equal(occurrences(text, literal), count, `${relativePath}: ${literal}`);
+      }
     }
   });
 

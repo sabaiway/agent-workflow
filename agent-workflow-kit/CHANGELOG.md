@@ -4,6 +4,45 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 21.0.0 — the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (AD-220)
+
+**Your project's `scripts/` stops being a pile of kit files.** Every kit script now lives in one folder the kit alone
+writes, `scripts/agent-workflow/`, and your hook, gates and docs name one command that will not move again:
+`node scripts/agent-workflow/run.mjs <name>`. One plain `/agent-workflow-kit upgrade` with your chat yes moves a
+project that holds the 25 flat kit files.
+
+- **The kit folder.** It holds runtime files only, laid out by meaning: `run.mjs`, `docs-size/`, `spec-schema/`,
+  `archives/` and `git-hooks/`, plus `shared/`. No kit test suite is deployed, and no published package carries one;
+  your commit hook no longer runs the kit's tests. Your size check already leaves the folder alone (20.1.0).
+- **The stable command.** `node scripts/agent-workflow/run.mjs <name> [arguments...]` runs `docs-size`,
+  `archive-changelog`, `archive-issues`, `archive-decisions` or `install-git-hooks` with every argument unchanged; any
+  other name exits 2 with the list of known names. The names are a public contract every later release answers.
+- **The move, in one upgrade run.** The `configs` step places the kit folder and, once
+  `scripts/agent-workflow/run.mjs` stands, removes each flat kit file whose replacement stands or that has none, printing `scripts/<name>: removed — the kit's scripts live in
+  scripts/agent-workflow/`; a file whose bytes are not the kit's, a link, a directory or an unreadable file is named
+  and left; a file whose replacement is not placed yet is kept and waits for the next run.
+- **Your consumers switch in the same upgrade.** The `gates-migration` step switches each flat gate to the command on
+  your yes; the `hook-checks` item rewrites a managed commit hook to the command (an unmanaged hook stays yours); the
+  agent edits the documented `package.json` scripts. After the removal the upgrade names each `scripts/*.test.mjs` of
+  your own with the line that keeps it on every commit (`scripts/pre-commit.local`), prints one `git grep` line that
+  finds every other file naming an old path, and, in a visible deployment, one line to commit the change together and
+  merge it into every branch you still commit on.
+- **After a no.** On a project with a `package.json`, an upgrade places the caps and index check and the ADR rotator
+  even after a no to the enforcement offer; the changelog and issue rotators and the hook still wait for a yes. The kit's
+  texts and the ADR rotator's own printed lines run a script of the kit folder only through the command.
+- **Stated limits, each with its fix.** A no on the hook item stops every commit at Node's error naming a removed file
+  until you apply the item or run `node scripts/agent-workflow/run.mjs install-git-hooks`. A no on the gates apply
+  leaves those gates failing until you apply it. A checkout that does not carry the move yet (a branch forked earlier)
+  commits with the kit's checks skipped, under one line naming the fix, and its old installer refuses the new hook,
+  until you merge the move into it. In a project named `agent-workflow` the new hook carries the old installer's
+  marker, so that installer rewrites the hook to the old paths instead, and every commit in a moved checkout stops at
+  Node's error naming a removed file until `node scripts/agent-workflow/run.mjs install-git-hooks`, run in a moved
+  checkout, writes it back.
+
+MAJOR: every deployed kit script changes path, the upgrade removes the flat files, and the package no longer carries
+the suites. Contracts: script-family revision 7, kit-command revision 6, distribution-files revision 23, init-project
+revision 30.
+
 ## 20.2.0 — the project rules check is offered as a gate of every project (AD-219)
 
 **Your project's rules can now stop a red gate run, not only a commit.** The check that each rules theme's effective

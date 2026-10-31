@@ -20,7 +20,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const CHECKER = resolve(HERE, '..', 'check-docs-size.mjs');
+export const CHECKER = resolve(HERE, '..', '..', 'agent-workflow-memory', 'references', 'scripts', 'docs-size', 'check-docs-size.mjs');
 export const SPEC_CHECK = resolve(HERE, '..', '..', 'agent-workflow-kit', 'tools', 'spec-check-cli.mjs');
 export const FAN_OUT = 30;
 export const STORE_REL = join('docs', 'ai', 'specs');

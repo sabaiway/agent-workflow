@@ -4,6 +4,36 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 10.0.0 — the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (AD-220)
+
+**A memory deployment keeps the kit's scripts in one folder, `scripts/agent-workflow/`, and its hook and docs name
+one command: `node scripts/agent-workflow/run.mjs <name>`.** One plain `/agent-workflow-memory upgrade` moves a
+project that holds the 25 flat kit files.
+
+- **The script source is laid out by meaning.** `references/scripts/` holds `run.mjs` and the module folders
+  `docs-size/`, `spec-schema/`, `archives/`, `git-hooks/`, `shared/`, `gates/` and `test-support/`, read through one
+  manifest, `family.json`. A deployment gets the runtime files only: `run.mjs`, `docs-size/`, `spec-schema/`,
+  `archives/`, `git-hooks/` and `shared/`. The package no longer carries a suite.
+- **The stable command.** `node scripts/agent-workflow/run.mjs <name> [arguments...]` runs `docs-size`,
+  `archive-changelog`, `archive-issues`, `archive-decisions` or `install-git-hooks` with every argument unchanged; any
+  other name exits 2 with the list. The installed hook, the documented `package.json` wiring and the ADR rotator's own
+  printed lines name it.
+- **The standalone move.** The upgrade runs one shipped script, `scripts/kit-folder.mjs --project <target>`: it
+  places the kit folder, runs the ADR store's `--ensure-current` and removes each flat kit file; a file whose bytes are
+  not the kit's is named and left. It then names each suite of your own with the line that keeps it on every commit
+  (`scripts/pre-commit.local`) and the `git grep` form, over the names in `scripts/flat-scripts.mjs`, that finds every
+  other file naming an old path. Memory touches no gate: a gate naming an old path is reported with its replacement
+  until your workflow toolkit's upgrade switches it. Under the toolkit, its upgrade owns the move.
+- **The installer converges its home.** `npx @sabaiway/agent-workflow-memory init` removes every file the package no
+  longer carries from the skill home, so the flat scripts and the suites leave it; a failed removal exits 1 with the
+  line to re-run.
+- **Stated limits, each with its fix.** A no on the hook switch stops every commit at Node's error naming a removed
+  file until the switch line is run. A checkout that does not carry the move yet commits with the kit's checks
+  skipped, under one line naming the fix, until you merge the move into it.
+
+MAJOR: every deployed kit script changes path, the upgrade removes the flat files, and the package no longer carries
+the suites. Contracts: script-family revision 7, kit-command revision 6.
+
 ## 9.0.0 — the templates carry no kit text; the deployment-lineage head moves to 5.0.0 (AD-216)
 
 **The `AGENTS.md` template ships no workflow comment lines and no line-cap footer, and the `agent_rules.md` template

@@ -143,12 +143,14 @@ your-repo/
     ├── known_issues.md    <- bugs + workarounds
     ├── architecture.md · current_state.md · changelog.md · …
     └── history/           <- changelog archive (HOT -> WARM -> COLD)
-  + scripts/               <- caps · index · archive   (installed on a yes)
+  + scripts/agent-workflow/ <- caps · index · archive  (the kit folder)
   + pre-commit hook        <- keeps it all honest       (installed on a yes)
 ```
 
-The Markdown memory is **stack-agnostic**; the `scripts/` + pre-commit hook are the **Node path**
-(dependency-free). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
+The Markdown memory is **stack-agnostic**; the kit folder `scripts/agent-workflow/` + pre-commit hook are the
+**Node path** (dependency-free). They are offered on every project because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
+On a project with a `package.json`, an upgrade places the caps and index check and the ADR rotator even after a no;
+the changelog and issue rotators and the hook still wait for a yes.
 
 Two **visibility** modes, chosen at deploy time: **visible** (committed with the repo) or
 **hidden** (same files in-tree but git-ignored via the project-local `.git/info/exclude`, so the

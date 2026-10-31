@@ -4,6 +4,12 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 6.0.1 — the texts name the spec reader at its path in the kit folder (AD-220)
+
+`README.md`, `SKILL.md` and `references/specs.md` name memory's deployed spec reader at its new path,
+`scripts/agent-workflow/spec-schema/spec-schema.mjs`: memory 10.0.0 and kit 21.0.0 move the kit's scripts out of the
+flat `scripts/` folder into the kit folder `scripts/agent-workflow/`. PATCH: text only.
+
 ## 6.0.0 — the lens ships as a rules theme, `references/rules/lens.md` (AD-216)
 
 The lens (the planning, review and process-fidelity invariants) moves from `references/agent-rules-lens.md` to

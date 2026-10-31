@@ -835,8 +835,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `layout.directories` record keyed under `scripts/agent-workflow` reads gone (`entry-gone`, `dir-gone`), a lowered kind
   (`agent-workflow-kit/tools/source-size-judge.mjs:37`), so a check that stops nothing adds `SPLIT_QUALITY_FOCUS`
   (`agent-workflow-kit/tools/source-size-report.mjs:213-215`) as S43 already spares the store record. Fix direction: the
-  gone records under the kit folder join the store record's no-focus arm. Residual exposure, NOT live in S1: no
-  deployment holds the folder; S4 first makes the state. Raised at the KIT-SCRIPTS S1 spec review (lens, round 1).
+  gone records under the kit folder join the store record's no-focus arm. Residual exposure, live from kit 21.0.0
+  (Issue-037): an upgraded deployment holds the folder. Raised at the KIT-SCRIPTS S1 spec review (lens, round 1).
 
 - **KIT-FOLDER-SPEC-R8-WORDING-MINORS** — invariant: every sentence of spec source-size revision 8 is true of the code
   and pins one order. Origin: the lens, round 2 of the KIT-SCRIPTS S1 spec review, four minors: (1) S55 and the judge
@@ -858,7 +858,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   — … already final-run-capable" above REPOINT or kit-not-current WARNING lines. Fix direction: one `main()` case for
   a matched customized gate (no SWITCH, its CUSTOMIZED line and recovery, one REPOINT) with one S6 sentence through a
   spec revision and its review; the no-op line takes the "the warnings below still need a hand" variant when repoints
-  or withheld gates exist. Residual exposure, NOT live: unreleased.
+  or withheld gates exist. Residual exposure, live from kit 21.0.0 (Issue-037).
 
 - **KIT-TEXTS-GUARD-QUOTED-NAME** — invariant: the kit-texts guard flags a refused command name however the text
   quotes it. Origin: codex, the KIT-SCRIPTS S6 code review (verdict ship, one minor):
@@ -866,7 +866,7 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `node scripts/agent-workflow/run.mjs "check-docs-size"` is spared although the command refuses it, exit 2; proved
   by a probe of the regex, and no packed text holds a quoted name today. Fix direction: read a name in single, double
   or back quotes, with a Markdown and a JSON case in the suite, through a script-family revision of S12 and its
-  review. Residual exposure, NOT live: unreleased, no current hit.
+  review. Residual exposure, NOT live: a repository suite, no current hit.
 
 - **GIT-HOOKS-LIMIT-2-NAMES-THE-OLD-FAILURE** — invariant: the part git-hooks' stated limit (2) describes what a hook
   below the work-tree top does. Origin: the KIT-SCRIPTS S4 spec review's last re-read (lens) — kit-command revision 2
@@ -895,8 +895,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   confirmed with git's message; (3) lstat each folder of the replacement path; (4) ask about
   `scripts/agent-workflow/` with the trailing slash, a dry-run hidden cell red first; (5) read the bundle outside the
   flat file's `try` or name the bundled path; (6) add the backtick and comma or state the follow set in the spec;
-  (7) a failing specs outcome that carries `placedScripts`; (8) drop the import. Residual exposure, NOT live: unreleased (RELEASE HOLD
-  until KIT-SCRIPTS S7).
+  (7) a failing specs outcome that carries `placedScripts`; (8) drop the import. Residual exposure, live from kit 21.0.0
+  (Issue-037).
 
 - **PLAN-SHAPE-GATE-READS-NO-WAIVER** — invariant: a plan-shape finding the maintainer waived for one plan does not
   block that plan's commit. Origin: `agent-workflow-kit/tools/plan-shape.mjs:17` (`MAX_LEDGER_ROWS` 25, no waiver
@@ -906,22 +906,14 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   1), its only findings the waived cap and T43's `story-owns`. Fix direction: a recorded waiver in a strict config
   that plan-shape reads, through a spec and its review. Residual exposure, NOT live: one plan, already reviewed.
 
-- **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
-  and when they arrive is true of the release it ships in. Origin: the lens, round 1 of the KIT-SCRIPTS S9 diff review
-  (verdict ship, one minor, outside the diff): `README.md:146,150` and `agent-workflow-kit/README.md:120,124` draw
-  `scripts/ <- caps · index · archive (installed on a yes)` and call "the `scripts/` + pre-commit hook" the Node path,
-  while since story S7 a declined project with Node evidence gets every seed entry (`upgrade.md:45`), and since 16.0.0
-  the spec-layer ensure places its absent files with no question, now with `run.mjs` (`ensure-specs.mjs:1-13`), all in
-  `scripts/agent-workflow/`. The kit-texts guard
-  reads no bare `scripts/` (`kit-texts.test.mjs:23-24`), and `enforcement-offer-docs.test.mjs:27,33-34` pins four
-  "installed on a yes" in each README. Narrow fix: the scripts row and the Node-path sentence name the kit folder and
-  the seed placement, the hook row keeps "installed on a yes", the pins' counts move test-first, before the held
-  release (story S10).
-  Residual exposure, partly live: published 20.2.0 already places the docs checker pair (caps · index) on a plain
-  upgrade with Node evidence, with no yes, in flat `scripts/`; the seed rotator and the kit folder are unreleased
-  (RELEASE HOLD until KIT-SCRIPTS S10).
-
 ## Closed
+
+- **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
+  and when they arrive is true of the release it ships in. Raised by the lens, round 1 of the KIT-SCRIPTS S9 diff
+  review. Closed in story S10: both READMES draw `+ scripts/agent-workflow/` as the kit folder, the Node-path sentence
+  names the kit folder and says an upgrade places the caps and index check and the ADR rotator even after a no, the
+  hook row keeps "installed on a yes" (`enforcement-offer-docs.test.mjs`, `INSTALL_CLAIM_PINS` 3 per README and
+  `README_SCRIPTS_PINS`, red at `60428f2` and green after the edit).
 
 - **KIT-COMMAND-S4-SPECS-NAME-THE-COMMAND** — invariant: every sentence of the specs S4 revises is true of the tree
   with the stable kit command in it. Raised by the lens, round 1 of the KIT-SCRIPTS S3 spec review. Closed in story

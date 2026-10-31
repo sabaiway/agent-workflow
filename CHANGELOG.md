@@ -7,6 +7,26 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-10-31 — AD-220: the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (memory 10.0.0 MAJOR; kit 21.0.0 MAJOR; engine 6.0.1 PATCH; both bridges unchanged)
+
+**A deployment's 25 flat kit files in `scripts/` become one folder the kit alone writes, `scripts/agent-workflow/`**,
+runtime files only, laid out by meaning from one family manifest (`run.mjs`, `docs-size/`, `spec-schema/`,
+`archives/`, `git-hooks/`, `shared/`); no published package carries a kit suite, and the commit hook runs none. One
+stable command, `node scripts/agent-workflow/run.mjs <name>`, runs `docs-size`, `archive-changelog`, `archive-issues`,
+`archive-decisions` and `install-git-hooks`, refuses any other name with the list, and is the only way the hook, the
+migrated gates and the ADR rotator's printed lines run a script of the kit folder. One plain upgrade with its chat yes moves a flat
+deployment in one run: the folder placed, the kit's flat files removed (a file that is not the kit's named and left),
+the hook and the gates switched, every other old path found by one `git grep` line, and one line to commit the change
+together; memory alone places the folder and removes the flat files through one shipped script, prints the hook
+switch line for the user's yes and leaves the gates to the kit's upgrade, and memory's installer converges its skill
+home.
+A declined deployment with a `package.json` gets the caps and index check and the ADR rotator. Stated limits with
+their fixes: a no on the hook item, a no on the gates apply, a checkout without the move (the kit entry names each). This repository
+moved by the same upgrade. Contracts: script-family revision 7, kit-command revision 6, distribution-files revision 23,
+init-project revision 30. Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md),
+[agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md).
+
 ## 2026-10-28 — AD-219: the project rules check is offered as a gate of every project (kit 20.2.0 MINOR; memory, engine and both bridges unchanged)
 
 **`checker-gates.mjs` and the upgrade's `tier` step offer a fifth kit checker gate, `project-rules`**
