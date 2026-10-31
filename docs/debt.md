@@ -1093,12 +1093,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Carried by stories S6 and S7 when they write those families; story S16 carries it for the two hook writers, whose line
   for a differing kit hook file is `fileLine`'s state `hook` ("differs from the body the kit writes for it"), the same
   for an older body and an edited one. Raised at the epic revision (2026-10-23).
-- **PAIRS-ONLY-TREE-LACKS-THE-SHIM** — invariant: every suite the kit leaves in `scripts/` loads. Origin: a tree where
-  the specs op seeded the spec-layer pairs and the component is not accepted (the pairs-only tree and a declined one
-  alike) has no `_expect-shim.mjs`, so its two pair suites fail at import (`spec-schema.test.mjs:2`,
-  `check-docs-size.test.mjs:2`), and the not-placed line calls the pair files no kit script. Narrow fix: the specs op
-  places the modules its pairs import, and the line says "no kit script outside the spec layer". Pre-existing on
-  HEAD; raised during the DISTRIBUTION-FILES-STAY-CURRENT S12 spec review (2026-10-23).
 - **A-RED-BUFFER-DEEPEQUAL-EXHAUSTS-THE-HOST** — invariant: a red cell fails in bounded memory. Origin: Node 24's
   `assert.deepEqual` builds its diff on failure even with a message, printing a Buffer one byte per line, and its
   line diff takes memory of order N·D: one failed compare of a 20 KB Buffer against `null` peaks at 3.2 GB RSS,
@@ -1331,3 +1325,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   in-band file (426 of 400 + 10%) must carry a raise bullet that records nothing. Narrow fix: the budget-cap check takes
   the band's ceiling (cap × (1 + tolerance)) for an unrecorded file. Residual exposure, live but inert: the bullet is
   worded as a no-op and the check passes.
+- **MEMORY-RERUN-LINE-HAS-NO-DEFAULT-HOME-CELL** — invariant: memory's re-run line over its default home is the bare
+  command. Origin: the lens, round 1 of the KIT-SCRIPTS S8 code review (2026-10-30): the recovery-command case loops
+  only `--dir` and `env` (`agent-workflow-memory/bin/install.test.mjs:305`), so a `fromDefault` of constant `false` at
+  `agent-workflow-memory/bin/install.mjs:277` passes every memory case. Narrow fix: a `default` route cell as the kit's
+  at `agent-workflow-kit/tools/payload-prune.test.mjs:476-500`. Residual exposure, NOT live: the code is right.

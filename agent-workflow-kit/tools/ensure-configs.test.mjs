@@ -101,7 +101,7 @@ describe('usage — nothing writes without --reconcile', () => {
     const r = main(['--help']);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /--reconcile/);
-    for (const re of [/CREATE-ONLY/, /declined the enforcement offer, its standing seed files are kept current/]) assert.match(r.stdout, re);
+    for (const re of [/CREATE-ONLY/, /declined the enforcement offer[^;]*every seed file, the rotator included/, /^(?![\s\S]*standing seed files)/]) assert.match(r.stdout, re);
   });
 });
 
@@ -141,13 +141,13 @@ describe('the reconcile run', () => {
       assert.equal(first.code, 0);
       // The ops: the spec-layer ensure seeds the reader pair, the checker pair and the store root on a
       // bare tree, and the navigator is regenerated AFTER it (the store root is a docs/ai file).
-      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated']);
+      assert.deepEqual(tokensOf(first.stdout).map((t) => t.token), ['seeded', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
       assert.equal(existsSync(join(dir, 'docs', 'ai', 'specs', 'index.md')), true, 'the spec store root landed');
       const afterFirst = snapshot(dir);
 
       const second = main(['--reconcile'], { cwd: dir });
       assert.equal(second.code, 0);
-      assert.deepEqual(tokensOf(second.stdout).find((t) => t.op === 'scripts'), { op: 'scripts', token: 'already-present' }, 'the seed files the spec layer placed are already the bundled body on the second run');
+      assert.deepEqual(tokensOf(second.stdout).find((t) => t.op === 'scripts'), { op: 'scripts', token: 'already-present' }, 'every seed entry the first run placed is already the bundled body on the second run');
       for (const { op, token } of tokensOf(second.stdout)) {
         assert.equal(WRITE_TOKENS.includes(token), false, `${op} claimed "${token}" on an already-current tree`);
       }
@@ -199,18 +199,18 @@ describe('the reconcile run', () => {
 
 describe('spec:distribution-files/S36 the op order on a flat tree without package.json', () => {
   const flat = [['spec-schema.mjs', 'references/scripts/spec-schema/spec-schema.mjs'], ['spec-schema.test.mjs', 'test/fixtures/script-priors/8.7.0/spec-schema.test.mjs.txt'],
-    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']];
-  for (const [label, flags] of [['one plain run places the pairs, closure and command before removing the flat pairs', []], ['--only scripts places and removes nothing, keeping each flat file with its line naming run.mjs', ['--only', 'scripts']]]) {
+    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']], SEEDS = DEPLOYED_SCRIPTS.filter((e) => e.seed && e.module && !['spec-schema', 'docs-size'].includes(e.module) && e.path !== 'run.mjs');
+  for (const [label, flags] of [['one plain run places the pairs, closure, command and every seed entry before removing the flat pairs', []], ['--only scripts places every seed entry and no other file, removes nothing, keeping each flat file with its line naming run.mjs', ['--only', 'scripts']]]) {
     it(label, () => withProject((dir) => {
       mkdirSync(join(dir, 'scripts'));
       for (const [name, source] of flat) writeFileSync(join(dir, 'scripts', name), readFileSync(join(KIT, source)));
-      const before = snapshot(dir), r = main(['--reconcile', ...flags], { cwd: dir, deps: { git: () => ({ status: 128 }) } });
+      const before = snapshot(dir), r = main(['--reconcile', ...flags], { cwd: dir, deps: { git: () => ({ status: 128 }) } }), after = snapshot(dir);
       assert.equal(r.code, 0, `${r.stderr}\n${r.stdout}`);
       if (flags.length) {
-        assert.deepEqual(snapshot(dir), before);
+        assert.deepEqual([tokensOf(r.stdout), [...after.keys()].filter((rel) => !before.has(rel)).sort(), [...before].filter(([rel, body]) => after.get(rel) !== body), SEEDS.filter(({ deployed, bundled }) => after.get(deployed) !== readFileSync(join(KIT, bundled), 'utf8')).map(({ path }) => path)], [[{ op: 'scripts', token: 'seeded' }], SEEDS.map(({ deployed }) => deployed).sort(), [], []], r.stdout);
         for (const [name] of flat) assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`), r.stdout);
       } else {
-        const paths = new Set([...PAIR_FILES.map(({ path }) => path), 'run.mjs']);
+        const paths = new Set([...PAIR_FILES.map(({ path }) => path), 'run.mjs', ...SEEDS.map(({ path }) => path)]);
         for (const path of paths) for (const dep of bundledImportsOf(path, readFileSync(join(KIT, entryOf(path).bundled)))) paths.add(dep);
         for (const path of paths) { const { deployed, bundled } = entryOf(path); assert.equal(existsSync(join(dir, deployed)), true, deployed); assert.deepEqual([lstatSync(join(dir, deployed)).isFile(), readFileSync(join(dir, deployed))], [true, readFileSync(join(KIT, bundled))], deployed); }
         for (const [name] of flat) { assert.equal(existsSync(join(dir, 'scripts', name)), false, name); assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: removed — the kit's scripts live in scripts/agent-workflow/`), r.stdout); }
@@ -423,7 +423,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      const expected = ['malformed-preserved', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated'];
+      const expected = ['malformed-preserved', 'seeded', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated'];
       assert.deepEqual(tokens, ENSURE_OPS.map((op, i) => ({ op, token: expected[i] })));
       assert.match(r.stdout, /part of this configuration run did NOT complete/);
       assert.doesNotMatch(r.stdout, /nothing was written for those/, 'the summary claims nothing about what landed — an op can stop partway');
@@ -444,7 +444,7 @@ describe('one op failing never skips the rest', () => {
       const r = main(['--reconcile'], { cwd: dir, deps });
       assert.equal(r.code, 1);
       const tokens = tokensOf(r.stdout);
-      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'already-present', 'seeded', 'regenerated']);
+      assert.deepEqual(tokens.map((t) => t.token), ['seeded', 'failed', 'seeded', 'seeded', 'not-placed', 'seeded', 'seeded', 'seeded', 'regenerated']);
       assert.match(r.stdout, /unexpected-error — gates: /);
     });
   });

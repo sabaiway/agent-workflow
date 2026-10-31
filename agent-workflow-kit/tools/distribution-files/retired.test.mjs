@@ -6,7 +6,6 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bundledImportsOf } from '../ensure-ops.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { PRIOR_FILES, SCRIPT_PRIORS, classifyDeployedScript, digestOf } from '../script-priors.mjs';
 
@@ -25,20 +24,16 @@ const kitLayout = async () => {
   const deployed = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
   return { deployed, byName: new Map(deployed.map((entry) => [basename(entry.path), entry.path])),
     family: deployed.filter((entry) => !['spec-schema', 'docs-size'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path),
-    seeds: deployed.filter((entry) => entry.seed).map((entry) => entry.path) };
+    seeds: deployed.filter((entry) => entry.seed && !['spec-schema', 'docs-size'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path) };
 };
-const closureOf = (from, within) => {
-  const reached = new Set(from);
-  for (const path of reached) for (const dependency of bundledImportsOf(path, bundled(path))) if (within.includes(dependency)) reached.add(dependency);
-  return [...reached];
-};
+const WOULD_STORE = `ADR store: ${KD}/archives/archive-decisions.mjs --ensure-current would run after the writes, bringing the store current or writing nothing when it already is`;
 const L = {
   removed: (name) => `${flat(name)}: removed — the kit's scripts live in scripts/agent-workflow/`,
   kept: (name, path) => `${flat(name)}: kept — ${KD}/${path} is not placed yet`,
   refused: (name, code) => `${flat(name)}: not removed (${code}) — left for the next run`,
   foreign: (name) => `${flat(name)}: differs from every body this kit knows it shipped — not the kit's, left as it stands; the kit's checks now run from scripts/agent-workflow/`,
   suite: (name) => `${flat(name)}: a suite of your own — the kit's hook runs no suite; add node --test ${flat(name)} to scripts/pre-commit.local to keep it on every commit`,
-  notPlaced: `${KD}/: no kit script stands in it, so none is placed`,
+  placed: (path) => `${KD}/${path}: absent — placed from the bundled scripts`,
   notAccepted: `${KD}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`,
   grep: `other files naming an old path: git grep -n -F --untracked ${PRIOR_FILES.map((name) => `-e ${name}`).join(' ')} -- . ':!scripts/agent-workflow'`,
   boundary: 'git grep lists tracked and untracked files git does not ignore; the hooks dir and ignored files are yours to check',
@@ -81,6 +76,11 @@ const run = (dir, { deps = {}, ...options } = {}) => {
 };
 const hasLine = (result, line) => assert.ok(result.lines.includes(line), `missing line: ${line}\n${result.lines.join('\n')}`);
 const assertWouldRemove = (result, name) => assert.ok(result.lines.some((line) => line.startsWith(`${flat(name)}:`) && line.includes('would be removed')), flat(name));
+// The store's would line stands, and every line of the part flat-move comes after it.
+const assertWouldFirst = (result) => {
+  const at = result.lines.indexOf(WOULD_STORE), flat = result.lines.flatMap((line, index) => (/^scripts\/(?!agent-workflow\/)/.test(line) || [L.grep, L.boundary].includes(line) ? [index] : []));
+  assert.ok(at !== -1 && flat.length > 0 && flat.every((index) => index > at), `the would line before every flat line:\n${result.lines.join('\n')}`);
+};
 const assertNoAfterLines = (result) => assert.deepEqual(result.lines.filter((line) => /a suite of your own|git grep|(?:not|outside|no) (?:a )?(?:git )?work tree/i.test(line)), []);
 const initGit = (dir) => {
   const home = join(dir, 'git-home'); mkdirSync(home);
@@ -115,39 +115,44 @@ describe('spec:distribution-files/S29 the flat component and the command prerequ
       }
     });
   });
-  it('each flat seed places only its manifest seed closure; index and project-root are never read or named', async () => {
+  it('a flat seed alone accepts nothing: every seed entry placed with the not-accepted line, that flat file removed; index and project-root are never read or named', async () => {
     const K = await kitLayout();
     for (const name of ['archive-decisions.mjs', 'markdown-blocks.mjs']) withTree(K, (dir) => {
       put(dir, { [name]: flatBody(name, K), 'index.mjs': '// not a seed\n', 'project-root.mjs': '// not a seed\n' });
       const reads = [], result = run(dir, { deps: { readFile: (path, ...args) => { reads.push(String(path)); return readFileSync(path, ...args); } } });
       assert.equal(result.token, 'seeded'); hasLine(result, L.notAccepted); hasLine(result, L.removed(name));
-      const reached = closureOf([K.byName.get(name)], K.seeds);
-      assert.deepEqual(Object.keys(snapshot(join(dir, KD))).sort(), [...reached, 'run.mjs'].sort());
-      for (const path of reached) assert.equal(digestOf(readFileSync(join(dir, KD, path))), digestOf(bundled(path)));
+      for (const path of K.seeds) hasLine(result, L.placed(path));
+      assert.deepEqual(Object.keys(snapshot(join(dir, KD))).sort(), [...K.seeds, 'run.mjs'].sort());
+      for (const path of K.seeds) assert.equal(digestOf(readFileSync(join(dir, KD, path))), digestOf(bundled(path)));
       for (const ignored of ['index.mjs', 'project-root.mjs']) { assert.ok(!reads.includes(join(dir, flat(ignored)))); assert.ok(!result.lines.some((line) => line.includes(flat(ignored)))); }
       assert.equal(existsSync(join(dir, flat(name))), false);
     });
   });
-  it('flat pairs supply Node evidence but no acceptance; suites alone skip, an archiver waits, and no flat file is unchanged', async () => {
+  it('flat pairs supply Node evidence but no acceptance, every seed entry placed; suites alone skip, an archiver waits, and no cell answers not-placed', async () => {
     const K = await kitLayout(), suites = PRIOR_FILES.filter((name) => name.endsWith('.test.mjs'));
     const rows = [
-      { names: ['check-docs-size.mjs', 'spec-schema.mjs', ...suites, '_expect-shim.mjs'], token: 'refreshed' },
+      { names: ['check-docs-size.mjs', 'spec-schema.mjs', ...suites, '_expect-shim.mjs'], token: 'seeded' },
       { names: [...suites, '_expect-shim.mjs'], token: 'skipped-no-node-evidence', command: false },
-      { names: ['archive-caps.mjs'], token: 'not-placed' }, { names: [], token: 'not-placed' },
+      { names: ['archive-caps.mjs'], token: 'seeded' }, { names: [], token: 'seeded' },
     ];
     for (const row of rows) withTree(K, (dir) => {
       put(dir, Object.fromEntries(row.names.map((name) => [name, flatBody(name, K)])));
       const before = snapshot(dir), reads = [], result = run(dir, { deps: { readFile: (path, ...args) => { reads.push(path); return readFileSync(path, ...args); } } });
       assert.equal(result.token, row.token);
       if (row.command === false) { assert.deepEqual([reads, snapshot(dir)], [[], before]); assertNoAfterLines(result); return; }
-      assert.equal(result.lines[0], L.notPlaced);
+      hasLine(result, L.notAccepted);
+      for (const path of K.seeds) hasLine(result, L.placed(path));
       for (const name of row.names) {
         const path = K.byName.get(name);
         hasLine(result, path ? L.kept(name, path) : L.removed(name));
         assert.equal(existsSync(join(dir, flat(name))), Boolean(path));
       }
-      assert.deepEqual(Object.keys(snapshot(join(dir, KD))), ['run.mjs']);
-      if (row.token === 'not-placed') { assert.deepEqual(snapshot(dir), before); assertNoAfterLines(result); }
+      assert.deepEqual(Object.keys(snapshot(join(dir, KD))).sort(), [...K.seeds, 'run.mjs'].sort());
+      if (row.names.every((name) => K.byName.get(name))) {
+        for (const name of row.names) assert.equal(snapshot(dir)[flat(name)], before[flat(name)], `${name} left as it stood`);
+        assertNoAfterLines(result);
+        assert.ok(!result.lines.some((line) => /^scripts\/(?!agent-workflow\/)/.test(line) && !row.names.some((name) => line.startsWith(`${flat(name)}:`))), 'no flat line for a file the tree does not hold');
+      }
     }, { command: row.command !== false, node: row.names.length === 0 });
   });
   it('without run.mjs the installer witness places the family but keeps every kit flat file naming run.mjs', async () => {
@@ -233,15 +238,18 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
       if (!['write', 'store'].includes(failure)) assertNoAfterLines(final);
     }, { family: true });
   });
-  it('a removal alone refreshes; a dry run previews standing replacements and keeps only absent ones', async () => {
+  it('a declined removal beside absent seeds seeds them; beside current seeds it refreshes with no placement line; a dry run previews standing replacements and keeps only absent ones, after the would line', async () => {
     const K = await kitLayout();
-    for (const dryRun of [false, true]) withTree(K, (dir) => {
+    for (const seedsStand of [false, true]) for (const dryRun of [false, true]) withTree(K, (dir) => {
       put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K), 'spec-schema.mjs': flatBody('spec-schema.mjs', K), 'archive-caps.mjs': flatBody('archive-caps.mjs', K) });
-      put(dir, { [K.byName.get('spec-schema.mjs')]: bundled(K.byName.get('spec-schema.mjs')) }, KD);
-      const before = snapshot(dir), result = run(dir, { dryRun }); assert.equal(result.token, dryRun ? 'would-refresh' : 'refreshed'); assert.equal(result.lines[0], L.notPlaced);
+      put(dir, { [K.byName.get('spec-schema.mjs')]: bundled(K.byName.get('spec-schema.mjs')), ...(seedsStand ? Object.fromEntries(K.seeds.map((path) => [path, bundled(path)])) : {}) }, KD);
+      const at = `seeds ${seedsStand ? 'current' : 'absent'}, ${dryRun ? 'dry' : 'plain'}`, before = snapshot(dir), result = run(dir, { dryRun });
+      assert.equal(result.token, seedsStand ? (dryRun ? 'would-refresh' : 'refreshed') : (dryRun ? 'would-seed' : 'seeded'), at); hasLine(result, L.notAccepted);
+      const placed = result.lines.filter((line) => line.startsWith(`${KD}/`) && /: absent — (?:would be )?placed from the bundled scripts$/.test(line)).map((line) => line.slice(KD.length + 1, line.indexOf(':')));
+      assert.deepEqual(placed.sort(), seedsStand ? [] : [...K.seeds].sort(), at);
       for (const name of ['_expect-shim.mjs', 'spec-schema.mjs']) { if (dryRun) assertWouldRemove(result, name); else hasLine(result, L.removed(name)); }
-      if (dryRun) { assert.deepEqual(snapshot(dir), before); assert.ok(result.lines.some((line) => line.startsWith('scripts/archive-caps.mjs:') && line.includes('would be kept') && line.includes(`${KD}/archives/archive-caps.mjs`))); }
-      else { hasLine(result, L.kept('archive-caps.mjs', 'archives/archive-caps.mjs')); const next = run(dir); assert.equal(next.token, 'not-placed'); assertNoAfterLines(next); }
+      if (dryRun) { assert.deepEqual(snapshot(dir), before); assert.ok(result.lines.some((line) => line.startsWith('scripts/archive-caps.mjs:') && line.includes('would be kept') && line.includes(`${KD}/archives/archive-caps.mjs`))); assertWouldFirst(result); }
+      else { hasLine(result, L.kept('archive-caps.mjs', 'archives/archive-caps.mjs')); const next = run(dir); assert.equal(next.token, 'already-present'); assertNoAfterLines(next); }
     });
   });
   it('a dry run counts its own due family placements without writing', async () => {
@@ -278,6 +286,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
         if (dryRun) assert.ok(result.lines.some((line) => line.startsWith(`${flat(name)}:`) && line.includes('would be kept') && line.includes(`${KD}/run.mjs`)));
         else hasLine(result, L.kept(name, 'run.mjs'));
       }
+      if (dryRun) assertWouldFirst(result);
       assert.deepEqual(snapshot(dir), before); assertNoAfterLines(result);
     }, { family: true, command: false });
   });

@@ -61,8 +61,6 @@ const [INSTALLER, ROTK, ISSUES] = ['git-hooks/install-git-hooks.mjs', 'archives/
 const kb = (p) => readFileSync(join(BUNDLE, ...p.split('/')));
 const IMPORT = /(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g;
 const importsOf = (p, within) => [...kb(p).toString('utf8').matchAll(IMPORT)].map(([, spec]) => posix.join(posix.dirname(p), spec)).filter((dep) => within.includes(dep));
-// `roots` and every file of `within` they reach through bundled relative imports, transitively.
-const closureOf = (within, roots) => { const reached = new Set(roots); for (const p of reached) for (const dep of importsOf(p, within)) reached.add(dep); return [...reached]; };
 // Dependencies before importers, code-unit order of the manifest path otherwise.
 const writeOrder = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p, paths).every((d) => !left.has(d))); assert.ok(next, `an import cycle among ${[...left]}`); out.push(next); left.delete(next); } return out; };
 const kitFamily = async () => {
@@ -73,6 +71,8 @@ const kitFamily = async () => {
   assert.deepEqual([INSTALLER, ROTK, ISSUES].filter((p) => !F.family.includes(p)), [], 'the named files are family files');
   return F;
 };
+// The tree the specs op seeds: the pairs and the shared files they import, no rotator.
+const SEEDED = (F) => Object.fromEntries([...F.pairs, ...F.shared].map((p) => [p, kb(p)]));
 const putK = (dir, bodies) => { for (const [p, body] of Object.entries(bodies)) if (body !== null) { mkdirSync(dirname(join(dir, KF, p)), { recursive: true }); writeFileSync(join(dir, KF, p), body); } };
 // A temp project whose kit folder holds every family file on its bundled body but as `bodies` says (null: absent).
 const withKit = (F, bodies, fn, opts = {}) => withTree(bodies, fn, { ...opts, lay: (dir, b) => putK(dir, Object.fromEntries(F.family.map((p) => [p, p in b ? b[p] : kb(p)]))) });
@@ -125,10 +125,11 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
       assert.deepEqual(order, [INSTALLER, ISSUES, '<spawn>'], 'the spawn is the last entry, after every publish');
     });
   });
-  it('an accepted component and a declined one whose judged seed files hold the rotator: one spawn each, on a current store and an old one', async () => {
+  it('an accepted component and a declined one, whether it held the rotator, an edited rotator or only the tree the specs op seeds: one spawn each, on a current store and an old one', async () => {
     const F = await kitFamily();
     const declined = (body) => (dir) => putK(dir, { ...Object.fromEntries(F.pairs.map((p) => [p, kb(p)])), [ROTK]: body });
-    const components = [['an accepted component', {}, () => {}], ['a declined one, the rotator alone', null, declined(kb(ROTK))], ['a declined one, the rotator edited', null, declined(EDIT(ROTK))]];
+    const components = [['an accepted component', {}, () => {}], ['a declined one, the rotator alone', null, declined(kb(ROTK))], ['a declined one, the rotator edited', null, declined(EDIT(ROTK))],
+      ['a declined one, the tree the specs op seeds', null, (dir) => putK(dir, SEEDED(F))]];
     const got = components.flatMap(([c, bodies, lay]) => [['a current store', () => {}], ['an old one', both]].map(([s, store]) => [`${c} on ${s}`, withKit(F, bodies, (dir) => {
       const { calls, spawn } = fakeSpawn();
       run(dir, { deps: { spawnSync: spawn } });
@@ -161,20 +162,16 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
       assert.deepEqual([r.token, r.lines.map((l) => (l.startsWith(note) ? note : l))], ['seeded', [LK.placed(ISSUES), LK.count(F.family.length - 1), HOOK, note, NAVIGATOR]], r.lines.join('\n'));
     });
   });
-  it('not-placed, skipped-no-node-evidence, wrong-node-kind, bundle-unreadable, write-refused, race-unresolved and a declined tree with no rotator spawn nothing', async () => {
+  it('skipped-no-node-evidence, wrong-node-kind, bundle-unreadable, write-refused and race-unresolved spawn nothing', async () => {
     const F = await kitFamily();
     const unreadable = (p, ...rest) => { if (String(p) === join(BUNDLE, ...ISSUES.split('/'))) throw Object.assign(new Error('EACCES: denied'), { code: 'EACCES' }); return readFileSync(p, ...rest); };
     const raced = (dir) => (from, to) => { if (to === join(dir, KF, ...ISSUES.split('/'))) writeFileSync(to, OLD(ISSUES)); return linkSync(from, to); };
-    // The tree the specs op seeds: the pairs and the shared files they import, no rotator.
-    const seeded = { setup: (dir) => putK(dir, Object.fromEntries([...F.pairs, ...F.shared].map((p) => [p, kb(p)]))) };
     const rows = [
-      ['not-placed', null, {}, () => ({})],
       ['skipped-no-node-evidence', null, { node: false }, () => ({})],
       ['wrong-node-kind', { [ISSUES]: null }, { setup: (dir) => symlinkSync(join(dir, 'package.json'), join(dir, KF, ...ISSUES.split('/'))) }, () => ({})],
       ['bundle-unreadable', {}, {}, () => ({ readFile: unreadable })],
       ['write-refused', { [INSTALLER]: OLD(INSTALLER) }, {}, (dir) => ({ ...recorder(dir, { refuseAt: 1, base: KF }).deps, priors: priorsK(INSTALLER) })],
       ['race-unresolved', { [ISSUES]: null }, {}, (dir) => ({ link: raced(dir) })],
-      ['already-present', null, seeded, () => ({})],
     ];
     const got = rows.map(([cause, bodies, tree, deps]) => withKit(F, bodies, (dir) => {
       const { calls, spawn } = fakeSpawn();
@@ -182,21 +179,21 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
       return [r.token === 'failed' ? r.lines[0].split(' — ')[0] : r.token, calls.length];
     }, tree));
     assert.deepEqual(got, rows.map(([cause]) => [cause, 0]));
-    withKit(F, null, (dir) => {
-      const { calls, spawn } = fakeSpawn();
-      assert.deepEqual([run(dir, { dryRun: true, deps: { spawnSync: spawn } }).lines, calls.length], [[LK.count(F.shared.length), NOT_ACCEPTED_K], 0], 'a declined tree with no rotator prints no would line dry');
-    }, seeded);
   });
-  it('a dry run spawns nothing and ends with the would line exactly when the rotator is judged, the token unchanged by it', async () => {
+  it('a dry run spawns nothing and prints the would line after its other lines exactly when the rotator is judged, an accepted and a declined run alike, the token unchanged by it', async () => {
     const F = await kitFamily();
     const N = F.family.length;
     const would = (l) => l.replace(/— (refreshed|replaced|placed) /, '— would be $1 ');
-    // A declined component whose judged seed closure holds the rotator: an edited rotator, every seed file it imports absent.
+    const DRY_IF = 'if a commit hook runs the files named above, writing them may stop the next commit';
+    // Two declined components, each judging every seed entry: an edited rotator beside the pairs alone, and the tree
+    // the specs op seeds, the rotator absent.
     const declined = { setup: (dir) => putK(dir, { ...Object.fromEntries(F.pairs.map((p) => [p, kb(p)])), [ROTK]: EDIT(ROTK) }) };
-    const closure = writeOrder(closureOf(F.seeds, [ROTK]));
-    assert.ok(closure.length > 1, 'the rotator imports seed files');
+    const seeded = { setup: (dir) => putK(dir, SEEDED(F)) };
+    const seeds = writeOrder(F.seeds), standing = seeds.filter((p) => F.shared.includes(p));
+    assert.ok(seeds.length > 1 && standing.length > 0 && !standing.includes(ROTK), 'the rotator imports seed files; the specs op seeds shared ones');
     const rows = [[{ [INSTALLER]: OLD(INSTALLER) }, 'would-refresh', [would(LK.refreshed(INSTALLER)), LK.count(N - 1), DRY_HOOK, WOULD_K]], [{}, 'already-present', [LK.count(N), WOULD_K]],
-      [null, 'would-seed', [...closure.map((p) => would(p === ROTK ? LK.replaced(p) : LK.placed(p))), NOT_ACCEPTED_K, 'if a commit hook runs the files named above, writing them may stop the next commit', WOULD_K], declined]];
+      [null, 'would-seed', [...seeds.map((p) => would(p === ROTK ? LK.replaced(p) : LK.placed(p))), NOT_ACCEPTED_K, DRY_IF, WOULD_K], declined],
+      [null, 'would-seed', [...seeds.filter((p) => !standing.includes(p)).map((p) => would(LK.placed(p))), LK.count(standing.length), NOT_ACCEPTED_K, DRY_IF, WOULD_K], seeded]];
     for (const [bodies, token, lines, tree] of rows) withKit(F, bodies, (dir) => {
       const { calls, spawn } = fakeSpawn();
       const r = run(dir, { dryRun: true, deps: { spawnSync: spawn, priors: priorsK(INSTALLER) } });

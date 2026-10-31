@@ -11,7 +11,7 @@
 //                                              one placed; then the store root seeded create-only
 //   scripts        scripts/<every kit script>  once a kit script outside the seed names, or the old flat installer, stands there, every file not current
 //                  + the installer set         written with no question and no copy kept; installer set first; on a
-//                                              declined offer only the standing seed files and the modules they import;
+//                                              declined offer every seed file, the rotator included, and no other;
 //                                              then the project's rotator brings the ADR store current (--ensure-current)
 //   rules          docs/ai/rules/<theme>.md    the kit file seeded, refreshed on a shipped prior body, or any
 //                  + effective/ + sources.json other body replaced, with no question and no copy kept; with no
@@ -88,8 +88,8 @@ advisor's agents item writes the derived body.
 A fifth writes too: once a kit script outside the seed names stands in scripts/agent-workflow/, or the hook installer under its old
 flat name in scripts/, the enforcement-script ensure writes every kit script that is not the bundled body, the hook installer first,
 with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced (its line names where an edit meant
-to last goes) and an absent one placed; on a project that declined the enforcement offer, its standing seed files are kept current
-the same way, with an absent module they import placed, and no other kit script is placed; after the writes the project's
+to last goes) and an absent one placed; on a project that declined the enforcement offer, every seed file, the rotator included,
+is kept current the same way, an absent one placed, and no other kit script is placed; after the writes the project's
 scripts/agent-workflow/archives/archive-decisions.mjs --ensure-current brings the ADR store current, an older layout moved; last, unless the run
 failed, and only while scripts/agent-workflow/run.mjs stands, each of the kit's old flat files in scripts/ is removed when its replacement stands or it has none (a dry run removes nothing).
 

@@ -4,7 +4,8 @@
 // which the specs op places. Each family file is
 // surveyed by proof before any write: absent, current, prior (a body the catalog lists for its manifest
 // path) or edited. On every plain run a prior is refreshed, an edited one replaced in place and an
-// absent one placed create-only, with no question and no copy kept; a current one is left. The
+// absent one placed create-only, with no question and no copy kept; a current one is left. A project
+// that did not accept the enforcement scripts gets every seed entry, the rotator and what it loads. The
 // installer is written first, then every file after the family files it imports; after the last write
 // the project's own rotator brings the ADR store current (`--ensure-current`); last, retired.mjs removes
 // the kit's old flat files from scripts/ (distribution-files, part flat-move). It never imports
@@ -19,7 +20,7 @@ import { join, posix } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
 import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
 import { DEPLOYED_SCRIPTS, INSTALLER_REL, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
-import { PRIOR_FILES, SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
+import { SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
 import { VEHICLES_REL } from '../vehicle-settings.mjs';
 import { retireScripts } from './retired.mjs';
 
@@ -30,11 +31,11 @@ export const LOCAL_HOOK_CHANNEL = 'the local hook file scripts/pre-commit.local,
 export const VEHICLE_CHANNEL = VEHICLES_REL;
 export const AGENT_CHANNEL = '.claude/agents/<name>.local.md with a name: of its own';
 export const HOOK_CHANNEL = '.claude/hooks/<name>.local.mjs';
-// The manifest paths a run of a component that is not accepted may judge: the rotator and what it loads.
-export const SEED_NAMES = Object.freeze(DEPLOYED_SCRIPTS.filter((e) => e.seed).map((e) => e.path));
 const ROTATOR = 'archives/archive-decisions.mjs';
 // The family: every deployed entry outside the specs op's files (its two modules and the command), in manifest order.
 const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module && e.module !== 'spec-schema' && e.module !== 'docs-size');
+// The manifest paths a run of a component that is not accepted judges: the rotator and what it loads.
+export const SEED_NAMES = Object.freeze(FAMILY.filter((e) => e.seed).map((e) => e.path));
 const FOLDERS = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...FAMILY.map((e) => posix.dirname(e.deployed))])];
 
 const causeOf = (err) => String((err && err.message) || err);
@@ -46,15 +47,7 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 // The installer first (it imports nothing), then each file after every family file it imports.
 const inWriteOrder = (files) => [...files.filter((f) => f.rel === INSTALLER_REL), ...dependenciesFirst(files.filter((f) => f.rel !== INSTALLER_REL))];
 
-// The seed files a run of a component that is not accepted judges: each standing one, and every seed
-// file reached from one through bundled relative imports, so every seed file the run leaves loads.
-const seedClosure = (standing, byPath) => {
-  const reached = new Set(standing);
-  for (const path of reached) for (const dep of byPath.get(path).imports) if (SEED_NAMES.includes(dep) && byPath.has(dep)) reached.add(dep);
-  return reached;
-};
-
-// Each folder on the way, lstat-ed without following a link: → { refusal } | { notPlaced } | {}.
+// Each folder on the way, lstat-ed without following a link: → { refusal } | {}.
 const surveyFolders = (cwd, lstat) => {
   for (const rel of FOLDERS) {
     const st = lstatNoFollow(join(cwd, rel), lstat);
@@ -63,8 +56,8 @@ const surveyFolders = (cwd, lstat) => {
   return {};
 };
 
-// → { refusal } | { notPlaced } | { files, accepted }. A family path of another node kind is judged
-// before the component, so a linked family file never reads as not-placed.
+// → { refusal } | { files, accepted }. A family path of another node kind is judged before the
+// component, so a linked family file is never placed over.
 const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
   const folders = surveyFolders(cwd, lstat);
   if (folders.refusal) return folders;
@@ -73,12 +66,6 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
   if (wrong) return { refusal: wrongKind(wrong.rel, wrong.probe.wrongKind) };
   const flatInstaller = probeSeedTarget(join(cwd, SCRIPTS_DIR, posix.basename(INSTALLER_REL)), lstat);
   const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.path)) || (flatInstaller.present && !flatInstaller.wrongKind);
-  const flatSeeds = FAMILY.filter((e) => e.seed && PRIOR_FILES.includes(posix.basename(e.path))).filter((e) => {
-    const probe = probeSeedTarget(join(cwd, SCRIPTS_DIR, posix.basename(e.path)), lstat);
-    return probe.present && !probe.wrongKind;
-  }).map((e) => e.path);
-  const standing = [...probes.filter((f) => f.probe.present).map((f) => f.path), ...flatSeeds];
-  if (!accepted && standing.length === 0) return { notPlaced: true };
   const byPath = new Map();
   for (const f of probes) {
     try {
@@ -88,8 +75,7 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
       return { refusal: composeFailure(OP, 'bundle-unreadable', `${f.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
     }
   }
-  const judged = accepted ? new Set(byPath.keys()) : seedClosure(standing, byPath);
-  const files = inWriteOrder([...byPath.values()]).filter((f) => judged.has(f.path)).map(({ path, rel, bundle, probe }) => {
+  const files = inWriteOrder([...byPath.values()]).filter((f) => accepted || SEED_NAMES.includes(f.path)).map(({ path, rel, bundle, probe }) => {
     const bytes = probe.present ? read(join(cwd, rel)) : undefined;
     return { path, rel, bundle, state: probe.present ? classifyDeployedScript(bytes, path, bundle, deps.priors ?? SCRIPT_PRIORS) : 'absent' };
   });
@@ -195,10 +181,6 @@ export const ensureScripts = ({ cwd, kitRoot, dryRun = false, deps = {}, placedS
   if (refusal) return refusal;
   const found = survey({ cwd, kitRoot, deps, read, lstat });
   if (found.refusal) return found.refusal;
-  if (found.notPlaced) {
-    const retired = retireScripts({ cwd, kitRoot, dryRun, deps, placedScripts });
-    return composeOutcome(OP, retired.removed.length ? (dryRun ? 'would-refresh' : 'refreshed') : 'not-placed', [`${KIT_SCRIPTS_DIR}/: no kit script stands in it, so none is placed`, ...retired.lines], false);
-  }
   const { files, accepted } = found;
   const current = files.filter((f) => f.state === 'current').length;
   const r = writeRun({ cwd, files, accepted, dryRun, deps, read });

@@ -346,10 +346,10 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
   const [RETIRED, STORE_RUN] = [['old-adr-layout-migration-instructed', 'adr-layout-unverifiable'], 'archive-decisions.mjs --ensure-current'];
   it('upgrade.md: the scripts token arm, the enforcement-script paragraph and the owns sentence state the one rule and the store run', () => {
     const doc = text('references', 'modes', 'upgrade.md'), at = doc.indexOf('**What the enforcement-script ensure does.**'), paragraph = at === -1 ? '' : doc.slice(at, doc.indexOf('\n', at));
-    has(doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`seeded`', '`refreshed`', '`already-present`', '`not-placed`', '`skipped-no-node-evidence`'], ['`pending`', 'customized-preserved']);
+    for (const [slice, yes, no] of [[doc.slice(doc.indexOf('scripts → ')).split(';')[0], ['`seeded`', '`refreshed`', '`already-present`', '`skipped-no-node-evidence`'], ['`not-placed`', '`pending`', 'customized-preserved']], [doc.slice(doc.indexOf('3. `configs`')).split('\n')[0], ['`not-placed`']]]) has(slice, yes, no);
     has(paragraph, ['a kit script outside the seed names', 'no question and no copy kept', 'where a lasting edit goes', 'the commit hook runs the files written',
-      'keeps the standing seed files current with the modules they import', 'places no other kit script', 'hook-run line as a condition', '--ensure-current', 'after the writes', 'its refusal stops the upgrade', '`--write-baseline`',
-      'the `enforcement` check line and apply, by the consent route'], ['withheld', 'customized', 'preserved', 'kept aside', 'held back', 'one yes', 'replace block', 'migrate-adr-store']);
+      'with Node evidence gets every seed file, the decisions rotator and the modules it imports, kept current', 'places no other kit script', 'hook-run line as a condition', '--ensure-current', 'after the writes', 'its refusal stops the upgrade', '`--write-baseline`',
+      'the `enforcement` check line and apply, by the consent route'], ['`not-placed`', 'standing seed files', 'withheld', 'customized', 'preserved', 'kept aside', 'held back', 'one yes', 'replace block', 'migrate-adr-store']);
     assert.deepEqual(PRIOR_FILES.filter((name) => paragraph.includes(`scripts/${name}`)), [], 'the enforcement-script paragraph names no flat kit file');
     has(doc, ["rewrites only what it owns, and the scripts op's store run moves ADR entries, rewrites their inbound links"], [...RETIRED, 'never auto-migrated', 'legacy-ADR', 'cannot READ', 'the layout it read']);
     has(text('tools', 'upgrade-runlist.mjs'), [], RETIRED);
@@ -360,10 +360,10 @@ describe('spec:distribution-files/S24 shipped text of the one rule and the store
   });
   it('ensure-configs.mjs: its header row and --help name the rule and the store run, no survey of another op and no yes for a kit script', () => {
     const rows = header(text('tools', 'ensure-configs.mjs')).split('\n'), at = rows.findIndex((l) => /^\/\/ {3}scripts /.test(l));
-    has(at === -1 ? '' : rows.slice(at, at + 4).join('\n'), ['with no question and no copy kept', 'brings the ADR store current (--ensure-current)'], ['held back']);
+    has(at === -1 ? '' : rows.slice(at, at + 4).join('\n'), ['with no question and no copy kept', 'every seed file, the rotator included', 'brings the ADR store current (--ensure-current)'], ['held back', 'standing seed files']);
     const help = main(['--help']).stdout, from = help.indexOf('\n  --only <op>'), fifth = help.indexOf('A fifth');
     has(help.slice(from, help.indexOf('\n  --cwd', from)), [], ['survey']);
-    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', `scripts/agent-workflow/archives/${STORE_RUN} brings the ADR store current`], ['yes', 'held back']);
+    has(fifth === -1 ? '' : help.slice(fifth, help.indexOf('\n\n', fifth)), ['with no question and no copy kept', 'every seed file, the rotator included', `scripts/agent-workflow/archives/${STORE_RUN} brings the ADR store current`], ['yes', 'held back', 'standing seed files']);
   });
   it('no shipped file but a test names migrate-adr-store; renderers.mjs and status.md name the upgrade for an older layout', () => {
     const isTest = (path) => path.split(/[\\/]/).some((segment) => /\.test(\.mjs)?$/.test(segment));
