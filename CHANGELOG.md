@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-02 — AD-222: the kit block imports every session-start rules file; the SessionStart hook AD-038 deferred is dropped (kit 22.1.0 MINOR; memory, engine and both bridges unchanged)
+
+**The kit block of a deployed `AGENTS.md` now carries one `@` import line per session-start file** (the handover,
+the agent rules and each effective rules theme, rendered from one list with the rules table) and a fallback sentence
+under them: read those files from disk when their content is not in context. Claude Code loads them at every root
+start with no dialog, after `/clear` and compaction, and in subagents; a subfolder start loads them after Claude
+Code's own one-time external-imports approval, and holds today's pointers plus the fallback sentence before it. The
+writer reports, writing nothing, a root `CLAUDE.md` that is not a symlink resolving to `AGENTS.md`, and names an
+unclosed code fence running over the import lines. The kit never reads or writes `~/.claude.json`. AD-038's deferred
+SessionStart discovery hook is dropped: its trigger could never fire on a session that did not read, and the reads
+are now settled by loading the files' content. A live probe of the release candidate (Claude Code 2.1.316) backs
+every claim.
+
 ## 2026-11-01 — AD-221: a red unit-test gate prints only its failures; the kit writes one gate form and moves every earlier one (memory 11.0.0 MAJOR; kit 22.0.0 MAJOR; engine and both bridges unchanged)
 
 **A kit test reporter, `scripts/agent-workflow/test-reporter/reporter.mjs`, ships in every kit folder with Node

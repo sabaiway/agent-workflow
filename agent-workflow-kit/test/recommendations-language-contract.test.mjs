@@ -410,7 +410,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40722, 'dc8ae0292e8ef84de63832b6ada2f7fee48653ee84e66caf4a310a511fe61a71'], 'the bytes after TEST-GATES-PRINT-ONLY-THEIR-FAILURES story S2 (the gates migration moves every earlier form with no question)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [41085, 'f182a068b1b899461a30a517e2a84c58eee52b6ed5af05363fea9dccd249bb34'], 'the bytes after SESSION-RULES-LOADED-BEFORE-THE-FIRST-WORD story S1 (the kit block names its import lines and fallback sentence, the report relays its notes and CLAUDE.md line)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);

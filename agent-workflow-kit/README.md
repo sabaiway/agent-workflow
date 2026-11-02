@@ -316,14 +316,16 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
   `<!-- workflow:kit:start -->` and `<!-- workflow:kit:end -->` comment lines, current on every run
   with no question and no copy kept — the read order, the workflow **methodology**, the
   **orchestration recipes** (Solo / Reviewed / Council / Delegated / Subagent), the **autonomy
-  policy** (the `docs/ai/autonomy.json` read contract), and a table of the rules themes
-  (`docs/ai/rules/effective/<theme>.md`); the engine texts are read **live** from the installed
-  **`agent-workflow-engine`** (the canonical narrative; a published member, never one of the shipped
-  backends). Text of your own goes outside the two `workflow:kit` comment lines; a change to a kit
-  rule goes in its theme's file under `docs/ai/rules/local/`. `docs/ai/agent_rules.md` is yours:
-  the kit lays it only where it is absent, and apart from the one-time `5.0.0` step, which removes the kit's old
-  sections from it, never reads or writes it. `/agent-workflow-kit recipes` surfaces + plans a recipe
-  for your environment, read-only.
+  policy** (the `docs/ai/autonomy.json` read contract), a table of the rules themes
+  (`docs/ai/rules/effective/<theme>.md`), then one `@` import line per session-start file (the
+  handover, the agent rules and each rules theme) and a fallback sentence telling an agent to read
+  those files from disk when their content is not in its context; the engine texts are read **live**
+  from the installed **`agent-workflow-engine`** (the canonical narrative; a published member, never
+  one of the shipped backends). Text of your own goes outside the two `workflow:kit` comment lines;
+  a change to a kit rule goes in its theme's file under `docs/ai/rules/local/`.
+  `docs/ai/agent_rules.md` is yours: the kit lays it only where it is absent, and apart from the
+  one-time `5.0.0` step, which removes the kit's old sections from it, never reads or writes it.
+  `/agent-workflow-kit recipes` surfaces + plans a recipe for your environment, read-only.
 - **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm;
   never first placed by `init` — `setup` places them, and once placed `init`/`upgrade` refresh
   them). They plug into the workflow's **execute** and **review** phases — for *what

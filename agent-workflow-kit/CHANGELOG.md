@@ -4,6 +4,31 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 22.1.0 — the kit block loads your session-start files into Claude Code before its first word (AD-222)
+
+**A Claude Code session started at your project root now holds your handover, your agent rules and every rules theme
+in context from the start.** The kit block of `AGENTS.md` gains one `@` import line per session-start file
+(`docs/ai/handover.md`, `docs/ai/agent_rules.md` and each `docs/ai/rules/effective/<theme>.md` the rules table lists)
+and, under them, a fallback sentence telling an agent to read those files from disk when their content is not in its
+context. Your next `/agent-workflow-kit upgrade` (or `init`) writes them with no question; a second run writes nothing.
+
+- **Where they load.** A start at the project root loads every listed file with no dialog, whatever an earlier dialog
+  answered, and again after `/clear` and after compaction, read fresh from disk; a subagent that loads project
+  instructions holds them too. A start in a subfolder loads them once Claude Code's own one-time external-imports
+  approval for that repository was answered Yes in an interactive session; before that answer (every `-p` start
+  included) or after No, it holds `AGENTS.md` with its pointer lines and the fallback sentence, as before. A listed
+  file you deleted is skipped with no error.
+- **One list.** The import lines and the rules table come from one list in the kit, in the same order; a rules theme
+  your engine does not supply has neither its row nor its import line. The pointer lines stay for agents without
+  imports.
+- **The CLAUDE.md check.** Claude Code reads `AGENTS.md` by itself only where the folder has no `CLAUDE.md`, so the
+  writer prints one line, writing nothing, when the root `CLAUDE.md` is not a symlink resolving to `AGENTS.md`:
+  absent → make it the link; a file of its own or a link elsewhere → move its text into `AGENTS.md` outside the kit
+  block, then make it the link.
+- **The open-fence note.** A code fence opened above the import lines and never closed makes Claude Code read them as
+  code; the writer names that fence's line.
+- `tools/inject-methodology.mjs` exports `MEMORY_IMPORTS` and `FALLBACK_LINE`; nothing is removed (MINOR).
+
 ## 22.0.0 — a red unit-test gate prints only its failures, through one gate form the upgrade moves you to (AD-221)
 
 **A failing unit-test gate now prints a few lines per failing test instead of the whole test log.** The kit's

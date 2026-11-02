@@ -1,9 +1,9 @@
 // The engine fixture and the expected kit block shared by the kit block suites and the engine-homed theme
 // suite; it holds no case. Contract: docs/ai/specs/kit/install/entry-pointers.md.
 import { after } from 'node:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export const inject = await import('../inject-methodology.mjs');
 export const rules = await import('../project-rules/index.mjs');
@@ -47,23 +47,27 @@ export const NO_ENGINE = join(tempDir('kit-block-none-'), 'absent-engine');
 export const skipLine = (name) => `${inject.SKIP_PREFIX} ${name} — refresh it with ${INSTALL}`;
 export const noteLine = (name) => `[inject-methodology] note: ${name} was not written — the installed engine does not supply it; refresh it with ${INSTALL}.`;
 
-// expectedBlock({ omit, eol, texts }) → the block the command composes over makeEngine({ omit }), texts replacing
-// a part's text by its id.
+// expectedBlock({ omit, eol, texts }) → the block with imports and fallback; texts replaces a part's text by its id.
 export const expectedBlock = ({ omit = [], eol = LF, texts = {} } = {}) => {
   const themePath = (theme) => rules.themePaths(theme.name).effective;
   const shipped = (theme) => theme.home !== 'engine' || !omit.includes(theme.name);
   const table = ['| Rules theme | Read when |', '|---|---|',
     ...rules.THEMES.filter(shipped).map((theme) => `| [\`${themePath(theme)}\`](./${themePath(theme)}) | ${theme.readWhen} |`)].join(LF);
   const lacking = rules.THEMES.filter((theme) => !shipped(theme)).map((theme) => skipLine(`the ${theme.name} rules theme`));
+  const imports = [...inject.MEMORY_IMPORTS, ...rules.THEMES.filter(shipped).map(themePath)].map((path) => `@${path}`).join(LF);
   const parts = [inject.BLOCK_START, rules.PRECEDENCE_LINE, inject.READ_LINE,
-    ...PARTS.map((part) => (omit.includes(part.id) ? skipLine(part.name) : (texts[part.id] ?? part.text))), table, ...lacking, inject.BLOCK_END];
+    ...PARTS.map((part) => (omit.includes(part.id) ? skipLine(part.name) : (texts[part.id] ?? part.text))), table, ...lacking,
+    imports, inject.FALLBACK_LINE, inject.BLOCK_END];
   return parts.join(LF + LF).split(LF).join(eol);
 };
 
-// reconcile(text, { engine, path }) → the command's result over an AGENTS.md holding text, the bytes after it
-// and the names beside it.
-export const reconcile = async (text, { engine = makeEngine(), path = join(tempDir('kit-block-'), 'AGENTS.md') } = {}) => {
+// reconcile(text, { engine, path, claude, arg, deps }) → result, final bytes and names; claude lays the relative link.
+export const reconcile = async (text, {
+  engine = makeEngine(), path = join(tempDir('kit-block-'), 'AGENTS.md'), claude = true, arg = path, deps = {},
+} = {}) => {
   writeFileSync(path, text);
-  const result = await inject.runCli(['reconcile', path], { env: { AGENT_WORKFLOW_ENGINE_DIR: engine }, home: HOME });
+  const claudePath = join(dirname(path), 'CLAUDE.md');
+  if (claude && !lstatSync(claudePath, { throwIfNoEntry: false })) symlinkSync(basename(path), claudePath);
+  const result = await inject.runCli(['reconcile', arg], { env: { AGENT_WORKFLOW_ENGINE_DIR: engine }, home: HOME, ...deps });
   return { ...result, path, after: readFileSync(path, 'utf8'), names: readdirSync(dirname(path)).sort() };
 };

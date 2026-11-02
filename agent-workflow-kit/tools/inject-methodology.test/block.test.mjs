@@ -1,7 +1,7 @@
 // The kit block's finder, composer, judgement and templates. Contract: docs/ai/specs/kit/install/entry-pointers.md.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { CRLF, LF, expectedBlock, inject, makeEngine, reconcile, rules } from './engine-harness.test.mjs';
 
 const START = '<!-- workflow:kit:start -->';
@@ -9,6 +9,8 @@ const END = '<!-- workflow:kit:end -->';
 const BOM = '﻿';
 const FENCE = '```';
 const READ_LINE = 'Read `docs/ai/index.md` after this file; read `docs/ai/agent_rules.md` before any code change.';
+const MEMORY_PATHS = ['docs/ai/handover.md', 'docs/ai/agent_rules.md'];
+const FALLBACK_LINE = 'Claude Code loads the content of the `@` files above at a start in the project root with no dialog, and at a start in a subfolder once its one-time per-repository approval was answered Yes in an interactive session; if their content is not in your context, read each `@` path above from disk before anything else.';
 const TEMPLATES = [['kit', '../../references/templates/AGENTS.md'], ['memory', '../../../agent-workflow-memory/references/templates/AGENTS.md']];
 const readTemplate = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const doc = (...lines) => lines.join(LF) + LF;
@@ -38,15 +40,60 @@ describe('spec:entry-pointers/S1 the finder answers ok, absent or malformed by t
 });
 
 describe('spec:entry-pointers/S2 the composed block over an engine fixture', () => {
-  it('opens with the precedence line and the read line, then the trimmed fragments and the themes table', async () => {
+  it('opens with the precedence line and the read line, then the trimmed fragments, themes table, import part and fallback', async () => {
     const result = await reconcile(doc('# My project'));
     const block = expectedBlock();
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.after, `${block}${LF}${LF}${doc('# My project')}`);
-    const lines = block.split(LF);
+    const writtenBlock = result.after.slice(0, block.length);
+    const lines = writtenBlock.split(LF);
     assert.deepEqual([lines[0], lines[2], lines[4]], [START, rules.PRECEDENCE_LINE, READ_LINE]);
     assert.equal(lines.filter((line) => line.startsWith('| [`docs/ai/rules/effective/')).length, rules.THEMES.length);
     assert.ok(lines.slice(1, -1).every((line) => ![START, END].includes(line.trim())), 'no body line equals a marker');
+    const parts = writtenBlock.split(LF + LF);
+    const tableIndex = parts.findIndex((part) => part.startsWith('| Rules theme | Read when |'));
+    assert.notEqual(tableIndex, -1);
+    const imports = [...MEMORY_PATHS, ...rules.THEMES.map((theme) => rules.themePaths(theme.name).effective)]
+      .map((path) => `@${path}`).join(LF);
+    assert.deepEqual(parts.slice(tableIndex + 1), [imports, FALLBACK_LINE, END]);
+  });
+
+  it('FALLBACK_LINE is exactly the sentence of contract part (f)', () => {
+    assert.equal(inject.FALLBACK_LINE, FALLBACK_LINE);
+  });
+});
+
+describe('spec:entry-pointers/S13 the one list, pure', () => {
+  const fragments = { methodology: 'methodology', orchestration: 'orchestration', autonomy: 'autonomy' };
+
+  it('MEMORY_IMPORTS is frozen and holds handover then agent_rules', () => {
+    assert.ok(Array.isArray(inject.MEMORY_IMPORTS) && Object.isFrozen(inject.MEMORY_IMPORTS), 'MEMORY_IMPORTS is a frozen array');
+    assert.deepEqual(inject.MEMORY_IMPORTS, MEMORY_PATHS);
+  });
+
+  for (const lacking of [[], ['lens']]) {
+    it(`composeKitBlock imports the literal memory paths then each table row path, lacking ${lacking.join(', ') || 'nothing'}`, () => {
+      const block = inject.composeKitBlock({ fragments, themes: rules.THEMES, lacking });
+      const tablePaths = [...block.matchAll(/^\| \[`([^`]+)`\]/gmu)].map((match) => match[1]);
+      const importLines = block.split(LF).filter((line) => line.startsWith('@'));
+      assert.deepEqual(importLines, [...MEMORY_PATHS, ...tablePaths].map((path) => `@${path}`));
+      for (const line of importLines) assert.doesNotMatch(line, /[*?\[|>`]/u);
+      assert.deepEqual(tablePaths, rules.THEMES.filter((theme) => !lacking.includes(theme.name))
+        .map((theme) => rules.themePaths(theme.name).effective));
+    });
+  }
+
+  it('no shipped kit, memory or engine file other than inject-methodology.mjs holds an import path', () => {
+    const files = ['agent-workflow-kit', 'agent-workflow-memory', 'agent-workflow-engine'].flatMap((name) =>
+      readdirSync(new URL(`../../../${name}/`, import.meta.url), { withFileTypes: true, recursive: true })
+        .filter((entry) => entry.isFile() && !entry.name.includes('.test.'))
+        .map((entry) => `${entry.parentPath.replace(/\/$/u, '')}/${entry.name}`)
+        .filter((path) => !/\/(?:node_modules|\.git|test|[^/]*\.test|[^/]*fixtures[^/]*)\//u.test(path)));
+    const writer = files.find((path) => path.endsWith('/agent-workflow-kit/tools/inject-methodology.mjs'));
+    assert.ok(writer, 'the walk reaches agent-workflow-kit/tools/inject-methodology.mjs');
+    assert.ok(files.some((path) => path.endsWith('/agent-workflow-kit/README.md')), 'the walk reaches agent-workflow-kit/README.md');
+    const carrying = files.filter((path) => path !== writer && /@(?:\.\/)?docs\/ai\//u.test(readFileSync(path, 'utf8')));
+    assert.deepEqual(carrying, []);
   });
 });
 

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // The kit block — the composition root's only mutation of a deployed AGENTS.md. ONE block between two
 // marker lines holds the precedence line, the read line, the installed engine's three fragments (read
-// LIVE, no bundled copy) and the rules-themes table. The block is written current on every run with no
-// question and no copy kept; outside it nothing is written or found. An absent or invalid engine is a
-// STOP; malformed marker lines are refused with their line numbers. Pure string functions plus one
-// return-code entry point; dependency-free, Node >= 22. Contract: docs/ai/specs/kit/install/entry-pointers.md.
+// LIVE, no bundled copy), the rules-themes table, import lines and fallback sentence. The block is
+// written current on every run with no question and no copy kept; outside it nothing is written or
+// found. An absent or invalid engine is a STOP; malformed marker lines are refused with their line
+// numbers. Pure string functions plus one return-code entry point; dependency-free, Node >= 22.
+// Contract: docs/ai/specs/kit/install/entry-pointers.md.
 
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
 import { PRECEDENCE_LINE, THEMES, themePaths } from './project-rules/index.mjs';
@@ -16,6 +18,8 @@ import {
 export const BLOCK_START = '<!-- workflow:kit:start -->';
 export const BLOCK_END = '<!-- workflow:kit:end -->';
 export const READ_LINE = 'Read `docs/ai/index.md` after this file; read `docs/ai/agent_rules.md` before any code change.';
+export const MEMORY_IMPORTS = Object.freeze(['docs/ai/handover.md', 'docs/ai/agent_rules.md']);
+export const FALLBACK_LINE = 'Claude Code loads the content of the `@` files above at a start in the project root with no dialog, and at a start in a subfolder once its one-time per-repository approval was answered Yes in an interactive session; if their content is not in your context, read each `@` path above from disk before anything else.';
 export const SKIP_PREFIX = 'Kit text not supplied by the installed engine:';
 export const BLOCK_ROUTE = "text of your own goes outside the two workflow:kit comment lines; a change to a kit rule goes in its theme's file under docs/ai/rules/local/";
 
@@ -24,6 +28,10 @@ const CRLF = '\r\n';
 const BOM = '\uFEFF';
 const INSTALL = 'npx @sabaiway/agent-workflow-engine@latest init';
 const TAG = '[inject-methodology]';
+const CLAUDE_PREFIX = `${TAG} CLAUDE.md is not a symlink to AGENTS.md: automatic loading of the kit block in Claude Code is not guaranteed; `;
+const CLAUDE_ABSENT = 'make CLAUDE.md the link to AGENTS.md.';
+const CLAUDE_MOVE = 'move its text into AGENTS.md outside the kit block, then make CLAUDE.md the link to AGENTS.md.';
+const MAX_LINKS = 40;
 
 // The three engine fragments in block order; a valid engine lacking one but methodology leaves a skip line.
 const FRAGMENTS = Object.freeze([
@@ -81,17 +89,34 @@ export const findKitBlock = (text) => {
 const skipLine = (name) => `${SKIP_PREFIX} ${name} — refresh it with ${INSTALL}`;
 const effectiveOf = (theme) => themePaths(theme.name).effective;
 
-// composeKitBlock({ fragments, themes, lacking? }) → the block in LF form; a fragment that is not a
-// string, and a theme named in lacking, each leave a skip line.
-export const composeKitBlock = ({ fragments, themes, lacking = [] }) => {
+// composeKitParts({ fragments, themes, lacking? }) → the block's parts in order; a fragment that is not a
+// string, and a theme named in lacking, each leave a skip line, and a lacking theme has no row and no import line.
+const composeKitParts = ({ fragments, themes, lacking = [] }) => {
   const texts = FRAGMENTS.map(({ id, name }) => (typeof fragments[id] === 'string'
     ? fragments[id].replace(/\r\n/gu, LF).trim()
     : skipLine(name)));
-  const rows = themes.filter((theme) => !lacking.includes(theme.name))
-    .map((theme) => `| [\`${effectiveOf(theme)}\`](./${effectiveOf(theme)}) | ${theme.readWhen} |`);
+  const shipped = themes.filter((theme) => !lacking.includes(theme.name));
+  const rows = shipped.map((theme) => `| [\`${effectiveOf(theme)}\`](./${effectiveOf(theme)}) | ${theme.readWhen} |`);
   const table = ['| Rules theme | Read when |', '|---|---|', ...rows].join(LF);
   const skips = themes.filter((theme) => lacking.includes(theme.name)).map((theme) => skipLine(themeName(theme.name)));
-  return [BLOCK_START, PRECEDENCE_LINE, READ_LINE, ...texts, table, ...skips, BLOCK_END].join(LF + LF);
+  const imports = [...MEMORY_IMPORTS, ...shipped.map(effectiveOf)].map((path) => `@${path}`).join(LF);
+  return [BLOCK_START, PRECEDENCE_LINE, READ_LINE, ...texts, table, ...skips, imports, FALLBACK_LINE, BLOCK_END];
+};
+// composeKitBlock({ fragments, themes, lacking? }) → the block in LF form, one blank line between parts.
+export const composeKitBlock = (input) => composeKitParts(input).join(LF + LF);
+
+// findOpenFence(text, importLine) → the 1-based line of the first opener above importLine no later line closes, or null.
+const findOpenFence = (text, importLine) => {
+  const lines = text.split(LF);
+  const cursor = { index: 0 };
+  for (; cursor.index < importLine - 1; cursor.index += 1) {
+    const open = opensFence(lines[cursor.index]);
+    if (!open) continue;
+    const close = lines.findIndex((line, at) => at > cursor.index && closesFence(line, open));
+    if (close === -1) return cursor.index + 1;
+    cursor.index = close;
+  }
+  return null;
 };
 
 // The byte offset where 1-based line n starts, and where its content ends (before its CR and LF).
@@ -154,10 +179,14 @@ const readEngineParts = ({ env, home, logError }) => {
   return { fragments, lacking };
 };
 
-// runCli(argv, { env, home }) → { code, stdout, stderr }; never exits. `reconcile <AGENTS.md>` is the one form.
+// runCli(argv, { env, home, lstat, readlink, realpath }) → { code, stdout, stderr }; never exits.
+// `reconcile <AGENTS.md>` checks CLAUDE.md before writing; reports fallback, open fence and link last.
 export const runCli = async (argv, deps = {}) => {
-  const { readFile, writeFile, rename, rm } = await import('node:fs/promises');
-  const { dirname, basename, join, resolve } = await import('node:path');
+  const fs = await import('node:fs/promises');
+  const { readFile, writeFile, rename, rm } = fs;
+  const lstat = deps.lstat ?? fs.lstat;
+  const readlink = deps.readlink ?? fs.readlink;
+  const realpath = deps.realpath ?? fs.realpath;
   const { homedir } = await import('node:os');
   const env = deps.env ?? process.env;
   const home = deps.home ?? homedir();
@@ -175,6 +204,27 @@ export const runCli = async (argv, deps = {}) => {
     return result(2);
   }
   const target = resolve(argv[1]);
+  const checkClaudeLink = async (own) => {
+    const state = { hop: join(dirname(own), 'CLAUDE.md'), links: 0, checkingEntry: true };
+    while (state.hop !== own) {
+      state.checkingEntry = true;
+      try {
+        const stat = await lstat(state.hop);
+        if (!stat.isSymbolicLink()) return CLAUDE_MOVE;
+        state.checkingEntry = false;
+        // Joined without resolve(): a `..` after a directory link is the native realpath's to follow, as the kernel does.
+        const link = await readlink(state.hop);
+        const next = isAbsolute(link) ? link : `${dirname(state.hop)}/${link}`;
+        state.hop = join(await realpath(dirname(next)), basename(next));
+        state.links += 1;
+        if (state.links > MAX_LINKS) return CLAUDE_MOVE;
+      } catch (err) {
+        if (!['ENOENT', 'ENOTDIR', 'ELOOP'].includes(err.code)) throw err;
+        return err.code === 'ENOENT' && state.checkingEntry && state.links === 0 ? CLAUDE_ABSENT : CLAUDE_MOVE;
+      }
+    }
+    return null;
+  };
   const writeAtomic = async (out) => {
     const tmp = join(dirname(target), `.${basename(target)}.tmp-${process.pid}-${Date.now()}`);
     try {
@@ -188,16 +238,25 @@ export const runCli = async (argv, deps = {}) => {
   try {
     const text = await readFile(target, 'utf8');
     const { fragments, lacking } = readEngineParts({ env, home, logError });
-    const block = composeKitBlock({ fragments, themes: THEMES, lacking });
+    const parts = composeKitParts({ fragments, themes: THEMES, lacking });
+    const block = parts.join(LF + LF);
     const judged = reconcileKitBlock(text, block);
     if (judged.status === 'refused') {
       logError(refusalLine(judged.lines));
       return result(1);
     }
+    const own = join(await realpath(dirname(target)), basename(target));
+    const claude = await checkClaudeLink(own);
     if (judged.status !== 'current') await writeAtomic(judged.text);
     log(OUTCOME[judged.status]);
     const skipped = [...FRAGMENTS.filter(({ id }) => typeof fragments[id] !== 'string').map(({ name }) => name), ...lacking.map(themeName)];
     skipped.forEach((name) => log(noteLine(name)));
+    if (judged.status !== 'current') log(`${TAG} note: ${FALLBACK_LINE}`);
+    // The import part is the third part from the end: its first line follows the earlier parts and one blank line.
+    const importOffset = parts.slice(0, -3).join(LF + LF).split(LF).length + 1;
+    const opener = findOpenFence(judged.text, findKitBlock(judged.text).start + importOffset);
+    if (opener !== null) log(`${TAG} note: an unclosed code fence on line ${opener} runs over the kit block's import lines, so Claude Code reads them as code; close it.`);
+    if (claude !== null) log(CLAUDE_PREFIX + claude);
     return result(0);
   } catch (err) {
     if (err[EXIT] !== undefined) return result(err[EXIT]);

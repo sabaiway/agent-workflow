@@ -17,19 +17,24 @@
 `node ${CLAUDE_SKILL_DIR}/tools/inject-methodology.mjs reconcile <project>/AGENTS.md` — which writes
 the kit block between its two `workflow:kit` comment lines in a single atomic write: the precedence
 line, the read line, the **workflow-methodology**, **orchestration-recipes** and **autonomy-policy**
-texts, and the rules-themes table, one row per theme. The block is written current with no question
-and no copy kept, its line naming the route — text of your own goes outside the two workflow:kit
-comment lines; a change to a kit rule goes in its theme's file under docs/ai/rules/local/. A file
-with no block gains it at its start; with a valid installed engine supplying every text, a
-deployment whose kit block is current reconciles to a zero-diff no-op. The texts are read **live from the installed
-`agent-workflow-engine`** (`references/methodology-slot.md` + `references/orchestration-slot.md` +
-`references/autonomy-slot.md`, the family's one source of truth) — **not** a bundled mirror. The
+texts, the rules-themes table, one row per theme, then one `@` import line per session-start file
+(the handover, the agent rules and each rules theme) and the fallback sentence telling an agent to
+read those files from disk when their content is not in its context. The block is written current
+with no question and no copy kept, its line naming the route — text of your own goes outside the two
+workflow:kit comment lines; a change to a kit rule goes in its theme's file under docs/ai/rules/local/.
+A file with no block gains it at its start; with a valid installed engine supplying every text, a
+deployment whose kit block is current reconciles to a zero-diff no-op. The texts are read **live
+from the installed `agent-workflow-engine`** (`references/methodology-slot.md` +
+`references/orchestration-slot.md` + `references/autonomy-slot.md`, the family's one source of truth) — **not** a bundled mirror. The
 read is **fail-loud**: an **absent/invalid** engine **STOPs** the run, nothing written — report it
 in plain language with the one-line install command `npx @sabaiway/agent-workflow-engine@latest init`
 (`npx @sabaiway/agent-workflow-kit@latest init` installs the engine for you; translate, never leak
 tool internals). An engine that lacks a later text writes one line in its place and a note naming
 the refresh command. Comment lines that are not exactly one start line before one end line are
-refused with their line numbers, nothing written: the upgrade STOPs.
+refused with their line numbers, nothing written: the upgrade STOPs. The install report relays each
+`note:` line in plain words — a text the engine does not supply, the fallback note, an unclosed code
+fence above the import lines — and the `CLAUDE.md` line, when printed, with its one step: make
+`CLAUDE.md` the link to `AGENTS.md`, its text moved into `AGENTS.md` first when it holds any.
 
 **Navigator finalizer (runs in BOTH paths, AFTER the block write above).** `docs/ai/index.md` is
 a GENERATED artifact the entry point declares always-loaded, and the deploy may have just
