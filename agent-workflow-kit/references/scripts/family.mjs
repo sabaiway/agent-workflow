@@ -19,12 +19,12 @@ const SCHEMA = 1;
 const TOP_KEYS = ['schema', 'entries'];
 const ENTRY_KEYS = ['path', 'role', 'seed'];
 const TOP_FILES = new Set(['family.mjs', 'family.test.mjs', 'run.mjs', 'run.test.mjs']);
-const MODULES = new Set(['docs-size', 'spec-schema', 'archives', 'git-hooks', 'gates', 'shared', 'test-support']);
+const MODULES = new Set(['docs-size', 'spec-schema', 'archives', 'git-hooks', 'gates', 'shared', 'test-support', 'test-reporter']);
 const FILE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-// A path is one of the top-level files, or <module>/<file> with the module one of the seven.
+// A path is one of the top-level files, or <module>/<file> with the module one of the eight.
 const inGrammar = (path) => {
   const parts = path.split('/');
   if (parts.length === 1) return TOP_FILES.has(path);

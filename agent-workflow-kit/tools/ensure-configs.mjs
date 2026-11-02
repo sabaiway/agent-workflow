@@ -6,7 +6,7 @@
 //   autonomy       docs/ai/autonomy.json       seed-if-missing (same)
 //   vehicles       docs/ai/vehicles.json       seed-if-missing (same)
 //   executor       .claude/agents/executor.md  judged against docs/ai/vehicles.json, never written: a differing body is pending
-//   specs          scripts/<spec layer>        reader + checker pairs and run.mjs, with no question and no copy kept:
+//   specs          scripts/<spec layer>        reader + checker pairs, the test reporter and run.mjs, with no question and no copy kept:
 //                  + docs/ai/specs/index.md    a shipped prior refreshed, an edited one replaced, an absent
 //                                              one placed; then the store root seeded create-only
 //   scripts        scripts/<every kit script>  once a kit script outside the seed names, or the old flat installer, stands there, every file not current
@@ -76,7 +76,7 @@ refreshed in place. Four ops refresh instead: the orchestration onboarding note,
 note with no question and no copy kept, every recipe kept (a differing note's line names where a note of your
 own goes); the spec-layer reader and checker pairs, with no question and no copy kept: a body a release shipped
 is refreshed, an edited one replaced (its line names where an edit meant to last goes) and an absent one placed,
-the reader pair, then the checker pair, then run.mjs, then the spec store root seeded create-only; the project rules
+the reader pair, then the checker pair, then the test reporter, then run.mjs, then the spec store root seeded create-only; the project rules
 kit file, refreshed while its bytes are a body a release shipped and any other body replaced by the template,
 with no question and no copy kept, the effective file rebuilt as its copy and recorded where no local file
 exists; and the navigator index — a GENERATED artifact, regenerated

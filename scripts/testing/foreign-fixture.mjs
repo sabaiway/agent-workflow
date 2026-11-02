@@ -17,11 +17,27 @@
 // which happens outside any test runner. It returns a `teardown` the caller registers (an `after`
 // hook in a suite, a `finally` in a script) so temp trees never accumulate.
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EXPECTED_WORKFLOW_VERSION } from '../../agent-workflow-kit/tools/velocity-profile.mjs';
+
+const KIT_SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'agent-workflow-kit', 'references', 'scripts');
+
+// The stable kit command and the kit reporter at their deployed paths, the kit's bundled bytes: the files the
+// unit-tests guard reads (spec coverage-producer). An `extraFiles` value, or the argument of placeKitCommand.
+export const kitCommandFiles = () => ({
+  'scripts/agent-workflow/run.mjs': readFileSync(join(KIT_SCRIPTS, 'run.mjs')),
+  'scripts/agent-workflow/test-reporter/reporter.mjs': readFileSync(join(KIT_SCRIPTS, 'test-reporter', 'reporter.mjs')),
+});
+export const placeKitCommand = (root, files = kitCommandFiles()) => {
+  for (const [rel, body] of Object.entries(files)) {
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), body);
+  }
+};
 
 // A runner the closed producer world CANNOT express — that is the whole point of the fixture. It
 // must not be a `node --test` form, or the project would have a producer the kit can recognize and

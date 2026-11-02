@@ -4,6 +4,31 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 11.0.0 — the kit folder carries a test reporter that prints only failures, run by `run.mjs unit-tests` (AD-221)
+
+**A memory deployment's kit folder gains the kit test reporter, and the stable command gains the name that runs the
+unit tests with it.** A red run prints each failing test's block and one totals line, nothing else.
+
+- **The reporter.** `scripts/agent-workflow/test-reporter/reporter.mjs`, the eighth module of `family.json`, reads
+  only the Node test runner's events and prints, for each failing test, the file and line, the test's names, the
+  failure type and message, the expected and actual values and the code line; a file that failed to load prints its
+  error line, on a red run each diagnostic one line, a part it cannot render one line, and every run ends with one totals line. It
+  never throws, and the exit code stays the runner's. The standalone move (`scripts/kit-folder.mjs`) places it with
+  `run.mjs`.
+- **`run.mjs unit-tests`.** `node scripts/agent-workflow/run.mjs unit-tests <test paths>` runs `node --test` with the
+  lcov reporter under `AW_GIT_DIR` (the gate runner exports it) and the kit reporter on stdout; an unset or empty
+  `AW_GIT_DIR` exits 1 with one line. The other five names are unchanged.
+- **The gates migration moves every earlier form.** `references/scripts/gates/migrate-gates.mjs`, which the workflow
+  toolkit's upgrade runs with `--apply` and no question, switches a gate an earlier kit wrote (`node --test` with its
+  reporter flags, any id) to the command and extends the unmarked `unit-tests` gate written as `node --test <paths>` to
+  it, only while the kit folder holds the current `run.mjs` and the reporter; otherwise it keeps the gate with one line
+  naming the path, its remedy and that once that is resolved the kit's upgrade moves it. Every gate it moves or removes
+  prints with its `was:`. The coverage checker is added only with `--add-checker`, on the user's yes, the run printing one offer
+  line with that command; a retired check's gate is removed only over a target proven absent. Every checker line
+  states one fact and one remedy. Memory alone still touches no gate.
+- **Breaking.** The migration's shared region drops `UNIT_TESTS_COVERAGE_FLAGS` and `KNOWN_COVERAGE_FLAG_SETS`: an
+  earlier flag set is a move list, never a producer.
+
 ## 10.0.0 — the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (AD-220)
 
 **A memory deployment keeps the kit's scripts in one folder, `scripts/agent-workflow/`, and its hook and docs name

@@ -35,7 +35,6 @@ import { quoteArg } from './jev-facts.mjs';
 import { GIT_MAX_BUFFER, hermeticGitEnv } from './git-env.mjs';
 // The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
 // item decides through that predicate, so a fixture spelling its own body would drift off it.
-import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
 // The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
 // consented apply run against the rendered selection — the real writer, never a re-implementation.
 import { applyFill } from './gates-init.mjs';
@@ -96,6 +95,7 @@ const REVIEW_RECIPE_STEP = 'your own step — set up the backend the recipe name
 const CHECKER_NOT_LAST = 'coverage-check is not the LAST declared gate, so there is no trailing position to place a producer before, and the fill never reorders entries it did not write';
 const PRODUCER_COLLISION = 'a producer IS offerable here, but its id "test" is already declared, so the fill refuses it as a collision — rename that gate, or repoint it at the producer form';
 const NO_PRODUCER = 'no offerable producer exists here, and the fill never reorders entries it did not write';
+const COVERAGE_PRODUCER_BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
 const PRODUCER_UNRECOGNIZED_DETAIL = 'coverage-check has no producer declared and none offerable — the fill offers only terminating-class script names, so a recognized body under another name (a "ci" script running node --test) is declared as its own gate entry, never marked';
 
 // Recipe expectations are READ FROM the bundled manifests (the advisor's own single source) —
@@ -185,6 +185,9 @@ const WITHIN_DOMAIN_CENSUS = Object.freeze({
   verdict: 'within-domain',
   total: 4,
 });
+const NARROW_CENSUS = Object.freeze({ counts: { assessable: 1, unsupported: 3, 'out-of-domain': 1, 'excluded-test': 0 }, unsupportedExtensions: ['.ts'], verdict: CENSUS_VERDICT.NARROW, total: 5 });
+// The flag set an earlier kit wrote after `node --test`, frozen as bytes (spec coverage-producer: a retired form).
+const RETIRED_FLAG_SET = '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
 
 // Deps that keep the host machine out of the probes: no placed wrappers, empty env/PATH, and a
 // fixture HOME (no bridge-settings.conf).
@@ -1915,6 +1918,8 @@ describe('recommendations — the inert gate declaration item', () => {
   // with its injected within-domain census.
   const { buildForeignFixture, hermeticAdvisorDeps } = FOREIGN;
   const gate = (id, cmd) => ({ id, title: id, cmd });
+  // The gates-inert WHAT: one positional fact (spec coverage-producer, every checker line).
+  const INERT_FACT_WHAT = 'the declared coverage checker (coverage-check): no gate before it is a producer this kit reads';
   const inertFor = (gates) => {
     const root = makeProject();
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
@@ -1931,7 +1936,7 @@ describe('recommendations — the inert gate declaration item', () => {
     // Both outcomes, because both are real: no lcov at all, or a verdict over bytes an earlier run
     // left in the git dir — the second reads as `coverage=certified`, so it cannot be called a pass
     // over nothing.
-    assert.match(item.what, /certifies nothing this run, or reads a stale lcov/);
+    assert.equal(item.what, INERT_FACT_WHAT, 'one positional fact');
     assert.equal(item.variant, 'gates-inert.unfillable');
     assert.equal(item.apply, UNFILLABLE_STEP);
     assert.equal(item.detail, NO_PRODUCER);
@@ -1945,6 +1950,7 @@ describe('recommendations — the inert gate declaration item', () => {
     // preview that cannot fix what the item just reported.
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    FOREIGN.placeKitCommand(root);
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
       gates: [gate('test', 'true'), gate('coverage-check', CHECKER)],
     }));
@@ -1960,6 +1966,7 @@ describe('recommendations — the inert gate declaration item', () => {
   it('cause A: a checker that is NOT last states THAT cause — never "no offerable producer" over a producer that exists', () => {
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    FOREIGN.placeKitCommand(root);
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
       gates: [gate('coverage-check', CHECKER), gate('lint', 'npm exec -- eslint .')],
     }));
@@ -1975,6 +1982,7 @@ describe('recommendations — the inert gate declaration item', () => {
   it('cause A with an OFFERABLE producer and the checker LAST renders the fill preview, not HAND-APPLY', () => {
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    FOREIGN.placeKitCommand(root);
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)] }));
     const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
@@ -2001,8 +2009,7 @@ describe('recommendations — the inert gate declaration item', () => {
     // producer writes the lcov too late. Only --final refuses this shape; a plain run reports PASS.
     const { item } = inertFor([gate('coverage-check', CHECKER), gate('unit-tests', COVERAGE_PRODUCER_BODY)]);
     assert.ok(item, 'a producer that runs too late leaves the checker just as inert');
-    assert.match(item.what, /has no producer before it/);
-    assert.match(item.what, /reads a stale lcov/, 'the late-producer shape is exactly where stale bytes get certified');
+    assert.equal(item.what, INERT_FACT_WHAT, 'the fact is positional: a producer after the checker is none before it');
     assert.equal(item.variant, 'gates-inert.unfillable');
     assert.equal(item.apply, UNFILLABLE_STEP);
     assert.equal(item.detail, CHECKER_NOT_LAST);
@@ -2014,6 +2021,7 @@ describe('recommendations — the inert gate declaration item', () => {
   it('cause A: the previewed apply names the PRODUCER, and running it converges the item', () => {
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    FOREIGN.placeKitCommand(root);
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({
@@ -2065,6 +2073,7 @@ describe('recommendations — the inert gate declaration item', () => {
   it('cause B: the previewed apply names only entries the fill would accept, and running it converges', () => {
     const root = makeProject();
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { test: 'node --test' } }));
+    FOREIGN.placeKitCommand(root);
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'council' } }));
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [gate('review-state', kitCheck('review-state.mjs'))] }));
@@ -2149,7 +2158,7 @@ describe('recommendations — the inert gate declaration item', () => {
     ]) {
       const { item } = inertFor([gate('unit-tests', cmd), gate('coverage-check', CHECKER)]);
       assert.ok(item, `${label} must not read as a producer`);
-      assert.match(item.what, /has no producer before it/);
+      assert.equal(item.what, INERT_FACT_WHAT);
     }
   });
 
@@ -2173,6 +2182,60 @@ describe('recommendations — the inert gate declaration item', () => {
       assert.ok(!built.skips.some((s) => s.key === 'gates-inert'), `an ${label} declaration is not a probe failure either`);
       assert.ok(built.items.some((i) => i.key === 'gates-declaration'), `the ${label} declaration fires the item that owns it`);
     }
+  });
+});
+
+describe('spec:coverage-producer/S8 the advisor routes a kept retired gate and a guard-withheld script to the upgrade', () => {
+  const CHECKER = `node "${join(HERE, 'coverage-check.mjs')}" --check`;
+  const gate = (id, cmd) => ({ id, title: id, cmd });
+  const inertItems = ({ gates, scripts, census = WITHIN_DOMAIN_CENSUS, kit = (root) => FOREIGN.placeKitCommand(root) }) => {
+    const root = makeProject();
+    writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
+    if (scripts) writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts }));
+    kit(root);
+    const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { takeCensus: () => census }) });
+    rmSync(root, { recursive: true, force: true });
+    return built.items.filter((item) => item.key === 'gates-inert');
+  };
+  // The WHAT is one positional fact on every arm of the route: a retired gate writes the lcov, so it never says the checker certifies nothing.
+  const FACT_WHAT = /^the declared coverage checker \(c.*\): no gate before it is a producer this kit reads$/;
+  const assertUpgradeRoute = (items, label) => assert.deepEqual(items.map((item) => [item.variant, item.lane, item.apply, FACT_WHAT.test(item.what)]), [['gates-inert', 'chat', '/agent-workflow-kit upgrade', true]], `${label}: ${JSON.stringify(items)}`);
+  const RETIRED = `node --test ${RETIRED_FLAG_SET} tests/*.test.mjs`;
+  const runAsDirectory = (root) => { FOREIGN.placeKitCommand(root); rmSync(join(root, 'scripts', 'agent-workflow', 'run.mjs')); mkdirSync(join(root, 'scripts', 'agent-workflow', 'run.mjs')); };
+
+  it('a retired-form gate then the checker, and the checker then such a gate, render gates-inert in lane chat with the upgrade and the fact, on a narrow-census tree too', () => {
+    for (const [label, census] of [['within-domain', WITHIN_DOMAIN_CENSUS], ['narrow', NARROW_CENSUS]]) {
+      for (const cmd of [RETIRED, `COREPACK_ENABLE_NETWORK=0 pnpm exec -- node --test ${RETIRED_FLAG_SET}`]) {
+        for (const id of ['unit-tests', 'test']) {
+          assertUpgradeRoute(inertItems({ gates: [gate(id, cmd), gate('coverage-check', CHECKER)], scripts: { test: 'node --test' }, census }), `${label} ${id}: ${cmd}`);
+          assertUpgradeRoute(inertItems({ gates: [gate('coverage-check', CHECKER), gate(id, cmd)], scripts: { test: 'node --test' }, census }), `${label} after the checker ${id}: ${cmd}`);
+        }
+      }
+    }
+    const [item] = inertItems({ gates: [gate('unit-tests', RETIRED), gate('coverage-check', CHECKER)], scripts: { test: 'node --test' } });
+    assert.equal(item?.what, 'the declared coverage checker (coverage-check): no gate before it is a producer this kit reads');
+    const longId = 'c'.repeat(400); // the id is cut to the budget of the template the line renders
+    const long = inertItems({ gates: [gate('unit-tests', RETIRED), gate(longId, CHECKER)], scripts: { test: 'node --test' } });
+    assertUpgradeRoute(long, 'a long checker id'); assert.ok(long[0].what.length < longId.length, 'the id is cut to its budget');
+  });
+
+  it('a flagged tail renders no upgrade apply; with no Node evidence or run.mjs a directory a retired gate renders the upgrade', () => {
+    const flagged = inertItems({ gates: [gate('unit-tests', `node --test ${RETIRED_FLAG_SET} --test-concurrency=1 tests/*.test.mjs`), gate('coverage-check', CHECKER)], scripts: { test: 'node --test' } });
+    assert.ok(flagged.length === 1 && !flagged[0].apply.includes('/agent-workflow-kit upgrade') && FACT_WHAT.test(flagged[0].what), `the upgrade cannot move a flagged tail: ${JSON.stringify(flagged)}`);
+    const noNode = (root) => rmSync(join(root, 'package.json'), { force: true });
+    assertUpgradeRoute(inertItems({ gates: [gate('unit-tests', RETIRED), gate('coverage-check', CHECKER)], kit: noNode }), 'no Node evidence');
+    assertUpgradeRoute(inertItems({ gates: [gate('unit-tests', RETIRED), gate('coverage-check', CHECKER)], scripts: { test: 'node --test' }, kit: runAsDirectory }), 'run.mjs a directory');
+  });
+
+  it('with no retired gate, a node --test script withheld on the guard renders the upgrade; WHATS holds no retired-form variant of gates-inert', () => {
+    const earlier = (root) => {
+      FOREIGN.placeKitCommand(root);
+      writeFileSync(join(root, 'scripts', 'agent-workflow', 'run.mjs'), `${readFileSync(join(root, 'scripts', 'agent-workflow', 'run.mjs'), 'utf8')}// an earlier kit\n`);
+    };
+    for (const [label, kit] of [['an earlier kit\'s run.mjs', earlier], ['no kit folder', () => {}], ['run.mjs a directory', runAsDirectory]]) {
+      assertUpgradeRoute(inertItems({ gates: [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)], scripts: { test: 'node --test' }, kit }), label);
+    }
+    assert.ok(!Object.hasOwn(WHATS, ['gates-inert', 'retired-form'].join('.')), 'the per-state WHAT is subtracted');
   });
 });
 
@@ -3580,12 +3643,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
   const CHECKER = `node "${join(HERE, 'coverage-check.mjs')}" --check`;
   const SOURCE_SIZE = `node "${join(HERE, 'source-size-check.mjs')}" --check`;
   const SQUATTER_STEP = `your own step — in docs/ai/gates.json rename the "source-size" gate to an id of its own, or repoint its cmd at node "${join(HERE, 'source-size-check.mjs')}" --check, then run /agent-workflow-kit recommendations`;
-  const NARROW = {
-    counts: { assessable: 1, unsupported: 3, 'out-of-domain': 1, 'excluded-test': 0 },
-    unsupportedExtensions: ['.ts'],
-    verdict: CENSUS_VERDICT.NARROW,
-    total: 5,
-  };
+  const NARROW = NARROW_CENSUS;
   const gate = (id, cmd) => ({ id, title: id, cmd });
   const makeRoot = (t) => {
     const root = makeProject();
@@ -3603,12 +3661,13 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
       platform: deps.jevHost?.platform ?? deps.platform,
     };
   };
-  const buildGates = (t, gates, { scripts, narrow = false } = {}) => {
+  const buildGates = (t, gates, { scripts, narrow = false, kit = scripts !== undefined } = {}) => {
     const root = makeRoot(t);
     writeFileSync(join(root, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates }));
     if (scripts !== undefined) {
       writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture', scripts }));
     }
+    if (kit) FOREIGN.placeKitCommand(root);
     return collect(root, narrow ? { takeCensus: () => NARROW } : {});
   };
   const buildUnfillable = (t) => [
@@ -3657,6 +3716,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     addBuilt(buildGates(t, [gate('lint', 'npm exec -- eslint .'), gate('coverage-check', CHECKER)], { scripts: { test: 'node --test' } }));
     addBuilt(buildGates(t, [gate('review-state', `node "${join(HERE, 'review-state.mjs')}" --check`)]));
     addBuilt(buildGates(t, [gate('suite', COVERAGE_PRODUCER_BODY), gate('coverage-check', CHECKER)], { narrow: true }));
+    addBuilt(buildGates(t, [gate('unit-tests', `node --test ${RETIRED_FLAG_SET} tests/*.test.mjs`), gate('coverage-check', CHECKER)]));
     addBuilt(buildGates(t, [gate('source-size', SOURCE_SIZE)]));
     const draftsRoot = makeRoot(t);
     const specs = join(draftsRoot, 'docs', 'ai', 'specs');
@@ -3878,6 +3938,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
       return mismatches;
     };
     const table = readTable(text);
+    assert.deepEqual(table.find((row) => row.variant === 'gates-inert')?.writers, ['gates-init.mjs', 'upgrade'], 'the gates-inert row names the fill and the upgrade');
     assert.deepEqual(judgeChatWriters(table, items), []);
     const missing = table.map((row) => row.variant === 'profile-gap' ? { ...row, writers: row.writers.filter((writer) => writer !== 'tier-preview.mjs') } : row);
     const unrelated = table.map((row) => row.variant === 'gates-declaration' ? { ...row, writers: [...row.writers, 'ack-write.mjs'] } : row);

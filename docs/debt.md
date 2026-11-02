@@ -13,6 +13,30 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   outside the Bash sandbox (e.g. through the kit's MCP server), a story, since it routes around a sandbox an admin may
   mandate. Proof, the only one that closes the row: a sandboxed agent's plain `codex-review` gets a Jev answer with no
   settings step at all.
+- **RUN-GATES-PRODUCER-COMMENT-NAMES-A-RETIRED-FORM** — invariant: no comment in shipped code names a retired gate
+  form as the kit's own. Origin: once story S2 of TEST-GATES-PRINT-ONLY-THEIR-FAILURES lands, the kit's one producer
+  form is `node scripts/agent-workflow/run.mjs unit-tests`, yet the preflight comment at
+  `agent-workflow-kit/tools/run-gates.mjs:201-202` still calls `${VAR:?word}` "the canonical producer destination"; the
+  epic's Non-goals keep the gate runner untouched. Narrow fix: the comment says the required-parameter form is what a
+  hand-written producer cmd carries. Raised by the S2 spec review (agy, lens).
+- **COVERAGE-PRODUCER-GUARD-REMEDY-WORDING** — invariant: the line a failed unit-tests guard prints names a remedy
+  that clears it. Origin: the S2 spec review's last re-read (lens) of `docs/ai/specs/kit/coverage-producer.md` "One
+  guard on every write of the form". S2's tests session folded two clauses into the draft and pinned them in
+  `agent-workflow-kit/tools/gates-init.test.mjs` (spec:coverage-producer/S3): a `run.mjs` that is a directory or a
+  link is named as cleared by hand first (the specs op refuses beside it, `agent-workflow-kit/tools/ensure-specs.mjs:44,71,83,163,168`),
+  and `buildOffer` returns `guardWithheld`, the advisor's signal. What stays: (a) a linked kit folder passes a guard that
+  reads `run.mjs` as a regular file while the specs op refuses beside it; (b) "with none" leaves the unreadable
+  Node-evidence probe unnamed (`docs/ai/specs/kit/node-evidence.md:26-27`), and the migration, which has no
+  Node-evidence probe, cannot tell none from a kit folder not yet placed. Narrow fix: the guard judges the kit folder
+  without following a link (as kit-command's proof (a) does) and names the probe's answer where one is read.
+- **KIT-FOLDER-FILES-HAVE-NO-SHIPPED-PRIORS** — invariant: a kit-folder file holding a body a released kit shipped
+  reads "matches a body an earlier release shipped". Origin: `agent-workflow-kit/tools/script-priors.mjs:19-21`
+  catalogs the 25 flat names only, so `agent-workflow-kit/tools/ensure-specs.mjs:85` classifies kit 21.0.0's
+  `scripts/agent-workflow/run.mjs` `custom`, and the upgrade to kit 22.0.0 prints "differs from every body this kit
+  knows it shipped" over it. Narrow fix: catalog the kit folder's deployed entries by manifest path and append kit
+  21.0.0's `run.mjs` row with its fixture. Proof: a classify cell over the 21.0.0 bytes reads `prior`. Residual,
+  declared not live as a wrong write: the write and its token equal a prior's; only the line's head reads "differs".
+  Raised by the S2 diff review (agy, lens).
 - **BRIDGE-TIER-FLAGLESS-READS-NO-MANIFEST-UNPINNED** — invariant: a flagless or `--kit-tools` velocity run reads no
   bridge manifest. Origin: spec velocity-profile S4 pins the manifest STOP only on `--bridge-tier`; the advisor's
   core plan has no catch (`agent-workflow-kit/tools/recommendations.mjs:446-449`), so a manifest read on every mode
@@ -1336,3 +1360,45 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   only `--dir` and `env` (`agent-workflow-memory/bin/install.test.mjs:305`), so a `fromDefault` of constant `false` at
   `agent-workflow-memory/bin/install.mjs:277` passes every memory case. Narrow fix: a `default` route cell as the kit's
   at `agent-workflow-kit/tools/payload-prune.test.mjs:476-500`. Residual exposure, NOT live: the code is right.
+- **REPORTER-PATH-OF-A-TEST-DECLARED-IN-A-HELPER** — invariant: a failing test's path of names holds every enclosing
+  test, those declared in another module included. Origin: codex 4 and the lens 6, round 1 of the
+  TEST-GATES-PRINT-ONLY-THEIR-FAILURES S1 spec review (2026-10-31): a test's `file` is where its `test()` call stands,
+  so a test a shared helper declares inside a suite keys a name stack with none of its suites
+  (`docs/plans/SHORT-GATE-OUTPUT-proto/reporter.mjs:69-72,80`). Narrow fix, once measured: one stream-wide stack by
+  nesting, if the runner never interleaves files' `test:start` events. Residual exposure, live once S1 lands: the block
+  still names the file, line, cause and code line.
+- **REPORTER-READS-CWD-ONCE** — invariant: the reporter's relative names and its in-project frame filter use the working
+  directory of the run's start. Origin: the lens 7, the same round: under `--test-isolation=none` a test that calls
+  `process.chdir()` moves what the reporter reads per render
+  (`agent-workflow-memory/references/scripts/test-reporter/reporter.mjs:24,47`), so names print as `../…` and the
+  code line drops. Narrow fix: read the directory once when the reporter starts, with one cell. Residual exposure, live
+  once S1 lands, only under `--test-isolation=none`.
+- **REPORTER-NO-SUMMARY-RED-RUN-WITH-ZERO-COUNTS** — invariant: a red run never reads green, on every Node the kit
+  supports. Origin: the lens's re-read of round 2 of the same spec review (2026-10-31): with no closing `test:summary`
+  the reporter's verdict comes from the closing counts (test-reporter.md "A red run never reads green"), and a red run
+  whose only cause is an error a test's work threw after it ended can count `fail 0` (the facts measured on Node 24 in
+  `docs/plans/TEST-GATES-PRINT-ONLY-THEIR-FAILURES-S1-folds-r1-handoff.md`). Narrow fix: measure once on Node 22.0.0
+  whether the closing summary arrives; if it does, the branch is synthetic only and the row closes. Residual exposure,
+  live once S1 lands, only on a Node whose runner sends no closing summary, if one exists.
+- **KIT-FOLDER-KEEPS-A-DROPPED-FAMILY-FILE** — invariant: after an upgrade a deployment's kit folder holds no file the
+  family manifest no longer names as deployed. Origin: codex and the Fable seat, round 1 of the TEST-GATES-PRINT-ONLY-
+  THEIR-FAILURES S1 coverage consult (2026-10-31): the specs op and memory's `kit-folder.mjs` only write, and
+  `retired.mjs` removes flat `scripts/` files alone, so a family file the manifest renames or drops stays in
+  `scripts/agent-workflow/` for good, run by a bare `node --test` if its name matches a test pattern. Narrow fix: the
+  ops remove a kit-folder file that carries a body the kit shipped and the manifest no longer names, with one cell per
+  op. Residual exposure, NOT live: no shipped family file was ever renamed or dropped; S1's rename removes this
+  repository's untracked old copy by hand.
+- **REPORTER-FRAME-PARSE-MISSES-NAMELESS-FRAMES** — invariant: the code line is the first stack frame inside the
+  working directory and under no node_modules (test-reporter.md, the code-line bullet). Origin: codex and the lens,
+  round 1 of the TEST-GATES-PRINT-ONLY-THEIR-FAILURES S1 diff review (2026-10-31):
+  `agent-workflow-memory/references/scripts/test-reporter/reporter.mjs:17` `FRAME` takes no `async ` prefix, so a
+  nameless frame `at async file:///<cwd>/t.test.mjs:7:40` is skipped, and a nameless frame whose path holds `(` loses
+  the path up to it; the block prints a later frame's line, or none. Narrow fix: parse
+  `^\s*at (?:async )?(?:.*? \((.+):(\d+):(\d+)\)|(.+):(\d+):(\d+))$`, the paren form only when the line ends in `)`;
+  proof: one direct-drive S8 cell with an `at async file:///<cwd>/x.mjs:L:C` frame before a later qualifying one.
+  Residual exposure, live once S2 wires the gate: a wrong or missing code line; the file, line and cause still print.
+- **KIT-FOLDER-WRITE-ORDER-TIES** — invariant: the kit folder's write order is a total order. Origin: agy, the same
+  round: `agent-workflow-memory/scripts/kit-folder.mjs:79` compares write keys with `< ? -1 : 1`, never 0, so two
+  files of the `test-reporter` module (one key `run.mj`) would sort by engine order. Narrow fix: tie-break on the
+  path; proof: a two-file module fixture in `kit-folder.test.mjs`. Residual exposure, NOT live: the module deploys one
+  file.

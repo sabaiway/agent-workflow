@@ -23,8 +23,8 @@ const kitLayout = async () => {
   const { readFamily } = await import('../../references/scripts/family.mjs');
   const deployed = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
   return { deployed, byName: new Map(deployed.map((entry) => [basename(entry.path), entry.path])),
-    family: deployed.filter((entry) => !['spec-schema', 'docs-size'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path),
-    seeds: deployed.filter((entry) => entry.seed && !['spec-schema', 'docs-size'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path) };
+    family: deployed.filter((entry) => !['spec-schema', 'docs-size', 'test-reporter'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path),
+    seeds: deployed.filter((entry) => entry.seed && !['spec-schema', 'docs-size', 'test-reporter'].includes(entry.module) && entry.path !== 'run.mjs').map((entry) => entry.path) };
 };
 const WOULD_STORE = `ADR store: ${KD}/archives/archive-decisions.mjs --ensure-current would run after the writes, bringing the store current or writing nothing when it already is`;
 const L = {

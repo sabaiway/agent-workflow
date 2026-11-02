@@ -69,7 +69,7 @@ const oneLine = (text, ...words) => {
 };
 
 // main(argv, deps) in-process: a spawn spy answering as spawnSync would, the file check and two captured streams.
-const inProcess = async (argv, { answer = { status: 0, signal: null }, isFile } = {}) => {
+const inProcess = async (argv, { answer = { status: 0, signal: null }, isFile, env } = {}) => {
   const { main } = await import('./run.mjs');
   const calls = [];
   const streams = { out: '', err: '' };
@@ -78,6 +78,7 @@ const inProcess = async (argv, { answer = { status: 0, signal: null }, isFile } 
     stdout: { write: (text) => { streams.out += text; return true; } },
     stderr: { write: (text) => { streams.err += text; return true; } },
     ...(isFile ? { isFile } : {}),
+    ...(env ? { env } : {}),
   };
   return { code: await main(argv, deps), calls, ...streams };
 };
@@ -196,5 +197,112 @@ describe('spec:kit-command/S4 the usage, help and an unknown name are the comman
       assert.deepEqual([r.code, r.out, r.calls], [2, '', []], name);
       oneLine(r.err, name, ...NAMES);
     }
+  });
+});
+
+const REPORTER = 'test-reporter/reporter.mjs';
+const GIT_DIR = '/work tree/.git';
+const runnerFlags = (gitDir, kit) => ['--test', '--experimental-test-coverage', '--test-reporter=lcov', `--test-reporter-destination=${gitDir}/agent-workflow-lcov.info`,
+  `--test-reporter=${pathToFileURL(at(kit, REPORTER)).href}`, '--test-reporter-destination=stdout'];
+
+// A git work tree whose path holds a space, # and %, its kit folder holding run.mjs and the reporter, and two fixtures.
+const unitTestsTree = () => {
+  const root = tempDir('kit unit #1 %41-');
+  const kit = join(root, 'scripts', 'agent-workflow');
+  mkdirSync(kit, { recursive: true });
+  copyFileSync(join(HERE, 'run.mjs'), join(kit, 'run.mjs'));
+  place(at(kit, REPORTER), readFileSync(at(HERE, REPORTER), 'utf8'));
+  const git = spawnSync('git', ['init', '-q', root], { encoding: 'utf8' });
+  assert.equal(git.status, 0, git.stderr);
+  place(join(root, 'tests', 'red.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('the red one', () => { assert.equal(1, 2); });\n");
+  place(join(root, 'tests', 'green.test.mjs'), "import { test } from 'node:test';\ntest('the green one', () => {});\n");
+  const run = (paths, env = {}) => {
+    const base = { ...process.env, AW_GIT_DIR: join(root, '.git'), ...env };
+    delete base.NODE_TEST_CONTEXT;
+    delete base.NODE_V8_COVERAGE;
+    const r = spawnSync(process.execPath, [join(kit, 'run.mjs'), 'unit-tests', ...paths], { cwd: root, encoding: 'utf8', env: base });
+    if (r.error) throw r.error;
+    return r;
+  };
+  return { root, kit, run };
+};
+
+describe('spec:kit-command/S10 unit-tests runs the Node test runner with the lcov reporter and the kit reporter', () => {
+  it('UNIT_TESTS_NAME and UNIT_TESTS_REPORTER are exported, the reporter a deployed entry, while KIT_COMMANDS keeps its five names', async () => {
+    const { UNIT_TESTS_NAME, UNIT_TESTS_REPORTER, KIT_COMMANDS } = await import('./run.mjs');
+    assert.deepEqual([UNIT_TESTS_NAME, UNIT_TESTS_REPORTER], ['unit-tests', REPORTER]);
+    assert.deepEqual(Object.keys(KIT_COMMANDS), NAMES);
+    const deployed = readFamily(HERE).filter((entry) => entry.role === 'deployed').map((entry) => entry.path);
+    assert.ok(deployed.includes(UNIT_TESTS_REPORTER), 'the reporter is a deployed entry of the manifest');
+  });
+
+  it('in-process with AW_GIT_DIR the git dir it spawns execPath with the six flags in order, then every argument unchanged', async () => {
+    const r = await inProcess(['unit-tests', 'a b', 'tools/*.test.mjs', '--x=1'], { env: { AW_GIT_DIR: GIT_DIR } });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(r.calls.map(({ command, args }) => [command, args]), [[process.execPath, [...runnerFlags(GIT_DIR, HERE), 'a b', 'tools/*.test.mjs', '--x=1']]]);
+    const stdio = r.calls[0].options?.stdio;
+    assert.deepEqual(stdio === 'inherit' ? [stdio, stdio, stdio] : stdio, ['inherit', 'inherit', 'inherit'], 'the runner inherits the three standard streams');
+    assert.equal((await inProcess(['unit-tests'], { env: { AW_GIT_DIR: GIT_DIR }, answer: { status: 4, signal: null } })).code, 4, 'the command exits with the runner\'s code');
+  });
+
+  it('as a child over a failing and a passing fixture it prints the FAIL block and the totals line, writes the lcov and exits 1; the passing fixture alone exits 0', () => {
+    const tree = unitTestsTree();
+    const red = tree.run(['tests/red.test.mjs', 'tests/green.test.mjs']);
+    assert.equal(red.status, 1, red.stderr);
+    const out = lines(red.stdout);
+    assert.ok(out.some((line) => line.startsWith('FAIL tests/red.test.mjs:') && line.includes('the red one')), red.stdout);
+    assert.ok(!red.stdout.includes('the green one'), 'no passing-test line');
+    assert.match(out.at(-1), /^tests 2 · pass 1 · fail 1 · cancelled 0 · /, 'the totals line closes the output');
+    assert.ok(existsSync(join(tree.root, '.git', 'agent-workflow-lcov.info')), 'the lcov lands under AW_GIT_DIR');
+    const green = tree.run(['tests/green.test.mjs']);
+    assert.equal(green.status, 0, green.stdout + green.stderr);
+    assert.match(lines(green.stdout).at(-1), /^tests 1 · pass 1 · fail 0 · /);
+  });
+});
+
+describe('spec:kit-command/S11 unit-tests\' own refusals, and the usage naming six names', () => {
+  it('AW_GIT_DIR unset or empty prints one stderr line naming it, exit 1, the runner never spawned', async () => {
+    for (const env of [{}, { AW_GIT_DIR: '' }]) {
+      const r = await inProcess(['unit-tests', 'tools/*.test.mjs'], { env });
+      assert.deepEqual([r.code, r.out, r.calls], [1, '', []], JSON.stringify(env));
+      oneLine(r.err, 'AW_GIT_DIR');
+    }
+    const tree = unitTestsTree();
+    const child = tree.run(['tests/green.test.mjs'], { AW_GIT_DIR: '' });
+    assert.equal(child.status, 1, child.stdout);
+    oneLine(child.stderr, 'AW_GIT_DIR');
+    assert.equal(existsSync(join(tree.root, '.git', 'agent-workflow-lcov.info')), false, 'nothing spawned, nothing written');
+  });
+
+  it('the reporter absent or a directory prints the missing-target line, exit 1, nothing spawned', async () => {
+    const spied = await inProcess(['unit-tests'], { env: { AW_GIT_DIR: GIT_DIR }, isFile: () => false });
+    assert.deepEqual([spied.code, spied.calls], [1, []]);
+    oneLine(spied.err, 'unit-tests', `scripts/agent-workflow/${REPORTER}`);
+    for (const shape of ['absent', 'directory']) {
+      const tree = unitTestsTree();
+      rmSync(at(tree.kit, REPORTER));
+      if (shape === 'directory') mkdirSync(at(tree.kit, REPORTER));
+      const r = tree.run(['tests/green.test.mjs']);
+      assert.deepEqual([r.status, r.stdout], [1, ''], `${shape}: ${r.stderr}`);
+      oneLine(r.stderr, 'unit-tests', `scripts/agent-workflow/${REPORTER}`);
+    }
+  });
+
+  it('a signal and a spawn error answer as for a check', async () => {
+    const env = { AW_GIT_DIR: GIT_DIR };
+    const signalled = await inProcess(['unit-tests'], { env, answer: { status: null, signal: 'SIGKILL' } });
+    assert.equal(signalled.code, 1);
+    oneLine(signalled.err, 'unit-tests', 'SIGKILL');
+    const failed = await inProcess(['unit-tests'], { env, answer: { status: null, signal: null, error: new Error('spawn went wrong') } });
+    assert.equal(failed.code, 1);
+    oneLine(failed.err, 'unit-tests', 'spawn went wrong');
+  });
+
+  it('the usage and the unknown-name line name all six names', async () => {
+    const six = [...NAMES, 'unit-tests'];
+    const bare = await inProcess([]);
+    for (const name of six) assert.ok(bare.err.includes(name), `the usage names ${name}`);
+    const unknown = await inProcess(['nope']);
+    oneLine(unknown.err, 'nope', ...six);
   });
 });

@@ -52,9 +52,9 @@ export const UPGRADE_RUNLIST = Object.freeze([
   ),
   entry(
     'gates-migration',
-    'node ${CLAUDE_SKILL_DIR}/references/scripts/gates/migrate-gates.mjs --kit-tools ${CLAUDE_SKILL_DIR}/tools --cwd <project>',
-    'preview first — apply only on an explicit yes, re-run with --apply',
-    ['preview', 'INERT', 'CUSTOMIZED'],
+    'node ${CLAUDE_SKILL_DIR}/references/scripts/gates/migrate-gates.mjs --kit-tools ${CLAUDE_SKILL_DIR}/tools --cwd <project> --apply',
+    'the coverage-check add alone: on the user\'s explicit yes, run its printed OFFER line, the same command with --apply --add-checker',
+    ['SWITCH', 'EXTEND', 'REMOVE', 'KEPT', 'CUSTOMIZED', 'OFFER'],
   ),
   entry(
     'bridges',

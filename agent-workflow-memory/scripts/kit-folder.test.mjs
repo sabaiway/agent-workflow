@@ -14,16 +14,17 @@ const BUNDLE = join(SKILL_ROOT, 'references/scripts');
 const KIT = posix.dirname(KIT_COMMAND_PATH);
 const INSTALLER = KIT_COMMANDS['install-git-hooks'];
 const ROTATOR = KIT_COMMANDS['archive-decisions'];
+const REPORTER = 'test-reporter/reporter.mjs';
 const SWITCH = `node ${KIT_COMMAND_PATH} install-git-hooks`;
 const DOCS_LINE = `node ${KIT_COMMAND_PATH} docs-size`;
 const MANAGED = `#!/bin/sh\n${MAGIC_MARKER}\nnode scripts/check-docs-size.mjs\n`;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const ENTRIES = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
 const DEPLOYED = ENTRIES.map((entry) => entry.path);
-const FAMILY = ENTRIES.filter((entry) => !['spec-schema', 'docs-size'].includes(entry.module) && entry.path !== 'run.mjs');
+const FAMILY = ENTRIES.filter((entry) => !['spec-schema', 'docs-size', 'test-reporter'].includes(entry.module) && entry.path !== 'run.mjs');
 const readBundled = (path) => readFileSync(join(BUNDLE, path));
 const readImports = (path) => [...readBundled(path).toString().matchAll(IMPORT)].map((match) => posix.join(posix.dirname(path), match[1]));
-const SPEC = new Set(ENTRIES.filter((entry) => ['spec-schema', 'docs-size'].includes(entry.module) || entry.path === 'run.mjs').map((entry) => entry.path));
+const SPEC = new Set(ENTRIES.filter((entry) => ['spec-schema', 'docs-size', 'test-reporter'].includes(entry.module) || entry.path === 'run.mjs').map((entry) => entry.path));
 for (const path of SPEC) for (const dependency of readImports(path)) if (DEPLOYED.includes(dependency)) SPEC.add(dependency);
 const DECLINED = [...new Set([...SPEC, ...FAMILY.filter((entry) => entry.seed).map((entry) => entry.path)])];
 const ROOTS = [];
@@ -161,9 +162,15 @@ describe('spec:standalone-scripts/S7 survey and Node evidence', () => {
 describe('spec:standalone-scripts/S8 component and writes', () => {
   it('a declined project gets exactly the spec closure and every seed', async () => {
     const cwd = createTree(), result = await run(cwd);
-    assert.deepEqual([DEPLOYED.length, SPEC.size, DECLINED.length], [12, 7, 8]);
+    assert.deepEqual([DEPLOYED.length, SPEC.size, DECLINED.length], [13, 8, 9]);
     assert.equal(result.exitCode, 0); assertBodies(cwd, DECLINED);
     assert.equal(result.lines.filter((line) => /not accepted/.test(line)).length, 1);
+  });
+  it('writes the test reporter just before run.mjs, declined or accepted', async () => {
+    for (const enforcement of [false, true]) {
+      const written = getFileLines(await run(createTree(), { enforcement })).map((line) => line.split(':')[0]);
+      assert.equal(written.indexOf(`${KIT}/run.mjs`) - written.indexOf(`${KIT}/${REPORTER}`), 1, written.join('\n'));
+    }
   });
   it('enforcement, each regular nonseed family file and a regular flat installer accept; a linked flat installer declines', async () => {
     for (const proof of ['enforcement', 'flat', 'linked-flat', ...FAMILY.filter((entry) => !entry.seed).map((entry) => entry.path)]) {
@@ -191,6 +198,8 @@ describe('spec:standalone-scripts/S8 component and writes', () => {
       const next = [...remaining].sort().find((path) => readImports(path).every((dependency) => !remaining.has(dependency)));
       assert.ok(next, 'bundled imports contain no cycle'); order.push(next); remaining.delete(next);
     }
+    const reporter = order.splice(order.indexOf(REPORTER), 1);
+    order.splice(order.indexOf('run.mjs'), 0, ...reporter);
     assert.deepEqual(lines.map((line) => DEPLOYED.find((path) => line.startsWith(`${KIT}/${path}:`))), order);
     assert.ok(!lines.some((line) => line.startsWith(`${KIT}/${current}:`)));
     assert.ok(result.lines.some((line) => /\b1\b/.test(line) && /current|already/.test(line)));

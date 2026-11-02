@@ -254,3 +254,41 @@ describe("spec:distribution-files/S12 an earlier release's kept-aside folder sta
     });
   });
 });
+
+// A deployment whose scripts component is not accepted: Node evidence, the docs/ai templates, a git checkout, no kit script.
+const declinedDeployment = () => {
+  const project = mkdtempSync(join(tmpdir(), 'upgrade-spec-layer-declined-'));
+  cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
+  writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
+  for (const entry of readdirSync(TEMPLATES)) if (!SKILL_HOME_ONLY.has(entry)) cpSync(join(TEMPLATES, entry), join(project, 'docs', 'ai', entry), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: project, stdio: 'pipe', env: strippedEnv() });
+  return project;
+};
+// The detail lines one op printed under its token line.
+const opLines = (stdout, op) => {
+  const lines = stdout.split('\n'), from = lines.findIndex((line) => line.startsWith(`  ${op}: `)) + 1;
+  const end = lines.findIndex((line, index) => index >= from && !line.startsWith('      '));
+  return from ? lines.slice(from, end < 0 ? lines.length : end).map((line) => line.trim()) : [];
+};
+
+describe('spec:test-reporter/S9 a deployment whose scripts component is not accepted gets the test reporter with the command', () => {
+  it('one plain upgrade places it through the specs op, byte-equal to the kit; that run and a second one place no family file outside the seed entries and print the not-accepted line', () => {
+    const project = declinedDeployment(), reporter = 'test-reporter/reporter.mjs';
+    const outsideSeeds = DEPLOYED_SCRIPTS.filter((e) => !e.seed && e.path !== 'run.mjs' && !['spec-schema', 'docs-size', 'test-reporter'].includes(e.module)).map((e) => e.path);
+    const notAccepted = 'scripts/agent-workflow/: the enforcement scripts were not accepted in this project, so no other kit script is placed';
+    try {
+      assert.ok(outsideSeeds.includes(INSTALLER_REL.replace('scripts/agent-workflow/', '')), outsideSeeds.join(' '));
+      for (const run of ['first', 'second']) {
+        const r = reconcile(project, { spawnSync: seam });
+        assert.equal(r.code, 0, `${run}: ${r.stdout}`);
+        assert.ok(existsSync(at(project, reporter)) && isBundled(project, reporter), `${run}: the reporter is the kit's bytes\n${r.stdout}`);
+        assert.deepEqual(outsideSeeds.filter((path) => existsSync(at(project, path))), [], `${run}: no family file outside the seed entries`);
+        assert.ok(opLines(r.stdout, 'scripts').includes(notAccepted), `${run}: ${r.stdout}`);
+        assert.equal(opLines(r.stdout, 'scripts').some((line) => line.includes(reporter)), false, `${run}: the scripts op never names the reporter`);
+        if (run === 'first') assert.ok(opLines(r.stdout, 'specs').includes(`scripts/agent-workflow/${reporter}: absent — placed from the bundled scripts`), r.stdout);
+      }
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});

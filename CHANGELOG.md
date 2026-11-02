@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-01 — AD-221: a red unit-test gate prints only its failures; the kit writes one gate form and moves every earlier one (memory 11.0.0 MAJOR; kit 22.0.0 MAJOR; engine and both bridges unchanged)
+
+**A kit test reporter, `scripts/agent-workflow/test-reporter/reporter.mjs`, ships in every kit folder with Node
+evidence** and reads only the Node test runner's events: a red run prints each failing test's block (file and line,
+names, failure type, expected and actual, the code line), one line per diagnostic and per part it cannot render, and
+one totals line; it never throws and the exit code stays the runner's. The stable command's sixth name,
+`node scripts/agent-workflow/run.mjs unit-tests <paths>`, runs the tests with the lcov reporter and this reporter, and
+is the one gate form that reads as a coverage producer. One guard (the kit folder's `run.mjs` byte-equal to the
+running kit's, the reporter a regular file) gates every write of it: the fill offers it, and the upgrade's gates
+migration switches every gate an earlier kit wrote, under any id, with no question, and extends a plain
+`node --test <paths>` unit-tests gate to it (its lcov can turn a declared checker live, so a green run can read red);
+the coverage checker alone is added on the user's yes. A retired check's gate leaves only over a target proven absent;
+every checker line states one fact and one remedy, and the `no-producer` defect and the advisor name the upgrade
+wherever an earlier kit's gate it can move stands. The kit's flag constants
+`UNIT_TESTS_COVERAGE_FLAGS` and `KNOWN_COVERAGE_FLAG_SETS` leave. The release run stops checking that an older kit
+reads a newer declaration: the cross-version gate, its stage and its receipt preflight leave (seven stages). This
+repository's unit-test gate runs the command. Contracts: test-reporter revision 3, kit-command revision 7,
+script-family revision 10, coverage-producer revision 1, distribution-files revision 25, release-run revision 5.
+Detail: [agent-workflow-kit/CHANGELOG.md](agent-workflow-kit/CHANGELOG.md),
+[agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md).
+
 ## 2026-10-31 — AD-220: the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (memory 10.0.0 MAJOR; kit 21.0.0 MAJOR; engine 6.0.1 PATCH; both bridges unchanged)
 
 **A deployment's 25 flat kit files in `scripts/` become one folder the kit alone writes, `scripts/agent-workflow/`**,

@@ -1,6 +1,6 @@
 // legacy-upgrade-e2e.test.mjs — the D8 upgrade path END TO END, all real child spawns (round-1
 // fold C10): a legacy consumer declaration (review-ledger gate + plain unit-tests + canonical
-// review-state) is migrated by the kit's OWN mirrored migrate-gates.mjs --apply, the tree is
+// review-state) is migrated by row 4's registry command, then its printed --apply --add-checker line, the tree is
 // staged, the REAL `run-gates.mjs --final` mints a GREEN receipt whose lcovSha256 is NON-NULL
 // (the lcov pipeline actually ran), and a commit under a minimal commit-guard pre-commit hook is
 // PERMITTED. The separate negative fixture proves the guard's teeth: one unstaged edit after the
@@ -13,9 +13,10 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { buildForeignFixture } from '../../scripts/testing/foreign-fixture.mjs';
+import { buildForeignFixture, placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 import { stripGitLocationEnv } from '../tools/git-env.mjs';
+import { UPGRADE_RUNLIST } from '../tools/upgrade-runlist.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOLS = join(HERE, '..', 'tools');
@@ -32,7 +33,8 @@ const cleanEnv = () => {
 const run = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, encoding: 'utf8', env: cleanEnv() });
 
 // A legacy consumer: one committed green test, a declaration the STRIPPED kit no longer accepts
-// (a review-ledger gate, a reporterless unit-tests cmd, no coverage-check), a retired store.
+// (a review-ledger gate, a reporterless unit-tests cmd, no coverage-check), a retired store, and the kit folder's
+// run.mjs and reporter (spec coverage-producer S9).
 const makeLegacyConsumer = () => {
   const root = mkdtempSync(join(tmpdir(), 'legacy-upgrade-e2e-'));
   const g = (...a) => run('git', a, root);
@@ -56,6 +58,7 @@ const makeLegacyConsumer = () => {
       ],
     }),
   );
+  placeKitCommand(root);
   const gitDir = run('git', ['rev-parse', '--absolute-git-dir'], root).stdout.trim();
   writeFileSync(join(gitDir, 'agent-workflow-review-ledger.jsonl'), '{"dead":1}\n');
   g('add', '-A');
@@ -63,10 +66,17 @@ const makeLegacyConsumer = () => {
   return { root, gitDir, g };
 };
 
-// The consented D8 steps shared by both fixtures: migrate --apply → stage → REAL --final.
+// The upgrade's steps shared by both fixtures: the registry's gates-migration command (row 4, no question) → its
+// printed --apply --add-checker line, run as on the user's yes → stage → REAL --final.
+const ADD_CHECKER = '--apply --add-checker';
 const migrateStageFinal = ({ root, g }) => {
-  const migrated = run('node', [MIGRATE, '--cwd', root, '--kit-tools', TOOLS, '--apply'], root);
-  assert.equal(migrated.status, 0, migrated.stderr);
+  const row = UPGRADE_RUNLIST.find(({ id }) => id === 'gates-migration');
+  const moved = run('bash', ['-c', row.command.replaceAll('${CLAUDE_SKILL_DIR}', join(HERE, '..')).replace('<project>', root)], root);
+  assert.equal(moved.status, 0, moved.stderr);
+  const offer = moved.stdout.split('\n').find((line) => line.includes(ADD_CHECKER));
+  assert.ok(offer, `row 4 prints its checker offer: ${moved.stdout}`);
+  const added = run('bash', ['-c', offer.slice(offer.indexOf('node "'), offer.indexOf(ADD_CHECKER) + ADD_CHECKER.length)], root);
+  assert.equal(added.status, 0, `${offer}\n${added.stderr}`);
   g('add', '-A');
   return run('node', [join(TOOLS, 'run-gates.mjs'), '--final', '--cwd', root], root);
 };
@@ -79,15 +89,15 @@ const armGuardHook = ({ gitDir }) => {
 };
 
 describe('legacy upgrade E2E — migrate → stage → real --final → commit under the guard (D8+D10)', () => {
-  it('the migrated declaration mints a GREEN receipt (non-null lcovSha256) and the guarded commit is PERMITTED', () => {
+  it('spec:coverage-producer/S9 the migrated declaration runs the command, mints a GREEN receipt (non-null lcovSha256) and the guarded commit is PERMITTED', () => {
     const fx = makeLegacyConsumer();
     const final = migrateStageFinal(fx);
-    assert.equal(final.status, 0, `--final is green on the migrated declaration: ${final.stdout}\n${final.stderr}`);
 
-    // The migration was COMPLETE: legacy gone, reporters wired, the canonical checker LAST.
+    // The migration was COMPLETE: legacy gone, the unit-tests gate on the stable kit command, the canonical checker LAST.
     const gates = JSON.parse(readFileSync(join(fx.root, 'docs', 'ai', 'gates.json'), 'utf8')).gates;
     assert.deepEqual(gates.map((g2) => g2.id), ['unit-tests', 'review-state', 'coverage-check']);
-    assert.match(gates[0].cmd, /--test-reporter=lcov/);
+    assert.equal(gates[0].cmd, 'node scripts/agent-workflow/run.mjs unit-tests tests/*.test.mjs');
+    assert.equal(final.status, 0, `--final is green on the migrated declaration: ${final.stdout}\n${final.stderr}`);
     assert.throws(() => readFileSync(join(fx.gitDir, 'agent-workflow-review-ledger.jsonl')), /ENOENT/, 'the retired store was cleaned by the migration');
 
     // The receipt: green, quiescent, and the lcov pipeline REALLY ran (a null sha would mean the

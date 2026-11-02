@@ -11,7 +11,7 @@ import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CHECKER_CLAIM, checkerClaimTool, classifyCheckerClaim } from './checker-claim.mjs';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
-import { isCoverageProducerGate } from './coverage-producer.mjs';
+import { readsAsCoverageProducer, retiredProducerFormOf } from './coverage-producer.mjs';
 import { matchesSourceSizeGate } from './source-size-core.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
@@ -158,11 +158,21 @@ export const isFinalCapableDeclaration = (gates, projectDir) => {
 // so the checker reads nothing — or, worse, stale bytes an earlier run left behind — and still
 // passes. ONE home for the rule: the written-declaration defects below and the advisor's
 // inert-declaration item both decide through it, so they cannot drift apart. Producer-ness itself is
-// the canon's gate-level predicate (cmd closed-world OR the declared marker), so the slice is the
-// only thing this function owns — and the slice is what keeps a marker on the CHECKER from
-// self-pairing.
-export const coverageProducerPrecedes = (gates, checkerIndex) =>
-  gates.slice(0, checkerIndex).some((gate) => isCoverageProducerGate(gate));
+// the canon's one row question (readsAsCoverageProducer: the gate-level predicate, asked only of a
+// row that does not claim the coverage checker), so the slice is the only thing this function owns.
+const COVERAGE_CHECK_TOOL = checkerClaimTool('coverage-check.mjs', fileURLToPath(new URL('./coverage-check.mjs', import.meta.url)));
+export const coverageProducerPrecedes = (gates, checkerIndex, projectDir) =>
+  gates.slice(0, checkerIndex).some((gate) => readsAsCoverageProducer(gate, classifyCheckerClaim(COVERAGE_CHECK_TOOL, gate?.cmd, projectDir)));
+
+// movableEarlierForm(gates) → whether a gate an earlier kit wrote, which the upgrade's gates-migration
+// step moves (a retired form with a path-shaped tail), stands anywhere in the declaration (spec
+// coverage-producer, the remedy route). A flagged tail is not movable: its remedy is its CUSTOMIZED line.
+export const movableEarlierForm = (gates) => gates.some((gate) => retiredProducerFormOf(gate?.cmd)?.pathShaped === true);
+
+// The checker lines' one fact and one remedy, and the upgrade's words, which predict nothing about the run.
+export const NO_PRODUCER_FACT = 'no gate before it is a producer this kit reads';
+export const NO_PRODUCER_REMEDY = 'declare or move one before it: node scripts/agent-workflow/run.mjs unit-tests <your test paths>, or mark your own suite gate "lcovProducer": true';
+export const UPGRADE_MOVES = "it moves an earlier kit's gate with no question, or a line of its report names what stops it";
 
 // coverageDeclarationDefects(gates, projectDir) → the WRITTEN-declaration coverage rule, as a list
 // of named defects (empty = satisfied): at most ONE canonical coverage checker; if one is present
@@ -193,14 +203,12 @@ export const coverageDeclarationDefects = (gates, projectDir) => {
         'places a new entry before a trailing checker, but it never reorders what it did not write)',
     }];
   }
-  if (!coverageProducerPrecedes(gates, index)) {
-    return [{
-      kind: 'no-producer',
-      message:
-        `${GATES_REL}: the canonical coverage checker (${checkers[0].id}) is declared but NO gate would produce the lcov it reads — ` +
-        'the checker would pass while verifying nothing. Declare a suite gate carrying the coverage reporters ' +
-        '(references/modes/gates.md names the exact form), or drop the checker',
-    }];
+  if (!coverageProducerPrecedes(gates, index, projectDir)) {
+    // One fact; the remedy is the upgrade's gates-migration step while a gate it moves stands anywhere.
+    const remedy = movableEarlierForm(gates)
+      ? `run the gates-migration step of /agent-workflow-kit upgrade: ${UPGRADE_MOVES}`
+      : NO_PRODUCER_REMEDY;
+    return [{ kind: 'no-producer', message: `${GATES_REL}: the canonical coverage checker (${checkers[0].id}): ${NO_PRODUCER_FACT} — ${remedy}` }];
   }
   return [];
 };

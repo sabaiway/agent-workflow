@@ -1,7 +1,7 @@
 // ensure-specs.test.mjs — the spec-layer ensure by its cells: every plain run writes the pair files, the
 // files they import and the store root by the part scripts' rule (a prior refreshed, an edit replaced in
 // place, an absent file placed, the store root seeded create-only) in the write order the pairs' imports,
-// reader pair, checker pair, run.mjs, store root, with the part's lines and the one hook-run line; the single run token
+// reader pair, checker pair, the test reporter, run.mjs, store root, with the part's lines and the one hook-run line; the single run token
 // by precedence; and every fail-closed arm writing nothing (or saying exactly what it had already written).
 // Real temp projects in the kit folder; a prior body is built through the deps.priors seam, since the catalog
 // names no file there.
@@ -146,8 +146,8 @@ const kitPairs = async () => {
   const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed');
   const all = deployed.map((e) => e.path);
   const [reader, checker] = ['spec-schema', 'docs-size'].map((m) => writeOrder(deployed.filter((e) => e.module === m).map((e) => e.path)));
-  const command = deployed.filter((e) => e.path === 'run.mjs').map((e) => e.path);
-  assert.deepEqual(command, ['run.mjs']);
+  const command = ['test-reporter/reporter.mjs', 'run.mjs'].filter((p) => deployed.some((e) => e.path === p));
+  assert.deepEqual(command, ['test-reporter/reporter.mjs', 'run.mjs'], 'the command group: the test reporter, then run.mjs, which runs it');
   const reached = new Set([...reader, ...checker]);
   for (const p of reached) for (const dep of importsOf(p, all)) reached.add(dep);
   const closure = writeOrder([...reached].filter((p) => !reader.includes(p) && !checker.includes(p)));
@@ -308,7 +308,7 @@ describe('spec:distribution-files/S2 the hook-run line and the lines of the part
     for (const dryRun of [false, true]) withTable(K, table, (dir) => {
       const fate = dryRun ? undefined : 'written';
       assert.deepEqual(runK(K, dir, { dryRun }).lines, [...K.closure.map((p) => pairLine(p, 'current', 'written', KF)), fileLine(file(K.reader[0], 'prior'), fate, dryRun), fileLine(file(K.reader[1], 'absent'), fate, dryRun),
-        fileLine(file(K.checker[0], 'custom'), fate, dryRun), fileLine(file(K.command[0], 'absent'), fate, dryRun), STORE_LINES.present, hookLine(false, dryRun)]);
+        fileLine(file(K.checker[0], 'custom'), fate, dryRun), ...K.command.map((p) => fileLine(file(p, 'absent'), fate, dryRun)), STORE_LINES.present, hookLine(false, dryRun)]);
     });
     assert.deepEqual([hookLine(false, false), hookLine(false, true), SCRIPT_CHANNEL, fileLine(file(K.checker[0], 'custom'), 'written', false).endsWith(`; an edit meant to last goes in ${SCRIPT_CHANNEL}`)], [HOOK, DRY_HOOK, CHANNEL, true]);
   });

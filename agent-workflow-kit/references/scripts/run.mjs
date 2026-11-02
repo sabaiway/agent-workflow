@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // run.mjs — the stable kit command (spec kit-command): `node scripts/agent-workflow/run.mjs <name> [arguments...]`
-// runs the named kit check with every argument unchanged. The names are frozen; the files behind them are the kit's.
+// runs the named kit check with every argument unchanged, and `unit-tests` runs the Node test runner with the lcov
+// reporter and the kit test reporter. The names are frozen; the files behind them are the kit's.
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -19,17 +20,25 @@ export const KIT_COMMANDS = Object.freeze({
   'archive-decisions': 'archives/archive-decisions.mjs',
   'install-git-hooks': 'git-hooks/install-git-hooks.mjs',
 });
+export const UNIT_TESTS_NAME = 'unit-tests';
+export const UNIT_TESTS_REPORTER = 'test-reporter/reporter.mjs';
 
-const NAMES = Object.keys(KIT_COMMANDS);
+const NAMES = [...Object.keys(KIT_COMMANDS), UNIT_TESTS_NAME];
 const PREFIX = '[run]';
 const USAGE = `Usage: node ${KIT_COMMAND_PATH} <name> [arguments...]
-Runs the named kit check with every argument after the name, unchanged. Names: ${NAMES.join(', ')}.
+Runs the named kit check with every argument after the name, unchanged; ${UNIT_TESTS_NAME} runs the Node test runner
+with the lcov reporter and the kit test reporter over the arguments. Names: ${NAMES.join(', ')}.
 `;
 
 const isRegularFile = (path) => statSync(path, { throwIfNoEntry: false })?.isFile() === true;
 
+// The runner's flags for unit-tests: the lcov under the git dir run-gates exports, the kit reporter on stdout.
+const unitTestsFlags = (gitDir, reporter) => ['--test', '--experimental-test-coverage', '--test-reporter=lcov',
+  `--test-reporter-destination=${gitDir}/agent-workflow-lcov.info`, `--test-reporter=${pathToFileURL(reporter).href}`,
+  '--test-reporter-destination=stdout'];
+
 export const main = (argv = process.argv.slice(2), deps = {}) => {
-  const { spawn = spawnSync, isFile = isRegularFile, stdout = process.stdout, stderr = process.stderr } = deps;
+  const { spawn = spawnSync, isFile = isRegularFile, stdout = process.stdout, stderr = process.stderr, env = process.env } = deps;
   const [name, ...args] = argv;
   if (name === undefined) {
     stderr.write(USAGE);
@@ -39,23 +48,30 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     stdout.write(USAGE);
     return 0;
   }
-  if (!Object.hasOwn(KIT_COMMANDS, name)) {
+  const unitTests = name === UNIT_TESTS_NAME;
+  if (!unitTests && !Object.hasOwn(KIT_COMMANDS, name)) {
     stderr.write(`${PREFIX} unknown name ${JSON.stringify(name)} — the known names are ${NAMES.join(', ')}\n`);
     return 2;
   }
-  const target = KIT_COMMANDS[name];
+  const target = unitTests ? UNIT_TESTS_REPORTER : KIT_COMMANDS[name];
   const file = join(HERE, ...target.split('/'));
   if (!isFile(file)) {
     stderr.write(`${PREFIX} ${name}: scripts/agent-workflow/${target} is not a file of this deployment\n`);
     return 1;
   }
-  const result = spawn(process.execPath, [file, ...args], { stdio: 'inherit' });
+  if (unitTests && !env.AW_GIT_DIR) {
+    stderr.write(`${PREFIX} ${name}: AW_GIT_DIR is unset or empty — run-gates exports it; the lcov has no destination\n`);
+    return 1;
+  }
+  const runArgs = unitTests ? [...unitTestsFlags(env.AW_GIT_DIR, file), ...args] : [file, ...args];
+  const result = spawn(process.execPath, runArgs, { stdio: 'inherit' });
+  const what = unitTests ? 'the test runner' : 'the check';
   if (result.error) {
-    stderr.write(`${PREFIX} ${name}: cannot run the check (${result.error.message})\n`);
+    stderr.write(`${PREFIX} ${name}: cannot run ${what} (${result.error.message})\n`);
     return 1;
   }
   if (result.signal) {
-    stderr.write(`${PREFIX} ${name}: the check was killed by ${result.signal}\n`);
+    stderr.write(`${PREFIX} ${name}: ${what} was killed by ${result.signal}\n`);
     return 1;
   }
   return result.status ?? 1;

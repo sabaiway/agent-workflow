@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
@@ -26,10 +26,10 @@ import {
 } from './dispatch-publish.mjs';
 import { runGitProcess, runProcess } from './git-process.mjs';
 import { buildReceipt, SMOKE_RECEIPT_BASENAME, SMOKE_RECEIPT_SCHEMA } from './smoke-candidate.mjs';
-import { buildGateReceipt, GATE_RECEIPT_BASENAME, GATE_RECEIPT_SCHEMA } from './cross-version-gate.mjs';
 
 const SHA = 'a'.repeat(40);
 const OTHER_SHA = 'b'.repeat(40);
+const GIT_DIR = join(REPO_ROOT, '.git');
 const REAL_KIT_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'agent-workflow-kit', 'package.json'), 'utf8')).version;
 
 const makeWorld = ({
@@ -49,11 +49,9 @@ const makeWorld = ({
   npmTransport = false, // the npm /latest lookup fails at the TRANSPORT layer (typed transportError)
   npmParseError = false, // the npm /latest lookup returns a reachable-but-unparseable body
   releaseTransport = false, // the GitHub Release lookup fails at the TRANSPORT layer (typed .transport)
-  // The candidate-smoke receipt this world's git dir holds. Default = one that COVERS the candidate
-  // (so every pre-existing row keeps testing what it was written to test); `null` = none on disk.
+  // The candidate-smoke receipt, the one file this world's git dir holds. Default = one that COVERS
+  // the candidate (so every pre-existing row keeps testing what it was written to test); `null` = none.
   smokeReceipt = undefined,
-  // The cross-version gate receipt, same defaulting rule (Issue-016, the second receipt).
-  crossVersionReceipt = undefined,
   // The two ancestry probes, which run on RAW process results. The defaults reproduce the world this
   // refusal was written in before AD-098: the remote tip is present locally AND an ancestor of HEAD,
   // i.e. a plain unpushed commit. Either may be given a raw result object instead, for the arms where
@@ -64,7 +62,7 @@ const makeWorld = ({
   shallow = false, // rev-parse --is-shallow-repository : false | true | a raw result
   lsRemoteBody = null, // the whole `git ls-remote origin <ref>` stdout, when an arm needs an exact one
 } = {}) => {
-  const calls = { dispatches: [], gitArgs: [], gitRawArgs: [], reads: [], readOpts: [], ghReqs: [] };
+  const calls = { dispatches: [], gitArgs: [], gitRawArgs: [], reads: [], readOpts: [], ghReqs: [], files: [] };
   const runs = [];
   let nextRunId = 100;
   let pendingRun = null;
@@ -123,7 +121,7 @@ const makeWorld = ({
     }
     if (head === 'status --porcelain') return dirtyTree;
     if (head === 'rev-parse HEAD') return `${localHead}\n`;
-    if (head === 'rev-parse --absolute-git-dir') return `${join(REPO_ROOT, '.git')}\n`;
+    if (head === 'rev-parse --absolute-git-dir') return `${GIT_DIR}\n`;
     throw new Error(`unscripted git: ${head}`);
   };
 
@@ -165,17 +163,6 @@ const makeWorld = ({
         })
       : smokeReceipt;
 
-  const gateReceipt =
-    crossVersionReceipt === undefined
-      ? buildGateReceipt({
-          kitVersion: localVersions['agent-workflow-kit'] ?? REAL_KIT_VERSION,
-          headSha: localHead,
-          dirty: false,
-          publishedVersion: '5.6.0',
-          at: '2026-08-14T00:00:00.000Z',
-        })
-      : crossVersionReceipt;
-
   const readLatest = async (name, opts) => {
     calls.reads.push(name);
     calls.readOpts.push(opts);
@@ -189,14 +176,10 @@ const makeWorld = ({
 
   const readFile = (path, enc) => {
     const str = String(path);
-    if (str.endsWith(SMOKE_RECEIPT_BASENAME)) {
-      if (receipt === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      return JSON.stringify(receipt);
-    }
-    if (str.endsWith(GATE_RECEIPT_BASENAME)) {
-      if (gateReceipt === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-      return JSON.stringify(gateReceipt);
-    }
+    calls.files.push(str);
+    if (str === join(GIT_DIR, SMOKE_RECEIPT_BASENAME) && receipt !== null) return JSON.stringify(receipt);
+    // The real git dir never answers: any other file under it is absent in this world.
+    if (str.startsWith(`${GIT_DIR}${sep}`)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     if (str.endsWith('_publish-one.yml')) return readFileSync(join(REPO_ROOT, '.github/workflows/_publish-one.yml'), enc);
     const dirMatch = Object.keys(localVersions).find((dir) => str.endsWith(`${dir}/package.json`));
     if (dirMatch) return JSON.stringify({ name: `@sabaiway/${dirMatch}`, version: localVersions[dirMatch] });
@@ -468,6 +451,7 @@ describe('runDispatch — a kit-carrying dispatch needs a candidate smoke for TH
     assert.equal(await runDispatch(['memory', 'engine'], deps), EXIT.ok);
     assert.deepEqual(calls.dispatches.map((d) => d.pkg), ['memory', 'engine']);
     assert.ok(!calls.gitArgs.includes('rev-parse --absolute-git-dir'), 'the receipt is not even looked for');
+    assert.deepEqual(calls.files.filter((path) => path.startsWith(`${GIT_DIR}${sep}`)), [], 'no receipt is read');
   });
 
   it('--verify-only performs zero dispatches, so it is never gated either', async () => {
@@ -479,91 +463,16 @@ describe('runDispatch — a kit-carrying dispatch needs a candidate smoke for TH
     assert.equal(await runDispatch(['kit', '--verify-only', '--expect', 'kit=5.0.0'], deps), EXIT.ok);
   });
 
-  it('a covering receipt is stated, and the flow proceeds', async () => {
-    const { deps, calls } = kitWorld({});
-    assert.equal(await runDispatch(['kit'], deps), EXIT.ok);
-    assert.deepEqual(calls.dispatches, [{ pkg: 'kit', dry: true, ref: 'main' }]);
-  });
-});
-
-// ── the cross-version gate preflight (Plan 3 Step 3.2 — Issue-016, the SECOND receipt) ─
-
-describe('runDispatch — a kit-carrying dispatch needs a cross-version gate PASS for THESE bytes', () => {
-  const kitWorld = (overrides = {}) =>
-    makeWorld({ localVersions: { 'agent-workflow-kit': '9.9.8', 'agent-workflow-engine': '9.9.9' }, ...overrides });
-  const covering = (over = {}) => ({
-    ...buildGateReceipt({ kitVersion: '9.9.8', headSha: SHA, dirty: false, publishedVersion: '5.6.0', at: 'x' }),
-    ...over,
-  });
-
-  it('no receipt at all → preflight refusal BEFORE any dispatch, dry-run included — the smoke alone clears nothing', async () => {
-    const { deps, calls } = kitWorld({ crossVersionReceipt: null });
-    const code = await runDispatch(['kit'], deps);
-    assert.equal(code, EXIT.preflight);
-    assert.deepEqual(calls.dispatches, [], 'the dry-run green is what the release lane reads as publishable — it must not run either');
-    assert.match(calls.lastError, /cross-version gate preflight: no cross-version gate receipt/);
-    assert.match(calls.lastError, /cross-version-gate\.mjs/, 'the refusal carries the command that clears it');
-  });
-
-  it('EVERY receipt field is validated — a positive and a negative case per field, never only the obvious three', async () => {
-    // Positive per field: the covering receipt (every field right) dispatches, and so does one with
-    // a DIFFERENT valid probed published version — that field is validated for FORM, not pinned.
-    for (const receipt of [covering(), covering({ publishedVersion: '9.9.9' })]) {
-      const { deps, calls } = kitWorld({ crossVersionReceipt: receipt });
-      assert.equal(await runDispatch(['kit'], deps), EXIT.ok, calls.lastError);
-    }
-    const badRows = [
-      [{ schema: GATE_RECEIPT_SCHEMA + 1 }, /schema/],
-      [{ outcome: 'fail' }, /not a pass/],
-      [{ kitVersion: '1.0.0' }, /passed for kit 1\.0\.0/],
-      [{ headSha: OTHER_SHA }, new RegExp(`passed at ${OTHER_SHA}`)],
-      [{ dirty: true }, /DIRTY tree/],
-      [{ publishedVersion: 'latest' }, /malformed.*published/i],
-      [{ publishedVersion: undefined }, /malformed.*published/i],
-      [{ axes: undefined }, /schema-accept.*missing/],
-      [{ axes: { 'schema-accept': 'pass', execution: 'pass' } }, /producer-recognition.*missing/],
-      [{ axes: { 'schema-accept': 'pass', execution: 'fail', 'producer-recognition': 'pass' } }, /execution.*"fail"/],
-    ];
-    for (const [over, expected] of badRows) {
-      const { deps, calls } = kitWorld({ crossVersionReceipt: covering(over) });
-      assert.equal(await runDispatch(['kit'], deps), EXIT.preflight, `must refuse: ${JSON.stringify(over)}`);
-      assert.match(calls.lastError, /cross-version gate preflight/);
-      assert.match(calls.lastError, expected);
-      assert.deepEqual(calls.dispatches, [], 'refused BEFORE any dispatch, the dry-run included');
-    }
-  });
-
-  it('`all` carries the kit, so it is gated the same way', async () => {
-    const { deps, calls } = makeWorld({ crossVersionReceipt: null });
-    assert.equal(await runDispatch(['all'], deps), EXIT.preflight);
-    assert.deepEqual(calls.dispatches, []);
-  });
-
-  it('a dispatch that does NOT carry the kit is never gated, and --verify-only performs zero dispatches', async () => {
-    const named = makeWorld({ crossVersionReceipt: null });
-    assert.equal(await runDispatch(['memory', 'engine'], named.deps), EXIT.ok);
-    const verify = makeWorld({
-      smokeReceipt: null,
-      crossVersionReceipt: null,
-      npmVersions: { '@sabaiway/agent-workflow-kit': '5.0.0' },
-      releases: { 'agent-workflow-kit-v5.0.0': { assets: 1 } },
-    });
-    assert.equal(await runDispatch(['kit', '--verify-only', '--expect', 'kit=5.0.0'], verify.deps), EXIT.ok);
-  });
-
-  it('with BOTH receipts missing the candidate smoke is named first — the gate mirrors its wiring, second', async () => {
-    const { deps, calls } = kitWorld({ smokeReceipt: null, crossVersionReceipt: null });
-    assert.equal(await runDispatch(['kit'], deps), EXIT.preflight);
-    assert.match(calls.lastError, /candidate smoke preflight/);
-  });
-
-  it('a covering receipt is stated in the log with the probed published version, and the flow proceeds', async () => {
+  // spec:release-run/S21
+  it('a covering smoke receipt passes the one receipt preflight: only the smoke receipt is read, no other logged', async () => {
     const { deps, calls } = kitWorld({});
     const lines = [];
     deps.log = (line) => lines.push(String(line));
-    assert.equal(await runDispatch(['kit'], deps), EXIT.ok);
-    assert.match(lines.join('\n'), /cross-version gate receipt covers kit 9\.9\.8.*published 5\.6\.0/);
+    assert.equal(await runDispatch(['kit'], deps), EXIT.ok, calls.lastError);
     assert.deepEqual(calls.dispatches, [{ pkg: 'kit', dry: true, ref: 'main' }]);
+    assert.deepEqual(calls.files.filter((path) => path.startsWith(`${GIT_DIR}${sep}`)), [join(GIT_DIR, SMOKE_RECEIPT_BASENAME)]);
+    const receiptLines = lines.filter((line) => /receipt/iu.test(line));
+    assert.deepEqual(receiptLines, [`✓ candidate smoke receipt covers kit 9.9.8 at local HEAD ${SHA}`]);
   });
 });
 

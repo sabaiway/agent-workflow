@@ -112,18 +112,18 @@ describe('spec:node-evidence/S6 the scripts ensure proceeds on a deployed script
   it('no Node evidence: skipped-no-node-evidence naming every probe, nothing written', () => withProject((dir) => {
     const r = run(dir);
     assert.deepEqual([r?.token, r?.failed, existsSync(join(dir, 'scripts'))], ['skipped-no-node-evidence', false, false]);
-    assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files \(archive-caps\.mjs, .*spec-schema\.mjs\), no regular file present/);
+    assert.match(r.lines.join('\n'), /probed package\.json and the kit-seeded scripts\/ files \(archive-caps\.mjs, .*test-reporter\/reporter\.mjs\), no regular file present/);
   }, { node: false }));
   it('a deployed kit script without a package.json is Node evidence: the op places every other kit script, token seeded, no entries field', async () => {
     // The kit folder's family: the manifest's deployed entries less the spec layer's modules, at their deployed paths.
     const { DEPLOYED_SCRIPTS } = await import('./node-evidence.mjs');
-    const family = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.path !== 'run.mjs');
+    const family = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter' && e.path !== 'run.mjs');
     const caps = family.find((e) => e.path === 'archives/archive-caps.mjs');
     withProject((dir) => {
       mkdirSync(dirname(join(dir, caps.deployed)), { recursive: true });
       writeFileSync(join(dir, caps.deployed), readFileSync(join(KIT_ROOT, caps.bundled)));
       const r = run(dir, { git: () => ({ status: 128, stdout: '', stderr: '' }) }), at = (e) => join(dir, e.deployed);
-      assert.deepEqual([r?.token, r?.failed, 'entries' in (r ?? {}), family.filter((e) => !existsSync(at(e)) || !readFileSync(at(e)).equals(readFileSync(join(KIT_ROOT, e.bundled)))).map((e) => e.path), existsSync(join(dir, 'scripts/agent-workflow/run.mjs'))], ['seeded', false, false, [], false], r?.lines?.join('\n'));
+      assert.deepEqual([r?.token, r?.failed, 'entries' in (r ?? {}), family.filter((e) => !existsSync(at(e)) || !readFileSync(at(e)).equals(readFileSync(join(KIT_ROOT, e.bundled)))).map((e) => e.path), existsSync(join(dir, 'scripts/agent-workflow/run.mjs')), existsSync(join(dir, 'scripts/agent-workflow/test-reporter'))], ['seeded', false, false, [], false, false], r?.lines?.join('\n'));
     }, { node: false });
   });
   it('an unreadable Node probe fails closed: node-evidence-unverifiable, nothing written', () => withProject((dir) => {

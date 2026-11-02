@@ -46,7 +46,7 @@ test('tree and commit proof failures refuse before a receipt is advanced', async
   assert.equal(wrongMessage.files.has(RECEIPT_FILE), false);
   assert.match(wrongMessage.errors.join('\n'), new RegExp(`commit ${NEW_HEAD} landed over ${OLD_HEAD}.*reset --soft ${OLD_HEAD}`, 'u'));
 
-  const dirtiedLast = makeWorld({ statusReads: [PORCELAIN, ...Array(14).fill(''), ' M dirtied\n'] });
+  const dirtiedLast = makeWorld({ statusReads: [PORCELAIN, ...Array(2 * STAGES.length - 2).fill(''), ' M dirtied\n'] });
   assert.equal(await runRelease(dirtiedLast.args(), dirtiedLast.deps), EXIT.refusal);
   assert.match(dirtiedLast.errors.join('\n'), /dirtied/u);
   assert.equal(JSON.parse(dirtiedLast.files.get(RECEIPT_FILE)).stages.at(-1).status, 'pass');
@@ -94,7 +94,7 @@ test('tree and commit proof failures refuse before a receipt is advanced', async
 });
 
 // spec:release-run/S12
-test('a plan renders the approved eight-stage run without writing', async () => {
+test('a plan renders every stage of the approved run without writing', async () => {
   assert.equal(typeof renderPlan, 'function');
   const world = makeWorld();
   const parsed = parseArgs(world.args({ plan: true, approved: null }));
@@ -176,7 +176,7 @@ test('a failed stage prints the one safe resume command', async () => {
   assert.equal(commit.files.has(RECEIPT_FILE), false);
   const staleCommit = makeWorld({ exits: { commit: 1 }, receipt: makeResumeReceipt('live'), statusReads: [PORCELAIN], headReads: [OLD_HEAD] });
   assert.equal(await runRelease(staleCommit.args(), staleCommit.deps), EXIT.failed);
-  assert.match(staleCommit.logs.at(-1), /^release-run: 0\/8 stages passed/u);
+  assert.match(staleCommit.logs.at(-1), /^release-run: 0\/7 stages passed/u);
 });
 
 // spec:release-run/S14
@@ -220,7 +220,7 @@ test('the run preserves secret paths and finishes with accounting', async () => 
   assert.equal(hostile.calls.gitEnvs.every((env, index) =>
     (hostile.calls.git[index][0] === '--no-pager' && hostile.calls.git[index][1] === 'config') || clean(env)), true);
   assert.equal(world.calls.reads.includes(TOKEN_FILE), false);
-  assert.match(world.logs.at(-1), /^release-run: 8\/8 stages passed · \d+s · 1 invocation[(]s[)]$/u);
+  assert.match(world.logs.at(-1), /^release-run: 7\/7 stages passed · \d+s · 1 invocation[(]s[)]$/u);
 
   const receipt = makeResumeReceipt('smoke-init');
   const spawned = makeWorld({ receipt, headReads: [NEW_HEAD, NEW_HEAD], statusReads: ['', ''] });

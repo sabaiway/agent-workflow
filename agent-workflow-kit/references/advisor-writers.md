@@ -13,7 +13,7 @@
 | sandbox-provision.installable | user | user step |
 | review-recipe | user | user step |
 | gates-declaration | chat | gates-init.mjs |
-| gates-inert | chat | gates-init.mjs |
+| gates-inert | chat | gates-init.mjs, upgrade |
 | gates-inert.unfillable | user | user step |
 | gates-inert.no-verification | chat | gates-init.mjs |
 | gates-inert.producer-unrecognized | user | user step |

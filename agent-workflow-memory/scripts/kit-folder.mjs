@@ -14,6 +14,8 @@ const SKILL_ROOT = dirname(dirname(SCRIPT_FILE));
 const KIT = posix.dirname(KIT_COMMAND_PATH);
 const INSTALLER = KIT_COMMANDS['install-git-hooks'];
 const ROTATOR = KIT_COMMANDS['archive-decisions'];
+// The command runs the reporter, which imports nothing: its module sorts just before run.mjs, so it is written just before it.
+const writeKey = (file) => (file.module === 'test-reporter' ? 'run.mj' : file.path);
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 // The installer's isManaged, copied (git-hooks has no index to import): a line ending with its marker tail, one carriage return dropped.
@@ -74,7 +76,7 @@ const orderFiles = (files) => {
   const remaining = new Map(files.map((file) => [file.path, file])), ordered = [];
   if (remaining.has(INSTALLER)) { ordered.push(remaining.get(INSTALLER)); remaining.delete(INSTALLER); }
   while (remaining.size) {
-    const next = [...remaining.keys()].sort().find((path) => remaining.get(path).imports.every((dependency) => !remaining.has(dependency)));
+    const next = [...remaining.keys()].sort((a, b) => (writeKey(remaining.get(a)) < writeKey(remaining.get(b)) ? -1 : 1)).find((path) => remaining.get(path).imports.every((dependency) => !remaining.has(dependency)));
     if (!next) throw new Error(`bundled scripts contain an import cycle: ${[...remaining.keys()].join(', ')}`);
     ordered.push(remaining.get(next)); remaining.delete(next);
   }
@@ -92,7 +94,7 @@ const survey = (cwd, skillRoot, enforcement, deps) => {
     const current = stat && Buffer.from(readBody(join(cwd, rel), deps)).equals(Buffer.from(body));
     return { ...entry, rel, body, present: Boolean(stat), current, imports: readImports(entry.path, body, paths) };
   });
-  const isSpec = (file) => ['spec-schema', 'docs-size'].includes(file.module) || file.path === 'run.mjs';
+  const isSpec = (file) => ['spec-schema', 'docs-size', 'test-reporter'].includes(file.module) || file.path === 'run.mjs';
   const family = files.filter((file) => !isSpec(file));
   const flatInstaller = readStat(join(cwd, 'scripts', posix.basename(INSTALLER)), deps);
   const accepted = enforcement || family.some((file) => file.present && !file.seed) || flatInstaller?.isFile() === true;

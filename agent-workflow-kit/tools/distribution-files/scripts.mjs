@@ -1,7 +1,7 @@
 // scripts.mjs — the upgrade's `scripts` op: every kit script of a deployment, the hook installer
 // included, kept current by the one rule in the kit folder scripts/agent-workflow/. The family is the
-// manifest's deployed entries (node-evidence.mjs) less the spec layer's modules and the command run.mjs,
-// which the specs op places. Each family file is
+// manifest's deployed entries (node-evidence.mjs) less the spec layer's modules, the test reporter's and the
+// command run.mjs, which the specs op places. Each family file is
 // surveyed by proof before any write: absent, current, prior (a body the catalog lists for its manifest
 // path) or edited. On every plain run a prior is refreshed, an edited one replaced in place and an
 // absent one placed create-only, with no question and no copy kept; a current one is left. A project
@@ -32,8 +32,9 @@ export const VEHICLE_CHANNEL = VEHICLES_REL;
 export const AGENT_CHANNEL = '.claude/agents/<name>.local.md with a name: of its own';
 export const HOOK_CHANNEL = '.claude/hooks/<name>.local.mjs';
 const ROTATOR = 'archives/archive-decisions.mjs';
-// The family: every deployed entry outside the specs op's files (its two modules and the command), in manifest order.
-const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module && e.module !== 'spec-schema' && e.module !== 'docs-size');
+// The family: every deployed entry outside the specs op's files (its three modules and the command), in manifest order.
+const SPECS_MODULES = ['spec-schema', 'docs-size', 'test-reporter'];
+const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module && !SPECS_MODULES.includes(e.module));
 // The manifest paths a run of a component that is not accepted judges: the rotator and what it loads.
 export const SEED_NAMES = Object.freeze(FAMILY.filter((e) => e.seed).map((e) => e.path));
 const FOLDERS = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...FAMILY.map((e) => posix.dirname(e.deployed))])];

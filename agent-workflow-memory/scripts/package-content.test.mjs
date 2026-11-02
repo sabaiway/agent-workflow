@@ -220,6 +220,6 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      tooling; their suites do not ship) — story S5 of KIT-SCRIPTS.
     // 56 = 55 + bin/payload-prune.mjs (the prune canon the installer converges its home with; the kit
     //      ships its generated copy) — story S8 of KIT-SCRIPTS.
-    assert.equal(packed.length, 56, `tarball file count drifted (${packed.length} ≠ 56)`);
+    assert.equal(packed.length, 57, `tarball file count drifted (${packed.length} ≠ 57)`);
   });
 });

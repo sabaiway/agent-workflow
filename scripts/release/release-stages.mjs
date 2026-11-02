@@ -5,7 +5,6 @@ export const INCONCLUSIVE_EXIT = 9;
 const DISPATCH_SCRIPT = 'scripts/release/dispatch-publish.mjs';
 const PREFLIGHT_SCRIPT = 'scripts/release/preflight-remote.mjs';
 const SMOKE_CANDIDATE_SCRIPT = 'scripts/release/smoke-candidate.mjs';
-const CROSS_VERSION_SCRIPT = 'scripts/release/cross-version-gate.mjs';
 const SMOKE_INIT_SCRIPT = 'scripts/release/smoke-init.mjs';
 const SMOKE_FLAGS = Object.freeze({ line: '--expect-line', file: '--expect-file' });
 
@@ -14,7 +13,6 @@ export const STAGES = Object.freeze([
   'preflight-remote',
   'push',
   'smoke-candidate',
-  'cross-version-gate',
   'live',
   'verify',
   'smoke-init',
@@ -69,10 +67,9 @@ export const stageCommand = (name, record, baseEnv = {}) => {
     return { command: GIT_COMMAND, argv: ['push', 'origin', `${record.head ?? 'HEAD'}:refs/heads/${record.ref}`], env: { ...baseEnv, ...NON_INTERACTIVE_ENV } };
   }
   if (name === STAGES[3]) return buildNodeCommand([SMOKE_CANDIDATE_SCRIPT]);
-  if (name === STAGES[4]) return buildNodeCommand([CROSS_VERSION_SCRIPT]);
-  if (name === STAGES[5]) return buildNodeCommand(buildDispatchArgs(record, '--live'));
-  if (name === STAGES[6]) return buildNodeCommand(buildDispatchArgs(record, '--verify-only'));
-  if (name === STAGES[7]) return buildNodeCommand(buildSmokeArgs(record));
+  if (name === STAGES[4]) return buildNodeCommand(buildDispatchArgs(record, '--live'));
+  if (name === STAGES[5]) return buildNodeCommand(buildDispatchArgs(record, '--verify-only'));
+  if (name === STAGES[6]) return buildNodeCommand(buildSmokeArgs(record));
   throw new Error(`unknown release stage: ${name}`);
 };
 

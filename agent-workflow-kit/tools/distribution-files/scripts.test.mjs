@@ -35,7 +35,7 @@ const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 let layout;
 const kitLayout = () => (layout ??= (async () => {
   const [{ readFamily }, { KIT_SCRIPTS_DIR, INSTALLER_REL }] = await Promise.all([import('../../references/scripts/family.mjs'), import('../node-evidence.mjs')]);
-  const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed'), spec = (e) => ['spec-schema', 'docs-size'].includes(e.module);
+  const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed'), spec = (e) => ['spec-schema', 'docs-size', 'test-reporter'].includes(e.module);
   const kit = posix.relative('scripts', KIT_SCRIPTS_DIR), installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
   const at = (path) => { assert.ok(deployed.some((e) => e.path === path), `${path} is a deployed entry of the manifest`); SRC.set(`${kit}/${path}`, path); return `${kit}/${path}`; };
   const importsOf = (path) => [...readFileSync(join(BUNDLE, path), 'utf8').matchAll(IMPORT)].map((m) => posix.join(posix.dirname(path), m[1]));

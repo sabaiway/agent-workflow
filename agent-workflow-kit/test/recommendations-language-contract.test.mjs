@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BENEFITS, OPT_IN_CAPABILITIES, RISK_NOTED_KEYS } from '../tools/recommendations.mjs';
@@ -410,7 +410,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [39783, '9268ba6a51693bb7462abe13821e24ae4c548ea3acd3f49b4f57de42eca61f9b'], 'the bytes after KIT-SCRIPTS story S10 (the old installer\'s marker exception)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [40722, 'dc8ae0292e8ef84de63832b6ada2f7fee48653ee84e66caf4a310a511fe61a71'], 'the bytes after TEST-GATES-PRINT-ONLY-THEIR-FAILURES story S2 (the gates migration moves every earlier form with no question)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);
@@ -1263,5 +1263,37 @@ describe('spec:init-project/S57 shipped text of revision 11', () => {
     const routerModeBudget = 52224;
     const bytes = Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md'));
     assert.ok(bytes <= routerModeBudget, `router plus recommendations.md: ${bytes} > ${routerModeBudget} bytes`);
+  });
+});
+
+describe('spec:coverage-producer/S14 the upgrade moves an earlier kit\'s gates with no question; the checker add alone asks', () => {
+  const ADD_CHECKER = '--apply --add-checker';
+  // A line that names a declined, unapplied or consented-only gates migration.
+  const ASKED_MIGRATION = [/unapplied/i, /consent not given/i, /a no on the gates apply/i, /declined (?:the )?gates migration/i, /re-run (?:it )?with `--apply`/,
+    /apply only on an explicit yes/i, /preview the consented migration/i, /migrat\w*[^.]*\bonly on (?:the user's |an |your )?explicit yes/i];
+
+  it('the gates-migration registry command ends --apply and its consent names the coverage-check add alone, carrying --apply --add-checker; upgrade.md\'s row 4 carries both', async () => {
+    const { UPGRADE_RUNLIST } = await import('../tools/upgrade-runlist.mjs');
+    const row = UPGRADE_RUNLIST.find(({ id }) => id === 'gates-migration');
+    assert.ok(row.command.endsWith(' --apply'), `the step runs the migration with --apply, no question: ${row.command}`);
+    assert.ok(typeof row.consent === 'string' && row.consent.includes('coverage-check') && row.consent.includes(ADD_CHECKER), `the consent is the checker add's: ${row.consent}`);
+    assert.doesNotMatch(row.consent, /\b(?:switch|extend|remove|legacy|move|preview)\w*/i, 'and names no mechanical row');
+    const row4 = between(UPGRADE_DOC, '4. `gates-migration`', '\n');
+    for (const part of [row.command, ADD_CHECKER]) assert.ok(row4.includes(part), `row 4 carries ${part}: ${row4}`);
+  });
+
+  it('no line of upgrade.md, contracts.md or migrations/3.0.0-hardened-core-loop.md names a declined, unapplied or consented-only gates migration', () => {
+    for (const rel of ['references/modes/upgrade.md', 'references/contracts.md', 'migrations/3.0.0-hardened-core-loop.md']) {
+      for (const line of read(rel).split('\n')) {
+        for (const pattern of ASKED_MIGRATION) assert.doesNotMatch(line, pattern, `${rel}: ${line.slice(0, 200)}`);
+      }
+    }
+  });
+
+  it('upgrade.md says a gate row 4 keeps runs as declared, and every kit path the 3.0.0 note names is shipped', () => {
+    assert.ok(UPGRADE_DOC.includes('a gate row 4 keeps is named with its own line and runs as declared until that line is acted on'), 'the residual holds in every state');
+    assert.ok(!UPGRADE_DOC.includes('stays failing until that line'), 'a kept gate in an earlier form may pass');
+    const named = [...read('migrations/3.0.0-hardened-core-loop.md').matchAll(/<installed-kit>\/(\S+?\.mjs)/g)].map(([, rel]) => rel);
+    assert.ok(named.length > 0 && named.every((rel) => existsSync(resolve(kitRoot, rel))), `every command resolves to a shipped file: ${named}`);
   });
 });

@@ -20,6 +20,7 @@ import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, matchesSourceSizeGate, measu
 import { buildOffer, sourceSizeCandidate, applyFill } from './gates-init.mjs';
 import { loadDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -54,6 +55,7 @@ const project = ({ config = AUTHORED, scripts = { test: 'node --test' }, gates }
   git(cwd, ['init', '-q', '-b', 'main']);
   writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts }, null, 2));
+  placeKitCommand(cwd);
   writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
   writeFileSync(join(cwd, 'docs', 'ai', 'orchestration.json'), JSON.stringify(COUNCIL, null, 2));
   if (config !== null) writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(config, null, 2));

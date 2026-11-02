@@ -25,17 +25,22 @@ import {
 import { loadDeclaration, validateDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';
 import { coverageProducerPrecedes } from './gates-declaration.mjs';
 import { EXPECTED_WORKFLOW_VERSION, KIT_WRITER_PREVIEW_TOOLS, UNIVERSAL_READONLY_ALLOWLIST } from './velocity-profile.mjs';
-import { COVERAGE_PRODUCER_BODY, matchesCoverageProducer } from './coverage-producer.mjs';
-import { buildForeignFixture, FOREIGN_TEST_SCRIPT } from '../../scripts/testing/foreign-fixture.mjs';
+import { matchesCoverageProducer } from './coverage-producer.mjs';
+import { buildForeignFixture, FOREIGN_TEST_SCRIPT, placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GATES_REL = join('docs', 'ai', 'gates.json');
 
-// A `node --test` suite body is the ONE allowlist member the offer wires the lcov reporters onto
-// (Phase 1.2) — every other body is emitted verbatim and produces no coverage.
-const PRODUCER_BODY = COVERAGE_PRODUCER_BODY;
+// A `node --test` suite body is the ONE allowlist member the offer rewrites: into the stable kit command's unit-tests
+// name (spec coverage-producer) — every other body is emitted verbatim and produces no coverage.
+const PRODUCER_BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
 // The canonical checker cmd, resolved against THIS kit — matchesCanonicalCheck realpath-anchors it.
 const CANONICAL_CHECKER_CMD = `node "${join(HERE, 'coverage-check.mjs')}" --check`;
+// Every checker line: one positional fact and one remedy (spec coverage-producer) — the fact's ending, the defect's fact, the remedy.
+const PRODUCER_FACT = /is a producer this kit reads/;
+const POSITIONAL_FACT = 'no gate before it is a producer this kit reads';
+const CHECKER_REMEDY = 'declare or move one before it: node scripts/agent-workflow/run.mjs unit-tests <your test paths>, or mark your own suite gate "lcovProducer": true';
+const checkerWithheldNote = (offer) => offer.notes.find((n) => /coverage-check/.test(n) && PRODUCER_FACT.test(n) && n.includes(CHECKER_REMEDY));
 
 // The Decision-1 exec forms (test-pinned literals — the derivation must emit these EXACTLY). The
 // `COREPACK_ENABLE_NETWORK=0` prefix disables Corepack PM-provisioning fetch (council R3 fold).
@@ -67,9 +72,10 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
-// A full project fixture: docs/ai + stamp + package.json (+ optional lockfile / config / gates).
-const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = EXPECTED_WORKFLOW_VERSION } = {}) => {
+// A full project fixture: docs/ai + stamp + package.json + the kit's run.mjs and reporter (+ optional lockfile / config / gates).
+const mkProject = ({ scripts = {}, lockfile, packageManager, config, gates, stamp = EXPECTED_WORKFLOW_VERSION, kit = true } = {}) => {
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
+  if (kit) placeKitCommand(cwd);
   if (stamp) writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${stamp}\n`);
   writeFileSync(
     join(cwd, 'package.json'),
@@ -692,7 +698,7 @@ describe('gates-init — preview is the default and writes NOTHING', () => {
     assert.equal(code, 0);
     assert.equal(gatesRaw(), before, 'dry-run must be byte-identical');
     const text = io.out.join('\n');
-    assert.ok(text.includes(NPM_EXEC('node --test')), 'the preview names the derived exec cmd');
+    assert.ok(text.includes(NPM_EXEC(PRODUCER_BODY)), 'the preview names the derived exec cmd');
     assert.ok(text.includes(TRUST_CHAIN_DISCLOSURE), 'the preview carries the trust-chain disclosure');
     assert.match(text, /auto-approves byte-exact declared gate commands/, 'the hook implication is stated');
     assert.match(text, /two separate yeses/, 'the two-consent boundary is stated');
@@ -717,6 +723,7 @@ describe('gates-init — preview is the default and writes NOTHING', () => {
       mkdirSync(join(evil, 'docs', 'ai'), { recursive: true });
       writeFileSync(join(evil, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
       writeFileSync(join(evil, 'package.json'), JSON.stringify({ scripts: { test: 'node --test' } }));
+      placeKitCommand(evil);
       const io = quiet();
       assert.equal(main(['--cwd', evil, '--dry-run'], io), 0);
       const text = io.out.join('\n');
@@ -976,16 +983,11 @@ describe('gates-init — the offered suite entry PRODUCES the lcov the checker r
     assert.equal(matchesCoverageProducer(cmdOf('lint')), false);
   });
 
-  it('the offered producer cmd survives the unmet-producer preflight on a PLAIN run and on --final', () => {
+  it('the offered producer cmd names no producer variable: the command itself refuses an unset AW_GIT_DIR (spec kit-command)', () => {
     mkProject({ scripts: { test: 'node --test' } });
     const gates = deriveScriptEntries(cwd);
-    assert.deepEqual(findUnmetProducerRefs(gates, ['AW_GIT_DIR']), [], 'a plain in-git-tree run injects everything the cmd references');
-    assert.deepEqual(findUnmetProducerRefs(gates, ['AW_GIT_DIR', 'AW_LCOV_FILE']), [], '--final injects it too');
-    assert.deepEqual(
-      findUnmetProducerRefs(gates, []).map((u) => u.name),
-      ['AW_GIT_DIR'],
-      'the preflight is live: outside a git tree the same cmd is refused up front, naming the variable',
-    );
+    assert.equal(gates[0].cmd, NPM_EXEC(PRODUCER_BODY));
+    for (const injected of [[], ['AW_GIT_DIR'], ['AW_GIT_DIR', 'AW_LCOV_FILE']]) assert.deepEqual(findUnmetProducerRefs(gates, injected), [], injected.join(','));
   });
 
   it('the offered entry title names the added reporters — the offer never understates what it declares', () => {
@@ -1320,7 +1322,7 @@ describe('gates-init — the fill over a project whose primary suite is not a `n
       const offer = buildOffer(fx.root);
       assert.ok(!offer.entries.some((e) => e.id === 'coverage-check'), 'no checker is offered over a project with no producer');
       assert.ok(offer.notes.some((n) => /screened out/.test(n)), `the vitest body is named as screened: ${offer.notes.join(' | ')}`);
-      assert.ok(offer.notes.some((n) => /withheld/.test(n) && /PRODUCE/.test(n)), 'and the withhold states WHY');
+      assert.ok(checkerWithheldNote(offer), `and the withhold states the fact and the remedy: ${offer.notes.join(' | ')}`);
       assert.doesNotMatch(offer.notes.join('\n'), new RegExp(FOREIGN_TEST_SCRIPT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), 'no screened body is echoed back');
     } finally {
       fx.teardown();
@@ -1338,7 +1340,7 @@ describe('gates-init — the fill over a project whose primary suite is not a `n
       assert.ok(suite, `the allowlisted suite body is offered: ${offer.entries.map((e) => e.id).join(', ')}`);
       assert.equal(matchesCoverageProducer(suite.cmd), false, 'the offered suite claims nothing about the lcov');
       assert.ok(!offer.entries.some((e) => e.id === 'coverage-check'), 'so the checker is still not offered');
-      assert.ok(offer.notes.some((n) => /withheld/.test(n) && /PRODUCE/.test(n)));
+      assert.ok(checkerWithheldNote(offer), offer.notes.join(' | '));
     } finally {
       fx.teardown();
     }
@@ -1362,6 +1364,117 @@ describe('gates-init — the fill over a project whose primary suite is not a `n
       assert.equal(coverageProducerPrecedes(written, written.length - 1), true, 'and the claimed producer precedes the checker');
     } finally {
       fx.teardown();
+    }
+  });
+});
+
+const RUN_REL = 'scripts/agent-workflow/run.mjs';
+const REPORTER_REL = 'scripts/agent-workflow/test-reporter/reporter.mjs';
+const UPGRADE = '/agent-workflow-kit upgrade';
+const guardNotes = (offer) => offer.notes.filter((note) => note.includes(UPGRADE));
+// The guard's remedies, by the kind of the first failing path (spec coverage-producer, the guard).
+const ABSENT_REMEDY = `is absent — the kit's upgrade places the kit folder only where Node evidence stands (a root package.json, or a kit script): add one if this project runs Node, then run ${UPGRADE}.`;
+const WRONG_KIND_REMEDY = `is not what the kit writes there — a directory, a link, or a file where a folder belongs — beside which the specs op writes nothing: clear it by hand first, then run ${UPGRADE}`;
+const EARLIER_REMEDY = 'differs from this kit\'s';
+const VENDORED_MARKED = { id: 'vendored-cov', title: 'V', cmd: 'node tools/coverage-check.mjs --check', lcovProducer: true };
+const placeVendored = () => { mkdirSync(join(cwd, 'tools'), { recursive: true }); writeFileSync(join(cwd, 'tools', 'coverage-check.mjs'), readFileSync(join(HERE, 'coverage-check.mjs'))); };
+
+describe('spec:coverage-producer/S3 the offer writes the command body only while the guard holds', () => {
+  it('with the bundled run.mjs and a regular reporter it emits node --test as execCmdFor(pm, the body) for npm, pnpm and yarn, the checker over it', () => {
+    for (const [lockfile, exec] of [[undefined, NPM_EXEC], ['pnpm-lock.yaml', PNPM_EXEC], ['yarn.lock', YARN_EXEC]]) {
+      rmSync(join(cwd, 'pnpm-lock.yaml'), { force: true });
+      mkProject({ scripts: { test: 'node --test' }, lockfile, config: COUNCIL });
+      const offer = buildOffer(cwd);
+      assert.deepEqual(offer.entries.map((e) => [e.id, e.cmd]).slice(0, 1), [['test', exec(PRODUCER_BODY)]], String(lockfile));
+      assert.deepEqual(offer.entries.map((e) => e.id), ['test', 'review-state', 'coverage-check']);
+      assert.deepEqual([offer.guardWithheld, guardNotes(offer)], [[], []], 'nothing withheld on the guard');
+    }
+  });
+
+  // Each failing state of the guard, in its order: run.mjs a regular file byte-equal to the kit's bundled one, then the reporter a regular file.
+  const STATES = [
+    ['run.mjs absent', RUN_REL, ABSENT_REMEDY, () => rmSync(join(cwd, RUN_REL))],
+    ['run.mjs a directory', RUN_REL, WRONG_KIND_REMEDY, () => { rmSync(join(cwd, RUN_REL)); mkdirSync(join(cwd, RUN_REL)); }],
+    ['run.mjs a symlink to an identical file', RUN_REL, WRONG_KIND_REMEDY, () => {
+      mkdirSync(join(cwd, 'elsewhere'));
+      writeFileSync(join(cwd, 'elsewhere', 'run.mjs'), readFileSync(join(cwd, RUN_REL)));
+      rmSync(join(cwd, RUN_REL));
+      symlinkSync(join(cwd, 'elsewhere', 'run.mjs'), join(cwd, RUN_REL));
+    }],
+    ['run.mjs an earlier kit\'s bytes', RUN_REL, EARLIER_REMEDY, () => writeFileSync(join(cwd, RUN_REL), `${readFileSync(join(cwd, RUN_REL), 'utf8')}// an earlier kit\n`)],
+    ['run.mjs absent and the reporter absent', RUN_REL, ABSENT_REMEDY, () => { rmSync(join(cwd, RUN_REL)); rmSync(join(cwd, REPORTER_REL)); }],
+    ['the reporter absent', REPORTER_REL, ABSENT_REMEDY, () => rmSync(join(cwd, REPORTER_REL))],
+    ['scripts/agent-workflow a regular file', 'scripts/agent-workflow', WRONG_KIND_REMEDY, () => { rmSync(join(cwd, 'scripts', 'agent-workflow'), { recursive: true }); writeFileSync(join(cwd, 'scripts', 'agent-workflow'), 'x\n'); }],
+  ];
+
+  for (const [state, path, remedy, breakGuard] of STATES) {
+    it(`${state}: no node --test script, one note naming its id, ${path} and its remedy, the checker withheld with its fact and remedy`, () => {
+      mkProject({ scripts: { 'test:unit': 'node --test', lint: 'eslint .' }, config: COUNCIL });
+      breakGuard();
+      const offer = buildOffer(cwd);
+      assert.deepEqual(offer.entries.map((e) => e.id), ['lint', 'review-state'], 'no node --test script, no dead checker');
+      assert.deepEqual(offer.guardWithheld, [{ id: 'test-unit', path }], 'the withhold is a returned field, never note text alone');
+      const notes = guardNotes(offer);
+      assert.equal(notes.length, 1, offer.notes.join(' | '));
+      for (const word of ['test-unit', `${path} `, remedy]) assert.ok(notes[0].includes(word), `the note names ${word}: ${notes[0]}`);
+      assert.equal(/clear it by hand/.test(notes[0]), remedy === WRONG_KIND_REMEDY, `only a wrong-kind path is named as cleared by hand first: ${notes[0]}`);
+      assert.ok(checkerWithheldNote(offer), `the checker's note carries the fact and the remedy: ${offer.notes.join(' | ')}`);
+    });
+  }
+
+  it('with only a marked canonical or vendored coverage checker declared and no offered producer, the coverage-check candidate is withheld', () => {
+    for (const checker of [{ id: 'cov', title: 'C', cmd: CANONICAL_CHECKER_CMD, lcovProducer: true }, VENDORED_MARKED]) {
+      mkProject({ scripts: { lint: 'eslint .' }, config: COUNCIL, gates: { gates: [checker] } });
+      placeVendored();
+      const offer = buildOffer(cwd);
+      assert.ok(!offer.entries.some((e) => e.id === 'coverage-check'), `${checker.id} claims the checker, so it is no producer: ${offer.entries.map((e) => e.id).join(', ')}`);
+      assert.ok(checkerWithheldNote(offer), `${checker.id}: the note carries the fact and the remedy: ${offer.notes.join(' | ')}`);
+    }
+  });
+
+  it('the preview prints the note; a declared producer still unlocks the checker; a vitest script is screened as before', () => {
+    mkProject({ scripts: { test: 'node --test', 'test:vitest': 'vitest run' }, config: COUNCIL, gates: { gates: [{ id: 'suite', title: 'S', cmd: `${PRODUCER_BODY} t/*.test.mjs` }] }, kit: false });
+    const offer = buildOffer(cwd);
+    assert.deepEqual(offer.entries.map((e) => e.id), ['test-vitest', 'review-state', 'coverage-check']);
+    assert.equal(offer.entries[0].cmd, NPM_EXEC('vitest run'));
+    assert.deepEqual(offer.guardWithheld, [{ id: 'test', path: RUN_REL }]);
+    const io = quiet();
+    assert.equal(main(['--cwd', cwd], io), 0);
+    assert.ok(io.out.join('\n').includes(UPGRADE), 'the preview carries the note');
+  });
+});
+
+describe('spec:coverage-producer/S7 the no-producer defect: one fact, and the upgrade for a movable earlier form', () => {
+  const checker = { id: 'coverage-check', title: 'C', cmd: CANONICAL_CHECKER_CMD };
+  const UPGRADE_WORDS = 'it moves an earlier kit\'s gate with no question, or a line of its report names what stops it';
+  const VERIFIES_NOTHING = /verif(?:y|ies|ying) nothing|certif(?:y|ies|ying) nothing/;
+  const noProducer = (gate) => {
+    const defects = coverageDeclarationDefects([gate, checker], cwd);
+    assert.deepEqual(defects.map((d) => d.kind), ['no-producer'], gate.cmd);
+    assert.ok(defects[0].message.includes(POSITIONAL_FACT) && !VERIFIES_NOTHING.test(defects[0].message), `the fact, never verifies nothing: ${defects[0].message}`);
+    return defects[0].message;
+  };
+  // The projects the route is read in: Node evidence, none, and run.mjs a directory — the kit predicts nothing about the run.
+  const PROJECTS = [() => mkProject({}), () => mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true }), () => { mkProject({}); rmSync(join(cwd, RUN_REL)); mkdirSync(join(cwd, RUN_REL)); }];
+
+  it('a retired-form gate with a path-shaped tail then the checker names the gates-migration step of the upgrade, in every project state', async () => {
+    const { RETIRED_COVERAGE_FLAG_SETS: [v2, v1] } = await import('./coverage-producer.mjs');
+    for (const [state, setUp] of PROJECTS.entries()) {
+      rmSync(cwd, { recursive: true, force: true }); mkdirSync(cwd); setUp();
+      for (const gate of [{ id: 'unit-tests', title: 'U', cmd: `node --test ${v2} tests/*.test.mjs` }, { id: 'project-check-42', title: 'P', cmd: NPM_EXEC(`node --test ${v1}`) }]) {
+        const message = noProducer(gate);
+        for (const word of ['gates-migration', UPGRADE, UPGRADE_WORDS]) assert.ok(message.includes(word), `state ${state}: the message names ${word}: ${message}`);
+      }
+    }
+  });
+
+  it('a flagged tail, a plain node --test gate and a vendored checker marked lcovProducer, each then the checker, carry the remedy and name no upgrade', async () => {
+    const { RETIRED_COVERAGE_FLAG_SETS: [v2] } = await import('./coverage-producer.mjs');
+    mkProject({});
+    placeVendored();
+    for (const gate of [{ id: 'unit-tests', title: 'U', cmd: `node --test ${v2} --test-concurrency=1 tests/*.test.mjs` }, { id: 'unit-tests', title: 'U', cmd: 'node --test tests/*.test.mjs' }, VENDORED_MARKED]) {
+      const message = noProducer(gate);
+      assert.ok(message.includes(CHECKER_REMEDY) && !message.includes('gates-migration') && !message.includes(UPGRADE), `the remedy, no upgrade: ${message}`);
     }
   });
 });

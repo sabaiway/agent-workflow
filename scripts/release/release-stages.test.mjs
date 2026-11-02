@@ -22,7 +22,7 @@ describe('release stages', () => {
     assert.equal(typeof stageCommand, 'function');
     assert.deepEqual(STAGES, [
       'commit', 'preflight-remote', 'push', 'smoke-candidate',
-      'cross-version-gate', 'live', 'verify', 'smoke-init',
+      'live', 'verify', 'smoke-init',
     ]);
     assert.ok(Object.isFrozen(STAGES));
     assert.deepEqual(RELEASE_IDENTITY, { name: 'coder-tool', email: 'coder-tools@proton.me' });
@@ -40,7 +40,6 @@ describe('release stages', () => {
     assert.deepEqual(commands.push.argv, ['push', 'origin', `HEAD:refs/heads/${RECORD.ref}`]);
     assert.deepEqual(stageCommand('push', { ...RECORD, head: 'f'.repeat(40) }, baseEnv).argv, ['push', 'origin', `${'f'.repeat(40)}:refs/heads/${RECORD.ref}`]);
     assert.deepEqual(commands['smoke-candidate'].argv, ['scripts/release/smoke-candidate.mjs']);
-    assert.deepEqual(commands['cross-version-gate'].argv, ['scripts/release/cross-version-gate.mjs']);
     const dispatch = [
       'scripts/release/dispatch-publish.mjs', 'all', '--ref', RECORD.ref,
       '--expect', 'memory=7.1.3', '--expect', 'engine=4.4.1', '--expect', 'kit=10.5.1',

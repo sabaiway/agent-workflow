@@ -29,7 +29,7 @@ import {
   SEVERITY_ATTENTION,
 } from '../tools/recommendations.mjs';
 import { COVERAGE_PRODUCER_BODY } from '../tools/coverage-producer.mjs';
-import { buildForeignFixture, hermeticAdvisorDeps } from '../../scripts/testing/foreign-fixture.mjs';
+import { buildForeignFixture, hermeticAdvisorDeps, kitCommandFiles } from '../../scripts/testing/foreign-fixture.mjs';
 
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TOOLS = join(KIT, 'tools');
@@ -180,7 +180,7 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
     const { root } = fixture({
       tsFiles: 3,
       testScript: 'node --test',
-      gates: [gate('lint', 'true'), gate('coverage-check', CHECKER)],
+      gates: [gate('lint', 'true'), gate('coverage-check', CHECKER)], extraFiles: kitCommandFiles(),
     });
     const { item } = report(root);
     assert.ok(item, 'the dead pair is still a dead pair');
@@ -195,7 +195,7 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
     const { root } = fixture({
       tsFiles: 3,
       testScript: 'node --test',
-      gates: [gate('test', 'true'), gate('coverage-check', CHECKER)],
+      gates: [gate('test', 'true'), gate('coverage-check', CHECKER)], extraFiles: kitCommandFiles(),
     });
     const { item } = report(root);
     assert.ok(item, 'the dead pair is still a dead pair');
@@ -249,7 +249,7 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
       const { item } = report(root);
       assert.ok(item, label);
       assert.equal(item.variant, 'gates-inert.unfillable', `${label}: the user ordering arm, not a third outcome`);
-      assert.match(item.what, /has no producer before it/, label);
+      assert.match(item.what, /no gate before it is a producer this kit reads/, label);
       assert.match(item.apply, /declare or move a suite gate/, `${label}: the MOVE remedy survives`);
       assert.ok(item.detail.startsWith('coverage-check is not the LAST declared gate'), `${label}: the ordering reason names the checker`);
     }
@@ -274,12 +274,12 @@ describe('advisor third outcomes — gates-inert on a tree the coverage domain c
       const liveReport = report(live.root);
       assert.equal(liveReport.item, undefined, `${label}: a live pair over a reachable domain is converged`);
       assert.equal(liveReport.skip, undefined, `${label}: and answered, never skipped`);
-      // The dead pair on the SAME tree must keep the pre-existing cause-A wording and its fill lane.
+      // The dead pair on the SAME tree keeps the cause-A arm and its fill lane; its WHAT is the one positional fact.
       const dead = fixture({ ...counts, gates: [gate('lint', 'true'), gate('coverage-check', CHECKER)] });
       const deadItem = report(dead.root).item;
       assert.ok(deadItem, `${label}: a dead pair is still a dead pair`);
       assert.equal(deadItem.variant, 'gates-inert.unfillable', `${label}: the user arm, not a third outcome`);
-      assert.match(deadItem.what, /certifies nothing this run, or reads a stale lcov/, label);
+      assert.equal(deadItem.what, 'the declared coverage checker (coverage-check): no gate before it is a producer this kit reads', label);
     }
   });
 

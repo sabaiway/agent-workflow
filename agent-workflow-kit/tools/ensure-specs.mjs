@@ -1,16 +1,17 @@
 // ensure-specs.mjs — the SIXTH upgrade ensure: the spec layer (memory 4.6.0, AD-112) kept current on an
 // EXISTING deployment. Its scripts are the reader pair (the deployed entries of the spec-schema module)
-// and the checker pair (the docs-size module's), plus the command, each at its deployed path in the kit folder
-// scripts/agent-workflow/, with the bundled files they import; every other kit script is the scripts
-// ensure's. They and one store root follow the scripts op's rule (distribution-files/): every file is
+// and the checker pair (the docs-size module's), plus the test reporter and the command, each at its deployed
+// path in the kit folder scripts/agent-workflow/, with the bundled files they import; every other kit script is
+// the scripts ensure's. They and one store root follow the scripts op's rule (distribution-files/): every file is
 // surveyed by proof first, then on every plain run a prior body is refreshed and an edited one replaced
 // in place, an absent one placed create-only and an absent store root seeded create-only, with no
 // question and no copy kept; a current file is left. The writes run in a FIXED order:
 //   1. the files the pairs import   scripts/agent-workflow/shared/... (dependencies first)
 //   2. the reader pair              scripts/agent-workflow/spec-schema/...
 //   3. the checker pair             scripts/agent-workflow/docs-size/check-docs-size.mjs
-//   4. the command                  scripts/agent-workflow/run.mjs
-//   5. the store root               docs/ai/specs/index.md (placeholders rendered)
+//   4. the test reporter            scripts/agent-workflow/test-reporter/reporter.mjs
+//   5. the command                  scripts/agent-workflow/run.mjs, which runs the reporter
+//   6. the store root               docs/ai/specs/index.md (placeholders rendered)
 // Why the order: every file is written after the files it imports, so each pair file it leaves loads;
 // the kit's bundled navigator generator collapses `specs/` into one row, while the project's pre-commit
 // hook runs ITS deployed checker — an older one renders the store row by row and reds `--check-index`.
@@ -31,6 +32,7 @@ import { fileLine, hookLine } from './distribution-files/index.mjs';
 const OP = 'specs';
 const READER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'spec-schema');
 const CHECKER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'docs-size');
+const REPORTER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'test-reporter');
 const COMMAND = DEPLOYED_SCRIPTS.find((e) => !e.module);
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
@@ -43,10 +45,10 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 
 // ── the survey: the pairs, the files they import and the store root classified, nothing written ───
 
-// The bundled side: the pairs and their whole import closure in write order → { files } | { refusal }.
+// The bundled side: the pairs, the reporter, the command and their whole import closure in write order → { files } | { refusal }.
 const readBundles = (kitRoot, read) => {
   const byPath = new Map();
-  const queue = [...READER, ...CHECKER, COMMAND];
+  const queue = [...READER, ...CHECKER, ...REPORTER, COMMAND];
   for (const entry of queue) {
     if (byPath.has(entry.path)) continue;
     let bundle;
@@ -61,7 +63,8 @@ const readBundles = (kitRoot, read) => {
   }
   const of = (entries) => (path) => entries.some((e) => e.path === path);
   const group = (keep) => dependenciesFirst([...byPath.values()].filter((f) => keep(f.path)));
-  return { files: [...group((p) => !of(READER)(p) && !of(CHECKER)(p) && p !== COMMAND.path), ...group(of(READER)), ...group(of(CHECKER)), ...group((p) => p === COMMAND.path)] };
+  const own = [READER, CHECKER, REPORTER].map(of);
+  return { files: [...group((p) => !own.some((is) => is(p)) && p !== COMMAND.path), ...own.flatMap(group), ...group((p) => p === COMMAND.path)] };
 };
 
 // Each folder on the way to a pair file or a file it imports, lstat-ed without following a link → a refusal or null.

@@ -20,6 +20,7 @@ const TREE = {
   gates: ['migrate-gates.mjs', 'kit-command-gates.mjs', 'migrate-gates.test.mjs', 'migrate-gates-branches.test.mjs', 'kit-command-gates.test.mjs'],
   shared: ['markdown-blocks.mjs', 'project-root.mjs', 'index.mjs', 'markdown-blocks.test.mjs', 'project-root.test.mjs'],
   'test-support': ['_expect-shim.mjs', 'index.mjs'],
+  'test-reporter': ['reporter.mjs', 'reporter.test.mjs'],
 };
 const MODULES = Object.keys(TREE).filter(Boolean);
 const FILES = Object.entries(TREE).flatMap(([module, names]) => names.map((name) => (module ? `${module}/${name}` : name))).sort();
@@ -29,6 +30,10 @@ const SKILL_HOME = ['docs-size/index.mjs', 'family.mjs', 'gates/kit-command-gate
 const roleOf = (path) => (path.endsWith('.test.mjs') ? 'suite' : SUPPORT.includes(path) ? 'support' : SKILL_HOME.includes(path) ? 'skill-home' : 'deployed');
 const moduleOf = (path) => (path.includes('/') ? path.split('/')[0] : null);
 const readFamily = async (dir) => (await import('./family.mjs')).readFamily(dir);
+// Node's default `node --test` patterns over a whole POSIX path: a JavaScript basename *.test, *-test, *_test, test-*
+// or test, or any file under a directory segment `test`.
+const NODE_TEST_DEFAULT = (path) => /\.[cm]?js$/.test(path)
+  && (path.split('/').slice(0, -1).includes('test') || /^(?:.*[._-]test|test-.*|test)\.[cm]?js$/.test(path.split('/').at(-1)));
 
 // Every node under a directory as a POSIX path, a directory with a trailing / and any other node marked.
 const walk = (dir, rel = '') =>
@@ -46,9 +51,9 @@ const bijectionProblems = (files, paths) => [
 ];
 
 describe('spec:script-family/S1 the canon tree and the manifest are one bijection', () => {
-  it('the tree holds exactly the 39 files: five top-level and those of the seven modules, each file but family.json one manifest entry', async () => {
+  it('the tree holds exactly the 41 files: five top-level and those of the eight modules, each file but family.json one manifest entry', async () => {
     assert.deepEqual(walk(HERE), [...FILES, ...MODULES.map((module) => `${module}/`)].sort());
-    assert.equal(FILES.length, 39);
+    assert.equal(FILES.length, 41);
     const files = walk(HERE).filter((node) => !node.endsWith('/'));
     const paths = (await readFamily(HERE)).map((entry) => entry.path);
     assert.deepEqual(bijectionProblems(files, paths), []);
@@ -73,11 +78,20 @@ describe('spec:script-family/S2 the manifest roles and the seed set', () => {
     const family = await readFamily(HERE);
     assert.deepEqual(family.filter((entry) => entry.role !== roleOf(entry.path)).map((entry) => `${entry.path}: ${entry.role}`), []);
     const deployed = FILES.filter((path) => roleOf(path) === 'deployed' && path !== MANIFEST);
-    const named = FILES.filter((path) => path === 'run.mjs' || (['docs-size', 'spec-schema', 'archives', 'git-hooks', 'shared'].includes(moduleOf(path))
+    const named = FILES.filter((path) => path === 'run.mjs' || (['docs-size', 'spec-schema', 'archives', 'git-hooks', 'shared', 'test-reporter'].includes(moduleOf(path))
       && !path.endsWith('.test.mjs') && (!path.endsWith('/index.mjs') || ['spec-schema', 'shared'].includes(moduleOf(path)))));
     assert.deepEqual(deployed, named);
     assert.deepEqual(family.filter((entry) => entry.role === 'deployed').map((entry) => entry.path).sort(), deployed);
-    assert.equal(family.find((entry) => entry.path === 'run.mjs')?.seed, false, 'run.mjs is deployed and no seed');
+    for (const path of ['run.mjs', 'test-reporter/reporter.mjs']) assert.equal(family.find((entry) => entry.path === path)?.seed, false, `${path} is deployed and no seed`);
+  });
+
+  it('a manifest path matches a default node --test pattern, on its whole tree path and its deployed path, exactly when it is a suite', async () => {
+    assert.deepEqual(['a/test/b.mjs', 'a/test-b.mjs', 'a/b_test.cjs', 'a/b-test.js', 'test.mjs', 'a/b.test.mjs', 'attest.mjs', 'a/tests/b.mjs', 'a/test.json']
+      .map(NODE_TEST_DEFAULT), [true, true, true, true, true, true, false, false, false]);
+    const repo = resolve(HERE, '..', '..', '..');
+    const wholes = ({ path }) => [relative(repo, join(HERE, path)).split(sep).join('/'), `scripts/agent-workflow/${path}`];
+    assert.deepEqual((await readFamily(HERE)).flatMap((entry) => wholes(entry).filter((whole) => NODE_TEST_DEFAULT(whole) !== (entry.role === 'suite'))
+      .map((whole) => `${whole}: ${entry.role}`)), []);
   });
 
   it('a deployment of exactly the seed files loads each, and losing any seed but the rotator breaks a load', async () => {

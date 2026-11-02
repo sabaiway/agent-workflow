@@ -66,7 +66,7 @@ const writeOrder = (paths) => { const left = new Set(paths), out = []; while (le
 const kitFamily = async () => {
   const { readFamily } = await import('../../references/scripts/family.mjs');
   const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed');
-  const own = deployed.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.path !== 'run.mjs');
+  const own = deployed.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter' && e.path !== 'run.mjs');
   const F = { family: own.map((e) => e.path), seeds: own.filter((e) => e.seed).map((e) => e.path), pairs: deployed.filter((e) => ['spec-schema', 'docs-size'].includes(e.module)).map((e) => e.path), shared: own.filter((e) => e.module === 'shared').map((e) => e.path) };
   assert.deepEqual([INSTALLER, ROTK, ISSUES].filter((p) => !F.family.includes(p)), [], 'the named files are family files');
   return F;

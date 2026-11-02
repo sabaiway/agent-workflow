@@ -4,6 +4,52 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 22.0.0 — a red unit-test gate prints only its failures, through one gate form the upgrade moves you to (AD-221)
+
+**A failing unit-test gate now prints a few lines per failing test instead of the whole test log.** The kit's
+unit-test gate runs through the stable command, `node scripts/agent-workflow/run.mjs unit-tests <your test paths>`,
+and its new test reporter prints, for each failing test only, the file and line, the test's names, why it failed,
+the expected and actual values and the code line, then one totals line. Your next `/agent-workflow-kit upgrade` moves
+a gate an earlier kit wrote with no question; the one thing that step asks is whether to add the coverage check.
+
+- **The kit test reporter.** `scripts/agent-workflow/test-reporter/reporter.mjs` reads only the Node test runner's
+  events: a passing test, a suite heading and the coverage table print nothing; a file that failed to load prints its
+  error line; on a red run, each diagnostic prints one line, so a red run never reads green; a part it cannot render
+  prints one line and the run goes on. It never throws, and the gate's exit code stays the runner's. The upgrade's
+  `configs` step places it with `run.mjs` on every deployment with Node evidence, even after a no to the enforcement
+  scripts.
+- **One gate form.** The command's sixth name, `unit-tests`, runs `node --test` with the lcov reporter under
+  `AW_GIT_DIR` and the kit reporter on stdout, every argument handed to the runner; it refuses an unset or empty
+  `AW_GIT_DIR` by name. It is the one form that reads as a coverage producer, bare or behind the verified per-PM
+  `exec` wrapper; `lcovProducer: true` is still the other way.
+- **The move, with no question.** The upgrade's `gates-migration` step now runs the migration with `--apply`: it
+  switches every gate an earlier kit wrote (`node --test` with its reporter flags, under any id, marked or not) to the
+  command with the same test paths, and extends the unmarked `unit-tests` gate written as `node --test <paths>`, the
+  kit's or your own, to it; every gate it moves or removes prints with its `was:`, and a second run writes nothing. A gate whose
+  tail carries a flag is reported CUSTOMIZED with the command's line as its recovery; a gate the kit never wrote is
+  never touched. The extended gate writes an lcov, so a coverage checker you declared over no producer reads it: a
+  plain run that read green can read red after the move.
+- **The coverage check stays optional.** Where a gate produces the lcov and no checker is declared, the step adds
+  nothing and prints one `OFFER coverage-check` line with its own `--apply --add-checker` command, which the agent runs
+  only on your explicit yes; the offer comes back on each upgrade until then. A row of yours already holding the id
+  `coverage-check` withholds only that add, with one line, and stops no move.
+- **A retired check leaves only when its file is gone.** A `review-ledger` or `fold-completeness` gate is removed only
+  when its target is proven absent; a target that is a file, a directory or a link, or a `~` or `$` token, keeps the
+  gate CUSTOMIZED.
+- **One guard on every write.** The fill and the migration write the form only while
+  `scripts/agent-workflow/run.mjs` is byte-equal to the running kit's and the reporter is a regular file; otherwise the
+  fill withholds its `node --test` script and the migration keeps the gate, each with one line naming the path and the
+  upgrade (a directory or a link there is cleared by hand first).
+- **A kept earlier gate is named, not silent.** It still runs, with the full runner log, but no longer reads as a
+  producer. Every coverage-checker line, in the migration, the fill, the `no-producer` defect and the advisor's
+  `gates-inert` item, states one fact (`no gate before it is a producer this kit reads`; the lines that withhold the
+  checker: `no declared gate is a producer this kit reads`) and one remedy; why a gate was
+  kept rides that gate's own line, and the line of a gate the guard keeps ends that once its cause is resolved, the
+  upgrade moves it with no question.
+  Where an earlier kit's gate the upgrade can move stands, the defect and the advisor name `/agent-workflow-kit upgrade`.
+- **Breaking, for tools reading the kit's exports.** `coverage-producer.mjs` drops `UNIT_TESTS_COVERAGE_FLAGS` and
+  `KNOWN_COVERAGE_FLAG_SETS`; `COVERAGE_PRODUCER_BODY` is now the command body.
+
 ## 21.0.0 — the kit's scripts live in one folder, `scripts/agent-workflow/`, run through one stable command (AD-220)
 
 **Your project's `scripts/` stops being a pile of kit files.** Every kit script now lives in one folder the kit alone

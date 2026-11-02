@@ -74,7 +74,6 @@ const REMAINING_STANDALONE_MODULES = Object.freeze([
   'scripts/release/smoke-init.mjs',
   'scripts/release/smoke-candidate.mjs',
   'scripts/release/version-sync.mjs',
-  'scripts/release/cross-version-gate.mjs',
   'scripts/release/dispatch-publish.mjs',
   'scripts/release/preflight-remote.mjs',
 ]);
@@ -97,8 +96,8 @@ test('the standalone-module list is complete and duplicate-free', async () => {
 });
 
 test('the remaining-standalone-module list is complete and duplicate-free', () => {
-  assert.equal(REMAINING_STANDALONE_MODULES.length, 11, 'the frozen W3 site list is 11 files');
-  assert.equal(new Set(REMAINING_STANDALONE_MODULES).size, 11, 'the frozen W3 site list has no duplicate entry');
+  assert.equal(REMAINING_STANDALONE_MODULES.length, 10, 'the frozen W3 site list is 10 files');
+  assert.equal(new Set(REMAINING_STANDALONE_MODULES).size, 10, 'the frozen W3 site list has no duplicate entry');
 });
 
 test('an unresolvable entry point fails the standalone guard CLOSED', async () => {

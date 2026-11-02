@@ -89,11 +89,13 @@ describe('release receipt', () => {
       ['missing field', JSON.stringify({ ...receipt, tokenFile: undefined })],
       ['unknown stage', JSON.stringify({ ...receipt, stages: receipt.stages.map((stage, index) => index === 2 ? { ...stage, name: 'other' } : stage) })],
       ['wrong order', JSON.stringify({ ...receipt, stages: [...receipt.stages].reverse() })],
+      ['one stage more than STAGES', JSON.stringify({ ...receipt, stages: [...receipt.stages.slice(0, 4), makeStage('retired', 'pass'), ...receipt.stages.slice(4)] })],
     ];
     for (const [name, body] of malformed) {
       const result = readReceipt(path, () => body);
       assert.match(result.refusal, /\/repo\/\.git\/receipt\.json/, name);
     }
+    assert.match(readReceipt(path, () => malformed.at(-1)[1]).refusal, /stage table length is malformed/u);
     assert.equal(readReceipt(path, () => JSON.stringify(normalized)).refusal, undefined, 'a normalized receipt reads back clean');
     const withStage = (name, patch) => {
       const cut = STAGES.indexOf(name);
@@ -123,7 +125,7 @@ describe('release receipt', () => {
       [{ live: { status: 'fail', dispatched: 'unknown' }, verify: 'fail', 'smoke-init': 'pending' }, true],
       [{ live: { status: 'fail', dispatched: 'unknown' }, 'smoke-init': 'pending' }, false],
       [{ live: { status: 'fail', resumable: true }, verify: 'fail', 'smoke-init': 'pending' }, false],
-      [{ commit: 'pass', 'preflight-remote': 'pending', push: 'pending', 'smoke-candidate': 'pending', 'cross-version-gate': 'pending', live: 'pending', verify: 'pending', 'smoke-init': 'pending' }, true],
+      [{ commit: 'pass', 'preflight-remote': 'pending', push: 'pending', 'smoke-candidate': 'pending', live: 'pending', verify: 'pending', 'smoke-init': 'pending' }, true],
     ];
     for (const [overrides, valid] of sequenceRows) {
       const body = JSON.stringify(makeReceipt({ stages: makeStages(overrides) }));
@@ -193,7 +195,6 @@ describe('release receipt', () => {
       ['preflight', buildValidAt('preflight-remote'), 'preflight-remote', HEAD, null],
       ['push', buildValidAt('push'), 'push', HEAD, null],
       ['candidate', buildValidAt('smoke-candidate'), 'smoke-candidate', HEAD, null],
-      ['cross version', buildValidAt('cross-version-gate'), 'cross-version-gate', HEAD, null],
       ['live not yet dispatched', buildValidAt('live'), 'live', HEAD, null],
       ['verify after live pass', buildValidAt('verify'), 'verify', HEAD, null],
       ['verify after unknown live', buildValidAt('verify', 'unknown'), 'verify', HEAD, null],

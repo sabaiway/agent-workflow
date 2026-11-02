@@ -268,7 +268,7 @@ const KIT_FX = (() => {
   const deployed = readFamily(join(KIT, 'references', 'scripts')).filter((e) => e.role === 'deployed'), all = deployed.map((e) => e.path);
   const importsOf = (p, within) => [...kb(p).toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g)].map(([, s]) => posix.join(posix.dirname(p), s)).filter((d) => within.includes(d));
   const order = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p, paths).every((d) => !left.has(d))); out.push(next); left.delete(next); } return out; };
-  const own = deployed.filter((e) => e.path !== 'run.mjs' && e.module !== 'spec-schema' && e.module !== 'docs-size').map((e) => e.path);
+  const own = deployed.filter((e) => e.path !== 'run.mjs' && e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter').map((e) => e.path);
   const [R, C] = ['spec-schema', 'docs-size'].map((m) => order(deployed.filter((e) => e.module === m).map((e) => e.path)));
   const reached = new Set([...R, ...C]);
   for (const p of reached) for (const d of importsOf(p, all)) reached.add(d);
@@ -277,7 +277,7 @@ const KIT_FX = (() => {
   const OLD = (p) => `// an earlier ${p}\n`, priors = { priors: [...SCRIPT_PRIORS, ...[INST, MD, PR, R[0], C[0], CL[1]].map((file) => ({ file, digest: createHash('sha256').update(OLD(file)).digest('hex') }))] };
   const lay = (dir, paths, over) => { for (const p of new Set([...paths, ...Object.keys(over)])) if (over[p] !== null) { mkdirSync(join(dir, KF, posix.dirname(p)), { recursive: true }); writeFileSync(join(dir, KF, p), over[p] ?? kb(p)); } return dir; };
   const kitTree = (over = {}) => lay(project(), own, over);
-  const specsKit = (over = {}, store = true, dir = lay(project(), [...CL, ...R, ...C, 'run.mjs'], over)) => { if (store) { mkdirSync(join(dir, 'docs', 'ai', 'specs')); writeFileSync(join(dir, SPEC_STORE), '---\nkind: index\n---\n'); } return dir; };
+  const specsKit = (over = {}, store = true, dir = lay(project(), [...CL, ...R, ...C, 'test-reporter/reporter.mjs', 'run.mjs'], over)) => { if (store) { mkdirSync(join(dir, 'docs', 'ai', 'specs')); writeFileSync(join(dir, SPEC_STORE), '---\nkind: index\n---\n'); } return dir; };
   const kitWithout = (p, kit = tmp('clux-kit-')) => { for (const sub of ['scripts', 'templates']) cpSync(join(KIT, 'references', sub), join(kit, 'references', sub), { recursive: true }); rmSync(join(kit, 'references', 'scripts', ...p.split('/'))); return kit; };
   const adrKit = (docs, over = {}) => { const dir = kitTree(over); assert.equal(spawnSync('git', ['init', '-q', dir], { env: hermeticGitEnv(process.env, dir) }).status, 0, 'git init, so the snapshot stays in the tree'); mkdirSync(join(dir, 'docs', 'ai', 'history')); for (const [rel, body] of Object.entries(docs)) writeFileSync(join(dir, 'docs', 'ai', rel), body); return dir; };
   const flatBody = (name) => { const root = join(KIT, 'test/fixtures/script-priors'), versions = readdirSync(root).filter((v) => readdirSync(join(root, v)).includes(`${name}.txt`)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); return readFileSync(join(root, versions.at(-1), `${name}.txt`)); };

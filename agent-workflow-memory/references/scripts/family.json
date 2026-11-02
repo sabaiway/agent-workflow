@@ -37,6 +37,8 @@
     { "path": "shared/index.mjs", "role": "deployed", "seed": true },
     { "path": "shared/markdown-blocks.test.mjs", "role": "suite" },
     { "path": "shared/project-root.test.mjs", "role": "suite" },
+    { "path": "test-reporter/reporter.mjs", "role": "deployed", "seed": false },
+    { "path": "test-reporter/reporter.test.mjs", "role": "suite" },
     { "path": "test-support/_expect-shim.mjs", "role": "support" },
     { "path": "test-support/index.mjs", "role": "support" }
   ]

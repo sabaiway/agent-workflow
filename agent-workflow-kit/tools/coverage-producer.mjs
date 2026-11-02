@@ -1,7 +1,8 @@
-// coverage-producer.mjs — the kit's half of the shared coverage-producer vocabulary: the reporter
-// flags the canonical suite gate carries, and the CLOSED predicate deciding whether a declared gate
-// cmd actually WRITES the lcov the canonical checker reads. A LEAF — imports nothing, so every
-// consumer (gates-init, gates-declaration, the advisor) decides through ONE predicate.
+// coverage-producer.mjs — the kit's half of the shared coverage-producer vocabulary (spec
+// coverage-producer): the one command body the suite gate runs, the move list of the flag sets
+// earlier kits wrote, and the CLOSED predicate deciding whether a declared gate cmd actually WRITES
+// the lcov the canonical checker reads. A LEAF — imports nothing, so every consumer (gates-init,
+// gates-declaration, the advisor) decides through ONE predicate.
 // Dependency-free, Node >= 22. No side effects on import.
 
 // coverage-producer canon >>> BEGIN drift-guarded region
@@ -11,31 +12,17 @@
 // bytes — so a TEXT drift guard beside the root's copy holds them equal. Edit BOTH, then re-run the
 // mirror sync.
 //
-// The destination is written against AW_GIT_DIR, which run-gates exports to every gate child on a
-// plain run AND on --final (AW_LCOV_FILE is --final only), so one cmd survives the unmet
-// producer-variable preflight in both modes. The `:?` is not decoration either: this cmd is also
-// PASTE-READY, and the required-parameter form makes bash refuse BY NAME when AW_GIT_DIR is unset
-// or EMPTY, where a bare `$AW_GIT_DIR` expanded to empty and wrote the lcov to the filesystem ROOT.
-// Residual, stated: `:?` says nothing about the value's ORIGIN — a STALE exported AW_GIT_DIR
-// expands fine and the lcov lands under it; only the runner's own injection makes it the right dir.
-// The explicit stdout reporter keeps the human stream: without it the lcov reporter swallows the
-// TAP/spec output.
-export const UNIT_TESTS_COVERAGE_FLAGS =
-  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+// The ONE producer form the kit writes: the stable kit command's unit-tests name (spec kit-command) —
+// the Node test runner with the lcov reporter under AW_GIT_DIR and the kit test reporter on stdout.
+export const COVERAGE_PRODUCER_BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
 
-// Every flag set the kit has EVER emitted — APPEND-ONLY, newest first. Emission uses the head; the
-// tail exists so a declaration written by an EARLIER kit and living on disk in a deployed project
-// keeps reading as the producer it is. De-recognizing a prior form would silently reclassify a
-// working suite gate as customized and withhold the checker over it.
-export const KNOWN_COVERAGE_FLAG_SETS = Object.freeze([
-  UNIT_TESTS_COVERAGE_FLAGS,
+// The reporter flag sets earlier kits wrote after `node --test`, newest first, byte for byte: a MOVE
+// LIST the gate migration switches onto the body above, never read as a producer.
+export const RETIRED_COVERAGE_FLAG_SETS = Object.freeze([
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout',
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout',
 ]);
-
-// The ONE suite body that produces that lcov with no extra dependency (the EMITTED form), beside
-// the closed set of bodies recognition accepts.
-export const COVERAGE_PRODUCER_BODY = `node --test ${UNIT_TESTS_COVERAGE_FLAGS}`;
-const KNOWN_PRODUCER_BODIES = Object.freeze(KNOWN_COVERAGE_FLAG_SETS.map((flags) => `node --test ${flags}`));
+const RETIRED_BODIES = Object.freeze(RETIRED_COVERAGE_FLAG_SETS.map((flags) => `node --test ${flags}`));
 
 // The per-PM exec wrappers a fill offer puts that body behind. Recognition must cover every form
 // the kit has EMITTED, so the prefixes are matched literally; gates-init's execCmdFor stays the one
@@ -48,11 +35,11 @@ const PRODUCER_EXEC_PREFIXES = Object.freeze([
 
 // A trailing suffix is the project's own test paths; a leading one would mean the body is not what
 // this cmd runs. The tail passes a POSITIVE closed grammar — every whitespace-separated token must
-// be path-shaped — never an operator blocklist: `node --test <flags> && rm -f <lcov>` runs the
-// suite and then DELETES the file, so an open-ended tail would certify a producer that leaves
-// nothing behind, and scanning for operator BYTES would put the incomplete-scan failure on the
-// unsafe side (a missed operator is a dead pair) instead of the mild one (an unrecognised
-// legitimate tail merely withholds the offer — add the gate by hand).
+// be path-shaped — never an operator blocklist: `<body> && rm -f <lcov>` runs the suite and then
+// DELETES the file, so an open-ended tail would certify a producer that leaves nothing behind, and
+// scanning for operator BYTES would put the incomplete-scan failure on the unsafe side (a missed
+// operator is a dead pair) instead of the mild one (an unrecognised legitimate tail merely
+// withholds the offer — add the gate by hand). No flag either: the command hands it to the runner.
 // The token set is everything that appears in a PATH or a glob and can never sequence, redirect or
 // substitute a command — quoting and `~` included, `( ) $ ` ; & | < > # \` excluded. SCOPE, stated
 // exactly: the screen judges each token's SOURCE bytes. Quote removal adds none, but brace SEQUENCE
@@ -67,21 +54,64 @@ const PRODUCER_EXEC_PREFIXES = Object.freeze([
 // `skipped-no-lcov`.
 const PRODUCER_PATH_TOKEN = /^(?!-)[A-Za-z0-9_./*{},:@+=~?[\]!'"-]+$/;
 const pathShapedTail = (tail) => tail === '' || tail.split(/[ \t]+/).every((token) => PRODUCER_PATH_TOKEN.test(token));
-const carriesProducerBody = (text) =>
-  KNOWN_PRODUCER_BODIES.some(
-    (body) => text === body || (text.startsWith(`${body} `) && pathShapedTail(text.slice(body.length).trim())),
-  );
+
+// The exec prefix the trimmed text opens with ('' for none), and the rest after it.
+const splitExecPrefix = (text) => {
+  const prefix = PRODUCER_EXEC_PREFIXES.find((p) => text.startsWith(p)) ?? '';
+  return [prefix, text.slice(prefix.length)];
+};
+
+// The rest after `body` (trimmed; '' when nothing follows), or null unless the text is the body, then nothing or one space.
+const bodyRest = (text, body) => {
+  if (text === body) return '';
+  return text.startsWith(`${body} `) ? text.slice(body.length).trim() : null;
+};
 
 // matchesCoverageProducer(cmd) → CLOSED-WORLD over the full command forms the kit emits, never a
-// substring probe: `echo "$AW_GIT_DIR/agent-workflow-lcov.info"`, a half-written reporter flag set,
-// or the path as a bare substring must all read as NOT a producer — otherwise the checker is
-// declared over a gate that writes nothing and then PASSES while certifying nothing.
+// substring probe: `echo <body>`, the quoted body or a retired flag set is NOT a producer — else the
+// checker is declared over a gate that writes nothing and then PASSES while certifying nothing.
 export const matchesCoverageProducer = (cmd) => {
   if (typeof cmd !== 'string') return false;
-  const trimmed = cmd.trim();
-  if (carriesProducerBody(trimmed)) return true;
-  return PRODUCER_EXEC_PREFIXES.some((prefix) => trimmed.startsWith(prefix) && carriesProducerBody(trimmed.slice(prefix.length)));
+  const [, text] = splitExecPrefix(cmd.trim());
+  const rest = bodyRest(text, COVERAGE_PRODUCER_BODY);
+  return rest !== null && pathShapedTail(rest);
 };
+
+// retiredProducerFormOf(cmd) → { prefix (as written, or ''), tail (trimmed), pathShaped } when the
+// trimmed cmd is no or one exec prefix, `node --test`, a retired flag set and nothing or one space and
+// a rest; null for every other value. The switch carries only a path-shaped tail onto the body.
+export const retiredProducerFormOf = (cmd) => {
+  if (typeof cmd !== 'string') return null;
+  const [prefix, text] = splitExecPrefix(cmd.trim());
+  for (const body of RETIRED_BODIES) {
+    const tail = bodyRest(text, body);
+    if (tail !== null) return { prefix, tail, pathShaped: pathShapedTail(tail) };
+  }
+  return null;
+};
+
+// unitTestsGuardFailure → the guard on every write of the body: run.mjs a regular file equal to `ownRun`, then the reporter
+// a regular file, every folder on the way a directory (lstat: a link fails); null, or the first failing path and kind,
+// worded by guardRemedy with the caller's upgrade.
+const GUARD_PATHS = Object.freeze(['scripts/agent-workflow/run.mjs', 'scripts/agent-workflow/test-reporter/reporter.mjs']);
+export const unitTestsGuardFailure = (projectDir, ownRun, { lstatSync, readFileSync }) => {
+  for (const rel of GUARD_PATHS) {
+    const parts = rel.split('/');
+    for (let depth = 1; depth <= parts.length; depth += 1) {
+      const at = parts.slice(0, depth).join('/');
+      const st = lstatSync(`${projectDir}/${at}`, { throwIfNoEntry: false });
+      if (st === undefined) return { path: rel, kind: 'absent' };
+      if (depth < parts.length ? !st.isDirectory() : !st.isFile()) return { path: at, kind: 'wrong-kind' };
+    }
+    if (rel === GUARD_PATHS[0] && !readFileSync(`${projectDir}/${rel}`).equals(readFileSync(ownRun))) return { path: rel, kind: 'earlier' };
+  }
+  return null;
+};
+export const guardRemedy = (kind, upgrade) => ({
+  absent: `is absent — the kit's upgrade places the kit folder only where Node evidence stands (a root package.json, or a kit script): add one if this project runs Node, then run ${upgrade}.`,
+  earlier: `differs from this kit's — run ${upgrade}, whose configs step writes the current one`,
+  'wrong-kind': `is not what the kit writes there — a directory, a link, or a file where a folder belongs — beside which the specs op writes nothing: clear it by hand first, then run ${upgrade}`,
+})[kind];
 
 // isCoverageProducerGate(gate) → the GATE-level producer question, and the ONE predicate every
 // consumer asks it through: does THIS declared entry write the lcov the canonical checker reads?
@@ -102,4 +132,9 @@ export const isCoverageProducerGate = (gate) => {
   if (gate.cmd.trim() === '' || /[\r\n]/.test(gate.cmd)) return false;
   return matchesCoverageProducer(gate.cmd) || gate.lcovProducer === true;
 };
+// readsAsCoverageProducer(gate, claim) → the ONE producer question of a declared row, asked by both hosts: `claim` is
+// the row's claim on the coverage-check tool through the checker-claim canon, and only a row that is not the tool
+// (`'not-the-tool'`, equal by test to CHECKER_CLAIM.NOT_THE_TOOL) can produce — a checker, canonical or vendored,
+// consumes the lcov it reads, so its marker claims nothing.
+export const readsAsCoverageProducer = (gate, claim) => claim === 'not-the-tool' && isCoverageProducerGate(gate);
 // coverage-producer canon <<< END drift-guarded region

@@ -31,7 +31,9 @@
 //     executes project-controlled tooling (a node_modules/.bin PATH shim intercepts under every
 //     form) — the documented residual, disclosed in the preview, bounded by the two consents;
 //   • a `node --test` suite body — the ONE allowlist member that produces lcov unaided — is
-//     emitted WITH the canonical coverage reporters, so the offered checker has a producer; every
+//     emitted as the stable kit command's unit-tests name (spec coverage-producer), which adds the
+//     lcov reporter, so the offered checker has a producer — only while the project's kit folder
+//     holds THIS kit's run.mjs and a reporter, else it is withheld naming the upgrade; every
 //     other body is emitted verbatim. The coverage-check candidate is WITHHELD (loud note) when
 //     neither the offer nor the existing declaration carries a producer, and --apply refuses to
 //     WRITE a declaration whose checker has no producer, is not last, or has a canonical twin:
@@ -62,8 +64,8 @@ import { fileURLToPath } from 'node:url';
 import { isDirectRun } from './direct-run.mjs';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
-import { canonicalCheckerGates, coverageDeclarationDefects, isKitOwnedCheckerGate } from './gates-declaration.mjs';
-import { COVERAGE_PRODUCER_BODY, isCoverageProducerGate } from './coverage-producer.mjs';
+import { canonicalCheckerGates, coverageDeclarationDefects, coverageProducerPrecedes, isKitOwnedCheckerGate, NO_PRODUCER_REMEDY } from './gates-declaration.mjs';
+import { COVERAGE_PRODUCER_BODY, guardRemedy, matchesCoverageProducer, unitTestsGuardFailure } from './coverage-producer.mjs';
 import { loadConfig } from './orchestration-config.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 // The source-size practice, through its PURE READ core only (D-18): this module asks whether the
@@ -117,8 +119,9 @@ never watch/serve, never a write-mode variant) whose BODY is a member of the lit
 allowlist is offered, as the hook-free \`COREPACK_ENABLE_NETWORK=0 <pm> exec -- <body>\` form for
 the detected package manager. A gate-class script whose body is NOT in the allowlist is screened
 out with a note naming it (a command you trust can still be declared by hand); non-gate-class
-names are excluded silently, as always. A \`node --test\` body carries the canonical coverage
-reporters; the coverage-check candidate is withheld when nothing would produce the lcov it reads,
+names are excluded silently, as always. A \`node --test\` body runs as ${COVERAGE_PRODUCER_BODY}
+while the kit folder holds this kit's command and reporter (else it is withheld, naming
+/agent-workflow-kit upgrade); the coverage-check candidate is withheld when nothing would produce the lcov it reads,
 and --apply refuses to write a checker with no producer, a checker that is not last, or a second
 canonical checker.
 ${TRUST_CHAIN_DISCLOSURE}`;
@@ -222,10 +225,14 @@ export const execCmdFor = (pm, body) => {
 
 // The coverage PRODUCER wiring (Decision 1 — closed-world here too). `node --test` is the only
 // allowlist body that produces lcov with no extra dependency, so it is the only body the offer
-// extends with the reporter flags; every other body is emitted verbatim and produces none (an
-// optional-dependency coverage flag set would be speculation about the project's own tooling).
+// rewrites — into the stable kit command's unit-tests name; every other body is emitted verbatim
+// and produces none (an optional-dependency coverage flag set would be speculation about the
+// project's own tooling).
 const COVERAGE_PRODUCING_BODY = 'node --test';
 const emittedBodyOf = (body) => (body === COVERAGE_PRODUCING_BODY ? COVERAGE_PRODUCER_BODY : body);
+
+// The unit-tests guard reads the project's kit folder against THIS kit's bundled run.mjs.
+const KIT_RUN = join(HERE, '..', 'references', 'scripts', 'run.mjs');
 
 export const kebabIdOf = (name) =>
   String(name)
@@ -276,6 +283,8 @@ const deriveScripts = (cwd, deps = {}) => {
   const entries = [];
   const screenedIds = [];
   const withheld = [];
+  const guardWithheld = [];
+  let guard;
   for (const c of named) {
     const id = kebabIdOf(c.scriptName);
     if (!id || seen.has(id)) continue; // an empty or duplicate derived id never enters the offer
@@ -286,12 +295,16 @@ const deriveScripts = (cwd, deps = {}) => {
       continue;
     }
     const emitted = emittedBodyOf(body);
+    if (emitted !== body && (guard === undefined ? (guard = unitTestsGuardFailure(cwd, KIT_RUN, { lstatSync, readFileSync })) : guard) !== null) {
+      guardWithheld.push({ id, ...guard });
+      continue;
+    }
     const { cmd, note } = execCmdFor(pm, emitted);
     if (cmd === null) {
       withheld.push({ id, note });
       continue;
     }
-    const coverage = emitted === body ? '' : ' (+ the lcov reporters the coverage checker reads)';
+    const coverage = emitted === body ? '' : ' (through the stable kit command, + the lcov reporter the coverage checker reads)';
     entries.push({ id, title: `Project script ${c.scriptName}: ${body}${coverage}`, cmd });
   }
   const notes = [];
@@ -304,7 +317,10 @@ const deriveScripts = (cwd, deps = {}) => {
   if (withheld.length) {
     notes.push(`${withheld.length} script gate(s) withheld: ${withheld.map((w) => w.id).join(', ')} — ${withheld[0].note}`);
   }
-  return { entries, notes };
+  for (const { id, path, kind } of guardWithheld) {
+    notes.push(`script gate ${id} withheld: its node --test body runs as ${COVERAGE_PRODUCER_BODY}, and ${path} ${guardRemedy(kind, '/agent-workflow-kit upgrade')}`);
+  }
+  return { entries, notes, guardWithheld: guardWithheld.map(({ id, path }) => ({ id, path })) };
 };
 
 export const deriveScriptEntries = (cwd, deps = {}) => deriveScripts(cwd, deps).entries;
@@ -533,17 +549,15 @@ export const buildOffer = (cwd, deps = {}) => {
   // a declaration the user already wrote by hand, so the rule reads the merged picture; a
   // declaration this preview cannot read degrades to a stated note, never to a silent withhold.
   const existing = declaredGatesBestEffort(cwd, deps);
-  // Both sides ask the ONE gate-level predicate. The offer side can only ever be a recognized cmd
-  // (this preview never EMITS the marker — it offers nothing it cannot verify), but a declaration
-  // the user wrote by hand may carry it, and the two sides must not answer through two predicates.
+  // The offered entries carry no marker and no claim, so the closed cmd world screens them; every
+  // declared row is asked the ONE row question (readsAsCoverageProducer, through
+  // coverageProducerPrecedes over the whole list), so a row claiming the checker never produces.
   const producerPresent =
-    scripts.entries.some((entry) => isCoverageProducerGate(entry)) ||
-    existing.gates.some((gate) => isCoverageProducerGate(gate));
+    scripts.entries.some((entry) => matchesCoverageProducer(entry.cmd)) ||
+    coverageProducerPrecedes(existing.gates, existing.gates.length, cwd);
   const withholdCoverage = cc.candidate !== null && !producerPresent;
   const coverageNote = withholdCoverage
-    ? `the coverage-check candidate was withheld: nothing would PRODUCE the lcov it reads — no offered or ` +
-      `declared gate carries the canonical coverage reporters, and a checker with no producer passes while ` +
-      `verifying nothing (declare a suite gate per references/modes/gates.md, then re-run)`
+    ? `the coverage-check candidate was withheld: no declared gate is a producer this kit reads, and none is offered — ${NO_PRODUCER_REMEDY}`
     : cc.note;
   // ALWAYS stated, not only when it changed the withhold: the preview would otherwise promise an
   // applicable offer over a declaration --apply is certain to refuse.
@@ -573,6 +587,8 @@ export const buildOffer = (cwd, deps = {}) => {
   return {
     entries: [...scripts.entries, ...candidates],
     notes: [...scripts.notes, noVerificationNote, unreadableNote, rs.note, fc.note, ss.note, coverageNote].filter(Boolean),
+    // The script gates the unit-tests guard withheld, { id, path }: the signal the advisor reads, never the note's text.
+    guardWithheld: scripts.guardWithheld,
   };
 };
 

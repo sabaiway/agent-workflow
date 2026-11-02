@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRIOR_FILES } from '../../agent-workflow-kit/tools/script-priors.mjs';
-import { KIT_COMMANDS } from '../../agent-workflow-kit/references/scripts/run.mjs';
 import { readFamily } from '../../agent-workflow-kit/references/scripts/family.mjs';
+
+const { KIT_COMMANDS, UNIT_TESTS_NAME } = await import('../../agent-workflow-kit/references/scripts/run.mjs');
 
 // The kit-texts guard (spec script-family, scenario S12): every kit text — a packed .md or .json of the kit, memory or engine
 // package, or the root README — names a kit check through `node scripts/agent-workflow/run.mjs <name>` and a deployed
@@ -37,7 +38,7 @@ const runFlag = (prefix, name) => {
   if (at !== '' && !/(^|\/)scripts\/agent-workflow\/$/.test(at)) return true;
   const word = (name ?? '').replace(/[.:]+$/, '');
   if (!/^[\w-]/.test(word) || word === '--help' || word === '-h') return false;
-  return !Object.hasOwn(KIT_COMMANDS, word);
+  return !Object.hasOwn(KIT_COMMANDS, word) && word !== UNIT_TESTS_NAME;
 };
 
 // Every whitespace run reads as one space; each kept character remembers the line it came from.
@@ -125,6 +126,7 @@ describe('spec:script-family/S12 every kit text names the kit folder and the sta
     ['md', 'scripts/agent-workflow/spec-schema.mjs'],
     ['md', 'node scripts/agent-workflow/run.mjs check-docs-size'], ['md', 'node scripts/agent-workflow/run.mjs\n  check-docs-size --check-index'],
     ['md', 'node scripts/run.mjs docs-size'], ['md', 'node check-docs-size.mjs --check-index'],
+    ['md', 'node scripts/agent-workflow/run.mjs unit-test'],
   ];
   for (const [kind, line] of FLAGGED) {
     it(`flags ${JSON.stringify(line)}`, () => {
@@ -138,6 +140,7 @@ describe('spec:script-family/S12 every kit text names the kit folder and the sta
     ['md', 'scripts/my-check-docs-size.mjs'], ['md', 'scripts/check-docs-size.mjs.bak'], ['md', 'the `check-docs-size.mjs` checker'],
     ['md', 'node scripts/agent-workflow/run.mjs docs-size --check-index'], ['md', 'node scripts/agent-workflow/run.mjs <name> [arguments...]'],
     ['md', 'node scripts/agent-workflow/run.mjs --help'], ['md', 'node scripts/release/release-run.mjs publish'],
+    ['md', 'node scripts/agent-workflow/run.mjs unit-tests'], ['md', 'node scripts/agent-workflow/run.mjs unit-tests <your test paths>'],
     ['md', 'the kit folder scripts/agent-workflow/'], ['md', 'scripts/agent-workflow/docs-size/'],
     ['md', 'scripts/agent-workflow/spec-schema/spec-schema.mjs'], ['md', 'scripts/agent-workflow/<path>'],
     ['json', '{ "path": "run.mjs", "role": "deployed", "seed": false }'],

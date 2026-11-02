@@ -1,6 +1,6 @@
 // migrate-gates.test.mjs — spec for the consented legacy gates.json migration (strip-the-kit D8).
 // The migration is ATOMIC and COMPLETE: canonical legacy entries removed + the unit-tests cmd
-// extended with the lcov reporters + the coverage-check gate added LAST; customized entries are
+// moved onto the stable kit command, with no question + the coverage-check gate added LAST on the yes; customized entries are
 // NEVER auto-touched (loud report + recovery); preview writes NOTHING; apply is tmp+rename. A kit-check
 // gate over a current kit folder is switched to the stable kit command as one more action (spec kit-command S9).
 
@@ -13,9 +13,6 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   LEGACY_FORMS,
-  UNIT_TESTS_COVERAGE_FLAGS,
-  KNOWN_COVERAGE_FLAG_SETS,
-  COVERAGE_PRODUCER_BODY,
   RETIRED_STORE_BASENAMES,
   findRetiredStores,
   buildMigrationPlan,
@@ -35,11 +32,22 @@ writeFileSync(join(KIT_TOOLS, 'review-state.mjs'), '// the installed review-stat
 // The project root the plan builder resolves declared RELATIVE tokens against — the same anchor
 // run-gates uses. Empty on purpose for the pure-plan cases: a relative lookalike resolves to
 // nothing there, which is exactly the "no claim can be made" outcome those rows assert. The
-// vendored rows below build their own project and pass it explicitly.
+// vendored rows below build their own project and pass it explicitly. Its kit folder holds the migration's own run.mjs
+// and the reporter, the guard on every write of the unit-tests command (spec coverage-producer).
+const TREE = dirname(dirname(fileURLToPath(import.meta.url)));
+const [RUN_REL, REPORTER_REL] = ['scripts/agent-workflow/run.mjs', 'scripts/agent-workflow/test-reporter/reporter.mjs'];
+const placeCommand = (root) => {
+  for (const rel of ['run.mjs', 'test-reporter/reporter.mjs']) {
+    mkdirSync(dirname(join(root, 'scripts', 'agent-workflow', rel)), { recursive: true });
+    copyFileSync(join(TREE, rel), join(root, 'scripts', 'agent-workflow', rel));
+  }
+};
 const PROJECT = mkdtempSync(join(tmpdir(), 'migrate-gates-project-'));
+placeCommand(PROJECT);
 
-const mkProject = (gates) => {
+const mkProject = (gates, { command = true } = {}) => {
   const root = mkdtempSync(join(tmpdir(), 'migrate-gates-'));
+  if (command) placeCommand(root);
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root, 'docs', 'ai', 'gates.json'), `${JSON.stringify({ _README: 'mine', gates }, null, 2)}\n`);
   return root;
@@ -51,12 +59,22 @@ const quiet = () => {
   return { log: (l) => out.push(String(l)), error: (l) => err.push(String(l)), out, err };
 };
 
-// The FIRST flag set the kit ever emitted, frozen here as literal bytes — never read back out of
-// KNOWN_COVERAGE_FLAG_SETS. Deployed declarations on disk carry exactly these bytes, so the
-// append-only promise needs a checker that goes red if they are edited or dropped; deriving the
-// "prior" from the set under test would keep this green while real deployments broke.
-const PRIOR_FLAG_SET_V1 =
+// The one body the kit writes and the two flag sets earlier kits wrote after `node --test`, frozen as literal bytes:
+// deployed declarations on disk carry exactly these.
+const BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
+const SUITE_LINE = `${BODY} <your test paths>`;
+const RETIRED_V2 =
+  '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="${AW_GIT_DIR:?exported by run-gates}/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+const RETIRED_V1 =
   '--experimental-test-coverage --test-reporter=lcov --test-reporter-destination="$AW_GIT_DIR/agent-workflow-lcov.info" --test-reporter=spec --test-reporter-destination=stdout';
+const EXEC_PREFIXES = ['COREPACK_ENABLE_NETWORK=0 npm exec --offline --script-shell /bin/sh -- ', 'COREPACK_ENABLE_NETWORK=0 pnpm exec -- ', 'COREPACK_ENABLE_NETWORK=0 yarn exec -- '];
+const [FLAG_SET_BYTES, UPGRADE] = [/--experimental-test-coverage|--test-reporter/, "the kit's upgrade"]; // memory names no sibling skill
+// Every checker line: one positional fact and one remedy; a guard-kept gate's line ends with the upgrade's promise.
+const [WITHHELD_FACT, POSITIONAL_FACT] = ['no declared gate is a producer this kit reads', 'no gate before it is a producer this kit reads'];
+const CHECKER_REMEDY = 'declare or move one before it: node scripts/agent-workflow/run.mjs unit-tests <your test paths>, or mark your own suite gate "lcovProducer": true';
+const GUARD_PROMISE = `once that is resolved, ${UPGRADE} moves this gate with no question`;
+const [ADD_CHECKER, RERUN, VERIFIES_NOTHING] = ['--apply --add-checker', /re-run this migration/, /verif(?:y|ies|ying) nothing|certif(?:y|ies|ying) nothing/];
+const factLine = (text, fact) => text.split('\n').find((line) => line.includes(fact) && line.includes(CHECKER_REMEDY));
 
 // A VENDORED deployment: the SAME tools, from a copy `--kit-tools` does not name. Recognition is a
 // realpath anchor, so these are real files — a fake path would be the unresolvable case instead.
@@ -78,65 +96,30 @@ describe('migrate-gates — the pure migration plan', () => {
     assert.deepEqual(plan.filter((r) => r.action === 'remove').map((r) => r.entry.id), ['review-ledger', 'fold-completeness']);
   });
 
-  it('extends the canonical unit-tests cmd with the lcov reporters (flags inserted after `node --test`)', () => {
-    const { plan, unitTestsExtended } = buildMigrationPlan([UNIT], KIT_TOOLS, PROJECT);
-    assert.ok(unitTestsExtended);
-    const extended = plan.find((r) => r.action === 'extend').entry;
-    assert.equal(extended.cmd, `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs`);
-  });
-
-  it('an already-extended unit-tests cmd is left alone (idempotent)', () => {
-    const done = { id: 'unit-tests', title: 'U', cmd: `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs` };
-    const { plan } = buildMigrationPlan([done], KIT_TOOLS, PROJECT);
-    assert.equal(plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
-  });
-
-  it('a declaration carrying a PRIOR emitted flag set reads as already-configured — keep, zero diff, no warning', () => {
-    // The canonical flag set moved (the destination became a required-parameter expansion). A
-    // deployment written by the earlier kit must not suddenly read as customized: that would send
-    // the maintainer to hand-fix a gate which already produces the lcov the checker reads.
-    assert.notEqual(PRIOR_FLAG_SET_V1, UNIT_TESTS_COVERAGE_FLAGS, 'the v1 bytes are a form the kit no longer emits');
-    assert.ok(KNOWN_COVERAGE_FLAG_SETS.includes(PRIOR_FLAG_SET_V1), 'and the append-only set still carries them');
-    const deployed = [
-      { id: 'unit-tests', title: 'U', cmd: `node --test ${PRIOR_FLAG_SET_V1} tools/*.test.mjs` },
-      { id: 'review-state', title: 'RS', cmd: `node "${join(KIT_TOOLS, 'review-state.mjs')}" --check` },
-      { id: 'coverage-check', title: 'CC', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` },
-    ];
-    const analysis = buildMigrationPlan(deployed, KIT_TOOLS, PROJECT);
-    assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
-    assert.deepEqual(analysis.customized, [], 'a prior emitted form is never reported customized');
-    assert.equal(analysis.hasProducer, true, 'it still counts as the producer the checker reads');
-    assert.equal(analysis.checkerInert, false);
-    assert.equal(analysis.finalCapable, true);
-    assert.deepEqual(resultingGates(analysis.plan), deployed, 'zero diff — nothing is rewritten');
-    const preview = formatPreview(analysis, 'APPLY');
-    assert.match(preview, /nothing to migrate/, 'the preview says there is nothing to do');
-    assert.doesNotMatch(preview, /CUSTOMIZED|INERT|WARNING/, 'and warns about nothing');
-  });
-
-  it('a unit-tests entry that merely CONTAINS the prior bytes is CUSTOMIZED, never a silent keep', () => {
-    // The already-configured decision runs through the closed producer predicate. A substring probe
-    // would call `echo <prior flags>` already configured and say nothing, leaving the maintainer
-    // with an entry the tool cannot verify and no recovery line.
-    const nearMiss = { id: 'unit-tests', title: 'U', cmd: `echo ${PRIOR_FLAG_SET_V1}` };
+  it('a unit-tests entry that merely CONTAINS a retired flag set is CUSTOMIZED with the command\'s recovery, never a silent keep', () => {
+    const nearMiss = { id: 'unit-tests', title: 'U', cmd: `echo ${RETIRED_V1}` };
     const analysis = buildMigrationPlan([nearMiss], KIT_TOOLS, PROJECT);
     assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep', 'nothing is rewritten');
     assert.deepEqual(analysis.customized.map((g) => g.id), ['unit-tests'], 'but it IS reported customized');
     assert.equal(analysis.hasProducer, false, 'and it never counts as the producer the checker would read');
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /CUSTOMIZED \(untouched\): unit-tests/);
-    assert.match(preview, /declare the canonical suite gate by hand/, 'the paste-ready recovery rides along');
-    assert.match(preview, /recovery \(apply by hand[^\n]*"lcovProducer": true/, 'the recovery names the marker as the other lane');
+    const recovery = preview.split('\n').find((line) => line.includes('recovery (apply by hand')) ?? '';
+    assert.ok(recovery.includes(SUITE_LINE), `the recovery names the command: ${recovery}`);
+    assert.doesNotMatch(recovery, FLAG_SET_BYTES, 'and no flag set');
+    assert.match(recovery, /"lcovProducer": true/, 'the recovery names the marker as the other lane');
   });
 
-  it('adds the coverage-check gate LAST with the RESOLVED quoted path; never a second one', () => {
-    const { plan } = buildMigrationPlan([UNIT], KIT_TOOLS, PROJECT);
-    const result = resultingGates(plan);
-    const last = result[result.length - 1];
+  it('--apply --add-checker adds the coverage-check gate LAST with the RESOLVED quoted path; never a second one', () => {
+    const root = mkProject([UNIT]);
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply', '--add-checker'], quiet()), 0);
+    const last = gatesOf(root).at(-1);
     assert.equal(last.id, 'coverage-check');
     assert.equal(last.cmd, `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check`);
-    const again = buildMigrationPlan(result, KIT_TOOLS, PROJECT);
-    assert.ok(!again.plan.some((r) => r.action === 'add'), 'a declaration already carrying the checker gains no duplicate');
+    const before = readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8');
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply', '--add-checker'], quiet()), 0);
+    assert.equal(readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8'), before, 'a declaration already carrying the checker gains no duplicate');
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('a declaration with NO producer never GAINS the checker — the pair is declared together or not at all', () => {
@@ -148,7 +131,7 @@ describe('migrate-gates — the pure migration plan', () => {
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /coverage-check/, 'the withheld checker is named');
     assert.match(preview, /produce/i, 'the preview says WHY — no gate produces the lcov it would read');
-    assert.match(preview, /WARNING: the canonical coverage-check gate was NOT added[^\n]*\n[^\n]*\n[^\n]*"lcovProducer": true/, 'the withheld block names the marker as the other lane');
+    assert.ok(factLine(preview, WITHHELD_FACT), `the withheld line states the fact and the remedy, the command and the marker: ${preview}`);
   });
 
   it('an ALREADY-declared checker over no producer is reported INERT, is never removed, and is not final-run-capable', () => {
@@ -158,20 +141,22 @@ describe('migrate-gates — the pure migration plan', () => {
     assert.equal(analysis.finalCapable, false, 'a review-state present must NOT make an inert pair read as final-run-capable');
     assert.ok(resultingGates(analysis.plan).some((g) => g.id === 'coverage-check'), 'the declared checker is never removed');
     const preview = formatPreview(analysis, 'APPLY');
-    assert.match(preview, /INERT/, 'the inert pair is named');
-    assert.match(preview, /--experimental-test-coverage/, 'the paste-ready suite cmd is carried');
-    assert.match(preview, /WARNING: the DECLARED coverage-check gate is INERT[^\n]*\n[^\n]*\n[^\n]*"lcovProducer": true/, 'the inert block names the marker as the other lane');
+    assert.ok(factLine(preview, POSITIONAL_FACT), `the inert line states the fact and the remedy, the command and the marker: ${preview}`);
+    assert.doesNotMatch(preview, FLAG_SET_BYTES, 'and carries no flag set');
     assert.doesNotMatch(preview, /already final-run-capable/);
   });
 
-  it('a gates-init-shaped producer (the exec-wrapped offer form) is recognized — the checker IS added over it', () => {
+  it('a gates-init-shaped producer (the exec-wrapped offer form) is recognized — the checker IS added over it on the yes', () => {
     const offered = {
       id: 'test',
       title: 'T',
-      cmd: `COREPACK_ENABLE_NETWORK=0 npm exec --offline --script-shell /bin/sh -- ${COVERAGE_PRODUCER_BODY}`,
+      cmd: `${EXEC_PREFIXES[0]}${BODY}`,
     };
+    const root = mkProject([offered]);
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply', '--add-checker'], quiet()), 0);
+    assert.deepEqual(gatesOf(root).map((g) => g.id), ['test', 'coverage-check']);
+    rmSync(root, { recursive: true, force: true });
     const analysis = buildMigrationPlan([offered], KIT_TOOLS, PROJECT);
-    assert.deepEqual(resultingGates(analysis.plan).map((g) => g.id), ['test', 'coverage-check']);
     // The `no canonical unit-tests entry` advice is keyed on the ID, but a producer is recognized
     // under ANY id — repeating the advice over a working producer sends the user to fix nothing.
     assert.doesNotMatch(formatPreview(analysis, 'APPLY'), /declare your suite gate with the lcov reporters by hand/);
@@ -197,12 +182,14 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
     assert.ok(!plan.some((r) => r.action === 'add'), 'no duplicate checker is added');
   });
 
-  it('a LOOKALIKE checker cmd is CUSTOMIZED (never counted canonical) and the canonical one is still added', () => {
+  it('a LOOKALIKE checker cmd is CUSTOMIZED (never counted canonical) and the canonical one is still added on the yes', () => {
     const lookalike = { id: 'cov', title: 'C', cmd: 'node scripts/coverage-check.mjs --check' };
     const analysis = buildMigrationPlan([lookalike, UNIT], KIT_TOOLS, PROJECT);
     assert.ok(analysis.customized.some((g) => g.id === 'cov'), 'the lookalike is reported customized');
-    const result = resultingGates(analysis.plan);
-    assert.equal(result[result.length - 1].id, 'coverage-check', 'the REAL canonical checker is added last');
+    const root = mkProject([lookalike, UNIT]);
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply', '--add-checker'], quiet()), 0);
+    assert.equal(gatesOf(root).at(-1).id, 'coverage-check', 'the REAL canonical checker is added last');
+    rmSync(root, { recursive: true, force: true });
   });
 
   it('the result is judged final-capable ONLY with a canonical review-state present; missing → a LOUD warning with the candidate line, never "final-run-capable"', () => {
@@ -218,15 +205,6 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
       PROJECT,
     );
     assert.equal(withRs.finalCapable, true);
-  });
-
-  it('a NON-canonical unit-tests cmd (npm test / wrapper) is CUSTOMIZED with the full flag set as the recovery', () => {
-    const npmTest = { id: 'unit-tests', title: 'U', cmd: 'npm test' };
-    const analysis = buildMigrationPlan([npmTest], KIT_TOOLS, PROJECT);
-    assert.equal(analysis.plan.find((r) => r.entry.id === 'unit-tests').action, 'keep');
-    assert.ok(analysis.customized.some((g) => g.id === 'unit-tests'), 'a non-canonical suite cmd is customized');
-    const preview = formatPreview(analysis, 'APPLY');
-    assert.match(preview, /--experimental-test-coverage/, 'the recovery carries the full flag set');
   });
 
   it('a PARTIALLY-flagged unit-tests cmd is CUSTOMIZED (a lone coverage flag never reads as configured)', () => {
@@ -274,7 +252,7 @@ describe('migrate-gates — the canonical anchor + final-capability validation (
 });
 
 describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit-tools does not name (D6)', () => {
-  const UNIT_DONE = { id: 'unit-tests', title: 'U', cmd: `${COVERAGE_PRODUCER_BODY} tools/*.test.mjs` };
+  const UNIT_DONE = { id: 'unit-tests', title: 'U', cmd: `${BODY} tools/*.test.mjs` };
   const INSTALLED_REVIEW_STATE = { id: 'review-state', title: 'RS', cmd: installedCmd('review-state') };
 
   it('a vendored coverage-check is PRESERVED exactly as declared — declared, never added over, never a collision', () => {
@@ -327,8 +305,8 @@ describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit
       PROJECT,
     );
     assert.equal(analysis.hasProducer, false, 'a marker on the checker itself never self-pairs, whichever copy it is');
-    assert.equal(analysis.checkerInert, true, 'a checker over nothing that writes the lcov passes verifying nothing');
-    assert.match(formatPreview(analysis, 'APPLY'), /INERT/);
+    assert.equal(analysis.checkerInert, true, 'a checker over nothing that writes the lcov reads no producer');
+    assert.ok(factLine(formatPreview(analysis, 'APPLY'), POSITIONAL_FACT));
   });
 
   it('producer-after-vendored-checker: a producer declared AFTER a vendored checker never covers it', () => {
@@ -340,26 +318,22 @@ describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit
     assert.equal(after.hasProducer, true, 'a producer IS declared somewhere');
     assert.equal(after.checkerInert, true, 'but not before the checker that reads what it writes');
     assert.equal(after.finalCapable, false);
-    assert.match(formatPreview(after, 'APPLY'), /INERT/);
+    assert.ok(factLine(formatPreview(after, 'APPLY'), POSITIONAL_FACT));
 
     const before = buildMigrationPlan([UNIT_DONE, INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT);
     assert.equal(before.checkerInert, false, 'the same entries in producer-first order are a live pair');
-    assert.doesNotMatch(formatPreview(before, 'APPLY'), /INERT/);
+    assert.ok(!formatPreview(before, 'APPLY').includes(POSITIONAL_FACT));
   });
 
-  it('the INERT warning names the edit the reader must actually make — order, not a missing gate', () => {
-    // The two ways to be inert need two sentences. Telling someone whose suite gate is already
-    // declared to declare it again sends them to fix nothing while the real defect stays.
+  it('the inert vendored row states one positional fact and one remedy, whether its producer runs after it or is absent', () => {
+    // One fact covers both: a producer after the checker and none at all are the same position, and the one remedy names both edits.
     const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') };
     const misordered = formatPreview(buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored, UNIT_DONE], KIT_TOOLS, PROJECT), 'APPLY');
-    assert.match(misordered, /runs AFTER this entry/, 'the ORDER is named as the defect, on the row it belongs to');
-    assert.match(misordered, /a checker belongs LAST, after its producer/, 'and the remedy is the reorder');
-    assert.doesNotMatch(misordered, /declare the suite gate/, 'never advise declaring a gate that is already there');
-
     const absent = formatPreview(buildMigrationPlan([INSTALLED_REVIEW_STATE, vendored], KIT_TOOLS, PROJECT), 'APPLY');
-    assert.match(absent, /no declared gate PRODUCES the lcov/, 'with nothing producing, the old sentence still holds');
-    assert.match(absent, /declare the suite gate/);
-    assert.match(absent, /no declared gate PRODUCES the lcov[^\n]*"lcovProducer": true/, 'the INERT row names the marker as the other lane');
+    for (const preview of [misordered, absent]) {
+      assert.ok(factLine(preview, POSITIONAL_FACT), preview);
+      assert.doesNotMatch(preview, VERIFIES_NOTHING, 'no checker line says the checker verifies nothing');
+    }
   });
 
   it('a mixed declaration renders ONE edit, never a removal and a reorder at once', () => {
@@ -372,9 +346,9 @@ describe('migrate-gates — a VENDORED core check is the tool, from a copy --kit
     assert.equal(analysis.canonicalCheckerInert, false, 'the canonical checker ends up last, after the producer');
     const preview = formatPreview(analysis, 'APPLY');
     assert.match(preview, /Remove THIS entry by hand/);
-    assert.match(preview, /the ONE edit that resolves both/);
+    assert.ok(preview.includes(POSITIONAL_FACT), 'the inert row states the fact');
     assert.doesNotMatch(preview, /belongs LAST, after its producer/, 'no second, contradictory edit');
-    assert.doesNotMatch(preview, /declare the suite gate/);
+    assert.ok(!preview.includes(CHECKER_REMEDY), 'the twin keeps its one remedy, the removal');
   });
 
   it('a canonical checker declared BESIDE the vendored one changes the recovery — remove, never repoint', () => {
@@ -413,18 +387,17 @@ describe('migrate-gates — preview writes NOTHING; apply is atomic and complete
     const text = io.out.join('\n');
     assert.match(text, /REMOVE review-ledger/);
     assert.match(text, /EXTEND unit-tests/);
-    assert.match(text, /ADD coverage-check/);
     assert.match(text, /apply exactly this migration: node "\/[^"]*migrate-gates\.mjs" --kit-tools/, 'the apply hint is a REAL runnable path (never a file: URL)');
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('--apply lands the full migration: legacy gone, unit-tests extended, coverage-check LAST', () => {
+  it('--apply --add-checker lands the full migration: legacy gone, unit-tests extended, coverage-check LAST', () => {
     const root = mkProject([UNIT, LEGACY_LEDGER, LEGACY_FOLD]);
     const io = quiet();
-    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply'], io), 0);
+    assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply', '--add-checker'], io), 0);
     const gates = gatesOf(root);
     assert.deepEqual(gates.map((g) => g.id), ['unit-tests', 'coverage-check']);
-    assert.match(gates[0].cmd, /--experimental-test-coverage/);
+    assert.equal(gates[0].cmd, `${BODY} tools/*.test.mjs`);
     assert.equal(gates[gates.length - 1].id, 'coverage-check');
     rmSync(root, { recursive: true, force: true });
   });
@@ -504,7 +477,7 @@ describe('migrate-gates — preview writes NOTHING; apply is atomic and complete
     const root = mkProject([LEGACY_LEDGER, UNIT]);
     const io = quiet();
     assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply'], io), 0);
-    assert.deepEqual(gatesOf(root).map((g2) => g2.id), ['unit-tests', 'coverage-check']);
+    assert.deepEqual(gatesOf(root).map((g2) => g2.id), ['unit-tests'], 'the moves land; the checker waits for the yes');
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -564,10 +537,9 @@ describe('spec:kit-command/S9 a kit-check gate is switched as an action of the m
     assert.equal(r.code, 0, r.err);
     assert.deepEqual(gatesOf(root), [
       { ...DOCS, cmd: SWITCHED },
-      { ...UNIT, cmd: `node --test ${UNIT_TESTS_COVERAGE_FLAGS} tools/*.test.mjs` },
+      { ...UNIT, cmd: `${BODY} tools/*.test.mjs` },
       { ...issues, cmd: 'node scripts/agent-workflow/run.mjs archive-issues --check' },
-      { id: 'coverage-check', title: 'Changed-line coverage + red-proof verification (the final-run checker)', cmd: `node "${join(KIT_TOOLS, 'coverage-check.mjs')}" --check` },
-    ]);
+    ], 'no checker is added without --add-checker');
     rmSync(root, { recursive: true, force: true });
   });
   it('--kit-script is an unknown argument, exits 2 without writing and appears nowhere in the usage', () => {
@@ -615,6 +587,153 @@ describe('spec:kit-command/S9 a kit-check gate is switched as an action of the m
         assert.deepEqual(gatesOf(root), [one], `${one.id} ${tail}: the gate is never rewritten`);
       }
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+const RS = { id: 'review-state', title: 'RS', cmd: installedCmd('review-state') };
+const CC = { id: 'coverage-check', title: 'CC', cmd: installedCmd('coverage-check') };
+const retired = (flags, { id = 'unit-tests', prefix = '', tail = '', ...extra } = {}) => ({ id, title: 'U', cmd: `${prefix}node --test ${flags}${tail ? ` ${tail}` : ''}`, ...extra });
+const commandCmd = (prefix = '', tail = '') => `${prefix}${BODY}${tail ? ` ${tail}` : ''}`;
+const linesOf = (text, pattern) => text.split('\n').filter((line) => pattern.test(line));
+const previewOf = (gates, project = PROJECT) => formatPreview(buildMigrationPlan(gates, KIT_TOOLS, project), 'APPLY');
+// The guard's remedies in the memory substrate, which names the kit's upgrade and no sibling skill.
+const ABSENT_REMEDY = `is absent — the kit's upgrade places the kit folder only where Node evidence stands (a root package.json, or a kit script): add one if this project runs Node, then run ${UPGRADE}.`;
+const WRONG_KIND_REMEDY = `is not what the kit writes there — a directory, a link, or a file where a folder belongs — beside which the specs op writes nothing: clear it by hand first, then run ${UPGRADE}`;
+// A project whose guard fails one way, with the first failing path and its remedy.
+const GUARD_FAILURES = [
+  ['run.mjs absent', RUN_REL, ABSENT_REMEDY, (root) => rmSync(join(root, RUN_REL))],
+  ['run.mjs an earlier kit\'s bytes', RUN_REL, 'differs from this kit\'s', (root) => writeFileSync(join(root, RUN_REL), `${readFileSync(join(root, RUN_REL), 'utf8')}// an earlier kit\n`)],
+  ['the reporter absent', REPORTER_REL, ABSENT_REMEDY, (root) => rmSync(join(root, REPORTER_REL))],
+  ['scripts/agent-workflow a regular file', 'scripts/agent-workflow', WRONG_KIND_REMEDY, (root) => { rmSync(join(root, 'scripts', 'agent-workflow'), { recursive: true }); writeFileSync(join(root, 'scripts', 'agent-workflow'), 'x\n'); }],
+];
+const declaredBytes = (root) => readFileSync(join(root, 'docs', 'ai', 'gates.json'), 'utf8');
+const runIn = (root, ...args) => { const io = quiet(); const code = main(['--cwd', root, '--kit-tools', KIT_TOOLS, ...args], io); return { code, out: io.out.join('\n'), err: io.err.join('\n') }; };
+const switchLines = (text) => linesOf(text, /^\s*SWITCH\b/).map((line) => line.trim());
+
+describe('spec:coverage-producer/S4 --apply, with no other flag, switches every retired producer form to the command while the guard holds', () => {
+  it('bare, behind each exec prefix, with a path tail and a quoted glob tail, under unit-tests and test, marked: switched in place, SWITCH with its was:, the preview the same lines, a rerun writes nothing', () => {
+    const cases = [...[RETIRED_V2, RETIRED_V1].map((flags) => [flags, {}]), ...EXEC_PREFIXES.map((prefix) => [RETIRED_V2, { prefix, id: 'test' }]),
+      [RETIRED_V1, { tail: 'tools/*.test.mjs test/*.test.mjs' }], [RETIRED_V2, { tail: "'src/**/*.test.mjs'", id: 'test' }],
+      [RETIRED_V2, { tail: 'tools/*.test.mjs', lcovProducer: true }], [RETIRED_V1, { prefix: EXEC_PREFIXES[1], tail: 'test/*.mjs', id: 'test', lcovProducer: true }]];
+    for (const [flags, options] of cases) {
+      const gate = retired(flags, options);
+      const expected = { ...gate, cmd: commandCmd(options.prefix, options.tail) };
+      const root = mkProject([gate, RS]);
+      const before = declaredBytes(root);
+      const preview = runIn(root);
+      assert.ok(preview.code === 0 && declaredBytes(root) === before, `${gate.cmd}: the preview writes nothing: ${preview.err}`);
+      const applied = runIn(root, '--apply');
+      assert.equal(applied.code, 0, applied.err);
+      assert.deepEqual(gatesOf(root), [expected, RS], `${gate.cmd}: switched at its place, every other field kept, no checker unasked`);
+      const lines = switchLines(applied.out);
+      assert.equal(lines.length, 1, applied.out);
+      for (const part of [`SWITCH ${gate.id}`, expected.cmd, `was: ${gate.cmd}`]) assert.ok(lines[0].includes(part), `${lines[0]} carries ${part}`);
+      assert.deepEqual(switchLines(preview.out), lines, 'the preview prints the same SWITCH line');
+      const moved = declaredBytes(root);
+      assert.ok(runIn(root, '--apply').code === 0 && declaredBytes(root) === moved, `${gate.cmd}: a second --apply writes nothing`);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('--apply keeps every other gate at its place; a command-body gate, an echo of a retired body and a shopt-prefixed retired body are untouched', () => {
+    const lint = { id: 'lint', title: 'L', cmd: 'npm run lint' };
+    const switched = retired(RETIRED_V2, { id: 'test', prefix: EXEC_PREFIXES[0], tail: 'tools/*.test.mjs' });
+    const untouched = [{ id: 'own', title: 'O', cmd: commandCmd('', 'more/*.test.mjs') }, { id: 'echoed', title: 'E', cmd: `echo node --test ${RETIRED_V2}` },
+      { id: 'globbed', title: 'G', cmd: `shopt -s globstar && node --test ${RETIRED_V2} tools/**/*.test.mjs` }];
+    const root = mkProject([lint, switched, ...untouched, RS]);
+    const applied = runIn(root, '--apply');
+    assert.equal(applied.code, 0, applied.err);
+    assert.deepEqual(switchLines(applied.out).map((line) => line.split(':')[0]), ['SWITCH test']);
+    assert.deepEqual(gatesOf(root), [lint, { ...switched, cmd: commandCmd(EXEC_PREFIXES[0], 'tools/*.test.mjs') }, ...untouched, RS]);
+    rmSync(root, { recursive: true, force: true });
+    const kept = mkProject([retired(RETIRED_V1, { lcovProducer: true }), RS, CC]);
+    assert.equal(runIn(kept, '--apply').code, 0);
+    assert.deepEqual(gatesOf(kept), [{ ...retired(RETIRED_V1, { lcovProducer: true }), cmd: BODY }, RS, CC], 'the declared checker is kept, never duplicated');
+    rmSync(kept, { recursive: true, force: true });
+  });
+});
+
+describe('spec:coverage-producer/S5 a flag in the tail is CUSTOMIZED; a failed guard keeps the gate with its one line', () => {
+  it('a retired form whose tail holds --test-concurrency=1, under unit-tests and another id, is CUSTOMIZED with the command\'s recovery and written nowhere; the checker lines state the fact', () => {
+    for (const id of ['unit-tests', 'test']) {
+      const gate = retired(RETIRED_V2, { id, tail: '--test-concurrency=1 tools/*.test.mjs' });
+      for (const [gates, fact] of [[[gate], WITHHELD_FACT], [[gate, RS, CC], POSITIONAL_FACT], [[gate, RS, { ...CC, cmd: vendoredCmd('coverage-check') }], POSITIONAL_FACT]]) {
+        const root = mkProject(gates);
+        const before = declaredBytes(root);
+        const r = runIn(root, '--apply');
+        assert.ok(r.code === 0 && declaredBytes(root) === before, `${id} ${gates.length}: written nowhere: ${r.err}`);
+        const [recovery] = linesOf(r.out, /recovery \(apply by hand/);
+        assert.ok(r.out.includes(`CUSTOMIZED (untouched): ${id}`) && switchLines(r.out).length === 0 && recovery?.includes(SUITE_LINE) && !FLAG_SET_BYTES.test(recovery), `${id}: ${r.out}`);
+        assert.ok(factLine(r.out, fact), `${id} ${gates.length}: the checker line states the fact and the remedy: ${r.out}`);
+        assert.doesNotMatch(r.out, /form an earlier kit wrote|verif(?:y|ies|ying) nothing/, 'why a gate was kept rides that gate\'s own line, never a checker line');
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  for (const [state, path, remedy, breakGuard] of GUARD_FAILURES) {
+    it(`${state}: each retired gate, marked or not, is kept as declared with one line naming its id, ${path}, its remedy and the upgrade's promise, no SWITCH, no re-run`, () => {
+      const unmarked = retired(RETIRED_V2, { tail: 'tools/*.test.mjs' });
+      const marked = retired(RETIRED_V1, { id: 'project-check-42', lcovProducer: true });
+      for (const [gates, gate, checker] of [[[unmarked], unmarked, 'withheld'], [[unmarked, RS, CC], unmarked, 'inert'], [[marked], marked, 'offered'], [[marked, RS, CC], marked, 'kept']]) {
+        const root = mkProject(gates);
+        breakGuard(root);
+        const before = declaredBytes(root);
+        const r = runIn(root, '--apply');
+        assert.equal(r.code, 0, `${state} ${checker}: no throw: ${r.err}`);
+        assert.ok(declaredBytes(root) === before && switchLines(r.out).length === 0, `${state} ${checker}: kept as declared, nothing added, no SWITCH: ${r.out}`);
+        const kept = linesOf(r.out, new RegExp(GUARD_PROMISE));
+        assert.equal(kept.length, 1, `${state} ${checker}: ${r.out}`);
+        for (const word of [gate.id, `${path} `, remedy]) assert.ok(kept[0].includes(word), `${kept[0]} names ${word}`);
+        assert.doesNotMatch(r.out, RERUN, `${state} ${checker}: no line says re-run this migration`);
+        if (checker === 'withheld') assert.ok(factLine(r.out, WITHHELD_FACT), r.out);
+        if (checker === 'inert') assert.ok(factLine(r.out, POSITIONAL_FACT), r.out);
+        if (checker === 'offered') assert.ok(r.out.includes(ADD_CHECKER), `a marked gate reads as a producer: the checker is offered: ${r.out}`);
+        if (checker === 'kept') assert.ok(!r.out.includes(POSITIONAL_FACT) && !r.out.includes(ADD_CHECKER), r.out);
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+describe('spec:coverage-producer/S6 the extend writes the command over a path-shaped rest; every printed suite line names the command', () => {
+  it('--apply extends node --test with paths and alone to the command body with its was:, a declared checker inert before reads live after; a flag in the rest is CUSTOMIZED', () => {
+    for (const [cmd, written] of [['node --test tools/*.test.mjs', `${BODY} tools/*.test.mjs`], ['node --test', BODY]]) {
+      const root = mkProject([{ ...UNIT, cmd }, RS, CC]);
+      const r = runIn(root, '--apply');
+      assert.equal(r.code, 0, r.err);
+      assert.deepEqual(gatesOf(root), [{ ...UNIT, cmd: written }, RS, CC], cmd);
+      const extend = linesOf(r.out, /^\s*EXTEND unit-tests\b/);
+      assert.ok(extend.length === 1 && extend[0].includes(written) && extend[0].includes(`was: ${cmd}`), `the acted row prints with its was: ${r.out}`);
+      const again = runIn(root);
+      assert.ok(!again.out.includes(POSITIONAL_FACT) && !/CUSTOMIZED|^\s*(EXTEND|SWITCH)\b/m.test(again.out), `${cmd}: the checker reads live, the next run has nothing to do: ${again.out}`);
+      rmSync(root, { recursive: true, force: true });
+    }
+    const flagged = { ...UNIT, cmd: 'node --test --test-concurrency=1 tools/*.test.mjs' };
+    const analysis = buildMigrationPlan([flagged], KIT_TOOLS, PROJECT);
+    assert.deepEqual([analysis.customized, analysis.unitTestsExtended], [[flagged], false]);
+    assert.ok(linesOf(formatPreview(analysis, 'APPLY'), /recovery \(apply by hand/)[0]?.includes(SUITE_LINE));
+  });
+
+  it('with run.mjs absent the unit-tests gate is kept with the guard\'s line, never extended', () => {
+    const root = mkProject([UNIT, RS]);
+    rmSync(join(root, RUN_REL));
+    const before = declaredBytes(root);
+    const r = runIn(root, '--apply');
+    assert.ok(r.code === 0 && declaredBytes(root) === before && linesOf(r.out, /^\s*EXTEND\b/).length === 0, `${r.out}${r.err}`);
+    const kept = linesOf(r.out, new RegExp(GUARD_PROMISE));
+    assert.ok(kept.length === 1 && ['unit-tests', `${RUN_REL} `, ABSENT_REMEDY].every((word) => kept[0].includes(word)) && !RERUN.test(r.out), r.out);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('no printed suite or recovery line carries a flag set: the customized recovery, the withheld and inert blocks and a vendored inert line', () => {
+    const vendored = { id: 'coverage-check', title: 'CC', cmd: vendoredCmd('coverage-check') }; assert.deepEqual(buildMigrationPlan([{ ...UNIT, cmd: 'npm test' }], KIT_TOOLS, PROJECT).customized.map((g) => g.cmd), ['npm test'], 'npm test is CUSTOMIZED');
+    for (const gates of [[{ ...UNIT, cmd: 'npm test' }], [{ id: 'suite', title: 'S', cmd: 'npm test' }], [{ id: 'suite', title: 'S', cmd: 'npm test' }, RS, CC], [RS, vendored]]) {
+      assert.doesNotMatch(previewOf(gates), FLAG_SET_BYTES, JSON.stringify(gates));
+      const suiteLines = linesOf(previewOf(gates), /your test paths/);
+      assert.ok(suiteLines.length > 0, JSON.stringify(gates));
+      for (const line of suiteLines) assert.ok(line.includes(SUITE_LINE) && !FLAG_SET_BYTES.test(line), line);
     }
   });
 });

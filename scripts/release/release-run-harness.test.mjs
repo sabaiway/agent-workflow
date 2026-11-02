@@ -95,7 +95,6 @@ export const makeWorld = (options = {}) => {
   const readStage = (command, argv) => command === 'git' ? argv[0]
     : argv[0].includes('preflight-remote') ? 'preflight-remote'
       : argv[0].includes('smoke-candidate') ? 'smoke-candidate'
-        : argv[0].includes('cross-version-gate') ? 'cross-version-gate'
           : argv[0].includes('dispatch-publish') ? (argv.includes('--live') ? 'live' : 'verify')
             : 'smoke-init';
   const exec = async (command, argv, execOptions) => {

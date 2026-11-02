@@ -110,7 +110,8 @@ Also the kit's: the onboarding note of `docs/ai/orchestration.json`, its `_READM
 upgrade with no question and no copy kept, every recipe kept; a note of your own goes in AGENTS.md, outside the kit
 block's two workflow:kit comment lines.
 A declaration seeded once from a template and never
-replaced by the upgrade's ensures (a migration rewrites one only on the user's explicit yes) is the
+replaced by the upgrade's ensures (the gates migration moves an earlier kit's gates with no
+question and adds the coverage checker only on the user's yes) is the
 user's own file. A customization goes into one of nine channels instead:
 
 - **Your own commit checks** go in the local hook file `scripts/pre-commit.local`: the managed

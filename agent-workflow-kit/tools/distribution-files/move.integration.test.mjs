@@ -159,14 +159,11 @@ describe('spec:distribution-files/S38 one plain upgrade of a 1af99af deployment 
       const migration = UPGRADE_RUNLIST.find(({ id }) => id === 'gates-migration');
       assert.ok(migration, 'step 3: row 4 supplies the gates-migration command');
       const migrationCommand = migration.command.replaceAll('${CLAUDE_SKILL_DIR}', KIT_ROOT).replace('<project>', project);
-      const gatesBefore = readAt(project, GATES_PATH);
-      const preview = run('step 3: migration preview', 'bash', '-c', migrationCommand);
-      assert.equal(readAt(project, GATES_PATH), gatesBefore, 'step 3: the preview writes nothing');
+      const moved = run('step 3: row 4 run once, with no question', 'bash', '-c', migrationCommand);
       for (const { id, cmd } of EXPECTED_GATES) {
-        assert.ok(preview.split('\n').some((line) => /\bSWITCH\b/.test(line) && line.includes(id) && line.includes(cmd)),
-          `step 3: row 4 switches ${id} without a flag naming a flat file\n${preview}`);
+        assert.ok(moved.split('\n').some((line) => /\bSWITCH\b/.test(line) && line.includes(id) && line.includes(cmd)),
+          `step 3: row 4 switches ${id} without a flag naming a flat file\n${moved}`);
       }
-      run('step 3: migration apply', 'bash', '-c', `${migrationCommand} --apply`);
       assert.deepEqual(readJson(project, GATES_PATH).gates, EXPECTED_GATES, 'step 3: each flat gate switches in place');
 
       const packageJson = readJson(project, 'package.json');

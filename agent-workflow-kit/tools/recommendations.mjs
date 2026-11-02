@@ -56,14 +56,14 @@ import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
-import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate } from './gates-declaration.mjs';
+import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, movableEarlierForm } from './gates-declaration.mjs';
 // The typed channel's READ-ONLY leaf only — never tools/mcp.mjs, which reaches the write core.
 import {
   SERVER_NAME as MCP_SERVER_NAME,
   STATE as MCP_STATE,
   readRegistration,
 } from './mcp-registration.mjs';
-import { matchesCoverageProducer, isCoverageProducerGate } from './coverage-producer.mjs';
+import { matchesCoverageProducer } from './coverage-producer.mjs';
 // How much of the TRACKED tree the changed-line coverage domain can assess at all — the fact that
 // turns "the checker certifies" into "the checker certifies the assessable minority".
 import { takeCensus, censusFact, CENSUS_VERDICT } from './tracked-tree-census.mjs';
@@ -266,7 +266,7 @@ export const composeVerdict = ({ attention, optional, skipped, kit = 0 }) => {
 // banned tokens), never a fixture-coverage gamble. A pure-placeholder template marks a WHAT whose
 // content is fully dynamic (capped at composition by truncation-with-count) — except `profile-gap`, whose
 // WHAT is never truncated: the leaf's suite pins every composed WHAT under the cap.
-const GATES_INERT_WHAT = 'the declared coverage checker ({id}) has no producer before it — it certifies nothing this run, or reads a stale lcov';
+const GATES_INERT_WHAT = 'the declared coverage checker ({id}): no gate before it is a producer this kit reads';
 export const WHATS = Object.freeze({
   'velocity-core': 'routine read-only commands still prompt — {n} audited read-only allowlist entr(ies) not seeded',
   'velocity-core.rule': 'auto mode refuses a harness apply, so work cannot stay in auto mode — the apply ask rule is not seeded',
@@ -693,7 +693,7 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       // ORDER decides, through the declaration's own shared predicate: a producer declared AFTER the
       // checker leaves it just as inert as no producer at all (it reads nothing, or stale bytes), and
       // only --final refuses that shape — a plain run reports every gate PASS.
-      if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]))) {
+      if (coverageProducerPrecedes(gates, gates.indexOf(checkers[0]), root)) {
         // The pair is LIVE, and that is exactly where the DOMAIN question becomes the honest one: the
         // checker's changed-line domain is `.mjs/.cjs/.js` by design, so on a tree dominated by what
         // that domain excludes, "certified" means "certified over the assessable minority". An
@@ -728,7 +728,16 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       // arm's sentence would be false over it. An offer computation that throws reaches the probe's
       // stated-skip lane, which is the honest answer to "can the fill help here" when nobody knows.
       const declaredIds = new Set(gates.map((gate) => gate.id));
-      const offered = buildOffer(root, deps).entries.filter((entry) => matchesCoverageProducer(entry.cmd));
+      const offer = buildOffer(root, deps);
+      // A gate an earlier kit wrote that the upgrade moves, anywhere in the declaration, or a `node --test`
+      // script the offer withheld on its unit-tests guard: the upgrade is the remedy, in place of the fill
+      // preview and of both user arms below — it moves the gate with no question, or a line of its report
+      // names what stops it; the advisor predicts nothing about the run (spec coverage-producer, the remedy route).
+      if (movableEarlierForm(gates) || offer.guardWithheld.length > 0) {
+        add('gates-inert', fillTemplate(WHATS['gates-inert'], { id: truncatedTo(oneLineOf(checkers[0].id), templateBudget(WHATS['gates-inert'])) }), '/agent-workflow-kit upgrade');
+        return;
+      }
+      const offered = offer.entries.filter((entry) => matchesCoverageProducer(entry.cmd));
       const producer = offered.find((entry) => !declaredIds.has(entry.id));
       // The dead pair on a tree the recognized producer set cannot speak for. It is deliberately NOT
       // the ordering arm: a producer that EXISTS but sits after the checker is one MOVE away from
@@ -754,7 +763,7 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
       // a recognizable producer the offer never carries. The arm therefore says only what it knows —
       // nothing declares one and nothing offers one — and its apply names that gap, because the
       // remedy there is a hand-declared gate rather than the marker.
-      if (offered.length === 0 && !gates.some((gate) => !checkers.includes(gate) && isCoverageProducerGate(gate))) {
+      if (offered.length === 0 && !coverageProducerPrecedes(gates, gates.length, root)) {
         // An UNAVAILABLE census is NOT a skip here. The dead pair is a defect on any tree, and the
         // arm below states it truthfully — falling through keeps a non-git deployment byte-identical
         // to what it saw before this outcome existed, and still renders an item, so the flow-optimal
