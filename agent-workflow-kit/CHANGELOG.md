@@ -4,6 +4,24 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 22.2.0 — a question is answered, not acted on: one new bullet in your communication rules (AD-223)
+
+**Your communication rules now say that a message which only asks changes nothing.** A message asking for information
+or an opinion is answered, with a change proposed if one is needed; a request phrased as a question ("can you fix
+it?") and work you already approved run as before. A change nobody asked for is a miss: the agent undoes it in the
+same turn when it is its own and safely reversible, and otherwise says plainly what was changed, never handing it
+back to you as a decision or a cleanup. Once `npx @sabaiway/agent-workflow-kit@latest init` has installed this kit,
+your next `/agent-workflow-kit upgrade` brings the bullet with no question; `init` alone leaves your project's rules
+files as they are.
+
+- **Where it sits.** `references/rules/communication.md` gains the bullet right after `Lead with the result`; every
+  other bullet is unchanged and `Two blocks for the user` stays last.
+- **A quiet refresh.** The body releases 20.0.0 to 22.1.0 shipped is now a known earlier body
+  (`tools/project-rules/rules-priors.mjs`), so the upgrade reports a `docs/ai/rules/communication.md` holding it as
+  refreshed from an earlier release, never as differing from every body the kit shipped. A file holding any other body is replaced by the template as before, with the line
+  naming `docs/ai/rules/local/communication.md` as the place for a rule of your own.
+- Nothing is removed and no export changes (MINOR).
+
 ## 22.1.0 — the kit block loads your session-start files into Claude Code before its first word (AD-222)
 
 **A Claude Code session started at your project root now holds your handover, your agent rules and every rules theme

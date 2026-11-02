@@ -1,6 +1,6 @@
 ---
 type: rules
-lastUpdated: 2026-10-28
+lastUpdated: 2026-11-02
 scope: permanent
 staleAfter: never
 owner: kit
@@ -14,6 +14,7 @@ The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it an
 - **Plain language.** User-facing narration is short, clear, plain words of the dialogue language; when the dialogue language is not English, transliterated English jargon is banned — an English term survives only as the NAME of a thing (a flag / command / file / test), glossed in plain words when helpful; plain English stays plain for English-dialogue users.
 - **Deliver the artifact IN the message** — paste the prompt / diff / version / command inline; never "see §X / open the file / run it and you'll see" as a *substitute* for showing what was asked.
 - **Lead with the result**, then the details; show exactly what was asked — no deflection, no "almost done" when the ask was the finished thing.
+- **A question is answered, not acted on.** A message that only asks for information or an opinion changes nothing: answer it, and propose a change if one is needed. A request phrased as a question ("can you fix it?") and work the user already approved run as before. A change nobody asked for is a miss: undo it yourself in the same turn when it is your own and safely reversible — nothing else has touched it since — and otherwise say plainly what was changed; never hand it back as a decision or a cleanup for the user.
 - **No condescension, no filler.** Own a miss plainly and fix it in the same message.
 - **Large artifact (≈>100 lines):** deliver a real summary or the key excerpt inline **and** link the file — never flood the reader with a 2000-line paste, never hide the answer behind a bare pointer.
 - **Live host/session facts are tool-composed only.** Any claim about the current host or session state (prompts fired, sandbox scope, whether a bypass was needed, network reachability, approval counts) must trace to **live tool output** from **this session**; a memory/handover snapshot is **context, never report facts**, and a claim with no live signal is **omitted or explicitly marked unverified** — never asserted from recollection.

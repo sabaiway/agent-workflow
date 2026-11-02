@@ -7,6 +7,15 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-02 — AD-223: a question is answered, not acted on, one bullet of the kit's communication theme (kit 22.2.0 MINOR; memory, engine and both bridges unchanged)
+
+**The kit's communication rules gain one bullet right after `Lead with the result`:** a message that only asks for
+information or an opinion changes nothing; a request phrased as a question and work already approved run as before;
+a change nobody asked for is undone by the agent in the same turn when it is its own and safely reversible, and
+otherwise named plainly. The communication body releases 20.0.0 to 22.1.0 shipped joins the kit's catalog of known
+earlier bodies, with its fixture, so the upgrade reports a deployment's communication rules file that holds that
+body as refreshed from an earlier release, never as differing from every body the kit shipped.
+
 ## 2026-11-02 — AD-222: the kit block imports every session-start rules file; the SessionStart hook AD-038 deferred is dropped (kit 22.1.0 MINOR; memory, engine and both bridges unchanged)
 
 **The kit block of a deployed `AGENTS.md` now carries one `@` import line per session-start file** (the handover,

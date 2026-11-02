@@ -14,6 +14,14 @@ const REPO_ROOT = new URL('../', KIT_ROOT);
 const ENGINE_ROOT = new URL('agent-workflow-engine/', REPO_ROOT);
 const SPEC_CANON = new URL('agent-workflow-engine/references/specs.md', REPO_ROOT);
 const SLICED_BULLET = '- **Spec drives modular, feature-sliced architecture.**';
+const QUESTION_LEAD = '- **A question is answered, not acted on.**';
+const QUESTION_TOKENS = [
+  'only asks for information or an opinion changes nothing',
+  'A request phrased as a question',
+  'work the user already approved run as before',
+  'undo it yourself in the same turn when it is your own and safely reversible',
+  'otherwise say plainly what was changed',
+];
 const ARCHITECTURE_TEMPLATES = ['agent-workflow-memory', 'agent-workflow-kit'].map((pkg) => `${pkg}/references/templates/architecture.md`);
 const START = '**Start of every session**';
 const BEFORE = '**Before any code change**';
@@ -160,6 +168,21 @@ describe('spec:project-rules/S26 the communication and story-sessions kit templa
       bodyRule(body);
     });
   }
+});
+
+describe('spec:project-rules/S39 the communication question bullet occurs once after Lead with the result and before Two blocks for the user, carrying its bound tokens', () => {
+  it('the communication body carries exactly one question bullet directly after Lead with the result, before Two blocks for the user, with all five tokens', () => {
+    const lines = afterTitle(readFileSync(new URL('references/rules/communication.md', KIT_ROOT), 'utf8'));
+    const questions = lines.filter((line) => line.startsWith(QUESTION_LEAD));
+    assert.equal(questions.length, 1, 'exactly one question bullet');
+    const questionIndex = lines.indexOf(questions[0]);
+    const resultIndex = lines.findIndex((line) => line.startsWith('- **Lead with the result**'));
+    const closeIndex = lines.findIndex((line) => line.startsWith('- **Two blocks for the user.**'));
+    assert.ok(resultIndex >= 0, 'Lead with the result bullet is present');
+    assert.equal(questionIndex, resultIndex + 1, 'the question bullet directly follows Lead with the result');
+    assert.ok(questionIndex < closeIndex, 'the question bullet comes before Two blocks for the user');
+    for (const token of QUESTION_TOKENS) assert.ok(questions[0].includes(token), token);
+  });
 });
 
 describe('spec:project-rules/S27 the precedence line opens every theme template and the kit block', () => {
