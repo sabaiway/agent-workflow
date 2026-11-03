@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeSandbox, farmFor, FAKE_AGY } from './agy-review-harness.test.mjs';
-import { stripGitLocationEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
+const stripGitLocationEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REVIEW = join(HERE, 'agy-review.sh');

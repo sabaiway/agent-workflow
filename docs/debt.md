@@ -998,6 +998,18 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   text, the manifest notes and help kept verbatim together. Residual exposure, NOT live: the shipped file carries two
   RUN_HOST lines, so every listed condition is the whole list today.
 
+- **BRIDGE-FILES-IMPORT-ONLY-THEIR-OWN-FOLDER** — invariant: no bridge file imports a path outside its own bridge
+  folder, and the local unit gate runs the kit's mirror bridge tests as the publish job does. Origin: JEV S14 release
+  run 1 (2026-11-03): `codex-cli-bridge/bin/codex-exec-jev.test.mjs:8`, `codex-review-jev.test.mjs:10` and
+  `antigravity-cli-bridge/bin/agy-jev.test.mjs:11` imported `../../agent-workflow-kit/tools/git-env.mjs`, which
+  resolves from the canon folder but not from the kit mirror (`agent-workflow-kit/bridges/<bridge>/bin/`); the publish
+  job's package test (`.github/workflows/_publish-one.yml:173`, `bridges/*/bin/*.test.mjs`) failed 3 of 12134 and
+  nothing was published, while the local `--final` was green because the unit-tests gate in `docs/ai/gates.json` runs
+  the canon bridge tests and, of the kit mirror, only `bridges/antigravity-cli-bridge/bin/agy-envelope.test.mjs`.
+  Narrow fix: each of the three defines the one-line `GIT_*` filter in place (the memory suites' idiom). Proof: the
+  three mirror files red before the fix (`ERR_MODULE_NOT_FOUND`, 3/3), green after (130/130 with the canon copies).
+  Residual exposure, NOT live: `git grep "from '../../"` over both canon bridge folders is empty after the fix.
+
 ## Closed
 
 - **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
