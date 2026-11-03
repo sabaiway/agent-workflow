@@ -2834,27 +2834,6 @@ describe('agy-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 },
     assert.match(r.stderr, /control/i);
   });
 
-  // The two-stage cap guarantee: the parent preflight fails closed, and the seam
-  // (AGY_REQUIRE_TIMEOUT_BIN=1) makes the CHILD's missing-binary lane refuse too — but only a
-  // child that HONORS the seam. A stale installed agy-run that never reads it could run uncapped
-  // past the parent preflight, so the parent verifies the resolved child carries the seam token
-  // and refuses loudly naming the refresh recovery otherwise.
-  it('a STALE agy-run child that does not honor the timeout seam refuses fail-closed (never a silently uncapped dispatch)', async () => {
-    const sb = makeSandbox();
-    const staleDir = join(sb.home, 'stale-bin');
-    mkdirSync(staleDir, { recursive: true });
-    writeFileSync(join(staleDir, 'agy-run'), '#!/usr/bin/env bash\nprintf "FAKE_AGY_REVIEW_OUTPUT\\n### Verdict\\nSHIP\\n"\n', { mode: 0o755 });
-    const r = await run(sb, {
-      args: ['code', '--facts', 'a tiny fact'],
-      env: { PATH: `${staleDir}:${sb.bin}:${farmFor(['agy-run'])}` },
-    });
-    const receipts = readReceipts(sb.repo);
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.equal(r.status, 127, 'a seam-blind child is a stale bridge install — refuse, never dispatch uncapped');
-    assert.match(r.stderr, /does not honor the AGY_REQUIRE_TIMEOUT_BIN seam/);
-    assert.equal(receipts.length, 0, 'no dispatch, no receipt');
-  });
-
   // Flow-orchestration Phase 4.2 (#26): the uncapped lane is CLOSED — without a capping binary the
   // preflight refuses by name BEFORE any CLI run (the pre-fix wrapper printed timeout=uncapped and
   // ran anyway). The shadow-proof resolver discipline now surfaces as the REFUSAL, not a banner.

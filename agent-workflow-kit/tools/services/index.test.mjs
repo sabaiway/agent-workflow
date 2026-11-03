@@ -40,7 +40,7 @@ it('spec:services/S1 loads exactly the three bundled fragments', () => {
   assert.deepEqual(services.loadServiceFragments(), EXPECTED_FRAGMENTS);
 });
 
-it('spec:services/S2 refuses every unreadable or invalid fragment without returning a partial set', (context) => {
+it('spec:services/S2 refuses every unreadable or invalid fragment without returning a partial set', async (context) => {
   assert.equal(typeof services.loadServiceFragments, 'function');
   const temporary = createTemp(context);
   const valid = EXPECTED_FRAGMENTS.codex;
@@ -72,6 +72,8 @@ it('spec:services/S2 refuses every unreadable or invalid fragment without return
       value: { ...valid, excludedCommands: [command] },
     })),
     { name: 'lowercase passed variable', key: 'passedVariables', value: { ...valid, passedVariables: ['lower_case'] } },
+    { name: 'proxy variable always scrubbed', key: 'passedVariables', value: { ...valid, passedVariables: ['OPENAI_BASE_URL'] } },
+    { name: 'run-reachable wildcard', key: 'hosts', value: { ...valid, hosts: ['*.example.com'], runReachesHosts: true } },
     { name: 'non-boolean reachability', key: 'runReachesHosts', value: { ...valid, runReachesHosts: 'yes' } },
     { name: 'repeated host', key: 'hosts', value: { ...valid, hosts: ['x.example', 'x.example'] } },
     { name: 'repeated command', key: 'excludedCommands', value: { ...valid, excludedCommands: ['tool *', 'tool *'] } },
@@ -81,19 +83,23 @@ it('spec:services/S2 refuses every unreadable or invalid fragment without return
     } },
   ];
   for (const [index, refusal] of cases.entries()) {
-    const servicesDir = join(temporary, String(index));
-    if (refusal.directory !== 'absent') {
-      mkdirSync(servicesDir);
-      writeJson(join(servicesDir, 'codex.json'), valid);
-      if (!refusal.directory) {
-        writeFileSync(join(servicesDir, 'z-bad.json'), refusal.raw ?? JSON.stringify(refusal.value ?? null));
+    await context.test(refusal.name, () => {
+      const servicesDir = join(temporary, String(index));
+      if (refusal.directory !== 'absent') {
+        mkdirSync(servicesDir);
+        writeJson(join(servicesDir, 'codex.json'), valid);
+        if (!refusal.directory) {
+          writeFileSync(join(servicesDir, 'z-bad.json'), refusal.raw ?? JSON.stringify(refusal.value ?? null));
+        }
       }
-    }
-    assert.throws(() => services.loadServiceFragments({ servicesDir, ...refusal.deps }), (error) => {
-      assert.ok(error.message.includes(refusal.directory ? servicesDir : 'z-bad.json'), refusal.name);
-      if (refusal.key) assert.ok(error.message.includes(refusal.key), refusal.name);
-      return true;
-    }, refusal.name);
+      const returned = [];
+      assert.throws(() => returned.push(services.loadServiceFragments({ servicesDir, ...refusal.deps })), (error) => {
+        assert.ok(error.message.includes(refusal.directory ? servicesDir : 'z-bad.json'), refusal.name);
+        if (refusal.key) assert.ok(error.message.includes(refusal.key), refusal.name);
+        return true;
+      }, refusal.name);
+      assert.deepEqual(returned, [], `${refusal.name}: no partial set returned`);
+    });
   }
 });
 

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, writeFileSync, symlinkSync, chmodSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, symlinkSync, chmodSync, readFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,28 +102,79 @@ describe('findOnPath', () => {
   });
 });
 
+describe('service-owned credentials — spec:services/S8', () => {
+  const markers = { codex: 'auth.json', antigravity: 'antigravity-oauth-token' };
+  const entries = Object.entries(markers).map(([service, file]) => [service, KNOWN_BACKENDS.find((entry) => entry.bin === (service === 'codex' ? 'codex' : 'agy')), file]);
+  it('registry credentials name only their service and marker file', () => {
+    for (const [service, entry, file] of entries) assert.deepEqual(entry.credential, { service, file });
+  });
+  for (const [service, entry, file] of entries) {
+    it(`${service}: an injected fragment owns the credential directory and its env override`, (context) => {
+      const directory = mkdtempSync(join(tmpdir(), 'awf-credential-'));
+      context.after(() => rmSync(directory, { recursive: true, force: true }));
+      const fragment = { writableDirs: [{ env: 'CREDENTIAL_DIR', default: '~/injected' }] };
+      for (const [getenv, path] of [[{ CREDENTIAL_DIR: directory }, directory], [{}, join(directory, 'injected')]]) {
+        mkdirSync(path, { recursive: true });
+        writeFileSync(join(path, file), 'marker\n', { flag: 'wx' });
+        const deps = { home: directory, getenv, loadServiceFragments: () => ({ [service]: fragment }) };
+        assert.deepEqual(probeCredential(entry, deps), { state: 'present', path: join(path, file) });
+        assert.deepEqual(detectBackend(entry, { ...deps, probeCli: () => ({ state: 'missing' }) }).credentials, { state: 'present', path: join(path, file) });
+      }
+    });
+    for (const [label, load] of [['loader throw', () => { throw new Error('fragment unreadable'); }], ['missing fragment', () => ({})],
+      ['no directory', () => ({ [service]: { writableDirs: [] } })], ['two directories', () => ({ [service]: { writableDirs: [{ env: null, default: '~/a' }, { env: null, default: '~/b' }] } })]]) {
+      it(`${service}: ${label} reports unknown with a reason in detection, report and guide`, () => {
+        const deps = { getenv: {}, home: HOME, exists: () => true, stat: () => ({ isFile: () => true }), loadServiceFragments: load,
+          validate: () => ({ result: 'valid', available: true, kind: 'execution-backend', name: entry.name }),
+          probeCli: () => ({ state: 'present', bin: entry.bin }), probeWrapper: (name) => ({ name, state: 'present' }) };
+        const credential = probeCredential(entry, deps);
+        assert.equal(credential.state, 'unknown');
+        assert.ok(credential.reason?.includes(service), credential.reason);
+        if (label === 'loader throw') assert.ok(credential.reason.includes('fragment unreadable'));
+        const status = detectBackend(entry, deps);
+        assert.deepEqual(status.credentials, credential);
+        assert.doesNotThrow(() => detectBackends(deps));
+        const report = formatReport([status]);
+        const hint = report.split('\n').find((line) => line.includes('↳'));
+        assert.ok(hint?.includes(credential.reason), report);
+        assert.doesNotMatch(hint, /marker file|sign in/i);
+        const step = guideFor(status).find(({ need }) => need === 'credentials');
+        assert.ok(step?.hint.includes(credential.reason), JSON.stringify(step));
+        assert.doesNotMatch(step.hint, /sign in/i);
+      });
+    }
+  }
+  it('characterize-first: the real loader retains CODEX_HOME, the codex home default and the antigravity default', () => {
+    for (const [service, entry, file] of entries) for (const getenv of [{ CODEX_HOME: '/override' }, {}]) {
+      const path = service === 'codex' ? join(getenv.CODEX_HOME ?? join(HOME, '.codex'), file) : join(HOME, '.gemini/antigravity-cli', file);
+      assert.deepEqual(probeCredential(entry, { home: HOME, getenv, exists: () => true, stat: () => ({ isFile: () => true }) }), { state: 'present', path });
+    }
+  });
+});
+
 describe('probeCredential', () => {
-  const entry = (over = {}) => ({ credential: { env: 'CRED', default: '~/.codex', file: 'auth.json', ...over } });
+  const entry = (over = {}) => ({ credential: { service: 'codex', env: 'CRED', default: '~/.codex', file: 'auth.json', ...over } });
+  const probeWithFragment = (entry, deps) => probeCredential(entry, { ...deps, loadServiceFragments: () => ({ codex: { writableDirs: [{ env: entry.credential.env, default: entry.credential.default }] } }) });
 
   it('present when the marker file is a real file (env override honoured)', () => {
-    const r = probeCredential(entry(), { getenv: { CRED: '/cdir' }, home: HOME, exists: () => true, stat: () => ({ isFile: () => true }) });
+    const r = probeWithFragment(entry(), { getenv: { CRED: '/cdir' }, home: HOME, exists: () => true, stat: () => ({ isFile: () => true }) });
     assert.equal(r.state, 'present');
     assert.equal(r.path, '/cdir/auth.json');
   });
 
   it('absent → missing', () => {
-    const r = probeCredential(entry(), { getenv: {}, home: HOME, exists: () => false });
+    const r = probeWithFragment(entry(), { getenv: {}, home: HOME, exists: () => false });
     assert.equal(r.state, 'missing');
     assert.equal(r.path, join(HOME, '.codex/auth.json')); // env unset → tilde default
   });
 
   it('statSync throwing a non-ENOENT error → unknown', () => {
-    const r = probeCredential(entry(), { getenv: {}, home: HOME, exists: () => true, stat: () => { throw eacces(); } });
+    const r = probeWithFragment(entry(), { getenv: {}, home: HOME, exists: () => true, stat: () => { throw eacces(); } });
     assert.equal(r.state, 'unknown');
   });
 
   it('credential.env:null uses the (tilde-expanded) default', () => {
-    const r = probeCredential(entry({ env: null, default: '~/.gemini/antigravity-cli', file: 'tok' }), {
+    const r = probeWithFragment(entry({ env: null, default: '~/.gemini/antigravity-cli', file: 'tok' }), {
       getenv: {}, home: HOME, exists: () => true, stat: () => ({ isFile: () => true }),
     });
     assert.equal(r.state, 'present');
@@ -131,7 +182,7 @@ describe('probeCredential', () => {
   });
 
   it('never counts a directory as a present credential', () => {
-    const r = probeCredential(entry(), { getenv: { CRED: '/cdir' }, home: HOME, exists: () => true, stat: () => ({ isFile: () => false }) });
+    const r = probeWithFragment(entry(), { getenv: { CRED: '/cdir' }, home: HOME, exists: () => true, stat: () => ({ isFile: () => false }) });
     assert.equal(r.state, 'missing');
   });
 });

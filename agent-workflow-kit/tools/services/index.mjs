@@ -57,8 +57,12 @@ const validateFragment = (fragment, path) => {
   validateList(fragment.writableDirs, path, 'writableDirs', isDirectoryEntry, (entry) => entry.default);
   validateList(fragment.excludedCommands, path, 'excludedCommands',
     (command) => typeof command === 'string' && EXCLUDED_COMMAND_RE.test(command));
-  validateList(fragment.passedVariables, path, 'passedVariables', isVariable);
+  validateList(fragment.passedVariables, path, 'passedVariables',
+    (value) => isVariable(value) && value !== 'OPENAI_BASE_URL');
   if (typeof fragment.runReachesHosts !== 'boolean') refuseSchema(path, 'runReachesHosts', 'must be a boolean');
+  if (fragment.runReachesHosts && fragment.hosts.some((host) => host.startsWith('*.'))) {
+    refuseSchema(path, 'hosts', 'must not contain a wildcard when runReachesHosts is true');
+  }
   return fragment;
 };
 

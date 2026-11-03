@@ -12,7 +12,7 @@
 #   - codex may edit the repo and the temp dirs, nothing else: on Linux with codex-cli 0.160.0 or
 #     newer, from a repository outside every temp root and off a codex version and profile digest
 #     recorded as refused, the run carries the permissions profile `jev` (workspace write, network to
-#     api.typesafe.ai and docs.typesafe.ai only); elsewhere today's workspace-write sandbox with network off. The banner's
+#     the run hosts its service-facts.txt lists); elsewhere today's workspace-write sandbox with network off. The banner's
 #     jev= field says which; new dependencies / network installs are done by a human
 #   - approval_policy=never: there is no TTY in exec; anything needing escalation
 #     is refused and reported, then handled by hand
@@ -30,7 +30,7 @@
 #
 # Auth: SUBSCRIPTION ONLY. Uses the cached ChatGPT login under CODEX_HOME
 # (~/.codex). The wrapper unsets OPENAI_BASE_URL and every *_API_KEY except
-# TYPESAFE_API_KEY (which passes as given) and passes --ignore-user-config, so a stray
+# the passed variables its service-facts.txt lists, and passes --ignore-user-config, so a stray
 # key or a personal ~/.codex/config.toml can never silently switch billing or change
 # behaviour. No credentials are bundled.
 #
@@ -44,14 +44,90 @@
 #   CODEX_PROBE=1 CODEX_MODEL=<slug> codex-exec <file>   # throwaway probe (the one route to a one-off)
 set -euo pipefail
 
+aw_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir hops=0 max_hops=16
+  while :; do
+    case "$src" in */*) dir="${src%/*}"; dir="${dir:-/}" ;; *) dir=. ;; esac
+    dir="$(CDPATH= builtin cd -P -- "$dir" 2>/dev/null && builtin pwd -P)" || break
+    [[ -L "$src" ]] || { printf '%s\n' "$dir"; return 0; }
+    if (( hops >= max_hops )); then
+      printf 'error: exceeded %s symlink hops; could not resolve its OWN directory\n' "$max_hops" >&2
+      return 127
+    fi
+    hops=$((hops + 1))
+    src="$(command readlink -- "$src" 2>/dev/null)" || break
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  printf 'error: could not resolve its OWN directory\n' >&2
+  return 127
+}
+aw_read_service_facts() {
+  local path="${1%/*}/service-facts.txt" line key value entry number=0 bad=0 valid seen=() run_lines=()
+  local host_re='^(\*\.)?[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?(\.[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?)+$'
+  local variable_re='^[ABCDEFGHIJKLMNOPQRSTUVWXYZ][ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*$'
+  local command_re='^[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]* \*$'
+  local env directory segments LC_ALL=C
+  AW_FACT_HOST=() AW_FACT_RUN_HOST=() AW_FACT_PASSED_VARIABLE=()
+  if [[ -f "$path" && -r "$path" ]]; then
+    while IFS= read -r line; do
+      number=$((number + 1)); valid=1
+      if (( number == 1 )); then
+        [[ "$line" == "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit" ]] || bad=1
+        continue
+      fi
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$line" == *=* ]] || valid=0
+      case "$key" in
+        HOST|RUN_HOST) [[ "$value" =~ $host_re ]] || valid=0
+          if [[ "$key" == RUN_HOST && "$value" == '*.'* ]]; then valid=0; fi ;;
+        PASSED_VARIABLE) [[ "$value" =~ $variable_re && "$value" != OPENAI_BASE_URL ]] || valid=0 ;;
+        EXCLUDED_COMMAND) [[ "$value" =~ $command_re ]] || valid=0 ;;
+        WRITABLE_DIR)
+          env="${value%%:*}"; directory="${value#*:}"; segments="/${directory//\\//}/"
+          [[ "$value" == *:* && ( -z "$env" || "$env" =~ $variable_re ) &&
+            ( "$directory" == '~/'* || "$directory" == /* ) && "$directory" != */ &&
+            "$directory" != *[\*\?\[\]]* && ! "$directory" =~ [[:cntrl:]] && "$segments" != */../* ]] || valid=0 ;;
+        *) valid=0 ;;
+      esac
+      for entry in ${seen[@]+"${seen[@]}"}; do [[ "$entry" != "$line" ]] || valid=0; done
+      if (( ! valid )); then (( bad )) || bad=$number; continue; fi
+      seen+=("$line")
+      case "$key" in
+        HOST) AW_FACT_HOST+=("$value") ;; RUN_HOST) AW_FACT_RUN_HOST+=("$value"); run_lines+=("$number") ;;
+        PASSED_VARIABLE) AW_FACT_PASSED_VARIABLE+=("$value") ;;
+      esac
+    done <"$path"
+    if (( ! number )); then bad=1; fi
+    if [[ -n "$line" ]] && (( ! bad )); then bad=$((number + 1)); fi
+    for ((number=0; number<${#AW_FACT_RUN_HOST[@]}; number++)); do
+      valid=0
+      for entry in ${AW_FACT_HOST[@]+"${AW_FACT_HOST[@]}"}; do [[ "$entry" != "${AW_FACT_RUN_HOST[number]}" ]] || valid=1; done
+      if (( ! valid && (! bad || run_lines[number] < bad) )); then bad=${run_lines[number]}; fi
+    done
+    (( bad )) || return 0
+    printf 'error: %s: invalid facts at line %s; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" "$bad" >&2
+  else
+    printf 'error: %s: not a readable regular file; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" >&2
+  fi
+  exit 127
+}
+HERE="$(aw_script_dir)" || exit 127
+aw_read_service_facts "$HERE"
+
 # --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
 # Keyed ONLY on the FIRST argument — never a scan of all args, else a passthrough
 # payload like `codex-exec f - -- --help` would be intercepted.
 # The contract below is drift-guarded against capability.json roles.execute.contract.
 case "${1:-}" in
   --help|-h)
+    aw_help_network="network off"
+    if (( ${#AW_FACT_RUN_HOST[@]} )); then
+      aw_help_hosts=""
+      for aw_host in "${AW_FACT_RUN_HOST[@]}"; do aw_help_hosts+="${aw_help_hosts:+, }$aw_host"; done
+      aw_help_network="network where the profile runs (the reachable host list is $aw_help_hosts) and off elsewhere"
+    fi
+    printf '%s\n' "codex-exec — delegate plan/instruction EXECUTION to the OpenAI Codex CLI (subscription-only; writes to the repository and the temp dirs only, $aw_help_network, git writes blocked — the orchestrator commits)."
     cat <<'HELP'
-codex-exec — delegate plan/instruction EXECUTION to the OpenAI Codex CLI (subscription-only; writes to the repository and the temp dirs only, network to api.typesafe.ai and docs.typesafe.ai where the profile runs and off elsewhere, git writes blocked — the orchestrator commits).
 
 Usage:
   codex-exec [--nonce <n>] <plan-file|->
@@ -125,39 +201,42 @@ Notes:
   nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox
   (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a
   preemptive blanket
-  exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture —
-  exec posture: model=… effort=… tier=… sandbox=jev-profile|workspace-write session=fresh|resume:<id> jev=… source=… timeout=… —
-  from RESOLVED post-validation values; the resume id is validated pre-spend, control bytes in
-  a model, effort, tier or timeout value refuse pre-spend, and a jev= reason shows a control byte as ?
+  exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture — exec
+  posture: model=… effort=… tier=… sandbox=jev-profile|workspace-write session=fresh|resume:<id>
+  jev=… source=… timeout=… — from RESOLVED post-validation values; the resume id is validated
+  pre-spend, control bytes in a model, effort, tier or timeout value refuse pre-spend, and a jev=
+  reason shows a control byte as ?
   threat model: the sidecar byte and grammar screens detect corrupted input under a trusted parent
   environment. A hostile parent environment — including exported shell functions or PATH
   substitution of core/backend commands — is outside the threat model and can substitute the
-  backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from accidental
-  shadowing; it is not an environment security boundary
-  the exec posture banner states what the run reaches in a jev= field: jev=api.typesafe.ai,docs.typesafe.ai
-  when the run carries the permissions profile `jev` (Linux, codex-cli 0.160.0 or newer, a repository
-  outside every temp root, a version and profile digest not recorded as refused), else
-  jev=unreachable (<reason>) on today's workspace-write flags with network off; a run whose codex
-  refuses the profile exits 72 with no success receipt and, for a refused profile key, records its
-  version and digest when the state file can be written, so the next run on them takes today's flags; then a banner-only
-  source=model:<s>,effort:<s> field — where each value came from: default, setting or environment —
-  then a banner-only timeout=<duration|uncapped> field — exactly the duration handed to timeout(1),
-  uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: none of the three is
-  persisted in a receipt or session sidecar
+  backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from
+  accidental shadowing; it is not an environment security boundary
+  the exec posture banner states what the run reaches in a jev= field: the run hosts its
+  service-facts.txt lists when the run carries the permissions profile `jev` (Linux, codex-cli
+  0.160.0 or newer, a repository outside every temp root, a version and profile digest not
+  recorded as refused), else jev=unreachable (<reason>) on today's workspace-write flags with
+  network off; a run whose codex refuses the profile exits 72 with no success receipt and, for a
+  refused profile key, records its version and digest when the state file can be written, so the
+  next run on them takes today's flags; then a banner-only source=model:<s>,effort:<s> field —
+  where each value came from: default, setting or environment — then a banner-only
+  timeout=<duration|uncapped> field — exactly the duration handed to timeout(1), uncapped when no
+  timeout/gtimeout binary caps the run; INFORMATIONAL only: none of the three is persisted in a
+  receipt or session sidecar
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
   every-run nested-sandbox scan (DUAL policy, deliberately two different rules): the scan runs on
-  EVERY completed run, not only a failed one, because a run that SURVIVES the nested-sandbox failure
-  exits 0 with an ungrounded answer and nothing said so. Failed run (rc != 0): the existing loose
-  whole-trace combination rule prints the recovery hint. Successful run (rc == 0): a warning fires
-  ONLY on precise per-item evidence — both a sandbox-mechanism token AND a permission/read-only
-  failure token inside the aggregated_output of ONE command_execution item whose failure is PROVEN
-  (a nonzero exit_code, or the serialized status "failed"); a null exit_code is never failure by
-  itself, tokens split across two items never fire, and a successful command's output never fires.
-  The answer is printed FIRST on stdout, then the warning on stderr. HONEST RESIDUAL: the exit
-  status does NOT change on that lane (a distinct nonzero exit would give a heuristic scan DENY
-  polarity, refusing real work whenever the scan over-warns), so an orchestrator keying on exit
-  status alone can still bank an ungrounded answer — the stderr warning is the signal
+  EVERY completed run, not only a failed one, because a run that SURVIVES the nested-sandbox
+  failure exits 0 with an ungrounded answer and nothing said so. Failed run (rc != 0): the
+  existing loose whole-trace combination rule prints the recovery hint. Successful run (rc == 0):
+  a warning fires ONLY on precise per-item evidence — both a sandbox-mechanism token AND a
+  permission/read-only failure token inside the aggregated_output of ONE command_execution item
+  whose failure is PROVEN (a nonzero exit_code, or the serialized status "failed"); a null
+  exit_code is never failure by itself, tokens split across two items never fire, and a successful
+  command's output never fires. The answer is printed FIRST on stdout, then the warning on stderr.
+  HONEST RESIDUAL: the exit status does NOT change on that lane (a distinct nonzero exit would
+  give a heuristic scan DENY polarity, refusing real work whenever the scan over-warns), so an
+  orchestrator keying on exit status alone can still bank an ungrounded answer — the stderr
+  warning is the signal
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
@@ -367,15 +446,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 aw_scrub_billing_keys() {
-  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
-  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
-  local name
+  local name passed keep
   unset OPENAI_BASE_URL 2>/dev/null || true
   for name in $(compgen -v); do
-    case "$name" in
-      TYPESAFE_API_KEY) ;;
-      *_API_KEY) unset "$name" 2>/dev/null || true ;;
-    esac
+    [[ "$name" == *_API_KEY ]] || continue
+    keep=0
+    for passed in ${AW_FACT_PASSED_VARIABLE[@]+"${AW_FACT_PASSED_VARIABLE[@]}"}; do
+      [[ "$name" != "$passed" ]] || keep=1
+    done
+    if (( ! keep )); then unset "$name" 2>/dev/null || true; fi
   done
   return 0
 }
@@ -430,7 +509,7 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="5.1.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="6.0.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.
@@ -496,15 +575,16 @@ if [[ ! -f AGENTS.md ]]; then
 fi
 
 # --- The permissions profile `jev` (spec jev-every-run) — byte-identical in codex-exec.sh and codex-review.sh ---
-# On Linux with codex-cli 0.160.0 or newer a run carries the profile `jev` by four -c overrides, with neither
-# --sandbox nor sandbox_mode beside them: its filesystem part is this wrapper's AW_PROFILE_FILESYSTEM, and its
-# network reaches api.typesafe.ai and docs.typesafe.ai and no other host (a literal of this bridge, which never
-# imports the kit). Elsewhere, and on a codex version and profile digest recorded as refused, the run keeps
-# today's flags and its banner says jev=unreachable (<reason>). Each run, a resume included, chooses afresh.
+# The run hosts come from service-facts.txt.
 AW_PROFILE_FLOOR="0.160.0"
-AW_PROFILE_HOSTS="api.typesafe.ai,docs.typesafe.ai"
+aw_profile_domains="" aw_run_hosts="" aw_reachable_hosts=""
+for aw_host in ${AW_FACT_RUN_HOST[@]+"${AW_FACT_RUN_HOST[@]}"}; do
+  aw_profile_domains+="${aw_profile_domains:+,}\"$aw_host\"=\"allow\""
+  aw_run_hosts+="${aw_run_hosts:+,}$aw_host"
+  aw_reachable_hosts+="${aw_reachable_hosts:+, }$aw_host"
+done
 AW_PROFILE_FLAGS=(-c default_permissions=jev -c permissions.jev.network.enabled=true
-  -c 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}'
+  -c "permissions.jev.network.domains={$aw_profile_domains}"
   -c "permissions.jev.filesystem=$AW_PROFILE_FILESYSTEM")
 # The version on the first line of `codex --version` ("codex-cli X.Y.Z[-pre]"); nothing when unreadable.
 aw_codex_version() {   # $1 = the timeout binary or ""
@@ -571,7 +651,9 @@ aw_profile_choose() {   # $1 = the timeout binary or "", $2 = the repository's t
   profile_version="$(aw_codex_version "$1")"
   profile_digest="$(aw_profile_digest)"
   os="$(uname -s 2>/dev/null)" || os=""
-  if [[ "$os" != "Linux" ]]; then
+  if (( ! ${#AW_FACT_RUN_HOST[@]} )); then
+    profile_reason="no run host in service-facts.txt"
+  elif [[ "$os" != "Linux" ]]; then
     profile_reason="not linux (${os:-unreadable})"
   elif [[ -z "$profile_version" ]]; then
     profile_reason="codex version unreadable"
@@ -584,7 +666,7 @@ aw_profile_choose() {   # $1 = the timeout binary or "", $2 = the repository's t
   else
     profile_on=1
   fi
-  if (( profile_on )); then profile_label="$AW_PROFILE_HOSTS"; else profile_label="unreachable ($profile_reason)"; fi
+  if (( profile_on )); then profile_label="$aw_run_hosts"; else profile_label="unreachable ($profile_reason)"; fi
   profile_label="${profile_label//[$'\x01'-$'\x1f'$'\x7f']/?}"
   return 0
 }
@@ -650,13 +732,12 @@ aw_profile_choose "$timeout_bin" "$(aw_repo_temp_root)"
 network_flags=()
 if (( profile_on )); then
   aw_sandbox_label="jev-profile"
-  read -r -d '' aw_network_item <<'ITEM' || true
-5. Do NOT commit. Network: the hosts api.typesafe.ai and docs.typesafe.ai are
-   reachable; network access to any other host is an escalation: STOP and report.
+  read -r -d '' aw_network_item <<ITEM || true
+5. Do NOT commit. Network: the reachable host list is $aw_reachable_hosts; network access to any other host is an escalation: STOP and report.
    If you hit another blocker needing escalation (writes outside the repo, a live
    approval, or an ambiguous decision), STOP and report it clearly — never guess.
 ITEM
-  aw_network_line="Network, as of this run (it replaces any earlier statement): the hosts api.typesafe.ai and docs.typesafe.ai are reachable; network access to any other host is an escalation: STOP and report."
+  aw_network_line="Network, as of this run (it replaces any earlier statement): the reachable host list is $aw_reachable_hosts; network access to any other host is an escalation: STOP and report."
 else
   aw_sandbox_label="workspace-write"
   network_flags=(-c sandbox_workspace_write.network_access=false)
@@ -683,7 +764,7 @@ ORCHESTRATOR EXECUTION CONTRACT — read before the task, follow it exactly:
    task). If the project declares NO gate set, STOP and report — do NOT invent
    checks. Fix every failure before finishing.
 DIRECTIVE
-# Item 5 states this run's posture (spec jev-every-run): the two hosts on a profile run, network access whole on a fallback run.
+# Item 5 states this run's posture (spec jev-every-run): the run hosts on a profile run, network access whole on a fallback run.
 ORCHESTRATOR_DIRECTIVE="$ORCHESTRATOR_DIRECTIVE"$'\n'"$aw_network_item"$'\n\nTASK:'
 
 read -r -d '' RESUME_REMINDER <<'REMINDER' || true

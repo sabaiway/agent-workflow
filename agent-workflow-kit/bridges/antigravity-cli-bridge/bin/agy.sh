@@ -9,7 +9,7 @@
 # Auth: SUBSCRIPTION ONLY. We use the cached OAuth token at
 # ~/.gemini/antigravity-cli/antigravity-oauth-token (Google AI Pro) and the
 # quota that comes with it. To make that guarantee hard, the wrapper unsets
-# every *_API_KEY except TYPESAFE_API_KEY (which passes as given), so a stray
+# every *_API_KEY except the passed variables its service-facts.txt lists, so a stray
 # key can never silently switch us to paid pay-as-you-go billing.
 #
 # This is a THIN, FLOW-AGNOSTIC wrapper on purpose: it just runs one headless
@@ -34,6 +34,76 @@
 #                                            # flow-agnostic; it never widens agy's own permissions;
 #                                            # --model* and --effort* refuse — the model is AGY_MODEL)
 set -euo pipefail
+
+aw_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir hops=0 max_hops=16
+  while :; do
+    case "$src" in */*) dir="${src%/*}"; dir="${dir:-/}" ;; *) dir=. ;; esac
+    dir="$(CDPATH= builtin cd -P -- "$dir" 2>/dev/null && builtin pwd -P)" || break
+    [[ -L "$src" ]] || { printf '%s\n' "$dir"; return 0; }
+    if (( hops >= max_hops )); then
+      printf 'error: exceeded %s symlink hops; could not resolve its OWN directory\n' "$max_hops" >&2
+      return 127
+    fi
+    hops=$((hops + 1))
+    src="$(command readlink -- "$src" 2>/dev/null)" || break
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  printf 'error: could not resolve its OWN directory\n' >&2
+  return 127
+}
+aw_read_service_facts() {
+  local path="${1%/*}/service-facts.txt" line key value entry number=0 bad=0 valid seen=() run_lines=()
+  local host_re='^(\*\.)?[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?(\.[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?)+$'
+  local variable_re='^[ABCDEFGHIJKLMNOPQRSTUVWXYZ][ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*$'
+  local command_re='^[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]* \*$'
+  local env directory segments LC_ALL=C
+  AW_FACT_HOST=() AW_FACT_RUN_HOST=() AW_FACT_PASSED_VARIABLE=()
+  if [[ -f "$path" && -r "$path" ]]; then
+    while IFS= read -r line; do
+      number=$((number + 1)); valid=1
+      if (( number == 1 )); then
+        [[ "$line" == "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit" ]] || bad=1
+        continue
+      fi
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$line" == *=* ]] || valid=0
+      case "$key" in
+        HOST|RUN_HOST) [[ "$value" =~ $host_re ]] || valid=0
+          if [[ "$key" == RUN_HOST && "$value" == '*.'* ]]; then valid=0; fi ;;
+        PASSED_VARIABLE) [[ "$value" =~ $variable_re && "$value" != OPENAI_BASE_URL ]] || valid=0 ;;
+        EXCLUDED_COMMAND) [[ "$value" =~ $command_re ]] || valid=0 ;;
+        WRITABLE_DIR)
+          env="${value%%:*}"; directory="${value#*:}"; segments="/${directory//\\//}/"
+          [[ "$value" == *:* && ( -z "$env" || "$env" =~ $variable_re ) &&
+            ( "$directory" == '~/'* || "$directory" == /* ) && "$directory" != */ &&
+            "$directory" != *[\*\?\[\]]* && ! "$directory" =~ [[:cntrl:]] && "$segments" != */../* ]] || valid=0 ;;
+        *) valid=0 ;;
+      esac
+      for entry in ${seen[@]+"${seen[@]}"}; do [[ "$entry" != "$line" ]] || valid=0; done
+      if (( ! valid )); then (( bad )) || bad=$number; continue; fi
+      seen+=("$line")
+      case "$key" in
+        HOST) AW_FACT_HOST+=("$value") ;; RUN_HOST) AW_FACT_RUN_HOST+=("$value"); run_lines+=("$number") ;;
+        PASSED_VARIABLE) AW_FACT_PASSED_VARIABLE+=("$value") ;;
+      esac
+    done <"$path"
+    if (( ! number )); then bad=1; fi
+    if [[ -n "$line" ]] && (( ! bad )); then bad=$((number + 1)); fi
+    for ((number=0; number<${#AW_FACT_RUN_HOST[@]}; number++)); do
+      valid=0
+      for entry in ${AW_FACT_HOST[@]+"${AW_FACT_HOST[@]}"}; do [[ "$entry" != "${AW_FACT_RUN_HOST[number]}" ]] || valid=1; done
+      if (( ! valid && (! bad || run_lines[number] < bad) )); then bad=${run_lines[number]}; fi
+    done
+    (( bad )) || return 0
+    printf 'error: %s: invalid facts at line %s; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" "$bad" >&2
+  else
+    printf 'error: %s: not a readable regular file; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" >&2
+  fi
+  exit 127
+}
+HERE="$(aw_script_dir)" || exit 127
+aw_read_service_facts "$HERE"
 
 # --- --help / -h (pre-preflight: no agy, no login needed) ----------------------
 # Keyed ONLY on the FIRST argument — never a scan of all args, else a passthrough
@@ -255,15 +325,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 aw_scrub_billing_keys() {
-  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
-  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
-  local name
+  local name passed keep
   unset OPENAI_BASE_URL 2>/dev/null || true
   for name in $(compgen -v); do
-    case "$name" in
-      TYPESAFE_API_KEY) ;;
-      *_API_KEY) unset "$name" 2>/dev/null || true ;;
-    esac
+    [[ "$name" == *_API_KEY ]] || continue
+    keep=0
+    for passed in ${AW_FACT_PASSED_VARIABLE[@]+"${AW_FACT_PASSED_VARIABLE[@]}"}; do
+      [[ "$name" != "$passed" ]] || keep=1
+    done
+    if (( ! keep )); then unset "$name" 2>/dev/null || true; fi
   done
   return 0
 }
@@ -431,10 +501,14 @@ fi
 
 agy_cmd=(agy "${model_flag[@]}" --print-timeout "$AGY_TIMEOUT" "${passthrough[@]}" -p "$prompt")
 
-# A non-empty TYPESAFE_API_KEY rides into agy and nothing is widened (spec jev-every-run, D5(a)): the limit, once,
-# before dispatch — never in agy-review's child, whose prompts forbid every tool.
-if [[ -n "${TYPESAFE_API_KEY:-}" && "${AW_AGY_REVIEW_CHILD:-}" != "1" ]]; then
-  echo "jev: TYPESAFE_API_KEY passed; a headless agy runs the Jev request only where your agy permissions allow commands — the first denied command ends the run" >&2
+aw_passed_names=""
+if [[ "${AW_AGY_REVIEW_CHILD:-}" != "1" ]]; then
+  for aw_name in ${AW_FACT_PASSED_VARIABLE[@]+"${AW_FACT_PASSED_VARIABLE[@]}"}; do
+    if [[ -n "${!aw_name:-}" ]]; then aw_passed_names+="${aw_passed_names:+, }$aw_name"; fi
+  done
+  if [[ -n "$aw_passed_names" ]]; then
+    echo "passed variables: $aw_passed_names; a headless agy runs a request that uses them only where your agy permissions allow commands — the first denied command ends the run" >&2
+  fi
 fi
 
 # Hard wall-clock cap via timeout(1) (GNU `timeout` on Linux, `gtimeout` from coreutils on macOS).

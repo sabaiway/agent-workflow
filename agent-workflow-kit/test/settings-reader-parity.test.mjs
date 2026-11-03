@@ -41,6 +41,7 @@ const WRAPPERS = SOURCES.map(({ path }) => path);
 const SHARED_FNS = [
   'aw_settings_file', 'aw_settings_known', 'aw_int_in_range', 'aw_settings_valid', 'aw_apply_settings',
   'aw_read_posture', 'aw_effective_timeout', 'aw_timeout_label', 'aw_resolve_timeout_bin', 'aw_scrub_billing_keys',
+  'aw_script_dir', 'aw_read_service_facts',
 ];
 
 // Extract a top-level `name() {` … column-0 `}` bash function from a wrapper source, verbatim.
@@ -90,20 +91,36 @@ describe('bridge-settings reader block — byte-identical across every bridge wr
     }
   });
 
+  it('every wrapper resolves its directory and reads its facts once before help and the key rule', () => {
+    for (const wrapper of WRAPPERS) {
+      const lines = readFileSync(wrapper, 'utf8').split('\n');
+      const help = lines.findIndex((line) => /^\s*--help\|-h\)/.test(line));
+      const scrub = lines.findIndex((line) => /^\s*aw_scrub_billing_keys\b(?!\s*\(\))/.test(line));
+      assert.ok(help >= 0 && scrub >= 0, `${wrapper}: help and key rule exist`);
+      const calls = ['aw_script_dir', 'aw_read_service_facts'].map((name) => {
+        const matches = lines.flatMap((line, index) => !/^\s*#/.test(line) && new RegExp(`(?:^\\s*|\\$\\(\\s*)${name}\\b(?!\\s*\\(\\))`).test(line) ? [index] : []);
+        assert.equal(matches.length, 1, `${wrapper}: ${name} called once`);
+        assert.ok(matches[0] < help && matches[0] < scrub, `${wrapper}: ${name} precedes help and scrub`);
+        return matches[0];
+      });
+      assert.ok(calls[0] <= calls[1], `${wrapper}: resolve before reading facts`);
+    }
+  });
+
   it('non-vacuous: an injected one-token divergence in the reader block is caught', () => {
-    const first = readerBlock(WRAPPERS[0]);
+    const first = extractBashFn(readFileSync(WRAPPERS[0], 'utf8'), 'aw_settings_known');
     // A real drift a reviewer must catch: one bridge recognizing a differently-named key.
     const mutated = first.replace('AGY_REVIEW_ALLOW_ADDDIR ', 'AGY_REVIEW_ALLOW_ADDDIR2 ');
     assert.notEqual(mutated, first, 'the mutation applied to the extracted block');
-    assert.notEqual(mutated, readerBlock(WRAPPERS[1]), 'a one-token registry drift would fail cross-wrapper parity');
+    assert.notEqual(mutated, extractBashFn(readFileSync(WRAPPERS[1], 'utf8'), 'aw_settings_known'), 'a one-token registry drift would fail cross-wrapper parity');
   });
 
   it('non-vacuous: an injected divergence in the timeout-resolver pair is caught (AD-061)', () => {
-    const first = readerBlock(WRAPPERS[0]);
+    const first = extractBashFn(readFileSync(WRAPPERS[0], 'utf8'), 'aw_timeout_label');
     // A real drift a reviewer must catch: one bridge rendering the missing-binary case differently.
     const mutated = first.replace("printf 'uncapped'", "printf 'nocap'");
     assert.notEqual(mutated, first, 'the mutation applied to aw_timeout_label in the extracted block');
-    assert.notEqual(mutated, readerBlock(WRAPPERS[1]), 'a resolver-render drift would fail cross-wrapper parity');
+    assert.notEqual(mutated, extractBashFn(readFileSync(WRAPPERS[1], 'utf8'), 'aw_timeout_label'), 'a resolver-render drift would fail cross-wrapper parity');
   });
 
   it('AW_SETTINGS_APPLIED is per-wrapper (intentionally outside the shared span) yet subset of the shared registry', () => {

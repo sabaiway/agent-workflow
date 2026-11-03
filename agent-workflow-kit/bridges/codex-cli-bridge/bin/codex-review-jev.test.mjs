@@ -3,14 +3,17 @@
 // directives. Standalone harness with its own fake codex and a fake uname.
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, chmodSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, chmodSync, realpathSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REVIEW = join(HERE, 'codex-review.sh');
 const HOSTS = 'api.typesafe.ai,docs.typesafe.ai';
+const childEnv = (home, env = {}) => ({ ...stripGitLocationEnv(env), HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', LC_ALL: 'C' });
 // The same layout as codex-exec-jev: repositories under the package's node_modules, TMPDIR their sibling.
 const FIXTURES = join(HERE, '..', 'node_modules', '.aw-fixtures');
 const TMP = join(FIXTURES, 'tmp');
@@ -25,7 +28,7 @@ const FAKE_CODEX = [
   '#!/usr/bin/env bash',
   'set -u',
   'st() { if [[ -n "${!1+x}" ]]; then printf "[%s]" "${!1}"; else printf unset; fi; }',
-  'rec() { echo "$1 key=$(st TYPESAFE_API_KEY) openai=$(st OPENAI_API_KEY) codex=$(st CODEX_API_KEY) foo=$(st FOO_API_KEY) base=$(st OPENAI_BASE_URL)" >>"$CODEX_FAKE_LOG"; }',
+  'rec() { echo "$1 key=$(st TYPESAFE_API_KEY) openai=$(st OPENAI_API_KEY) codex=$(st CODEX_API_KEY) foo=$(st FOO_API_KEY) base=$(st OPENAI_BASE_URL) bar=$(st BAR_API_KEY)" >>"$CODEX_FAKE_LOG"; }',
   'case "${1:-}" in',
   '  login) rec login; echo "Logged in using ChatGPT"; exit 0 ;;',
   '  --version) rec version; echo "${CODEX_FAKE_VERSION-codex-cli 0.160.0}"; exit 0 ;;',
@@ -61,7 +64,7 @@ mkdirSync(join(TEMPLATE, 'repo'));
 writeFileSync(join(TEMPLATE, 'bin', 'codex'), FAKE_CODEX);
 writeFileSync(join(TEMPLATE, 'bin', 'uname'), FAKE_UNAME);
 {
-  const git = (...args) => spawnSync('git', args, { cwd: join(TEMPLATE, 'repo'), encoding: 'utf8' });
+  const git = (...args) => spawnSync('git', args, { cwd: join(TEMPLATE, 'repo'), encoding: 'utf8', env: childEnv(join(TEMPLATE, 'home'), { PATH: process.env.PATH }) });
   git('init', '-q');
   git('config', 'user.email', 'probe@example.com');
   git('config', 'user.name', 'probe');
@@ -71,9 +74,8 @@ writeFileSync(join(TEMPLATE, 'bin', 'uname'), FAKE_UNAME);
   git('commit', '-qm', 'base');
 }
 
-let sequence = 0;
 const sandbox = ({ skills = true } = {}) => {
-  const dir = join(ROOT, `sb-${++sequence}`);
+  const dir = mkdtempSync(join(ROOT, 'sb-'));
   cpSync(TEMPLATE, dir, { recursive: true });
   for (const name of ['codex', 'uname']) chmodSync(join(dir, 'bin', name), 0o755);
   const sb = { dir, bin: join(dir, 'bin'), home: join(dir, 'home'), repo: join(dir, 'repo'),
@@ -89,11 +91,13 @@ const PLAN = ['plan', 'plan.md'];
 const drive = (sb, args, env = {}, cwd = sb.repo) => {
   const cap = (name) => join(sb.dir, name);
   for (const name of ['log', 'argv', 'stdin', 'skills']) rmSync(cap(name), { force: true });
-  const r = spawnSync('bash', [REVIEW, ...args], {
+  const r = spawnSync('bash', [sb.wrapper ?? REVIEW, ...args], {
     cwd, input: '', encoding: 'utf8', timeout: 60000,
-    env: { PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: TMP, CODEX_FAKE_LOG: cap('log'), CODEX_FAKE_ARGV: cap('argv'),
-      CODEX_FAKE_STDIN: cap('stdin'), CODEX_FAKE_SKILLS: cap('skills'), ...env },
+    env: childEnv(sb.home, { PATH: `${sb.bin}:${process.env.PATH}`, TMPDIR: TMP, CODEX_FAKE_LOG: cap('log'), CODEX_FAKE_ARGV: cap('argv'),
+      CODEX_FAKE_STDIN: cap('stdin'), CODEX_FAKE_SKILLS: cap('skills'), ...env }),
   });
+  assert.ifError(r.error);
+  assert.equal(r.signal, null, r.stderr);
   const read = (name) => (existsSync(cap(name)) ? readFileSync(cap(name), 'utf8') : '');
   const spawns = read('log').split('\n').filter(Boolean).map((line) => [line.slice(0, line.indexOf(' ')), line.slice(line.indexOf(' ') + 1)]);
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, spawns, runs: spawns.filter(([kind]) => kind === 'run').length,
@@ -104,11 +108,11 @@ const overrides = (argv) => Object.fromEntries(argv.flatMap((arg, i) => (argv[i 
   ? [[arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)]] : [])));
 // A reader for the TOML inline tables a profile override carries.
 const inline = (text) => {
-  let at = 0;
+  const cursor = { at: 0 };
   const eat = (re) => {
-    const m = re.exec(text.slice(at));
+    const m = re.exec(text.slice(cursor.at));
     assert.ok(m, `an inline table: ${text}`);
-    at += m[0].length;
+    cursor.at += m[0].length;
     return m;
   };
   const value = () => {
@@ -123,7 +127,7 @@ const inline = (text) => {
     return table;
   };
   const parsed = value();
-  assert.equal(text.slice(at).trim(), '', `nothing after the inline table: ${text}`);
+  assert.equal(text.slice(cursor.at).trim(), '', `nothing after the inline table: ${text}`);
   return parsed;
 };
 const PROFILE_KEYS = ['default_permissions', 'permissions.jev.filesystem', 'permissions.jev.network.domains', 'permissions.jev.network.enabled'];
@@ -146,7 +150,7 @@ const assertFallback = (r) => {
 const bannerOf = (r) => r.stderr.split('\n').find((line) => line.startsWith('review posture: ')) ?? '';
 const banner = (jev) => `review posture: model=gpt-6.1-sol effort=high tier=standard jev=${jev} source=model:default,effort:default timeout=1800s`;
 const KEYS = { TYPESAFE_API_KEY: 'jev-key', OPENAI_API_KEY: 'sk-live', CODEX_API_KEY: 'ck', FOO_API_KEY: 'foo', OPENAI_BASE_URL: 'http://proxy' };
-const PASSED = 'key=[jev-key] openai=unset codex=unset foo=unset base=unset';
+const PASSED = 'key=[jev-key] openai=unset codex=unset foo=unset base=unset bar=unset';
 const runEnv = (r) => (r.spawns.find(([kind]) => kind === 'run') ?? [])[1];
 const item = (body) => JSON.stringify({ type: 'item.completed', item: body });
 const P13_TEXT = 'Configured filesystem path `:root` is not recognized by this version of Codex and will be ignored. Upgrade Codex if this path is required.';
@@ -281,7 +285,7 @@ describe('the three fence directives — spec:jev-every-run/S16', () => {
     for (const [args, env] of [[PLAN, {}], [['code'], {}], [['code'], { CODEX_REVIEW_MAX_TOTAL_BYTES: '1' }]]) {
       const r = drive(sandbox(), args, env);
       assertProfile(r);
-      for (const text of ['.agents/skills', 'api.typesafe.ai', 'docs.typesafe.ai', NO_WRITE]) assert.ok(r.prompt.includes(text), `${args[0]} ${text}`);
+      for (const text of ['.agents/skills', ' The reachable host list is api.typesafe.ai, docs.typesafe.ai; every other host is refused, and still no file may be edited, created or deleted.', NO_WRITE]) assert.ok(r.prompt.includes(text), `${args[0]} ${text}`);
     }
   });
   it('the oversized code review keeps its one exception, the precomputed-diff file', () => {
@@ -297,5 +301,31 @@ describe('the three fence directives — spec:jev-every-run/S16', () => {
     const bare = drive(sandbox({ skills: false }), PLAN);
     assertProfile(bare);
     assert.equal(bare.prompt.includes('.agents/skills'), false);
+  });
+});
+
+const copyBridge = (sb) => {
+  const directory = join(sb.dir, 'bridge');
+  cpSync(HERE, join(directory, 'bin'), { recursive: true });
+  cpSync(join(HERE, '..', 'capability.json'), join(directory, 'capability.json'));
+  const lines = readFileSync(join(HERE, '..', 'service-facts.txt'), 'utf8').trimEnd().split('\n');
+  writeFileSync(join(directory, 'service-facts.txt'), [lines[0], 'HOST=a.example', 'HOST=b.example', 'RUN_HOST=a.example', 'RUN_HOST=b.example', lines.find((line) => line.startsWith('WRITABLE_DIR=')), 'PASSED_VARIABLE=FOO_API_KEY', 'PASSED_VARIABLE=BAR_API_KEY', ''].join('\n'));
+  const wrapper = join(directory, 'bin', 'linked-review');
+  symlinkSync('codex-review.sh', wrapper);
+  return { ...sb, wrapper };
+};
+describe('injected facts through a symlink — spec:jev-every-run/S26', () => {
+  it('renders only the injected hosts in domains, banner and every fence directive and passes the listed variables', () => {
+    const sb = copyBridge(sandbox());
+    for (const [args, env] of [[PLAN, {}], [['code'], {}], [['code'], { CODEX_REVIEW_MAX_TOTAL_BYTES: '1' }]]) {
+      const result = drive(sb, args, { ...KEYS, BAR_API_KEY: '', ...env });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(overrides(result.argv)['permissions.jev.network.domains'], '{"a.example"="allow","b.example"="allow"}');
+      assert.equal(bannerOf(result), banner('a.example,b.example'));
+      assert.ok(result.prompt.includes(' The reachable host list is a.example, b.example; every other host is refused, and still no file may be edited, created or deleted.'), result.prompt);
+      assert.doesNotMatch([result.argv.join(' '), result.prompt, result.stderr, result.stdout].join('\n'), /typesafe\.ai/i);
+      assert.ok(result.spawns.length > 0, result.stderr);
+      for (const [kind, keys] of result.spawns) assert.equal(keys, 'key=unset openai=unset codex=unset foo=[foo] base=unset bar=[]', kind);
+    }
   });
 });

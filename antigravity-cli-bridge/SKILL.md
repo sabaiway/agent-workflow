@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '7.1.0'
+  version: '8.0.0'
 ---
 
 # antigravity-cli-bridge
@@ -44,16 +44,15 @@ wrapper [`bin/agy.sh`](bin/agy.sh) on `PATH` as `agy-run`.
 
 Never read, print, copy, commit, or package that token — it is personal and is **never bundled** with
 this skill. The wrapper [`bin/agy.sh`](bin/agy.sh) **unsets `OPENAI_BASE_URL` and every `*_API_KEY` except
-`TYPESAFE_API_KEY`** (`ANTIGRAVITY_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_API_KEY`
-included; `TYPESAFE_API_KEY` passes as given) before invoking `agy`, so a stray key can never silently
-switch you to pay-as-you-go billing.
+the passed variables its service-facts.txt lists** (those variables pass as given) before invoking `agy`,
+so a stray key can never silently switch you to pay-as-you-go billing.
 
 **Caveat:** the subscription has a finite quota. Keep probes short (see *How the main agent drives
 agy*); the model every review and kept run uses is the host posture below, never a per-call pick.
 
 ## Models
 
-The model is **one host setting**: `AGY_MODEL=<exact display string>` in the bridge settings file
+The model is **a host setting**: `AGY_MODEL=<exact display string>` in the bridge settings file
 `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf` is the host posture, else the
 built-in default `Gemini 3.8 Flash (High)`. An `AGY_MODEL` environment value off the host posture
 (an explicitly empty one included) is a one-off, which `agy-run` (the probe role) runs and
@@ -226,9 +225,11 @@ AGY_MODEL="<an offered display string>" agy-run \
 **The Jev skill in a delegated run.** A headless `agy-run` loads the vendor's Jev skill from the user root the kit's
 `jev-skill` command fills, `~/.gemini/config/skills` (measured 2026-10-02 on agy 1.2.14: a probe skill under that
 root was listed, none under `~/.gemini/antigravity-cli/skills`), and `TYPESAFE_API_KEY` passes the wrappers as given
-while every other `*_API_KEY` is unset; nothing in agy's permissions is widened, no flag is added and no setting is
-written. With the key set, `agy-run` prints one line before dispatch: a headless agy runs the Jev request only where
-the user's agy permissions allow commands, and the first denied command ends the run. `agy-review` makes no Jev
+under the shared key rule: every `*_API_KEY` except the passed variables its service-facts.txt lists is unset;
+nothing in agy's permissions is widened, no flag is added and no setting is written. The run hosts its
+service-facts.txt lists do not widen those permissions. With a non-empty passed
+variable, `agy-run` prints one line naming the non-empty passed variables before dispatch: a headless agy runs a
+request that uses them only where the user's agy permissions allow commands, and the first denied command ends the run. `agy-review` makes no Jev
 request while its model obeys its prompts, which forbid every tool; that prohibition is advisory, not a sandbox. The documented opt-in `-- --dangerously-skip-permissions`
 stays admitted, and such a run carries the key into an agy whose network and file tool are unconfined. Two residuals
 stand: the key now sits in every run's environment, and a `web_search` or fetch tool agy is permitted to run may reach
@@ -255,8 +256,8 @@ checklist, prompt templates, output handling). Essentials:
   writes (branch/add/commit/stash/reset/rewrite) with the orchestrator, and tell `agy` in the prompt
   to return findings only. Add `-- --sandbox` when delegating anything that could trigger
   terminal/tool work; opt into `-- --add-dir . --dangerously-skip-permissions` only for a flow that
-  genuinely needs writes, then review the diff afterwards (such a run also carries `TYPESAFE_API_KEY`,
-  when set, into an agy whose network and file tool are unconfined).
+  genuinely needs writes, then review the diff afterwards (such a run also carries the passed variables
+  its service-facts.txt lists, as given, into an agy whose network and file tool are unconfined).
 
 ## Complementary skills (optional, standalone-first)
 

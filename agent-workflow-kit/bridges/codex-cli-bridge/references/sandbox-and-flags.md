@@ -9,7 +9,7 @@ wrapper commands are `codex-exec` and `codex-review`, backed by `bin/codex-exec.
 
 | Level | Can write? | Network? | Wrapper that uses it |
 |---|---|---|---|
-| permissions profile `jev` | exec: the repository, `/tmp` and `$TMPDIR`; review: nothing | `api.typesafe.ai` and `docs.typesafe.ai` only | both wrappers on Linux with codex-cli 0.160.0 or newer (conditions below) |
+| permissions profile `jev` | exec: the repository, `/tmp` and `$TMPDIR`; review: nothing | the run hosts its service-facts.txt lists | both wrappers on Linux with codex-cli 0.160.0 or newer (conditions below) |
 | `read-only` | no | no | `codex-review`, the fallback (codex only reads + emits findings) |
 | `workspace-write` | repository, `/tmp` and `$TMPDIR` | off (forced off) | `codex-exec`, the fallback (codex edits the repo) |
 | `danger-full-access` | anywhere | yes | never used by this skill |
@@ -37,11 +37,11 @@ On Linux with codex-cli 0.160.0 or newer, from a repository outside every temp r
 version and profile digest recorded as refused, the first two
 posture flags (`--sandbox workspace-write` and the `network_access=false` override) give way to the
 permissions profile `jev` — four overrides, never beside `--sandbox` or `sandbox_mode` (codex refuses
-both together):
+both together). Here `$run_domains` is the domain table rendered from the run hosts its service-facts.txt lists:
 
 ```bash
   -c default_permissions=jev -c permissions.jev.network.enabled=true \
-  -c 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}' \
+  -c "permissions.jev.network.domains=$run_domains" \
   -c 'permissions.jev.filesystem={":root"="read",":tmpdir"="write",":slash_tmp"="write",":workspace_roots"={"."="write"}}'
 ```
 
@@ -104,10 +104,9 @@ Note that `--skip-git-repo-check` (tier 2) only relaxes **codex's own** git-repo
 preflight still **requires a git work tree and a root `AGENTS.md`** and STOPs first if either is
 missing — passing it does not let `codex-exec` run outside a repo.
 
-## Network: two hosts at most
+## Network
 
-A run reaches `api.typesafe.ai` and `docs.typesafe.ai` under the permissions profile `jev` and no other
-host; on today's flags `codex-exec` keeps the network off. Either way **new dependencies and any other
+A run reaches the run hosts its service-facts.txt lists under the permissions profile `jev`; on today's flags `codex-exec` keeps the network off. Either way **new dependencies and any other
 network step are installed by a human**, not by codex: if a task needs a new package, codex must STOP
 and report it; the orchestrator installs it, then re-dispatches. The profile runs on Linux with
 codex-cli 0.160.0 or newer, off a codex version and profile digest recorded as refused and, for
@@ -207,9 +206,8 @@ no-op — while `codex-review` **refuses pre-spend** (the fail-closed hard-timeo
 
 Both wrappers, before invoking codex:
 
-- **unset** `OPENAI_BASE_URL` and every `*_API_KEY` except `TYPESAFE_API_KEY` (`OPENAI_API_KEY` and
-  `CODEX_API_KEY` included), so a stray key can't switch to paid api-key billing; `TYPESAFE_API_KEY`
-  passes as given (empty stays empty, unset stays unset) and changes no flag;
+- **unset** `OPENAI_BASE_URL` and every `*_API_KEY` except the passed variables its service-facts.txt lists,
+  so a stray key can't switch to paid api-key billing; those variables pass as given (empty stays empty, unset stays unset) and change no flag;
 - pass **`--ignore-user-config`** so a personal `~/.codex/config.toml` cannot change behaviour. Auth
   still works: codex reads the cached login from `CODEX_HOME` (`~/.codex`) regardless of that flag;
 - preflight `codex login status` and refuse unless it contains `Logged in using ChatGPT`;
@@ -264,8 +262,7 @@ exec` over the precomputed diff instead, keeping every invariant intact.
   from the target project root.
 - **`exceeded the hard cap`** (exit 124/137): the run hit `CODEX_HARD_TIMEOUT` — raise it for a
   known-healthy slow run, or narrow the task, then re-dispatch.
-- **codex wants to install a dependency**: it can't (exec reaches at most `api.typesafe.ai` and
-  `docs.typesafe.ai`) — install it by hand, then re-dispatch.
+- **codex wants to install a dependency**: it can't (exec reaches only the run hosts its service-facts.txt lists) — install it by hand, then re-dispatch.
 - **exit 72**: codex refused the permissions profile `jev` (the message is on stderr). A refused profile
   key, codex's error item before the first turn, is recorded for that wrapper's profile digest when the
   state file can be written (otherwise the wrapper prints one warning naming the file), so that wrapper's

@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-03 — AD-225: every bridge wrapper takes its run hosts and passed variables from its own folder's facts file (codex bridge 6.0.0 and antigravity bridge 8.0.0 MAJOR; kit 23.1.0 MINOR; engine and memory unchanged)
+
+**The four bridge wrappers read the `service-facts.txt` of their bridge folder (beside `bin/`) through one shared
+resolver and reader** before `--help` and the key rule; every state but a valid generated file exits 127 naming the
+path, the offending line and `/agent-workflow-kit upgrade`. The codex profile domains, both banners, the review fence
+directives and the `codex-exec --help` summary render the file's run hosts; the key rule passes its passed variables;
+agy-run's limit line names the non-empty ones, and agy-review always runs its sibling `agy.sh`. For the shipped file
+the profile overrides and posture banners are byte for byte the previous release's; a profile run's network sentence,
+the `codex-exec --help` summary and agy-run's line before dispatch name the run hosts and passed variables in new
+words. No bridge text names a host; the detector reads its credential dirs from the service fragments, and the loader
+refuses a `*.` host in a run-reachable fragment and `OPENAI_BASE_URL` as a passed variable.
+
 ## 2026-11-03 — AD-224: kit service fragments are the one source the kit reads for each bridge's hosts and state dirs (kit 23.0.0 MAJOR; codex bridge 5.1.0 and antigravity bridge 7.1.0 MINOR; engine 6.0.2 PATCH; memory unchanged)
 
 **The kit holds one fragment per service a bridge run reaches** (`agent-workflow-kit/tools/services/`: `codex`,

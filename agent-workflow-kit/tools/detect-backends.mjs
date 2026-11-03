@@ -23,6 +23,7 @@ import { existsSync, statSync, accessSync, realpathSync, constants } from 'node:
 import { join } from 'node:path';
 import os from 'node:os';
 import { isDirectRun } from './direct-run.mjs';
+import { loadServiceFragments } from './services/index.mjs';
 import { validateManifest, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 
 // Probe states. `unknown` (a wrapped fs error) NEVER counts as present in any readiness rule.
@@ -50,7 +51,7 @@ const EXPECTED_KIND = 'execution-backend';
 
 // The kit-owned registry: the per-backend facts the detector needs even when a bridge is NOT
 // installed (no manifest on disk to read). Kept in lockstep with the in-repo manifests by the
-// drift-guard test. `credential.env: null` → no env override exists (do not invent one).
+// drift-guard test. Credential directories come from the named service fragment.
 // `roleCmds` is the role-keyed source of truth (role → the PATH wrapper cmd), mirroring each bridge
 // manifest `roles[role].cmd`, drift-guarded. Two derivations ride on it, both drift-guarded against the
 // manifests: `wrapperCmds` (the deduped set the readiness probe checks — a stale install missing one
@@ -85,7 +86,7 @@ const RAW_BACKENDS = [
           'nested-sandbox limit: codex-exec ships its OWN OS sandbox (bwrap workspace-write) and cannot run nested inside a harness sandbox (the FS turns read-only) — route it OUTSIDE the harness sandbox (excludedCommands / a per-run consented bypass) on the OBSERVED bwrap/EPERM failure, never a preemptive blanket',
           'exec posture banner: ONE stderr line before dispatch states the ACTUAL run posture — exec posture: model=… effort=… tier=… sandbox=jev-profile|workspace-write session=fresh|resume:<id> jev=… source=… timeout=… — from RESOLVED post-validation values; the resume id is validated pre-spend, control bytes in a model, effort, tier or timeout value refuse pre-spend, and a jev= reason shows a control byte as ?',
           'threat model: the sidecar byte and grammar screens detect corrupted input under a trusted parent environment. A hostile parent environment — including exported shell functions or PATH substitution of core/backend commands — is outside the threat model and can substitute the backend itself. Targeted shadow-proof resolution protects banner/dispatch honesty from accidental shadowing; it is not an environment security boundary',
-          "the exec posture banner states what the run reaches in a jev= field: jev=api.typesafe.ai,docs.typesafe.ai when the run carries the permissions profile `jev` (Linux, codex-cli 0.160.0 or newer, a repository outside every temp root, a version and profile digest not recorded as refused), else jev=unreachable (<reason>) on today's workspace-write flags with network off; a run whose codex refuses the profile exits 72 with no success receipt and, for a refused profile key, records its version and digest when the state file can be written, so the next run on them takes today's flags; then a banner-only source=model:<s>,effort:<s> field — where each value came from: default, setting or environment — then a banner-only timeout=<duration|uncapped> field — exactly the duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: none of the three is persisted in a receipt or session sidecar",
+          "the exec posture banner states what the run reaches in a jev= field: the run hosts its service-facts.txt lists when the run carries the permissions profile `jev` (Linux, codex-cli 0.160.0 or newer, a repository outside every temp root, a version and profile digest not recorded as refused), else jev=unreachable (<reason>) on today's workspace-write flags with network off; a run whose codex refuses the profile exits 72 with no success receipt and, for a refused profile key, records its version and digest when the state file can be written, so the next run on them takes today's flags; then a banner-only source=model:<s>,effort:<s> field — where each value came from: default, setting or environment — then a banner-only timeout=<duration|uncapped> field — exactly the duration handed to timeout(1), uncapped when no timeout/gtimeout binary caps the run; INFORMATIONAL only: none of the three is persisted in a receipt or session sidecar",
           'quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated posture; a prose re-type drifts',
           'every-run nested-sandbox scan (DUAL policy, deliberately two different rules): the scan runs on EVERY completed run, not only a failed one, because a run that SURVIVES the nested-sandbox failure exits 0 with an ungrounded answer and nothing said so. Failed run (rc != 0): the existing loose whole-trace combination rule prints the recovery hint. Successful run (rc == 0): a warning fires ONLY on precise per-item evidence — both a sandbox-mechanism token AND a permission/read-only failure token inside the aggregated_output of ONE command_execution item whose failure is PROVEN (a nonzero exit_code, or the serialized status "failed"); a null exit_code is never failure by itself, tokens split across two items never fire, and a successful command\'s output never fires. The answer is printed FIRST on stdout, then the warning on stderr. HONEST RESIDUAL: the exit status does NOT change on that lane (a distinct nonzero exit would give a heuristic scan DENY polarity, refusing real work whenever the scan over-warns), so an orchestrator keying on exit status alone can still bank an ungrounded answer — the stderr warning is the signal',
         ],
@@ -99,7 +100,7 @@ const RAW_BACKENDS = [
         continue: [],
         receipt: 'side effect — a successful review appends one JSON receipt line to <git dir>/agent-workflow-review-receipts.jsonl (AW_REVIEW_RECEIPTS overrides): fingerprint = sha256 over the canonical uncommitted-state payload (staged diff + unstaged diff + untracked-not-ignored contents — the review-payload domain; never-committable untracked paths — character/block devices, FIFOs, sockets — are excluded from the domain entirely, untracked symlinks/directories ride as name-only notes) in code mode, the artifact-file sha256 in plan mode; durationS = integer wall-clock seconds from CLI start through verdict parsing and the wrapper prints review duration: <n>s; blocking = the count of [blocker] and [major] lines (schema mode: findings with either severity; a payload whose findings cannot be counted fails the run, no receipt); artifactPath = the normalized realpath on plan receipts only (repo-relative inside the work tree, absolute otherwise), while a double quote, backslash or control byte refuses pre-spend because the receipt encoder cannot carry it; verdict parsed from the mandated literal verdict line (schema mode: the verdict field); always fresh:true (one-shot) + grounded:true (native AGENTS.md auto-merge, factsHash null); probe = whether the run relaxed the quality guards (CODEX_PROBE=1), written on EVERY receipt so it self-declares — the kit\'s review-state gate rejects a probe-marked receipt (a probe review never attests) and equally rejects an unmarked one (silence is not a declaration); posture = the ACTUAL run posture {model, effort, tier} (tier null on the standard tier), written on EVERY receipt (D5) — the gate rejects a receipt with an absent/invalid posture (a pre-D5 wrapper minted it; re-run the review), one stderr banner line states the same posture, and a posture value carrying control bytes refuses pre-spend in every mode; a run whose final message carries NO recognized \'Verdict: <ship|revise|rethink>\' line — empty or missing output included — exits 4 with NO receipt (D4: a FAILED review to RE-RUN, never a fatal session error); when the dispatch nonce seam is supplied — the AW_REVIEW_NONCE environment value or its plain-argument equivalent --nonce <n> (one seam: the flag assigns the same value; supplying both with different values refuses pre-spend) — under the safe grammar [A-Za-z0-9._-]{1,64} (anything else refuses pre-spend), the wrapper first mints the finding MANIFEST {schema, backend, nonce, fingerprint, findings} beside the receipts file (agent-workflow-finding-manifest-<backend>-<nonce>.json; atomic, no-clobber — a byte-identical rewrite is an idempotent no-op, different bytes refuse loudly) ORDERED before the receipt append — a failed manifest write EXCLUDES the receipt append, so a nonce-supplied dispatch can never land a receipt without its readable manifest; a nonce-less invocation adds NO nonce field and mints NO finding manifest (the existing wrapperVersion field still changes with each bridge release); a write failure warns, never fails the review',
         notes: [
-          'the review posture banner states what the run reaches in a jev= field: jev=api.typesafe.ai,docs.typesafe.ai when the run carries the read-only permissions profile `jev` (Linux, codex-cli 0.160.0 or newer, a version and profile digest not recorded as refused), else jev=unreachable (<reason>) under --sandbox read-only; a run whose codex refuses the profile exits 72 with no receipt; then a banner-only source=model:<s>,effort:<s> field — where each value came from: default, setting or environment — then a banner-only timeout=<duration> field — exactly the duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no longer happen), and none of the three fields enters the receipt posture or the D5 banner↔receipt parity',
+          'the review posture banner states what the run reaches in a jev= field: the run hosts its service-facts.txt lists when the run carries the read-only permissions profile `jev` (Linux, codex-cli 0.160.0 or newer, a version and profile digest not recorded as refused), else jev=unreachable (<reason>) under --sandbox read-only; a run whose codex refuses the profile exits 72 with no receipt; then a banner-only source=model:<s>,effort:<s> field — where each value came from: default, setting or environment — then a banner-only timeout=<duration> field — exactly the duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no longer happen), and none of the three fields enters the receipt posture or the D5 banner↔receipt parity',
           'quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated posture; a prose re-type drifts',
         ],
       },
@@ -108,7 +109,7 @@ const RAW_BACKENDS = [
     // The per-backend receipt-deadline default (seconds) the capability block reports — the review
     // wrapper's built-in hard cap (CODEX_HARD_TIMEOUT review default), an OFFLINE registry fact.
     deadlineDefaultS: 1800,
-    credential: { env: 'CODEX_HOME', default: '~/.codex', file: 'auth.json' },
+    credential: { service: 'codex', file: 'auth.json' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/codex-cli-bridge/setup/README.md',
     setupPathLocal: 'setup/README.md',
     // The short canonical guided commands. Binary-install is platform-variant and longer, so it is
@@ -151,7 +152,7 @@ const RAW_BACKENDS = [
     bin: 'agy',
     // AGY_HARD_TIMEOUT's built-in review default is 30m — reported in seconds, an OFFLINE registry fact.
     deadlineDefaultS: 1800,
-    credential: { env: null, default: '~/.gemini/antigravity-cli', file: 'antigravity-oauth-token' },
+    credential: { service: 'antigravity', file: 'antigravity-oauth-token' },
     setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/antigravity-cli-bridge/setup/README.md',
     setupPathLocal: 'setup/README.md',
     guide: { setupRef: 'antigravity-cli-bridge/setup/README.md', loginCmd: 'agy', verifyCmd: 'echo "say OK" | agy-run -' },
@@ -263,13 +264,19 @@ const probeFile = (file, deps = {}) => {
 // "authed?" = existence of the credential-marker file (read-only). NEVER runs the subscription CLI.
 // Report wording is "credentials present/missing/unknown", never "authenticated".
 export const probeCredential = (entry, deps = {}) => {
-  const dir = resolveDir(
-    { env: entry.credential.env, default: entry.credential.default },
-    deps.getenv ?? process.env,
-    deps.home ?? os.homedir(),
-  );
-  const file = join(dir, entry.credential.file);
-  return { state: probeFile(file, deps), path: file };
+  const service = entry.credential.service;
+  try {
+    const fragment = (deps.loadServiceFragments ?? loadServiceFragments)()?.[service];
+    if (!fragment) return { state: UNKNOWN, path: null, reason: `${service}: service fragment missing` };
+    if (!Array.isArray(fragment.writableDirs) || fragment.writableDirs.length !== 1) {
+      return { state: UNKNOWN, path: null, reason: `${service}: expected exactly one writableDirs entry` };
+    }
+    const dir = resolveDir(fragment.writableDirs[0], deps.getenv ?? process.env, deps.home ?? os.homedir());
+    const file = join(dir, entry.credential.file);
+    return { state: probeFile(file, deps), path: file };
+  } catch (error) {
+    return { state: UNKNOWN, path: null, reason: `${service}: ${error?.message ?? String(error)}` };
+  }
 };
 
 const computeReadiness = (manifestState, cli, credentials, wrappers) => {
@@ -348,7 +355,7 @@ export const detectBackend = (entry, deps = {}) => {
     manifestReason,
     skillDir: installed ? resolvedDir : null,
     cli: { bin: entry.bin, state: cliProbe.state, path: cliProbe.path ?? null },
-    credentials: { state: credentials.state, path: credentials.path },
+    credentials: { state: credentials.state, path: credentials.path, ...(credentials.reason ? { reason: credentials.reason } : {}) },
     wrappers,
     readiness,
     setupHint,
@@ -384,7 +391,7 @@ export const guideFor = (status) => {
   if (status.credentials.state !== PRESENT) {
     out.push({
       need: 'credentials',
-      hint: `sign in once (subscription): ${guide?.loginCmd ?? 'see the setup README'}  (verify: ${guide?.verifyCmd ?? 'see the setup README'})`,
+      hint: status.credentials.reason ?? `sign in once (subscription): ${guide?.loginCmd ?? 'see the setup README'}  (verify: ${guide?.verifyCmd ?? 'see the setup README'})`,
     });
   }
   return out;
@@ -400,6 +407,7 @@ const setupTarget = (s) => s.setupHint.local ?? s.setupHint.url;
 // Next-step hint per readiness. Deliberately never says "authenticated"/"authed" — only
 // "credentials present/missing" (detection is file-presence, not a live login check).
 const nextStep = (s) => {
+  if (s.credentials.reason) return s.credentials.reason;
   switch (s.readiness) {
     case READY:
       return null;

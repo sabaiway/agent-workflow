@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '5.1.0'
+  version: '6.0.0'
 ---
 
 # codex-cli-bridge
@@ -19,7 +19,7 @@ or a working-tree diff and only emits findings (`codex-review`).
 Use this skill when the user wants to:
 
 - Delegate plan or instruction EXECUTION to `codex` in a workspace-write sandbox (network to
-  `api.typesafe.ai` and `docs.typesafe.ai` only where the permissions profile `jev` runs, off elsewhere).
+  the run hosts its service-facts.txt lists where the permissions profile `jev` runs, off elsewhere).
 - Get a second-opinion ADVISORY review of an implementation plan or the current diff.
 - Install, authenticate, smoke-test, or troubleshoot `codex`, or understand its sandbox/flags/models.
 - Drive codex efficiently from the main agent (exec vs review, `resume`, the commit boundary).
@@ -40,9 +40,8 @@ binary, run `codex login` once under a ChatGPT subscription, then expose this sk
 print, copy, commit, or package `~/.codex/auth.json` — it is personal and is **never bundled** with
 this skill. Both wrappers enforce the subscription path before invoking codex:
 
-- they **unset `OPENAI_BASE_URL` and every `*_API_KEY` except `TYPESAFE_API_KEY`** (`OPENAI_API_KEY`
-  and `CODEX_API_KEY` included; `TYPESAFE_API_KEY` passes as given) so a stray key can never silently
-  switch you to paid api-key billing;
+- they **unset `OPENAI_BASE_URL` and every `*_API_KEY` except the passed variables its service-facts.txt lists**
+  (those variables pass as given) so a stray key can never silently switch you to paid api-key billing;
 - they pass **`--ignore-user-config`** so a personal `~/.codex/config.toml` cannot change model,
   sandbox, or approval behaviour (auth still works — codex reads the login from `CODEX_HOME`
   regardless of that flag);
@@ -99,7 +98,7 @@ waste, never lowering quality. Full knob list: [§ Environment knobs](#environme
 Drive codex only through the two wrappers (installed on `PATH`), run from the target project root:
 
 ```bash
-# EXECUTION (workspace writes; network to api.typesafe.ai and docs.typesafe.ai under the profile `jev`, else off; never prompts):
+# EXECUTION (workspace writes; network to the run hosts its service-facts.txt lists under the profile `jev`, else off; never prompts):
 codex-exec docs/plans/<slug>.md                 # drive a plan file
 echo "apply review fix: ..." | codex-exec -      # ad-hoc instruction from stdin
 codex-exec <file|-> -- <extra codex flags...>     # GUARDED passthrough after `--` (policy/model/capture flags rejected; some relaxed only under CODEX_PROBE=1)
@@ -125,7 +124,7 @@ receipt records the same `posture {model, effort, tier}` (tier `null` on the sta
 bytes in a posture value refuse pre-spend in every mode. `codex-exec` states its posture the same way —
 ONE `exec posture: model=… effort=… tier=… sandbox=jev-profile|workspace-write session=fresh|resume:<id>
 jev=… source=… timeout=…` stderr line before dispatch (the resume id validated pre-spend). The `jev=`
-field says what the run reaches: `jev=api.typesafe.ai,docs.typesafe.ai` under the permissions profile `jev`
+field says what the run reaches: the run hosts its service-facts.txt lists under the permissions profile `jev`
 (Linux, codex-cli 0.160.0 or newer, for `codex-exec` a repository outside every temp root, a codex
 version and profile digest not recorded as refused), else `jev=unreachable (<reason>)` on today's flags.
 A run whose codex refuses the profile (a profile error before the turn starts, or `bwrap: execvp` in a
@@ -182,9 +181,9 @@ anything that would defeat a policy is guarded — see [§ Models](#models-the-h
 | `CODEX_REVIEW_SCHEMA` | unset | `codex-review`: `=1` returns findings as a validated JSON object (`--output-schema`), with a raw-text fallback. Default off. |
 | `CODEX_PROBE` | unset | `=1` ⇒ throwaway-probe mode: the one route to a one-off model or effort, and it relaxes the tier-2 passthrough guard (echoed loudly); a probe review's receipt never attests. Never for real work. |
 
-The git-write shim, `--ignore-user-config`, the key rule (`OPENAI_BASE_URL` and every `*_API_KEY` but
-`TYPESAFE_API_KEY` unset) and the choice between the profile and today's flags are NOT env-tunable —
-they are fixed invariants.
+The git-write shim, `--ignore-user-config`, the key rule (unset `OPENAI_BASE_URL` and every `*_API_KEY`
+except the passed variables its service-facts.txt lists) and the choice between the profile and today's
+flags are NOT env-tunable — they are fixed invariants.
 
 ### Dispatch identity — the accounted exec lane
 
@@ -251,14 +250,14 @@ you truly mean it.
 
 **The Jev skill in a delegated run.** A `codex-exec` or `codex-review` run loads the vendor's Jev skill from the
 user root the kit's `jev-skill` command fills, `~/.agents/skills` (a run under `--ignore-user-config` listed its
-skills, measured 2026-10-02; `codex-review` links that root into its fence home), and `TYPESAFE_API_KEY` passes the
-wrappers as given while every other `*_API_KEY` is unset. On Linux with codex-cli 0.160.0 or newer, off a codex
-version and profile digest recorded as refused and, for `codex-exec`, from a repository outside every temp root, the
-run carries the permissions profile `jev`: it reaches `api.typesafe.ai` and `docs.typesafe.ai` and no other host, a review still
-writes nothing, and the banner reads `jev=api.typesafe.ai,docs.typesafe.ai`; anywhere else the run keeps today's
-flags with network off and the banner says `jev=unreachable (<reason>)`. Two residuals stand: codex's server-side
-`web_search` reaches pages outside the profile, and the key now sits in every run's environment, the `web_search`
-channel included. A codex release that stops recognizing a profile key costs one run per version and profile digest
+skills, measured 2026-10-02; `codex-review` links that root into its fence home), and `TYPESAFE_API_KEY` passes as
+given under the shared key rule: every `*_API_KEY` except the passed variables its service-facts.txt lists is unset.
+With run hosts in that file, on Linux with codex-cli 0.160.0 or newer, off a recorded version and profile digest
+refusal and, for `codex-exec`, outside every temp root, the profile `jev` reaches the run hosts its service-facts.txt
+lists; a review still writes nothing, and the banner's `jev=` field lists those hosts. Elsewhere the run keeps
+today's flags with network off and `jev=unreachable (<reason>)`. Two residuals stand: codex's server-side
+`web_search` reaches pages outside the profile, and the key now sits in every run's environment, that channel
+included. A codex release that stops recognizing a profile key costs one run per version and profile digest
 (exit 72), while the state file can be written, before the recorded fallback takes over.
 
 ## How the main agent drives `codex` efficiently
@@ -283,9 +282,9 @@ See [`references/driving-codex.md`](references/driving-codex.md) for the full pl
   sets `approval_policy=never` and the run's own posture explicitly — the profile `jev`'s four overrides,
   or `sandbox_mode=workspace-write` + `sandbox_workspace_write.network_access=false` — chosen afresh on
   each resume. It reads the session id from the sidecar (`--resume-last`) or takes it as an argument.
-- **Network: two hosts at most in exec.** Under the profile `jev` a run reaches `api.typesafe.ai` and
-  `docs.typesafe.ai` only; under today's flags none. New dependencies and any other network step are
-  installed by hand, then codex is re-dispatched.
+- **Network in exec.** Under the profile `jev` a run reaches the run hosts its service-facts.txt lists;
+  under today's flags none. New dependencies and any other network step are installed by hand, then
+  codex is re-dispatched.
 - **`codex-review code` precomputes the diff.** The wrapper assembles the change set (repo map, status,
   staged + unstaged diff, untracked file contents) and feeds it in, so codex does not roam the
   filesystem rediscovering it; a clean tree exits 0 before a run is spent. Native `codex review` is
@@ -311,9 +310,9 @@ The wrappers work in any git repo where `codex` is installed and authenticated. 
 
 ## Known limitations
 
-- **Network: two hosts at most** in `codex-exec` — the profile `jev` reaches `api.typesafe.ai` and
-  `docs.typesafe.ai` only, today's flags (`sandbox_workspace_write.network_access=false`) none: codex
-  cannot install dependencies — do that by hand, then re-dispatch. The profile runs only on Linux with
+- **Network** in `codex-exec` — the profile `jev` reaches the run hosts its service-facts.txt lists,
+  today's flags (`sandbox_workspace_write.network_access=false`) none: codex cannot install dependencies
+  — do that by hand, then re-dispatch. The profile runs only on Linux with
   codex-cli 0.160.0 or newer; Windows and macOS keep today's flags until its round-trip is probed there.
 - **No live approvals** — `codex exec` has no TTY, so `approval_policy=never`; an action that would
   need escalation is reported, not approved interactively.

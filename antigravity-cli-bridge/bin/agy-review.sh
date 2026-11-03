@@ -54,6 +54,76 @@
 #                            disagreeing flag+env pair refuses pre-spend)
 set -euo pipefail
 
+aw_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir hops=0 max_hops=16
+  while :; do
+    case "$src" in */*) dir="${src%/*}"; dir="${dir:-/}" ;; *) dir=. ;; esac
+    dir="$(CDPATH= builtin cd -P -- "$dir" 2>/dev/null && builtin pwd -P)" || break
+    [[ -L "$src" ]] || { printf '%s\n' "$dir"; return 0; }
+    if (( hops >= max_hops )); then
+      printf 'error: exceeded %s symlink hops; could not resolve its OWN directory\n' "$max_hops" >&2
+      return 127
+    fi
+    hops=$((hops + 1))
+    src="$(command readlink -- "$src" 2>/dev/null)" || break
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  printf 'error: could not resolve its OWN directory\n' >&2
+  return 127
+}
+aw_read_service_facts() {
+  local path="${1%/*}/service-facts.txt" line key value entry number=0 bad=0 valid seen=() run_lines=()
+  local host_re='^(\*\.)?[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?(\.[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?)+$'
+  local variable_re='^[ABCDEFGHIJKLMNOPQRSTUVWXYZ][ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*$'
+  local command_re='^[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]* \*$'
+  local env directory segments LC_ALL=C
+  AW_FACT_HOST=() AW_FACT_RUN_HOST=() AW_FACT_PASSED_VARIABLE=()
+  if [[ -f "$path" && -r "$path" ]]; then
+    while IFS= read -r line; do
+      number=$((number + 1)); valid=1
+      if (( number == 1 )); then
+        [[ "$line" == "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit" ]] || bad=1
+        continue
+      fi
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$line" == *=* ]] || valid=0
+      case "$key" in
+        HOST|RUN_HOST) [[ "$value" =~ $host_re ]] || valid=0
+          if [[ "$key" == RUN_HOST && "$value" == '*.'* ]]; then valid=0; fi ;;
+        PASSED_VARIABLE) [[ "$value" =~ $variable_re && "$value" != OPENAI_BASE_URL ]] || valid=0 ;;
+        EXCLUDED_COMMAND) [[ "$value" =~ $command_re ]] || valid=0 ;;
+        WRITABLE_DIR)
+          env="${value%%:*}"; directory="${value#*:}"; segments="/${directory//\\//}/"
+          [[ "$value" == *:* && ( -z "$env" || "$env" =~ $variable_re ) &&
+            ( "$directory" == '~/'* || "$directory" == /* ) && "$directory" != */ &&
+            "$directory" != *[\*\?\[\]]* && ! "$directory" =~ [[:cntrl:]] && "$segments" != */../* ]] || valid=0 ;;
+        *) valid=0 ;;
+      esac
+      for entry in ${seen[@]+"${seen[@]}"}; do [[ "$entry" != "$line" ]] || valid=0; done
+      if (( ! valid )); then (( bad )) || bad=$number; continue; fi
+      seen+=("$line")
+      case "$key" in
+        HOST) AW_FACT_HOST+=("$value") ;; RUN_HOST) AW_FACT_RUN_HOST+=("$value"); run_lines+=("$number") ;;
+        PASSED_VARIABLE) AW_FACT_PASSED_VARIABLE+=("$value") ;;
+      esac
+    done <"$path"
+    if (( ! number )); then bad=1; fi
+    if [[ -n "$line" ]] && (( ! bad )); then bad=$((number + 1)); fi
+    for ((number=0; number<${#AW_FACT_RUN_HOST[@]}; number++)); do
+      valid=0
+      for entry in ${AW_FACT_HOST[@]+"${AW_FACT_HOST[@]}"}; do [[ "$entry" != "${AW_FACT_RUN_HOST[number]}" ]] || valid=1; done
+      if (( ! valid && (! bad || run_lines[number] < bad) )); then bad=${run_lines[number]}; fi
+    done
+    (( bad )) || return 0
+    printf 'error: %s: invalid facts at line %s; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" "$bad" >&2
+  else
+    printf 'error: %s: not a readable regular file; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" >&2
+  fi
+  exit 127
+}
+HERE="$(aw_script_dir)" || exit 127
+aw_read_service_facts "$HERE"
+
 # --- --help / -h (pre-preflight: no agy, no login, no git tree needed) ---------
 # Keyed ONLY on the FIRST argument — never a scan of all args (uniform rule across
 # the four wrappers). Drift-guarded against capability.json roles.review.contract.
@@ -373,15 +443,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 aw_scrub_billing_keys() {
-  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
-  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
-  local name
+  local name passed keep
   unset OPENAI_BASE_URL 2>/dev/null || true
   for name in $(compgen -v); do
-    case "$name" in
-      TYPESAFE_API_KEY) ;;
-      *_API_KEY) unset "$name" 2>/dev/null || true ;;
-    esac
+    [[ "$name" == *_API_KEY ]] || continue
+    keep=0
+    for passed in ${AW_FACT_PASSED_VARIABLE[@]+"${AW_FACT_PASSED_VARIABLE[@]}"}; do
+      [[ "$name" != "$passed" ]] || keep=1
+    done
+    if (( ! keep )); then unset "$name" 2>/dev/null || true; fi
   done
   return 0
 }
@@ -389,7 +459,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="7.1.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="8.0.0"  # aw-version-anchor
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
 # newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
@@ -513,41 +583,6 @@ FED_ECHO_MAX_BYTES=200
 # address nobody requested and FAILS the proof, rather than vanishing from the check entirely.
 FED_PROOF_ADDRESS_MAX=1000000000
 
-# This wrapper's REAL directory, symlinks RESOLVED. The managed install puts a symlink on PATH
-# (~/.local/bin/agy-review -> <placed skill>/bin/agy-review.sh), so an unresolved BASH_SOURCE names
-# the LINK's directory — and every sibling payload below, the envelope reader most of all, would be
-# looked for beside the link instead of beside the script. `readlink -f` is GNU-only (macOS ships
-# BSD readlink), so the chain is walked by hand; `cd -P` resolves a symlinked directory too.
-# The walk is HOP-BOUNDED with a loud refusal, never an unbounded loop. A symlink CYCLE cannot be
-# reached by construction — the kernel already resolved this path to exec the script and would have
-# failed with ELOOP — but it becomes reachable if a link is rewritten in the window between exec and
-# this walk, and an unbounded `while` would then spin until something killed it. Past the bound the
-# wrapper refuses BY NAME rather than guessing at a directory: a wrong answer here sends every
-# sibling lookup somewhere arbitrary. 16 is far above any managed install (which uses ONE hop) and
-# below the kernel's own chain limit, so it never truncates a real chain.
-AW_SCRIPT_LINK_MAX_HOPS=16
-aw_script_dir() {
-  local src="${BASH_SOURCE[0]}" dir hops=0
-  while [[ -L "$src" ]]; do
-    if (( hops >= AW_SCRIPT_LINK_MAX_HOPS )); then
-      echo "error: resolving this wrapper's own path exceeded ${AW_SCRIPT_LINK_MAX_HOPS} symlink hops at" >&2
-      echo "       '$src' — a symlink cycle, or an absurd chain." >&2
-      return 1
-    fi
-    hops=$(( hops + 1 ))
-    dir="$(cd -P "$(dirname "$src")" && pwd)" || return 1
-    src="$(readlink "$src")" || return 1
-    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
-  done
-  ( cd -P "$(dirname "$src")" && pwd )
-}
-if ! HERE="$(aw_script_dir)"; then
-  echo "error: this wrapper could not resolve its OWN directory, so the sibling payload every review" >&2
-  echo "       depends on cannot be located. Refusing before anything is spent — repair the link, or" >&2
-  echo "       invoke the real script path." >&2
-  exit 127
-fi
-
 # --- The dispatch transport (AGY-1.1.13, Decision 1) ---------------------------
 # EVERY review dispatch runs `--output-format json`: the CLI then answers with ONE envelope whose
 # `response` carries the model's Markdown VERBATIM, so the wrapper reads a NAMED FIELD instead of
@@ -597,23 +632,7 @@ if [[ -z "$aw_review_timeout_bin" ]]; then
   exit 127
 fi
 export AGY_REQUIRE_TIMEOUT_BIN=1
-# Delegate execution to agy-run (the single home of the timeout + subscription + byte-ceiling guards);
-# fall back to the sibling agy.sh on a fresh checkout / hermetic test where agy-run is not yet linked.
-if command -v agy-run >/dev/null 2>&1; then
-  AGY_RUN="agy-run"
-else
-  AGY_RUN="$HERE/agy.sh"
-fi
-# The seam is a guarantee only when the RESOLVED child honors it: a stale installed agy-run that
-# never reads AGY_REQUIRE_TIMEOUT_BIN would keep its uncapped lane past the parent preflight —
-# refuse loudly and name the refresh recovery instead of dispatching on a hope.
-aw_child_path="$(command -v "$AGY_RUN" 2>/dev/null || printf '%s' "$AGY_RUN")"
-if ! grep -q "AGY_REQUIRE_TIMEOUT_BIN" "$aw_child_path" 2>/dev/null; then
-  echo "error: the resolved agy-run child ($aw_child_path) does not honor the AGY_REQUIRE_TIMEOUT_BIN seam —" >&2
-  echo "       a stale bridge install could run uncapped past the parent preflight. Refresh the placed" >&2
-  echo "       bridges (/agent-workflow-kit setup --refresh-placed), then re-run." >&2
-  exit 127
-fi
+AGY_RUN="$HERE/agy.sh"
 
 # --- Pre-spend capability door (AGY-1.1.13, Decision 2) ------------------------
 # This wrapper drives the CLI in `--output-format json`, passes --disable-slash-commands, and reads
@@ -774,8 +793,7 @@ aw_agy_catalog_check() {
 }
 export AW_AGY_CATALOG_READ=1
 # Every child agy-run is this review's (spec jev-every-run): its prompts forbid every tool, so a review whose model
-# obeys them sends no request to api.typesafe.ai (an advisory prohibition, not a sandbox), and the child prints no
-# TYPESAFE_API_KEY limit line.
+# obeys them sends no request (an advisory prohibition, not a sandbox), and the child prints no limit line.
 export AW_AGY_REVIEW_CHILD=1
 if [[ -n "$AGY_MODEL" ]]; then aw_agy_catalog_check "$aw_review_timeout_bin" "$DEFAULT_AGY_REVIEW_MODEL"; fi
 if [[ "$AGY_MODEL" != "$HOST_AGY_MODEL" && "$AGY_PROBE" != "1" ]]; then

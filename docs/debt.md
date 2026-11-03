@@ -938,6 +938,66 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   to the next item at the same indent and judge every step whose body holds `uses: actions/checkout@`, a named-step
   fixture red first. Residual exposure, NOT live: no checkout in `ci.yml` or `_publish-one.yml` is a named step.
 
+- **MANIFEST-FIXTURES-KEEP-RETIRED-FIELD-NAMES** — invariant: a fixture's name says what it pins. Origin: JEV S12
+  (kit 23.0.0): `agent-workflow-kit/tools/manifest/validate.test.mjs:259-260` keeps nine fixtures named
+  `network-hosts-*` and `writable-dirs-*`, which now pin a manifest with no `services` key carrying the retired fields
+  (valid, no fragment read) rather than the field rules the names describe. Narrow fix: rename them to the old-shape
+  case they pin, with their descriptions, in the change that next touches the suite. Residual exposure, NOT live: the
+  cells assert the right results; only the names mislead.
+
+- **PLACED-NEWER-BRIDGE-NAMING-AN-UNKNOWN-SERVICE-READS-INVALID** — invariant: a placed bridge newer than the kit
+  reads as newer, never as broken. Origin: JEV S12 (kit 23.0.0): `agent-workflow-kit/tools/manifest/validate.mjs:650`
+  judges `services` against the fragments this kit ships, so a placed bridge from a later release naming a service
+  this kit lacks is `invalid` before any reader compares versions. Narrow fix: none needed today. Fix direction: the
+  readers that place or refresh bridges compare versions before they judge `services`, through a spec revision.
+  Residual exposure, NOT live: every bridge ships inside the kit and the upgrade refreshes placed bridges from the
+  kit's own bundle, so no placed bridge is newer than its kit.
+
+- **SYNC-MIRRORS-NO-WRITE-CELL-CANNOT-GO-RED** — invariant: a cell's every assertion can fail on the regression its
+  name states. Origin: the lens, JEV S12 re-check 3: `scripts/sync-mirrors.test.mjs:192,196` breaks the FIRST bridge's
+  manifest and checks the SECOND bridge's facts file stays absent, but the refusal throws before the second bridge is
+  planned, so a write-as-you-go regression would leave it absent too. Narrow fix: break the second bridge's manifest
+  and remove the first bridge's facts file, so any write before the refusal turns the cell red. Residual exposure, NOT
+  live: `planAllMirrors` computes every plan before any apply (`scripts/sync-mirrors.mjs:285`, `:289`).
+
+- **BRIDGE-TEXTS-KEEP-STATE-DIR-DEFAULTS** — invariant: a bridge's state dir is written once, in its service
+  fragment. Origin: JEV S14 (codex bridge 6.0.0, antigravity bridge 8.0.0): every `~/.codex`, `$HOME/.codex` or
+  `~/.gemini/antigravity-cli` in the canon bridge folders outside the tests, among them
+  `codex-cli-bridge/bin/codex-review.sh:667` (`${CODEX_HOME:-$HOME/.codex}`), `codex-exec.sh:11,32,34`, `agy.sh:10`
+  and the SKILL.md, references and setup pages. Narrow fix: none needed today. Fix direction: the wrappers and pages
+  take the state dir from the `WRITABLE_DIR` line service-facts.txt already carries, through a revision of spec
+  kit/services. Residual exposure, NOT live: both defaults equal the shipped fragments' and are the CLIs' own fixed
+  locations.
+
+- **DETECTOR-UNKNOWN-CREDENTIALS-READ-AS-SIGN-IN** — invariant: a reasoned `unknown` credential state is shown with its
+  reason wherever readiness is turned into a remedy. Origin: JEV S14 (kit 23.1.0): the detector's own hint and next
+  step print the reason, but `remedyFor` (`agent-workflow-kit/tools/review-roster-resolve.mjs:14`) and
+  `recommendRecipe` (`agent-workflow-kit/tools/recipes.mjs:216-243`) still say sign in for `needs-credentials`.
+  Narrow fix: none needed today. Fix direction: both read `credentials.reason` before the readiness remedy, a red
+  case each. Residual exposure, NOT live: a reason arises only when a shipped fragment cannot be loaded or has other
+  than one writable dir, and the two fragments the detector selects for its credential-directory checks, codex.json
+  and antigravity.json (`detect-backends.mjs:112,155`), load with one dir each under the loader's test.
+
+- **FACTS-REFUSAL-CAN-NAME-A-VALID-RUN-HOST-LINE** — invariant: the line the refusal names is the first line that fails
+  the table. Origin: the lens, JEV S14 diff review: `codex-cli-bridge/bin/codex-exec.sh:101,105` (the same block in
+  all four wrappers): a file `<header>\nRUN_HOST=a.example\nHOST=a.example` with no final newline sets the last-line
+  cell (3), then the membership pass, which never saw the unterminated HOST, overwrites it with 2, a valid line.
+  Narrow fix: parse the unterminated last line through the same key checks before the membership pass
+  (`codex-exec.sh:72`: `read -r line || [[ -n $line ]]`), and record it as failing for the missing newline only when
+  no earlier line fails; two S25 cells: that file names line 3, and `<header>\nRUN_HOST=b.example\nHOST=a.example`
+  with no final newline names line 2. Residual exposure, NOT live: the generator writes every HOST before every
+  RUN_HOST and ends the file with a newline (`agent-workflow-kit/tools/services/index.mjs:16,126`); the refusal and
+  its remedy stay right, only the line number is off.
+
+- **PROFILE-CONDITION-LISTS-OMIT-THE-RUN-HOST** — invariant: every text that lists the conditions of the profile `jev`
+  includes "a RUN_HOST line exists", which `aw_profile_choose` checks first (`codex-exec.sh:654`). Origin: JEV S14:
+  every text in the canon codex bridge folder, and `detect-backends.mjs`'s role-contract copy, that lists the
+  conditions under which the profile `jev` runs (the lines naming `codex-cli 0.160.0 or newer` or `0.160.0+`) omits
+  it, except the exec guardrail `codex-cli-bridge/capability.json:84` and the SKILL.md Jev paragraph
+  `codex-cli-bridge/SKILL.md:255`. Narrow fix: none needed today. Fix direction: add the run-host condition once per
+  text, the manifest notes and help kept verbatim together. Residual exposure, NOT live: the shipped file carries two
+  RUN_HOST lines, so every listed condition is the whole list today.
+
 ## Closed
 
 - **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live

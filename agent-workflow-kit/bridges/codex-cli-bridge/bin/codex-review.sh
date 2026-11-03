@@ -2,7 +2,7 @@
 # Read-only ADVISORY review BY the OpenAI Codex CLI. Runs read-only — on Linux with
 # codex-cli 0.160.0 or newer, off a codex version and profile digest recorded as
 # refused, under the permissions profile `jev` with no write entry
-# (network to api.typesafe.ai and docs.typesafe.ai only), elsewhere under --sandbox
+# (network to the run hosts its service-facts.txt lists), elsewhere under --sandbox
 # read-only — so codex structurally CANNOT edit/create/delete files or write to git
 # — it can only read and emit findings. The orchestrator reads those findings and
 # decides what to act on; codex never applies them itself.
@@ -36,6 +36,76 @@
 # load a skill. This trims roaming noise; it is NOT a security boundary (absolute paths
 # anywhere on disk remain readable under read-only — read-scoping is a prompt concern).
 set -euo pipefail
+
+aw_script_dir() {
+  local src="${BASH_SOURCE[0]}" dir hops=0 max_hops=16
+  while :; do
+    case "$src" in */*) dir="${src%/*}"; dir="${dir:-/}" ;; *) dir=. ;; esac
+    dir="$(CDPATH= builtin cd -P -- "$dir" 2>/dev/null && builtin pwd -P)" || break
+    [[ -L "$src" ]] || { printf '%s\n' "$dir"; return 0; }
+    if (( hops >= max_hops )); then
+      printf 'error: exceeded %s symlink hops; could not resolve its OWN directory\n' "$max_hops" >&2
+      return 127
+    fi
+    hops=$((hops + 1))
+    src="$(command readlink -- "$src" 2>/dev/null)" || break
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  printf 'error: could not resolve its OWN directory\n' >&2
+  return 127
+}
+aw_read_service_facts() {
+  local path="${1%/*}/service-facts.txt" line key value entry number=0 bad=0 valid seen=() run_lines=()
+  local host_re='^(\*\.)?[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?(\.[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]([abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-]*[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789])?)+$'
+  local variable_re='^[ABCDEFGHIJKLMNOPQRSTUVWXYZ][ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*$'
+  local command_re='^[abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789][abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]* \*$'
+  local env directory segments LC_ALL=C
+  AW_FACT_HOST=() AW_FACT_RUN_HOST=() AW_FACT_PASSED_VARIABLE=()
+  if [[ -f "$path" && -r "$path" ]]; then
+    while IFS= read -r line; do
+      number=$((number + 1)); valid=1
+      if (( number == 1 )); then
+        [[ "$line" == "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit" ]] || bad=1
+        continue
+      fi
+      key="${line%%=*}"; value="${line#*=}"
+      [[ "$line" == *=* ]] || valid=0
+      case "$key" in
+        HOST|RUN_HOST) [[ "$value" =~ $host_re ]] || valid=0
+          if [[ "$key" == RUN_HOST && "$value" == '*.'* ]]; then valid=0; fi ;;
+        PASSED_VARIABLE) [[ "$value" =~ $variable_re && "$value" != OPENAI_BASE_URL ]] || valid=0 ;;
+        EXCLUDED_COMMAND) [[ "$value" =~ $command_re ]] || valid=0 ;;
+        WRITABLE_DIR)
+          env="${value%%:*}"; directory="${value#*:}"; segments="/${directory//\\//}/"
+          [[ "$value" == *:* && ( -z "$env" || "$env" =~ $variable_re ) &&
+            ( "$directory" == '~/'* || "$directory" == /* ) && "$directory" != */ &&
+            "$directory" != *[\*\?\[\]]* && ! "$directory" =~ [[:cntrl:]] && "$segments" != */../* ]] || valid=0 ;;
+        *) valid=0 ;;
+      esac
+      for entry in ${seen[@]+"${seen[@]}"}; do [[ "$entry" != "$line" ]] || valid=0; done
+      if (( ! valid )); then (( bad )) || bad=$number; continue; fi
+      seen+=("$line")
+      case "$key" in
+        HOST) AW_FACT_HOST+=("$value") ;; RUN_HOST) AW_FACT_RUN_HOST+=("$value"); run_lines+=("$number") ;;
+        PASSED_VARIABLE) AW_FACT_PASSED_VARIABLE+=("$value") ;;
+      esac
+    done <"$path"
+    if (( ! number )); then bad=1; fi
+    if [[ -n "$line" ]] && (( ! bad )); then bad=$((number + 1)); fi
+    for ((number=0; number<${#AW_FACT_RUN_HOST[@]}; number++)); do
+      valid=0
+      for entry in ${AW_FACT_HOST[@]+"${AW_FACT_HOST[@]}"}; do [[ "$entry" != "${AW_FACT_RUN_HOST[number]}" ]] || valid=1; done
+      if (( ! valid && (! bad || run_lines[number] < bad) )); then bad=${run_lines[number]}; fi
+    done
+    (( bad )) || return 0
+    printf 'error: %s: invalid facts at line %s; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" "$bad" >&2
+  else
+    printf 'error: %s: not a readable regular file; remove whatever is at that path and run /agent-workflow-kit upgrade to write it again\n' "$path" >&2
+  fi
+  exit 127
+}
+HERE="$(aw_script_dir)" || exit 127
+aw_read_service_facts "$HERE"
 
 # --- --help / -h (pre-preflight: no codex, no login, no git tree needed) -------
 # Keyed ONLY on the FIRST argument — never a scan of all args (uniform rule across
@@ -101,16 +171,16 @@ Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins ov
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
 Notes:
-  the review posture banner states what the run reaches in a jev= field:
-  jev=api.typesafe.ai,docs.typesafe.ai when the run carries the read-only permissions profile `jev`
-  (Linux, codex-cli 0.160.0 or newer, a version and profile digest not recorded as refused), else
-  jev=unreachable (<reason>) under --sandbox read-only; a run whose codex refuses the profile exits
-  72 with no receipt; then a banner-only source=model:<s>,effort:<s> field — where each value came
-  from: default, setting or environment — then a banner-only timeout=<duration> field — exactly the
-  duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no timeout/gtimeout
-  binary exists (the wrapper refuses by name before any CLI run, so an uncapped review run can no
-  longer happen), and none of the three fields enters the receipt posture or the D5 banner↔receipt
-  parity
+  the review posture banner states what the run reaches in a jev= field: the run hosts its
+  service-facts.txt lists when the run carries the read-only permissions profile `jev` (Linux,
+  codex-cli 0.160.0 or newer, a version and profile digest not recorded as refused), else
+  jev=unreachable (<reason>) under --sandbox read-only; a run whose codex refuses the profile
+  exits 72 with no receipt; then a banner-only source=model:<s>,effort:<s> field — where each
+  value came from: default, setting or environment — then a banner-only timeout=<duration> field —
+  exactly the duration handed to timeout(1); the hard-timeout preflight fails CLOSED when no
+  timeout/gtimeout binary exists (the wrapper refuses by name before any CLI run, so an uncapped
+  review run can no longer happen), and none of the three fields enters the receipt posture or the
+  D5 banner↔receipt parity
   quote the posture banner verbatim when labeling this dispatch — the banner is the machine-stated
   posture; a prose re-type drifts
 
@@ -326,15 +396,15 @@ aw_resolve_timeout_bin() {
   printf '%s' "$bin"
 }
 aw_scrub_billing_keys() {
-  # The one key rule (spec jev-every-run): OPENAI_BASE_URL and every *_API_KEY are unset, so a stray key can never
-  # switch a run to paid billing; TYPESAFE_API_KEY is neither read nor set, so it reaches the CLI exactly as given.
-  local name
+  local name passed keep
   unset OPENAI_BASE_URL 2>/dev/null || true
   for name in $(compgen -v); do
-    case "$name" in
-      TYPESAFE_API_KEY) ;;
-      *_API_KEY) unset "$name" 2>/dev/null || true ;;
-    esac
+    [[ "$name" == *_API_KEY ]] || continue
+    keep=0
+    for passed in ${AW_FACT_PASSED_VARIABLE[@]+"${AW_FACT_PASSED_VARIABLE[@]}"}; do
+      [[ "$name" != "$passed" ]] || keep=1
+    done
+    if (( ! keep )); then unset "$name" 2>/dev/null || true; fi
   done
   return 0
 }
@@ -342,7 +412,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="5.1.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="6.0.0"  # aw-version-anchor
 # Generous hard cap for a slow review at the host posture's effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
@@ -413,15 +483,16 @@ if [[ -z "$timeout_bin" ]]; then
 fi
 
 # --- The permissions profile `jev` (spec jev-every-run) — byte-identical in codex-exec.sh and codex-review.sh ---
-# On Linux with codex-cli 0.160.0 or newer a run carries the profile `jev` by four -c overrides, with neither
-# --sandbox nor sandbox_mode beside them: its filesystem part is this wrapper's AW_PROFILE_FILESYSTEM, and its
-# network reaches api.typesafe.ai and docs.typesafe.ai and no other host (a literal of this bridge, which never
-# imports the kit). Elsewhere, and on a codex version and profile digest recorded as refused, the run keeps
-# today's flags and its banner says jev=unreachable (<reason>). Each run, a resume included, chooses afresh.
+# The run hosts come from service-facts.txt.
 AW_PROFILE_FLOOR="0.160.0"
-AW_PROFILE_HOSTS="api.typesafe.ai,docs.typesafe.ai"
+aw_profile_domains="" aw_run_hosts="" aw_reachable_hosts=""
+for aw_host in ${AW_FACT_RUN_HOST[@]+"${AW_FACT_RUN_HOST[@]}"}; do
+  aw_profile_domains+="${aw_profile_domains:+,}\"$aw_host\"=\"allow\""
+  aw_run_hosts+="${aw_run_hosts:+,}$aw_host"
+  aw_reachable_hosts+="${aw_reachable_hosts:+, }$aw_host"
+done
 AW_PROFILE_FLAGS=(-c default_permissions=jev -c permissions.jev.network.enabled=true
-  -c 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}'
+  -c "permissions.jev.network.domains={$aw_profile_domains}"
   -c "permissions.jev.filesystem=$AW_PROFILE_FILESYSTEM")
 # The version on the first line of `codex --version` ("codex-cli X.Y.Z[-pre]"); nothing when unreadable.
 aw_codex_version() {   # $1 = the timeout binary or ""
@@ -488,7 +559,9 @@ aw_profile_choose() {   # $1 = the timeout binary or "", $2 = the repository's t
   profile_version="$(aw_codex_version "$1")"
   profile_digest="$(aw_profile_digest)"
   os="$(uname -s 2>/dev/null)" || os=""
-  if [[ "$os" != "Linux" ]]; then
+  if (( ! ${#AW_FACT_RUN_HOST[@]} )); then
+    profile_reason="no run host in service-facts.txt"
+  elif [[ "$os" != "Linux" ]]; then
     profile_reason="not linux (${os:-unreadable})"
   elif [[ -z "$profile_version" ]]; then
     profile_reason="codex version unreadable"
@@ -501,7 +574,7 @@ aw_profile_choose() {   # $1 = the timeout binary or "", $2 = the repository's t
   else
     profile_on=1
   fi
-  if (( profile_on )); then profile_label="$AW_PROFILE_HOSTS"; else profile_label="unreachable ($profile_reason)"; fi
+  if (( profile_on )); then profile_label="$aw_run_hosts"; else profile_label="unreachable ($profile_reason)"; fi
   profile_label="${profile_label//[$'\x01'-$'\x1f'$'\x7f']/?}"
   return 0
 }
@@ -1188,7 +1261,7 @@ REVIEW_ARTIFACT_PATH=""
 
 # The user's real Codex skill root, resolved before the fence home repoints HOME (spec jev-every-run): when it
 # exists, the fence home links .agents/skills to it on a profile and a fallback run alike, read-only in both, and
-# the fence directives admit reading it; on a profile run they also name the two reachable hosts.
+# the fence directives admit reading it; on a profile run they also name the run hosts.
 skills_root="$(builtin cd -P -- "$HOME/.agents/skills" 2>/dev/null && builtin pwd -P)" || skills_root=""
 fence_skills=""
 if [[ -n "$skills_root" ]]; then
@@ -1196,7 +1269,7 @@ if [[ -n "$skills_root" ]]; then
 fi
 fence_hosts=""
 if (( profile_on )); then
-  fence_hosts=" The hosts api.typesafe.ai and docs.typesafe.ai are reachable; every other host is refused, and still no file may be edited, created or deleted."
+  fence_hosts=" The reachable host list is $aw_reachable_hosts; every other host is refused, and still no file may be edited, created or deleted."
 fi
 
 case "$mode" in

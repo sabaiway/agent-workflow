@@ -1,18 +1,16 @@
-// codex-exec-jev.test.mjs — spec jev-every-run on codex-exec: the shared key rule, the posture the wrapper chooses
-// (the jev permissions profile or today's flags), the loud failure, the banner, the directive and the probe
-// passthrough. Standalone harness with its own fake codex and a fake uname.
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, chmodSync, realpathSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, chmodSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-
+import { stripGitLocationEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXEC = join(HERE, 'codex-exec.sh');
 const HOSTS = 'api.typesafe.ai,docs.typesafe.ai';
-// The repositories sit outside every temp root: under the package's node_modules, TMPDIR their sibling, never an ancestor.
+const childEnv = (home, env = {}) => ({ ...stripGitLocationEnv(env), HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
+  GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', LC_ALL: 'C' });
 const FIXTURES = join(HERE, '..', 'node_modules', '.aw-fixtures');
 const TMP = join(FIXTURES, 'tmp');
 mkdirSync(TMP, { recursive: true });
@@ -20,22 +18,17 @@ mkdirSync(join(FIXTURES, 'repos'), { recursive: true });
 const ROOT = mkdtempSync(join(FIXTURES, 'repos', 'exec-jev-'));
 after(() => rmSync(ROOT, { recursive: true, force: true }));
 const REAL_UNAME = spawnSync('bash', ['-c', 'type -P uname'], { encoding: 'utf8' }).stdout.trim();
-
-// Every spawn of the CLI appends one line: its kind and the state of each key ([value] or unset).
 const FAKE_CODEX = [
-  '#!/usr/bin/env bash',
-  'set -u',
+  '#!/usr/bin/env bash', 'set -u',
   'st() { if [[ -n "${!1+x}" ]]; then printf "[%s]" "${!1}"; else printf unset; fi; }',
-  'rec() { echo "$1 key=$(st TYPESAFE_API_KEY) openai=$(st OPENAI_API_KEY) codex=$(st CODEX_API_KEY) foo=$(st FOO_API_KEY) base=$(st OPENAI_BASE_URL)" >>"$CODEX_FAKE_LOG"; }',
+  'rec() { echo "$1 key=$(st TYPESAFE_API_KEY) openai=$(st OPENAI_API_KEY) codex=$(st CODEX_API_KEY) foo=$(st FOO_API_KEY) base=$(st OPENAI_BASE_URL) bar=$(st BAR_API_KEY)" >>"$CODEX_FAKE_LOG"; }',
   'case "${1:-}" in',
   '  login) rec login; echo "Logged in using ChatGPT"; exit 0 ;;',
   '  --version) rec version; echo "${CODEX_FAKE_VERSION-codex-cli 0.160.0}"; exit 0 ;;',
   '  debug) rec catalog; cat <<EOF',
   '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}',
-  'EOF',
-  '    exit 0 ;;',
-  'esac',
-  'rec run',
+  'EOF', '    exit 0 ;;',
+  'esac', 'rec run',
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"',
   'cat >"$CODEX_FAKE_STDIN"',
   'out=""; prev=""; for a in "$@"; do if [[ "$prev" == "-o" ]]; then out="$a"; fi; prev="$a"; done',
@@ -51,10 +44,9 @@ const FAKE_CODEX = [
 const FAKE_UNAME = ['#!/usr/bin/env bash', 'if [[ $# -eq 0 || "$1" == "-s" ]]; then echo "${CODEX_FAKE_UNAME:-Linux}"; exit 0; fi',
   `exec "${REAL_UNAME}" "$@"`, ''].join('\n');
 const CONTRACT = '# dispatch\n\n```aw-dispatch-contract\n{"nonce":"n1","scope":"probe"}\n```\n';
-
 const initRepo = (repo) => {
   mkdirSync(repo, { recursive: true });
-  const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+  const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: childEnv(join(ROOT, 'template', 'home'), { PATH: process.env.PATH }) });
   git('init', '-q');
   git('config', 'user.email', 'probe@example.com');
   git('config', 'user.name', 'probe');
@@ -69,10 +61,8 @@ mkdirSync(join(TEMPLATE, 'home'));
 writeFileSync(join(TEMPLATE, 'bin', 'codex'), FAKE_CODEX);
 writeFileSync(join(TEMPLATE, 'bin', 'uname'), FAKE_UNAME);
 initRepo(join(TEMPLATE, 'repo'));
-
-let sequence = 0;
 const sandbox = () => {
-  const dir = join(ROOT, `sb-${++sequence}`);
+  const dir = mkdtempSync(join(ROOT, 'sb-'));
   cpSync(TEMPLATE, dir, { recursive: true });
   for (const name of ['codex', 'uname']) chmodSync(join(dir, 'bin', name), 0o755);
   return { dir, bin: join(dir, 'bin'), home: join(dir, 'home'), repo: join(dir, 'repo'),
@@ -81,25 +71,25 @@ const sandbox = () => {
 const drive = (sb, args, env = {}, cwd = sb.repo) => {
   const cap = (name) => join(sb.dir, name);
   for (const name of ['log', 'argv', 'stdin']) rmSync(cap(name), { force: true });
-  const r = spawnSync('bash', [EXEC, ...args], {
+  const r = spawnSync('bash', [sb.wrapper ?? EXEC, ...args], {
     cwd, input: 'do the thing', encoding: 'utf8', timeout: 60000,
-    env: { PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: TMP, CODEX_FAKE_LOG: cap('log'),
-      CODEX_FAKE_ARGV: cap('argv'), CODEX_FAKE_STDIN: cap('stdin'), ...env },
+    env: childEnv(sb.home, { PATH: `${sb.bin}:${process.env.PATH}`, TMPDIR: TMP, CODEX_FAKE_LOG: cap('log'),
+      CODEX_FAKE_ARGV: cap('argv'), CODEX_FAKE_STDIN: cap('stdin'), ...env }),
   });
+  assert.ifError(r.error);
+  assert.equal(r.signal, null, r.stderr);
   const read = (name) => (existsSync(cap(name)) ? readFileSync(cap(name), 'utf8') : '');
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, log: read('log'), argv: read('argv').split('\n').slice(0, -1),
     prompt: read('stdin').replace(/\s+/g, ' ') };
 };
-
-// -c key=value pairs of the run's argv, and a reader for the TOML inline tables a profile override carries.
 const overrides = (argv) => Object.fromEntries(argv.flatMap((arg, i) => (argv[i - 1] === '-c'
   ? [[arg.slice(0, arg.indexOf('=')), arg.slice(arg.indexOf('=') + 1)]] : [])));
 const inline = (text) => {
-  let at = 0;
+  const cursor = { at: 0 };
   const eat = (re) => {
-    const m = re.exec(text.slice(at));
+    const m = re.exec(text.slice(cursor.at));
     assert.ok(m, `an inline table: ${text}`);
-    at += m[0].length;
+    cursor.at += m[0].length;
     return m;
   };
   const value = () => {
@@ -114,7 +104,7 @@ const inline = (text) => {
     return table;
   };
   const parsed = value();
-  assert.equal(text.slice(at).trim(), '', `nothing after the inline table: ${text}`);
+  assert.equal(text.slice(cursor.at).trim(), '', `nothing after the inline table: ${text}`);
   return parsed;
 };
 const EXEC_FS = { ':root': 'read', ':tmpdir': 'write', ':slash_tmp': 'write', ':workspace_roots': { '.': 'write' } };
@@ -142,7 +132,7 @@ const banner = (sandboxValue, jev, session = 'fresh') => 'exec posture: model=gp
   + `sandbox=${sandboxValue} session=${session} jev=${jev} source=model:default,effort:default timeout=3600s`;
 const unreachable = (reason) => banner('workspace-write', `unreachable (${reason})`);
 const KEYS = { TYPESAFE_API_KEY: 'jev-key', OPENAI_API_KEY: 'sk-live', CODEX_API_KEY: 'ck', FOO_API_KEY: 'foo', OPENAI_BASE_URL: 'http://proxy' };
-const PASSED = 'key=[jev-key] openai=unset codex=unset foo=unset base=unset';
+const PASSED = 'key=[jev-key] openai=unset codex=unset foo=unset base=unset bar=unset';
 const spawnsOf = (r) => r.log.split('\n').filter(Boolean).map((line) => [line.slice(0, line.indexOf(' ')), line.slice(line.indexOf(' ') + 1)]);
 const runEnv = (r) => (spawnsOf(r).find(([kind]) => kind === 'run') ?? [])[1];
 const item = (body) => JSON.stringify({ type: 'item.completed', item: body });
@@ -156,7 +146,6 @@ const receiptOf = (sb) => JSON.parse(readFileSync(join(sb.repo, '.git', 'agent-w
 const RECEIPT_KEYS = ['schema', 'kind', 'state', 'backend', 'nonce', 'owner', 'contractDigest', 'wrapperVersion', 'posture', 'capS',
   'killGraceS', 'sessionId', 'exitStatus', 'outcome', 'reportDigest', 'reportLength', 'timestamp'];
 const stateLines = (sb) => (existsSync(sb.state) ? readFileSync(sb.state, 'utf8').split('\n').filter(Boolean) : []);
-
 describe('the key rule on codex-exec — spec:jev-every-run/S1', () => {
   it('a fresh run hands codex only TYPESAFE_API_KEY of the keys, and the login, version and catalog spawns see the same env', () => {
     const r = drive(sandbox(), ['-'], KEYS);
@@ -165,7 +154,6 @@ describe('the key rule on codex-exec — spec:jev-every-run/S1', () => {
     for (const [kind, env] of spawnsOf(r)) assert.equal(env, PASSED, `${kind} spawn`);
   });
 });
-
 describe('a resumed run — spec:jev-every-run/S2', () => {
   it('keeps the key rule and carries the profile overrides with no sandbox_mode', () => {
     const r = drive(sandbox(), ['--resume', 'sess-1', '-'], KEYS);
@@ -174,7 +162,6 @@ describe('a resumed run — spec:jev-every-run/S2', () => {
     for (const [kind, env] of spawnsOf(r)) assert.equal(env, PASSED, `${kind} spawn`);
   });
 });
-
 describe('an empty key and an unset key — spec:jev-every-run/S5', () => {
   it('an empty TYPESAFE_API_KEY reaches codex empty, an unset one stays unset, and the argv is the same with the key set', () => {
     const runs = ['jev-key', '', undefined].map((value) => drive(sandbox(), ['-'], { TYPESAFE_API_KEY: value }));
@@ -185,7 +172,6 @@ describe('an empty key and an unset key — spec:jev-every-run/S5', () => {
     assertProfile(runs[0]);
   });
 });
-
 describe('the exec profile on Linux from codex-cli 0.160.0 — spec:jev-every-run/S7', () => {
   for (const version of ['0.160.0', '0.161.0', '1.0.0']) {
     it(`codex-cli ${version}: the exec profile exactly, neither --sandbox nor sandbox_mode`, () => {
@@ -193,7 +179,6 @@ describe('the exec profile on Linux from codex-cli 0.160.0 — spec:jev-every-ru
     });
   }
 });
-
 describe('the fallback by OS and by temp root — spec:jev-every-run/S9', () => {
   it('a uname other than Linux runs today\'s flags with the key passed and names the reason', () => {
     const r = drive(sandbox(), ['-'], { ...KEYS, CODEX_FAKE_UNAME: 'Darwin' });
@@ -216,7 +201,7 @@ describe('the fallback by OS and by temp root — spec:jev-every-run/S9', () => 
     const sb = sandbox();
     const root = join(sb.dir, 'tmproot');
     cpSync(sb.repo, join(root, 'main'), { recursive: true });
-    spawnSync('git', ['worktree', 'add', '-q', join(sb.dir, 'wt')], { cwd: join(root, 'main'), encoding: 'utf8' });
+    spawnSync('git', ['worktree', 'add', '-q', join(sb.dir, 'wt')], { cwd: join(root, 'main'), encoding: 'utf8', env: childEnv(sb.home, { PATH: process.env.PATH }) });
     writeFileSync(join(sb.dir, 'wt', 'task.md'), CONTRACT);
     const r = drive(sb, ['-'], { TMPDIR: root }, join(sb.dir, 'wt'));
     assertFallback(r);
@@ -243,7 +228,6 @@ describe('the fallback by OS and by temp root — spec:jev-every-run/S9', () => 
     }
   });
 });
-
 describe('the fallback by version and by the refused record — spec:jev-every-run/S10', () => {
   const cases = [['codex-cli 0.159.0', 'codex 0.159.0 below 0.160.0'], ['codex-cli 0.160.0-alpha.1', 'codex 0.160.0-alpha.1 below 0.160.0'],
     ['codex-cli', 'codex version unreadable']];
@@ -271,7 +255,6 @@ describe('the fallback by version and by the refused record — spec:jev-every-r
     }
   });
 });
-
 describe('the profile error item before the turn — spec:jev-every-run/S11', () => {
   for (const [label, shape] of [['the P13 shape', P13], ['the P1 shape', P1]]) {
     it(`${label}, printed twice before turn.started: exit 72, one entry appended, a transport-failure receipt`, () => {
@@ -305,7 +288,6 @@ describe('the profile error item before the turn — spec:jev-every-run/S11', ()
     assert.equal(receiptOf(sb).outcome, 'transport-failure');
   });
 });
-
 describe('bwrap: execvp in a failed command — spec:jev-every-run/S12', () => {
   it('exits 72 without touching the state file', () => {
     const sb = sandbox();
@@ -316,7 +298,6 @@ describe('bwrap: execvp in a failed command — spec:jev-every-run/S12', () => {
     assert.equal(receiptOf(sb).outcome, 'transport-failure');
   });
 });
-
 describe('the same strings where they never fire — spec:jev-every-run/S13', () => {
   it('inside a successful command\'s output and in the final message: exit 0, a success receipt, no state file', () => {
     const sb = sandbox();
@@ -328,7 +309,6 @@ describe('the same strings where they never fire — spec:jev-every-run/S13', ()
     assert.equal(existsSync(sb.state), false);
   });
 });
-
 describe('the exec banner and the receipt — spec:jev-every-run/S14', () => {
   it('a profile run reads sandbox=jev-profile and the two hosts before source=, the receipt keys unchanged', () => {
     const sb = sandbox();
@@ -343,13 +323,12 @@ describe('the exec banner and the receipt — spec:jev-every-run/S14', () => {
     assert.equal(bannerOf(r), banner('workspace-write', 'unreachable (codex 0.159.0 below 0.160.0)', 'resume:sess-1'));
   });
 });
-
 describe('the execution directive and the resume reminder — spec:jev-every-run/S17', () => {
-  const HOST_LINE = 'the hosts api.typesafe.ai and docs.typesafe.ai are reachable; network access to any other host is an escalation: STOP and report';
+  const HOST_LINE = 'the reachable host list is api.typesafe.ai, docs.typesafe.ai; network access to any other host is an escalation: STOP and report.';
   it('a fresh profile run names the two hosts and the other-host escalation; a fallback run keeps network access whole', () => {
     const profile = drive(sandbox(), ['-']);
     assertProfile(profile);
-    assert.ok(profile.prompt.includes(HOST_LINE), profile.prompt);
+    assert.ok(profile.prompt.includes(`5. Do NOT commit. Network: ${HOST_LINE}`), profile.prompt);
     const fallback = drive(sandbox(), ['-'], { CODEX_FAKE_UNAME: 'Darwin' });
     assert.ok(fallback.prompt.includes('escalation (network access, writes outside the repo'), fallback.prompt);
     assert.doesNotMatch(fallback.prompt, /typesafe/);
@@ -358,14 +337,70 @@ describe('the execution directive and the resume reminder — spec:jev-every-run
     const sb = sandbox();
     const profile = drive(sb, ['--resume', 'sess-1', '-']);
     assertProfile(profile);
-    assert.ok(profile.prompt.includes(HOST_LINE), profile.prompt);
+    assert.ok(profile.prompt.includes(`Network, as of this run (it replaces any earlier statement): ${HOST_LINE}`), profile.prompt);
     const fallback = drive(sb, ['--resume', 'sess-1', '-'], { CODEX_FAKE_UNAME: 'Darwin' });
     assertFallback(fallback);
-    assert.match(fallback.prompt, /network access/);
+    assert.ok(fallback.prompt.includes('Network, as of this run (it replaces any earlier statement): network access is an escalation: STOP and report.'), fallback.prompt);
     assert.doesNotMatch(fallback.prompt, /typesafe/);
   });
 });
-
+const copyBridge = (sb, transform = (lines) => lines) => {
+  const directory = join(sb.dir, 'bridge');
+  cpSync(HERE, join(directory, 'bin'), { recursive: true });
+  cpSync(join(HERE, '..', 'capability.json'), join(directory, 'capability.json'));
+  const shipped = readFileSync(join(HERE, '..', 'service-facts.txt'), 'utf8').trimEnd().split('\n');
+  writeFileSync(join(directory, 'service-facts.txt'), `${transform(shipped).join('\n')}\n`);
+  const wrapper = join(directory, 'bin', 'linked-exec');
+  symlinkSync('codex-exec.sh', wrapper);
+  return { ...sb, wrapper };
+};
+describe('injected facts through a symlink — spec:jev-every-run/S26', () => {
+  it('renders only the injected hosts and passes exactly the listed variables, including empty values', () => {
+    const sb = copyBridge(sandbox(), (lines) => [lines[0], 'HOST=a.example', 'HOST=b.example', 'RUN_HOST=a.example', 'RUN_HOST=b.example', lines.find((line) => line.startsWith('WRITABLE_DIR=')), 'PASSED_VARIABLE=FOO_API_KEY', 'PASSED_VARIABLE=BAR_API_KEY']);
+    const env = { ...KEYS, BAR_API_KEY: '' };
+    const fresh = drive(sb, ['-'], env), resume = drive(sb, ['--resume', 'sess-1', '-'], env), help = drive(sb, ['--help'], env);
+    for (const result of [fresh, resume, help]) { assert.equal(result.status, 0, result.stderr); assert.doesNotMatch([result.argv.join(' '), result.prompt, result.stderr, result.stdout].join('\n'), /typesafe\.ai/i); }
+    for (const result of [fresh, resume]) {
+      assert.equal(overrides(result.argv)['permissions.jev.network.domains'], '{"a.example"="allow","b.example"="allow"}');
+      assert.equal(bannerOf(result), banner('jev-profile', 'a.example,b.example', result === resume ? 'resume:sess-1' : 'fresh'));
+      assert.ok(spawnsOf(result).length > 0, result.log);
+      for (const [kind, keys] of spawnsOf(result)) assert.equal(keys, 'key=unset openai=unset codex=unset foo=[foo] base=unset bar=[]', kind);
+    }
+    const phrase = 'the reachable host list is a.example, b.example; network access to any other host is an escalation: STOP and report.';
+    assert.ok(fresh.prompt.includes(`5. Do NOT commit. Network: ${phrase}`), fresh.prompt);
+    assert.ok(resume.prompt.includes(`Network, as of this run (it replaces any earlier statement): ${phrase}`), resume.prompt);
+    assert.ok(help.stdout.includes('network where the profile runs (the reachable host list is a.example, b.example) and off elsewhere'), help.stdout);
+  });
+  it('an empty passed-variable list unsets every billing key and OPENAI_BASE_URL', () => {
+    const result = drive(copyBridge(sandbox(), (lines) => lines.filter((line) => !line.startsWith('PASSED_VARIABLE='))), ['-'], { ...KEYS, BAR_API_KEY: 'bar' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(spawnsOf(result).length > 0, result.log);
+    for (const [kind, keys] of spawnsOf(result)) assert.equal(keys, 'key=unset openai=unset codex=unset foo=unset base=unset bar=unset', kind);
+  });
+});
+describe('run hosts choose posture and preserve the shipped profile — spec:jev-every-run/S27', () => {
+  it('no RUN_HOST takes fallback before the OS reason and makes help say network off', () => {
+    const sb = copyBridge(sandbox(), (lines) => lines.filter((line) => !line.startsWith('RUN_HOST=')));
+    for (const env of [{}, { CODEX_FAKE_UNAME: 'Darwin' }]) {
+      const result = drive(sb, ['-'], env);
+      assertFallback(result);
+      assert.equal(bannerOf(result), unreachable('no run host in service-facts.txt'));
+    }
+    const help = drive(sb, ['--help']);
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout.split('\n')[0], /network off/);
+  });
+  it('characterize-first: both shipped profiles retain the exact overrides and recorded refusal digest', () => {
+    const common = ['default_permissions=jev', 'permissions.jev.network.enabled=true', 'permissions.jev.network.domains={"api.typesafe.ai"="allow","docs.typesafe.ai"="allow"}'];
+    for (const [wrapper, filesystem, digest] of [['codex-exec.sh', 'permissions.jev.filesystem={":root"="read",":tmpdir"="write",":slash_tmp"="write",":workspace_roots"={"."="write"}}', 'f693ef134a9c6d5b41042b91260726d4179d99ccadc149270f1ddba09cdc99e8'], ['codex-review.sh', 'permissions.jev.filesystem={":root"="read"}', 'c68a3f5f7be241f7cecf5328a3541063e1f25365f216798aff42b719164f9159']]) {
+      const sb = { ...sandbox(), wrapper: join(HERE, wrapper) };
+      const result = drive(sb, wrapper === 'codex-exec.sh' ? ['-'] : ['plan', 'task.md'], { CODEX_FAKE_PRE: P13 });
+      assert.equal(result.status, 72, result.stderr);
+      assert.deepEqual(result.argv.flatMap((arg, index) => result.argv[index - 1] === '-c' && /^(default_permissions|permissions\.)/.test(arg) ? ['-c', arg] : []), [...common, filesystem].flatMap((arg) => ['-c', arg]));
+      assert.deepEqual(stateLines(sb), [`0.160.0 ${digest}`]);
+    }
+  });
+});
 describe('the probe passthrough under the profile — spec:jev-every-run/S18', () => {
   for (const flag of [['--add-dir', '/x'], ['-C', '/x'], ['--cd', '/x'], ['--enable', 'foo'], ['--disable', 'foo']]) {
     it(`CODEX_PROBE=1 with ${flag[0]}: refused pre-spend under the profile, admitted under the fallback`, () => {

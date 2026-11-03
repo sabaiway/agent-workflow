@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.1.0 — every bridge wrapper reads its hosts and passed keys from the file in its own folder (AD-225)
+
+**The bridge wrappers no longer carry their own copy of the Jev hosts and key: each reads them from the
+`service-facts.txt` the kit writes into its bridge folder.** A host or key change is now one edit to the kit's service
+files; the wrappers, their `--help` and their banners follow it. For the facts the kit ships today a run reaches the
+same hosts, passes the same key and prints the same posture banners; a profile run's network instruction now reads
+`the reachable host list is …`, and agy-run's line before dispatch now opens `passed variables: TYPESAFE_API_KEY;` in
+place of `jev: TYPESAFE_API_KEY passed;`. This kit carries codex bridge 6.0.0 and antigravity bridge 8.0.0; your next
+`/agent-workflow-kit upgrade` (or `init`) refreshes the bridges you placed, with no question.
+
+- **A broken or missing facts file stops the run.** `codex-exec`, `codex-review`, `agy-run` and `agy-review` check the
+  file before `--help` and before any CLI starts. A missing, unreadable or malformed file exits 127 with one line
+  naming the file, the bad line and `/agent-workflow-kit upgrade`, which writes it again.
+- **Your own `HOST` still reaches the CLI.** The wrappers keep what they read under their own names, so a `HOST`
+  variable you exported is passed on as before.
+- **agy-review runs the agy wrapper from its own folder**, never an `agy-run` found first on your PATH, so both read the
+  same facts.
+- **The bridge pages name no host and no key** outside the two Jev paragraphs: they say the run reaches the hosts its
+  `service-facts.txt` lists.
+- **The setup check takes the sign-in folders from the service files.** When it cannot use one, the credentials read as
+  `unknown` and the reason is printed instead of a sign-in hint.
+- **The service files refuse two unsafe shapes:** a `*.` host in a service the run itself reaches, and
+  `OPENAI_BASE_URL` as a passed variable.
+
 ## 23.0.0 — the kit reads each bridge's hosts and state folders from a separate file for each service (AD-224)
 
 **The network hosts and state folders the kit sets up for a bridge now come from a separate kit file for each service
