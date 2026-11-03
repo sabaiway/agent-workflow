@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // sync-mirrors.mjs — the canon → mirror synchronizer for the four byte-identical mirror
-// families (repo-local, tracked; repo-only tooling — never shipped in any tarball).
+// families, and the generator of each canon bridge's service-facts.txt (spec kit/services),
+// which runs first so the bridge mirror carries the fresh file (repo-local, tracked; repo-only
+// tooling — never shipped in any tarball).
 //
 // The kit ships byte-identical MIRROR copies of content whose canon lives elsewhere in the
 // monorepo. Three test files DETECT drift of the first three (bridges-mirror.test.mjs,
@@ -34,9 +36,10 @@
 // touch the real tree; scripts/release/version-sync.mjs --bump reuses syncBridgeMirror after a
 // bridge bump. Dependency-free, Node >= 22. No side effects on import.
 
-import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync, realpathSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSync, chmodSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
+import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadServiceFragments, mergeServices, renderServiceFacts, SERVICE_FACTS_FILE } from '../agent-workflow-kit/tools/services/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -49,6 +52,8 @@ export const BRIDGE_DIRS = Object.freeze(['codex-cli-bridge', 'antigravity-cli-b
 
 const MEMORY_DIR = 'agent-workflow-memory';
 const KIT_DIR = 'agent-workflow-kit';
+const SERVICES_REL = 'tools/services';
+const MANIFEST_FILE = 'capability.json';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
 // The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
@@ -124,18 +129,20 @@ const fileNeedsCopy = (canonPath, mirrorPath) => {
 // Plan one full-tree family (set-equality). An absent mirror dir means everything copies; an
 // absent CANON dir is a loud failure — silently treating a missing canon as empty would delete
 // the whole mirror.
-const planTreeSync = (root, canonRel, mirrorRel) => {
+const planTreeSync = (root, canonRel, mirrorRel, pending = []) => {
   const canonRoot = join(root, canonRel);
   if (!existsSync(canonRoot)) {
     throw fail(1, `canon dir is missing: ${canonRel} — refusing to sync (a missing canon is never an empty canon)`);
   }
   const mirrorRoot = join(root, mirrorRel);
-  const canonFiles = walkFiles(canonRoot);
+  const generatedFiles = pending.filter((change) => dirname(change.to) === canonRoot)
+    .map((change) => basename(change.to));
+  const canonFiles = [...new Set([...walkFiles(canonRoot), ...generatedFiles])].sort();
   const canonSet = new Set(canonFiles);
   const changes = [];
   let identical = 0;
   for (const rel of canonFiles) {
-    if (fileNeedsCopy(join(canonRoot, rel), join(mirrorRoot, rel))) {
+    if (generatedFiles.includes(rel) || fileNeedsCopy(join(canonRoot, rel), join(mirrorRoot, rel))) {
       changes.push({ action: 'copy', rel: join(mirrorRel, rel), from: join(canonRoot, rel), to: join(mirrorRoot, rel) });
     } else {
       identical += 1;
@@ -183,11 +190,33 @@ const planFileSync = (root, canonRel, mirrorRel) => {
   return { changes: [{ action: 'copy', rel: mirrorRel, from: canonPath, to: mirrorPath }], identical: 0 };
 };
 
+const planServiceFacts = (root) => {
+  const fragments = loadServiceFragments({ servicesDir: join(root, KIT_DIR, SERVICES_REL) });
+  const changes = BRIDGE_DIRS.flatMap((bridge) => {
+    const manifestPath = join(root, bridge, MANIFEST_FILE);
+    const manifest = (() => {
+      try {
+        return JSON.parse(readFileSync(manifestPath, 'utf8'));
+      } catch (error) {
+        throw fail(1, `${manifestPath}: cannot read or parse canon manifest: ${error.message}`);
+      }
+    })();
+    if (!Array.isArray(manifest.services)) throw fail(1, `${manifestPath}: the canon manifest names no services list`);
+    const content = renderServiceFacts(mergeServices(manifest.services, fragments));
+    const rel = join(bridge, SERVICE_FACTS_FILE);
+    const to = join(root, rel);
+    return existsSync(to) && readFileSync(to, 'utf8') === content
+      ? [] : [{ action: 'write', rel, to, content }];
+  });
+  return { changes, identical: BRIDGE_DIRS.length - changes.length };
+};
+
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
-  const plans = [];
+  const facts = planServiceFacts(root);
+  const plans = [{ family: 'service-facts', ...facts }];
   for (const bridge of BRIDGE_DIRS) {
-    plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge)) });
+    plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge), facts.changes) });
   }
   plans.push({ family: 'reference-scripts', ...planTreeSync(root, join(MEMORY_DIR, SCRIPTS_REL), join(KIT_DIR, SCRIPTS_REL)) });
   plans.push({ family: 'templates', ...planTemplatesSync(root) });
@@ -203,6 +232,10 @@ const applyChange = (change) => {
     return;
   }
   mkdirSync(dirname(change.to), { recursive: true });
+  if (change.action === 'write') {
+    writeFileSync(change.to, change.content);
+    return;
+  }
   copyFileSync(change.from, change.to);
   chmodSync(change.to, statSync(change.from).mode & 0o777); // preserve the canon mode (exec bit)
 };
@@ -254,7 +287,8 @@ export const runCli = (argv, deps = {}) => {
     for (const plan of plans) {
       for (const change of plan.changes) {
         if (!opts.check) applyChange(change);
-        const verb = opts.check ? `would ${change.action}` : change.action === 'copy' ? 'copied' : 'deleted';
+        const verb = opts.check ? `would ${change.action}`
+          : change.action === 'write' ? 'written' : change.action === 'copy' ? 'copied' : 'deleted';
         log(`${plan.family}: ${verb} ${change.rel}`);
       }
       log(`${plan.family}: ${plan.changes.length} change(s), ${plan.identical} identical`);

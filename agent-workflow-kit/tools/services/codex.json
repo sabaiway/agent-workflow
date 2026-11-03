@@ -1,0 +1,15 @@
+{
+  "hosts": [
+    "chatgpt.com",
+    "*.chatgpt.com"
+  ],
+  "writableDirs": [
+    {
+      "env": "CODEX_HOME",
+      "default": "~/.codex"
+    }
+  ],
+  "excludedCommands": [],
+  "passedVariables": [],
+  "runReachesHosts": false
+}

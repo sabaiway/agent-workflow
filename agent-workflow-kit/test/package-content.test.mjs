@@ -497,6 +497,15 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     assert.deepEqual(leaks, [], 'no fixtures (fixtures/ or __fixtures__/) may ship in the tarball');
   });
 
+  it('ships exactly the services module without tests and both bridge mirrors service-facts.txt (spec:services/S6)', () => {
+    assert.deepEqual(packed.filter((path) => path.startsWith('tools/services/')).sort(), [
+      'tools/services/antigravity.json', 'tools/services/codex.json',
+      'tools/services/index.mjs', 'tools/services/jev.json',
+    ]);
+    const missing = ['codex-cli-bridge', 'antigravity-cli-bridge'].filter((bridge) => !packed.includes(`bridges/${bridge}/service-facts.txt`));
+    assert.deepEqual(missing, [], 'both bridge mirrors must ship service-facts.txt');
+  });
+
   // Exact-count pin: update this number only when intentionally adding/removing a shipped file;
   // a surprise change means over/under-exclusion (e.g. a new colocated test leaking, or a payload
   // file accidentally dropped). After an intentional change, run `npm pack ./agent-workflow-kit
@@ -903,8 +912,11 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 376 = 386 - the 25 flat references/scripts/ files + family.json and the 14 deployed and skill-home entries of its manifest - story S2 of KIT-SCRIPTS
     // 378 = 376 + references/scripts/run.mjs (the stable kit command) and references/scripts/gates/kit-command-gates.mjs - story S3 of KIT-SCRIPTS
     // 379 = 378 + tools/distribution-files/retired.mjs (the flat-file removal) - story S4 of KIT-SCRIPTS
+    // 386 = 380 + tools/services/{index,codex,antigravity,jev} and
+    //       bridges/{codex-cli-bridge,antigravity-cli-bridge}/service-facts.txt
+    //       - story S12 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [380, []], `tarball file count drifted (${packed.length}\u2260 380), or a retired leaf ships`);
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

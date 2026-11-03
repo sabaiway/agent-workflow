@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HOST_HONORS_QUALIFIER } from './velocity-profile.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+
+const services = await import('./services/index.mjs').catch(() => ({}));
+const childEnv = () => Object.fromEntries(Object.entries(stripGitLocationEnv(process.env))
+  .filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
 
 const wiring = await import('./bridge-wiring.mjs').catch((cause) => new Proxy({}, {
   get: (_, name) => {
@@ -37,9 +42,10 @@ const CONFIG_FILE = 'docs/ai/orchestration.json';
 const BUNDLE_ROOT = fileURLToPath(new URL('../bridges', import.meta.url));
 const CODEX_MANIFEST = join(BUNDLE_ROOT, CODEX, MANIFEST);
 const readJson = (path) => JSON.parse(readFileSync(path, UTF8));
-const CODEX_HOSTS = readJson(CODEX_MANIFEST).networkHosts;
-const AGY_HOSTS = readJson(join(BUNDLE_ROOT, AGY, MANIFEST)).networkHosts;
-const HOSTS = [...new Set([...AGY_HOSTS, ...CODEX_HOSTS])];
+const readHosts = (manifest) => services.mergeServices(readJson(manifest).services, services.loadServiceFragments()).hosts;
+const CODEX_HOSTS = () => readHosts(CODEX_MANIFEST);
+const AGY_HOSTS = () => readHosts(join(BUNDLE_ROOT, AGY, MANIFEST));
+const HOSTS = () => [...new Set([...AGY_HOSTS(), ...CODEX_HOSTS()])];
 const CODEX_DIR = '~/.codex';
 const AGY_DIR = '~/.gemini/antigravity-cli';
 const CODEX_REVIEW = 'codex-review *';
@@ -74,7 +80,7 @@ const emptyDelta = () => ({ excludedCommands: [], hosts: [], dirs: [] });
 const makeSandbox = (excludedCommands, hosts, dirs) => ({
   enabled: true, excludedCommands, network: { allowedDomains: hosts }, filesystem: { allowWrite: dirs },
 });
-const FULL = makeSandbox([...REVIEW_EXCLUSIONS, CODEX_EXEC], HOSTS, [CODEX_DIR, AGY_DIR]);
+const FULL = () => makeSandbox([...REVIEW_EXCLUSIONS, CODEX_EXEC], HOSTS(), [CODEX_DIR, AGY_DIR]);
 const ENABLED = { sandbox: { enabled: true } };
 const DISABLED = { sandbox: { enabled: false } };
 const EMPTY_SANDBOX = { sandbox: {} };
@@ -109,7 +115,10 @@ const CHILD_JUDGE = [
   'const { WIRING_URL, SETTINGS_PATH, ROOT, HOME, SWAP } = process.env;',
   'const original = fs.readFileSync;',
   'fs.readFileSync = (target, ...rest) => {',
-  "  if (SWAP && target === SETTINGS_PATH) { fs.rmSync(target); spawnSync('mkfifo', [target]); }",
+  '  if (SWAP && target === SETTINGS_PATH) {',
+  "    fs.rmSync(target); const child = spawnSync('mkfifo', [target]);",
+  "    if (child.error || child.status !== 0) throw child.error ?? new Error(`mkfifo exited ${child.status}`);",
+  '  }',
   '  return original(target, ...rest);',
   '};',
   'syncBuiltinESMExports();',
@@ -121,7 +130,7 @@ const judgeInChild = (fixture, swap) => spawnSync(process.execPath, ['--input-ty
   encoding: UTF8,
   timeout: CHILD_TIMEOUT_MS,
   env: {
-    ...process.env,
+    ...childEnv(),
     WIRING_URL: new URL('./bridge-wiring.mjs', import.meta.url).href,
     SETTINGS_PATH: join(fixture.root, PROJECT_FILE),
     ROOT: fixture.root,
@@ -226,7 +235,7 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
     assert.equal(preflights.length, ZERO);
   });
   it('with every enabled surface wires both bridges and calls preflight once', (t) => {
-    const fixture = makeProject(t, { sandbox: FULL });
+    const fixture = makeProject(t, { sandbox: FULL() });
     const calls = [];
     const result = compose(fixture, READY, { preflight: () => calls.push(true) });
     assert.equal(result.enabled, true);
@@ -242,7 +251,7 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
   });
   it('lists three missing codex execute surfaces while agy stays wired', (t) => {
     const absentHost = 'chatgpt.com';
-    const sandbox = makeSandbox(REVIEW_EXCLUSIONS, HOSTS.filter((host) => host !== absentHost), [AGY_DIR]);
+    const sandbox = makeSandbox(REVIEW_EXCLUSIONS, HOSTS().filter((host) => host !== absentHost), [AGY_DIR]);
     const fixture = makeProject(t, { sandbox }, withExecute(COUNCIL));
     const [codex, agy] = compose(fixture).bridges;
     assert.equal(codex.bridge, CODEX);
@@ -255,7 +264,7 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
     assertWired(agy);
   });
   it('wires execute alone while the unused codex review remains uncovered', (t) => {
-    const sandbox = makeSandbox([CODEX_EXEC], CODEX_HOSTS, [CODEX_DIR]);
+    const sandbox = makeSandbox([CODEX_EXEC], CODEX_HOSTS(), [CODEX_DIR]);
     const fixture = makeProject(t, { sandbox }, withExecute('solo'));
     const result = compose(fixture, signedOut());
     assert.equal(result.bridges.length, ONE);
@@ -265,7 +274,7 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
     assert.equal(codex.reviewRoute, EXPECTED.WIRING_ROUTE_UNUSED);
   });
   it('judges a ready unused agy on review and gives both unused routes', (t) => {
-    const sandbox = makeSandbox([CODEX_REVIEW], CODEX_HOSTS, [CODEX_DIR]);
+    const sandbox = makeSandbox([CODEX_REVIEW], CODEX_HOSTS(), [CODEX_DIR]);
     const fixture = makeProject(t, { sandbox }, reviewConfig(REVIEWED));
     const [codex, agy] = compose(fixture).bridges;
     assertWired(codex);
@@ -277,7 +286,7 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
     assert.equal(agy.reviewRoute, EXPECTED.WIRING_ROUTE_UNUSED);
   });
   it('does not count a state dir or exclusion supplied only by the local settings', (t) => {
-    const sandbox = makeSandbox([], CODEX_HOSTS, []);
+    const sandbox = makeSandbox([], CODEX_HOSTS(), []);
     const local = { sandbox: makeSandbox([CODEX_REVIEW], [], [CODEX_DIR]) };
     const fixture = makeProject(t, { sandbox }, reviewConfig(REVIEWED), local);
     const [codex] = compose(fixture).bridges;
@@ -332,16 +341,25 @@ describe('spec:velocity-profile/S15 composeBridgeWiring', () => {
     assert.deepEqual(result.bridges.map((entry) => entry.state), [EXPECTED.UNCHECKED, EXPECTED.UNCHECKED]);
   });
   it('a FIFO settings file, present or swapped in at the read, never blocks the judgement', (t) => {
-    const probe = spawnSync('mkfifo', [join(tmpdir(), `bridge-wiring-probe-${process.pid}`)]);
-    if (probe.status !== ZERO) return t.skip('mkfifo is unavailable on this host');
+    const env = childEnv();
+    const probe = spawnSync('mkfifo', [join(tmpdir(), `bridge-wiring-probe-${process.pid}`)], { env });
+    if (probe.error?.code === 'ENOENT') return t.skip('mkfifo is unavailable on this host');
+    assert.ifError(probe.error);
+    assert.equal(probe.status, ZERO);
     rmSync(join(tmpdir(), `bridge-wiring-probe-${process.pid}`), { force: true });
     const present = makeProject(t, ENABLED);
     rmSync(join(present.root, PROJECT_FILE));
-    assert.equal(spawnSync('mkfifo', [join(present.root, PROJECT_FILE)]).status, ZERO);
+    const created = spawnSync('mkfifo', [join(present.root, PROJECT_FILE)], { env });
+    assert.ifError(created.error);
+    assert.equal(created.status, ZERO);
     const fifo = judgeInChild(present, false);
+    assert.ifError(fifo.error);
+    assert.equal(fifo.status, ZERO, fifo.stderr);
     assert.equal(fifo.signal, null, 'the judgement blocked on the FIFO');
     assert.match(JSON.parse(fifo.stdout).reason, NOT_REGULAR_PATTERN);
     const swapped = judgeInChild(makeProject(t, ENABLED), true);
+    assert.ifError(swapped.error);
+    assert.equal(swapped.status, ZERO, swapped.stderr);
     assert.equal(swapped.signal, null, 'the judgement blocked on a FIFO swapped in before a path read');
     assert.equal(JSON.parse(swapped.stdout).enabled, true);
   });

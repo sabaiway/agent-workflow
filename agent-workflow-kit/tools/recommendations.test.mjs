@@ -51,6 +51,7 @@ const velocityModule = await import('./velocity-profile.mjs');
 const { probeSpecAdoption, probeEnforcement, probeProfileGaps } = recommendations;
 const { composeProfileGapScreen } = await import('./profile-gap-screen.mjs').catch(() => ({}));
 const lanes = await import('./write-lanes.mjs').catch(() => ({}));
+const services = await import('./services/index.mjs').catch(() => ({}));
 const gitHooks = await import('./git-hooks.mjs');
 const need = (mod, name) => {
   if (!(name in mod)) throw new Error(`${name} is absent`);
@@ -98,13 +99,11 @@ const NO_PRODUCER = 'no offerable producer exists here, and the fill never reord
 const COVERAGE_PRODUCER_BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
 const PRODUCER_UNRECOGNIZED_DETAIL = 'coverage-check has no producer declared and none offerable — the fill offers only terminating-class script names, so a recognized body under another name (a "ci" script running node --test) is declared as its own gate entry, never marked';
 
-// Recipe expectations are READ FROM the bundled manifests (the advisor's own single source) —
-// a hardcoded list here would silently outdate the moment a manifest gains an observed entry.
 const BUNDLE_ROOT = join(HERE, '..', 'bridges');
-const manifestField = (bridge, field) =>
-  JSON.parse(readFileSync(join(BUNDLE_ROOT, bridge, 'capability.json'), 'utf8'))[field];
-const CODEX_HOSTS = manifestField('codex-cli-bridge', 'networkHosts');
-const CODEX_DIRS = manifestField('codex-cli-bridge', 'writableDirs');
+const readCodexServices = () => services.mergeServices(
+  JSON.parse(readFileSync(join(BUNDLE_ROOT, 'codex-cli-bridge', 'capability.json'), 'utf8')).services, services.loadServiceFragments());
+const CODEX_HOSTS = () => readCodexServices().hosts;
+const CODEX_DIRS = () => readCodexServices().dirEntries;
 const codexReady = () => [{ name: 'codex-cli-bridge', readiness: 'ready' }];
 const agyReady = () => [{ name: 'antigravity-cli-bridge', readiness: 'ready' }];
 const bothBridgesReady = () => [...codexReady(), ...agyReady()];
@@ -1032,12 +1031,12 @@ describe('recommendations — item probes over fixtures', () => {
   it('the fingerprint is MACHINE-PORTABLE for home-anchored recipes (a committed project ack stays stable)', () => {
     // The ack may live in the COMMITTED .claude/settings.json — different users' home dirs must
     // not churn a shared ack: home-anchored dirs hash in their symbolic ~/ form.
-    const a = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: [CODEX_DIRS[0].default], home: '/home/alpha' });
-    const b = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: [CODEX_DIRS[0].default], home: '/home/beta' });
+    const a = recipeFingerprint({ hosts: CODEX_HOSTS(), dirs: [CODEX_DIRS()[0].default], home: '/home/alpha' });
+    const b = recipeFingerprint({ hosts: CODEX_HOSTS(), dirs: [CODEX_DIRS()[0].default], home: '/home/beta' });
     assert.equal(a, b, 'the default recipe fingerprint is identical across machines/users');
-    const viaAbsolute = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: ['/home/alpha/.codex'], home: '/home/alpha' });
+    const viaAbsolute = recipeFingerprint({ hosts: CODEX_HOSTS(), dirs: ['/home/alpha/.codex'], home: '/home/alpha' });
     assert.equal(viaAbsolute, a, 'an absolute expansion under home canonicalizes back to the symbolic form');
-    const outsideHome = recipeFingerprint({ hosts: CODEX_HOSTS, dirs: ['/opt/codex-state'], home: '/home/alpha' });
+    const outsideHome = recipeFingerprint({ hosts: CODEX_HOSTS(), dirs: ['/opt/codex-state'], home: '/home/alpha' });
     assert.notEqual(outsideHome, a, 'a genuinely-outside-home override is a different recipe');
   });
 
@@ -1636,8 +1635,8 @@ describe('recommendations — retired sandbox lane and bridge recipe — spec:ve
   const reviewRule = 'Bash(codex-review code:*)';
   const reviewExclusion = 'codex-review *';
   const executeExclusion = 'codex-exec *';
-  const stateDir = CODEX_DIRS[0].default;
-  const missingHost = CODEX_HOSTS[0];
+  const stateDir = () => CODEX_DIRS()[0].default;
+  const missingHost = () => CODEX_HOSTS()[0];
   const expectedWhat = (count) => `bridge-wrappers tier incomplete — ${count} entr(ies) missing (allow rules, exclusions, hosts or state dirs of used bridges)`;
   const readBridgeItem = (t, sandbox, { allow = [reviewRule], delegated = false } = {}) => {
     const root = makeProject();
@@ -1688,7 +1687,7 @@ describe('recommendations — retired sandbox lane and bridge recipe — spec:ve
   const reviewDetail = 'missing — allow rules: Bash(codex-review code:*); exclusions: codex-review *; hosts: chatgpt.com; state dirs: ~/.codex';
   for (const enabled of [undefined, true, invalidEnabled]) {
     it(`names every missing review entry with sandbox.enabled=${enabled}`, (t) => {
-      const { item, skip } = readBridgeItem(t, { excludedCommands: ['codex-review'], network: { allowedDomains: CODEX_HOSTS.slice(1) }, ...(enabled === undefined ? {} : { enabled }) }, { allow: [] });
+      const { item, skip } = readBridgeItem(t, { excludedCommands: ['codex-review'], network: { allowedDomains: CODEX_HOSTS().slice(1) }, ...(enabled === undefined ? {} : { enabled }) }, { allow: [] });
       assert.equal(skip, undefined);
       assert.equal(item?.what, expectedWhat(4));
       if (enabled === invalidEnabled) {
@@ -1700,12 +1699,13 @@ describe('recommendations — retired sandbox lane and bridge recipe — spec:ve
     });
   }
   const executeCases = [
-    { kind: 'exclusions', entry: executeExclusion, excludedCommands: [reviewExclusion], hosts: CODEX_HOSTS, dirs: [stateDir], missing: { excludedCommands: [executeExclusion], hosts: [], dirs: [] } },
-    { kind: 'hosts', entry: missingHost, excludedCommands: [reviewExclusion, executeExclusion], hosts: CODEX_HOSTS.slice(1), dirs: [stateDir], missing: { excludedCommands: [], hosts: [missingHost], dirs: [] } },
-    { kind: 'state dirs', entry: stateDir, excludedCommands: [reviewExclusion, executeExclusion], hosts: CODEX_HOSTS, missing: { excludedCommands: [], hosts: [], dirs: [stateDir] } },
+    { kind: 'exclusions', read: () => ({ entry: executeExclusion, excludedCommands: [reviewExclusion], hosts: CODEX_HOSTS(), dirs: [stateDir()], missing: { excludedCommands: [executeExclusion], hosts: [], dirs: [] } }) },
+    { kind: 'hosts', read: () => ({ entry: missingHost(), excludedCommands: [reviewExclusion, executeExclusion], hosts: CODEX_HOSTS().slice(1), dirs: [stateDir()], missing: { excludedCommands: [], hosts: [missingHost()], dirs: [] } }) },
+    { kind: 'state dirs', read: () => ({ entry: stateDir(), excludedCommands: [reviewExclusion, executeExclusion], hosts: CODEX_HOSTS(), missing: { excludedCommands: [], hosts: [], dirs: [stateDir()] } }) },
   ];
-  for (const { kind, entry, excludedCommands, hosts, dirs, missing } of executeCases) {
+  for (const { kind, read } of executeCases) {
     it(`names the execution wrapper's missing ${kind} and returns executeToAdd`, (t) => {
+      const { entry, excludedCommands, hosts, dirs, missing } = read();
       const sandbox = { excludedCommands, network: { allowedDomains: hosts }, ...(dirs ? { filesystem: { allowWrite: dirs } } : {}) };
       const { root, deps, item, skip } = readBridgeItem(t, sandbox, { delegated: true });
       const plan = planVelocityProfile(preflightVelocityProfile({ cwd: root }, deps), { bridgeTier: true, findWrapper: deps.findWrapper, detect: deps.detect, env: deps.getenv, home: deps.home });
@@ -1773,15 +1773,15 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
       writeFileSync(join(root, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(codex-review code:*)'] }, sandbox }));
       return buildRecommendations({ cwd: root, deps: hermeticDeps(root, { ...deps, ...extra }) });
     };
-    const beforeRevision4 = recommendationsWith(['codex-review'], CODEX_HOSTS);
-    const missingHost = recommendationsWith(['codex-review *'], CODEX_HOSTS.slice(1), ['~/.codex']);
-    const complete = recommendationsWith(['codex-review *'], CODEX_HOSTS, ['~/.codex']);
+    const beforeRevision4 = recommendationsWith(['codex-review'], CODEX_HOSTS());
+    const missingHost = recommendationsWith(['codex-review *'], CODEX_HOSTS().slice(1), ['~/.codex']);
+    const complete = recommendationsWith(['codex-review *'], CODEX_HOSTS(), ['~/.codex']);
     const unusedAgy = {
       detect: bothBridgesReady,
       findWrapper: (cmd) => cmd === 'codex-review' || cmd === 'agy-review',
     };
-    const incompleteWithUnusedAgy = recommendationsWith(['codex-review'], CODEX_HOSTS, undefined, unusedAgy);
-    const completeWithUnusedAgy = recommendationsWith(['codex-review *'], CODEX_HOSTS, ['~/.codex'], unusedAgy);
+    const incompleteWithUnusedAgy = recommendationsWith(['codex-review'], CODEX_HOSTS(), undefined, unusedAgy);
+    const completeWithUnusedAgy = recommendationsWith(['codex-review *'], CODEX_HOSTS(), ['~/.codex'], unusedAgy);
     rmSync(root, { recursive: true, force: true });
     for (const [result, n, reason] of [
       [beforeRevision4, 2, 'the missing codex-review * and ~/.codex count'],

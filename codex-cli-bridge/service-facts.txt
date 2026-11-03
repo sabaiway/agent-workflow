@@ -1,0 +1,9 @@
+# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit
+HOST=chatgpt.com
+HOST=*.chatgpt.com
+HOST=api.typesafe.ai
+HOST=docs.typesafe.ai
+RUN_HOST=api.typesafe.ai
+RUN_HOST=docs.typesafe.ai
+WRITABLE_DIR=CODEX_HOME:~/.codex
+PASSED_VARIABLE=TYPESAFE_API_KEY

@@ -26,7 +26,7 @@ import {
 } from './recipes.mjs';
 import { detectBackends, READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
 import { usedBridges } from './bridge-sandbox-recipe.mjs';
-
+const { mergeServices, loadServiceFragments } = await import('./services/index.mjs').catch(() => ({}));
 const recipesModule = await import('./recipes.mjs');
 const getRecommendWiredRecipe = () => {
   if (!recipesModule.recommendWiredRecipe) throw new Error('recommendWiredRecipe is absent');
@@ -99,7 +99,7 @@ const makeWiringCliFixture = (t) => {
   for (const key of ['CODEX_HOME', 'CODEX_SERVICE_TIER', 'CODEX_HARD_TIMEOUT', 'CODEX_REVIEW_MAX_TOTAL_BYTES', 'AGY_HARD_TIMEOUT', 'AGY_REVIEW_ALLOW_ADDDIR']) delete env[key];
   assert.equal(detectBackends({ getenv: env, home }).find((backend) => backend.name === CODEX).readiness, READY, 'detector precondition');
   writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(REVIEW_CONFIG));
-  const sandbox = { enabled: true, excludedCommands: [CODEX_REVIEW_EXCLUSION], network: { allowedDomains: readManifest(join('agent-workflow-kit', 'bridges', CODEX)).networkHosts } };
+  const sandbox = { enabled: true, excludedCommands: [CODEX_REVIEW_EXCLUSION], network: { allowedDomains: mergeServices(readManifest(join('agent-workflow-kit', 'bridges', CODEX)).services, loadServiceFragments()).hosts } };
   const settingsPath = join(root, '.claude', 'settings.json');
   writeFileSync(settingsPath, JSON.stringify({ sandbox }));
   const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: root, env, encoding: 'utf8' });

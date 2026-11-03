@@ -1,0 +1,11 @@
+# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit
+HOST=*.googleapis.com
+HOST=accounts.google.com
+HOST=antigravity-unleash.goog
+HOST=lh3.googleusercontent.com
+HOST=api.typesafe.ai
+HOST=docs.typesafe.ai
+RUN_HOST=api.typesafe.ai
+RUN_HOST=docs.typesafe.ai
+WRITABLE_DIR=:~/.gemini/antigravity-cli
+PASSED_VARIABLE=TYPESAFE_API_KEY

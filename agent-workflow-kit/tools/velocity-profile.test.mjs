@@ -45,6 +45,7 @@ import { lstatSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { sandboxSurfaceDelta } from './bridge-wiring.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
 import { nearestExistingDir } from './worktrees.mjs';
+const services = await import('./services/index.mjs').catch(() => ({}));
 
 const UTF8 = 'utf8';
 const TEMP_PREFIX = 'velocity-profile-';
@@ -996,9 +997,15 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
   const BUNDLE_ROOT = join(KIT_ROOT, 'bridges');
   const BUNDLES = ['antigravity-cli-bridge', 'codex-cli-bridge'];
   const manifestPath = (bundle) => join(BUNDLE_ROOT, bundle, 'capability.json');
-  const AGY_HOSTS = readJson(manifestPath('antigravity-cli-bridge')).networkHosts;
-  const CODEX_HOSTS = readJson(manifestPath('codex-cli-bridge')).networkHosts;
-  const UNION_HOSTS = [...AGY_HOSTS, ...CODEX_HOSTS.filter((host) => !AGY_HOSTS.includes(host))];
+  const mergeBundledServices = (bundle) => services.mergeServices(readJson(manifestPath(bundle)).services, services.loadServiceFragments());
+  const AGY_HOSTS = () => mergeBundledServices('antigravity-cli-bridge').hosts;
+  const CODEX_HOSTS = () => mergeBundledServices('codex-cli-bridge').hosts;
+  const UNION_HOSTS = () => [...new Set([...AGY_HOSTS(), ...CODEX_HOSTS()])];
+  const seedServiceFragments = (t, exclusions = {}) => {
+    const servicesDir = makeTempProject(t);
+    for (const [id, fragment] of Object.entries(services.loadServiceFragments())) writeJson(join(servicesDir, `${id}.json`), { ...fragment, excludedCommands: exclusions[id] ?? fragment.excludedCommands });
+    return servicesDir;
+  };
   const READY = BUNDLES.map((name) => ({ name, readiness: 'ready' }));
   const signedOut = (name) => READY.map((row) => ({ ...row, readiness: row.name === name ? 'needs-credentials' : 'ready' }));
   const reviewConfig = (review) => Object.fromEntries(
@@ -1127,14 +1134,14 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
   });
 
   it('dry-run derives exact surfaces from used roles, readiness, rosters, degradation and defaults — spec:velocity-profile/S1', (t) => {
-    const codex = { allow: ['Bash(codex-review code:*)'], excluded: ['codex-review *'], hosts: CODEX_HOSTS, dirs: ['~/.codex'] };
+    const codex = { allow: ['Bash(codex-review code:*)'], excluded: ['codex-review *'], hosts: CODEX_HOSTS(), dirs: ['~/.codex'] };
     const council = {
       allow: ['Bash(agy-review code:*)', GROUNDING_RULE, ...codex.allow],
       excluded: ['agy-review *', 'codex-review *'],
-      hosts: UNION_HOSTS,
+      hosts: UNION_HOSTS(),
       dirs: ['~/.gemini/antigravity-cli', '~/.codex'],
     };
-    const execute = { allow: [], excluded: ['codex-exec *'], hosts: CODEX_HOSTS, dirs: ['~/.codex'] };
+    const execute = { allow: [], excluded: ['codex-exec *'], hosts: CODEX_HOSTS(), dirs: ['~/.codex'] };
     const empty = { allow: [], excluded: [], hosts: [], dirs: [] };
     const delegated = reviewConfig('solo');
     delegated['plan-execution'].execute = 'delegated';
@@ -1149,7 +1156,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
       ['placed ready agy unused by any slot', reviewConfig('reviewed'), READY, codex],
       ['all slots solo with both bridges ready', reviewConfig('solo'), READY, empty],
     ];
-    assert.deepEqual([CODEX_HOSTS.length, AGY_HOSTS.length, UNION_HOSTS.length], [4, 6, 8]);
+    assert.deepEqual([CODEX_HOSTS().length, AGY_HOSTS().length, UNION_HOSTS().length], [4, 6, 8]);
     for (const [label, config, readiness, expected] of cases) {
       const deps = bridgeProject(t, config, readiness);
       const r = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, deps);
@@ -1171,7 +1178,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
       const deps = bridgeProject(t, config);
       const allow = ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)', 'Bash(foreign read:*)'];
       const excludedCommands = ['codex-review', 'agy-review', 'foreign-tool'];
-      const network = { allowedDomains: ['internal.example.com', ...UNION_HOSTS], allowLocalBinding: true };
+      const network = { allowedDomains: ['internal.example.com', ...UNION_HOSTS()], allowLocalBinding: true };
       const filesystem = { allowWrite: ['/foreign/state', ...covering], denyWrite: ['/private/state'] };
       const sandbox = { enabled: true, excludedCommands, network, filesystem };
       writeJson(settingsPath(deps.cwd), { permissions: { allow }, sandbox });
@@ -1227,6 +1234,22 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     }
   });
 
+  it('injected services exclude a command once after both codex wrappers and never include the unused agy service (S2)', (t) => {
+    const config = reviewConfig('reviewed');
+    config['plan-execution'].execute = 'delegated';
+    const deps = { ...bridgeProject(t, config), servicesDir: seedServiceFragments(t, { codex: ['codex-helper *'], antigravity: ['agy-helper *'] }) };
+    assert.deepEqual(usedBridges(config, READY), [{ bridge: 'codex-cli-bridge', roles: ['review', 'execute'] }]);
+    const excludedCommands = ['codex-review *', 'codex-exec *', 'codex-helper *'];
+    for (const argv of [['--bridge-tier'], ['--apply', '--bridge-tier']]) {
+      const result = runBridgeMain(argv, deps.cwd, nonePlaced, deps);
+      assert.equal(result.code, EXIT_OK, result.stderr);
+      assert.deepEqual(listedExcluded(result.stdout)?.entries, excludedCommands);
+      assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /agy-helper/);
+    }
+    assert.deepEqual(readJson(settingsPath(deps.cwd)).sandbox.excludedCommands, excludedCommands);
+    assert.doesNotMatch(readText(settingsPath(deps.cwd)), /agy-helper/);
+  });
+
   it('writer to-add lists come from the leaf on bare-name, covering-dir and complete trees — spec:velocity-profile/S16', async (t) => {
     const { sandboxSurfaceDelta } = await import('./bridge-wiring.mjs').catch(() => ({}));
     const computeDelta = sandboxSurfaceDelta ?? (() => { throw new Error('bridge-wiring.mjs absent'); });
@@ -1234,9 +1257,9 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     config['plan-execution'].execute = 'delegated';
     const excludedCommands = ['agy-review *', 'codex-review *', 'codex-exec *'];
     const trees = [
-      { excludedCommands: ['codex-review', 'agy-review'], network: { allowedDomains: UNION_HOSTS } },
-      { excludedCommands, network: { allowedDomains: UNION_HOSTS.slice(1) }, filesystem: { allowWrite: ['~/.gemini'] } },
-      { excludedCommands, network: { allowedDomains: UNION_HOSTS }, filesystem: { allowWrite: ['~/.gemini/antigravity-cli', '~/.codex'] } },
+      { excludedCommands: ['codex-review', 'agy-review'], network: { allowedDomains: UNION_HOSTS() } },
+      { excludedCommands, network: { allowedDomains: UNION_HOSTS().slice(1) }, filesystem: { allowWrite: ['~/.gemini'] } },
+      { excludedCommands, network: { allowedDomains: UNION_HOSTS() }, filesystem: { allowWrite: ['~/.gemini/antigravity-cli', '~/.codex'] } },
     ];
     for (const sandbox of trees) {
       const deps = bridgeProject(t, config, READY);
@@ -1302,7 +1325,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     }
   });
 
-  it('manifest, rejected config and dangerous CODEX_HOME STOP with zero writes; stray bundle entries are skipped — spec:velocity-profile/S4', (t) => {
+  it('manifest, unknown service, broken fragments, rejected config and dangerous CODEX_HOME STOP with zero writes; stray bundle entries are skipped — spec:velocity-profile/S4', (t) => {
     const deps = bridgeProject(t);
     writeJson(settingsPath(deps.cwd), { permissions: { allow: [] } });
     const original = readText(settingsPath(deps.cwd));
@@ -1312,6 +1335,17 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
       (path, enc) => path === broken ? '{ not json' : readFileSync(path, enc),
     ];
     const stops = readers.map((readFile) => ({ deps: { ...deps, ...bundleDeps(BUNDLES, readFile) }, key: 'capability.json' }));
+    const { networkHosts, writableDirs, ...manifest } = readJson(broken);
+    const readUnknown = (path, enc) => path === broken ? JSON.stringify({ ...manifest, services: ['codex', 'nope'] }) : readFileSync(path, enc);
+    stops.push({ deps: { ...deps, ...bundleDeps(BUNDLES, readUnknown) }, key: 'nope' });
+    for (const failure of ['parse', 'schema', ...(process.getuid?.() === 0 ? [] : ['unreadable'])]) {
+      const servicesDir = seedServiceFragments(t);
+      const fragmentPath = join(servicesDir, 'jev.json');
+      if (failure === 'parse') writeText(fragmentPath, '{ not json');
+      if (failure === 'schema') writeJson(fragmentPath, { ...readJson(fragmentPath), surprise: true });
+      if (failure === 'unreadable') chmodSync(fragmentPath, 0o000);
+      stops.push({ deps: { ...deps, servicesDir }, key: 'jev.json' });
+    }
     for (const config of ['{ not json', JSON.stringify({ 'plan-execution': { review: 'unknown-recipe' } })]) {
       stops.push({ deps, key: 'docs/ai/orchestration.json', config });
     }
@@ -1334,7 +1368,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     const readFile = (path, enc) => path === stray ? failWith('ENOTDIR') : readFileSync(path, enc);
     const r = runBridgeMain(['--bridge-tier'], deps.cwd, nonePlaced, { ...deps, ...bundleDeps(['.DS_Store', ...BUNDLES], readFile) });
     assert.equal(r.code, EXIT_OK, r.stderr);
-    assert.deepEqual(listedHosts(r.stdout)?.hosts, UNION_HOSTS);
+    assert.deepEqual(listedHosts(r.stdout)?.hosts, UNION_HOSTS());
     assert.deepEqual(listedDirs(r.stdout)?.entries, ['~/.gemini/antigravity-cli', '~/.codex']);
     assert.equal(readText(settingsPath(deps.cwd)), original);
   });
@@ -1350,7 +1384,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     assertLists(r.stdout, {
       allow: ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)'],
       excluded: ['agy-review *', 'codex-review *', 'codex-exec *'],
-      hosts: UNION_HOSTS,
+      hosts: UNION_HOSTS(),
       dirs: ['~/.gemini/antigravity-cli', '~/.codex'],
     }, 'dry-run blocks');
     assert.equal(listedDirs(r.stdout)?.after, 'already present (allowWrite): 0');
@@ -1438,7 +1472,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     const allow = ['Bash(agy-review code:*)', GROUNDING_RULE, 'Bash(codex-review code:*)'];
     const surfaces = {
       excludedCommands: ['agy-review', 'agy-review *', 'codex-review', 'codex-review *', 'codex-exec *'],
-      network: { allowedDomains: UNION_HOSTS },
+      network: { allowedDomains: UNION_HOSTS() },
       filesystem: { allowWrite: ['~/.gemini/antigravity-cli', '~/.codex'] },
     };
     const note = (key, entry, widening) =>
@@ -1453,7 +1487,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     const degrade = (r, scope, key) => r.stdout.split('\n').filter((line) => line.includes('⚠ DEGRADE') && line.includes(`${scope} has ${key}`));
     const executeOnly = {
       excludedCommands: ['codex-exec *'],
-      network: { allowedDomains: CODEX_HOSTS },
+      network: { allowedDomains: CODEX_HOSTS() },
       filesystem: { allowWrite: ['~/.codex'] },
     };
     for (const [proof, sandbox] of [[allow, surfaces], [[], executeOnly]]) {
@@ -1493,8 +1527,8 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     }
     assert.doesNotMatch(local.stdout, /note: \.claude\/settings\.local\.json has sandbox\./);
     rmSync(localSettingsPath(deps.cwd));
-    const jevHost = CODEX_HOSTS.find((host) => AGY_HOSTS.includes(host));
-    const agyHost = AGY_HOSTS.find((host) => !CODEX_HOSTS.includes(host));
+    const jevHost = CODEX_HOSTS().find((host) => AGY_HOSTS().includes(host));
+    const agyHost = AGY_HOSTS().find((host) => !CODEX_HOSTS().includes(host));
     writeJson(settingsPath(deps.cwd), {
       permissions: { allow: ['Bash(codex-review code:*)'] },
       sandbox: { network: { allowedDomains: [jevHost, agyHost] } },

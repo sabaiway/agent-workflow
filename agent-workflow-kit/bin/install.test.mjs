@@ -60,6 +60,16 @@ describe('kit installer — payload + symlink-traversal hardening', () => {
     assert.equal(existsSync(join(target, 'bin/install.mjs')), false);
   });
 
+  it('installs the services module and its three fragments', () => {
+    const target = join(dir, 'agent-workflow-kit');
+    const res = runInstaller(target);
+    assert.equal(res.error, undefined);
+    assert.equal(res.status, 0);
+    for (const fileName of ['index.mjs', 'codex.json', 'antigravity.json', 'jev.json']) {
+      assert.ok(existsSync(join(target, 'tools/services', fileName)), `missing installed entry: tools/services/${fileName}`);
+    }
+  });
+
   it('removes retired mirror files an older install left behind (single source of truth on upgrade)', async () => {
     const target = join(dir, 'agent-workflow-kit');
     await mkdir(join(target, 'references'), { recursive: true });

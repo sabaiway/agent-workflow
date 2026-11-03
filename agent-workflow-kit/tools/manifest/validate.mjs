@@ -21,6 +21,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join, isAbsolute } from 'node:path';
 import { isDirectRun } from '../direct-run.mjs';
+import { loadServiceFragments } from '../services/index.mjs';
 
 export const FAMILY = 'agent-workflow';
 export const SUPPORTED_SCHEMA = 1;
@@ -88,10 +89,6 @@ const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 
 const hasTraversal = (p) => p.split(/[\\/]/).includes('..');
 const isUnresolved = (s) => /\{\{|\}\}|\$\{/.test(s);
-
-// A `networkHosts` entry: a bare dotted hostname, optionally a `*.` family wildcard — never a
-// scheme, a path, a port, or whitespace (the entry is pasted verbatim into an allowlist line).
-export const NETWORK_HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
 // Cross-platform "absolute-like": POSIX root (/x), Windows drive (C:\ or C:/), UNC (\\host),
 // or a leading backslash. node:path.isAbsolute() alone is platform-dependent, so a Windows path
@@ -436,7 +433,7 @@ const validateModeCatalog = (catalog, roles, errors) => {
   });
 };
 
-export const validateManifest = (skillDir) => {
+export const validateManifest = (skillDir, options = {}) => {
   const manifestPath = join(skillDir, 'capability.json');
   let raw;
   try {
@@ -637,63 +634,28 @@ export const validateManifest = (skillDir) => {
     }
   }
 
-  // `networkHosts` (AD-044 Plan 4, consult-locked): the backend CLI's OBSERVED egress host
-  // families. `velocity-profile --bridge-tier` seeds them into sandbox.network.allowedDomains
-  // for USED bridges (a recipe slot uses them, revision 4; AD-172); the pre-allow widens egress for EVERY
-  // sandboxed command, stated at that consent. A malformed list FAILS --strict like `settings`:
-  // the tier writes it and the Recommendations advisor renders it verbatim, so a bad entry would corrupt a seeded line.
-  const networkHosts = manifest.networkHosts;
-  if (networkHosts != null) {
-    if (!Array.isArray(networkHosts) || networkHosts.length === 0) {
-      errors.push('`networkHosts` must be a non-empty array of host strings');
-    } else {
-      const seenHosts = new Set();
-      networkHosts.forEach((host, i) => {
-        if (typeof host !== 'string' || !NETWORK_HOST_RE.test(host)) {
-          errors.push(`\`networkHosts[${i}]\` must be a bare hostname or a *.family wildcard (${JSON.stringify(host)})`);
-          return;
-        }
-        if (seenHosts.has(host)) errors.push(`duplicate networkHosts entry "${host}" (\`networkHosts[${i}]\`)`);
-        else seenHosts.add(host);
-      });
+  if (Object.hasOwn(manifest, 'services')) {
+    for (const key of ['networkHosts', 'writableDirs']) {
+      if (Object.hasOwn(manifest, key)) errors.push(`\`services\` must not coexist with retired key \`${key}\``);
     }
-  }
-
-  // `writableDirs` (REC-UX-REWORK, D6): {env, default} entries the tier RESOLVES (a NON-EMPTY
-  // env value wins, else the default) and seeds home-relative into sandbox.filesystem.allowWrite
-  // for USED bridges via `bridge-state-dirs.mjs`; the advisor's `bridge-tier` item counts and names them.
-  // A malformed list FAILS --strict: the resolved dir is written into the settings and rendered
-  // on the Recommendations advisor's ONE-LINE `recipe:` line.
-  const writableDirs = manifest.writableDirs;
-  if (writableDirs != null) {
-    if (!Array.isArray(writableDirs) || writableDirs.length === 0) {
-      errors.push('`writableDirs` must be a non-empty array of {env, default} entries');
-    } else {
-      const seenDefaults = new Set();
-      writableDirs.forEach((entry, i) => {
-        const at = `\`writableDirs[${i}]\``;
-        if (entry == null || typeof entry !== 'object' || Array.isArray(entry)) {
-          errors.push(`${at} must be an {env, default} object`);
-          return;
+    try {
+      const fragments = loadServiceFragments({ servicesDir: options.servicesDir });
+      const services = manifest.services;
+      if (!Array.isArray(services) || services.length === 0) {
+        errors.push('`services` must be a non-empty array of unique service ids');
+      } else {
+        const seenServices = new Set();
+        for (const id of services) {
+          if (typeof id !== 'string' || !Object.hasOwn(fragments, id)) {
+            errors.push(`\`services\` has an unknown or non-string id: ${JSON.stringify(id)}`);
+          } else if (seenServices.has(id)) {
+            errors.push(`\`services\` has a duplicate id: ${JSON.stringify(id)}`);
+          }
+          seenServices.add(id);
         }
-        if (entry.env !== null && (typeof entry.env !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(entry.env))) {
-          errors.push(`${at}.env must be null or an UPPER_SNAKE_CASE env-var name (${JSON.stringify(entry.env)})`);
-        }
-        const dir = entry.default;
-        if (typeof dir !== 'string' || !(dir.startsWith('~/') || dir.startsWith('/'))) {
-          errors.push(`${at}.default must be a \`~/\`-anchored or absolute POSIX path (${JSON.stringify(dir)})`);
-          return;
-        }
-        if (/[*?[\]]/.test(dir)) errors.push(`${at}.default must not carry glob characters ("${dir}")`);
-        // The resolved dir is written into `allowWrite` and rendered on a ONE-LINE advisor line —
-        // a control character (newline, CR, NUL, …) would break that line or the settings entry.
-        // eslint-disable-next-line no-control-regex
-        if (/[\x00-\x1f\x7f]/.test(dir)) errors.push(`${at}.default must not carry control characters (${JSON.stringify(dir)})`);
-        if (dir.endsWith('/')) errors.push(`${at}.default must not end with a trailing slash ("${dir}")`);
-        if (hasTraversal(dir)) errors.push(`${at}.default must not contain ".." traversal ("${dir}")`);
-        if (seenDefaults.has(dir)) errors.push(`duplicate writableDirs default "${dir}" (${at})`);
-        else seenDefaults.add(dir);
-      });
+      }
+    } catch (error) {
+      errors.push(`\`services\`: ${error.message}`);
     }
   }
 

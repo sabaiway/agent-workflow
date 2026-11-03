@@ -641,7 +641,7 @@ it('spec:velocity-profile/S10 — every bridge-tier passage names used bridges a
     ['recommendations.md posture note', between(MODE_DOC, '- `bridge-tier` —', '\n- ')],
     ['recommendations.md settings-native lane', between(MODE_DOC, '- **Settings-native sandbox**', '\n- ')],
     ['README advisor row', between(readmeRow, '`/agent-workflow-kit recommendations`', '`--cwd` is required')],
-    ['schema.md networkHosts and writableDirs', between(read('tools/manifest/schema.md'), '## Network hosts', '## Mode catalog')],
+    ['schema.md services', between(read('tools/manifest/schema.md'), '## Services', '## Mode catalog')],
     ['recommendations --help bridge tier', between(usage.stdout, 'Apply lines are cwd-independent', '\n\nRead-only:')],
     ['BENEFITS[bridge-tier]', BENEFITS['bridge-tier']],
   ];

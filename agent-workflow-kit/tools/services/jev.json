@@ -1,0 +1,12 @@
+{
+  "hosts": [
+    "api.typesafe.ai",
+    "docs.typesafe.ai"
+  ],
+  "writableDirs": [],
+  "excludedCommands": [],
+  "passedVariables": [
+    "TYPESAFE_API_KEY"
+  ],
+  "runReachesHosts": true
+}

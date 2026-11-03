@@ -1,6 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, chmodSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -23,15 +23,30 @@ afterEach(() => {
   while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true });
 });
 
-// Seed a fully in-sync fixture family: two bridge canons + mirrors, the reference-scripts pair,
-// and the templates pair (every manifest file identical; the hard-excluded files DIVERGENT by
-// construction — that divergence is legitimate and must never trip the sync).
+const SERVICES_REL = 'agent-workflow-kit/tools/services';
+const FACTS_FILE = 'service-facts.txt';
+const seedFacts = (id) => [
+  "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit",
+  `HOST=${id}.example`, 'HOST=jev.example', 'RUN_HOST=jev.example',
+  `WRITABLE_DIR=${id === 'codex' ? 'CODEX_HOME:~/.codex' : ':~/.gemini/antigravity-cli'}`,
+  'PASSED_VARIABLE=TYPESAFE_API_KEY', '',
+].join('\n');
 const seedFamily = (root) => {
+  const servicesDir = join(root, SERVICES_REL);
+  mkdirSync(servicesDir, { recursive: true });
+  for (const id of ['codex', 'antigravity', 'jev']) {
+    const writableDirs = id === 'jev' ? [] : [{ env: id === 'codex' ? 'CODEX_HOME' : null,
+      default: id === 'codex' ? '~/.codex' : '~/.gemini/antigravity-cli' }];
+    writeFileSync(join(servicesDir, `${id}.json`), JSON.stringify({ hosts: [`${id}.example`], writableDirs,
+      excludedCommands: [], passedVariables: id === 'jev' ? ['TYPESAFE_API_KEY'] : [], runReachesHosts: id === 'jev' }));
+  }
   for (const bridge of BRIDGE_DIRS) {
+    const id = bridge.replace('-cli-bridge', '');
     for (const base of [join(root, bridge), join(root, 'agent-workflow-kit', 'bridges', bridge)]) {
       mkdirSync(join(base, 'bin'), { recursive: true });
       writeFileSync(join(base, 'SKILL.md'), `# ${bridge}\n`);
-      writeFileSync(join(base, 'capability.json'), `{"name":"${bridge}","version":"1.0.0"}\n`);
+      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services: [id, 'jev'] })}\n`);
+      writeFileSync(join(base, FACTS_FILE), seedFacts(id));
       writeFileSync(join(base, 'bin', 'run.sh'), '#!/bin/sh\necho run\n');
       chmodSync(join(base, 'bin', 'run.sh'), 0o755);
     }
@@ -61,7 +76,6 @@ const run = (argv, root) => {
   const code = runCli([...argv, '--root', root], { log: (l) => out.push(l), logError: (l) => err.push(l) });
   return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
 };
-
 describe('in-sync tree', () => {
   it('--check exits 0 with zero would-be changes despite the hard-excluded divergence', () => {
     const root = makeRoot();
@@ -79,14 +93,9 @@ describe('in-sync tree', () => {
     const { code, text } = run([], root);
     assert.equal(code, 0);
     assert.match(text, /all mirrors in sync — nothing to do/);
-    assert.equal(
-      readFileSync(join(root, 'agent-workflow-kit', 'references', 'templates', TEMPLATE_HARD_EXCLUDES[0]), 'utf8'),
-      excludedBefore,
-      'the excluded file is untouched',
-    );
+    assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'references', 'templates', TEMPLATE_HARD_EXCLUDES[0]), 'utf8'), excludedBefore, 'the excluded file is untouched');
   });
 });
-
 describe('canon drift → sync restores byte-identity (all three families)', () => {
   it('bridge canon edit is copied to the mirror', () => {
     const root = makeRoot();
@@ -119,7 +128,6 @@ describe('canon drift → sync restores byte-identity (all three families)', () 
     assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'references', 'templates', 'gates.json'), 'utf8'), '{"edited":true}\n');
   });
 });
-
 describe('set-equality (full-tree families)', () => {
   it('an extraneous bridge-mirror file is DELETED', () => {
     const root = makeRoot();
@@ -145,7 +153,6 @@ describe('set-equality (full-tree families)', () => {
     assert.ok(!existsSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0], '.git')), '.git never copied');
   });
 });
-
 describe('template exclusions (D1)', () => {
   it('hard-excluded divergence is NEVER copied — a run leaves both sides as they were', () => {
     const root = makeRoot();
@@ -177,8 +184,18 @@ describe('template exclusions (D1)', () => {
     assert.equal(code, 1);
     assert.match(errText, /missing on the canon side: agent-workflow-memory\/references\/templates\/gates\.json/);
   });
+  it('an unparsable canon bridge manifest fails LOUD naming the file and writes no facts file', () => {
+    const root = makeRoot();
+    seedFamily(root);
+    const manifest = join(root, BRIDGE_DIRS[0], 'capability.json');
+    writeFileSync(manifest, '{ not json');
+    rmSync(join(root, BRIDGE_DIRS[1], FACTS_FILE));
+    const { code, errText } = run([], root);
+    assert.equal(code, 1);
+    assert.ok(errText.includes(`${manifest}: cannot read or parse canon manifest`), errText);
+    assert.equal(existsSync(join(root, BRIDGE_DIRS[1], FACTS_FILE)), false);
+  });
 });
-
 describe('--check never writes', () => {
   it('with injected drift + an extraneous file, --check exits 1 and mutates nothing', () => {
     const root = makeRoot();
@@ -196,7 +213,6 @@ describe('--check never writes', () => {
     assert.ok(existsSync(stray), 'no delete happened');
   });
 });
-
 describe('mode preservation (D2)', () => {
   it('a canon-executable file synced into a NEW mirror path keeps the executable bit', () => {
     const root = makeRoot();
@@ -223,7 +239,6 @@ describe('mode preservation (D2)', () => {
     assert.notEqual(statSync(mirrorTool).mode & 0o111, 0, 'the executable bit is restored');
   });
 });
-
 describe('syncBridgeMirror — the root-parameterized --bump hook (D5)', () => {
   it('re-syncs exactly the named bridge and returns the applied changes', () => {
     const root = makeRoot();
@@ -232,36 +247,24 @@ describe('syncBridgeMirror — the root-parameterized --bump hook (D5)', () => {
     writeFileSync(join(root, BRIDGE_DIRS[1], 'capability.json'), '{"version":"8.8.8"}\n');
     const changes = syncBridgeMirror(root, BRIDGE_DIRS[0]);
     assert.equal(changes.length, 1);
-    assert.equal(
-      readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0], 'capability.json'), 'utf8'),
-      '{"version":"9.9.9"}\n',
-      'the named bridge mirror is byte-identical again',
-    );
-    assert.notEqual(
-      readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[1], 'capability.json'), 'utf8'),
-      '{"version":"8.8.8"}\n',
-      'the OTHER bridge mirror is untouched',
-    );
+    assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0], 'capability.json'), 'utf8'), '{"version":"9.9.9"}\n', 'the named bridge mirror is byte-identical again');
+    assert.notEqual(readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[1], 'capability.json'), 'utf8'), '{"version":"8.8.8"}\n', 'the OTHER bridge mirror is untouched');
   });
 
   it('rejects a non-bridge dir loudly', () => {
     assert.throws(() => syncBridgeMirror(makeRoot(), 'agent-workflow-kit'), /not a bridge dir/);
   });
 });
-
 describe('planAllMirrors covers every family', () => {
-  it('reports one plan per bridge + reference-scripts + templates, and no root-scripts family (the family retires with the flat copies, spec script-family)', () => {
+  it('reports the bridge and existing shared families in order, with no retired root-scripts family', () => {
     const root = makeRoot();
     seedFamily(root);
     const families = planAllMirrors(root).map((plan) => plan.family);
-    assert.deepEqual(families, [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates', 'payload-prune']);
+    const existing = [`bridge:${BRIDGE_DIRS[0]}`, `bridge:${BRIDGE_DIRS[1]}`, 'reference-scripts', 'templates', 'payload-prune'];
+    assert.deepEqual(families.filter((family) => existing.includes(family)), existing);
+    assert.equal(families.includes('root-scripts'), false);
   });
 });
-
-// The script family is one nested tree: the kit mirror is the canon tree file for file, and the
-// basename-keyed copy into this repository's flat scripts/ retired. The temp root's scripts/ stands
-// in for that flat folder: a file of it whose basename the canon also carries is drifted and
-// unreadable, so a sync that read it fails and a sync that wrote it changes its bytes.
 describe('spec:script-family/S6 the reference-scripts tree syncs whole and leaves the flat scripts/ alone', () => {
   const MODULE_FILE = 'shared/markdown-blocks.mjs';
   const seedTree = (root) => {
@@ -290,14 +293,10 @@ describe('spec:script-family/S6 the reference-scripts tree syncs whole and leave
     const { canon, mirror, flat, standIns } = seedTree(root);
     const sealed = Object.keys(standIns).map((name) => join(flat, name));
     for (const path of sealed) chmodSync(path, 0o000);
-    let check;
-    let apply;
-    try {
-      check = run(['--check'], root);
-      apply = run([], root);
-    } finally {
-      for (const path of sealed) chmodSync(path, 0o644);
-    }
+    const { check, apply } = (() => {
+      try { return { check: run(['--check'], root), apply: run([], root) }; }
+      finally { for (const path of sealed) chmodSync(path, 0o644); }
+    })();
     assert.equal(check.errText, '', 'the check read nothing it could not');
     for (const rel of ['family.mjs', MODULE_FILE, 'archives/archive-decisions.mjs']) {
       assert.match(check.text, new RegExp(`^reference-scripts: would copy agent-workflow-kit/references/scripts/${rel}$`, 'm'));
@@ -323,7 +322,6 @@ describe('spec:script-family/S6 the reference-scripts tree syncs whole and leave
     assert.throws(() => planAllMirrors(root), /canon dir is missing: agent-workflow-memory\/references\/scripts/);
   });
 });
-
 describe('spec:upgrade-delivery/S20 payload-prune mirror', () => {
   const CANON = 'agent-workflow-memory/bin/payload-prune.mjs';
   const COPY = 'agent-workflow-kit/tools/payload-prune.mjs';
@@ -368,6 +366,43 @@ describe('spec:upgrade-delivery/S20 payload-prune mirror', () => {
   });
 });
 
+it('spec:services/S5 facts drift and absence are read-only checks, then canon and mirrors render from the root tree', async () => {
+  const root = makeRoot();
+  seedFamily(root);
+  const servicesDir = join(root, SERVICES_REL);
+  const fragmentPath = join(servicesDir, 'jev.json');
+  const fragment = JSON.parse(readFileSync(fragmentPath, 'utf8'));
+  writeFileSync(fragmentPath, JSON.stringify({ ...fragment, hosts: [...fragment.hosts, 'extra.example'] }));
+  const snapshot = () => Object.fromEntries(readdirSync(root, { recursive: true })
+    .filter((path) => statSync(join(root, path)).isFile()).map((path) => [path, readFileSync(join(root, path))]));
+  const before = snapshot();
+  const check = run(['--check'], root);
+  assert.equal(check.code, 1, `${check.text}\n${check.errText}`);
+  for (const bridge of BRIDGE_DIRS) assert.ok(check.text.split(/\s+/).includes(`${bridge}/${FACTS_FILE}`), check.text);
+  assert.deepEqual(snapshot(), before);
+  const absent = join(root, BRIDGE_DIRS[0], FACTS_FILE);
+  rmSync(absent);
+  const afterDelete = snapshot();
+  const missing = run(['--check'], root);
+  assert.equal(missing.code, 1, missing.errText);
+  assert.ok(missing.text.split(/\s+/).includes(`${BRIDGE_DIRS[0]}/${FACTS_FILE}`), missing.text);
+  assert.deepEqual(snapshot(), afterDelete);
+  for (const base of [join(root, BRIDGE_DIRS[0]), join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0])]) {
+    const path = join(base, 'capability.json');
+    const manifest = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...manifest, services: [...manifest.services].reverse() }));
+  }
+  const apply = run([], root);
+  assert.equal(apply.code, 0, apply.errText);
+  const { loadServiceFragments, mergeServices, renderServiceFacts } = await import('../agent-workflow-kit/tools/services/index.mjs');
+  for (const bridge of BRIDGE_DIRS) {
+    const manifest = JSON.parse(readFileSync(join(root, bridge, 'capability.json'), 'utf8'));
+    const expected = renderServiceFacts(mergeServices(manifest.services, loadServiceFragments({ servicesDir })));
+    const canon = readFileSync(join(root, bridge, FACTS_FILE));
+    assert.equal(canon.toString('utf8'), expected);
+    assert.deepEqual(readFileSync(join(root, 'agent-workflow-kit', 'bridges', bridge, FACTS_FILE)), canon);
+  }
+});
 describe('the real tree', () => {
   it('the current repo is fully in sync (release invariant): --check exits 0', () => {
     const { code, errText, text } = run(['--check'], REPO_ROOT);

@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-03 — AD-224: kit service fragments are the one source the kit reads for each bridge's hosts and state dirs (kit 23.0.0 MAJOR; codex bridge 5.1.0 and antigravity bridge 7.1.0 MINOR; engine 6.0.2 PATCH; memory unchanged)
+
+**The kit holds one fragment per service a bridge run reaches** (`agent-workflow-kit/tools/services/`: `codex`,
+`antigravity`, `jev`), each a closed five-key JSON object, behind one door `index.mjs`. Both bridge manifests name
+their services and carry no host or state dir; the sandbox recipe and the validator derive from the fragments, and
+`scripts/sync-mirrors.mjs` generates each bridge folder's `service-facts.txt` before the bridge mirrors, its `--check`
+naming drift. The bridge tier's output on a project is unchanged byte for byte. The validator refuses the retired
+`networkHosts` and `writableDirs` beside `services` and keeps a manifest with no `services` key valid. No wrapper
+reads the facts file yet (story S14). The kit's 22.1.0 entry no longer says `init` writes the import lines: only
+`upgrade` reaches the kit-block writer.
+
 ## 2026-11-02 — AD-223: a question is answered, not acted on, one bullet of the kit's communication theme (kit 22.2.0 MINOR; memory, engine and both bridges unchanged)
 
 **The kit's communication rules gain one bullet right after `Lead with the result`:** a message that only asks for

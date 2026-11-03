@@ -18,8 +18,7 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 | `roles` | object | yes | keys ⊆ `provides`; see *Roles* |
 | `detect` | object | no | `installed` (skill on the machine) + `deployed` (substrate set up in cwd) |
 | `settings` | array | no | the bridge's **settings-file surface** (typed; see *Settings*). Unlike `contract`, a malformed entry **fails** `--strict`. |
-| `networkHosts` | string[] | no | the backend CLI's **observed egress host families** (see *Network hosts*). A malformed list **fails** `--strict`. |
-| `writableDirs` | object[] | no | the backend CLI's **writable state-dir declarations** — `{env, default}` entries (see *Writable dirs*). A malformed list **fails** `--strict`. |
+| `services` | string[] | no | the ids of the kit service fragments the bridge uses — a non-empty list of unique ids (see *Services*); with it, `networkHosts` and `writableDirs` are refused. |
 | `modeCatalog` | object[] | no | the bridge's **user-facing operating modes** — what each mode is FOR and when to reach for it (see *Mode catalog*). A malformed block **fails** `--strict`. |
 | `install` / `uninstall` | object | no | `install.npm` is a package name, not a path |
 | `cost` / `quota` / `provenance` | misc | no | informational |
@@ -95,49 +94,31 @@ Wrappers never parse JSON at run time: each carries its own shell registry/valid
 drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (help section keys,
 `aw_settings_known` registry, `AW_SETTINGS_APPLIED` subset, `aw_settings_valid` typed arms).
 
-## Network hosts (AD-044 Plan 4, consult-locked)
+## Services
 
-`networkHosts` declares the hosts the backend CLI is **observed** to contact (synthetic examples:
-`*.api.backend.example`, `accounts.backend.example`; the real observed lists live in each bridge's
-`capability.json`) — the **single source** of the hosts `velocity-profile --bridge-tier` seeds
-into the project's `sandbox.network.allowedDomains` for every used bridge. Rules:
+`services` names the kit service fragments under `agent-workflow-kit/tools/services/` that the
+bridge uses. The module's `mergeServices` supplies their hosts, state dirs and excluded commands.
+A fragment is a closed object of five required keys (`hosts`, `writableDirs`, `excludedCommands`,
+`passedVariables`, `runReachesHosts`), enforced by the module's loader in
+[`../services/index.mjs`](../services/index.mjs); the host and state-dir rules are the ones these
+retired manifest fields carried.
 
-- Each entry is a bare dotted hostname or a `*.family` wildcard — never a scheme/path/port.
-  Entries must be unique. A malformed list **fails** `--strict` (the tier writes the entries into
-  `sandbox.network.allowedDomains` and the Recommendations advisor renders them on its
-  `bridge-tier` item's `recipe:` line).
-- **The `--bridge-tier` seed is the primary lane** (AD-172): for every used bridge it merges
-  hosts into the project's `sandbox.network.allowedDomains` beside the wrapper's `<wrapper> *`
-  exclusion (`codex-exec *` for the execution wrapper). A settings-native harness that drops the
-  exclusion still admits them; that pre-allow widens egress
-  for **every** sandboxed command, which the tier's consent states. A harness-managed sandbox
-  that ignores the settings keys keeps the harness's own controls — its scoped rules, a session
-  allowance, its consent at the point of action — and the kit writes no shape for it.
-- Observed-minimal, honestly incomplete: a blocked host names itself at run time — extend the
-  manifest list where it was observed; the list records what was actually observed.
+A present `services` must be a non-empty array of unique string ids, each naming a loaded fragment. With that key present, `networkHosts` and `writableDirs` are
+refused whatever their values. A manifest without `services` stays valid in its earlier shape:
+no fragments are read and the retired keys are read by nothing. The validator loads fragments only
+when `services` is present; a loader refusal makes the manifest invalid, naming the fragment file
+or services directory, rather than throwing. An invalid manifest **fails** `--strict`.
 
-## Writable dirs (REC-UX-REWORK, D6)
-
-`writableDirs` declares the backend CLI's **writable state dirs** (credentials, session state) as
-`{env, default}` entries — a bare string cannot be truthful, because a wrapper resolves its state
-dir from an env override first (e.g. `CODEX_HOME` as `~`, `~/…`, absolute or relative), so the
-declared path is only the **default under no override**. Rules:
-
-- Each entry: `env` is `null` or an **UPPER_SNAKE_CASE env-var name**; `default` is a
-  **`~/`-anchored or absolute POSIX path** — no globs, no trailing slash, no `..` traversal.
-  Defaults must be unique. A malformed list **fails** `--strict` (the resolved dir is written into
-  `sandbox.filesystem.allowWrite` and rendered on the Recommendations advisor's one-line `recipe:` line).
-- **Resolution is the advisor's, at run time, mirroring the wrapper's byte-semantics:** a
-  NON-EMPTY env value wins (an EMPTY env value ≡ unset — the `${VAR:-default}` form); the
-  wrapper's exact case-arms apply — `~`, `~/…` and absolute forms ride as-given, EVERY other
-  form (including `~user/…`, which the wrappers never resolve as a home path) anchors like a
-  relative path. The advisor anchors those to the **target project root** (its pinned `--cwd`),
-  matching what a wrapper invoked from the project root resolves — the documented dispatch form
-  (the wrapper itself anchors to its invocation `$PWD`); else the `default` applies.
-- **The `--bridge-tier` seeds every used bridge's state dirs**, home-relative under the home
-  (absolute outside it), into `sandbox.filesystem.allowWrite` beside the wrapper's `<wrapper> *`
-  exclusion (`codex-exec *` for the execution wrapper) — the advisor's `bridge-tier` item counts
-  and names each missing dir.
+**The `--bridge-tier` seed is the primary lane** (AD-172): for every used bridge it merges the
+services' hosts into `sandbox.network.allowedDomains`, resolved state dirs into
+`sandbox.filesystem.allowWrite` (home-relative under the home, absolute outside it, env overrides
+honoured), and excluded commands after the used roles' `<wrapper> *` exclusions (`codex-exec *`
+for the execution wrapper). The advisor's `bridge-tier` item counts and names each missing entry.
+A settings-native harness that drops the exclusion still admits the hosts; that pre-allow widens
+egress for **every** sandboxed command, which the tier's consent states. A harness-managed sandbox
+that ignores the settings keys keeps its own controls — scoped rules, a session allowance and
+consent at the point of action — and the kit writes no shape for it. The hosts record what was
+observed: a blocked host names itself at run time, and its service fragment is the place to extend.
 
 ## Mode catalog (BRIDGE-MODES-CATALOG)
 
@@ -203,8 +184,8 @@ with no control characters — the surface is a terminal-width list and a pasted
 ## Path-field rules (Windows-safe, traversal-safe)
 
 These rules govern the **repo/project-relative path fields** enumerated below (`source`,
-`template`, `detect.*`) — NOT `writableDirs`, whose `default` entries are deliberately
-`~/`-anchored or absolute **host** paths under their own section's rules above.
+`template`, `detect.*`). Service fragments' state-dir defaults are deliberately `~/`-anchored or
+absolute **host** paths under the fragment rules in *Services* above.
 
 - **No absolute paths**, **no `..` traversal** in the fields below; **no unresolved placeholders**
   (`{{…}}` / `${…}`) in any field.

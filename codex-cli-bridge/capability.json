@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "codex-cli-bridge",
   "kind": "execution-backend",
-  "version": "5.0.1",
+  "version": "5.1.0",
   "posture": { "model": "gpt-6.1-sol", "effort": "high", "tier": null },
   "provides": ["execute", "review"],
   "roles": {
@@ -228,8 +228,7 @@
       "effect": "codex-review code: above this assembled-payload size (bytes) the diff rides via a git-dir temp file instead of inline — never truncated."
     }
   ],
-  "networkHosts": ["chatgpt.com", "*.chatgpt.com", "api.typesafe.ai", "docs.typesafe.ai"],
-  "writableDirs": [{ "env": "CODEX_HOME", "default": "~/.codex" }],
+  "services": ["codex", "jev"],
   "detect": {
     "installed": {
       "env": "CODEX_CLI_BRIDGE_DIR",

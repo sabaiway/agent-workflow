@@ -4,6 +4,12 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 6.0.2 — the host-diff line names the hosts of a bridge's services (AD-224)
+
+`references/orchestration.md`: the pre-dispatch host-diff diffs the hosts of the services a bridge manifest names
+against the live sandbox allow-list; kit 23.0.0 moves those hosts from the manifest into its service fragments.
+PATCH: text only.
+
 ## 6.0.1 — the texts name the spec reader at its path in the kit folder (AD-220)
 
 `README.md`, `SKILL.md` and `references/specs.md` name memory's deployed spec reader at its new path,

@@ -94,7 +94,7 @@ Notes:
   capability probe, not a version floor: agy --help must advertise --output-format and
   --disable-slash-commands, node must be >= 22, and bin/agy-envelope.mjs must be present — otherwise
   the review refuses before any run is spent and names the missing capability
-  pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff its declared networkHosts
+  pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff the hosts of the services its manifest names
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
   dispatching, never fired into a known prompt
   the review posture banner appends a banner-only source=model:<s> field — where the model came
@@ -389,7 +389,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="7.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="7.1.0"  # aw-version-anchor
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
 # newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then

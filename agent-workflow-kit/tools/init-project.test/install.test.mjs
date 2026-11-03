@@ -127,7 +127,7 @@ describe('spec:init-project/S17 install runs the project step after the engine f
     assert.ok(stepNote > engineNote, res.stdout);
     assert.equal(res.stdout.includes('This command only installs/updates the kit itself'), false);
     assert.ok(lineCount(join(KIT, 'bin', 'install.mjs')) <= 585);
-    assert.ok(lineCount(join(KIT, 'bin', 'install.test.mjs')) <= 739);
+    assert.ok(lineCount(join(KIT, 'bin', 'install.test.mjs')) <= 749);
   });
 
   it("The step's failure is init's", () => {

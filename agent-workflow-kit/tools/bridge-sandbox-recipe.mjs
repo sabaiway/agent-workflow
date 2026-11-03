@@ -1,4 +1,5 @@
-// bridge-sandbox-recipe.mjs — the one reader of the bundled bridges' declared sandbox surfaces and
+// bridge-sandbox-recipe.mjs — the one reader of the bundled bridges' sandbox surfaces (their roles and
+// the kit service fragments their manifests name, spec kit/services) and
 // the one derivation of the bridge tier (contract: bridges/velocity-profile, revision 4). The tier
 // writer, the advisor's delta, the danger check and the autonomy preview read the same
 // `bundledSandboxRecipe(usedBridges(...))`, so the four cannot drift.
@@ -13,6 +14,7 @@ import { ACTIVITIES, BACKEND_PRIORITY, REVIEW_CMD_ALIASES } from './carriers.mjs
 import { planRecipe, resolveActivityRecipe } from './recipes.mjs';
 import { isReadyMember } from './review-roster-resolve.mjs';
 import { isSeedablePathToken } from './repo-lex.mjs';
+import { loadServiceFragments, mergeServices } from './services/index.mjs';
 
 // The review wrappers, spelled bare as invoked. Only their `code` mode is auto-allowed: a bare
 // `Bash(<wrapper>:*)` prefix would also cover the plan/diff file-argument modes, whose targets can
@@ -80,6 +82,7 @@ export const bundledSandboxRecipe = (used, deps = {}) => {
   const readFile = deps.readFile ?? readFileSync;
   const readDir = deps.readdir ?? readdirSync;
   const bundleRoot = deps.bundleRoot ?? DEFAULT_BUNDLE_ROOT;
+  const fragments = loadServiceFragments({ servicesDir: deps.servicesDir });
   const allow = [];
   const excludedCommands = [];
   const hosts = [];
@@ -116,11 +119,11 @@ export const bundledSandboxRecipe = (used, deps = {}) => {
         });
       }
     }
-    if (Array.isArray(manifest.networkHosts)) for (const host of manifest.networkHosts) pushOnce(hosts, host);
-    if (Array.isArray(manifest.writableDirs)) {
-      for (const entry of manifest.writableDirs) {
-        if (!dirEntries.some((taken) => JSON.stringify(taken) === JSON.stringify(entry))) dirEntries.push(entry);
-      }
+    const services = mergeServices(manifest.services ?? [], fragments);
+    for (const command of services.excludedCommands) pushOnce(excludedCommands, command);
+    for (const host of services.hosts) pushOnce(hosts, host);
+    for (const entry of services.dirEntries) {
+      if (!dirEntries.some((taken) => JSON.stringify(taken) === JSON.stringify(entry))) dirEntries.push(entry);
     }
   }
   return { allow, excludedCommands, hosts, dirEntries, skips };

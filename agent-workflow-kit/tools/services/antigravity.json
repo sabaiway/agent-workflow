@@ -1,0 +1,17 @@
+{
+  "hosts": [
+    "*.googleapis.com",
+    "accounts.google.com",
+    "antigravity-unleash.goog",
+    "lh3.googleusercontent.com"
+  ],
+  "writableDirs": [
+    {
+      "env": null,
+      "default": "~/.gemini/antigravity-cli"
+    }
+  ],
+  "excludedCommands": [],
+  "passedVariables": [],
+  "runReachesHosts": false
+}

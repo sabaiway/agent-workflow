@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, cpSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, cpSync, writeFileSync, rmSync, mkdirSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,18 +52,6 @@ describe('validateManifest — result classes', () => {
     assert.deepEqual(r.errors, []);
   });
 
-  it('a well-formed `networkHosts` list (wildcard family + exact hosts) → valid', () => {
-    const r = validateManifest(at('network-hosts-valid'));
-    assert.equal(r.result, VALID, r.errors.join('; '));
-    assert.deepEqual(r.errors, []);
-  });
-
-  it('a well-formed `writableDirs` list (env-overridable tilde default + env-less absolute) → valid', () => {
-    const r = validateManifest(at('writable-dirs-valid'));
-    assert.equal(r.result, VALID, r.errors.join('; '));
-    assert.deepEqual(r.errors, []);
-  });
-
   // BRIDGE-MODES-CATALOG (D1/D2/D4/D6): `modeCatalog` is the additive-optional, typed, top-level
   // user-facing mode catalog. This fixture IS the binding shape — every entry kind, plural
   // composition-by-reference, the contract-free literal descriptor, typed operands, structured
@@ -111,22 +99,6 @@ describe('validateManifest — negative fixtures MUST fail (strict)', () => {
     // one-word reason would ship an unexplained refusal into the writer and every reader surface.
     ['settings-bad-retired', /`settings\[0\]`\.retired must be a string stating WHY the key is retired/],
     ['settings-bad-retired', /`settings\[1\]`\.retired must be a string stating WHY the key is retired/],
-    // `networkHosts` (AD-044 Plan 4): entries are pasted verbatim into hand-applied allowlist
-    // lines, so a malformed list fails --strict like `settings` — never a tolerated extra.
-    ['network-hosts-bad-entry', /`networkHosts\[0\]` must be a bare hostname or a \*\.family wildcard/],
-    ['network-hosts-duplicate', /duplicate networkHosts entry "\*\.chatgpt\.com"/],
-    ['network-hosts-empty', /`networkHosts` must be a non-empty array of host strings/],
-    // `writableDirs` (REC-UX-REWORK, D6): {env, default} entries the advisor RESOLVES and renders
-    // into the sandbox-lane recipe — malformed entries fail --strict like networkHosts.
-    ['writable-dirs-bad-entry', /`writableDirs\[0\]`\.default must be a `~\/`-anchored or absolute POSIX path/],
-    ['writable-dirs-bad-entry', /`writableDirs\[0\]`\.env must be null or an UPPER_SNAKE_CASE env-var name/],
-    ['writable-dirs-bad-path', /`writableDirs\[0\]`\.default must not carry glob characters/],
-    ['writable-dirs-bad-path', /`writableDirs\[1\]`\.default must not end with a trailing slash/],
-    ['writable-dirs-bad-path', /`writableDirs\[2\]`\.default must not contain "\.\." traversal/],
-    ['writable-dirs-bad-path', /`writableDirs\[3\]` must be an \{env, default\} object/],
-    ['writable-dirs-bad-path', /`writableDirs\[4\]`\.default must not carry control characters/],
-    ['writable-dirs-duplicate', /duplicate writableDirs default "~\/\.fixture"/],
-    ['writable-dirs-empty', /`writableDirs` must be a non-empty array of \{env, default\} entries/],
     // `modeCatalog` (BRIDGE-MODES-CATALOG, D1): the block is rendered as a user-facing discovery
     // surface, so a malformed entry FAILS --strict like `settings` — never a tolerated extra. One
     // red rule per line: this matrix IS the executable schema spec.
@@ -262,4 +234,82 @@ describe('validateManifest — path-field hardening', () => {
     const r = validateManifest(at('valid'));
     assert.ok(!r.errors.some((e) => /default/.test(e)));
   });
+});
+
+describe('spec:manifest-validate/S6 services replace retired host and dir keys', () => {
+  const makeFixture = (t, services = ['jev'], extra = {}) => {
+    const root = mkdtempSync(join(tmpdir(), 'manifest-services-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const dir = join(root, 'bridge');
+    cpSync(at('valid'), dir, { recursive: true });
+    writeFileSync(join(dir, 'capability.json'), JSON.stringify({ ...manifestOf('valid'), services, ...extra }));
+    const servicesDir = join(root, 'services');
+    mkdirSync(servicesDir);
+    const fragment = { hosts: ['jev.example'], writableDirs: [], excludedCommands: [],
+      passedVariables: ['TYPESAFE_API_KEY'], runReachesHosts: true };
+    writeFileSync(join(servicesDir, 'jev.json'), JSON.stringify(fragment));
+    return { dir, servicesDir, fragment };
+  };
+  const assertInvalid = (dir, servicesDir, name) => {
+    const results = [];
+    assert.doesNotThrow(() => results.push(validateManifest(dir, { servicesDir })));
+    assert.equal(results[0].result, INVALID, `${name}: ${results[0].errors.join('; ')}`);
+    assert.ok(results[0].errors.some((error) => error.includes(name)), results[0].errors.join('; '));
+  };
+  for (const name of ['network-hosts-valid', 'network-hosts-bad-entry', 'network-hosts-duplicate',
+    'network-hosts-empty', 'writable-dirs-valid', 'writable-dirs-bad-entry', 'writable-dirs-bad-path',
+    'writable-dirs-duplicate', 'writable-dirs-empty']) {
+    it(`${name} without services stays valid with the services directory absent`, (t) => {
+      const { servicesDir } = makeFixture(t);
+      rmSync(servicesDir, { recursive: true });
+      assert.equal(Object.hasOwn(manifestOf(name), 'services'), false);
+      const result = validateManifest(at(name), { servicesDir });
+      assert.equal(result.result, VALID, result.errors.join('; '));
+      assert.deepEqual(result.errors, []);
+    });
+  }
+  for (const key of ['networkHosts', 'writableDirs']) {
+    const list = key === 'networkHosts' ? ['bridge.example'] : [{ env: null, default: '~/.bridge' }];
+    for (const value of [list, [], null]) {
+      it(`services with ${key}=${JSON.stringify(value)} is invalid naming services`, (t) => {
+        const { dir, servicesDir } = makeFixture(t, ['jev'], { [key]: value });
+        assertInvalid(dir, servicesDir, 'services');
+      });
+    }
+  }
+  for (const services of [[], 'codex', [1], ['jev', 'jev'], ['nope']]) {
+    it(`services=${JSON.stringify(services)} is invalid naming services`, (t) => {
+      const { dir, servicesDir } = makeFixture(t, services);
+      assertInvalid(dir, servicesDir, 'services');
+    });
+  }
+  for (const refused of ['unparsable', 'sixth key']) {
+    it(`${refused} fragment is invalid naming jev.json without throwing`, (t) => {
+      const { dir, servicesDir, fragment } = makeFixture(t);
+      writeFileSync(join(servicesDir, 'jev.json'), refused === 'unparsable' ? '{' : JSON.stringify({ ...fragment, extra: true }));
+      assertInvalid(dir, servicesDir, 'jev.json');
+    });
+  }
+  it('an absent services directory is invalid naming its path without throwing', (t) => {
+    const { dir, servicesDir } = makeFixture(t);
+    rmSync(servicesDir, { recursive: true });
+    assertInvalid(dir, servicesDir, servicesDir);
+  });
+  it('an unreadable services directory is invalid naming its path without throwing', (t) => {
+    if (process.getuid?.() === 0) return t.skip('root can read a mode 0o000 directory');
+    const { dir, servicesDir } = makeFixture(t);
+    chmodSync(servicesDir, 0o000);
+    try { assertInvalid(dir, servicesDir, servicesDir); } finally { chmodSync(servicesDir, 0o755); }
+  });
+  for (const [bridge, services] of [['codex-cli-bridge', ['codex', 'jev']], ['antigravity-cli-bridge', ['antigravity', 'jev']]]) {
+    it(`${bridge} is valid with ordered services and neither retired key`, () => {
+      const dir = fileURLToPath(new URL(`../../../${bridge}/`, import.meta.url));
+      const manifest = JSON.parse(readFileSync(join(dir, 'capability.json'), 'utf8'));
+      const result = validateManifest(dir);
+      assert.equal(result.result, VALID, result.errors.join('; '));
+      assert.deepEqual(result.errors, []);
+      assert.deepEqual(manifest.services, services);
+      for (const key of ['networkHosts', 'writableDirs']) assert.equal(Object.hasOwn(manifest, key), false, key);
+    });
+  }
 });

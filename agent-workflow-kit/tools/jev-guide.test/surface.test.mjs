@@ -251,7 +251,8 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
   // Jev in every bridge wrapper (spec jev-every-run): the mirrored bridge tests, the kit's role-contract copy, and the
   // lines of the bridge mirrors that carry a host, the profile or the key.
   const bridgeLine = ({ file, text }) => /^kit:bridges\/[^/]+\/bin\/[^/]+\.test\.mjs$/.test(file) || file === 'kit:tools/detect-backends.mjs'
-    || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text));
+    || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text))
+    || (/^kit:bridges\/[^/]+\/capability\.json$/.test(file) && /^\s*"services": \[[^\]]*"jev"[^\]]*\],?$/.test(text));
 
   it('says jev or typesafe only on admitted surfaces, advisor-writers table rows and write-lanes or apply-danger-check lines naming a jev variant or leaf, with neither word in init-project', () => {
     const tableLines = fileLines('kit:references/advisor-writers.md').filter(({ text }) => WORDS.test(text));
@@ -283,10 +284,15 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     allowed.push(...fileLines('kit:tools/write-lanes.mjs').filter(({ text }) => WORDS.test(text)));
     allowed.push(...fileLines('kit:tools/apply-danger-check.mjs').filter(({ text }) => WORDS.test(text)));
     allowed.push(...tableLines);
+    const fragmentLines = fileLines('kit:tools/services/jev.json').filter(({ text }) => WORDS.test(text));
+    assert.ok(fragmentLines.some(({ text }) => text.includes('api.typesafe.ai')), 'the jev service fragment carries the host');
+    allowed.push(...fragmentLines);
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
+      const facts = `kit:bridges/${bridge}/service-facts.txt`;
+      assert.ok(hitsOf(WORDS).some((line) => line.file === facts && line.text.includes('api.typesafe.ai') && bridgeLine(line)), `${facts}: the admitted host line`);
       const manifest = `kit:bridges/${bridge}/capability.json`;
-      assert.ok(hitsOf(WORDS).some((line) => line.file === manifest && line.text.includes('api.typesafe.ai') && bridgeLine(line)), `${manifest}: the admitted host line`);
+      assert.ok(hitsOf(WORDS).some((line) => line.file === manifest && line.text.includes('"services"') && bridgeLine(line)), `${manifest}: the admitted services line`);
     }
     assert.deepEqual(hitsOf(WORDS).filter((line) => !allowed.includes(line) && !guideFile(line) && !bridgeLine(line)).map(where), []);
   });

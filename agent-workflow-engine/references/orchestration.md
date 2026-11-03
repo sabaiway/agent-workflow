@@ -198,7 +198,7 @@ are **COMMAND-SHAPE dependent** — first try the sandbox-safe shape (cache unde
 offline/notifier off) before moving anything out. Two driving rules: **move ONLY the failing
 command out of the sandbox, never its class**, and **BATCH consecutive unsandboxed calls** — a
 blanket unsandbox after one failure is the canonical over-reaction. **Pre-dispatch host-diff:**
-before the FIRST dispatch of each bridge, diff its manifest `networkHosts` against the live
+before the FIRST dispatch of each bridge, diff the hosts of the services its manifest names against the live
 sandbox's allowed hosts — a missing host is surfaced to the maintainer BEFORE dispatching, never
 fired into a known prompt. **Nested-sandbox honesty:** a backend CLI that ships its OWN OS sandbox
 cannot run nested inside a harness sandbox — route it outside (an excluded command / a per-run

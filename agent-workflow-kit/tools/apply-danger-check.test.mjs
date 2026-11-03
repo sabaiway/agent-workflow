@@ -24,7 +24,7 @@ import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 import { THEMES, themePaths } from './project-rules/index.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
-
+const services = await import('./services/index.mjs').catch(() => ({}));
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const worktrees = await import('./worktrees.mjs');
 const need = (name) => {
@@ -62,6 +62,8 @@ const put = (path, bytes) => {
   fs.writeFileSync(path, bytes);
 };
 const json = (path) => fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, 'utf8')) : null;
+const getBridgeHosts = (bridge) => services.mergeServices(
+  json(join(TOOLS, `../bridges/${bridge}/capability.json`)).services, services.loadServiceFragments()).hosts;
 const tree = (root) => {
   const entries = {};
   const walk = (path) => {
@@ -409,8 +411,7 @@ describe('spec:init-project/S22 real writers, declared scopes and unchanged tree
   });
   const plants = [
     ['a host of a bridge no slot uses', 'bridge-tier', 'sandbox.network.allowedDomains', () => {
-      const agy = json(join(TOOLS, '../bridges/antigravity-cli-bridge/capability.json')).networkHosts;
-      const codex = json(join(TOOLS, '../bridges/codex-cli-bridge/capability.json')).networkHosts;
+      const [agy, codex] = ['antigravity-cli-bridge', 'codex-cli-bridge'].map(getBridgeHosts);
       return agy.find((host) => !codex.includes(host));
     }],
     ['non-wrapper exclusion', 'bridge-tier', 'sandbox.excludedCommands', () => 'codex-exec'],
@@ -1322,11 +1323,9 @@ describe('spec:init-project/S26 — the velocity variants admit exactly the appl
     assert.ok(result.lines.includes(`  permissions.ask: added ${rule} — nothing widened`));
   });
 });
-
 describe('spec:velocity-profile/S8 used bridge scope, additions only and state-dir refusals', () => {
-  const codexHosts = json(join(TOOLS, '../bridges/codex-cli-bridge/capability.json')).networkHosts;
-  const agyHost = json(join(TOOLS, '../bridges/antigravity-cli-bridge/capability.json')).networkHosts
-    .find((host) => !codexHosts.includes(host));
+  const codexHosts = () => getBridgeHosts('codex-cli-bridge');
+  const agyHost = () => getBridgeHosts('antigravity-cli-bridge').find((host) => !codexHosts().includes(host));
   const grounding = `Bash(node "${join(TOOLS, 'grounding.mjs')}":*)`;
   const setReviews = (f, review = 'reviewed') => put(join(f.root, 'docs/ai/orchestration.json'),
     JSON.stringify(Object.fromEntries(Object.entries(ACTIVITIES)
@@ -1349,11 +1348,11 @@ describe('spec:velocity-profile/S8 used bridge scope, additions only and state-d
       assertPreview('bridge-tier', f, result, expectedPlan('bridge-tier', f));
       for (const [key, value, kind] of [
         ['sandbox.excludedCommands', 'codex-review *', CLASSES[2]],
-        ...codexHosts.map((host) => ['sandbox.network.allowedDomains', host, CLASSES[0]]),
+        ...codexHosts().map((host) => ['sandbox.network.allowedDomains', host, CLASSES[0]]),
         ['sandbox.filesystem.allowWrite', dir, CLASSES[1]],
       ]) assert.ok(result.lines.includes(lineOf({ key, value, change: 'added', class: kind })), `${key}: ${value} — ${kind}`);
       assert.deepEqual(judge(f, 'sandbox.filesystem.allowWrite', dir).refused, []);
-      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts[0]).refused, []);
+      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts()[0]).refused, []);
       const cli = capture(f, () => { throw new Error('preview spawned'); });
       assert.equal(danger.main(argvFor('bridge-tier', f), cli.io), 0);
       assert.deepEqual(cli.lines, result.lines);
@@ -1369,18 +1368,19 @@ describe('spec:velocity-profile/S8 used bridge scope, additions only and state-d
     ['installed grounding with agy unused', 'permissions.allow', grounding],
     ['removed codex allow', 'permissions.allow', 'Bash(codex-review code:*)', 'removed'],
     ['removed codex exclusion', 'sandbox.excludedCommands', 'codex-review *', 'removed'],
-    ['removed codex host', 'sandbox.network.allowedDomains', codexHosts[0], 'removed'],
+    ['removed codex host', 'sandbox.network.allowedDomains', () => codexHosts()[0], 'removed'],
     ['removed codex dir', 'sandbox.filesystem.allowWrite', '~/.codex', 'removed'],
   ];
-  for (const [title, key, value, change, review] of plants) it(`refuses ${title} naming ${key}; admits used codex dir`, (t) => {
+  for (const [title, key, valueOf, change, review] of plants) it(`refuses ${title} naming ${key}; admits used codex dir`, (t) => {
     const f = fixture(t);
     setReviews(f, review);
+    const value = typeof valueOf === 'function' ? valueOf() : valueOf;
     unchanged(f, () => {
       assert.notEqual(value, undefined, 'fixture has a bridge-specific host');
       const result = judge(f, key, value, change);
       assert.deepEqual(result.refused, [{ path: SETTINGS, key, reason: 'beyond the declared scope of bridge-tier' }], title);
       if (review === 'council') assert.deepEqual(judge(f, 'permissions.allow', grounding).refused, []);
-      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts[0]).refused, []);
+      assert.deepEqual(judge(f, 'sandbox.network.allowedDomains', codexHosts()[0]).refused, []);
       assert.deepEqual(judge(f, 'sandbox.filesystem.allowWrite', '~/.codex').refused, [], 'used codex dir admitted');
     });
   });

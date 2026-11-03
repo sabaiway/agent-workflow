@@ -1,5 +1,5 @@
-// bridge-state-dirs.mjs — the one leaf that turns the bundled bridges' declared writable state dirs
-// (`writableDirs`) into `sandbox.filesystem.allowWrite` entries (contract: bridges/velocity-profile).
+// bridge-state-dirs.mjs — the one leaf that turns kit service fragments' state dir entries, through
+// mergeServices (spec kit/services), into `sandbox.filesystem.allowWrite` entries (contract: bridges/velocity-profile).
 // The bridge tier writes them, the advisor counts them, the danger check admits them, the autonomy
 // preview names them: one resolution, one home-relative spelling, one merge, so the four cannot drift.
 //

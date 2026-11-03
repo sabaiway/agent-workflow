@@ -4,6 +4,30 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.0.0 — the kit reads each bridge's hosts and state folders from a separate file for each service (AD-224)
+
+**The network hosts and state folders the kit sets up for a bridge now come from a separate kit file for each service
+the bridge uses: codex, antigravity and Jev.**
+`tools/services/` holds `codex.json`, `antigravity.json` and `jev.json`; a bridge manifest names the services it uses
+(`"services": ["codex", "jev"]`) instead of listing hosts and folders itself. The bridge tier, the danger check, the
+autonomy preview and the Recommendations advisor read the hosts and folders from those files, so for the kit a host
+change is one edit in one place; the bridge wrappers still have their own copies, held to the files by a drift
+check, until a later release. What `/agent-workflow-kit velocity-profile --bridge-tier` writes into your project's
+sandbox settings is byte for byte what it wrote before. Your next `/agent-workflow-kit upgrade` (or `init`)
+refreshes the bridges you placed, with no question.
+
+- **One reader, one door.** `tools/services/index.mjs` loads the files, merges the ones a manifest names in its order,
+  and renders each bridge folder's generated `service-facts.txt`. If one of these files cannot be read or is
+  malformed, the kit stops and says which file is broken and, for a wrong field, which field; it never works from
+  part of the set.
+- **The validator.** A manifest naming `services` is judged against the fragments the kit ships; `networkHosts` or
+  `writableDirs` beside `services` is invalid. A manifest with no `services` key, the shape bridges shipped before this
+  release, stays valid, so a placed older bridge keeps working until the upgrade refreshes it.
+- **Docs.** The manifest schema page gains a Services section; the README, `velocity.md`, `recommendations.md` and the
+  agy host-diff note name the hosts of the services a manifest names.
+- **MAJOR:** `tools/manifest/validate.mjs` no longer exports `NETWORK_HOST_RE` and refuses the two retired fields
+  beside `services`.
+
 ## 22.2.0 — a question is answered, not acted on: one new bullet in your communication rules (AD-223)
 
 **Your communication rules now say that a message which only asks changes nothing.** A message asking for information
@@ -28,7 +52,7 @@ files as they are.
 in context from the start.** The kit block of `AGENTS.md` gains one `@` import line per session-start file
 (`docs/ai/handover.md`, `docs/ai/agent_rules.md` and each `docs/ai/rules/effective/<theme>.md` the rules table lists)
 and, under them, a fallback sentence telling an agent to read those files from disk when their content is not in its
-context. Your next `/agent-workflow-kit upgrade` (or `init`) writes them with no question; a second run writes nothing.
+context. Your next `/agent-workflow-kit upgrade` writes them with no question; a second run writes nothing.
 
 - **Where they load.** A start at the project root loads every listed file with no dialog, whatever an earlier dialog
   answered, and again after `/clear` and after compaction, read fresh from disk; a subagent that loads project

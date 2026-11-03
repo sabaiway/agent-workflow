@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { JEV_ENDPOINT } from '../tools/jev-facts.mjs';
+import { JEV_ENDPOINT, KEY_VARIABLE } from '../tools/jev-facts.mjs';
+import { stripGitLocationEnv } from '../tools/git-env.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -16,6 +17,8 @@ const BRIDGES = ['codex-cli-bridge', 'antigravity-cli-bridge'];
 const read = (rel) => readFileSync(join(REPO, rel), 'utf8');
 const manifestOf = (bridge) => JSON.parse(read(`${bridge}/capability.json`));
 const HOSTS = ['api.typesafe.ai', 'docs.typesafe.ai'];
+const childEnv = () => Object.fromEntries(Object.entries(stripGitLocationEnv(process.env))
+  .filter(([key]) => key !== 'NODE_TEST_CONTEXT' && key !== 'NODE_V8_COVERAGE'));
 
 const made = [];
 after(() => made.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -35,8 +38,10 @@ const fixtureTree = (extra) => {
 };
 // The wrapper check itself, run against a tree: the shared-block suite with its discovery pointed at the fixture.
 const checkTree = (root) => {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT' && key !== 'NODE_V8_COVERAGE'));
+  const env = childEnv();
   const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', join(HERE, 'settings-reader-parity.test.mjs')], { encoding: 'utf8', env: { ...env, AW_BRIDGES_ROOT: root } });
+  assert.ifError(r.error);
+  assert.ok(r.status === 0 || r.status === 1, `wrapper check exited ${r.status}, signal ${r.signal}`);
   return { status: r.status, output: `${r.stdout}${r.stderr}` };
 };
 const roles = (entries) => JSON.stringify({ roles: Object.fromEntries(entries) });
@@ -61,31 +66,36 @@ describe('the wrappers are derived from the bridge manifests — spec:jev-every-
 
 // Every "<host>"="allow" pair a wrapper's profile literal carries, a backslash before a quote allowed.
 const profileHostsOf = (text) => [...text.matchAll(/\\?"([a-z0-9.-]+)\\?"\s*=\s*\\?"allow\\?"/g)].map(([, host]) => host);
-const hostCopies = () => ({
+const hostCopies = (fragment) => ({
   'codex-exec.sh': profileHostsOf(read('codex-cli-bridge/bin/codex-exec.sh')),
   'codex-review.sh': profileHostsOf(read('codex-cli-bridge/bin/codex-review.sh')),
-  ...Object.fromEntries(BRIDGES.map((bridge) => [`${bridge} networkHosts`, manifestOf(bridge).networkHosts.filter((host) => host.endsWith('typesafe.ai'))])),
+  'jev fragment': fragment.hosts,
 });
 const setOf = (hosts) => [...new Set(hosts)].sort().join(',');
-// The copies whose host set differs from the exec wrapper's, and JEV_ENDPOINT when its host is outside that set.
-const drift = (copies, endpointHost) => {
+const drift = (copies, endpointHost, passedVariables) => {
   const want = setOf(copies['codex-exec.sh']);
   const off = Object.entries(copies).filter(([, hosts]) => setOf(hosts) !== want).map(([name]) => name);
-  return want.split(',').includes(endpointHost) ? off : [...off, 'JEV_ENDPOINT'];
+  return [...off, ...(want.split(',').includes(endpointHost) ? [] : ['JEV_ENDPOINT']),
+    ...(passedVariables.includes(KEY_VARIABLE) ? [] : ['KEY_VARIABLE'])];
 };
 
 describe('one set of hosts — spec:jev-every-run/S19', () => {
   const endpointHost = new URL(JEV_ENDPOINT).host;
-  it('both manifests declare the two hosts, the copies agree, and a drift in any one copy fails the check', () => {
-    for (const bridge of BRIDGES) for (const host of HOSTS) assert.ok(manifestOf(bridge).networkHosts.includes(host), `${bridge} declares ${host}`);
-    const copies = hostCopies();
+  it('both manifests name jev, the profile and fragment hosts agree, and every host or passed-key drift fails the check', async () => {
+    for (const bridge of BRIDGES) assert.ok(manifestOf(bridge).services?.includes('jev'), `${bridge} services include jev`);
+    const { loadServiceFragments } = await import('../tools/services/index.mjs');
+    const fragment = loadServiceFragments().jev;
+    const copies = hostCopies(fragment);
     assert.equal(setOf(copies['codex-exec.sh']), HOSTS.join(','));
-    assert.deepEqual(drift(copies, endpointHost), []);
+    assert.ok(fragment.passedVariables.includes(KEY_VARIABLE));
+    assert.deepEqual(drift(copies, endpointHost, fragment.passedVariables), []);
     for (const name of Object.keys(copies)) {
       const moved = { ...copies, [name]: copies[name].map((host) => host.replace('docs.', 'doc.')) };
-      assert.notDeepEqual(drift(moved, endpointHost), [], `a drift in ${name} is caught`);
+      assert.notDeepEqual(drift(moved, endpointHost, fragment.passedVariables), [], `a drift in ${name} is caught`);
     }
-    assert.deepEqual(drift(copies, 'api2.typesafe.ai'), ['JEV_ENDPOINT']);
+    assert.deepEqual(drift(copies, 'api2.typesafe.ai', fragment.passedVariables), ['JEV_ENDPOINT']);
+    const withoutKey = { ...fragment, passedVariables: fragment.passedVariables.filter((name) => name !== KEY_VARIABLE) };
+    assert.deepEqual(drift(hostCopies(withoutKey), endpointHost, withoutKey.passedVariables), ['KEY_VARIABLE']);
   });
 });
 
@@ -129,7 +139,10 @@ const commentBlocks = (lines) => lines.reduce((blocks, line, index) => {
 const wrapperText = (rel) => {
   const lines = read(rel).split('\n');
   const header = lines.slice(1, lines.findIndex((line, index) => index > 0 && !line.startsWith('#')));
-  const help = spawnSync('bash', [join(REPO, rel), '--help'], { encoding: 'utf8' }).stdout;
+  const child = spawnSync('bash', [join(REPO, rel), '--help'], { encoding: 'utf8', env: childEnv() });
+  assert.ifError(child.error);
+  assert.equal(child.status, 0, child.stderr);
+  const help = child.stdout;
   const fence = commentBlocks(lines).filter((block) => block.some((line) => /fence/i.test(line))).flat();
   return [...header, help, ...lines.filter((line) => !/^\s*#/.test(line)), ...fence].join('\n');
 };
