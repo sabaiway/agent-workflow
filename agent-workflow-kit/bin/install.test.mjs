@@ -523,7 +523,7 @@ describe('kit installer — memory cascade (subprocess, stubbed npx, no network)
         ...process.env,
         PATH: binDir, // ONLY the stub npx — no real npx, no network
         NPX_LOG: join(dir, 'npx.log'),
-        HOME: join(dir, 'home'),
+        HOME: join(dir, 'home'), XDG_CONFIG_HOME: join(dir, 'home'),
         AGENT_WORKFLOW_MEMORY_DIR: join(dir, 'mem'), // sanitized: the degraded warning never reads real home
         AGENT_WORKFLOW_ENGINE_DIR: join(dir, 'eng'),
         AW_INSTALL_RETRY_DELAY_MS: '0', // the retry POLICY still runs; only the transient-blip wait is zeroed
@@ -629,7 +629,7 @@ describe('kit installer — placed-bridge refresh (subprocess, refresh-only, loc
       encoding: 'utf8',
       env: {
         ...process.env,
-        HOME: join(dir, 'home'),
+        HOME: join(dir, 'home'), XDG_CONFIG_HOME: join(dir, 'home'),
         CODEX_CLI_BRIDGE_DIR: join(dir, 'codex-skill'),
         ANTIGRAVITY_CLI_BRIDGE_DIR: join(dir, 'agy-skill'),
         ...env,

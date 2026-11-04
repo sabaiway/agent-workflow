@@ -246,7 +246,7 @@ describe('spec:manifest-validate/S6 services replace retired host and dir keys',
     const servicesDir = join(root, 'services');
     mkdirSync(servicesDir);
     const fragment = { hosts: ['jev.example'], writableDirs: [], excludedCommands: [],
-      passedVariables: ['TYPESAFE_API_KEY'], runReachesHosts: true };
+      passedVariables: ['TYPESAFE_API_KEY'], billingVariables: [], runReachesHosts: true };
     writeFileSync(join(servicesDir, 'jev.json'), JSON.stringify(fragment));
     return { dir, servicesDir, fragment };
   };

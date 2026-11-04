@@ -58,7 +58,7 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
    current* / *skipped — not placed* / `skipped-readonly` / *could not refresh* + its recovery). It
    is **refresh-only**: it refreshes a bridge **`setup` already placed** from this kit's bundled copies
    and re-links its wrappers; an **absent** bridge is a stated skip, **never a first placement**
-   (placement stays the opt-in `${CLAUDE_SKILL_DIR}/references/modes/setup.md` — AD-009/AD-011 honesty intact), a placed bridge
+   (placement stays the opt-in `${CLAUDE_SKILL_DIR}/references/modes/setup.md`), a placed bridge
    **newer** than the bundle is a stated skip naming the kit update (**never a downgrade**), and
    `skipped-readonly` is an equal-version re-sync a **read-only** skills dir blocked this session (a
    stated skip, exit 0 — not a failure). That line never guesses at the tree: it carries one **proven**
@@ -69,8 +69,8 @@ Requires: ${CLAUDE_SKILL_DIR}/references/shared/report-footer.md · ${CLAUDE_SKI
    write, an incompatible node kind, a foreign wrapper target; those are named apart as
    resolve-by-hand-then-rerun), or `unverifiable` (every uncomparable item **named**, the remaining
    need for repair unknown). The line carries the exact cause per item — relay it as worded, never
-   soften `unverifiable` into "already fine", never relay a resolve-by-hand item as rerun-fixable.
-   Runs on **every** upgrade
+   soften `unverifiable` into "already fine", never relay a resolve-by-hand item as rerun-fixable;
+   on `drifted`/`unverifiable` rerun it outside the sandbox. Runs on **every** upgrade
    (equal-head too), no lineage-head bump; a *could not refresh* line is non-fatal — relay it plainly
    with its recovery.
 

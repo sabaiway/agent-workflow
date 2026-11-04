@@ -12,7 +12,6 @@ import {
   syncBridgeMirror,
   runCli,
 } from './sync-mirrors.mjs';
-
 const tempDirs = [];
 const makeRoot = () => {
   const dir = mkdtempSync(join(tmpdir(), 'sync-mirrors-'));
@@ -22,7 +21,6 @@ const makeRoot = () => {
 afterEach(() => {
   while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true });
 });
-
 const SERVICES_REL = 'agent-workflow-kit/tools/services';
 const FACTS_FILE = 'service-facts.txt';
 const seedFacts = (id) => [
@@ -38,7 +36,7 @@ const seedFamily = (root) => {
     const writableDirs = id === 'jev' ? [] : [{ env: id === 'codex' ? 'CODEX_HOME' : null,
       default: id === 'codex' ? '~/.codex' : '~/.gemini/antigravity-cli' }];
     writeFileSync(join(servicesDir, `${id}.json`), JSON.stringify({ hosts: [`${id}.example`], writableDirs,
-      excludedCommands: [], passedVariables: id === 'jev' ? ['TYPESAFE_API_KEY'] : [], runReachesHosts: id === 'jev' }));
+      excludedCommands: [], passedVariables: id === 'jev' ? ['TYPESAFE_API_KEY'] : [], billingVariables: [], runReachesHosts: id === 'jev' }));
   }
   for (const bridge of BRIDGE_DIRS) {
     const id = bridge.replace('-cli-bridge', '');
@@ -69,7 +67,6 @@ const seedFamily = (root) => {
     chmodSync(join(root, rel), 0o644);
   }
 };
-
 const run = (argv, root) => {
   const out = [];
   const err = [];
@@ -85,7 +82,6 @@ describe('in-sync tree', () => {
     assert.match(text, /all mirrors in sync — nothing to do/);
     assert.doesNotMatch(text, /would (copy|delete)/);
   });
-
   it('a real run on an in-sync tree is a stated no-op', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -106,7 +102,6 @@ describe('canon drift → sync restores byte-identity (all three families)', () 
     assert.match(text, new RegExp(`bridge:${BRIDGE_DIRS[0]}: copied .*SKILL\\.md`));
     assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0], 'SKILL.md'), 'utf8'), '# edited canon\n');
   });
-
   it('reference-scripts canon edit is copied to the kit fallback', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -115,7 +110,6 @@ describe('canon drift → sync restores byte-identity (all three families)', () 
     assert.equal(code, 0);
     assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'references', 'scripts', 'tool.mjs'), 'utf8'), 'export const tool = 2;\n');
   });
-
   it('a manifest template edit is copied; --check reports it with exit 1 first', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -139,7 +133,6 @@ describe('set-equality (full-tree families)', () => {
     assert.match(text, /deleted .*leftover\.md/);
     assert.ok(!existsSync(stray), 'the extraneous mirror file is gone');
   });
-
   it('node_modules/.git on the canon side never enter the mirror (walk exclusions)', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -165,7 +158,6 @@ describe('template exclusions (D1)', () => {
       assert.equal(readFileSync(join(kitSide, rel), 'utf8'), before[i], `${rel} stays divergent (deliberate)`);
     });
   });
-
   it('a template file OUTSIDE the manifest is untouched even when divergent', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -175,7 +167,6 @@ describe('template exclusions (D1)', () => {
     assert.equal(code, 0);
     assert.equal(readFileSync(kitExtra, 'utf8'), before);
   });
-
   it('a manifest template missing on the canon side fails LOUD naming the file', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -226,7 +217,6 @@ describe('mode preservation (D2)', () => {
     assert.ok(existsSync(mirrored));
     assert.notEqual(statSync(mirrored).mode & 0o111, 0, 'the executable bit survives the copy');
   });
-
   it('an exec-bit drift alone (same bytes) is detected and repaired', () => {
     const root = makeRoot();
     seedFamily(root);
@@ -250,7 +240,6 @@ describe('syncBridgeMirror — the root-parameterized --bump hook (D5)', () => {
     assert.equal(readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[0], 'capability.json'), 'utf8'), '{"version":"9.9.9"}\n', 'the named bridge mirror is byte-identical again');
     assert.notEqual(readFileSync(join(root, 'agent-workflow-kit', 'bridges', BRIDGE_DIRS[1], 'capability.json'), 'utf8'), '{"version":"8.8.8"}\n', 'the OTHER bridge mirror is untouched');
   });
-
   it('rejects a non-bridge dir loudly', () => {
     assert.throws(() => syncBridgeMirror(makeRoot(), 'agent-workflow-kit'), /not a bridge dir/);
   });

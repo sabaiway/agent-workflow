@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-04 — AD-226: a service the kit does not ship goes into the user's own strict services list (kit 23.2.0 MINOR; memory, engine and both bridges unchanged)
+
+**The user's own `services.json` beside the bridge settings file (`$XDG_CONFIG_HOME/agent-workflow`) adds services to
+every placed bridge and to the bridge tier**; the kit only reads it. `loadUserServices` in
+`agent-workflow-kit/tools/services/index.mjs` admits it by one conjunction (ENOENT is the empty list; every other
+state throws naming the file), refuses a kit id, and both loaders refuse a passed variable equal to a fragment's new
+`billingVariables`. Setup's place and every refresh render each placed `service-facts.txt` from the manifest's
+services then the user's before any write; the read-only parity judges it against that render; the bridge tier, the
+danger check and the autonomy preview seed the user's entries after each used bridge's own. No user service ever
+enters the mirrors, the tarball or the canon facts files, and the bridge mirrors and the canon facts files are byte
+for byte the previous release's. With no user service every output is the previous release's but two lines: an
+equal-version refresh no longer reports the placed `service-facts.txt` as a locally changed file it overwrote, and
+the read-only drift sentence says "still differing from what the refresh writes" for every item it names.
+
 ## 2026-11-03 — AD-225: every bridge wrapper takes its run hosts and passed variables from its own folder's facts file (codex bridge 6.0.0 and antigravity bridge 8.0.0 MAJOR; kit 23.1.0 MINOR; engine and memory unchanged)
 
 **The four bridge wrappers read the `service-facts.txt` of their bridge folder (beside `bin/`) through one shared

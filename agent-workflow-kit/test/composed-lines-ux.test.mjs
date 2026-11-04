@@ -1,11 +1,3 @@
-// composed-lines-ux.test.mjs — the L2 class guard over the kit's tool-COMPOSED user-facing lines.
-// The verbatim-paste contract makes these lines the exact bytes a third-party user reads, so they
-// must be user-grade: (a) alarm words only under a DETECTED abnormal condition; (b) machine tokens
-// never inside a human sentence; (c) internal names only as a machine-line prefix/self-label or a
-// runnable command/path. ONE designed exception (AD-092 D6): the ensures' LEADING outcome token —
-// characterized, never swept. Completeness is enumerated FROM each closed vocabulary/branch set,
-// and the rule's doc half (references/shared/deploy-tail.md) is bound below. Dev-only repo test.
-
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -22,17 +14,14 @@ import { ensureExecutor } from '../tools/ensure-executor.mjs';
 import { EXECUTOR_VEHICLE_REL, executorTemplate, readExecutorPosture } from '../tools/cheap-agents-read.mjs';
 import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
 const [{ applyGitHooks, UPGRADE_ROUTE }, { hermeticGitEnv }] = await Promise.all(['../tools/git-hooks.mjs', '../tools/git-env.mjs'].map((path) => import(path)));
-// Loaded against the pre-fix tree too (red-first): absent, the specs and scripts fixtures below are
-// skipped and the completeness suite reds on the unwitnessed tokens.
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
 const { ensureScripts } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
-// The KIT mirror's family manifest lays the S5 and S11 fixtures out in the kit folder.
 import { readFamily } from '../references/scripts/family.mjs';
 import { DEPLOYED_SCRIPTS } from '../tools/node-evidence.mjs';
 import { SCRIPT_PRIORS } from '../tools/script-priors.mjs';
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-parity.mjs';
-import { REFRESH_LINES, SKIPPED_READONLY, driftSummary } from '../tools/setup-backends.mjs';
+import { REFRESH_LINES, SKIPPED_READONLY, driftSummary, refreshPlacedBridges } from '../tools/setup-backends.mjs';
 import { reconcileSettings } from '../tools/bridge-settings.mjs';
 import { settingsPath } from '../tools/bridge-settings-read.mjs';
 const { OUTCOME_LINES: TIER_LINES } = await import('../tools/tier-preview.mjs').catch(() => ({}));
@@ -41,21 +30,13 @@ const { OUTCOME_LINES: CLOSE_LINES } = await import('../tools/session-close-chec
 import { planRecipe } from '../tools/recipes.mjs';
 import { formatReport } from '../tools/hide-footprint.mjs';
 import { NOTE_ROUTE } from '../tools/orchestration-readme.mjs';
-// The scanner leaf (its own negative controls live in composed-lines-scan.test.mjs); it sits under
-// scripts/testing/ — not test/ — so the coverage run sees its lines.
 import { ALARM_WORDS, INTERNAL_NAMES, scannable } from '../../scripts/testing/composed-lines-scan.mjs';
 
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Machine tokens: NEVER inside a human sentence, normal or abnormal (the token slot is stripped
-// before scanning — that slot is the designed exception, characterized below). Scanned members are
-// the HYPHENATED forms — the vocabulary's own token shape. A bare-word member that doubles as
-// ordinary English (`seeded`, `failed`, `drifted`) cannot be told from prose mechanically; those
-// words ride invariant (a) where they alarm, and the slot characterization where they are tokens.
 const MACHINE_TOKENS = [...new Set([...ENSURE_TOKENS, ...FAILURE_CAUSES, ...Object.values(PARITY), SKIPPED_READONLY])]
   .filter((token) => token.includes('-'));
 
-// ── fixture collection ───────────────────────────────────────────────────────────
 const SURFACES = [];
 const fx = (surface, id, abnormal, lines) => SURFACES.push({ surface, id, abnormal, lines });
 
@@ -72,8 +53,6 @@ const project = ({ node = true } = {}) => {
   if (node) writeFileSync(join(dir, 'package.json'), '{"name":"fixture"}\n');
   return dir;
 };
-// The modules the project's hook loads (the docs-size, spec-schema and shared modules' deployed entries) at their
-// bundled bodies in the kit folder, the one at manifest path `customPath` holding an edit of its own instead.
 const [KEPT_CHECKER, KEPT_READER] = ['docs-size/check-docs-size.mjs', 'spec-schema/spec-schema.mjs'];
 const projectWithScripts = (customPath, customBody) => {
   const dir = project();
@@ -428,6 +407,26 @@ refreshFx('skipped-readonly-unverifiable', SKIPPED_READONLY, true, 'codex-cli-br
 refreshFx('already-current', 'already-current', false, 'codex-cli-bridge', ' (v2.3.0)', null);
 refreshFx('already-current-drift', 'already-current', true, 'codex-cli-bridge', ' (v2.3.0)', driftSummary({ drifted: ['setup/codex-exec.sh'], unreadable: ['setup/README.md'], absent: [], conflicts: [], modes: new Map() }));
 refreshFx('refreshed', 'refreshed', false, 'codex-cli-bridge', ' (v2.3.0 → v2.4.0)');
+const userListRoot = tmp('clux-user-list-');
+const userListSkill = join(userListRoot, 'skill');
+const userListHome = join(userListRoot, 'home');
+const userListFile = join(userListHome, '.config/agent-workflow/services.json');
+mkdirSync(dirname(userListFile), { recursive: true });
+writeFileSync(userListFile, '{');
+cpSync(join(KIT, 'bridges/codex-cli-bridge'), userListSkill, { recursive: true });
+const [userListRefresh] = refreshPlacedBridges({
+  home: userListHome, getenv: { CODEX_CLI_BRIDGE_DIR: userListSkill, PATH: '' },
+  bundleRoot: join(KIT, 'bridges'), bindir: join(userListRoot, 'bin'), platform: 'linux',
+  detect: () => ({ name: 'codex-cli-bridge', manifestState: 'ok', wrappers: [], readiness: 'ready',
+    cli: { bin: 'codex', state: 'present', path: '/usr/bin/codex' }, credentials: { state: 'present', path: '/c/auth.json' },
+    setupHint: { url: 'u' }, skillDir: userListSkill }),
+}, ['codex-cli-bridge']);
+fx('refresh', 'failed-user-list', true, [userListRefresh.line]);
+it('the real refused-list refresh line names the file and the upgrade remedy', () => {
+  assert.equal(userListRefresh.outcome, 'failed', userListRefresh.line);
+  assert.ok(userListRefresh.line.includes(userListFile), userListRefresh.line);
+  assert.ok(userListRefresh.line.includes('/agent-workflow-kit upgrade'), userListRefresh.line);
+});
 
 // ── the bridge-settings reconcile lines (every branch of its outcome set) ────────
 const witnessedReconcile = new Set();

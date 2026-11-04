@@ -3,6 +3,24 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **USER-SERVICES-LIST-READS-A-NON-REGULAR-FILE** — invariant: the user loader refuses a `services.json` that is not
+  a regular file, as `agent-workflow-kit/tools/bridge-settings-read.mjs:119` does for its sibling settings file.
+  Origin: `agent-workflow-kit/tools/services/index.mjs:112-120` (`loadUserServices` reads with no file-type check;
+  story S15 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE). Narrow fix: an lstat regular-file check before the read,
+  refusing by name. Proof: a FIFO cell in S10 of spec kit/services that refuses without blocking. Residual exposure,
+  not live: only a user who places a pipe at that path hangs setup, the refresh or the tier, and Ctrl-C ends it.
+
+- **HOST-DIFF-NOTE-MISSES-USER-SERVICES** — invariant: the pre-dispatch host-diff note names every host a bridge run
+  reaches. Origin: story S15 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE adds the user's own services list
+  (`~/.config/agent-workflow/services.json`, spec kit/services, part user-list), whose hosts join every placed bridge's
+  `service-facts.txt` and the bridge tier; the note still says "the hosts of the services its manifest names" in the
+  antigravity bridge's `capability.json:37` and `bin/agy-review.sh:167` (and their kit mirrors),
+  `agent-workflow-kit/tools/detect-backends.mjs:146`, `agent-workflow-kit/tools/procedures.mjs:479` and the engine's
+  `orchestration.md:201` — the root's Out of scope. Narrow fix: each site says "the hosts of the services its manifest
+  names and of your own services list", a bridge and engine release. Proof: a grep of the five sites finds the new
+  wording and the procedures render prints it. Residual exposure, not live: an orchestrator that diffs only the
+  manifest's hosts may miss a user host before a first dispatch; the run itself still reaches it through the tier.
+
 - **JEV-SANDBOXED-WRAPPER-NEEDS-NO-USER-STEP** — invariant: a delegated run reaches Jev with no hand settings edit by
   the user. Origin: on 2026-10-06 Claude Code 2.1.291 ran an agent's plain `codex-review` inside its sandbox although
   the project lists it in `excludedCommands`. The hosts closed with AD-172 (kit 14.24.0), the state dirs and the

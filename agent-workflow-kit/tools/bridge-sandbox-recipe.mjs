@@ -7,14 +7,15 @@
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { readFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
+import { DEFAULT_BUNDLE_ROOT, userServicesFile } from './bridge-settings-read.mjs';
 import { ACTIVITIES, BACKEND_PRIORITY, REVIEW_CMD_ALIASES } from './carriers.mjs';
 import { planRecipe, resolveActivityRecipe } from './recipes.mjs';
 import { isReadyMember } from './review-roster-resolve.mjs';
 import { isSeedablePathToken } from './repo-lex.mjs';
-import { loadServiceFragments, mergeServices } from './services/index.mjs';
+import { loadServiceFragments, loadUserServices, mergeServices } from './services/index.mjs';
 
 // The review wrappers, spelled bare as invoked. Only their `code` mode is auto-allowed: a bare
 // `Bash(<wrapper>:*)` prefix would also cover the plan/diff file-argument modes, whose targets can
@@ -83,6 +84,9 @@ export const bundledSandboxRecipe = (used, deps = {}) => {
   const readDir = deps.readdir ?? readdirSync;
   const bundleRoot = deps.bundleRoot ?? DEFAULT_BUNDLE_ROOT;
   const fragments = loadServiceFragments({ servicesDir: deps.servicesDir });
+  const userFragments = deps.userServices === false ? {} : loadUserServices(fragments, {
+    file: deps.userServicesFile ?? userServicesFile({ env: deps.env ?? process.env, home: deps.home ?? homedir() }),
+  });
   const allow = [];
   const excludedCommands = [];
   const hosts = [];
@@ -119,7 +123,7 @@ export const bundledSandboxRecipe = (used, deps = {}) => {
         });
       }
     }
-    const services = mergeServices(manifest.services ?? [], fragments);
+    const services = mergeServices(manifest.services ?? [], fragments, userFragments);
     for (const command of services.excludedCommands) pushOnce(excludedCommands, command);
     for (const host of services.hosts) pushOnce(hosts, host);
     for (const entry of services.dirEntries) {

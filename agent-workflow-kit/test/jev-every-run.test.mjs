@@ -204,8 +204,8 @@ describe('the shipped text follows — spec:jev-every-run/S23', () => {
 it('every discovered wrapper validates the facts state table before help or CLI spawn — spec:jev-every-run/S25', async (context) => {
   const { loadServiceFragments, mergeServices, renderServiceFacts } = await import('../tools/services/index.mjs');
   const fragments = {
-    reachable: { hosts: ['API.EXAMPLE', '7label.example'], writableDirs: [{ env: 'FIRST_DIR', default: '~/shared cache:slot' }], excludedCommands: ['tool-name *'], passedVariables: ['FOO_API_KEY'], runReachesHosts: true },
-    catalog: { hosts: ['*.catalog.example'], writableDirs: [{ env: null, default: '/srv/env less:cache' }, { env: 'SECOND_DIR', default: '~/shared cache:slot' }], excludedCommands: [], passedVariables: [], runReachesHosts: false },
+    reachable: { hosts: ['API.EXAMPLE', '7label.example'], writableDirs: [{ env: 'FIRST_DIR', default: '~/shared cache:slot' }], excludedCommands: ['tool-name *'], passedVariables: ['FOO_API_KEY'], billingVariables: [], runReachesHosts: true },
+    catalog: { hosts: ['*.catalog.example'], writableDirs: [{ env: null, default: '/srv/env less:cache' }, { env: 'SECOND_DIR', default: '~/shared cache:slot' }], excludedCommands: [], passedVariables: [], billingVariables: [], runReachesHosts: false },
   };
   const ids = Object.keys(fragments);
   const loaded = loadServiceFragments({ servicesDir: '/in-memory', readdir: () => ids.map((id) => `${id}.json`), readFile: (path) => JSON.stringify(fragments[basename(path, '.json')]) });

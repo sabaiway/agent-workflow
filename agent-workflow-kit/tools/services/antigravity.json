@@ -13,5 +13,8 @@
   ],
   "excludedCommands": [],
   "passedVariables": [],
+  "billingVariables": [
+    "GEMINI_API_KEY"
+  ],
   "runReachesHosts": false
 }

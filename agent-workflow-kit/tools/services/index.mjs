@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const SERVICE_FACTS_FILE = 'service-facts.txt';
 const SERVICES_DIRECTORY = fileURLToPath(new URL('.', import.meta.url));
 const FRAGMENT_EXTENSION = '.json';
-const FRAGMENT_KEYS = ['hosts', 'writableDirs', 'excludedCommands', 'passedVariables', 'runReachesHosts'];
+const FRAGMENT_KEYS = ['hosts', 'writableDirs', 'excludedCommands', 'passedVariables', 'billingVariables', 'runReachesHosts'];
+const SERVICE_ID_RE = /^[a-z][a-z0-9-]*$/;
 const NETWORK_HOST_RE = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 const VARIABLE_RE = /^[A-Z][A-Z0-9_]*$/;
 const EXCLUDED_COMMAND_RE = /^[A-Za-z0-9][A-Za-z0-9._-]* \*$/;
@@ -59,6 +60,7 @@ const validateFragment = (fragment, path) => {
     (command) => typeof command === 'string' && EXCLUDED_COMMAND_RE.test(command));
   validateList(fragment.passedVariables, path, 'passedVariables',
     (value) => isVariable(value) && value !== 'OPENAI_BASE_URL');
+  validateList(fragment.billingVariables, path, 'billingVariables', isVariable);
   if (typeof fragment.runReachesHosts !== 'boolean') refuseSchema(path, 'runReachesHosts', 'must be a boolean');
   if (fragment.runReachesHosts && fragment.hosts.some((host) => host.startsWith('*.'))) {
     refuseSchema(path, 'hosts', 'must not contain a wildcard when runReachesHosts is true');
@@ -77,6 +79,18 @@ const readFragment = (path, readFile) => {
   return validateFragment(fragment, path);
 };
 
+const validateBillingVariables = (fragments, locate) => {
+  const billing = new Map(Object.entries(fragments).flatMap(([id, fragment]) =>
+    fragment.billingVariables.map((variable) => [variable, id])));
+  for (const [id, fragment] of Object.entries(fragments)) {
+    for (const variable of fragment.passedVariables) {
+      if (!billing.has(variable)) continue;
+      const [path, key] = locate(id, billing.get(variable));
+      refuseSchema(path, key, `conflicts with billing variable ${variable}`);
+    }
+  }
+};
+
 export const loadServiceFragments = (deps = {}) => {
   const servicesDir = deps.servicesDir ?? SERVICES_DIRECTORY;
   const readdir = deps.readdir ?? readdirSync;
@@ -88,9 +102,32 @@ export const loadServiceFragments = (deps = {}) => {
       throw new Error(`${servicesDir}: cannot read services directory: ${error.message}`, { cause: error });
     }
   })();
-  return Object.fromEntries(entries.filter((name) => name.endsWith(FRAGMENT_EXTENSION)).sort().map((name) => [
+  const fragments = Object.fromEntries(entries.filter((name) => name.endsWith(FRAGMENT_EXTENSION)).sort().map((name) => [
     name.slice(0, -FRAGMENT_EXTENSION.length), readFragment(join(servicesDir, name), readFile),
   ]));
+  validateBillingVariables(fragments, (id) => [join(servicesDir, `${id}${FRAGMENT_EXTENSION}`), 'passedVariables']);
+  return fragments;
+};
+
+export const loadUserServices = (fragments, { file, readFile = readFileSync }) => {
+  const userFragments = (() => {
+    try {
+      return JSON.parse(readFile(file, 'utf8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return {};
+      throw new Error(`${file}: cannot read or parse user services: ${error.message}`, { cause: error });
+    }
+  })();
+  if (!isObject(userFragments)) refuseSchema(file, 'root', 'must be an object');
+  for (const [id, fragment] of Object.entries(userFragments)) {
+    if (!SERVICE_ID_RE.test(id) || Object.hasOwn(fragments, id)) refuseSchema(file, id, 'is not an available service id');
+    validateFragment(fragment, `${file}: ${id}`);
+  }
+  validateBillingVariables({ ...fragments, ...userFragments }, (passing, billed) =>
+    Object.hasOwn(userFragments, passing)
+      ? [`${file}: ${passing}`, 'passedVariables']
+      : [`${file}: ${billed}`, 'billingVariables']);
+  return userFragments;
 };
 
 const takeUnique = (entries, identify = (entry) => entry) => {
@@ -103,11 +140,11 @@ const takeUnique = (entries, identify = (entry) => entry) => {
   });
 };
 
-export const mergeServices = (ids, fragments) => {
+export const mergeServices = (ids, fragments, userFragments = {}) => {
   const selected = ids.map((id) => {
     if (!Object.hasOwn(fragments, id)) throw new Error(`Unknown service id: ${id}`);
     return fragments[id];
-  });
+  }).concat(Object.values(userFragments));
   return {
     hosts: takeUnique(selected.flatMap((fragment) => fragment.hosts)),
     dirEntries: takeUnique(selected.flatMap((fragment) => fragment.writableDirs),
@@ -125,3 +162,6 @@ export const renderServiceFacts = (merged) => [
     `${key}=${field === 'dirEntries' ? `${entry.env ?? ''}:${entry.default}` : entry}`)),
   '',
 ].join('\n');
+
+export const placedServiceFacts = (services, fragments, userFragments) =>
+  renderServiceFacts(mergeServices(services, fragments, userFragments));

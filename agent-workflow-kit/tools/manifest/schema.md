@@ -98,8 +98,8 @@ drift-guarded set-equal to this block by the bridge `bin/*.test.mjs` suites (hel
 
 `services` names the kit service fragments under `agent-workflow-kit/tools/services/` that the
 bridge uses. The module's `mergeServices` supplies their hosts, state dirs and excluded commands.
-A fragment is a closed object of five required keys (`hosts`, `writableDirs`, `excludedCommands`,
-`passedVariables`, `runReachesHosts`), enforced by the module's loader in
+A fragment is a closed object of six required keys (`hosts`, `writableDirs`, `excludedCommands`,
+`passedVariables`, `billingVariables`, `runReachesHosts`), enforced by the module's loader in
 [`../services/index.mjs`](../services/index.mjs); the host and state-dir rules are the ones these
 retired manifest fields carried.
 

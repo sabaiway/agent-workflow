@@ -410,7 +410,7 @@ describe('recommendations contract — the full-flow-profile capability (spec:ga
     const declarations = [...UPGRADE_DOC.matchAll(/^<!-- opt-in-capability: ([a-z-]+) -->$/gmu)].map((match) => match[1]);
     assert.deepEqual(declarations, ['family-freshness', 'spec-adoption', 'full-flow-profile']);
     const prior = UPGRADE_DOC.replace('<!-- opt-in-capability: full-flow-profile -->\n', '');
-    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [41085, 'f182a068b1b899461a30a517e2a84c58eee52b6ed5af05363fea9dccd249bb34'], 'the bytes after SESSION-RULES-LOADED-BEFORE-THE-FIRST-WORD story S1 (the kit block names its import lines and fallback sentence, the report relays its notes and CLAUDE.md line)');
+    assert.deepEqual([Buffer.byteLength(prior), createHash('sha256').update(prior).digest('hex')], [41110, 'da68b981ccc7dbe9a4736bf0236f4983df84c4a765eaabbf346210550fd3fda7'], 'the bytes after JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE story S15 (a drifted or unverifiable read-only bridge refresh reruns outside the sandbox)');
   });
   it('the registry row names mode upgrade and advisor key profile-gap', () => {
     assert.deepEqual(OPT_IN_CAPABILITIES.filter(({ id }) => id === 'full-flow-profile'), [{ id: 'full-flow-profile', mode: 'upgrade', advisorKey: 'profile-gap' }]);

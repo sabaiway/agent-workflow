@@ -395,7 +395,7 @@ describe('readonlySkipLine — every clause maps to the verdict that proved it',
 
   it('drifted → the count, EVERY name, and the writable-rerun recovery', () => {
     const line = readonlySkipLine('codex-cli-bridge', '1.0.0', { state: PARITY.drifted, drifted: ['SKILL.md', 'wrapper run'], conflicts: [], unverifiable: [] });
-    assert.match(line, /2 item\(s\) still differing from the bundled copy: SKILL\.md, wrapper run/);
+    assert.match(line, /2 item\(s\) still differing from what the refresh writes: SKILL\.md, wrapper run/);
     assert.ok(line.includes(`${READONLY_RERUN_HINT} to repair`));
     assert.ok(!/no drift|nothing to repair/.test(line));
   });
@@ -407,14 +407,14 @@ describe('readonlySkipLine — every clause maps to the verdict that proved it',
     assert.ok(!only.includes(`${READONLY_RERUN_HINT} to repair`), 'a refusal is never promised as a rerun repair');
 
     const both = readonlySkipLine('codex-cli-bridge', '1.0.0', { state: PARITY.drifted, drifted: ['SKILL.md'], conflicts: ['wrapper run (a non-symlink is in the way)'], unverifiable: [] });
-    assert.match(both, /1 item\(s\) still differing from the bundled copy: SKILL\.md/, 'the repairable half keeps its own recovery');
+    assert.match(both, /1 item\(s\) still differing from what the refresh writes: SKILL\.md/, 'the repairable half keeps its own recovery');
     assert.ok(both.includes(`${READONLY_RERUN_HINT} to repair`));
     assert.match(both, /REFUSE rather than repair: wrapper run \(a non-symlink is in the way\)/);
   });
 
   it('drifted AND unverifiable → BOTH proven facts are stated, neither collapsed into the other', () => {
     const line = readonlySkipLine('codex-cli-bridge', '1.0.0', { state: PARITY.drifted, drifted: ['SKILL.md'], conflicts: [], unverifiable: ['bin'] });
-    assert.match(line, /1 item\(s\) still differing from the bundled copy: SKILL\.md/);
+    assert.match(line, /1 item\(s\) still differing from what the refresh writes: SKILL\.md/);
     assert.match(line, /could not verify a further 1 item\(s\): bin/);
   });
 
@@ -428,7 +428,7 @@ describe('readonlySkipLine — every clause maps to the verdict that proved it',
     const allThree = readonlySkipLine('codex-cli-bridge', '1.0.0', {
       state: PARITY.drifted, drifted: ['SKILL.md'], conflicts: ['wrapper run (a foreign symlink is in the way)'], unverifiable: ['bin'],
     });
-    assert.match(allThree, /1 item\(s\) still differing from the bundled copy: SKILL\.md/);
+    assert.match(allThree, /1 item\(s\) still differing from what the refresh writes: SKILL\.md/);
     assert.match(allThree, /It also found 1 item\(s\) a writable rerun would REFUSE rather than repair/);
     assert.match(allThree, /It could not verify a further 1 item\(s\): bin — whether those still need repair is unknown/);
     assert.match(allThree, /resolve each by hand, then re-run the refresh\./, 'the refusal keeps its own recovery');

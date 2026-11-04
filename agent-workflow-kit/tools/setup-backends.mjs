@@ -1,38 +1,17 @@
 #!/usr/bin/env node
-// setup-backends.mjs — link-only auto-setup for the execution-backend bridges (Plan B / AD-011).
-// The kit owns ONLY the two deterministic, secret-free steps: (1) PLACE/REFRESH the bundled bridge
-// skill into its canonical dir, and (2) LINK its POSIX wrappers onto PATH (~/.local/bin) via managed
-// symlinks. Binary install + the interactive subscription login stay GUIDED (printed, never run) —
-// guideFor() supplies the exact commands. The read-only detector is the reader; this is the writer.
-//
-// Two write modes: plain setup (opt-in, in-agent — the ONLY path that ever PLACES a bridge) and the
-// refresh-only driver (`--refresh-placed` / refreshPlacedBridges, run by `init` and Mode: upgrade) —
-// it refreshes what setup already placed and re-links wrappers, states an absent bridge as a skip
-// (never a first placement), and never downgrades: a placed bridge newer than the kit-bundled mirror
-// is a stated skip naming the kit update (guarded again at the write boundary in placeSkill).
-//
-// Safety posture (AD-011): drive off the decoupled axes (a per-bindir wrapper check + an independent
-// skill-dir inspection), never the detector's collapsed readiness. REFRESH only a dir we provably own
-// (valid manifest, name+kind match) or one that is absent/empty; STOP on anything else (a marker fs
-// error, a stub/foreign/invalid/unsupported manifest, a non-empty unknown dir, or a symlinked dir).
-// Clobber-risk lives only on the wrapper symlinks — replace only a symlink already pointing at our
-// source; STOP on a foreign symlink or a non-symlink. PREFLIGHT every dst, THEN mutate (a conflict on
-// the 2nd wrapper ⇒ zero mutations; no rollback — symlinks/chmod converge on re-run). Windows: the
-// wrappers are POSIX .sh — report unsupported / use WSL and mutate nothing. Every fs primitive is
-// injectable (deps.*) so the whole module is unit-testable without touching the real filesystem.
-//
-// Dependency-free, Node >= 22.
 
 import {
   existsSync, lstatSync, statSync, readdirSync, readlinkSync, symlinkSync, mkdirSync, copyFileSync,
-  chmodSync, readFileSync, realpathSync,
+  chmodSync, readFileSync, realpathSync, writeFileSync,
 } from 'node:fs';
 import { join, resolve, relative, dirname, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { KNOWN_BACKENDS, detectBackend, detectBackends, resolveDir, guideFor, READY } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { copyTreeRefresh, linkManaged, isReadonlyWriteBoundary } from './fs-safe.mjs';
+import { assertContainedRealPath, copyTreeRefresh, linkManaged, isReadonlyWriteBoundary, throwTaggedReadonly } from './fs-safe.mjs';
+import { userServicesFile } from './bridge-settings-read.mjs';
+import { loadServiceFragments, loadUserServices, placedServiceFacts, SERVICE_FACTS_FILE } from './services/index.mjs';
 import {
   READONLY_RERUN_HINT, WRAPPER_MODE, scanBundleOwnedDrift, scanWrapperParity, parityVerdict,
   unverifiableParity, readonlySkipLine,
@@ -79,6 +58,7 @@ const fsDeps = (deps = {}) => ({
   chmod: deps.chmod ?? chmodSync,
   readFile: deps.readFile ?? readFileSync,
   realpath: deps.realpath ?? realpathSync,
+  writeFile: deps.writeFile ?? writeFileSync,
 });
 
 // lstat without following symlinks; null when absent. A non-ENOENT error propagates (never fail open).
@@ -302,14 +282,33 @@ const assertNoDowngrade = (plan, deps = {}) => {
   if (compareSemver(placed, bundled) === 1) throw stop(downgradeReason(placed, bundled), { skillDir: plan.skillDir, wouldDowngrade: true });
 };
 
-// Copy the bundle over the placed skill dir (the refresh overwrite), FIRST scanning bundle-owned files
-// for local drift so the caller can STATE what the overwrite replaced (D5 — overwrite honesty). Scan
-// only on a refresh: a `place` writes into an absent/empty dir, so there is nothing local to lose. The
-// copy proceeds either way — bridge code is kit-owned. Returns the drift report (null for a place).
+const userServicesRemedy = (step) => `fix or remove that file, then run /agent-workflow-kit ${step} again`;
+const loadBridgeServices = (deps) => {
+  const fragments = loadServiceFragments();
+  try {
+    const userFragments = loadUserServices(fragments, {
+      file: userServicesFile({ env: deps.getenv ?? process.env, home: deps.home ?? os.homedir() }),
+    });
+    return { fragments, userFragments };
+  } catch (error) {
+    throw stop(`${error.message}; ${userServicesRemedy('setup')}`, { userServicesMessage: error.message });
+  }
+};
+
 const copyBridgeWithHonesty = (action, bundleDir, skillDir, deps) => {
+  const { fragments, userFragments } = loadBridgeServices(deps);
+  const facts = Object.keys(userFragments).length
+    ? placedServiceFacts(readBundledManifest(bundleDir, deps).services ?? [], fragments, userFragments) : null;
   const fs = fsDeps(deps);
-  const drift = action === 'refresh' ? scanBundleOwnedDrift(bundleDir, skillDir, fs) : null;
+  const drift = action === 'refresh' ? scanBundleOwnedDrift(bundleDir, skillDir, {
+    ...fs, readdir: (path) => fs.readdir(path).filter((name) => path !== bundleDir || name !== SERVICE_FACTS_FILE),
+  }) : null;
   copyTreeRefresh(bundleDir, skillDir, skillDir, fs);
+  if (facts !== null) {
+    const file = join(skillDir, SERVICE_FACTS_FILE);
+    assertContainedRealPath(skillDir, file, fs);
+    try { fs.writeFile(file, facts, 'utf8'); } catch (error) { throwTaggedReadonly(error, 'writeFile', file, fs.readFile); }
+  }
   return drift;
 };
 
@@ -557,12 +556,6 @@ const refreshSkillOnly = (entry, deps = {}) => {
 const NOT_PLACED_LINE = 'skipped — not placed (placement is opt-in: /agent-workflow-kit setup)';
 const stripPrefix = (message) => message.replace('[agent-workflow-kit] ', '');
 
-// The read-only degrade wording (D1, honesty-split per D4). The STATED-skip line is composed in
-// refresh-parity.mjs from a POST-FAILURE re-scan: the old line asserted "PARTIALLY updated" and "any
-// remaining drift persists" unconditionally — two claims about post-state that nothing had checked.
-// It still never claims a re-sync RAN (that is already-current's line). The FAILED line (a
-// version-behind upgrade blocked by the same read-only dir) stays loud, but its recovery points at a
-// writable rerun — the in-session `setup` would hit the same read-only dir.
 const readonlyRefreshFailedLine = (name, message) =>
   `  ${name}: could not refresh — ${stripPrefix(message)}; the skills directory is read-only this session — ${READONLY_RERUN_HINT}`;
 
@@ -573,7 +566,7 @@ export const REFRESH_LINES = Object.freeze({
   unsupported: (name, reason) => `  ${name}: skipped — ${reason}`,
   'kept-newer': (name, reason) => `  ${name}: skipped — ${reason}`,
   'not-placed': (name) => `  ${name}: ${NOT_PLACED_LINE}`,
-  failed: (name, reason) => `  ${name}: could not refresh — ${reason}; recover with /agent-workflow-kit setup`,
+  failed: (name, reason, remedy = 'recover with /agent-workflow-kit setup') => `  ${name}: could not refresh — ${reason}; ${remedy}`,
   'failed-readonly': readonlyRefreshFailedLine,
   [SKIPPED_READONLY]: readonlySkipLine,
   'already-current': (name, label, summary) => {
@@ -583,19 +576,14 @@ export const REFRESH_LINES = Object.freeze({
   refreshed: (name, label) => `  ${name}: refreshed${label}`,
 });
 
-// The post-failure parity verdict behind that line (D3): a read-only re-scan of the bundle-owned
-// files AND the wrapper links, run AFTER the write refusal, so every clause binds to state proven
-// THIS run. The degrade returns before linkWrappers, so the wrapper axis is genuinely unreconciled —
-// a calm claim that skipped it would be unproven. Any failure raised out of the walk itself (the
-// bundle read is deliberately uncaught in there) collapses to could-not-verify: the calm claim is
-// withheld, never inverted into a false clean, and a re-scan problem never turns the stated skip
-// into a reported failure.
 const readonlyParity = (plan, deps) => {
   const fs = fsDeps(deps);
   try {
-    // ONE walk feeds both halves: the wrapper axis judges a source's mode from what the walk already
-    // reached, never from a second stat that could traverse an ancestor the walk refused.
-    const scan = scanBundleOwnedDrift(plan.place.bundleDir, plan.skillDir, fs);
+    const { fragments, userFragments } = loadBridgeServices(deps);
+    const manifest = readBundledManifest(plan.place.bundleDir, deps);
+    const scan = scanBundleOwnedDrift(plan.place.bundleDir, plan.skillDir, fs, {
+      [SERVICE_FACTS_FILE]: placedServiceFacts(manifest.services ?? [], fragments, userFragments),
+    });
     return parityVerdict({
       scan,
       wrappers: scanWrapperParity(plan.links, fs, { skillDir: plan.skillDir, modes: scan.modes }),
@@ -672,7 +660,8 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
       if (isReadonlyWriteBoundary(err)) {
         return { name: canonical, outcome: 'failed', line: REFRESH_LINES['failed-readonly'](canonical, err.message) };
       }
-      return { name: canonical, outcome: 'failed', line: REFRESH_LINES.failed(canonical, stripPrefix(err.message)) };
+      return { name: canonical, outcome: 'failed', line: REFRESH_LINES.failed(canonical,
+        err.userServicesMessage ?? stripPrefix(err.message), err.userServicesMessage ? userServicesRemedy('upgrade') : undefined) };
     }
   });
 

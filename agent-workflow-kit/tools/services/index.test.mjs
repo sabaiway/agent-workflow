@@ -11,21 +11,24 @@ import { refreshPlacedBridges } from '../setup-backends.mjs';
 import { validateManifest } from '../manifest/validate.mjs';
 
 const services = await import('./index.mjs').catch(() => ({}));
+const { loadUserServices, placedServiceFacts } = await import('./index.mjs').catch(() => ({}));
+const { userServicesFile } = await import('../bridge-settings-read.mjs').catch(() => ({}));
 const BUNDLED_CODEX = fileURLToPath(new URL('../../bridges/codex-cli-bridge/', import.meta.url));
 const EXPECTED_FRAGMENTS = {
   codex: {
     hosts: ['chatgpt.com', '*.chatgpt.com'],
     writableDirs: [{ env: 'CODEX_HOME', default: '~/.codex' }],
     excludedCommands: [], passedVariables: [], runReachesHosts: false,
+    billingVariables: ['OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL'],
   },
   antigravity: {
     hosts: ['*.googleapis.com', 'accounts.google.com', 'antigravity-unleash.goog', 'lh3.googleusercontent.com'],
     writableDirs: [{ env: null, default: '~/.gemini/antigravity-cli' }],
-    excludedCommands: [], passedVariables: [], runReachesHosts: false,
+    excludedCommands: [], passedVariables: [], runReachesHosts: false, billingVariables: ['GEMINI_API_KEY'],
   },
   jev: {
     hosts: ['api.typesafe.ai', 'docs.typesafe.ai'], writableDirs: [], excludedCommands: [],
-    passedVariables: ['TYPESAFE_API_KEY'], runReachesHosts: true,
+    passedVariables: ['TYPESAFE_API_KEY'], runReachesHosts: true, billingVariables: [],
   },
 };
 const createTemp = (context) => {
@@ -57,7 +60,7 @@ it('spec:services/S2 refuses every unreadable or invalid fragment without return
     ...Object.keys(valid).map((key) => ({
       name: `missing ${key}`, key, value: Object.fromEntries(Object.entries(valid).filter(([name]) => name !== key)),
     })),
-    ...['hosts', 'writableDirs', 'excludedCommands', 'passedVariables'].map((key) => ({
+    ...['hosts', 'writableDirs', 'excludedCommands', 'passedVariables', 'billingVariables'].map((key) => ({
       name: `non-array ${key}`, key, value: { ...valid, [key]: 'x' },
     })),
     { name: 'malformed host', key: 'hosts', value: { ...valid, hosts: ['bad host'] } },
@@ -72,6 +75,10 @@ it('spec:services/S2 refuses every unreadable or invalid fragment without return
       value: { ...valid, excludedCommands: [command] },
     })),
     { name: 'lowercase passed variable', key: 'passedVariables', value: { ...valid, passedVariables: ['lower_case'] } },
+    { name: 'lowercase billing variable', key: 'billingVariables', value: { ...valid, billingVariables: ['lower_case'] } },
+    { name: 'repeated billing variable', key: 'billingVariables', value: { ...valid, billingVariables: ['KEY', 'KEY'] } },
+    { name: 'passed variable billed by codex', key: 'passedVariables',
+      value: { ...valid, billingVariables: [], passedVariables: ['OPENAI_API_KEY'] } },
     { name: 'proxy variable always scrubbed', key: 'passedVariables', value: { ...valid, passedVariables: ['OPENAI_BASE_URL'] } },
     { name: 'run-reachable wildcard', key: 'hosts', value: { ...valid, hosts: ['*.example.com'], runReachesHosts: true } },
     { name: 'non-boolean reachability', key: 'runReachesHosts', value: { ...valid, runReachesHosts: 'yes' } },
@@ -233,4 +240,83 @@ it('spec:services/S7 refreshes a placed pre-services bridge to the bundle servic
   assert.equal(Object.hasOwn(placed, 'networkHosts'), false);
   assert.equal(Object.hasOwn(placed, 'writableDirs'), false);
   assert.deepEqual(readFileSync(join(skillDir, 'service-facts.txt')), readFileSync(join(bundleDir, 'service-facts.txt')));
+});
+
+it('spec:services/S9 loads the ordered user list, merges and renders it, and isolates its settings path', (context) => {
+  const temporary = createTemp(context);
+  const file = join(temporary, 'services.json');
+  const user = {
+    beta: { hosts: ['*.beta.example'], writableDirs: [], excludedCommands: [], passedVariables: [],
+      billingVariables: [], runReachesHosts: false },
+    acme: { hosts: ['chatgpt.com', 'api.acme.example'], writableDirs: [{ env: 'ACME_HOME', default: '~/.acme' }],
+      excludedCommands: ['acme *'], passedVariables: ['ACME_TOKEN'], billingVariables: ['ACME_BILLING_KEY'], runReachesHosts: true },
+  };
+  const expected = [
+    "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit",
+    'HOST=chatgpt.com', 'HOST=*.chatgpt.com', 'HOST=api.typesafe.ai', 'HOST=docs.typesafe.ai',
+    'HOST=*.beta.example', 'HOST=api.acme.example',
+    'RUN_HOST=api.typesafe.ai', 'RUN_HOST=docs.typesafe.ai', 'RUN_HOST=chatgpt.com', 'RUN_HOST=api.acme.example',
+    'WRITABLE_DIR=CODEX_HOME:~/.codex', 'WRITABLE_DIR=ACME_HOME:~/.acme',
+    'EXCLUDED_COMMAND=acme *', 'PASSED_VARIABLE=TYPESAFE_API_KEY', 'PASSED_VARIABLE=ACME_TOKEN', '',
+  ].join('\n');
+  const kitFragments = services.loadServiceFragments();
+  assert.deepEqual(loadUserServices(kitFragments, { file }), {});
+  writeJson(file, user);
+  const loaded = loadUserServices(kitFragments, { file });
+  assert.deepEqual(Object.keys(loaded), ['beta', 'acme']);
+  assert.deepEqual(loaded, user);
+  assert.equal(services.renderServiceFacts(services.mergeServices(['codex', 'jev'], kitFragments, loaded)), expected);
+  assert.equal(placedServiceFacts(['codex', 'jev'], kitFragments, loaded), expected);
+  const home = join(temporary, 'home');
+  const xdg = join(temporary, 'xdg');
+  assert.equal(userServicesFile({ env: { XDG_CONFIG_HOME: xdg }, home }), join(xdg, 'agent-workflow/services.json'));
+  assert.equal(userServicesFile({ env: {}, home }), join(home, '.config/agent-workflow/services.json'));
+  const previous = process.env.XDG_CONFIG_HOME;
+  context.after(() => {
+    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previous;
+  });
+  process.env.XDG_CONFIG_HOME = join(temporary, 'other');
+  assert.equal(userServicesFile({ env: {}, home }), join(home, '.config/agent-workflow/services.json'));
+});
+
+it('spec:services/S10 refuses every invalid user list without a partial set and admits constructor', async (context) => {
+  const temporary = createTemp(context);
+  const valid = { hosts: ['api.acme.example'], writableDirs: [], excludedCommands: [],
+    passedVariables: [], billingVariables: [], runReachesHosts: true };
+  const cases = [
+    { name: 'EACCES', deps: { readFile: denyRead } },
+    { name: 'EISDIR', directory: true },
+    { name: 'unparsable JSON', raw: '{' },
+    ...[null, [], 'x', 3, true].map((value) => ({ name: `root ${JSON.stringify(value)}`, value })),
+    ...['Acme', '1acme', 'acme_x', 'jev'].map((id) => ({ name: `id ${id}`, id, value: { [id]: valid } })),
+    { name: 'unknown key', id: 'acme', key: 'surprise', value: { acme: { ...valid, surprise: [] } } },
+    { name: 'user passed kit billing', id: 'acme', key: 'passedVariables',
+      value: { acme: { ...valid, passedVariables: ['OPENAI_API_KEY'] } } },
+    { name: 'user passed user billing', id: 'acme', key: 'passedVariables', value: {
+      acme: { ...valid, passedVariables: ['BETA_BILLING_KEY'] }, beta: { ...valid, billingVariables: ['BETA_BILLING_KEY'] },
+    } },
+    { name: 'kit passed user billing', id: 'acme', key: 'billingVariables',
+      value: { acme: { ...valid, billingVariables: ['TYPESAFE_API_KEY'] } } },
+  ];
+  for (const [index, refusal] of cases.entries()) {
+    await context.test(refusal.name, () => {
+      const file = join(temporary, `${index}.json`);
+      if (refusal.directory) mkdirSync(file);
+      else writeFileSync(file, refusal.raw ?? JSON.stringify(Object.hasOwn(refusal, 'value') ? refusal.value : { acme: valid }));
+      const returned = [];
+      assert.throws(() => returned.push(loadUserServices(EXPECTED_FRAGMENTS, { file, ...refusal.deps })), (error) => {
+        assert.ok(error.message.includes(file), error.message);
+        if (refusal.id) assert.ok(error.message.includes(refusal.id), error.message);
+        if (refusal.key) assert.ok(error.message.includes(refusal.key), error.message);
+        return true;
+      });
+      assert.deepEqual(returned, []);
+    });
+  }
+  await context.test('constructor is no kit id', () => {
+    const file = join(temporary, 'constructor.json');
+    writeJson(file, { constructor: valid });
+    assert.deepEqual(loadUserServices(EXPECTED_FRAGMENTS, { file }), { constructor: valid });
+  });
 });

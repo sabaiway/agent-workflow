@@ -8,5 +8,6 @@
   "passedVariables": [
     "TYPESAFE_API_KEY"
   ],
+  "billingVariables": [],
   "runReachesHosts": true
 }

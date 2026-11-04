@@ -235,7 +235,7 @@ describe('dead-rule prevention — velocity.md bridge-tier byte-forms match the 
     assert.equal(typeof usedBridges, 'function', 'usedBridges is not exported yet (S2-15)');
     const config = { 'plan-execution': { review: 'council', execute: 'delegated' } };
     const readiness = ['antigravity-cli-bridge', 'codex-cli-bridge'].map((name) => ({ name, readiness: 'ready' }));
-    const derived = bundledSandboxRecipe(usedBridges(config, readiness));
+    const derived = bundledSandboxRecipe(usedBridges(config, readiness), { userServicesFile: join(kitRoot, 'absent-services.json') });
     const listStart = VELOCITY_MODE.indexOf('The seeded byte-forms', sectionStart);
     const listEnd = VELOCITY_MODE.indexOf('\n**Consented posture', listStart);
     assert.ok(listStart > sectionStart && listEnd > listStart, 'the bridge-tier seeded byte-form list is bounded');

@@ -84,6 +84,8 @@ export const allowedLabel = (entry) => {
 
 export const settingsDir = (ctx) => join(resolveDir(SETTINGS_XDG, ctx.getenv ?? process.env, ctx.home ?? homedir()), SETTINGS_SUBDIR);
 export const settingsPath = (ctx) => join(settingsDir(ctx), SETTINGS_FILENAME);
+export const userServicesFile = ({ env = process.env, home = homedir() } = {}) =>
+  join(resolveDir(SETTINGS_XDG, env, home), SETTINGS_SUBDIR, 'services.json');
 
 // Lines with a single trailing newline normalized away, so edits operate on an exact line array and
 // re-serialize with one trailing newline (comments/blank lines in the middle survive verbatim).

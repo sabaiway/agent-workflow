@@ -936,7 +936,7 @@ export const preflightVelocityProfile = ({ cwd }, deps = {}) => {
   const derivedBridge = (() => {
     try {
       const probe = deps.findWrapper ?? ((cmd) => findOnPath(cmd).state === WRAPPER_PLACED);
-      return bundledSandboxRecipe(BRIDGE_REVIEW_WRAPPERS.filter(probe), deps).allow;
+      return bundledSandboxRecipe(BRIDGE_REVIEW_WRAPPERS.filter(probe), { ...deps, userServices: false }).allow;
     } catch {
       return [];
     }

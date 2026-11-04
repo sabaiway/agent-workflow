@@ -185,7 +185,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
     if (variant === 'bridge-tier') {
       const detect = deps.detect ?? facts.detect ?? (() => detectAtRoot(facts.root, { env: facts.env, home: facts.home }));
       const used = usedBridges(loadConfig(facts.root).config, detect());
-      const recipe = bundledSandboxRecipe(used, { groundingAbsPath: join(facts.toolsDir, '..', KIT_GROUNDING_TOOL) });
+      const recipe = bundledSandboxRecipe(used, { env: facts.env, home: facts.home, groundingAbsPath: join(facts.toolsDir, '..', KIT_GROUNDING_TOOL) });
       allow.push(...recipe.allow);
       set('sandbox.excludedCommands', recipe.excludedCommands);
       set('sandbox.network.allowedDomains', recipe.hosts);

@@ -46,8 +46,10 @@ import { sandboxSurfaceDelta } from './bridge-wiring.mjs';
 import { homeRelative } from './bridge-state-dirs.mjs';
 import { nearestExistingDir } from './worktrees.mjs';
 const services = await import('./services/index.mjs').catch(() => ({}));
-
 const UTF8 = 'utf8';
+const servicesDirectory = mkdtempSync(join(tmpdir(), 'velocity-services-'));
+const ABSENT_USER_SERVICES = join(servicesDirectory, 'absent.json');
+after(() => rmSync(servicesDirectory, { recursive: true, force: true }));
 const TEMP_PREFIX = 'velocity-profile-';
 const JSON_INDENT = 2;
 const EXIT_OK = 0;
@@ -56,13 +58,11 @@ const EXIT_USAGE = 2;
 const READ_ALLOW = 'Read(*)';
 const LEGACY_FETCH_ALLOW = 'Bash(git fetch:*)';
 const BYPASS_MODE = 'bypassPermissions';
-
 const makeTempProject = (t) => {
   const dir = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 };
-
 const writeText = (absPath, text) => writeFileSync(absPath, text, UTF8);
 
 const readText = (absPath) => readFileSync(absPath, UTF8);
@@ -88,7 +88,7 @@ const runMain = (argv, cwd) => {
   const stdout = [];
   const stderr = [];
   const code = main([...argv, '--cwd', cwd], {
-    log: (line) => stdout.push(line),
+    userServicesFile: ABSENT_USER_SERVICES, log: (line) => stdout.push(line),
     errlog: (line) => stderr.push(line),
   });
   return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
@@ -98,7 +98,7 @@ const runMainWithoutCwd = (argv) => {
   const stdout = [];
   const stderr = [];
   const code = main(argv, {
-    log: (line) => stdout.push(line),
+    userServicesFile: ABSENT_USER_SERVICES, log: (line) => stdout.push(line),
     errlog: (line) => stderr.push(line),
   });
   return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
@@ -984,7 +984,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     const stdout = [];
     const stderr = [];
     const code = main([...argv, '--cwd', cwd], {
-      log: (line) => stdout.push(line),
+      userServicesFile: ABSENT_USER_SERVICES, log: (line) => stdout.push(line),
       errlog: (line) => stderr.push(line),
       findWrapper,
       detect: () => [],
@@ -1027,7 +1027,7 @@ describe('bridge-wrappers tier — frozen membership, derivation, screen, audit 
     };
     return { cwd, home, env, writes, writeFile, detect: () => readiness, findWrapper: nonePlaced, ...bundleDeps() };
   };
-  const bundleDeps = (entries = BUNDLES, readFile = readFileSync) => ({ bundleRoot: BUNDLE_ROOT, readdir: (dir) => (dir === BUNDLE_ROOT ? entries : readdirSync(dir)), readFile });
+  const bundleDeps = (entries = BUNDLES, readFile = readFileSync) => ({ userServicesFile: ABSENT_USER_SERVICES, bundleRoot: BUNDLE_ROOT, readdir: (dir) => (dir === BUNDLE_ROOT ? entries : readdirSync(dir)), readFile });
   const failWith = (code) => { throw Object.assign(new Error(`${code}: fixture`), { code }); };
   const HOSTS_HEADER = /^(?:would add|added) sandbox\.network\.allowedDomains entries: (\d+)$/;
   const listedEntries = (stdout, header) => {
@@ -1592,7 +1592,7 @@ describe('velocity — settings-derived runtime claims are host-conditional', ()
   const runAutonomy = (argv, cwd, extra = {}) => {
     const stdout = [];
     const stderr = [];
-    const code = main([...argv, '--cwd', cwd], { log: (l) => stdout.push(l), errlog: (l) => stderr.push(l), ...extra });
+    const code = main([...argv, '--cwd', cwd], { userServicesFile: ABSENT_USER_SERVICES, log: (l) => stdout.push(l), errlog: (l) => stderr.push(l), ...extra });
     return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
   };
 
@@ -1712,7 +1712,7 @@ describe('velocity — the allowWrite degrade resolves before it judges, and nam
   const runRender = (cwd) => {
     const stdout = [];
     const code = main(['--autonomy', '--cwd', cwd], {
-      log: (l) => stdout.push(l),
+      userServicesFile: ABSENT_USER_SERVICES, log: (l) => stdout.push(l),
       errlog: () => {},
       home: OUTSIDE_HOME,
       env: { ...process.env, TMPDIR: boundaryTmp },
@@ -1788,7 +1788,7 @@ describe('velocity — the allowWrite degrade resolves before it judges, and nam
     const stdout = [];
     // An unresolvable harness binary is the "version unknown" arm — the probe's own honest branch.
     main(['--autonomy', '--cwd', cwd], {
-      log: (l) => stdout.push(l),
+      userServicesFile: ABSENT_USER_SERVICES, log: (l) => stdout.push(l),
       errlog: () => {},
       findOnPath: () => ({ path: null, state: 'absent' }),
     });
@@ -1950,12 +1950,12 @@ describe('spec:velocity-profile/S25 — the --worktrees writer by proof', () => 
     return createHash('sha256').update(JSON.stringify([path, collect(path)])).digest('hex');
   };
   const hashTrees = ({ real, home }) => [hashTree(real), hashTree(home)];
-  const write = ({ root, home }, dryRun = true) => writeVelocityProfile({ cwd: root, dryRun, worktrees: true }, { home });
+  const write = ({ root, home }, dryRun = true) => writeVelocityProfile({ cwd: root, dryRun, worktrees: true }, { home, env: {} });
   const run = ({ root, home }, argv = []) => {
     const log = [];
     const errlog = [];
     const code = main([...argv, '--cwd', root], {
-      home,
+      home, env: {},
       log: (line) => log.push(line),
       errlog: (line) => errlog.push(line),
     });
@@ -2119,7 +2119,7 @@ describe('spec:velocity-profile/S25 — the --worktrees writer by proof', () => 
       assert.deepEqual(hashTrees(fixture), before);
       return { fixture, sandbox, result };
     });
-    const flagless = writeVelocityProfile({ cwd: cases[0].fixture.root, dryRun: true }, { home: cases[0].fixture.home });
+    const flagless = writeVelocityProfile({ cwd: cases[0].fixture.root, dryRun: true }, { home: cases[0].fixture.home, env: {} });
     for (const { fixture, sandbox, result } of cases) {
       assert.equal(result.worktreesDir, fixture.parentDir);
       assert.equal(result.worktrees, true);

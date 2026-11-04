@@ -71,14 +71,14 @@ export const assertContainedRealPath = (root, dest, deps = {}) => {
 // Read-only write-boundary tagging (REFRESH-EROFS-HONESTY / AD-056). A DESTINATION-side write failure
 // of the read-only class is TAGGED (err.readonlyWriteBoundary) so the refresh-only driver can classify
 // an equal-version repair-on-rerun that cannot write as a STATED skip — never a false red. The tag is
-// applied ONLY around the three write primitives, so a READ-side failure (bundle read / dir listing)
+// applied ONLY around a write primitive, so a READ-side failure (bundle read / dir listing)
 // is never absorbed: the degrade classifies at the write boundary, not by a broad err.code sniff over
 // the whole copy. EROFS is destination-side by nature; mkdir/symlink write only the dest; an
 // EACCES/EPERM at copyFile (which also READS the source) is destination-provable ONLY when the source
 // is readable — else it is a source-side read failure that must stay loud.
 const READONLY_WRITE_ERRNOS = new Set(['EROFS', 'EACCES', 'EPERM']);
 export const isReadonlyWriteBoundary = (err) => Boolean(err && err.readonlyWriteBoundary);
-const throwTaggedReadonly = (err, primitive, src, readFile) => {
+export const throwTaggedReadonly = (err, primitive, src, readFile) => {
   if (err && READONLY_WRITE_ERRNOS.has(err.code)) {
     let destinationSide = err.code === 'EROFS' || primitive !== 'copyFile';
     if (!destinationSide) {

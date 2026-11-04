@@ -4,6 +4,32 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.2.0 — a service the kit does not ship goes into your own services list (AD-226)
+
+**A bridge run can now reach a service the kit does not ship: you list it once in your own
+`~/.config/agent-workflow/services.json`, and the kit adds it to every placed bridge and to the project's sandbox
+settings.** The kit only reads that file, never writes it. Each entry maps a new service id to the same six keys as a
+kit service file (`hosts`, `writableDirs`, `excludedCommands`, `passedVariables`, `billingVariables`,
+`runReachesHosts`); Mode: setup describes it. With no such file every output is what it was, but for the two lines
+below.
+
+- **Placement and every refresh write your services into each bridge's facts file.** `/agent-workflow-kit setup`,
+  `init` and `/agent-workflow-kit upgrade` write each placed bridge's `service-facts.txt` from the bridge's own
+  services, then yours, so the bridge wrappers reach your hosts and pass your variables.
+- **The bridge tier adds your hosts, state folders and excluded commands** to `.claude/settings.json` for every bridge
+  the project uses: the dry-run, the apply, the Recommendations item, the danger check and the autonomy preview read
+  the same list.
+- **A broken list stops the step before it writes anything**, naming the file: fix or remove it, then run the same
+  step again (`/agent-workflow-kit setup` after a stopped place, `/agent-workflow-kit upgrade` after a refresh that
+  could not run).
+- **No list can hand a billing key to a run.** Every service now names its billing variables (codex `OPENAI_API_KEY`,
+  `CODEX_API_KEY`, `OPENAI_BASE_URL`; antigravity `GEMINI_API_KEY`), and a passed variable equal to one is refused.
+- **A service you remove leaves the facts files at the next refresh**; the sandbox entries the tier already added stay,
+  and you remove them from `.claude/settings.json` yourself.
+- **Two changed lines:** an equal-version refresh no longer reports the placed `service-facts.txt` as a local edit,
+  since every refresh writes it anew; and a read-only refresh that cannot repair a file now says it still differs
+  "from what the refresh writes", where it said "from the bundled copy".
+
 ## 23.1.0 — every bridge wrapper reads its hosts and passed keys from the file in its own folder (AD-225)
 
 **The bridge wrappers no longer carry their own copy of the Jev hosts and key: each reads them from the

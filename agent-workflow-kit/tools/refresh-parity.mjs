@@ -75,7 +75,7 @@ const probe = (path, fs) => {
 // Plus `modes`: the placed mode of every node the walk actually reached as a regular file. It exists
 // so the wrapper axis can judge a source's mode WITHOUT a second lstat of its own — a separate stat
 // could traverse a symlinked ancestor this walk already refused, and produce a contradicting verdict.
-export const scanBundleOwnedDrift = (bundleDir, skillDir, fs) => {
+export const scanBundleOwnedDrift = (bundleDir, skillDir, fs, expectedBytes = {}) => {
   const drifted = [];
   const unreadable = [];
   const absent = [];
@@ -126,7 +126,7 @@ export const scanBundleOwnedDrift = (bundleDir, skillDir, fs) => {
       return;
     }
     if (typeof placed.mode === 'number') modes.set(rel, placed.mode);
-    const srcBytes = fs.readFile(src);
+    const srcBytes = Object.hasOwn(expectedBytes, rel) ? expectedBytes[rel] : fs.readFile(src);
     const destBytes = (() => {
       try {
         return fs.readFile(dest);
@@ -243,7 +243,7 @@ export const readonlySkipLine = (name, version, verdict) => {
   // repair" over both would promise a repair that never happens.
   const said = [];
   if (verdict.drifted.length > 0) {
-    said.push(`A read-only re-scan found ${count(verdict.drifted)} still differing from the bundled copy: ` +
+    said.push(`A read-only re-scan found ${count(verdict.drifted)} still differing from what the refresh writes: ` +
       `${verdict.drifted.join(', ')} — ${READONLY_RERUN_HINT} to repair.`);
   }
   if (verdict.conflicts.length > 0) {
