@@ -325,10 +325,12 @@ const inRepoBackends = () =>
     .map((e) => e.name);
 
 describe('KNOWN_BACKENDS — drift guard against the in-repo manifests', () => {
-  it('set equality: registry names == in-repo execution-backend dirs', () => {
+  it('set equality: registry names == in-repo non-stub execution-backend dirs — spec:jev-judge/S3', () => {
     const onDisk = inRepoBackends().sort();
+    const stubs = onDisk.filter((name) => readManifest(join(REPO, name)).available === false);
+    assert.deepEqual(stubs, ['typesafe-jev-bridge']);
     const registry = KNOWN_BACKENDS.map((b) => b.name).sort();
-    assert.deepEqual(registry, onDisk);
+    assert.deepEqual(registry, onDisk.filter((name) => !stubs.includes(name)));
   });
 
   it('the methodology-engine is NOT counted as a backend', () => {

@@ -9,25 +9,16 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bridgeRoleSources } from '../../scripts/testing/bridge-role-sources.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
 
-// The wrappers are derived, never typed (spec jev-every-run): every role source of every capability.json directly
-// under a top-level *-bridge/ directory whose first line is a bash shebang; a role without a source fails here. The
-// kit mirrors stay sync-mirrors --check's. AW_BRIDGES_ROOT points the discovery at a fixture tree.
 const BRIDGES_ROOT = process.env.AW_BRIDGES_ROOT || REPO_ROOT;
-const roleSources = (root) => readdirSync(root, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name.endsWith('-bridge') && existsSync(join(root, entry.name, 'capability.json')))
-  .flatMap(({ name }) => Object.entries(JSON.parse(readFileSync(join(root, name, 'capability.json'), 'utf8')).roles ?? {})
-    .map(([role, { source }]) => {
-      assert.ok(source, `${name}/capability.json role ${role} has no source`);
-      return { bridge: name, path: join(root, name, source) };
-    }));
-const SOURCES = roleSources(BRIDGES_ROOT).filter(({ path }) => /^#!\s*(\/usr\/bin\/env\s+bash|\/bin\/bash)\b/.test(readFileSync(path, 'utf8').split('\n')[0]));
+const SOURCES = bridgeRoleSources(BRIDGES_ROOT);
 const WRAPPERS = SOURCES.map(({ path }) => path);
 
 // The reader functions that carry the shared settings contract, byte-identical across all wrappers.

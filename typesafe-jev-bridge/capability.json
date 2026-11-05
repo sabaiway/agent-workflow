@@ -1,0 +1,28 @@
+{
+  "family": "agent-workflow",
+  "schema": 1,
+  "name": "typesafe-jev-bridge",
+  "kind": "execution-backend",
+  "version": "1.0.0",
+  "available": false,
+  "provides": ["judge"],
+  "roles": {
+    "judge": {
+      "cmd": "jev-ask",
+      "source": "bin/jev-ask.sh",
+      "output": "advisory"
+    }
+  },
+  "services": ["jev"],
+  "detect": {
+    "installed": {
+      "env": "TYPESAFE_JEV_BRIDGE_DIR",
+      "default": "~/.claude/skills/typesafe-jev-bridge",
+      "file": "SKILL.md"
+    }
+  },
+  "provenance": {
+    "author": "sabaiway",
+    "source": "github:sabaiway/agent-workflow"
+  }
+}

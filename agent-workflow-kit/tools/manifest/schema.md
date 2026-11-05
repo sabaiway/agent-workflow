@@ -26,9 +26,11 @@ expansion), never via the shell. The validator is [`validate.mjs`](./validate.mj
 
 ## Role vocabulary
 
-`context | plan | execute | review | probe | synthesize`. Every entry of `provides` and every
+`context | plan | execute | review | probe | synthesize | judge`. Every entry of `provides` and every
 key of `roles` must come from this set, and **`provides` ⊇ `Object.keys(roles)`** (you may
 advertise a capability without a callable role, but never the reverse).
+
+`judge` is a per-lane carrier the orchestrator dispatches, never a recipe or roster role.
 
 ### Roles
 
@@ -42,7 +44,7 @@ Each `roles.<role>` is an object:
   `references/review-prompt.md`); repo-relative, **must exist**.
 - `modes`, `output` (optional) — e.g. `["plan","code"]`, `"advisory"`.
 - `contract` (object, optional; execution-backend bridges) — the machine-readable **driving
-  contract** for a dispatchable recipe role (`review` / `execute`; the `probe` role carries none).
+  contract** for a dispatchable recipe role (`review` / `execute`; the `probe` and `judge` roles carry none).
   Rides as a validator-tolerated extra field (format-checked by the bridge/kit drift-guard tests,
   not by `validate.mjs`), and is the single source the point-of-use advisor
   (`/agent-workflow-kit procedures`) and each wrapper's `--help` render verbatim:

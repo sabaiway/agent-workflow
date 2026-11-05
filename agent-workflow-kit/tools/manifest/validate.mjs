@@ -31,7 +31,7 @@ export const KINDS = new Set([
   'execution-backend',
   'composition-root',
 ]);
-export const ROLE_VOCAB = new Set(['context', 'plan', 'execute', 'review', 'probe', 'synthesize']);
+export const ROLE_VOCAB = new Set(['context', 'plan', 'execute', 'review', 'probe', 'synthesize', 'judge']);
 
 export const VALID = 'valid';
 export const UNSUPPORTED = 'unsupported';

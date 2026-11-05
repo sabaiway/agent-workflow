@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { JEV_ENDPOINT, KEY_VARIABLE } from '../tools/jev-facts.mjs';
 import { stripGitLocationEnv } from '../tools/git-env.mjs';
+import { bridgeRoleSources } from '../../scripts/testing/bridge-role-sources.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -18,11 +19,6 @@ const read = (rel) => readFileSync(join(REPO, rel), 'utf8');
 const manifestOf = (bridge) => JSON.parse(read(`${bridge}/capability.json`));
 const childEnv = (overrides = {}) => Object.fromEntries(Object.entries(stripGitLocationEnv({ ...process.env, ...overrides }))
   .filter(([key]) => key !== 'NODE_TEST_CONTEXT' && key !== 'NODE_V8_COVERAGE'));
-const sourcesOf = (root) => readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.endsWith('-bridge') && existsSync(join(root, entry.name, 'capability.json')))
-  .flatMap(({ name }) => Object.values(JSON.parse(readFileSync(join(root, name, 'capability.json'), 'utf8')).roles).map(({ source }) => {
-    assert.ok(source, `${name}: role has a source`);
-    return { bridge: name, source };
-  })).filter(({ bridge, source }) => /^#!\s*(\/usr\/bin\/env\s+bash|\/bin\/bash)\b/.test(readFileSync(join(root, bridge, source), 'utf8').split('\n')[0]));
 
 const made = [];
 after(() => made.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
@@ -57,7 +53,7 @@ const roles = (entries) => JSON.stringify({ roles: Object.fromEntries(entries) }
 
 describe('the wrappers are derived from the bridge manifests — spec:jev-every-run/S6', () => {
   it('the check passes on the bridges as they are, holds a bash wrapper added to a new bridge, and fails a role without a source', () => {
-    assert.ok(sourcesOf(REPO).length > 0, 'the shared discovery returns the wrappers');
+    assert.ok(bridgeRoleSources(REPO).length > 0, 'the shared discovery returns the wrappers');
     const r = checkTree(fixtureTree({
       'node-bridge/capability.json': roles([['tool', { source: 'bin/tool.mjs' }]]),
       'node-bridge/bin/tool.mjs': '#!/usr/bin/env node\nconsole.log(1);\n',
@@ -79,7 +75,7 @@ const hostDrifts = (root, fragments, endpointHost = new URL(JEV_ENDPOINT).hostna
   const families = new Set(Object.values(fragments).flatMap(({ hosts }) => hosts.map((host) => host.toLowerCase().replace(/^\*\./, '').split('.').slice(-2).join('.'))));
   const variables = [...new Set(Object.values(fragments).flatMap(({ passedVariables }) => passedVariables))];
   const hits = [];
-  const wrappers = new Set(sourcesOf(root).map(({ bridge, source }) => join(root, bridge, source)));
+  const wrappers = new Set(bridgeRoleSources(root).map(({ bridge, source }) => join(root, bridge, source)));
   const inspect = (path) => {
     const text = readFileSync(path, 'utf8');
     const isJevSkill = BRIDGES.some((bridge) => path === join(root, bridge, 'SKILL.md'));
@@ -235,7 +231,7 @@ it('every discovered wrapper validates the facts state table before help or CLI 
     { name: 'repeated HOST', text: facts('HOST=a.example', 'HOST=a.example'), line: 3 },
     { name: 'RUN_HOST absent from HOST', text: facts('HOST=a.example', 'RUN_HOST=b.example'), line: 3 },
   ];
-  for (const cell of cells) for (const { bridge, source } of sourcesOf(REPO)) for (const launch of ['direct', 'symlink']) {
+  for (const cell of cells) for (const { bridge, source } of bridgeRoleSources(REPO)) for (const launch of ['direct', 'symlink']) {
     await context.test(`${cell.name}: ${bridge}/${source}: ${launch}`, (test) => {
       if (cell.name === 'unreadable' && process.getuid?.() === 0) { test.skip('chmod 000 is readable by uid 0'); return; }
       const directory = mkdtempSync(join(root, 'copy-'));
@@ -286,5 +282,19 @@ describe('the settings-native lane states the sandboxed wrapper — spec:jev-eve
     assert.ok(sentences.some((s) => s.includes('--bridge-tier') && /\bre-?run\b/i.test(s) && /\bhosts\b/.test(s)), 'the tier re-run is the lane for the hosts');
     assert.ok(!sentences.some((s) => /hand-apply/i.test(s) && s.includes('allowWrite')), 'the lane carries no hand-apply allowWrite step');
     assert.match(lane, /--bridge-tier.*\bre-?run\b.*(?:\ballowWrite\b|\bstate dirs?\b)/i, 'the tier re-run is the lane for the state dirs too');
+  });
+});
+
+describe('a declared stub adds no wrapper — spec:jev-every-run/S28', () => {
+  it('an absent role source passes only with available false', () => {
+    const manifest = { available: false, roles: { judge: { cmd: 'jev-ask', source: 'bin/jev-ask.sh' } } };
+    const stub = checkTree(fixtureTree({ 'typesafe-jev-bridge/capability.json': JSON.stringify(manifest) }));
+    assert.equal(stub.status, 0, stub.output);
+    const { available, ...undeclared } = manifest;
+    for (const declared of [{ ...manifest, available: true }, undeclared]) {
+      const result = checkTree(fixtureTree({ 'typesafe-jev-bridge/capability.json': JSON.stringify(declared) }));
+      assert.notEqual(result.status, 0, result.output);
+      assert.ok(result.output.includes('typesafe-jev-bridge/bin/jev-ask.sh'), result.output);
+    }
   });
 });

@@ -4,7 +4,7 @@ import { readFileSync, mkdtempSync, cpSync, writeFileSync, rmSync, mkdirSync, ch
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateManifest, settingValueValid, VALID, UNSUPPORTED, INVALID, CATALOG_LINE_MAX } from './validate.mjs';
+import { validateManifest, settingValueValid, VALID, UNSUPPORTED, INVALID, CATALOG_LINE_MAX, ROLE_VOCAB } from './validate.mjs';
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const at = (name) => join(FIX, name);
@@ -312,4 +312,24 @@ describe('spec:manifest-validate/S6 services replace retired host and dir keys',
       for (const key of ['networkHosts', 'writableDirs']) assert.equal(Object.hasOwn(manifest, key), false, key);
     });
   }
+});
+
+describe('spec:manifest-validate/S7 judge joins the closed role vocabulary', () => {
+  it('judge is valid; triage in provides or roles is invalid naming the vocabulary', (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'manifest-judge-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+    cpSync(at('valid'), dir, { recursive: true });
+    const manifest = manifestOf('valid'); manifest.provides.push('judge'); manifest.roles.judge = { cmd: 'fixture-judge', source: 'bin/run.sh' };
+    const path = join(dir, 'capability.json'); writeFileSync(path, JSON.stringify(manifest));
+    const valid = validateManifest(dir); assert.equal(valid.result, VALID, valid.errors.join('; ')); assert.deepEqual(valid.errors, []);
+    manifest.provides.push('triage'); writeFileSync(path, JSON.stringify(manifest));
+    const unknown = validateManifest(dir); assert.equal(unknown.result, INVALID); assert.ok(unknown.errors.some((error) => error.includes('unknown role "triage"')), unknown.errors.join('; '));
+    manifest.roles.triage = { cmd: 'fixture-triage', source: 'bin/run.sh' }; writeFileSync(path, JSON.stringify(manifest));
+    const outside = validateManifest(dir); assert.equal(outside.result, INVALID); assert.ok(outside.errors.some((error) => error.includes('role vocabulary')), outside.errors.join('; '));
+  });
+  it('ROLE_VOCAB and the schema role vocabulary line contain exactly the seven words', () => {
+    const expected = ['context', 'plan', 'execute', 'review', 'probe', 'synthesize', 'judge'].sort();
+    assert.deepEqual([...ROLE_VOCAB].sort(), expected);
+    const line = readFileSync(new URL('./schema.md', import.meta.url), 'utf8').split('## Role vocabulary\n')[1].split('\n').find((text) => text.trim());
+    assert.deepEqual(line.match(/`([^`]+)`/)[1].split('|').map((word) => word.trim()).sort(), expected);
+  });
 });

@@ -97,13 +97,13 @@ jobs:
         with:
           node-version: '22'
 
-      # Family manifest validation (strict), all five package dirs.
-      - name: Manifest validate (strict, 5 dirs)
+      # Family manifest validation (strict), all six package dirs.
+      - name: Manifest validate (strict, 6 dirs)
         run: |
           node agent-workflow-kit/tools/manifest/validate.mjs --strict \
-            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine
+            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine typesafe-jev-bridge
 
-      # Release scan — fails on any AI/agent attribution. The five package dirs PLUS the
+      # Release scan — fails on any AI/agent attribution. The six package dirs PLUS the
       # tracked workflow files, the root README.md / CHANGELOG.md, the tracked release
       # scripts (scripts/release/) AND the tracked root tooling outside scripts/release/
       # (scripts/sync-mirrors*.mjs, scripts/suite-parity*.mjs), so the "no attribution
@@ -111,5 +111,5 @@ jobs:
       - name: Release scan (no AI attribution)
         run: |
           node agent-workflow-kit/tools/release-scan.mjs \
-            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine \
+            agent-workflow-memory agent-workflow-kit codex-cli-bridge antigravity-cli-bridge agent-workflow-engine typesafe-jev-bridge \
             .github/workflows README.md CHANGELOG.md scripts/release scripts/sync-mirrors*.mjs scripts/suite-parity*.mjs
