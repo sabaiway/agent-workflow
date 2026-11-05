@@ -349,8 +349,7 @@ const hasHiddenFence = (projectDir, deps = {}) => {
 // probe never imports the rotator).
 // The ADR-layout probe's paths. LOCAL literals, not an import: this module backs the read-only
 // `status` view and importing the rotator would drag child_process + crypto into a status read. A
-// drift guard in family-registry.test.mjs pins each literal to the rotator's exported constant —
-// the same baked-frozen-copy shape the gate hook uses for its velocity constants.
+// drift guard in family-registry.test.mjs pins each literal to the rotator's exported constant.
 export const ADR_LAYOUT_PATHS = Object.freeze({
   hot: 'docs/ai/decisions.md',
   monoliths: Object.freeze(['docs/ai/history/decisions-archive.md', 'docs/ai/history/decisions-archive-early.md']),

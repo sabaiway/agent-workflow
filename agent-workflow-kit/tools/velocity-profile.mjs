@@ -233,9 +233,9 @@ export { SHELL_METACHARACTERS };
 
 // The RUNTIME residual documented above, as data: the exact write-redirection / command-
 // substitution / bounded write-flag forms a settings-level allow rule cannot see. Consumed by
-// the PreToolUse gate hook's residual guard — the placed hook (references/hooks/gate-approve.mjs)
-// bakes a frozen COPY (a placed file cannot import the kit), drift-guarded by
-// test/gate-hook-core-parity.test.mjs alongside UNIVERSAL_READONLY_ALLOWLIST.
+// the PreToolUse gate hook's residual guard — scripts/sync-mirrors.mjs writes the generated region
+// in the bundled hook (references/hooks/gate-approve.mjs; a placed file cannot import the kit),
+// alongside UNIVERSAL_READONLY_ALLOWLIST.
 export const RUNTIME_RESIDUAL_FORMS = Object.freeze({
   writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
   // `$(…)` + backtick + BOTH process substitutions `<(…)` / `>(…)` RUN a nested command. `>(…)` is

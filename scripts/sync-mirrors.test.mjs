@@ -1,78 +1,10 @@
-import { describe, it, afterEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  REPO_ROOT,
-  BRIDGE_DIRS,
-  MIRROR_TEMPLATE_FILES,
-  TEMPLATE_HARD_EXCLUDES,
-  planAllMirrors,
-  syncBridgeMirror,
-  runCli,
-} from './sync-mirrors.mjs';
-const tempDirs = [];
-const makeRoot = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sync-mirrors-'));
-  tempDirs.push(dir);
-  return dir;
-};
-afterEach(() => {
-  while (tempDirs.length) rmSync(tempDirs.pop(), { recursive: true, force: true });
-});
-const SERVICES_REL = 'agent-workflow-kit/tools/services';
-const FACTS_FILE = 'service-facts.txt';
-const seedFacts = (id) => [
-  "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit",
-  `HOST=${id}.example`, 'HOST=jev.example', 'RUN_HOST=jev.example',
-  `WRITABLE_DIR=${id === 'codex' ? 'CODEX_HOME:~/.codex' : ':~/.gemini/antigravity-cli'}`,
-  'PASSED_VARIABLE=TYPESAFE_API_KEY', '',
-].join('\n');
-const seedFamily = (root) => {
-  const servicesDir = join(root, SERVICES_REL);
-  mkdirSync(servicesDir, { recursive: true });
-  for (const id of ['codex', 'antigravity', 'jev']) {
-    const writableDirs = id === 'jev' ? [] : [{ env: id === 'codex' ? 'CODEX_HOME' : null,
-      default: id === 'codex' ? '~/.codex' : '~/.gemini/antigravity-cli' }];
-    writeFileSync(join(servicesDir, `${id}.json`), JSON.stringify({ hosts: [`${id}.example`], writableDirs,
-      excludedCommands: [], passedVariables: id === 'jev' ? ['TYPESAFE_API_KEY'] : [], billingVariables: [], runReachesHosts: id === 'jev' }));
-  }
-  for (const bridge of BRIDGE_DIRS) {
-    const id = bridge.replace('-cli-bridge', '');
-    for (const base of [join(root, bridge), join(root, 'agent-workflow-kit', 'bridges', bridge)]) {
-      mkdirSync(join(base, 'bin'), { recursive: true });
-      writeFileSync(join(base, 'SKILL.md'), `# ${bridge}\n`);
-      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services: [id, 'jev'] })}\n`);
-      writeFileSync(join(base, FACTS_FILE), seedFacts(id));
-      writeFileSync(join(base, 'bin', 'run.sh'), '#!/bin/sh\necho run\n');
-      chmodSync(join(base, 'bin', 'run.sh'), 0o755);
-    }
-  }
-  for (const side of ['agent-workflow-memory', 'agent-workflow-kit']) {
-    const scripts = join(root, side, 'references', 'scripts');
-    mkdirSync(scripts, { recursive: true });
-    writeFileSync(join(scripts, 'tool.mjs'), 'export const tool = 1;\n');
-    const templates = join(root, side, 'references', 'templates');
-    mkdirSync(join(templates, 'pages'), { recursive: true });
-    mkdirSync(join(templates, 'adr'), { recursive: true }); // the seed adr/log.md subdir entry
-    mkdirSync(join(templates, 'specs'), { recursive: true }); // the seed specs/index.md subdir entry
-    for (const rel of MIRROR_TEMPLATE_FILES) writeFileSync(join(templates, rel), `template ${rel}\n`);
-    for (const rel of TEMPLATE_HARD_EXCLUDES) writeFileSync(join(templates, rel), `${side} divergent ${rel}\n`);
-    writeFileSync(join(templates, 'local-extra.md'), `${side} extra outside the manifest\n`);
-  }
-  for (const rel of ['agent-workflow-memory/bin/payload-prune.mjs', 'agent-workflow-kit/tools/payload-prune.mjs']) {
-    mkdirSync(join(root, rel, '..'), { recursive: true });
-    writeFileSync(join(root, rel), 'export const prunePayload = () => ({});\n');
-    chmodSync(join(root, rel), 0o644);
-  }
-};
-const run = (argv, root) => {
-  const out = [];
-  const err = [];
-  const code = runCli([...argv, '--root', root], { log: (l) => out.push(l), logError: (l) => err.push(l) });
-  return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
-};
+import { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, syncBridgeMirror } from './sync-mirrors.mjs';
+import { makeRoot, seedFamily, run, SERVICES_REL, FACTS_FILE } from './sync-mirrors-fixture.mjs';
+import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
 describe('in-sync tree', () => {
   it('--check exits 0 with zero would-be changes despite the hard-excluded divergence', () => {
     const root = makeRoot();
@@ -390,6 +322,74 @@ it('spec:services/S5 facts drift and absence are read-only checks, then canon an
     const canon = readFileSync(join(root, bridge, FACTS_FILE));
     assert.equal(canon.toString('utf8'), expected);
     assert.deepEqual(readFileSync(join(root, 'agent-workflow-kit', 'bridges', bridge, FACTS_FILE)), canon);
+  }
+});
+describe('spec:init-project/S78 gate-hook-lists sync and refusals', () => {
+  const HOOK_REL = 'agent-workflow-kit/references/hooks/gate-approve.mjs';
+  const BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs by scripts/sync-mirrors.mjs; do not edit';
+  const END = '// end of the generated lists';
+  it('plans gate-hook-lists immediately after service-facts', async () => {
+    const { renderGateHookLists } = await import('./sync-mirrors.mjs');
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    const root = makeRoot();
+    seedFamily(root);
+    assert.ok(readFileSync(join(root, HOOK_REL), 'utf8').includes(render));
+    assert.deepEqual(planAllMirrors(root).slice(0, 2).map(({ family }) => family), ['service-facts', 'gate-hook-lists']);
+  });
+  it('checks drift without writes, restores only the region, then checks clean', async () => {
+    const { renderGateHookLists } = await import('./sync-mirrors.mjs');
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    const root = makeRoot();
+    seedFamily(root);
+    const path = join(root, HOOK_REL);
+    const original = readFileSync(path, 'utf8');
+    assert.ok(original.includes(render));
+    const expected = original.replace(BEGIN, `// preserved above the generated lists\n${BEGIN}`);
+    const driftedRegion = render.replace(/^([ \t]*".*")(,?)$/m, '$1$2 ');
+    assert.notEqual(driftedRegion, render);
+    const drifted = expected.replace(render, () => driftedRegion);
+    writeFileSync(path, drifted);
+    const check = run(['--check'], root);
+    assert.equal(check.code, 1, check.errText);
+    assert.ok(check.text.split('\n').includes(`gate-hook-lists: would write ${HOOK_REL}`), check.text);
+    assert.deepEqual(readFileSync(path), Buffer.from(drifted));
+    const apply = run([], root);
+    assert.equal(apply.code, 0, apply.errText);
+    assert.deepEqual(readFileSync(path), Buffer.from(expected));
+    const restored = readFileSync(path, 'utf8');
+    assert.equal(restored.slice(restored.indexOf(BEGIN), restored.indexOf(END) + END.length), render);
+    const clean = run(['--check'], root);
+    assert.equal(clean.code, 0, `${clean.text}\n${clean.errText}`);
+  });
+  for (const [cell, rewrite] of [
+    ['absent file', (path) => rmSync(path)],
+    ['directory at the hook path', (path) => { rmSync(path); mkdirSync(path); }],
+    ['zero begin lines', (path, text) => writeFileSync(path, text.replace(`${BEGIN}\n`, ''))],
+    ['two begin lines', (path, text) => writeFileSync(path, text.replace(BEGIN, `${BEGIN}\n${BEGIN}`))],
+    ['zero end lines', (path, text) => writeFileSync(path, text.replace(`${END}\n`, ''))],
+    ['two end lines', (path, text) => writeFileSync(path, text.replace(END, `${END}\n${END}`))],
+    ['end before begin', (path, text) => writeFileSync(path, text.split('\n').map((line) => line === BEGIN ? END : line === END ? BEGIN : line).join('\n'))],
+  ]) {
+    it(`refuses ${cell} in both modes before any service-facts write`, async () => {
+      const { renderGateHookLists } = await import('./sync-mirrors.mjs');
+      const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+      const root = makeRoot();
+      seedFamily(root);
+      const path = join(root, HOOK_REL);
+      const original = readFileSync(path, 'utf8');
+      assert.ok(original.includes(render));
+      rewrite(path, original);
+      const factsPath = join(root, BRIDGE_DIRS[0], FACTS_FILE);
+      const driftedFacts = Buffer.from('drifted service facts\n');
+      writeFileSync(factsPath, driftedFacts);
+      assert.throws(() => planAllMirrors(root), (error) => error.message.includes(HOOK_REL));
+      for (const argv of [['--check'], []]) {
+        const result = run(argv, root);
+        assert.equal(result.code, 1, `${result.text}\n${result.errText}`);
+        assert.ok(result.errText.includes(HOOK_REL), `${result.text}\n${result.errText}`);
+        assert.deepEqual(readFileSync(factsPath), driftedFacts);
+      }
+    });
   }
 });
 describe('the real tree', () => {

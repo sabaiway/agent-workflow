@@ -4,6 +4,14 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.2.1 — the gate hook's read-only list is written from the kit's own list (AD-227)
+
+**The gate hook's list of read-only commands and its list of residual shell forms are now written from the kit's own
+lists, so the two can no longer drift apart.** The hook decides every gate run exactly as before. The hook file in
+the kit changes, so where you wired the gate hook your next `/agent-workflow-kit upgrade` refreshes
+`.claude/hooks/agent-workflow-gates.mjs` through its usual item, with no question, and `init` refreshes it on its one
+y.
+
 ## 23.2.0 — a service the kit does not ship goes into your own services list (AD-226)
 
 **A bridge run can now reach a service the kit does not ship: you list it once in your own

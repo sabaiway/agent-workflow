@@ -1,59 +1,66 @@
-// gate-hook-core-parity.test.mjs — drift-guard: the PreToolUse hook's BAKED constants must stay
-// byte-identical to the velocity-profile.mjs exports they copy. The hook is self-contained by
-// contract (a placed file cannot import the kit), so the copy is structural — this test is the
-// mechanism that makes it safe: edit either side alone and the suite goes red.
-//
-// Non-vacuous by construction: `deepStrictEqual` on the full frozen structures — any injected
-// divergence (an added/removed/reworded entry on either side) fails.
-
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { isRefusedControlByte } from '../tools/repo-lex.mjs';
 import { RUNTIME_RESIDUAL_FORMS, UNIVERSAL_READONLY_ALLOWLIST } from '../tools/velocity-profile.mjs';
-import { RESIDUAL_FORMS, SEEDED_READONLY_CORE } from '../references/hooks/gate-approve.mjs';
 
-describe('gate hook ↔ velocity-profile constant parity', () => {
-  it('the baked seeded read-only core ≡ UNIVERSAL_READONLY_ALLOWLIST', () => {
-    assert.deepStrictEqual([...SEEDED_READONLY_CORE], [...UNIVERSAL_READONLY_ALLOWLIST]);
-  });
-
-  it('the baked residual forms ≡ RUNTIME_RESIDUAL_FORMS', () => {
-    assert.deepStrictEqual(
-      JSON.parse(JSON.stringify(RESIDUAL_FORMS)),
-      JSON.parse(JSON.stringify(RUNTIME_RESIDUAL_FORMS)),
-    );
-  });
-
-  it('the bash-5.3 funsub openers + the line-continuation forms are present on BOTH sides (AD-055 Part II) — a simultaneous revert goes red', () => {
-    // deepStrictEqual above catches a ONE-sided drift; this pins the extensions themselves so removing
-    // them from both copies at once still fails.
-    for (const forms of [RUNTIME_RESIDUAL_FORMS.commandSubstitutions, RESIDUAL_FORMS.commandSubstitutions]) {
-      for (const opener of ['${ ', '${\t', '${\n', '${\r', '${|']) {
-        assert.ok(forms.includes(opener), `commandSubstitutions must include the funsub opener ${JSON.stringify(opener)}`);
-      }
-      // Both process substitutions RUN a nested command; `>(` must not silently drop back to being
-      // covered only by the redirection scan's coincidental `>` match (AD-079).
-      for (const opener of ['<(', '>(']) {
-        assert.ok(forms.includes(opener), `commandSubstitutions must include the process substitution ${JSON.stringify(opener)}`);
-      }
+describe('the velocity profile lists the gate hook region renders from', () => {
+  it('the bash-5.3 funsub openers and process substitutions stay pinned in the velocity profile', () => {
+    for (const opener of ['${ ', '${\t', '${\n', '${\r', '${|', '<(', '>(']) {
+      assert.ok(RUNTIME_RESIDUAL_FORMS.commandSubstitutions.includes(opener), `commandSubstitutions must include ${JSON.stringify(opener)}`);
     }
-    for (const forms of [RUNTIME_RESIDUAL_FORMS.lineContinuations, RESIDUAL_FORMS.lineContinuations]) {
-      for (const form of ['\\\n', '\\\r']) {
-        assert.ok(forms.includes(form), `lineContinuations must include the splice form ${JSON.stringify(form)}`);
-      }
+    for (const form of ['\\\n', '\\\r']) {
+      assert.ok(RUNTIME_RESIDUAL_FORMS.lineContinuations.includes(form), `lineContinuations must include the splice form ${JSON.stringify(form)}`);
     }
   });
 
-  it('both sides are frozen (a runtime mutation cannot widen either set)', () => {
-    for (const value of [
-      UNIVERSAL_READONLY_ALLOWLIST,
-      SEEDED_READONLY_CORE,
-      RUNTIME_RESIDUAL_FORMS,
-      RESIDUAL_FORMS,
-      ...Object.values(RUNTIME_RESIDUAL_FORMS),
-      ...Object.values(RESIDUAL_FORMS),
-    ]) {
+  it('the velocity profile lists are frozen at every level', () => {
+    for (const value of [UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, ...Object.values(RUNTIME_RESIDUAL_FORMS)]) {
       assert.equal(Object.isFrozen(value), true);
+    }
+  });
+});
+
+describe('spec:init-project/S77 generated hook lists preserve values and frozen structure', () => {
+  const assertFrozenLists = (core, forms) => {
+    for (const value of [core, forms, ...Object.values(forms)]) assert.equal(Object.isFrozen(value), true);
+  };
+
+  it('the bundled hook holds the render exactly once and exports the frozen velocity lists', async () => {
+    const { renderGateHookLists } = await import('../../scripts/sync-mirrors.mjs');
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    const hookUrl = new URL('../references/hooks/gate-approve.mjs', import.meta.url);
+    const text = readFileSync(hookUrl, 'utf8');
+    assert.equal(text.split(render).length - 1, 1);
+    const { SEEDED_READONLY_CORE, RESIDUAL_FORMS } = await import(hookUrl.href);
+    assert.deepEqual(SEEDED_READONLY_CORE, UNIVERSAL_READONLY_ALLOWLIST);
+    assert.deepEqual(RESIDUAL_FORMS, RUNTIME_RESIDUAL_FORMS);
+    assertFrozenLists(SEEDED_READONLY_CORE, RESIDUAL_FORMS);
+  });
+
+  it('injected characters round-trip through a safe render with every level frozen', async () => {
+    const { renderGateHookLists } = await import('../../scripts/sync-mirrors.mjs');
+    const core = ['double"quote', 'back\\slash', 'line\nfeed', 'carriage\rreturn'];
+    const forms = { 'own"key': ['back`tick', '${', '\u0001'], 'other\\key': ['\u007f'] };
+    const before = structuredClone({ core, forms });
+    const render = renderGateHookLists(core, forms);
+    assert.equal(render, renderGateHookLists(core, forms));
+    assert.deepEqual({ core, forms }, before);
+    for (const byte of Buffer.from(render, 'utf8')) assert.equal(isRefusedControlByte(byte), false);
+    assert.ok(render.includes('\\u007f'));
+    const dir = mkdtempSync(join(tmpdir(), 'gate-hook-lists-'));
+    try {
+      const file = join(dir, 'lists.mjs');
+      writeFileSync(file, render);
+      const { SEEDED_READONLY_CORE, RESIDUAL_FORMS } = await import(pathToFileURL(file).href);
+      assert.deepEqual(SEEDED_READONLY_CORE, core);
+      assert.deepEqual(RESIDUAL_FORMS, forms);
+      assertFrozenLists(SEEDED_READONLY_CORE, RESIDUAL_FORMS);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

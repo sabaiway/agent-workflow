@@ -3,6 +3,45 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **GATE-HOOK-RESTATES-THE-DECLARATION-SCHEMA** — invariant: every constant the bundled gate hook shares with a kit
+  module is a generated, drift-checked copy of that module's export, never a hand copy. Origin:
+  `agent-workflow-kit/references/hooks/gate-approve.mjs:175-182` restates the gate id rule, `GATE_KEYS` and
+  `LCOV_PRODUCER_KEY` from `agent-workflow-kit/tools/gates-declaration.mjs:25-33`, and
+  `agent-workflow-kit/references/hooks/gate-approve.mjs:173` restates `BASH_ALLOW_PATTERN` from
+  `agent-workflow-kit/tools/velocity-profile.mjs:279`, by hand (the stated limit of the part gate-hook-lists, JEV S16).
+  Narrow fix: a second generated region rendered by the `gate-hook-lists` family of `scripts/sync-mirrors.mjs` from
+  `gates-declaration.mjs` and `velocity-profile.mjs`, each constant first exported by its source. Proof: a sync-mirrors
+  cell where a changed source value makes `--check` name the hook at exit 1, and the hook's suite green on the region.
+  Residual exposure, not live: today each restated value equals its source, and the hook suite's `lcovProducer` cells
+  (`agent-workflow-kit/test/gate-approve-hook.test.mjs:229-262`) hold the hook and the runner to one verdict.
+
+- **RELEASE-POLL-DIES-ON-ONE-GH-ERROR** — invariant: a transport failure of one `gh api` call while a dispatched run is
+  polled is retried on the next tick within the poll timeout; it never ends the stage. Origin:
+  `scripts/release/dispatch-publish.mjs:458-475` (`pollRunToConclusion` calls `ghApi` once per tick with no catch, and
+  `ghApi` throws exit 4). Measured on the kit 23.2.0 release (2026-11-04): the live stage died at exit 4 while it
+  polled the dry run; nothing was published. Narrow fix: a failure carrying `.transport` retries on the next tick.
+  Proof: a dispatch-publish test whose fake `ghApi` throws a transport failure once, then reports a successful
+  completed run, and the run concludes success. Residual exposure, not live: a fresh start after the manual
+  adjudication below recovers, at the cost of one more release cycle.
+
+- **RELEASE-LIVE-UNKNOWN-BEFORE-ANY-LIVE-DISPATCH** — invariant: the receipt marks the live dispatch unknown only when
+  the live dispatch may have been sent; a failure in the dry-run phase leaves `live` failed and resumable with
+  `--from live`. Origin: `scripts/release/release-run.mjs:336` judges the live stage by the dispatcher's exit code
+  alone, and that code does not tell the dry-run phase from the live one. Measured twice on the kit 23.2.0 release:
+  exit 4 and exit 6, both in the dry-run phase, left `dispatched: unknown`; `--from verify` was the only resume allowed
+  and fails by design when nothing was published, so the receipt was adjudicated by hand (every run at HEAD a dry run,
+  npm and the Release absent), removed, and the release started again with `--from preflight-remote`. Narrow fix: the
+  dispatcher reports the phase it failed in and the live outcome maps a dry-run-phase failure to a plain fail. Proof:
+  a release-run test whose live child fails before its live dispatch and whose receipt then admits `--from live`.
+  Residual exposure, not live: the manual adjudication above.
+
+- **RELEASE-VERIFY-WINDOW-SHORTER-THAN-REGISTRY-LAG** — invariant: the npm `@latest` verify waits at least as long as
+  the registry's observed propagation lag. Origin: `scripts/release/dispatch-publish.mjs:116-117` (10 attempts, 10 s
+  apart). Measured on the kit 23.2.0 release: published at 16:58:39Z, `latest` still 23.1.0 at 17:02:13Z and 23.2.0
+  a minute later; the verify stage failed at exit 8 and `--from verify` then passed. Narrow fix: a window of about
+  five minutes. Proof: a test pins the window's length. Residual exposure, not live: `--from verify` recovers without
+  a second ask.
+
 - **USER-SERVICES-LIST-READS-A-NON-REGULAR-FILE** — invariant: the user loader refuses a `services.json` that is not
   a regular file, as `agent-workflow-kit/tools/bridge-settings-read.mjs:119` does for its sibling settings file.
   Origin: `agent-workflow-kit/tools/services/index.mjs:112-120` (`loadUserServices` reads with no file-type check;

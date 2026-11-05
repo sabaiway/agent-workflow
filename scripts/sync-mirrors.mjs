@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // sync-mirrors.mjs — the canon → mirror synchronizer for the four byte-identical mirror
-// families, and the generator of each canon bridge's service-facts.txt (spec kit/services),
-// which runs first so the bridge mirror carries the fresh file (repo-local, tracked; repo-only
+// families, the generator of each canon bridge's service-facts.txt (spec kit/services), which
+// runs first so the bridge mirror carries the fresh file, and of the bundled gate hook's lists
+// region (spec kit/install/init-project, part gate-hook-lists) (repo-local, tracked; repo-only
 // tooling — never shipped in any tarball).
 //
 // The kit ships byte-identical MIRROR copies of content whose canon lives elsewhere in the
@@ -40,6 +41,7 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, statSync, copyFileSyn
 import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadServiceFragments, mergeServices, renderServiceFacts, SERVICE_FACTS_FILE } from '../agent-workflow-kit/tools/services/index.mjs';
+import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -56,6 +58,9 @@ const SERVICES_REL = 'tools/services';
 const MANIFEST_FILE = 'capability.json';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
+const GATE_HOOK_REL = `${KIT_DIR}/references/hooks/gate-approve.mjs`;
+const GATE_HOOK_LISTS_BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs by scripts/sync-mirrors.mjs; do not edit';
+const GATE_HOOK_LISTS_END = '// end of the generated lists';
 // The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
 const PRUNE_CANON = `${MEMORY_DIR}/bin/payload-prune.mjs`;
 const PRUNE_COPY = `${KIT_DIR}/tools/payload-prune.mjs`;
@@ -211,10 +216,50 @@ const planServiceFacts = (root) => {
   return { changes, identical: BRIDGE_DIRS.length - changes.length };
 };
 
+const renderLiteral = (value) => JSON.stringify(value).replaceAll('\u007f', '\\u007f');
+
+export const renderGateHookLists = (readonlyCore, residualForms) => [
+  GATE_HOOK_LISTS_BEGIN,
+  'export const SEEDED_READONLY_CORE = Object.freeze([',
+  ...readonlyCore.map((item) => `  ${renderLiteral(item)},`),
+  ']);',
+  'export const RESIDUAL_FORMS = Object.freeze({',
+  ...Object.entries(residualForms).flatMap(([key, items]) => [
+    `  ${renderLiteral(key)}: Object.freeze([`,
+    ...items.map((item) => `    ${renderLiteral(item)},`),
+    '  ]),',
+  ]),
+  '});',
+  GATE_HOOK_LISTS_END,
+].join('\n');
+
+const planGateHookLists = (root) => {
+  const to = join(root, GATE_HOOK_REL);
+  const hook = (() => {
+    try {
+      return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(to)) };
+    } catch (error) {
+      return { error };
+    }
+  })();
+  const lines = hook.text?.split('\n') ?? [];
+  const beginLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_BEGIN ? [index] : []);
+  const endLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_END ? [index] : []);
+  if (typeof hook.text === 'string' && beginLines.length === 1 && endLines.length === 1 && endLines[0] > beginLines[0]) {
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    const begin = beginLines[0];
+    const afterEnd = endLines[0] + 1;
+    if (lines.slice(begin, afterEnd).join('\n') === render) return { changes: [], identical: 1 };
+    const content = [...lines.slice(0, begin), render, ...lines.slice(afterEnd)].join('\n');
+    return { changes: [{ action: 'write', rel: GATE_HOOK_REL, to, content }], identical: 0 };
+  }
+  throw fail(1, `${GATE_HOOK_REL}: refusing to sync: ${hook.error?.message ?? 'expected exactly one begin line and one later end line'}`);
+};
+
 // All families, in canonical order → [{ family, changes, identical }].
 export const planAllMirrors = (root) => {
   const facts = planServiceFacts(root);
-  const plans = [{ family: 'service-facts', ...facts }];
+  const plans = [{ family: 'service-facts', ...facts }, { family: 'gate-hook-lists', ...planGateHookLists(root) }];
   for (const bridge of BRIDGE_DIRS) {
     plans.push({ family: `bridge:${bridge}`, ...planTreeSync(root, bridge, join(KIT_DIR, 'bridges', bridge), facts.changes) });
   }

@@ -7,6 +7,17 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-05 — AD-227: the gate hook's read-only core and residual forms are generated from the velocity profile (kit 23.2.1 PATCH; memory, engine and both bridges unchanged)
+
+**The bundled `agent-workflow-kit/references/hooks/gate-approve.mjs` holds one generated region**, between two exact
+marker lines, with `SEEDED_READONLY_CORE` and `RESIDUAL_FORMS` one item per line. `scripts/sync-mirrors.mjs` exports
+`renderGateHookLists` and renders the region from `UNIVERSAL_READONLY_ALLOWLIST` and `RUNTIME_RESIDUAL_FORMS` in the
+new family `gate-hook-lists`, planned right after `service-facts`; `--check` names drift at exit 1, and a hook with
+no admitted region (absent, unreadable, a missing, repeated or misordered marker) is refused before any family
+writes. The sync suite's fixture moves to `scripts/sync-mirrors-fixture.mjs`; the parity suite pins the velocity side
+and checks that the hook holds the render exactly once and exports the same frozen values. Every ask and allow
+decision of the hook is unchanged.
+
 ## 2026-11-04 — AD-226: a service the kit does not ship goes into the user's own strict services list (kit 23.2.0 MINOR; memory, engine and both bridges unchanged)
 
 **The user's own `services.json` beside the bridge settings file (`$XDG_CONFIG_HOME/agent-workflow`) adds services to

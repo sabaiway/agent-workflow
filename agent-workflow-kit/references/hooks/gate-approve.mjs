@@ -5,10 +5,8 @@
 // .claude/settings.json.
 //
 // SELF-CONTAINED by contract: the placed copy must run on machines without the kit — no kit
-// imports, dependency-free, Node >= 22, no side effects on import. Two constants are baked
-// FROZEN COPIES of the velocity-profile.mjs exports (a placed file cannot import the kit):
-// SEEDED_READONLY_CORE ≡ UNIVERSAL_READONLY_ALLOWLIST and RESIDUAL_FORMS ≡
-// RUNTIME_RESIDUAL_FORMS — drift-guarded by the kit's test/gate-hook-core-parity.test.mjs.
+// imports, dependency-free, Node >= 22, no side effects on import.
+// SEEDED_READONLY_CORE and RESIDUAL_FORMS are the generated region scripts/sync-mirrors.mjs writes from velocity-profile.mjs.
 //
 // It reads <project root>/docs/ai/gates.json LIVE on every invocation (AD-035: one declaration,
 // two consumers — editing gates.json never requires re-wiring) and, for the opt-in read-lane
@@ -101,67 +99,69 @@ export const DECISION_ASK = 'ask';
 // fenced closed by default. The residual guard (b) is NOT mode-fenced: an `ask` never loosens.
 export const ALLOW_PERMISSION_MODES = Object.freeze(['default', 'acceptEdits']);
 
-// Baked frozen copy of velocity-profile.mjs UNIVERSAL_READONLY_ALLOWLIST (the audited read-only
-// core velocity seeds as settings allow rules). Drift-guarded — never edit here alone.
+// generated from agent-workflow-kit/tools/velocity-profile.mjs by scripts/sync-mirrors.mjs; do not edit
 export const SEEDED_READONLY_CORE = Object.freeze([
-  'Bash(git status:*)',
-  'Bash(git diff:*)',
-  'Bash(git log:*)',
-  'Bash(git show:*)',
-  'Bash(git ls-files:*)',
-  'Bash(git check-ignore:*)',
-  'Bash(git branch --list:*)',
-  'Bash(git rev-parse:*)',
-  'Bash(git blame:*)',
-  'Bash(git shortlog:*)',
-  'Bash(git describe:*)',
-  'Bash(git tag --list:*)',
-  'Bash(git stash list:*)',
-  'Bash(git worktree list:*)',
-  'Bash(npm view:*)',
-  'Bash(npm ls:*)',
-  'Bash(npm outdated:*)',
-  'Bash(ls:*)',
-  'Bash(cat:*)',
-  'Bash(head:*)',
-  'Bash(tail:*)',
-  'Bash(wc:*)',
-  'Bash(readlink:*)',
-  'Bash(which:*)',
-  'Bash(grep:*)',
-  'Bash(diff:*)',
-  'Bash(stat:*)',
-  'Bash(du:*)',
-  'Bash(basename:*)',
-  'Bash(dirname:*)',
-  'Bash(realpath:*)',
+  "Bash(git status:*)",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+  "Bash(git ls-files:*)",
+  "Bash(git check-ignore:*)",
+  "Bash(git branch --list:*)",
+  "Bash(git rev-parse:*)",
+  "Bash(git blame:*)",
+  "Bash(git shortlog:*)",
+  "Bash(git describe:*)",
+  "Bash(git tag --list:*)",
+  "Bash(git stash list:*)",
+  "Bash(git worktree list:*)",
+  "Bash(npm view:*)",
+  "Bash(npm ls:*)",
+  "Bash(npm outdated:*)",
+  "Bash(ls:*)",
+  "Bash(cat:*)",
+  "Bash(head:*)",
+  "Bash(tail:*)",
+  "Bash(wc:*)",
+  "Bash(readlink:*)",
+  "Bash(which:*)",
+  "Bash(grep:*)",
+  "Bash(diff:*)",
+  "Bash(stat:*)",
+  "Bash(du:*)",
+  "Bash(basename:*)",
+  "Bash(dirname:*)",
+  "Bash(realpath:*)",
 ]);
-
-// Baked frozen copy of velocity-profile.mjs RUNTIME_RESIDUAL_FORMS (the documented residual a
-// settings-level allow rule cannot see). Drift-guarded — never edit here alone.
 export const RESIDUAL_FORMS = Object.freeze({
-  writeRedirections: Object.freeze(['>', '>>', '1>', '2>', '&>', '>|']),
-  // `$(…)` + backtick + BOTH process substitutions `<(…)` / `>(…)` RUN a nested command. `>(…)` is
-  // named here explicitly because that is the class it is IN: the redirection scan also happens to
-  // match its `>`, but a command that RUNS something must be reported as running something, and a
-  // classification must not depend on another class's coincidence. Bare `<` is input redirection
-  // (reads a file — read-only commands may
-  // already do that), so it is deliberately NOT here. The bash-5.3 function substitutions `${ cmd; }`
-  // (a blank — space/tab/newline/CR — right after `${`) and `${| cmd; }` also RUN a nested command —
-  // matched as the literal openers `${ ` / `${\t` / `${\n` / `${\r` / `${|` (AD-055 Part II). Ordinary
-  // `${VAR}` has no blank after `${`, so it trips none of these (kept rung-(b)-silent).
-  commandSubstitutions: Object.freeze(['$(', '`', '<(', '>(', '${ ', '${\t', '${\n', '${\r', '${|']),
-  // A backslash immediately before a newline/CR is a bash LINE CONTINUATION: bash removes it and
-  // splices the two lines into ONE word, reconstructing a residual token (`--output`, `$(`, `${ …; }`)
-  // a raw substring scan on the pre-splice string misses. Guards a settings-allowed SINGLE (rung c
-  // already forbids backslash in every segment). AD-055 Part II council fold.
-  lineContinuations: Object.freeze(['\\\n', '\\\r']),
-  // The `--output` write-flag family, matched as a raw SUBSTRING of the whole command (never a
-  // whitespace-token check): the hook sees the pre-shell command string, so `--output=f`,
-  // `"--output=f"`, `'--output' f`, and `\--output` must all trip it — over-asking on a benign
-  // `--output-indicator` is the safe direction (never under-allow a real write flag through quotes).
-  boundedWriteFlags: Object.freeze(['--output']),
+  "writeRedirections": Object.freeze([
+    ">",
+    ">>",
+    "1>",
+    "2>",
+    "&>",
+    ">|",
+  ]),
+  "commandSubstitutions": Object.freeze([
+    "$(",
+    "`",
+    "<(",
+    ">(",
+    "${ ",
+    "${\t",
+    "${\n",
+    "${\r",
+    "${|",
+  ]),
+  "lineContinuations": Object.freeze([
+    "\\\n",
+    "\\\r",
+  ]),
+  "boundedWriteFlags": Object.freeze([
+    "--output",
+  ]),
 });
+// end of the generated lists
 
 export const RESIDUAL_CLASS_REDIRECTION = 'output redirection';
 export const RESIDUAL_CLASS_SUBSTITUTION = 'command substitution';
