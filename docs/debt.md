@@ -1531,3 +1531,22 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   files of the `test-reporter` module (one key `run.mj`) would sort by engine order. Narrow fix: tie-break on the
   path; proof: a two-file module fixture in `kit-folder.test.mjs`. Residual exposure, NOT live: the module deploys one
   file.
+- **JEV-ASK-POSTURE-LINE-WRITTEN-WITH-THE-OUTCOME** — invariant: the judge's posture line reaches stderr before the
+  request is sent (spec bridges/typesafe-jev-bridge, part answer, "The output"). Origin: the JEV S2 plan review and
+  codex in the S2 diff review (2026-11-05): `typesafe-jev-bridge/bin/jev-client.mjs:146` composes the line before the
+  request, but `runJudgeCli` returns it prefixed to the outcome and the entry (`:154-155`) writes both after the exchange.
+  Narrow fix: `runJudgeCli` takes a stderr writer and writes the line before it calls the transport; the entry passes
+  the process's stderr. Proof: an S11 cell whose transport asserts the writer already holds the posture line when it
+  is called. Residual exposure, NOT live: the line still opens stderr ahead of the outcome; only its timing differs,
+  by at most the 10 s bound.
+- **JEV-ASK-CLIENT-ERROR-PATH-MINORS** — invariant: every exit line names the class the exit table gives it, in one
+  clean line, and no exported helper throws on input its callers may pass. Origin: the JEV S2 diff review
+  (2026-11-05), lens and agy: (1) `typesafe-jev-bridge/bin/jev-client.mjs:149-151` maps an unexpected throw inside
+  `runJudgeCli` to exit 8, a failure before any status, also before the posture line; (2) `:57-61` ends a cyclic
+  cause chain in `caused by ` with an empty tail; (3) `:63` `keyIsSet` throws on a nullish `env`; (4) codex, round 2:
+  `:111` maps a failure of `response.text()` (`:91`) after a 2xx status to exit 8 as well. Narrow fixes: (1) a spec
+  revision gives the closed exit table an internal-error class and the catch maps to it, and S11's defect cell moves
+  to that class; (2) the cycle stops the join, not the text; (3) `env?.[variable]`; (4) a body that fails to arrive
+  after its status exits 6. Proof: one client cell each. Residual exposure, NOT live: nothing reachable throws in
+  `runJudgeCli`, `fetch` builds no cyclic cause, every caller passes an object, and a cut body still exits non-zero
+  with one scrubbed line.

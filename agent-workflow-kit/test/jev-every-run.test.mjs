@@ -51,6 +51,25 @@ const checkTree = (root, fragments, endpointHost, keyVariable) => {
 };
 const roles = (entries) => JSON.stringify({ roles: Object.fromEntries(entries) });
 
+it('spec:typesafe-jev-bridge/S14 the admitted judge wrapper passes the shared block, discovery and help', () => {
+  const bridge = 'typesafe-jev-bridge';
+  const source = 'bin/jev-ask.sh';
+  const host = 'api.jev.invalid';
+  const header = read('codex-cli-bridge/service-facts.txt').split('\n')[0];
+  const root = fixtureTree({
+    [`${bridge}/capability.json`]: JSON.stringify({ ...manifestOf(bridge), available: true }),
+    [`${bridge}/${source}`]: read(`${bridge}/${source}`),
+    [`${bridge}/service-facts.txt`]: [header, `HOST=${host}`, `RUN_HOST=${host}`, 'PASSED_VARIABLE=TYPESAFE_API_KEY', ''].join('\n'),
+  });
+  const checked = checkTree(root);
+  assert.equal(checked.status, 0, checked.output);
+  assert.ok(bridgeRoleSources(root).some((entry) => entry.bridge === bridge && entry.source === source));
+  const result = spawnSync('bash', [join(root, bridge, source), '--help'], { env: childEnv(), encoding: 'utf8' });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Usage:$/m);
+});
+
 describe('the wrappers are derived from the bridge manifests — spec:jev-every-run/S6', () => {
   it('the check passes on the bridges as they are, holds a bash wrapper added to a new bridge, and fails a role without a source', () => {
     assert.ok(bridgeRoleSources(REPO).length > 0, 'the shared discovery returns the wrappers');

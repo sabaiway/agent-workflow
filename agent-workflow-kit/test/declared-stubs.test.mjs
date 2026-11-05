@@ -9,7 +9,7 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const readManifest = (name) => JSON.parse(readFileSync(join(REPO_ROOT, name, 'capability.json'), 'utf8'));
 
 it('spec:jev-judge/S1 the declared judge stub has exactly the agreed manifest, shared provenance and a valid verdict', () => {
-  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.0","available":false,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"}}');
+  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.0","available":false,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
   const manifest = readManifest('typesafe-jev-bridge');
   assert.deepEqual(manifest, expected);
   for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
@@ -20,7 +20,7 @@ it('spec:jev-judge/S1 the declared judge stub has exactly the agreed manifest, s
   assert.deepEqual(result.errors, []);
 });
 
-it('spec:jev-judge/S2 every declared stub is absent from runtime code and kit mirrors and holds its manifest alone', () => {
+it('spec:jev-judge/S2 every declared stub is absent from runtime code and kit mirrors and holds no service-facts.txt', () => {
   const stubs = readdirSync(REPO_ROOT, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(REPO_ROOT, entry.name, 'capability.json')))
     .map(({ name }) => name).filter((name) => readManifest(name).available === false);
@@ -35,6 +35,6 @@ it('spec:jev-judge/S2 every declared stub is absent from runtime code and kit mi
     const offending = ['agent-workflow-kit', 'agent-workflow-engine', 'scripts'].flatMap((directory) => scanCode(directory, name));
     assert.deepEqual(offending, [], offending.join('\n'));
     assert.equal(existsSync(join(REPO_ROOT, 'agent-workflow-kit', 'bridges', name)), false, name);
-    assert.deepEqual(readdirSync(join(REPO_ROOT, name)).sort(), ['capability.json'], name);
+    assert.equal(existsSync(join(REPO_ROOT, name, 'service-facts.txt')), false, name);
   }
 });
