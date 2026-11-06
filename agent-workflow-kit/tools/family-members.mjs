@@ -5,7 +5,7 @@
 // itself — can import the DATA without dragging in the whole status/presenter graph
 // (detect-backends, the manifest validator, hide-footprint, engine-source, recipes, the renderers …).
 // install.mjs runs on the npx cold-start hot path, so the leaner import matters; single-source-of-truth
-// + the drift-guard (family-registry.test.mjs pins FAMILY_MEMBERS to the 5 in-repo capability.json)
+// + the drift-guard (family-registry.test.mjs pins FAMILY_MEMBERS to the 6 in-repo capability.json)
 // are preserved — the table just lives in a dependency-free leaf now.
 //
 // Pure data, no imports, no side effects, Node >= 22.
@@ -16,7 +16,7 @@
 // `npm` is the install package (null for the bridges — placed by `setup`, and once placed refreshed
 // by `init`/`upgrade` from the kit's bundled copies, never npm);
 // `wrapperCmds` is the deduped roles[].cmd set the `setup` linker creates on PATH (bridges only).
-// Kept in lockstep with the 5 in-repo capability.json by the drift-guard test. The two release skills
+// Kept in lockstep with the 6 in-repo capability.json by the drift-guard test. The two release skills
 // (release-engineering / release-marketing) are deliberately NOT here — they are not family members
 // (AD-013): no capability.json, not in the kit tarball, not in the role vocabulary.
 export const FAMILY_MEMBERS = [
@@ -60,6 +60,14 @@ export const FAMILY_MEMBERS = [
     npm: null,
     // review → agy-review, probe → agy-run (first-seen role order in capability.json; bridge 2.0.0).
     wrapperCmds: ['agy-review', 'agy-run'],
+  },
+  {
+    name: 'typesafe-jev-bridge',
+    kind: 'execution-backend',
+    installed: { env: 'TYPESAFE_JEV_BRIDGE_DIR', default: '~/.claude/skills/typesafe-jev-bridge', file: 'SKILL.md' },
+    deployed: null,
+    npm: null,
+    wrapperCmds: ['jev-ask'],
   },
 ];
 

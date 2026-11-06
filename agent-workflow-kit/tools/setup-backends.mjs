@@ -28,9 +28,10 @@ const EXPECTED_KIND = 'execution-backend';
 const CMD_ALLOWED = /^[A-Za-z0-9._-]+$/;
 
 // Token → registry name. `codex`/`agy`/`antigravity` are the CLI-facing aliases.
-const ALIASES = { codex: 'codex-cli-bridge', agy: 'antigravity-cli-bridge', antigravity: 'antigravity-cli-bridge' };
+const ALIASES = { codex: 'codex-cli-bridge', agy: 'antigravity-cli-bridge', antigravity: 'antigravity-cli-bridge', jev: 'typesafe-jev-bridge' };
 const resolveBackendName = (token) => ALIASES[token] ?? token;
 const registryEntry = (name) => KNOWN_BACKENDS.find((b) => b.name === resolveBackendName(name));
+const providesReview = (entry) => Boolean(entry?.roleCmds?.review);
 
 // A typed STOP — a deliberate refusal we surface (distinct from a native fs error, though both exit
 // non-zero). `Object.assign(new Error(), { code })`, the codebase's typed-error idiom (no classes).
@@ -671,13 +672,13 @@ export const refreshPlacedBridges = (deps = {}, names = KNOWN_BACKENDS.map((b) =
 // view lives in the read-only status mode.
 const STATUS_POINTER = 'Full family + deployment versions: /agent-workflow-kit status';
 
-// Count the review-capable backends that are READY right now (both bridges provide review, so a READY
+// Count the review-capable backends that are READY right now (a READY
 // count ≥1 unlocks Reviewed, ≥2 unlocks Council). Uses the MULTI-backend detector. A detection failure
 // → null: we can't tell, so we make NO offer (never a false one). Read-only.
 const reviewReadyCount = (deps) => {
   const detectAll = deps.detectAll ?? detectBackends;
   try {
-    return detectAll(deps).filter((d) => d.readiness === READY).length;
+    return detectAll(deps).filter((d) => d.readiness === READY && providesReview(registryEntry(d.name))).length;
   } catch {
     return null;
   }
@@ -704,7 +705,7 @@ export const proactiveReviewOffer = (before, after) => {
 
 const USAGE = `usage: setup-backends [<backend>] [--bindir <path>] [--dry-run | --refresh-placed] [--help]
 
-  <backend>          codex | agy | antigravity | codex-cli-bridge | antigravity-cli-bridge   (default: all)
+  <backend>          codex | agy | antigravity | jev | codex-cli-bridge | antigravity-cli-bridge | typesafe-jev-bridge   (default: the review bridges)
   --bindir           where to link the wrappers                                              (default: ~/.local/bin)
   --dry-run          print the plan; change nothing
   --refresh-placed   refresh ONLY the already-placed bridges from the kit's bundled copies —
@@ -714,7 +715,7 @@ const USAGE = `usage: setup-backends [<backend>] [--bindir <path>] [--dry-run | 
   --help, -h         this help
 
 Places the bundled bridge skill + links its wrappers (idempotent; refuses to clobber a non-symlink).
-Binary install + the interactive subscription login stay manual — the printed guidance has the exact
+Binary install + the interactive subscription login + a key stay manual — the printed guidance has the exact
 commands. The detector ("/agent-workflow-kit backends") stays read-only; this is the only writer.`;
 
 const parseArgs = (argv) => {
@@ -759,7 +760,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
   }
 
   let targets;
-  if (args.backend === undefined) targets = KNOWN_BACKENDS.map((b) => b.name);
+  if (args.backend === undefined) targets = KNOWN_BACKENDS.filter((b) => args.refreshPlaced || providesReview(b)).map((b) => b.name);
   else {
     const entry = registryEntry(args.backend);
     if (!entry) {

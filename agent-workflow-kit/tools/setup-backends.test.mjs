@@ -26,6 +26,13 @@ const CODEX_ROLES = {
   execute: { cmd: 'codex-exec', source: 'bin/codex-exec.sh' },
   review: { cmd: 'codex-review', source: 'bin/codex-review.sh' },
 };
+const JEV_ROLES = { judge: { cmd: 'jev-ask', source: 'bin/jev-ask.sh' } };
+const AGY_ROLES = { review: { cmd: 'agy-review', source: 'bin/agy-review.sh' }, probe: { cmd: 'agy-run', source: 'bin/agy.sh' } };
+const CODEX = 'codex-cli-bridge';
+const AGY = 'antigravity-cli-bridge';
+const JUDGE = 'typesafe-jev-bridge';
+const BRIDGE_NAMES = [CODEX, AGY, JUDGE];
+const PREVIOUS_VERSION = '0.9.0';
 const manifestOf = (name, roles, version = '1.0.0') => ({
   family: 'agent-workflow', schema: 1, name, kind: 'execution-backend', version,
   provides: Object.keys(roles), roles,
@@ -46,6 +53,9 @@ const writeBundle = (root, name = 'codex-cli-bridge', roles = CODEX_ROLES, extra
   for (const r of Object.values(roles)) writeFileSync(join(dir, r.source), '#!/bin/sh\necho hi\n');
   if (extra.newFile) writeFileSync(join(dir, extra.newFile), 'bundled-only\n');
   return dir;
+};
+const writeAllBundles = () => {
+  for (const [name, roles] of [[CODEX, CODEX_ROLES], [AGY, AGY_ROLES], [JUDGE, JEV_ROLES]]) writeBundle(join(tmp, 'bundles'), name, roles);
 };
 
 const okValidate = (name = 'codex-cli-bridge') => () => ({ result: 'valid', name, kind: 'execution-backend', available: true });
@@ -1156,14 +1166,8 @@ describe('refreshPlacedBridges — the read-only skip line binds every clause to
 // ── §2.1 --refresh-placed CLI mode ────────────────────────────────────────────────
 
 describe('main --refresh-placed — CLI contract', () => {
-  const AGY_ROLES = { review: { cmd: 'agy-review', source: 'bin/agy-review.sh' }, probe: { cmd: 'agy-run', source: 'bin/agy.sh' } };
-  const bothBundles = () => {
-    writeBundle(join(tmp, 'bundles'));
-    writeBundle(join(tmp, 'bundles'), 'antigravity-cli-bridge', AGY_ROLES);
-  };
-
   it('refreshes the placed bridge, states the absent one, exit 0, and never offers set-recipe', () => {
-    bothBundles();
+    writeAllBundles();
     const skillDir = seedPlaced('0.9.0');
     const { code, text } = capturedMain(['--refresh-placed'], baseDeps({ skillDir }));
     assert.equal(code, 0);
@@ -1173,16 +1177,17 @@ describe('main --refresh-placed — CLI contract', () => {
   });
 
   it('win32 → every backend is a stated unsupported skip with the WSL guidance line', () => {
-    const results = refreshPlacedBridges({ platform: 'win32', home: '/home/u' });
-    assert.equal(results.length, 2);
+    writeAllBundles();
+    const results = refreshPlacedBridges(baseDeps({ rest: { platform: 'win32' } }));
+    assert.equal(results.length, 3);
     for (const r of results) {
       assert.equal(r.outcome, 'unsupported');
-      assert.match(r.line, /^  [a-z-]+-cli-bridge: skipped — POSIX \.sh wrappers/);
+      assert.match(r.line, /^  [a-z-]+-bridge: skipped — POSIX \.sh wrappers/);
     }
   });
 
   it('a failed backend → exit 1 (the line still carries the reason + recovery)', () => {
-    bothBundles();
+    writeAllBundles();
     const skillDir = join(tmp, 'skill');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '# present\n');
@@ -1209,5 +1214,79 @@ describe('main --refresh-placed — CLI contract', () => {
   it('--help lists --refresh-placed', () => {
     const { text } = capturedMain(['--help']);
     assert.match(text, /--refresh-placed/);
+  });
+});
+
+describe('spec:jev-judge/S8 setup places the judge by name only, offers for review bridges only and refreshes it when placed', () => {
+  const makeSetup = (placed = false, rest = {}) => {
+    writeAllBundles();
+    const dirs = Object.fromEntries(BRIDGE_NAMES.map((name) => [name, join(tmp, 'placed', name)]));
+    if (placed) writeBundle(join(tmp, 'placed'), JUDGE, JEV_ROLES, { version: PREVIOUS_VERSION });
+    const deps = baseDeps({ skillDir: dirs[CODEX], getenv: { CODEX_CLI_BRIDGE_DIR: dirs[CODEX], ANTIGRAVITY_CLI_BRIDGE_DIR: dirs[AGY], TYPESAFE_JEV_BRIDGE_DIR: dirs[JUDGE] }, rest });
+    return { dirs, deps };
+  };
+  const skippedLine = (name) => `${name}: skipped — not placed`;
+  const refreshedLine = `${JUDGE}: refreshed (v${PREVIOUS_VERSION} → v1.0.0)`;
+  const expectedRefreshLines = [skippedLine(CODEX), skippedLine(AGY), refreshedLine].sort();
+  const assertRefreshLines = (lines, expected) => {
+    assert.equal(lines.length, expected.length);
+    for (const prefix of expected) assert.equal(lines.filter((line) => line.trim().startsWith(prefix)).length, 1, prefix);
+  };
+
+  it('resolves jev in a dry-run', () => {
+    const { deps } = makeSetup();
+    const { code, text } = capturedMain(['jev', '--dry-run'], deps);
+    assert.equal(code, 0, text);
+    assert.ok(text.includes(JUDGE), text);
+  });
+  it('places the review bridges by default and the judge only when named', () => {
+    const { dirs, deps } = makeSetup();
+    const bare = capturedMain([], deps);
+    assert.equal(bare.code, 0, bare.text);
+    for (const name of [CODEX, AGY]) assert.ok(existsSync(join(dirs[name], 'SKILL.md')));
+    const wrapper = join(deps.bindir, JEV_ROLES.judge.cmd);
+    assert.equal(existsSync(dirs[JUDGE]), false);
+    assert.equal(existsSync(wrapper), false);
+    const named = capturedMain(['jev'], deps);
+    assert.equal(named.code, 0, named.text);
+    assert.ok(existsSync(join(dirs[JUDGE], 'SKILL.md')));
+    assert.equal(readlinkSync(wrapper), join(dirs[JUDGE], JEV_ROLES.judge.source));
+  });
+  it('names the judge, the review default and the three manual steps in help', () => {
+    const { text } = capturedMain(['--help']);
+    assert.match(text, /\bjev\b/);
+    assert.ok(text.includes(JUDGE), text);
+    assert.doesNotMatch(text, /\(default: all\)/);
+    assert.match(text, /default:[^)\n]*review/i);
+    const manual = text.split('\n').find((line) => /manual/i.test(line));
+    assert.equal(typeof manual, 'string', text);
+    for (const word of [/key/i, /install/i, /login/i]) assert.match(manual, word);
+    assert.doesNotMatch(manual, /\bjev\b|typesafe/i);
+  });
+  for (const flipped of [JUDGE, CODEX]) it(`${flipped} readiness flip ${flipped === JUDGE ? 'does not offer' : 'offers'} set-recipe`, () => {
+    const calls = [];
+    const detectAll = () => {
+      calls.push(true);
+      return BRIDGE_NAMES.map((name) => ({ name, readiness: calls.length > 1 && name === flipped ? 'ready' : 'needs-skill' }));
+    };
+    const { deps } = makeSetup(false, { detectAll });
+    const { code, text } = capturedMain(['codex'], deps);
+    assert.equal(code, 0, text);
+    assert.equal(calls.length, 2);
+    assert.equal(text.includes('set-recipe'), flipped === CODEX, text);
+  });
+  it('the no-name CLI refresh reports exactly one outcome per bridge and refreshes the placed judge', () => {
+    const { deps } = makeSetup(true);
+    const { code, text } = capturedMain(['--refresh-placed'], deps);
+    assert.equal(code, 0, text);
+    assertRefreshLines(text.split('\n').filter((line) => BRIDGE_NAMES.some((name) => line.trim().startsWith(`${name}:`))), expectedRefreshLines);
+  });
+  for (const placed of [true, false]) it(`the no-name refresh driver reports the judge ${placed ? 'refreshed' : 'not placed'}`, () => {
+    const { deps } = makeSetup(placed);
+    const results = refreshPlacedBridges(deps);
+    assert.deepEqual(results.map(({ name }) => name), BRIDGE_NAMES);
+    const judge = results.find(({ name }) => name === JUDGE);
+    assert.equal(judge.outcome, placed ? 'refreshed' : 'not-placed');
+    assertRefreshLines([judge.line], [placed ? refreshedLine : skippedLine(JUDGE)]);
   });
 });

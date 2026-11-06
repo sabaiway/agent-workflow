@@ -4,6 +4,11 @@ All notable changes to the methodology engine. Versions are this **package's** n
 they are distinct from the **deployment-lineage** stamp written into a project's `docs/ai/`
 (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 6.0.3 — the package needs Node.js 22.21 or newer (AD-228)
+
+`package.json`'s `engines.node` is `>=22.21`, the floor of the whole family since kit 23.3.0, whose judge bridge
+takes a sandbox's proxy through the runtime's own switch. PATCH: no methodology text changes.
+
 ## 6.0.2 — the host-diff line names the hosts of a bridge's services (AD-224)
 
 `references/orchestration.md`: the pre-dispatch host-diff diffs the hosts of the services a bridge manifest names

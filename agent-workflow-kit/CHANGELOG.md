@@ -4,6 +4,24 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.3.0 — the kit ships the judge bridge, placed when you name it, and needs Node.js 22.21 (AD-228)
+
+**An agent can now ask Jev a choice question through `jev-ask`: the kit carries the judge bridge
+`typesafe-jev-bridge`, and `/agent-workflow-kit setup jev` places it.** The bridge sends the question with your
+`TYPESAFE_API_KEY` and prints Jev's notes, never a byte of the key. A bare `/agent-workflow-kit setup` still places
+only the two review bridges, so the judge reaches your machine only when you ask for it.
+
+- **`/agent-workflow-kit backends` and `status` show the judge.** Once placed, it is ready with `node` and `jev-ask` on
+  `PATH` and the key set; the key's value is never printed. Otherwise the report names the next step, such as
+  Node.js 22.21 or newer, or the kit's connect command in a terminal of your own, then a restart of the agent.
+- **Once placed, `init` and `/agent-workflow-kit upgrade` refresh it** from the kit's bundled copy, as they do the
+  other bridges. A ready judge alone makes no recipe offer: it is not a reviewer.
+- **The request goes through a sandbox's proxy.** The wrapper switches on Node's own proxy support, so a run under a
+  sandbox that sets `HTTPS_PROXY` sends its request through that proxy.
+- **Node.js 22.21 or newer is now required** (the release that carries that proxy support): the `engines` field of
+  every package, the READMEs and the CI floor job say so.
+- **The role vocabulary admits `judge`**, and a bridge manifest can declare it.
+
 ## 23.2.1 — the gate hook's read-only list is written from the kit's own list (AD-227)
 
 **The gate hook's list of read-only commands and its list of residual shell forms are now written from the kit's own

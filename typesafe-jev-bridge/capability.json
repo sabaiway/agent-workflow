@@ -4,7 +4,7 @@
   "name": "typesafe-jev-bridge",
   "kind": "execution-backend",
   "version": "1.0.0",
-  "available": false,
+  "available": true,
   "provides": ["judge"],
   "roles": {
     "judge": {

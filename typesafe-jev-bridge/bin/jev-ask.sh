@@ -270,7 +270,8 @@ if (( ${#AW_FACT_PASSED_VARIABLE[@]} == 0 )); then
 fi
 aw_scrub_billing_keys
 if ! command -v node >/dev/null 2>&1; then
-  printf '%s\n' 'jev-ask: node not found on PATH; install Node.js 22 or newer' >&2
+  printf '%s\n' 'jev-ask: node not found on PATH; install Node.js 22.21 or newer' >&2
   exit 127
 fi
+export NODE_USE_ENV_PROXY=1
 exec node "$HERE/jev-client.mjs" --host "${AW_FACT_RUN_HOST[0]}" --key-variable "${AW_FACT_PASSED_VARIABLE[0]}" "$1"

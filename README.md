@@ -21,7 +21,7 @@ Claude Code, Codex, Cursor, and any agent that reads `AGENTS.md`.*
 `downloads/week` is the family total across both packages. A badge reading `n/a` means the signal was
 **not measured**, never that it was zero.</sub>
 
-`Node ≥ 22`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
+`Node ≥ 22.21`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
 
 **One command to start:**
 
@@ -208,7 +208,7 @@ optional backends (placed once by setup, NOT by init; init refreshes them):
 - **Plan lifecycle** — a capped plan (goal and boundary, module ledger, verification), ephemeral plan files, a **mandatory Cleanup phase**.
 - **No silent failures** — every guard that rejects an action surfaces a real error.
 
-The dependency-free **Node ≥ 22** enforcement scripts and their hook are offered on every project
+The dependency-free **Node ≥ 22.21** enforcement scripts and their hook are offered on every project
 because the agent host runs them; a committer without Node on PATH gets a loud hook failure.
 
 ---
@@ -259,7 +259,7 @@ Honest caveats:
 - They call **third-party services** (`codex` / `agy`); the "no telemetry" claim covers this
   family's own code, not those external services.
 
-`/agent-workflow-kit backends` checks readiness **read-only** (marker-file presence — it never
+`/agent-workflow-kit backends` checks readiness **read-only** (marker-file presence or a key variable set — it never
 runs a subscription CLI or changes the machine); `/agent-workflow-kit setup` then does the link-only
 setup (place skill + link wrappers). For the command mechanics see the
 [kit README](agent-workflow-kit/README.md#-use); for each bridge's operating policy see
@@ -302,7 +302,7 @@ This is a monorepo (npm workspaces) for the whole family.
   (kit + memory) stamp the shared lineage head — the engine has no per-project footprint, so it does
   not stamp it.
 - `docs/plans/` is machine-local and is never committed (see `.gitignore`).
-- Shipped Node scripts stay dependency-free and support Node ≥ 22. Run the repo's test,
+- Shipped Node scripts stay dependency-free and support Node ≥ 22.21. Run the repo's test,
   manifest-validate, release-scan, and docs-caps checks before proposing a commit.
 
 </details>

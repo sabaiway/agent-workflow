@@ -62,6 +62,7 @@ export const DISPLAY_NAMES = Object.freeze({
   'agent-workflow-engine': 'engine',
   'codex-cli-bridge': 'codex-bridge',
   'antigravity-cli-bridge': 'antigravity-bridge',
+  'typesafe-jev-bridge': 'jev-bridge',
 });
 export const displayOf = (name) => DISPLAY_NAMES[name] ?? name;
 

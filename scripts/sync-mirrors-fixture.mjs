@@ -15,10 +15,15 @@ afterEach(() => {
 });
 export const SERVICES_REL = 'agent-workflow-kit/tools/services';
 export const FACTS_FILE = 'service-facts.txt';
-const seedFacts = (id) => [
+const BRIDGE_SERVICES = new Map([
+  ['codex-cli-bridge', ['codex', 'jev']],
+  ['antigravity-cli-bridge', ['antigravity', 'jev']],
+  ['typesafe-jev-bridge', ['jev']],
+]);
+const seedFacts = (services) => [
   "# generated from the kit's service fragments (agent-workflow-kit/tools/services/); do not edit",
-  `HOST=${id}.example`, 'HOST=jev.example', 'RUN_HOST=jev.example',
-  `WRITABLE_DIR=${id === 'codex' ? 'CODEX_HOME:~/.codex' : ':~/.gemini/antigravity-cli'}`,
+  ...services.map((id) => `HOST=${id}.example`), 'RUN_HOST=jev.example',
+  ...services.filter((id) => id !== 'jev').map((id) => `WRITABLE_DIR=${id === 'codex' ? 'CODEX_HOME:~/.codex' : ':~/.gemini/antigravity-cli'}`),
   'PASSED_VARIABLE=TYPESAFE_API_KEY', '',
 ].join('\n');
 export const seedFamily = (root) => {
@@ -34,12 +39,13 @@ export const seedFamily = (root) => {
       excludedCommands: [], passedVariables: id === 'jev' ? ['TYPESAFE_API_KEY'] : [], billingVariables: [], runReachesHosts: id === 'jev' }));
   }
   for (const bridge of BRIDGE_DIRS) {
-    const id = bridge.replace('-cli-bridge', '');
+    const services = BRIDGE_SERVICES.get(bridge);
+    if (!services) throw new Error(`Unknown bridge services: ${bridge}`);
     for (const base of [join(root, bridge), join(root, 'agent-workflow-kit', 'bridges', bridge)]) {
       mkdirSync(join(base, 'bin'), { recursive: true });
       writeFileSync(join(base, 'SKILL.md'), `# ${bridge}\n`);
-      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services: [id, 'jev'] })}\n`);
-      writeFileSync(join(base, FACTS_FILE), seedFacts(id));
+      writeFileSync(join(base, 'capability.json'), `${JSON.stringify({ name: bridge, version: '1.0.0', services })}\n`);
+      writeFileSync(join(base, FACTS_FILE), seedFacts(services));
       writeFileSync(join(base, 'bin', 'run.sh'), '#!/bin/sh\necho run\n');
       chmodSync(join(base, 'bin', 'run.sh'), 0o755);
     }

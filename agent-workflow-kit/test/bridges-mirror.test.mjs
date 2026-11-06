@@ -1,24 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Drift-guard: the two execution-backend bridges (codex-cli-bridge → `codex`, antigravity-cli-bridge
-// → `agy`) are CANONICAL at the repo root; the kit ships BYTE-IDENTICAL mirror copies under
-// agent-workflow-kit/bridges/<name>/ so the published npm tarball can place a bridge skill (Plan B /
-// AD-011). This test pins each mirror to its canon — every file byte-for-byte AND set-equality of the
-// file lists (a canon file added/deleted without re-syncing the mirror fails here). Same byte-set
-// drift-guard pattern used elsewhere in the suite (e.g. test/known-footprint.test.mjs).
-//
-// Lives under test/ (NOT tools/): it reads the repo-root bridge dirs, which are sibling packages
-// outside the kit's npm tarball, so it must stay a monorepo-only dev test. test/ is excluded from the
-// package `files` whitelist yet still matched by the gate glob `agent-workflow-kit/test/*.test.mjs`.
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = join(HERE, '..');
 const FAMILY_ROOT = join(KIT_ROOT, '..');
 
-const BRIDGES = ['codex-cli-bridge', 'antigravity-cli-bridge'];
+const BRIDGES = ['codex-cli-bridge', 'antigravity-cli-bridge', 'typesafe-jev-bridge'];
+const FACTS_FILE = 'service-facts.txt';
 
 // Recursive list of relative file paths under `root`, sorted, excluding VCS/dependency noise.
 // The bridge dirs are git-tracked skill files only (no node_modules/.git), but guard anyway so a
@@ -37,10 +28,14 @@ const walkFiles = (root) => {
   return out.sort();
 };
 
-describe('bridges mirror — kit copies stay byte-identical to the repo-root canon', () => {
+describe('spec:jev-judge/S2 every kit bridge mirror holds its canon file for file, byte for byte and bit for bit, and both hold service-facts.txt', () => {
   for (const name of BRIDGES) {
     const canonRoot = join(FAMILY_ROOT, name);
     const mirrorRoot = join(KIT_ROOT, 'bridges', name);
+
+    it(`${name}: canon and mirror both hold service-facts.txt`, () => {
+      for (const root of [canonRoot, mirrorRoot]) assert.ok(existsSync(join(root, FACTS_FILE)), `${root}/${FACTS_FILE} is absent`);
+    });
 
     it(`${name}: file list set-equality (canon === mirror)`, () => {
       assert.deepEqual(

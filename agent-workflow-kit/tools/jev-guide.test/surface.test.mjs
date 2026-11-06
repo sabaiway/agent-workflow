@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatHelp } from '../commands.mjs';
 import { BENEFITS, SEVERITIES, VARIANT_BENEFITS, WHATS } from '../recommendations.mjs';
+import { JEV_ENDPOINT, KEY_VARIABLE } from '../jev-facts.mjs';
 
 const loaded = await import('../jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
@@ -16,6 +17,11 @@ const GUIDE = join(KIT, 'tools', 'jev-guide.mjs');
 const LF = '\n';
 const COMMAND = /\/agent-workflow-kit jev\b/;
 const WORDS = /\bjev\b|typesafe/i;
+const JEV_HOST = new URL(JEV_ENDPOINT).host;
+const JUDGE_NAMES = new RegExp(`typesafe-jev-bridge|TYPESAFE_JEV_BRIDGE_DIR|${KEY_VARIABLE}|jev-ask`);
+const JUDGE_FILES = ['tools/family-members.mjs', 'tools/labels.mjs', 'tools/setup-backends.mjs',
+  'references/modes/backends.md', 'references/modes/setup.md'].map((path) => `kit:${path}`);
+const JUDGE_MIRROR = 'kit:bridges/typesafe-jev-bridge/';
 // The contract's closed import surface: specifier → the names it may give (null: any name).
 const FACTS = ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
   'printable', 'skillLine', 'skillState', 'skillTargets'];
@@ -100,7 +106,7 @@ before(() => {
   const found = tmp();
   mkdirSync(join(found, '.claude', 'skills', 'typesafe-ai'), { recursive: true });
   writeFileSync(join(found, '.claude', 'skills', 'typesafe-ai', 'SKILL.md'), '# the vendor skill\n');
-  cells.found = { dir: found, cwd: found, env: { TYPESAFE_API_KEY: 'jev-canary-value' }, home: tmp() };
+  cells.found = { dir: found, cwd: found, env: { [KEY_VARIABLE]: 'jev-canary-value' }, home: tmp() };
   const files = PACKAGES.flatMap(([name, dir]) => packedFiles(dir).map((path) => [`${name}:${path}`, join(dir, path)]))
     .concat([['root:README.md', join(REPO, 'README.md')]])
     .filter(([, path]) => basename(path) !== 'CHANGELOG.md');
@@ -108,6 +114,11 @@ before(() => {
 });
 after(() => {
   for (const root of made) rmSync(root, { recursive: true, force: true });
+});
+
+it('spec:jev-judge/S6 the jev service fragment lists first the host of JEV_ENDPOINT', () => {
+  const fragment = JSON.parse(readRequired('tools/services/jev.json'));
+  assert.equal(fragment.hosts[0], JEV_HOST);
 });
 
 describe('spec:jev-guide/S7 a closed import surface, no network token and no network call', () => {
@@ -251,10 +262,13 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
   // Jev in every bridge wrapper (spec jev-every-run): the mirrored bridge tests, the kit's role-contract copy, and the
   // lines of the bridge mirrors that carry a host, the profile or the key.
   const bridgeLine = ({ file, text }) => /^kit:bridges\/[^/]+\/bin\/[^/]+\.test\.mjs$/.test(file) || file === 'kit:tools/detect-backends.mjs'
+    || file.startsWith(JUDGE_MIRROR) || (JUDGE_FILES.includes(file) && JUDGE_NAMES.test(text))
     || (file.startsWith('kit:bridges/') && /typesafe\.ai|TYPESAFE_API_KEY|\bjev[=-]|=jev\b|permissions\.jev\b|profile \\?`?jev\b/.test(text))
     || (/^kit:bridges\/[^/]+\/capability\.json$/.test(file) && /^\s*"services": \[[^\]]*"jev"[^\]]*\],?$/.test(text));
 
-  it('says jev or typesafe only on admitted surfaces, advisor-writers table rows and write-lanes or apply-danger-check lines naming a jev variant or leaf, with neither word in init-project', () => {
+  it('says jev or typesafe only on admitted surfaces, the judge mirror and named judge lines, advisor-writers table rows and write-lanes or apply-danger-check lines naming a jev variant or leaf, with neither word in init-project', () => {
+    assert.ok(lines.some(({ file }) => file === `${JUDGE_MIRROR}capability.json`), 'the scanned files include the judge mirror capability.json');
+    for (const file of JUDGE_FILES) assert.ok(fileLines(file).some(({ text }) => JUDGE_NAMES.test(text)), `${file}: a named judge line is absent`);
     const tableLines = fileLines('kit:references/advisor-writers.md').filter(({ text }) => WORDS.test(text));
     assert.equal(tableLines.length, 3, 'advisor-writers.md carries exactly three jev table rows');
     const tableKeys = tableLines.map(({ text }) => {
@@ -285,12 +299,12 @@ describe('spec:jev-guide/S12 two discovery lines and nothing else', () => {
     allowed.push(...fileLines('kit:tools/apply-danger-check.mjs').filter(({ text }) => WORDS.test(text)));
     allowed.push(...tableLines);
     const fragmentLines = fileLines('kit:tools/services/jev.json').filter(({ text }) => WORDS.test(text));
-    assert.ok(fragmentLines.some(({ text }) => text.includes('api.typesafe.ai')), 'the jev service fragment carries the host');
+    assert.ok(fragmentLines.some(({ text }) => text.includes(JEV_HOST)), 'the jev service fragment carries the host');
     allowed.push(...fragmentLines);
     assert.ok(allowed.slice(0, 4).every((line) => line && WORDS.test(line.text)), 'every named line carries the word');
     for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) {
       const facts = `kit:bridges/${bridge}/service-facts.txt`;
-      assert.ok(hitsOf(WORDS).some((line) => line.file === facts && line.text.includes('api.typesafe.ai') && bridgeLine(line)), `${facts}: the admitted host line`);
+      assert.ok(hitsOf(WORDS).some((line) => line.file === facts && line.text.includes(JEV_HOST) && bridgeLine(line)), `${facts}: the admitted host line`);
       const manifest = `kit:bridges/${bridge}/capability.json`;
       assert.ok(hitsOf(WORDS).some((line) => line.file === manifest && line.text.includes('"services"') && bridgeLine(line)), `${manifest}: the admitted services line`);
     }

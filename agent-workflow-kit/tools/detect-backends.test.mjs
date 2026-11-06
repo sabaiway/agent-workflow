@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, writeFileSync, symlinkSync, chmodSync, readFileSync, readdirSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { validateManifest, VALID } from './manifest/validate.mjs';
+import { KEY_VARIABLE, keySet, connectLine } from './jev-facts.mjs';
+import { loadServiceFragments } from './services/index.mjs';
 import {
   expandTilde,
   resolveDir,
@@ -23,6 +26,12 @@ const REPO = fileURLToPath(new URL('../../', import.meta.url)); // …/agent-wor
 const KIT = join(REPO, 'agent-workflow-kit');
 const FIX = join(KIT, 'tools', 'manifest', 'fixtures');
 const HOME = '/home/u';
+const JUDGE = 'typesafe-jev-bridge';
+const JUDGE_WRAPPER = 'jev-ask';
+const JUDGE_KEY = `judge-canary-${'Q7xZp3'.repeat(6)}`;
+const MISSING_KEYS = [undefined, '', '   ', '\u00a0'];
+const PRESENT_KEYS = [`  ${JUDGE_KEY}  `, JUDGE_KEY];
+const keyEnv = (value) => value === undefined ? {} : { [KEY_VARIABLE]: value };
 
 // An ENOENT-typed error, matching the shape Node's fs throws (used to drive the wrapped probes).
 const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
@@ -317,6 +326,78 @@ describe('detectBackend — readiness over an ok manifest', () => {
 
 const readManifest = (dir) => JSON.parse(readFileSync(join(dir, 'capability.json'), 'utf8'));
 
+it('spec:jev-judge/S1 the in-repo judge manifest has exactly the shipped fields, shared provenance and a valid verdict', () => {
+  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.0","available":true,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
+  const manifest = readManifest(join(REPO, JUDGE));
+  assert.deepEqual(manifest, expected);
+  for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) assert.deepEqual(manifest.provenance, readManifest(join(REPO, bridge)).provenance);
+  const result = validateManifest(join(REPO, JUDGE));
+  assert.equal(result.result, VALID, result.errors.join('; '));
+  assert.deepEqual(result.errors, []);
+});
+
+describe('spec:jev-judge/S4 the judge reads its readiness by proof, one cell per row over injected probes', () => {
+  const cells = [
+    ['skill absent', JUDGE_KEY, 'needs-skill', false],
+    ...['missing', 'unknown'].map((state) => [`node ${state}`, JUDGE_KEY, 'needs-cli', true, state]),
+    ...MISSING_KEYS.map((value) => [`key ${JSON.stringify(value)}`, value, 'needs-credentials']),
+    ...PRESENT_KEYS.map((value, index) => [`key ${index === 0 ? 'padded' : 'plain'}`, value, 'ready']),
+    ['wrapper missing', JUDGE_KEY, 'degraded', true, 'present', 'missing'],
+  ];
+  for (const [label, value, readiness, skill = true, cli = 'present', wrapper = 'present'] of cells) it(label, (context) => {
+    const entry = KNOWN_BACKENDS.find((b) => b.name === JUDGE);
+    assert.ok(entry, `${JUDGE} is absent from KNOWN_BACKENDS`);
+    const home = mkdtempSync(join(tmpdir(), 'awf-judge-'));
+    context.after(() => rmSync(home, { recursive: true, force: true }));
+    if (skill) writeFileSync(join(home, 'SKILL.md'), '# judge\n');
+    const status = detectBackend(entry, { getenv: { TYPESAFE_JEV_BRIDGE_DIR: home, ...keyEnv(value) }, home,
+      validate: () => ({ result: VALID, available: true, kind: 'execution-backend', name: JUDGE }),
+      probeCli: (bin) => ({ bin, state: cli, path: null }), probeWrapper: (name) => ({ name, state: wrapper }) });
+    const report = formatReport([status]);
+    const guide = guideFor(status);
+    for (const text of [JSON.stringify(status), report, JSON.stringify(guide)]) assert.equal(text.includes(JUDGE_KEY), false, 'judge key leaked');
+    assert.equal(status.readiness, readiness);
+    if (readiness === 'needs-cli' || readiness === 'needs-credentials') {
+      const need = readiness === 'needs-cli' ? 'cli' : 'credentials';
+      const hint = guide.find((step) => step.need === need)?.hint;
+      const line = report.split('\n').find((text) => text.includes('↳'));
+      assert.equal(typeof hint, 'string', JSON.stringify(guide));
+      assert.equal(typeof line, 'string', report);
+      if (need === 'cli') {
+        assert.equal(status.cli.bin, 'node');
+        for (const text of [line, hint]) assert.ok(text.includes('Node.js 22.21 or newer on PATH'), text);
+        assert.equal(hint.includes('§1'), false, hint);
+      } else {
+        assert.deepEqual(status.credentials, { state: 'missing', path: null });
+        for (const text of [line, hint]) {
+          assert.ok(text.includes(connectLine(join(KIT, 'tools'), process.platform)), text);
+          assert.match(text, /restart/i);
+          assert.doesNotMatch(text, /marker file|sign in/i);
+        }
+      }
+    }
+    if (readiness === 'ready') {
+      assert.deepEqual(status.credentials, { state: 'present', path: null });
+      assert.deepEqual(status.wrappers.map((w) => w.name), [JUDGE_WRAPPER]);
+    }
+  });
+});
+
+it('spec:jev-judge/S5 the judge entry agrees with the client, the facts leaf and the jev fragment', async () => {
+  const { keyIsSet, JUDGE_TIMEOUT_MS } = await import(pathToFileURL(join(KIT, 'bridges/typesafe-jev-bridge/bin/jev-client.mjs')).href);
+  for (const value of [...MISSING_KEYS, ...PRESENT_KEYS]) assert.equal(keyIsSet(keyEnv(value), KEY_VARIABLE), keySet(keyEnv(value)));
+  assert.deepEqual(loadServiceFragments().jev.passedVariables, [KEY_VARIABLE]);
+  const entry = KNOWN_BACKENDS.find((b) => b.name === JUDGE);
+  assert.ok(entry, `${JUDGE} is absent from KNOWN_BACKENDS`);
+  const deadlineDefaultS = JUDGE_TIMEOUT_MS / 1000;
+  assert.deepEqual(entry.roleCmds, { judge: JUDGE_WRAPPER });
+  assert.equal(entry.roleContracts, undefined);
+  assert.equal(entry.bin, 'node');
+  assert.equal(entry.deadlineDefaultS, deadlineDefaultS);
+  assert.deepEqual(entry.guide, { setupRef: `${JUDGE}/setup/README.md`, loginCmd: connectLine(join(KIT, 'tools'), process.platform), verifyCmd: '/agent-workflow-kit backends' });
+  assert.deepEqual(backendCapability(JUDGE), { roles: ['judge'], reviewContract: false, deadlineDefaultS });
+});
+
 // Every top-level in-repo dir with a kind:execution-backend manifest, discovered fresh from disk.
 const inRepoBackends = () =>
   readdirSync(REPO, { withFileTypes: true })
@@ -325,12 +406,11 @@ const inRepoBackends = () =>
     .map((e) => e.name);
 
 describe('KNOWN_BACKENDS — drift guard against the in-repo manifests', () => {
-  it('set equality: registry names == in-repo non-stub execution-backend dirs — spec:jev-judge/S3', () => {
+  it('spec:jev-judge/S3 set equality: registry names == every in-repo execution-backend directory', () => {
     const onDisk = inRepoBackends().sort();
-    const stubs = onDisk.filter((name) => readManifest(join(REPO, name)).available === false);
-    assert.deepEqual(stubs, ['typesafe-jev-bridge']);
+    assert.ok(onDisk.includes(JUDGE));
     const registry = KNOWN_BACKENDS.map((b) => b.name).sort();
-    assert.deepEqual(registry, onDisk.filter((name) => !stubs.includes(name)));
+    assert.deepEqual(registry, onDisk);
   });
 
   it('the methodology-engine is NOT counted as a backend', () => {
@@ -409,19 +489,19 @@ describe('wrapperCmdFor — role-keyed wrapper resolution (drift-guarded via KNO
 
 describe('wrapperContractFor — per-role driving contract (drift-guarded vs the manifests)', () => {
   it('every dispatchable manifest role declares a contract and the registry mirror deep-equals it', () => {
-    let checked = 0;
+    const checked = [];
     for (const entry of KNOWN_BACKENDS) {
       const manifest = readManifest(join(REPO, entry.name));
       for (const [role, r] of Object.entries(manifest.roles ?? {})) {
-        if (role === 'probe') continue; // never dispatched by an activity slot — no contract by design
+        if (role === 'probe' || role === 'judge') continue;
         assert.ok(r.contract, `${entry.name} manifest roles.${role} must declare a contract`);
         assert.ok(Array.isArray(r.contract.invocations) && r.contract.invocations.length > 0,
           `${entry.name} ${role} contract.invocations must be non-empty (never a vacuous equality)`);
         assert.deepEqual(wrapperContractFor(entry.name, role), r.contract, `${entry.name} ${role} contract`);
-        checked += 1;
+        checked.push([entry.name, role]);
       }
     }
-    assert.ok(checked >= 3, `expected ≥3 dispatchable role contracts across the registry, saw ${checked}`);
+    assert.ok(checked.length >= 3, `expected ≥3 dispatchable role contracts across the registry, saw ${checked.length}`);
   });
 
   it('the registry carries ONLY manifest-declared contracts (a stale extra role fails here)', () => {

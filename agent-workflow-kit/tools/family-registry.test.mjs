@@ -1153,13 +1153,17 @@ describe('surveySettings — the five per-area surveys, each independently local
   });
 });
 
+const JUDGE = 'typesafe-jev-bridge';
+const bridgeSurveyDeps = {
+  detect: () => [{ name: 'codex-cli-bridge', readiness: READY }, { name: 'antigravity-cli-bridge', readiness: NEEDS_SKILL }, { name: JUDGE, readiness: NEEDS_SKILL }],
+  findOnPath: (cmd) => ({ bin: cmd, state: cmd === 'codex-exec' ? 'present' : 'missing', path: null }),
+};
 describe('surveyBridges — host wrapper PATH presence + readiness, NO model claim', () => {
-  const detect = () => [{ name: 'codex-cli-bridge', readiness: READY }, { name: 'antigravity-cli-bridge', readiness: NEEDS_SKILL }];
-  const findOnPath = (cmd) => ({ bin: cmd, state: cmd === 'codex-exec' ? 'present' : 'missing', path: null });
+  const { detect, findOnPath } = bridgeSurveyDeps;
 
   it('probes wrapperCmds directly (not detect-backends wrappers[]) + reports readiness', () => {
     const bridges = surveyBridges({ detect, findOnPath });
-    assert.equal(bridges.length, 2);
+    assert.equal(bridges.length, 3);
     const codex = bridges.find((b) => b.member === 'codex-cli-bridge');
     assert.equal(codex.readiness, READY);
     assert.deepEqual(codex.wrappers, [{ cmd: 'codex-exec', state: 'present' }, { cmd: 'codex-review', state: 'missing' }]);
@@ -1237,13 +1241,11 @@ describe('parseArgs — loud reject (no more silent ignore)', () => {
   });
 });
 
-// ── drift-guard: FAMILY_MEMBERS ⟷ the 5 in-repo capability.json (the AD-008 lockstep pattern) ──────
+// ── drift-guard: FAMILY_MEMBERS ⟷ the 6 in-repo capability.json (the AD-008 lockstep pattern) ──────
 
 describe('FAMILY_MEMBERS drift-guard', () => {
   const readManifest = (memberName) =>
     JSON.parse(readFileSync(resolve(REPO_ROOT, memberName, 'capability.json'), 'utf8'));
-
-  // deduped roles[].cmd, in first-seen order (mirrors detect-backends' wrapperCmds derivation).
   const dedupedCmds = (manifest) => {
     const seen = new Set();
     const out = [];
@@ -1255,30 +1257,28 @@ describe('FAMILY_MEMBERS drift-guard', () => {
     }
     return out;
   };
-
-  it('has exactly the five family members and no release skills', () => {
-    assert.equal(FAMILY_MEMBERS.length, 5);
+  it('spec:jev-judge/S7 has exactly the six family members, the judge row, its display name and three bridge rows, and no release skills', () => {
+    assert.equal(FAMILY_MEMBERS.length, 6);
+    assert.deepEqual(FAMILY_MEMBERS.find((member) => member.name === JUDGE), { name: JUDGE, kind: 'execution-backend',
+      installed: readManifest(JUDGE).detect.installed, deployed: null, npm: null, wrapperCmds: ['jev-ask'] });
+    assert.equal(DISPLAY_NAMES[JUDGE], 'jev-bridge');
+    assert.deepEqual(surveyBridges(bridgeSurveyDeps).map(({ member }) => member), ['codex-cli-bridge', 'antigravity-cli-bridge', JUDGE]);
     const names = FAMILY_MEMBERS.map((m) => m.name);
     assert.ok(!names.includes('release-engineering'));
     assert.ok(!names.includes('release-marketing'));
   });
-
   for (const member of FAMILY_MEMBERS) {
     it(`${member.name}: name/kind/detect.installed/deployed/npm/wrapperCmds match the in-repo manifest`, () => {
       const m = readManifest(member.name);
       assert.equal(m.name, member.name);
       assert.equal(m.kind, member.kind);
-
       assert.equal(m.detect.installed.env, member.installed.env);
       assert.equal(m.detect.installed.default, member.installed.default);
       assert.equal(m.detect.installed.file, member.installed.file);
-
       if (member.deployed) assert.equal(m.detect.deployed.file, member.deployed.file);
       else assert.equal(m.detect?.deployed ?? null, null);
-
       if (member.npm) assert.equal(m.install.npm, member.npm);
       else assert.equal(m.install?.npm ?? null, null);
-
       assert.deepEqual(dedupedCmds(m), member.wrapperCmds);
     });
   }

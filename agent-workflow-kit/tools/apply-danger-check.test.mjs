@@ -1343,7 +1343,7 @@ describe('spec:velocity-profile/S8 used bridge scope, additions only and state-d
       put(join(dir, 'auth.json'), '{}');
     }
     unchanged(f, () => {
-      assert.deepEqual(detectBackends({ getenv: f.env, home: f.home }).map(({ readiness }) => readiness), ['ready', 'ready']);
+      assert.deepEqual(detectBackends({ getenv: f.env, home: f.home }).map(({ readiness }) => readiness), ['ready', 'ready', 'needs-skill']);
       const result = danger.checkApply('bridge-tier', f);
       assertPreview('bridge-tier', f, result, expectedPlan('bridge-tier', f));
       for (const [key, value, kind] of [

@@ -4,7 +4,9 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRIDGE = resolve(HERE, '..');
@@ -257,7 +259,8 @@ describe('spec:typesafe-jev-bridge/S10 every missing facts line, manifest model 
     }
     assert.ok(existsSync(join(farm, 'bash')));
     assert.equal(existsSync(join(farm, 'node')), false);
-    runWrapper(fixture, [fixture.path], 127, { PATH: farm }, false, false, join(farm, 'bash'));
+    const result = runWrapper(fixture, [fixture.path], 127, { PATH: farm }, false, false, join(farm, 'bash'));
+    assert.ok(result.stderr.includes('Node.js 22.21'), result.stderr);
   });
   it('refuses absent, unparseable and posture-less manifests', async (context) => {
     const cli = await client();
@@ -318,10 +321,11 @@ it('spec:typesafe-jev-bridge/S12 prints help and keeps the version and exact bun
   assert.ok(frontmatter);
   assert.match(frontmatter, /^name:\s*['"]?typesafe-jev-bridge['"]?\s*$/m);
   assert.equal(frontmatter.match(/^metadata:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+version:\s*['"]?([^\s'"\n]+)['"]?\s*$/m)?.[1], version);
-  assert.deepEqual(listFiles(BRIDGE), ['SKILL.md', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'setup/README.md']);
+  assert.deepEqual(listFiles(BRIDGE), ['SKILL.md', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md']);
   const setup = read(join(BRIDGE, 'setup/README.md'));
   assert.ok(setup.includes('jev-connect.mjs'));
   assert.match(setup, /restart/i);
+  assert.match(setup, /Node(?:\.js)? 22\.21 or newer/);
 });
 it('spec:typesafe-jev-bridge/S13 scans every shipped file and catches planted host and model literals', (context) => {
   const fixture = makeFixture(context);
@@ -345,5 +349,44 @@ it('spec:typesafe-jev-bridge/S15 forwards client outcomes unchanged for success 
     assert.deepEqual(wrapped, direct);
     assert.equal(read(preload.log), `${ENDPOINT}\n`);
     rmSync(preload.log);
+  }
+});
+it('spec:typesafe-jev-bridge/S16 the wrapper reaches a loopback CONNECT proxy by its own switch and prints no key or proxy password', async (context) => {
+  const fixture = makeFixture(context, true);
+  const lines = [];
+  const loopback = '127.0.0.1';
+  const password = `proxy-${Buffer.from(context.name).toString('hex')}-${fixture.key.slice(-32)}`;
+  const server = createServer((req, res) => {
+    lines.push(`${req.method} ${req.url}`);
+    res.writeHead(403);
+    res.end();
+  });
+  server.on('connect', (req, socket) => {
+    lines.push(`${req.method} ${req.url}`);
+    socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+  });
+  server.listen(0, loopback);
+  try {
+    await once(server, 'listening');
+    const env = { PATH: process.env.PATH, HOME: fixture.env.HOME, [KEY_VARIABLE]: fixture.key,
+      HTTPS_PROXY: `http://proxy-user:${password}@${loopback}:${server.address().port}` };
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn('bash', [join(fixture.root, 'bin/jev-ask.sh'), fixture.path], { cwd: fixture.root, env });
+      const stdout = [];
+      const stderr = [];
+      const timer = setTimeout(() => child.kill('SIGKILL'), 12000);
+      child.stdout.on('data', (chunk) => stdout.push(chunk));
+      child.stderr.on('data', (chunk) => stderr.push(chunk));
+      child.once('error', (error) => { clearTimeout(timer); reject(error); });
+      child.once('close', (code) => {
+        clearTimeout(timer);
+        resolve({ code, stdout: Buffer.concat(stdout).toString(), stderr: Buffer.concat(stderr).toString() });
+      });
+    });
+    assert.deepEqual(lines, [`CONNECT ${HOST}:443`]);
+    assertOutcome(result, fixture.key, 8, true);
+    for (const stream of [result.stdout, result.stderr]) assert.equal(stream.includes(password), false, 'proxy password leaked');
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });

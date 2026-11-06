@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Backend detector — read-only detection of the family's optional execution-backends (the bridges
-// to subscription CLIs: codex-cli-bridge → `codex`, antigravity-cli-bridge → `agy`). Surfaced as
+// to subscription CLIs: codex-cli-bridge → `codex`, antigravity-cli-bridge → `agy`, and the judge). Surfaced as
 // `/agent-workflow-kit backends` and a one-line bootstrap summary. It answers "what is set up vs
 // missing" WITHOUT running any subscription CLI: "credentials present" means the credential-marker
-// FILE exists, never a live `codex login` / `agy` check (which spawns a paid/slow/networked CLI).
+// file exists or the judge's key is set, never a live `codex login` / `agy` check.
 //
 // Two orthogonal axes are reported independently (a healthy manifest ≠ a usable backend):
 //   manifestState — health of the bridge SKILL: not-installed | unsupported-schema |
@@ -13,17 +13,19 @@
 //
 // Source of truth is the in-tool KNOWN_BACKENDS registry (Option B / AD-008): a missing bridge has
 // no manifest on disk and no setup/README in the kit tarball, so the per-backend facts (bin,
-// credential marker, stable setup URL) must live here. A drift-guard test keeps the registry in
+// credential probe, stable setup URL) must live here. A drift-guard test keeps the registry in
 // lockstep with the in-repo manifests.
 //
 // Pure, dependency-injectable (fs/env/validator are deps), dependency-free, Node >= 22. Every fs
 // probe is wrapped → an explicit `unknown` + reason, never a throw and never a nameless failure.
 
 import { existsSync, statSync, accessSync, realpathSync, constants } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { isDirectRun } from './direct-run.mjs';
 import { loadServiceFragments } from './services/index.mjs';
+import { keySet, connectLine, RESTART_STEP } from './jev-facts.mjs';
 import { validateManifest, UNSUPPORTED, INVALID } from './manifest/validate.mjs';
 
 // Probe states. `unknown` (a wrapped fs error) NEVER counts as present in any readiness rule.
@@ -48,6 +50,8 @@ export const NEEDS_CREDENTIALS = 'needs-credentials';
 export const DEGRADED = 'degraded';
 
 const EXPECTED_KIND = 'execution-backend';
+const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
+const JUDGE_CONNECT_LINE = connectLine(TOOLS_DIR, process.platform);
 
 // The kit-owned registry: the per-backend facts the detector needs even when a bridge is NOT
 // installed (no manifest on disk to read). Kept in lockstep with the in-repo manifests by the
@@ -157,6 +161,19 @@ const RAW_BACKENDS = [
     setupPathLocal: 'setup/README.md',
     guide: { setupRef: 'antigravity-cli-bridge/setup/README.md', loginCmd: 'agy', verifyCmd: 'echo "say OK" | agy-run -' },
   },
+  {
+    name: 'typesafe-jev-bridge',
+    installed: { env: 'TYPESAFE_JEV_BRIDGE_DIR', default: '~/.claude/skills/typesafe-jev-bridge', file: 'SKILL.md' },
+    roleCmds: { judge: 'jev-ask' },
+    bin: 'node',
+    deadlineDefaultS: 10,
+    credential: { isSet: keySet },
+    cliHint: 'install or locate Node.js 22.21 or newer on PATH',
+    credentialsHint: `run ${JUDGE_CONNECT_LINE} in a terminal of your own, then ${RESTART_STEP}`,
+    setupUrl: 'https://github.com/sabaiway/agent-workflow/blob/main/typesafe-jev-bridge/setup/README.md',
+    setupPathLocal: 'setup/README.md',
+    guide: { setupRef: 'typesafe-jev-bridge/setup/README.md', loginCmd: JUDGE_CONNECT_LINE, verifyCmd: '/agent-workflow-kit backends' },
+  },
 ];
 
 // The deduped roles[].cmd set the CURRENT kit bundles, derived from roleCmds in first-seen order — one
@@ -261,9 +278,11 @@ const probeFile = (file, deps = {}) => {
   }
 };
 
-// "authed?" = existence of the credential-marker file (read-only). NEVER runs the subscription CLI.
+// Credentials = a marker file or an entry's key-presence rule. NEVER runs the subscription CLI.
 // Report wording is "credentials present/missing/unknown", never "authenticated".
 export const probeCredential = (entry, deps = {}) => {
+  const getenv = deps.getenv ?? process.env;
+  if (entry.credential.isSet) return { state: entry.credential.isSet(getenv) ? PRESENT : MISSING, path: null };
   const service = entry.credential.service;
   try {
     const fragment = (deps.loadServiceFragments ?? loadServiceFragments)()?.[service];
@@ -271,7 +290,7 @@ export const probeCredential = (entry, deps = {}) => {
     if (!Array.isArray(fragment.writableDirs) || fragment.writableDirs.length !== 1) {
       return { state: UNKNOWN, path: null, reason: `${service}: expected exactly one writableDirs entry` };
     }
-    const dir = resolveDir(fragment.writableDirs[0], deps.getenv ?? process.env, deps.home ?? os.homedir());
+    const dir = resolveDir(fragment.writableDirs[0], getenv, deps.home ?? os.homedir());
     const file = join(dir, entry.credential.file);
     return { state: probeFile(file, deps), path: file };
   } catch (error) {
@@ -382,16 +401,17 @@ const skillHint = (status, guide) =>
 // fresh machine needs both the CLI and a login). `[]` ⇒ nothing manual left (the linker handles the
 // wrappers). Each step is `{ need: 'skill'|'cli'|'credentials', hint }`. Pure; no fs, no side effects.
 export const guideFor = (status) => {
-  const guide = registryEntry(status.name)?.guide;
+  const entry = registryEntry(status.name);
+  const guide = entry?.guide;
   const out = [];
   if (status.manifestState !== OK) out.push({ need: 'skill', hint: skillHint(status, guide) });
   if (status.cli.state !== PRESENT) {
-    out.push({ need: 'cli', hint: `install the "${status.cli.bin}" CLI — see ${guide?.setupRef ?? status.setupHint?.url} §1` });
+    out.push({ need: 'cli', hint: entry?.cliHint ?? `install the "${status.cli.bin}" CLI — see ${guide?.setupRef ?? status.setupHint?.url} §1` });
   }
   if (status.credentials.state !== PRESENT) {
     out.push({
       need: 'credentials',
-      hint: status.credentials.reason ?? `sign in once (subscription): ${guide?.loginCmd ?? 'see the setup README'}  (verify: ${guide?.verifyCmd ?? 'see the setup README'})`,
+      hint: status.credentials.reason ?? entry?.credentialsHint ?? `sign in once (subscription): ${guide?.loginCmd ?? 'see the setup README'}  (verify: ${guide?.verifyCmd ?? 'see the setup README'})`,
     });
   }
   return out;
@@ -405,18 +425,19 @@ const mark = (state) => MARK[state] ?? '?';
 const setupTarget = (s) => s.setupHint.local ?? s.setupHint.url;
 
 // Next-step hint per readiness. Deliberately never says "authenticated"/"authed" — only
-// "credentials present/missing" (detection is file-presence, not a live login check).
+// "credentials present/missing" (file or key presence, never a live login check).
 const nextStep = (s) => {
   if (s.credentials.reason) return s.credentials.reason;
+  const entry = registryEntry(s.name);
   switch (s.readiness) {
     case READY:
       return null;
     case NEEDS_SKILL:
       return `install the bridge skill — ${setupTarget(s)}`;
     case NEEDS_CLI:
-      return `install or locate the "${s.cli.bin}" CLI on PATH`;
+      return entry?.cliHint ?? `install or locate the "${s.cli.bin}" CLI on PATH`;
     case NEEDS_CREDENTIALS:
-      return `set up credentials for "${s.cli.bin}" (marker file ${s.credentials.path} not present)`;
+      return entry?.credentialsHint ?? `set up credentials for "${s.cli.bin}" (marker file ${s.credentials.path} not present)`;
     case DEGRADED:
       return `bridge wrapper(s) not on PATH: ${s.wrappers.filter((w) => w.state !== PRESENT).map((w) => w.name).join(', ')}`;
     default:

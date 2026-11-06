@@ -103,7 +103,7 @@ const CATALOG = [
     invocation: invocationOf('backends'),
     group: 'Inspect',
     kind: READ_ONLY,
-    oneLine: 'Check which optional review/execute backends (codex, agy) are set up versus missing, and the next step.',
+    oneLine: 'Check which optional backends (codex, agy and the judge) are set up versus missing, and the next step.',
   },
   {
     key: 'help',

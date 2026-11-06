@@ -1,6 +1,6 @@
 # Setting up the Jev key
 
-`jev-ask` needs no binary of its own beyond Node 22 or newer on `PATH`. It needs one thing from you:
+`jev-ask` needs no binary of its own beyond Node.js 22.21 or newer on `PATH`. It needs one thing from you:
 your TypeSafe key, saved where every new shell of the agent reads it.
 
 ## 1. Save the key with the kit's connect command

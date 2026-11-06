@@ -50,7 +50,7 @@ export const fail = (exitCode, message) => Object.assign(new Error(message), { e
 
 // ── the mirror manifest ───────────────────────────────────────────────────────────────
 
-export const BRIDGE_DIRS = Object.freeze(['codex-cli-bridge', 'antigravity-cli-bridge']);
+export const BRIDGE_DIRS = Object.freeze(['codex-cli-bridge', 'antigravity-cli-bridge', 'typesafe-jev-bridge']);
 
 const MEMORY_DIR = 'agent-workflow-memory';
 const KIT_DIR = 'agent-workflow-kit';

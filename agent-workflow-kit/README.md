@@ -13,7 +13,7 @@ decisions. Works with Claude Code, Codex, Cursor, and any agent that reads `AGEN
 [![license](https://img.shields.io/npm/l/@sabaiway/agent-workflow-kit)](./LICENSE)
 [![node](https://img.shields.io/node/v/@sabaiway/agent-workflow-kit)](https://nodejs.org)
 
-`Node ≥ 22`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
+`Node ≥ 22.21`  ·  `dependency-free scripts`  ·  `no telemetry in family code`
 
 **One command to start:**
 
@@ -217,11 +217,11 @@ refreshes the other npm core members so a returning `init` leaves **no stale cor
 | `~/.claude/skills/agent-workflow-kit/` | the kit itself (refreshed on every `init`) |
 | `~/.claude/skills/agent-workflow-memory/` | the **memory substrate**, refreshed via `npx @sabaiway/agent-workflow-memory@latest init` — **best-effort:** a failure is a **loud degraded success** (warning + the exact recovery command + exit 0), never silent; skip with `--no-memory` |
 | `~/.claude/skills/agent-workflow-engine/` | the **methodology engine** the kit reads live, refreshed via `npx @sabaiway/agent-workflow-engine@latest init` — **required** (the live read STOPs without it); skip with `--no-engine` |
-| `~/.claude/skills/{codex,antigravity}-cli-bridge/` | the placed **bridges**, refreshed from the kit's bundled copies (local files, no network) — **only if `/agent-workflow-kit setup` already placed them**: an absent bridge is never placed, a newer one never downgraded; skip with `--no-bridges` |
+| `~/.claude/skills/<bridge-name>/` | the placed **bridges**, refreshed from the kit's bundled copies (local files, no network) — **only if `/agent-workflow-kit setup` already placed them**: an absent bridge is never placed, a newer one never downgraded; skip with `--no-bridges` |
 | `~/.codex/skills/agent-workflow-kit` | a symlink — only if you have Codex |
 | `…/global_workflows/agent-workflow-kit.md` | a managed file — only if you have Devin Desktop |
 
-The **execution-backend bridges** (`codex` / `agy`) are never first **placed** by `init` — set one up
+The **execution-backend bridges** (`codex` / `agy` and the judge) are never first **placed** by `init` — set one up
 on demand with `/agent-workflow-kit setup`; after that, a returning `init` keeps the placed copy
 fresh (the table row above). Your other Codex skills and Devin Desktop workflows are
 never touched. If one of those exact slots already holds a file the kit didn't write, it is **left
@@ -241,10 +241,10 @@ file), or run the guarded `/agent-workflow-kit uninstall`.
 | `/agent-workflow-kit` | new / empty project | recon → **asks visible-or-hidden** + **conversational language** + **agent attribution** (default off) → deploys `AGENTS.md` + `docs/ai/` filled with real recon data → offers enforcement (installed on a yes) → **asks before committing** |
 | `/agent-workflow-kit upgrade` | existing deployment | reads `docs/ai/.workflow-version`, shows the changelog diff, preserves your authored memory, applies migrations, re-stamps — then prints a **read-only** one-line backend-status line (what's set up vs missing); refreshes the already-placed bridges from the kit's bundled copies (never installs a new one — set one up with `/agent-workflow-kit setup`) |
 | `/agent-workflow-kit help` | any time | **read-only command index** — every command, grouped (Inspect / Configure / Orchestrate / Lifecycle) and tagged read-only / writer / guarded. The discoverable entry point, and where any unrecognized invocation lands (always read-only — a garbage invocation never writes). Never writes, never commits, never runs a subscription CLI. |
-| `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends (the `codex` / `agy` bridges): what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence, not a live login). |
+| `/agent-workflow-kit backends` | any time | **read-only** check of the optional execution-backends: what's set up vs missing and the next step. Never writes, never commits, never runs a subscription CLI (credentials = marker-file presence or a key variable set, never a live login). |
 | `/agent-workflow-kit gates` | any time | **project gate runner** — runs the verification commands **your project itself declares** in `docs/ai/gates.json` (seeded at deploy; hand-editable `{ id, title, cmd }` entries plus the optional boolean `lcovProducer`, each `cmd` one bash line) as one batch: a per-gate **PASS/FAIL table** + one machine-readable summary line, exit 0 iff all green; a failing gate's own output is shown verbatim; `--only <id>` re-runs one. Honest distinct outcomes for a missing / empty / malformed declaration — never a silent green. The runner writes nothing **by default** and never commits — opt-in `--final` runs the FULL declared matrix and mints ONE final-run receipt into the git-dir core-evidence store (status green/red, pre/post tree fingerprints, the declaration, the consumed lcov's sha; the receipt the commit-guard binds); it executes only your own declared commands (a batching convenience, not a sandbox). The velocity tier auto-approves only the exact no-`--final` form — the recording run stays explicit. |
-| `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** auto-setup of a bridge: places the bundled bridge skill (only into an absent / empty / managed dir — never overwrites an unmanaged one) + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). The binary install + the one-time subscription login stay **manual**: it prints the exact **login** command and points the binary install at each bridge's `setup/README.md`. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
-| `/agent-workflow-kit status` | any time | **read-only** single view of **versions + deployment + settings + bridges**: which members (kit / memory / engine / the two bridges) are installed and at what version (with an honest "installed on this machine" note when one is behind) and — in a project — what's deployed (`docs/ai`, the version stamps, and the **visibility**: visible / hidden / unclear), and the **feature-spec adoption state** (`not adopted` / `adopting (N draft)` / `adopted (N live, M draft)` / `could not be read`, plus `declined` when recorded), plus your settings (orchestration recipes, attribution, velocity) and the bridges' readiness. The two version axes (package number vs deployment-structure head) stay decoupled. Never writes, never commits, never runs a subscription CLI. |
+| `/agent-workflow-kit setup [backend]` | opt-in, any time | **link-only** setup: a bare run places the review bridges; name another bridge to place it. Places the bundled skill only into an absent / empty / managed dir + links its wrappers onto `PATH` via managed symlinks (idempotent; refuses to clobber a non-symlink; try `--dry-run` to preview). Binary install, subscription login and a key stay **manual**: it prints guidance for each missing step. POSIX wrappers — on Windows use WSL. Never commits, never runs a subscription CLI. |
+| `/agent-workflow-kit status` | any time | **read-only** single view of **versions + deployment + settings + bridges**: which members (kit / memory / engine / the bridges) are installed and at what version (with an honest "installed on this machine" note when one is behind) and — in a project — what's deployed (`docs/ai`, the version stamps, and the **visibility**: visible / hidden / unclear), and the **feature-spec adoption state** (`not adopted` / `adopting (N draft)` / `adopted (N live, M draft)` / `could not be read`, plus `declined` when recorded), plus your settings (orchestration recipes, attribution, velocity) and the bridges' readiness. The two version axes (package number vs deployment-structure head) stay decoupled. Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit now` | any time | **read-only** answer to where work stands in four blocks: **NOW** names every plan in flight, its phase, current and next step, and the tree evidence; **STEPS** gives every ledger row its evidence-derived status; **QUEUE** folds named rows under their full heading paths and calls position priority only in the judged backlog; **CAMPAIGN** shows the source-size practice figures and config state. The plan's own text never sets a status; a contradicted claim prints beside it. A block that cannot be derived is WITHHELD with its cause; NOW has two halves, plans and tree, each independently a value or WITHHELD, and NOW itself is WITHHELD only when both are. Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit tier` | any time | **read-only** guide to the epic, story and task tier: what each level is, and the next step of the walk, with the command that runs it wherever a tool does. Never writes, never commits, never runs a subscription CLI. |
 | `/agent-workflow-kit jev` | any time | **read-only** guide to Jev (TypeSafe), a decision model: what it is, why it pays here, what it is not, the two steps to a set key (the connect command, the optional vendor skill) and three prompts where it pays. Opens no connection and never prints the key. |
@@ -306,7 +306,7 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
    ├─ injects   ─▶ workflow methodology  (live from the installed engine)
    ├─ deploys   ─▶ AGENTS.md + docs/ai/
    │               + Node scripts + pre-commit hook (installed on a yes)
-   ├─ detects   ─▶ optional backends   (codex / agy, read-only)
+   ├─ detects   ─▶ optional backends   (codex / agy / judge, read-only)
    └─ sets up   ─▶ a bridge (opt-in)   (place skill + link wrappers)
 ```
 
@@ -326,14 +326,14 @@ agent-workflow-kit  —  the composition root (installed via npx … init)
   `docs/ai/agent_rules.md` is yours: the kit lays it only where it is absent, and apart from the
   one-time `5.0.0` step, which removes the kit's old sections from it, never reads or writes it.
   `/agent-workflow-kit recipes` surfaces + plans a recipe for your environment, read-only.
-- **Detects & (opt-in) sets up** the optional `codex` / `agy` **bridges** — agent skills (not npm;
+- **Detects & (opt-in) sets up** the optional **bridges** — agent skills (not npm;
   never first placed by `init` — `setup` places them, and once placed `init`/`upgrade` refresh
-  them). They plug into the workflow's **execute** and **review** phases — for *what
+  them). The subscription CLI bridges plug into the workflow's **execute** and **review** phases — for *what
   each adds and why*, see the
   [family front door](https://github.com/sabaiway/agent-workflow#readme). `/agent-workflow-kit backends`
   reports readiness **read-only**;
   `/agent-workflow-kit setup` does the **link-only** part (place the bundled bridge skill + link its
-  wrappers), while the binary install + the subscription login stay manual. A bridge reads the deployed
+  wrappers; a bare run places the review bridges), while binary install, subscription login and a key stay manual. A bridge reads the deployed
   memory only if it wins that tool's context-file priority, and the bridges call third-party services
   (so "no telemetry" covers family code, not those).
 
@@ -382,7 +382,7 @@ agent-workflow-kit/
 │   ├── family-registry.mjs    ← unified family registry (status)
 │   ├── uninstall.mjs          ← guarded teardown (uninstall)
 │   └── release-scan.mjs       ← attribution / release gate
-├── bridges/         ← bundled bridge skill mirrors (codex / antigravity)
+├── bridges/         ← bundled bridge mirrors (codex / agy / judge)
 ├── launchers/       ← Codex / Devin Desktop / Cursor entries
 └── migrations/      ← per-version upgrade steps
 ```

@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-06 — AD-228: the kit ships the judge bridge, placed only by name, and the family floor is Node 22.21 (kit 23.3.0 MINOR; memory 11.0.1 and engine 6.0.3 PATCH; codex and agy bridges unchanged)
+
+**`typesafe-jev-bridge` 1.0.0 ships inside the kit tarball** (`agent-workflow-kit/bridges/typesafe-jev-bridge/`, with
+its generated `service-facts.txt`): `scripts/sync-mirrors.mjs` gains it in `BRIDGE_DIRS`, and its manifest says
+`available: true`, so the stub suite retires. The role vocabulary admits `judge` (S1); the bundle's `jev-ask` sends a
+choice question to Jev and prints notes, never a key byte (S2). `FAMILY_MEMBERS` gains a sixth member, `DISPLAY_NAMES`
+maps it to `jev-bridge`, and the detector's entry reads `node` on PATH and `keySet` over the environment for its
+credential, with hints naming Node.js 22.21 and the connect line, then a restart. `setup-backends.mjs` takes the alias
+`jev`; a bare run places only the bridges whose roles carry review, and the review-ready count that drives the recipe
+offer counts only those; `--refresh-placed` still covers every bridge. `jev-ask.sh` exports `NODE_USE_ENV_PROXY=1`
+before starting its client (bridge S16: a loopback CONNECT proxy sees one tunnel). Every `engines.node` is
+`>=22.21`, CI's floor job pins `22.21.0`, and the READMEs, the backends and setup mode files and the help line are
+true of the judge.
+
 ## 2026-11-05 — AD-227: the gate hook's read-only core and residual forms are generated from the velocity profile (kit 23.2.1 PATCH; memory, engine and both bridges unchanged)
 
 **The bundled `agent-workflow-kit/references/hooks/gate-approve.mjs` holds one generated region**, between two exact

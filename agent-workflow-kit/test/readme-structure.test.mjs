@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { commandFor } from '../tools/commands.mjs';
 
 // agent-workflow-kit/test → repo root
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -123,5 +124,17 @@ describe('shipped surfaces name five recipes, never the retired four-name list',
     assert.ok(normative.length >= 10, 'the scan covers the shipped surfaces, never an empty list');
     const stale = normative.filter((rel) => FOUR_ONLY.test(readFileSync(resolve(repoRoot, rel), 'utf8')));
     assert.deepEqual(stale, [], 'every recipe list names the fifth recipe');
+  });
+});
+
+describe('the kit README and help name every bundled bridge', () => {
+  it('the bridges, detects and never-placed lines and the backends help line each name the judge', () => {
+    const lines = readFileSync(resolve(repoRoot, 'agent-workflow-kit/README.md'), 'utf8').split('\n');
+    for (const anchor of [(l) => l.startsWith('├── bridges/'), (l) => l.includes('├─ detects'), (l) => l.includes('The **execution-backend bridges**')]) {
+      const found = lines.filter(anchor);
+      assert.equal(found.length, 1, `expected exactly one line for ${anchor}`);
+      assert.match(found[0], /\bjudge\b/, found[0]);
+    }
+    assert.match(commandFor('backends').oneLine, /\bjudge\b/);
   });
 });

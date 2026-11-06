@@ -77,6 +77,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'bridges/codex-cli-bridge/bin/codex-review.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-await-guard.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs',
+      'bridges/typesafe-jev-bridge/bin/jev-ask.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
@@ -497,13 +498,20 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     assert.deepEqual(leaks, [], 'no fixtures (fixtures/ or __fixtures__/) may ship in the tarball');
   });
 
-  it('ships exactly the services module without tests and both bridge mirrors service-facts.txt (spec:services/S6)', () => {
+  it('ships exactly the services module without tests and every bridge mirror service-facts.txt (spec:services/S6)', () => {
     assert.deepEqual(packed.filter((path) => path.startsWith('tools/services/')).sort(), [
       'tools/services/antigravity.json', 'tools/services/codex.json',
       'tools/services/index.mjs', 'tools/services/jev.json',
     ]);
-    const missing = ['codex-cli-bridge', 'antigravity-cli-bridge'].filter((bridge) => !packed.includes(`bridges/${bridge}/service-facts.txt`));
-    assert.deepEqual(missing, [], 'both bridge mirrors must ship service-facts.txt');
+    const missing = ['codex-cli-bridge', 'antigravity-cli-bridge', 'typesafe-jev-bridge'].filter((bridge) => !packed.includes(`bridges/${bridge}/service-facts.txt`));
+    assert.deepEqual(missing, [], 'every bridge mirror must ship service-facts.txt');
+  });
+
+  it('spec:jev-judge/S9 ships every file of the judge bridge mirror', () => {
+    const prefix = 'bridges/typesafe-jev-bridge/';
+    assert.deepEqual(packed.filter((path) => path.startsWith(prefix)).sort(), [
+      'SKILL.md', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md',
+    ].map((path) => `${prefix}${path}`));
   });
 
   // Exact-count pin: update this number only when intentionally adding/removing a shipped file;
@@ -916,7 +924,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     //       bridges/{codex-cli-bridge,antigravity-cli-bridge}/service-facts.txt
     //       - story S12 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [386, []], `tarball file count drifted (${packed.length}\u2260 386), or a retired leaf ships`);
+    // 393 = 386 + bridges/typesafe-jev-bridge/{capability.json,SKILL.md,service-facts.txt,setup/README.md,bin/jev-ask.sh,bin/jev-client.mjs,bin/jev-ask.test.mjs} - story S17 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [393, []], `tarball file count drifted (${packed.length}\u2260 393), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

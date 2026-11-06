@@ -4,6 +4,11 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 11.0.1 — the package needs Node.js 22.21 or newer (AD-228)
+
+`package.json`'s `engines.node` is `>=22.21`, the floor of the whole family since kit 23.3.0, whose judge bridge
+takes a sandbox's proxy through the runtime's own switch. PATCH: no file of a deployment changes.
+
 ## 11.0.0 — the kit folder carries a test reporter that prints only failures, run by `run.mjs unit-tests` (AD-221)
 
 **A memory deployment's kit folder gains the kit test reporter, and the stable command gains the name that runs the

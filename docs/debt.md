@@ -1550,3 +1550,18 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   after its status exits 6. Proof: one client cell each. Residual exposure, NOT live: nothing reachable throws in
   `runJudgeCli`, `fetch` builds no cyclic cause, every caller passes an object, and a cut body still exits non-zero
   with one scrubbed line.
+- **SHIPPED-BRIDGE-LISTS-NAME-EVERY-BRIDGE** — invariant: every shipped kit line that says which bridges the kit
+  bundles, detects or never places by `init` holds for every family bridge. Origin: the lens, round 1 of the JEV S17
+  diff review (2026-11-06): `agent-workflow-kit/README.md:385` named two bridge mirrors while the tarball carries
+  three; `:309`, `:224` and `agent-workflow-kit/tools/commands.mjs:106` listed codex and agy alone. Narrow fix: the four
+  lines name the judge; proof: `readme-structure.test.mjs` "the kit README and help name every bundled bridge", red on
+  the old four lines, green after. Residual exposure, NOT live: a by-name scan for `codex / agy` also hits
+  `agent-workflow-kit/README.md:271` (the codex and agy hard timeouts) and `references/modes/worktrees.md:270` (the codex and agy review
+  wrappers), both true of those two alone, and no other bridge-roster list was found.
+- **JEV-S17-STALE-COMMENTS-AND-EXIT-8-EXAMPLES** — invariant: a fact a comment or a table states is true of the tree.
+  Origin: the lens, the same round: `agent-workflow-kit/tools/family-registry.mjs:5` says KNOWN_BACKENDS holds 2
+  bridges and `:13` that the drift guard pins 5 manifests (6 since S17); `agent-workflow-kit/tools/jev-facts.mjs:4-5`
+  lists its importers without the detector; `typesafe-jev-bridge/SKILL.md:69`'s exit-8 examples omit a proxy refusing
+  the tunnel (bridge spec revision 2). Narrow fix: the counts and the importer list corrected or dropped, the exit-8
+  row names the refused tunnel. Proof: a read of each line. Residual exposure, NOT live: comments and an example list;
+  no reader acts on them.

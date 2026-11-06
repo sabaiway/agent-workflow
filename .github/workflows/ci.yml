@@ -32,15 +32,15 @@ concurrency:
 
 jobs:
   # Unit suite across the supported Node range. Every shipped script is dependency-free
-  # and declares engines.node ">=22"; the floor job pins the EXACT minimal version (22.0.0
-  # carries --experimental-test-coverage + the lcov reporter) — never a floating '22' alias,
+  # and declares engines.node ">=22.21"; the floor job pins the EXACT minimal version (22.21.0
+  # carries the runtime's env proxy switch) — never a floating '22' alias,
   # so a floor-only regression cannot pass on a newer minor. No `npm install` — no deps.
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        node-version: ['22.0.0', '24']
+        node-version: ['22.21.0', '24']
     steps:
       - uses: actions/checkout@v5
         with:
