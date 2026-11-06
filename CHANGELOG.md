@@ -7,6 +7,18 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-06 — AD-228 amended: the judge prints no runtime warning under a proxy on Node 22 (kit 23.3.1 PATCH, judge bridge 1.0.1; memory, engine, codex and agy bridges unchanged)
+
+**`typesafe-jev-bridge/bin/jev-ask.sh` starts node with `--disable-warning=UNDICI-EHPA`**: CI's floor job ran bridge
+S16 red on Node 22.21.0 after kit 23.3.0, the tunnel reached the loopback proxy, but Node 22 printed its
+`EnvHttpProxyAgent is experimental` warning (two lines) before the posture line. The bridge goes to 1.0.1 (manifest, `SKILL.md`, the wrapper's
+version anchor, the detector suite's exact manifest pin), so a placed 1.0.0 refreshes by its version arrow and no
+refresh calls the changed bytes a local edit. The bridge spec takes revision 3 (The route names the switch and what a
+runtime below the floor does), jev-judge revision 4 (the version); S11's recording node now sees the flag before the client's path, the key still in none
+of its arguments. `agent-workflow-kit/tools/ensure-ops.test.mjs` moves its top-level `await` and the kept-module
+helpers above the first `describe`, so Node 22 no longer starts a test before they exist. The unit-tests gate now also
+runs the kit mirror's `jev-ask.test.mjs`, so the coverage check sees the mirrored client.
+
 ## 2026-11-06 — AD-228: the kit ships the judge bridge, placed only by name, and the family floor is Node 22.21 (kit 23.3.0 MINOR; memory 11.0.1 and engine 6.0.3 PATCH; codex and agy bridges unchanged)
 
 **`typesafe-jev-bridge` 1.0.0 ships inside the kit tarball** (`agent-workflow-kit/bridges/typesafe-jev-bridge/`, with

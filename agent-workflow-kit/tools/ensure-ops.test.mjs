@@ -62,6 +62,35 @@ const REJECTING_CHECKER = '// rejects every navigator\nprocess.exit(1);\n';
 const ACCEPTING_CHECKER = '// accepts every navigator\n';
 const TRAPPING_CHECKER = "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 20000);\n";
 const COUNTING_CHECKER = "import { existsSync, writeFileSync } from 'node:fs';\nif (!existsSync('first-ran')) { writeFileSync('first-ran', ''); process.exit(1); }\n" + TRAPPING_CHECKER;
+// The kit folder (docs-navigator revision 6): the bundled generator in the kit's docs-size module, and the modules the
+// project's hook loads at their deployed paths, read from the KIT mirror's manifest inside each cell.
+const KIT_GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'docs-size', 'check-docs-size.mjs');
+const KF = 'scripts/agent-workflow';
+const KEPT_PROBE = ['scripts', 'agent-workflow', 'docs-size', 'check-docs-size.mjs'];
+const TODAYS_REGENERATED = 'docs/ai/index.md: written from the source frontmatter — the navigator is in sync again';
+const kb = (p) => readFileSync(join(KIT_ROOT, 'references', 'scripts', ...p.split('/')));
+const IMPORT = /(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g;
+// The docs-size and spec-schema modules' deployed files and the shared files the checker reaches through its imports.
+const hookModules = async () => {
+  const { readFamily } = await import('../references/scripts/family.mjs');
+  const deployed = readFamily(join(KIT_ROOT, 'references', 'scripts')).filter((e) => e.role === 'deployed');
+  const all = deployed.map((e) => e.path);
+  const reached = new Set(deployed.filter((e) => e.module === 'docs-size').map((e) => e.path));
+  for (const p of reached) for (const [, spec] of kb(p).toString('utf8').matchAll(IMPORT)) if (all.includes(posix.join(posix.dirname(p), spec))) reached.add(posix.join(posix.dirname(p), spec));
+  const modules = deployed.filter((e) => e.module === 'docs-size' || e.module === 'spec-schema' || (e.module === 'shared' && reached.has(e.path))).map((e) => e.path);
+  assert.ok(modules.some((p) => p.startsWith('shared/')), 'the checker loads shared files');
+  return modules;
+};
+const KEPT_MODULES = await hookModules();
+const withKitKept = (modules, setup, fn) => withDocs((dir) => {
+  for (const p of modules) {
+    mkdirSync(join(dir, KF, posix.dirname(p)), { recursive: true });
+    writeFileSync(join(dir, KF, p), kb(p));
+  }
+  writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
+  setup(dir);
+  return fn(dir);
+});
 // The modules the project's hook loads, laid out at their deployed paths in the kit folder (S8's helpers below).
 const withKept = (setup, fn) => withKitKept(KEPT_MODULES, setup, fn);
 const keptAt = (dir, path) => join(dir, 'scripts', 'agent-workflow', ...path.split('/'));
@@ -300,35 +329,6 @@ describe('spec:docs-navigator/S7 a hook module that is not the bundled one puts 
   });
 });
 
-// The kit folder (docs-navigator revision 6): the bundled generator in the kit's docs-size module, and the modules the
-// project's hook loads at their deployed paths, read from the KIT mirror's manifest inside each cell.
-const KIT_GENERATOR = join(KIT_ROOT, 'references', 'scripts', 'docs-size', 'check-docs-size.mjs');
-const KF = 'scripts/agent-workflow';
-const KEPT_PROBE = ['scripts', 'agent-workflow', 'docs-size', 'check-docs-size.mjs'];
-const TODAYS_REGENERATED = 'docs/ai/index.md: written from the source frontmatter — the navigator is in sync again';
-const kb = (p) => readFileSync(join(KIT_ROOT, 'references', 'scripts', ...p.split('/')));
-const IMPORT = /(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g;
-// The docs-size and spec-schema modules' deployed files and the shared files the checker reaches through its imports.
-const hookModules = async () => {
-  const { readFamily } = await import('../references/scripts/family.mjs');
-  const deployed = readFamily(join(KIT_ROOT, 'references', 'scripts')).filter((e) => e.role === 'deployed');
-  const all = deployed.map((e) => e.path);
-  const reached = new Set(deployed.filter((e) => e.module === 'docs-size').map((e) => e.path));
-  for (const p of reached) for (const [, spec] of kb(p).toString('utf8').matchAll(IMPORT)) if (all.includes(posix.join(posix.dirname(p), spec))) reached.add(posix.join(posix.dirname(p), spec));
-  const modules = deployed.filter((e) => e.module === 'docs-size' || e.module === 'spec-schema' || (e.module === 'shared' && reached.has(e.path))).map((e) => e.path);
-  assert.ok(modules.some((p) => p.startsWith('shared/')), 'the checker loads shared files');
-  return modules;
-};
-const KEPT_MODULES = await hookModules();
-const withKitKept = (modules, setup, fn) => withDocs((dir) => {
-  for (const p of modules) {
-    mkdirSync(join(dir, KF, posix.dirname(p)), { recursive: true });
-    writeFileSync(join(dir, KF, p), kb(p));
-  }
-  writeFileSync(join(dir, 'docs', 'ai', 'b.md'), DOC_BODY);
-  setup(dir);
-  return fn(dir);
-});
 const launchedIn = (calls, dir) => calls.filter((args) => args[0].startsWith(join(dir, 'scripts')));
 
 describe('spec:docs-navigator/S8 the index op runs the bundled generator and the kept probe at the module paths', () => {

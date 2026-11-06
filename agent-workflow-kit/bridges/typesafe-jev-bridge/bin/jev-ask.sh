@@ -244,7 +244,7 @@ aw_scrub_billing_keys() {
   return 0
 }
 
-AW_BRIDGE_VERSION="1.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="1.0.1"  # aw-version-anchor
 case "${1:-}" in
   --help|-h)
     printf '%s\n' "jev-ask — judge notes through typesafe-jev-bridge $AW_BRIDGE_VERSION." '' \
@@ -274,4 +274,4 @@ if ! command -v node >/dev/null 2>&1; then
   exit 127
 fi
 export NODE_USE_ENV_PROXY=1
-exec node "$HERE/jev-client.mjs" --host "${AW_FACT_RUN_HOST[0]}" --key-variable "${AW_FACT_PASSED_VARIABLE[0]}" "$1"
+exec node --disable-warning=UNDICI-EHPA "$HERE/jev-client.mjs" --host "${AW_FACT_RUN_HOST[0]}" --key-variable "${AW_FACT_PASSED_VARIABLE[0]}" "$1"

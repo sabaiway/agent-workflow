@@ -40,7 +40,32 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   apart). Measured on the kit 23.2.0 release: published at 16:58:39Z, `latest` still 23.1.0 at 17:02:13Z and 23.2.0
   a minute later; the verify stage failed at exit 8 and `--from verify` then passed. Narrow fix: a window of about
   five minutes. Proof: a test pins the window's length. Residual exposure, not live: `--from verify` recovers without
-  a second ask.
+  a second ask. Measured again on kit 23.3.0 (2026-11-06): the kit's `latest` lagged past all 10 attempts.
+
+- **RELEASE-DISPATCH-GH-CALLS-HAVE-NO-DEADLINE** — invariant: every `gh api` call of the dispatch path ends within a
+  bound, so a stalled connection fails the stage instead of holding it. Origin: `scripts/release/dispatch-publish.mjs:438`
+  (`listRuns`) and `:481-489` call `ghApi` with no `deadlineMs`, unlike `:170` and `:536`. Measured on the kit 23.3.0
+  release (2026-11-06): the pre-dispatch run listing of the live phase hung 21 minutes through the sandbox proxy; the
+  run was stopped, nothing had been dispatched (every run at HEAD a dry run, npm and the Release absent), the receipt
+  set aside and the release resumed `--from preflight-remote`. Narrow fix: the listing and poll GETs take the verify
+  deadline; the POST stays unbounded only if a timeout cannot tell sent from unsent. Proof: a dispatch-publish test
+  whose fake `ghApi` never returns for a listing GET without a deadline and ends at the deadline with one. Residual
+  exposure, NOT live: the stop-and-resume recovery above, which sends nothing twice.
+- **RELEASE-RUN-STAGE-REASON-HIDDEN-BY-COMMIT-OUTPUT** — invariant: a failed release-run stage prints its own reason
+  where the operator reads it, after any earlier stage's output. Origin: `scripts/release/release-run.mjs` prints the
+  commit stage's whole pre-commit output (a ~50 KB docs-size table) before `preflight-remote`; on kit 23.3.0
+  (2026-11-06) `preflight-remote` refused at exit 3 for the second time in two releases and its reason was cut from
+  view, while the same check passed alone a minute later. Narrow fix: the commit stage keeps only the hook's failure
+  lines, or each stage's reason prints last. Proof: a release-run test whose fake commit prints 60 KB and whose
+  preflight fails; the reason is the last line. Residual exposure, NOT live: the stage re-run alone shows it.
+- **BRIDGE-BYTES-CHANGE-WITHOUT-A-VERSION-BUMP** — invariant: a byte change in a shipped bridge bundle ships with a new
+  bridge version, the premise of the equal-version drift report (`agent-workflow-kit/tools/setup-backends.mjs:644`).
+  Origin: kit 23.3.1 changed `typesafe-jev-bridge/bin/jev-ask.sh` with no checker to require the bump (bumped by hand
+  to 1.0.1), and `scripts/release/version-sync.mjs:52-58` does not list the judge. Narrow fix: version-sync lists the
+  judge, and a release check refuses a bridge whose bundle bytes differ from the last release tag at an equal version.
+  Proof: a version-sync test with a fixture bridge whose bytes changed at an equal version, refused; `--expect` names
+  the judge. Residual exposure, NOT live: after the 1.0.1 bump no shipped bridge differs from its last release at an
+  equal version.
 
 - **USER-SERVICES-LIST-READS-A-NON-REGULAR-FILE** — invariant: the user loader refuses a `services.json` that is not
   a regular file, as `agent-workflow-kit/tools/bridge-settings-read.mjs:119` does for its sibling settings file.

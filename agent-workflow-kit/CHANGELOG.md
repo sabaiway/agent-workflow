@@ -4,6 +4,14 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.3.1 — the judge prints no runtime warning under a proxy on Node 22 (AD-228)
+
+**On Node 22, a `jev-ask` run under a proxy no longer prints Node's experimental-feature warning for its proxy agent,
+so its stderr again holds only the bridge's own lines: the posture line once the request is sent, and one line on a failure.** Node 22 prints that warning (code `UNDICI-EHPA`) at
+start whenever its proxy switch meets a set `HTTPS_PROXY`, as inside a sandbox; Node 24 does not. The wrapper now
+starts node with `--disable-warning=UNDICI-EHPA`, which turns off exactly that warning; every other warning stays. A
+placed judge refreshes from 1.0.0 to 1.0.1 on your next `init` or `/agent-workflow-kit upgrade`.
+
 ## 23.3.0 — the kit ships the judge bridge, placed when you name it, and needs Node.js 22.21 (AD-228)
 
 **An agent can now ask Jev a choice question through `jev-ask`: the kit carries the judge bridge

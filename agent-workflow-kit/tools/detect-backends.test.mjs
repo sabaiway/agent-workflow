@@ -327,7 +327,7 @@ describe('detectBackend — readiness over an ok manifest', () => {
 const readManifest = (dir) => JSON.parse(readFileSync(join(dir, 'capability.json'), 'utf8'));
 
 it('spec:jev-judge/S1 the in-repo judge manifest has exactly the shipped fields, shared provenance and a valid verdict', () => {
-  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.0","available":true,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
+  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.1","available":true,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
   const manifest = readManifest(join(REPO, JUDGE));
   assert.deepEqual(manifest, expected);
   for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) assert.deepEqual(manifest.provenance, readManifest(join(REPO, bridge)).provenance);

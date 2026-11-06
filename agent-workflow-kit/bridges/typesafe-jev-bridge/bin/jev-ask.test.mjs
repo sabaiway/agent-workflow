@@ -308,7 +308,7 @@ describe('spec:typesafe-jev-bridge/S11 the posture line precedes the request and
     assert.equal(read(recording.env), fixture.key);
     const argv = read(recording.argv);
     assert.equal(argv.includes(fixture.key), false);
-    assert.deepEqual(argv.split('\n').slice(0, -1), [join(fixture.root, 'bin/jev-client.mjs'), ...fixture.argv]);
+    assert.deepEqual(argv.split('\n').slice(0, -1), ['--disable-warning=UNDICI-EHPA', join(fixture.root, 'bin/jev-client.mjs'), ...fixture.argv]);
     assert.equal(read(preload.log), `${ENDPOINT}\n`);
   });
 });

@@ -2,7 +2,7 @@
 name: typesafe-jev-bridge
 description: Ask TypeSafe's Jev decision model a set of choice questions about a stated situation and get back typed notes, each with a choice, the probability of every option and a confidence. Use when a step wants a second, calibrated opinion as a note — never a verdict: the bridge moves no gate, review or commit.
 metadata:
-  version: '1.0.0'
+  version: '1.0.1'
 ---
 
 # typesafe-jev-bridge
