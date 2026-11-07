@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from './git-env.mjs';
 import { parseLedger } from './plan-shape.mjs';
 import { DELEGATION_STORE_BASENAME } from './dispatch-store.mjs';
@@ -128,7 +129,8 @@ const put = (ws, path, bytes = INITIAL) => {
 const makeRepo = ({ brief = renderBrief(), plan = renderPlan(), unborn = false } = {}) => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
   const ws = { cwd, env: { ...ENV, AW_DELEGATION_STORE: join(cwd, '.git', DELEGATION_STORE_BASENAME) } };
-  for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'coder-tools@proton.me'], ['config', 'user.name', 'coder-tool']]) sh(ws, args);
+  makeFixtureRepo((args) => sh(ws, args), ws.cwd, ['-q', '-b', 'main']);
+  for (const args of [['config', 'user.email', 'coder-tools@proton.me'], ['config', 'user.name', 'coder-tool']]) sh(ws, args);
   for (const path of [MODULE, TEST, NESTED_TEST, ANCHOR, PIN, OTHER, OTHER_TEST, SWEEP_FILE, SWEEP_OTHER]) put(ws, path);
   if (!unborn) { sh(ws, ['add', '-A']); sh(ws, ['commit', '-q', '-m', 'initial tree']); }
   put(ws, '.git/info/exclude', '/docs/ai/\n/AGENTS.md\n');

@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
 import {
   validateSourceSizeConfig, matchesSourceSizeGate, measureFile, SOURCE_SIZE_DEFAULTS,
@@ -43,7 +44,7 @@ let seq = 0;
 const project = ({ files = {}, config = CONFIG() } = {}) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) {
     const abs = join(cwd, rel);
     mkdirSync(dirname(abs), { recursive: true });

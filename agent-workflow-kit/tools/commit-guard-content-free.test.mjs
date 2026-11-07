@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { main, runGuard } from './commit-guard.mjs';
 import { computeTreeFingerprint, computeWorkingState } from './core-evidence.mjs';
+import { makeFixtureRepo, addFixtureSubmodule } from '../../scripts/testing/fixture-repo.mjs';
 
 // The literal clean-tree value, spelled out here rather than imported: a named import of the
 // constant would make this suite fail to LINK against a tree that does not export it yet, and an
@@ -42,7 +43,7 @@ const makeCleanRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
   const g = gitIn(root);
-  g('init', '-q', '-b', 'main');
+  makeFixtureRepo((args) => g(...args), root, ['-q', '-b', 'main']);
   g('config', 'user.email', 'coder-tools@proton.me');
   g('config', 'user.name', 'coder-tool');
   writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));
@@ -107,14 +108,13 @@ describe('commit-guard — the CONTENT-FREE lanes', () => {
     const sub = join(TMP, `sub-${seq}`);
     mkdirSync(sub, { recursive: true });
     const gs = gitIn(sub);
-    gs('init', '-q', '-b', 'main');
+    makeFixtureRepo((args) => gs(...args), sub, ['-q', '-b', 'main']);
     gs('config', 'user.email', 'coder-tools@proton.me');
     gs('config', 'user.name', 'coder-tool');
     writeFileSync(join(sub, 'f.txt'), 'one\n');
     gs('add', '-A');
     gs('commit', '-qm', 'sub base');
-    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'], { cwd: root, encoding: 'utf8' });
-    assert.equal(add.status, 0, add.stderr);
+    addFixtureSubmodule((args) => { const add = spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd: root, encoding: 'utf8' }); assert.equal(add.status, 0, add.stderr); }, root, sub, 'vendor', ['-q']);
     g('commit', '-qm', 'add submodule');
     const vendor = join(root, 'vendor');
     const gv = gitIn(vendor);

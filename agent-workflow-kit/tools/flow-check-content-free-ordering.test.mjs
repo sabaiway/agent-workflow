@@ -19,6 +19,7 @@ import { decideFlowCheck, computeFlowDecision } from './flow-check.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { parseFlowStoreText } from './flow-store.mjs';
 import { EVIDENCE_SCHEMA_VERSION, parseEvidenceText } from './core-evidence.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 // The observed clean-tree value; flow-check-content-free-red.test.mjs binds this literal to the
 // exported constant and to a real clean repository.
@@ -65,7 +66,7 @@ const makeRepo = (flowRecords = null) => {
     const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
     assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   };
-  g('init', '-q', '-b', 'main');
+  makeFixtureRepo((args) => g(...args), root, ['-q', '-b', 'main']);
   g('config', 'user.email', 'coder-tools@proton.me');
   g('config', 'user.name', 'coder-tool');
   writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));

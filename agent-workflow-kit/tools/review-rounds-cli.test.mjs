@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main, normalizeArtifactPath } from './review-rounds-cli.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLI = join(HERE, 'review-rounds-cli.mjs');
@@ -25,8 +26,7 @@ const makeRepo = () => {
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root, 'docs', 'plans', 'example.md'), '# example\n');
   writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-authoring': { review: ['codex-review'] } }));
-  const git = spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
-  assert.equal(git.status, 0, git.stderr);
+  makeFixtureRepo((args) => { const git = spawnSync('git', args, { cwd: root, encoding: 'utf8' }); assert.equal(git.status, 0, git.stderr); }, root, ['-q']);
   return root;
 };
 

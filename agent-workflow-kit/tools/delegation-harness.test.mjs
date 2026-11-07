@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalDelegationDigest, DELEGATION_SCHEMA_VERSION, expectedBundleLength } from './dispatch-record.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const DIGEST_BYTES = 32;
 const DIFF_LENGTH = 100;
@@ -117,7 +118,7 @@ const runFixtureGit = (root, args) => {
 export const createFixtureGitRepo = (options = {}) => {
   const root = createFixtureRepo({ ...options, dirty: false });
   try {
-    runFixtureGit(root, ['init', '-q', '-b', 'main']);
+    makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q', '-b', 'main']);
     runFixtureGit(root, ['add', '-A']);
     runFixtureGit(root, [
       '-c', 'user.name=coder-tool', '-c', 'user.email=coder-tools@proton.me',

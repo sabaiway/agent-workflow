@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { GIT_MAX_BUFFER, resolveGitLocation } from './git-env.mjs';
 import { makeRepo, skipWithoutGit } from './hostile-git-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const tool = await import('./control-bytes.mjs').catch(() => ({}));
 const { main } = tool;
@@ -85,7 +86,7 @@ describe('control-bytes — a nested-repository entry swapped for a symlink is j
   it('the trailing slash never reaches the filesystem: the swapped symlink\'s target is judged', () => withRepo((r) => {
     const nested = join(r.dir, 'racer');
     mkdirSync(nested);
-    r.must(['init', '-q'], { cwd: nested });
+    makeFixtureRepo((args) => r.must(args, { cwd: nested }), nested, ['-q']);
     writeFileSync(join(nested, 'x.txt'), 'x');
     // Capture git's REAL answers while the nested repository stands (the `racer/` entry) …
     const capture = {};

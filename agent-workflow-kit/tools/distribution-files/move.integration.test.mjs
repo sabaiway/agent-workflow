@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { PRIOR_FILES } from '../script-priors.mjs';
 import { DEPLOYED_SCRIPTS } from '../node-evidence.mjs';
@@ -95,7 +96,7 @@ describe('spec:distribution-files/S38 one plain upgrade of a 1af99af deployment 
       git(step, 'commit', '-q', '-m', message, ...flags);
     };
     try {
-      git('setup', 'init', '-q', '-b', 'main');
+      makeFixtureRepo((args) => git('setup', ...args), project, ['-q', '-b', 'main']);
       writeJson(project, 'package.json', { name: 'flat-upgrade-fixture', scripts: { prepare: 'node scripts/install-git-hooks.mjs' } });
       for (const name of PRIOR_FILES) writeAt(project, `scripts/${name}`, readFlatBody(name));
       for (const [name, type] of [['changelog', 'log'], ['known_issues', 'issues']]) {

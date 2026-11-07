@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { computeTreeFingerprint, RECEIPTS_BASENAME } from './core-evidence.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 const awaitLeaf = await import('./review-state-await.mjs').catch(() => ({}));
 const mainAwait = awaitLeaf.mainAwait ?? (async () => {
   throw new Error('absent: mainAwait');
@@ -37,7 +38,7 @@ const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' } });
 const REPO_TEMPLATE = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'review-await-template-'));
   const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), dir, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(dir, 'base.txt'), 'committed base\n');

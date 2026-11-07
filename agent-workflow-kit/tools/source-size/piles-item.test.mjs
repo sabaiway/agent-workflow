@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { ITEM_LINE_CAP, SEVERITY_OPTIONAL, buildRecommendations } from '../recommendations.mjs';
 import { shellQuoteArg } from '../repo-lex.mjs';
@@ -44,7 +45,7 @@ const project = ({ config = minted(PILE), queue = QUEUE, gates } = {}) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts: {} }, null, 2));
   writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);

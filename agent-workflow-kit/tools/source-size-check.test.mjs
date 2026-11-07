@@ -15,6 +15,7 @@ import { authoringTemplate } from './source-size-report.mjs';
 import {
   countBytes, measureFile, validateSourceSizeConfig, matchesSourceSizeGate, SOURCE_SIZE_DEFAULTS,
 } from './source-size-core.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -62,7 +63,7 @@ let seq = 0;
 const project = ({ files = {}, config = CONFIG(), suffix = '', stage = true } = {}) => {
   const cwd = join(TMP, `p${seq += 1}${suffix}`);
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) put(cwd, rel, body);
   if (config !== null) writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(config, null, 2));
   if (stage) git(cwd, ['add', '-A']);

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { ENSURE_OPS, ENSURE_TOKENS, FAILURE_CAUSES } from '../tools/ensure-vocabulary.mjs';
 import { composeFailure, ensureAutonomy, ensureGates, ensureIndex, ensureOrchestration, failedOutcome } from '../tools/ensure-ops.mjs';
 import { main as ensureConfigsMain } from '../tools/ensure-configs.mjs';
@@ -186,7 +187,7 @@ const NODE_EVIDENCE_FX = [['scripts-skipped-no-node-evidence', () => runScripts(
 // The two git-hook re-read lines through the real leaf (an installer that exits 0 and writes no hook), each one line ending with the upgrade route.
 for (const [variant, roles] of [['commit-guard'], ['hook-checks', ['rules', 'layout']]]) {
   const root = project(), env = hermeticGitEnv(process.env, root), errors = [];
-  spawnSync('git', ['init', '-q', root], { env });
+  makeFixtureRepo((args) => spawnSync('git', args, { env }), root, ['-q']);
   applyGitHooks({ root, variant, copies: [], roles, runs: { argv: ['node', join(root, 'scripts', 'install-git-hooks.mjs')] } }, { env, spawn: () => ({ status: 0 }), error: (line) => errors.push(line) });
   fx('git-hooks', `${variant}-unarmed`, true, () => (assert.deepEqual(errors.map((line) => line.endsWith(` — ${UPGRADE_ROUTE}`)), [true], errors.join('\n')), errors));
 }
@@ -258,13 +259,13 @@ const KIT_FX = (() => {
   const kitTree = (over = {}) => lay(project(), own, over);
   const specsKit = (over = {}, store = true, dir = lay(project(), [...CL, ...R, ...C, 'test-reporter/reporter.mjs', 'run.mjs'], over)) => { if (store) { mkdirSync(join(dir, 'docs', 'ai', 'specs')); writeFileSync(join(dir, SPEC_STORE), '---\nkind: index\n---\n'); } return dir; };
   const kitWithout = (p, kit = tmp('clux-kit-')) => { for (const sub of ['scripts', 'templates']) cpSync(join(KIT, 'references', sub), join(kit, 'references', sub), { recursive: true }); rmSync(join(kit, 'references', 'scripts', ...p.split('/'))); return kit; };
-  const adrKit = (docs, over = {}) => { const dir = kitTree(over); assert.equal(spawnSync('git', ['init', '-q', dir], { env: hermeticGitEnv(process.env, dir) }).status, 0, 'git init, so the snapshot stays in the tree'); mkdirSync(join(dir, 'docs', 'ai', 'history')); for (const [rel, body] of Object.entries(docs)) writeFileSync(join(dir, 'docs', 'ai', rel), body); return dir; };
+  const adrKit = (docs, over = {}) => { const dir = kitTree(over); makeFixtureRepo((args) => assert.equal(spawnSync('git', args, { env: hermeticGitEnv(process.env, dir) }).status, 0, 'git init, so the snapshot stays in the tree'), dir, ['-q']); mkdirSync(join(dir, 'docs', 'ai', 'history')); for (const [rel, body] of Object.entries(docs)) writeFileSync(join(dir, 'docs', 'ai', rel), body); return dir; };
   const flatBody = (name) => { const root = join(KIT, 'test/fixtures/script-priors'), versions = readdirSync(root).filter((v) => readdirSync(join(root, v)).includes(`${name}.txt`)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); return readFileSync(join(root, versions.at(-1), `${name}.txt`)); };
   const moveRun = (flat = {}, command = true, inGit = false, deps = {}) => {
     const dir = lay(project(), [R[0], ...(command ? ['run.mjs'] : [])], {});
     for (const [name, body] of Object.entries({ 'spec-schema.mjs': kb(R[0]), ...flat })) writeFileSync(join(dir, 'scripts', name), body);
     const git = (cmd, args, options = {}) => { const result = spawnSync(cmd, args, { ...options, env: hermeticGitEnv(process.env, dir) }); if (args[0] === 'check-ignore') assert.equal(result.status, 1, 'the temp deployment is visible'); return result; };
-    if (inGit) assert.equal(git('git', ['init', '-q', dir]).status, 0, 'git init for the move lines');
+    if (inGit) makeFixtureRepo((args) => assert.equal(git('git', args).status, 0, 'git init for the move lines'), dir, ['-q']);
     return runScripts(dir, { deps: { ...stripped(dir).deps, ...(inGit ? { git } : {}), ...deps } });
   };
   const [refreshed, edited, rejected] = [kitTree({ [INST]: OLD(INST) }), kitTree({ [INST]: MINE, [CAPS]: MINE, [ISSUES]: null }), kitTree(Object.fromEntries(own.map((p) => [p, p === ROT ? MINE : null])))];

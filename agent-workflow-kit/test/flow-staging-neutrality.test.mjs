@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { computeTreeFingerprint } from '../tools/core-evidence.mjs';
 import { appendFlowRecord, resolveFlowStorePath, readFlowStore } from '../tools/flow-store.mjs';
 import { FLOW_SCHEMA_VERSION } from '../tools/flow-record.mjs';
@@ -24,7 +25,7 @@ let seq = 0;
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');

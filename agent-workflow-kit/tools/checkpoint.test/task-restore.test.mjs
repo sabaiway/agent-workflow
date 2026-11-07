@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { main as dispatchMain } from '../dispatch.mjs';
 import { DELEGATION_STORE_BASENAME, readDelegationStore } from '../dispatch-store.mjs';
@@ -83,7 +84,8 @@ const makeRepo = () => {
     env: { ...ENV, AW_DELEGATION_STORE: store, AW_CORE_EVIDENCE: join(dir, 'evidence.jsonl'),
       GIT_AUTHOR_DATE: HEAD_DATE, GIT_COMMITTER_DATE: HEAD_DATE },
     now: () => { ws.clock += SECOND_MS; return new Date(ws.clock).toISOString(); } };
-  for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'coder-tools@proton.me'],
+  makeFixtureRepo((args) => readGit(ws, args), ws.cwd, ['-q', '-b', 'main']);
+  for (const args of [['config', 'user.email', 'coder-tools@proton.me'],
     ['config', 'user.name', 'coder-tool']]) readGit(ws, args);
   put(ws, BASE, INITIAL_BASE);
   for (const path of [SOURCE_A, SOURCE_B]) put(ws, path, INITIAL_SOURCE);

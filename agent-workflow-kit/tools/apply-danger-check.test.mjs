@@ -24,6 +24,7 @@ import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 import { THEMES, themePaths } from './project-rules/index.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 const services = await import('./services/index.mjs').catch(() => ({}));
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
 const worktrees = await import('./worktrees.mjs');
@@ -1088,8 +1089,7 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
     const git = findOnPath('git', { getenv: process.env }).path;
     assert.ok(git, 'git is on the host PATH');
     f.env.PATH += `:${dirname(git)}`;
-    const child = spawnSync('git', ['init', '-q', f.root], { env: hermeticGitEnv(process.env, f.home) });
-    assert.equal(child.status, 0, String(child.stderr));
+    makeFixtureRepo((args) => { const child = spawnSync('git', args, { env: hermeticGitEnv(process.env, f.home) }); assert.equal(child.status, 0, String(child.stderr)); }, f.root, ['-q']);
     return f;
   };
   const project = (t, deployed = false) => {
@@ -1224,7 +1224,7 @@ describe('spec:init-project/S63 the danger check over hook-checks by proof', () 
     const f = fixture(t);
     f.env = hermeticGitEnv({ ...f.env, PATH: `${f.env.PATH}:${dirname(findOnPath('git', { getenv: process.env }).path)}` }, f.home);
     delete f.env.NODE_TEST_CONTEXT;
-    assert.equal(spawnSync('git', ['init', '-q', f.root], { env: f.env }).status, 0);
+    makeFixtureRepo((args) => assert.equal(spawnSync('git', args, { env: f.env }).status, 0), f.root, ['-q']);
     const themed = theme ? { ...Object.fromEntries(THEMES.flatMap(({ name }) => [themePaths(name).kit, themePaths(name).effective]).map((path) => [path, RULE])), [themePaths(THEMES[0].name).record]: JSON.stringify({ schema: 1, themes: Object.fromEntries(THEMES.map(({ name }) => [name, { kit: sha(RULE), local: 'absent', effective: sha(RULE) }])) }) } : {};
     for (const [path, bytes] of Object.entries({ [INSTALLER]: installer, 'docs/ai/source-size.json': config, ...themed })) if (bytes !== undefined) put(join(f.root, path), bytes);
     return f;

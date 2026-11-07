@@ -24,6 +24,7 @@ import {
   MASKS_FENCE_END,
 } from './sandbox-masks.mjs';
 import { fakeStat, repoFactory } from './sandbox-masks-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const makeRepo = repoFactory('sandbox-masks');
 
@@ -516,7 +517,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     const root = join(base, 'repo');
     mkdirSync(root);
     const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     const probe = probeSandboxMasks({ cwd: root, ...maskDeps({ '.bashrc': 'char' }) });
     rmSync(base, { recursive: true, force: true });
     assert.match(probe.applyCmd, /--cwd '.*sandbox masks .*'/, 'the spaced cwd rides single quotes — a dead/unsafe paste is impossible');

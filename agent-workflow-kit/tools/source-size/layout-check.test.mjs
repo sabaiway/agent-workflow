@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../source-size-check.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
 
@@ -38,7 +39,7 @@ const writeTree = (cwd, files) => {
 const createProject = ({ files = {}, config = null, store = {} } = {}) => {
   const cwd = mkdtempSync(join(TMP, 'p'));
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  runGit(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => runGit(cwd, args), cwd, ['-q', '-b', 'main']);
   writeTree(cwd, files);
   if (config !== null) writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(config, null, 2));
   runGit(cwd, ['add', '-A']);

@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, st
 import { delimiter, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { BUNDLED_HOOK_PATH, HOOK_FILE_REL, LANES_REL, buildHookSettingsEntry } from '../gate-hook.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { readFamily } from '../../references/scripts/family.mjs';
@@ -250,8 +251,7 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
     const f = realFixture(t, new Set(['enforcement', 'state-block']));
     const gitDir = (process.env.PATH ?? '').split(delimiter).find((dir) => existsSync(join(dir, 'git')));
     assert.ok(gitDir, 'git must be on PATH');
-    const git = spawnSync('git', ['init', '-q'], { cwd: f.root, env: hermeticGitEnv(process.env, f.home), encoding: 'utf8' });
-    assert.equal(git.status, 0, git.stderr);
+    makeFixtureRepo((args) => { const git = spawnSync('git', args, { cwd: f.root, env: hermeticGitEnv(process.env, f.home), encoding: 'utf8' }); assert.equal(git.status, 0, git.stderr); }, f.root, ['-q']);
     f.env.PATH = [dirname(process.execPath), gitDir, f.env.PATH].join(delimiter);
     assert.equal(existsSync(join(f.root, 'package.json')), false);
     assert.deepEqual(pending(f), ['enforcement', 'state-block']);

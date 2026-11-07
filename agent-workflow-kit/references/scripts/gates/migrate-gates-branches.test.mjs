@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
 import { CHECKER_CLAIM, RETIRED_STORE_BASENAMES, checkerClaimTool, classifyCheckerClaim, main } from './migrate-gates.mjs';
 
 // Both core checks exist as real files — canonicity is a realpath anchor, so a check whose file is
@@ -143,7 +144,7 @@ describe('migrate-gates — refusal and no-op branches', () => {
 
   it('a NON-ENOENT lstat failure on the gates.json LEAF is a loud STOP — never read as "missing"', () => {
     const root = mkProject([LEGACY, UNIT]);
-    spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+    makeFixtureRepo((args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' }), root, ['-q']);
     writeFileSync(join(root, '.git', RETIRED_STORE_BASENAMES[0]), '{"dead":1}\n');
     const io = {
       ...quiet(),
@@ -299,7 +300,7 @@ describe('migrate-gates — refusal and no-op branches', () => {
 
   it('an un-unlinkable retired store is reported LOUDLY and never fails the migration', () => {
     const root = mkProject([LEGACY, UNIT]);
-    spawnSync('git', ['init', '-q'], { cwd: root, encoding: 'utf8' });
+    makeFixtureRepo((args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' }), root, ['-q']);
     // A DIRECTORY at the store path: existsSync sees it, unlink refuses (EISDIR/EPERM) — the
     // deterministic un-unlinkable shape (permission bits vary by runner; a dir does not).
     mkdirSync(join(root, '.git', RETIRED_STORE_BASENAMES[0]), { recursive: true });

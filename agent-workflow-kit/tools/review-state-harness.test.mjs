@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { computeFingerprintPayload, computeTreeFingerprint, resolveBase } from './core-evidence.mjs';
 import { resolveFlowStorePath } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION } from './flow-record.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 export const CODEX = 'codex-cli-bridge';
 export const AGY = 'antigravity-cli-bridge';
@@ -41,7 +42,7 @@ export const SOLO_CONFIG = JSON.stringify({ 'plan-execution': { review: 'solo' }
 const REPO_TEMPLATE = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'review-state-template-'));
   const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), dir, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(dir, 'base.txt'), 'committed base\n');

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { hermeticGitEnv } from './git-env.mjs';
 import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
 import { KIT_LIMITS } from './source-size/index.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const scriptPriors = await import('./script-priors.mjs').catch(() => ({}));
 const { SCRIPT_PRIORS, PRIOR_FILES, READER_PAIR, CHECKER_PAIR, INSTALLER_SET, classifyDeployedScript, digestOf } = scriptPriors;
@@ -267,7 +268,7 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
     const { INSTALLER_REL, KIT_SCRIPTS_DIR } = await import('./node-evidence.mjs');
     assert.equal(typeof KIT_SCRIPTS_DIR, 'string', 'node-evidence.mjs exports KIT_SCRIPTS_DIR');
     inTemp((root) => {
-      spawnChecked('git', ['init', '-q'], root);
+      makeFixtureRepo((args) => spawnChecked('git', args, root), root, ['-q']);
       writeFileSync(join(root, 'package.json'), '{"name":"fixture"}');
       writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
       const hook = join(resolve(root, spawnChecked('git', ['rev-parse', '--git-path', 'hooks'], root).stdout.trim()), 'pre-commit');

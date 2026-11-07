@@ -15,6 +15,7 @@ import { hermeticGitEnv } from './git-env.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { THEMES, themePaths } from './project-rules/index.mjs';
 import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const leaf = await import('./git-hooks.mjs').catch(() => ({}));
 const need = (name) => {
@@ -79,8 +80,7 @@ const makeProject = (t) => {
   const env = hermeticGitEnv(process.env, root);
   delete env.NODE_TEST_CONTEXT;
   env.PATH = [dirname(process.execPath), process.env.PATH ?? ''].join(delimiter);
-  const result = spawnSync('git', ['init', '-q', root], { env, encoding: 'utf8' });
-  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+  makeFixtureRepo((args) => { const result = spawnSync('git', args, { env, encoding: 'utf8' }); assert.equal(result.status, 0, result.error?.message ?? result.stderr); }, root, ['-q']);
   return { root, io: makeIo(t, root, env) };
 };
 const invoke = (argv, io) => {

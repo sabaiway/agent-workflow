@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, readEvidence, canonicalKindSerialization, isTreeClean, computeWorkingState } from './core-evidence.mjs';
 import { quoteReportName } from './review-state.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const guard = await import('./commit-guard.mjs').catch(() => null);
 const { main, decideIndexLag, buildIndexLagRecovery, INDEX_LAG_PATH_CAP } = guard ?? {};
@@ -39,7 +40,7 @@ const GATES = { gates: [{ id: 'noop', title: 'noop', cmd: 'true' }] };
 const REPO_TEMPLATE = (() => {
   const dir = mkdtempSync(join(tmpdir(), 'commit-guard-template-'));
   const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), dir, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
@@ -451,7 +452,7 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const { root, g } = makeRepo();
     const sub = join(root, 'sub');
     mkdirSync(sub);
-    gitIn(sub, 'init', '-q');
+    makeFixtureRepo((args) => gitIn(sub, ...args), sub, ['-q']);
     gitIn(sub, 'config', 'user.email', 'probe@example.com');
     gitIn(sub, 'config', 'user.name', 'probe');
     writeFileSync(join(sub, 'inner.txt'), 'inner\n');
@@ -574,7 +575,7 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const { root, g } = makeRepo();
     const sub = join(root, 'sub');
     mkdirSync(sub);
-    gitIn(sub, 'init', '-q');
+    makeFixtureRepo((args) => gitIn(sub, ...args), sub, ['-q']);
     gitIn(sub, 'config', 'user.email', 'probe@example.com');
     gitIn(sub, 'config', 'user.name', 'probe');
     writeFileSync(join(sub, 'inner.txt'), 'inner\n');
@@ -596,7 +597,7 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const { root, g } = makeRepo();
     const sub = join(root, 'sub');
     mkdirSync(sub);
-    gitIn(sub, 'init', '-q');
+    makeFixtureRepo((args) => gitIn(sub, ...args), sub, ['-q']);
     gitIn(sub, 'config', 'user.email', 'probe@example.com');
     gitIn(sub, 'config', 'user.name', 'probe');
     writeFileSync(join(sub, 'inner.txt'), 'inner\n');
@@ -973,7 +974,7 @@ describe('commit-guard — the index must already carry the verified tree', () =
     const { root, g } = makeRepo();
     const sub = join(root, 'sub');
     mkdirSync(sub);
-    gitIn(sub, 'init', '-q');
+    makeFixtureRepo((args) => gitIn(sub, ...args), sub, ['-q']);
     gitIn(sub, 'config', 'user.email', 'probe@example.com');
     gitIn(sub, 'config', 'user.name', 'probe');
     writeFileSync(join(sub, 'inner.txt'), 'inner\n');

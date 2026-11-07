@@ -9,6 +9,7 @@ import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { MASKS_FENCE_START, MASKS_FENCE_END } from './sandbox-masks.mjs';
 import { buildRecommendations } from './recommendations.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 // An empty stat by default (`size: 0`, no `mode`): the S2 and S3 stubs.
 export const fakeStat = (type, extra = {}) => ({
@@ -34,7 +35,7 @@ export const repoFactory = (prefix, files = { 'base.txt': 'committed\n' }) => {
     mkdirSync(dirname(join(template, rel)), { recursive: true });
     writeFileSync(join(template, rel), text);
   }
-  git(template, 'init', '-q');
+  makeFixtureRepo((args) => git(template, ...args), template, ['-q']);
   git(template, 'config', 'user.email', 'probe@example.com');
   git(template, 'config', 'user.name', 'probe');
   git(template, 'add', '-A');

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-review.sh');
@@ -61,7 +62,7 @@ const TEMPLATE_ROOT = (() => {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), repo, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(repo, 'AGENTS.md'), '# Hard Constraints\n');

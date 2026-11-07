@@ -22,6 +22,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from './fixture-repo.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from '../../agent-workflow-kit/tools/velocity-profile.mjs';
 
 const KIT_SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'agent-workflow-kit', 'references', 'scripts');
@@ -74,7 +75,7 @@ export const buildForeignFixture = ({
   const root = mkdtempSync(join(tmpdir(), prefix));
   const teardown = () => rmSync(root, { recursive: true, force: true });
   try {
-    git(root, ['init', '-q', '-b', 'main'], spawn);
+    makeFixtureRepo((args) => git(root, args, spawn), root, ['-q', '-b', 'main']);
     const srcDir = join(root, 'packages', 'app', 'src');
     mkdirSync(srcDir, { recursive: true });
     for (let i = 0; i < tsFiles; i += 1) {

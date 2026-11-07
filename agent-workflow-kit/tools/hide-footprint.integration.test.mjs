@@ -16,6 +16,7 @@ import { MASKS_FENCE_START as MS, MASKS_FENCE_END as ME } from './sandbox-masks.
 import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
 import { PRIOR_FILES } from './script-priors.mjs';
 import { hermeticGitEnv, stripGitLocationEnv } from './git-env.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 const inheritedEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
 let gitOk = true;
 before(() => { try { execFileSync('git', ['--version'], { env: stripGitLocationEnv(inheritedEnvironment), encoding: 'utf8' }); } catch { gitOk = false; } });
@@ -34,7 +35,7 @@ const setup = () => {
     GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@e', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@e',
   };
   const git = (args, cwd = dir) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  git(['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(args), dir, ['-q', '-b', 'main']);
   return { home, dir, gcfg, env, git, deps: { env, home } };
 };
 const readExclude = (dir) => { const p = join(dir, '.git/info/exclude'); return existsSync(p) ? readFileSync(p, 'utf8') : ''; };

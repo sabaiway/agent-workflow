@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main as checkMain } from './source-size-check.mjs';
 import { main as proceduresMain } from './procedures.mjs';
 import { SOURCE_SIZE_CONFIG_REL } from './source-size-core.mjs';
@@ -107,7 +108,7 @@ const project = ({ files = {}, config = AUTHORED } = {}, suffix = '') => {
   const cwd = join(TMP, `p${seq += 1}${suffix}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) writeFileSync(join(cwd, rel), body);
   if (config !== null) {
     writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), typeof config === 'string' ? config : JSON.stringify(config, null, 2));

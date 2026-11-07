@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hermeticGitEnv } from './git-env.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 export const load = () => import('./feedback-record-cli.mjs');
 export const MIB = 1024 * 1024;
@@ -28,7 +29,7 @@ export const makeRepo = () => {
     GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.com',
   };
   const repo = { root, env };
-  git(repo, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(repo, args), root, ['-q', '-b', 'main']);
   writeFileSync(join(root, 'anchor.txt'), 'one\ntwo\nthree\nfour\n');
   writeFileSync(join(root, '.gitignore'), 'scratch/\n');
   return { ...repo, head: commit(repo) };

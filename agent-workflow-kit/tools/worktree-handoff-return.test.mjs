@@ -16,6 +16,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { composeProvisionRecordSection } from './worktrees-record.mjs';
 import { main as dispatchMain } from './dispatch.mjs';
 
@@ -46,7 +47,7 @@ const USER_AFTER = ['## Session notes', 'after-record user content stays user-ow
 const makeFixture = (name, slug) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'base.txt'), 'base content\n');

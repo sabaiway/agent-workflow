@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from './fixture-repo.mjs';
 import { GIT_MAX_BUFFER, hermeticGitEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
 import { PRIOR_FILES, SCRIPT_PRIORS } from '../../agent-workflow-kit/tools/script-priors.mjs';
 import { NODE_EVIDENCE_PROBES } from '../../agent-workflow-kit/tools/node-evidence.mjs';
@@ -99,7 +100,7 @@ it('spec:standalone-scripts/S14 one plain run moves a 1af99af deployment through
         git(step, 'add', '-A');
         git(step, 'commit', '-q', '-m', message, ...flags);
       };
-      git('setup', 'init', '-q', '-b', 'main');
+      makeFixtureRepo((args) => git('setup', ...args), project, ['-q', '-b', 'main']);
       for (const [question, expected] of [
         ['--absolute-git-dir', join(project, '.git')], ['--git-common-dir', join(project, '.git')],
         ['--show-toplevel', project],

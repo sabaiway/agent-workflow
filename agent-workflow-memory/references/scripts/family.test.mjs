@@ -215,14 +215,21 @@ const importsOf = (text) => {
   ].filter((one) => one.spec.startsWith('.'));
 };
 
-// The repository holding this tree (the nearest .git above it), walked for .mjs files; a nested checkout is its own.
-const repoRoot = (dir = HERE) => (existsSync(join(dir, '.git')) ? dir : dirname(dir) === dir ? dirname(dirname(HERE)) : repoRoot(dirname(dir)));
-const SKIP = new Set(['node_modules', '.git', '.claude', 'docs']);
-const mjsUnder = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-  const full = join(dir, entry.name);
-  if (entry.isDirectory()) return SKIP.has(entry.name) || existsSync(join(full, '.git')) ? [] : mjsUnder(full);
-  return entry.isFile() && entry.name.endsWith('.mjs') ? [full] : [];
-});
+const GIT_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^[Gg][Ii][Tt]_/.test(name)));
+const GIT_MAX_BUFFER = 16 * 1024 * 1024;
+const runGit = (args, directory) => {
+  const result = spawnSync('git', args, { cwd: directory, env: GIT_ENV, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER });
+  const fact = `git ${args.join(' ')} in ${directory}: error=${result.error?.message ?? 'none'}, signal=${result.signal}, status=${result.status}; ${result.stderr}${result.stdout}`;
+  assert.ok(!result.error, fact);
+  assert.equal(result.signal, null, fact);
+  assert.equal(result.status, 0, fact);
+  return result.stdout;
+};
+const listMjs = () => {
+  const root = runGit(['rev-parse', '--show-toplevel'], HERE).replace(/\r?\n$/, '');
+  return runGit(['ls-files', '-z', '--cached', '--others', '--exclude-standard'], root).split('\0')
+    .filter((path) => path.endsWith('.mjs')).map((path) => resolve(root, path)).filter((path) => existsSync(path));
+};
 
 // A target inside this tree or a byte-equal twin (the mirror): its tree and its POSIX path there, else null.
 const twins = new Map();
@@ -242,7 +249,7 @@ describe('spec:script-family/S4 the index is the one door, and every non-suite f
     assert.deepEqual(MODULES.filter((module) => existsSync(join(HERE, module, 'index.mjs'))), [...INDEXED].sort((a, b) => MODULES.indexOf(a) - MODULES.indexOf(b)));
     const names = new Map(INDEXED.map((module) => [module, new Set()]));
     const reached = new Set();
-    for (const file of mjsUnder(repoRoot())) {
+    for (const file of listMjs()) {
       const from = placeOf(file);
       for (const { spec, names: taken } of importsOf(readFileSync(file, 'utf8'))) {
         const to = placeOf(resolve(dirname(file), spec));

@@ -17,6 +17,7 @@ import {
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, subsetFoldBatchDigest, subsetGateIdsDigest } from './flow-record.mjs';
 import { lstatNoFollowRead } from './flow-store-read.mjs';
 import { computeTreeFingerprint, computeFingerprintPayload } from './core-evidence.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-flow-store-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -37,7 +38,7 @@ const GATES_DECLARATION = JSON.stringify({ gates: [
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');
@@ -103,7 +104,7 @@ describe('flow-store — path resolution (common dir + AW_FLOW_STORE seam)', () 
 
   it('a bare repository resolves null — the store exists only where a work tree does', () => {
     const bare = join(TMP, 'bare-repo.git');
-    sh(['init', '--bare', '-q', bare], TMP);
+    makeFixtureRepo((args) => sh(args, TMP), bare, ['--bare', '-q']);
     assert.equal(resolveFlowStorePath(bare, {}), null, 'a bare repo has a common dir but NO work tree — is-inside-work-tree gates the resolution');
   });
 
@@ -1201,7 +1202,7 @@ describe('flow-store — bookkeeping-delta custody proof (masked revert-and-reco
   it('an unborn HEAD is a legitimately absent HEAD layer — the mint proceeds', () => {
     const root = join(TMP, 'unborn-head-repo');
     mkdirSync(root, { recursive: true });
-    sh(['init', '-q', '-b', 'main'], root);
+    makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
     sh(['config', 'user.email', 'coder-tools@proton.me'], root);
     sh(['config', 'user.name', 'coder-tool'], root);
     const fpBefore = computeTreeFingerprint(root);

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { KNOWN_FOOTPRINT } from '../known-footprint.mjs';
 import { main as dispatchMain } from '../dispatch.mjs';
@@ -76,7 +77,7 @@ const makeRepo = () => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
   const store = join(cwd, '.git', DELEGATION_STORE_BASENAME);
   const ws = { cwd, store, env: { ...ENV, AW_DELEGATION_STORE: store, AW_CORE_EVIDENCE: join(cwd, '.git', 'evidence.jsonl') } };
-  sh(ws, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => sh(ws, args), ws.cwd, ['-q', '-b', 'main']);
   sh(ws, ['config', 'user.email', 'coder-tools@proton.me']);
   sh(ws, ['config', 'user.name', 'coder-tool']);
   put(ws, BASE);

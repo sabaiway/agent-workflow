@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { makeFixtureRepo, cloneFixtureRepo } from '../testing/fixture-repo.mjs';
 import { FAMILY_DIRS, PACKAGE_ALIASES, resolvePackageDir, runCli } from './version-sync.mjs';
 import { syncBridgeMirror } from '../sync-mirrors.mjs';
 import { cwdBoundGitEnv } from '../suite-parity.mjs';
@@ -39,7 +40,7 @@ const git = (root, args, environment = makeGitEnv(root)) => execFileSync('git', 
   cwd: root, env: cwdBoundGitEnv(environment), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
 }).trim();
 const initializeRepository = (root) => {
-  git(root, ['init']);
+  makeFixtureRepo((args) => git(root, args), root);
   const environment = makeGitEnv(root);
   const stripped = makeGitEnv(root, Object.fromEntries(Object.entries(environment).filter(([key]) => !key.startsWith('GIT_'))));
   for (const flag of ['--show-toplevel', '--absolute-git-dir', '--git-common-dir']) {
@@ -195,7 +196,7 @@ describe('spec:version-sync/S4 unreadable history is one problem; roots and inhe
     const { root } = makeRepository();
     write(root, 'later.txt', 'later\n'); commit(root, 'After release');
     const destination = makeRoot();
-    git(destination, ['clone', '--depth', '1', pathToFileURL(root).href, destination]);
+    cloneFixtureRepo((args) => git(destination, args), pathToFileURL(root).href, destination, ['--depth', '1']);
     assert.equal(git(destination, ['rev-parse', '--is-shallow-repository']), 'true');
     assertProblem(run(destination), /history|shallow/i);
   });

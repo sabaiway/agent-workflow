@@ -9,6 +9,7 @@ import { computeTreeFingerprint } from './core-evidence-tree.mjs';
 import { EVIDENCE_SCHEMA_VERSION, readEvidence, authoritativeOfKind } from './core-evidence-store-read.mjs';
 import { CORE_EVIDENCE_STOP, appendEvidenceRecord, probeKnobsFromEnv, runRedProof, runDegrade } from './core-evidence-store.mjs';
 import { makeRepo, fixtureEnv, headOf, storeOf, validRedProof, validDegrade } from './core-evidence-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 // ── appendEvidenceRecord: validated, atomic, duplicate-refusing (D6a) ─────────────────────────────
 
@@ -277,8 +278,12 @@ describe('runRedProof — the observed-red declaration (refusals write NOTHING)'
 
   it('a red-proof in a sha256-object-format repo records the 64-hex base', (t) => {
     const root = mkdtempSync(join(tmpdir(), 'core-evidence-sha256-'));
-    const init = spawnSync('git', ['init', '--object-format=sha256', '-q', root], { encoding: 'utf8' });
-    if (init.status !== 0) {
+    const failures = [];
+    makeFixtureRepo((args) => {
+      const result = spawnSync('git', args, { encoding: 'utf8' });
+      if (result.status !== 0) failures.push(result);
+    }, root, ['--object-format=sha256', '-q']);
+    if (failures.length) {
       rmSync(root, { recursive: true, force: true });
       t.skip('host git lacks --object-format=sha256 — the 64-hex arm stays covered by the validator fixture');
       return;

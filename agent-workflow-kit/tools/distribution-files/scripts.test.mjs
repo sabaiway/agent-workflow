@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../ensure-configs.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { SCRIPT_PRIORS, PRIOR_FILES } from '../script-priors.mjs';
@@ -302,7 +303,8 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
   it('the hook its installer writes runs the docs checker and archive lines through the stable kit command and no suite, a commit passes; an edited installer is made the bundled bytes by one plain run; an absent family file placed with no command', { timeout: 120_000 }, async () => {
     const K = await kitLayout();
     withTree({}, (dir) => {
-      for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.com'], ['config', 'user.name', 'fixture']]) ok(dir, 'git', ...args);
+      makeFixtureRepo((args) => ok(dir, 'git', ...args), dir, ['-q', '-b', 'main']);
+      for (const args of [['config', 'user.email', 'fixture@example.com'], ['config', 'user.name', 'fixture']]) ok(dir, 'git', ...args);
       for (const [doc, type, title] of [['changelog.md', 'log', 'Changelog'], ['known_issues.md', 'issues', 'Known issues']]) writeFileSync(join(dir, 'docs', 'ai', doc), `---\ntype: ${type}\nmaxLines: 200\n---\n\n# ${title}\n`);
       const checker = rel(K.at('docs-size/check-docs-size.mjs')), hook = () => readFileSync(join(dir, '.git', 'hooks', 'pre-commit'), 'utf8').split('\n');
       for (const args of [[checker, '--write-index'], [rel(K.installer)]]) ok(dir, process.execPath, ...args);

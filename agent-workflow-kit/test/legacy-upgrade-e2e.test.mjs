@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { buildForeignFixture, placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 import { stripGitLocationEnv } from '../tools/git-env.mjs';
@@ -38,7 +39,7 @@ const run = (cmd, args, cwd) => spawnSync(cmd, args, { cwd, encoding: 'utf8', en
 const makeLegacyConsumer = () => {
   const root = mkdtempSync(join(tmpdir(), 'legacy-upgrade-e2e-'));
   const g = (...a) => run('git', a, root);
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });

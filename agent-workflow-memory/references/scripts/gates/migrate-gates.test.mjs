@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
 import {
   LEGACY_FORMS,
   RETIRED_STORE_BASENAMES,
@@ -442,7 +443,7 @@ describe('migrate-gates — preview writes NOTHING; apply is atomic and complete
   it('retired git-dir stores: previewed as CLEAN rows (nothing deleted), unlinked on apply, ENOENT a no-op', () => {
     const root = mkProject([LEGACY_LEDGER]);
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8', env: childEnv });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     for (const name of RETIRED_STORE_BASENAMES) writeFileSync(join(root, '.git', name), '{"dead":1}\n');
     assert.equal(findRetiredStores(root).length, RETIRED_STORE_BASENAMES.length, 'all three retired basenames are found');
     const io = quiet();
@@ -463,7 +464,7 @@ describe('migrate-gates — preview writes NOTHING; apply is atomic and complete
   it('stores alone (an already-migrated declaration) still get cleaned on apply', () => {
     const root = mkProject([UNIT]);
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8', env: childEnv });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     assert.equal(main(['--cwd', root, '--kit-tools', KIT_TOOLS, '--apply'], quiet()), 0); // migrate first
     writeFileSync(join(root, '.git', RETIRED_STORE_BASENAMES[0]), '{"dead":1}\n');
     const io = quiet();

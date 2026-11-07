@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { main as dispatchMain } from '../dispatch.mjs';
 import { contractDigest } from '../dispatch-record.mjs';
@@ -85,7 +86,8 @@ const makeRepo = () => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
   const store = join(cwd, '.git', DELEGATION_STORE_BASENAME);
   const ws = { cwd, store, planted: new Set(), env: { ...ENV, AW_DELEGATION_STORE: store, AW_CORE_EVIDENCE: join(cwd, '.git', 'evidence.jsonl') } };
-  for (const args of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'coder-tools@proton.me'], ['config', 'user.name', 'coder-tool']]) sh(ws, args);
+  makeFixtureRepo((args) => sh(ws, args), ws.cwd, ['-q', '-b', 'main']);
+  for (const args of [['config', 'user.email', 'coder-tools@proton.me'], ['config', 'user.name', 'coder-tool']]) sh(ws, args);
   put(ws, BASE); put(ws, GONE, BINARY); put(ws, IGNORE, '\n'); chmodSync(join(cwd, BASE), MODE_EXEC);
   sh(ws, ['add', '-A']); sh(ws, ['commit', '-q', '-m', 'initial tree']);
   put(ws, EXCLUDE, HIDDEN); put(ws, getPlan(), PLAN_TITLE); put(ws, HIDDEN_PATH);

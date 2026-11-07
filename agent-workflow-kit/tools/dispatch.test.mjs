@@ -11,6 +11,7 @@ import {
   REGISTER_FLAG_FIELDS, REGISTER_DERIVED_FIELDS, OBSERVE_FLAG_FIELDS, OBSERVE_DERIVED_FIELDS,
   wavesInStore, selectWave, aggregateDelegationWave, renderAggregate,
 } from './dispatch.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // The NAMESPACE form beside the named imports above: a missing export then surfaces as a failing
 // assertion inside the test that needs it, never as a link-time error that reddens the whole file —
 // the red-first discipline needs every proof to fail for its OWN reason.
@@ -43,8 +44,7 @@ const plainDir = () => {
 // AW_DELEGATION_STORE seam so no test depends on the repo it runs in.
 const workspace = () => {
   const ws = plainDir();
-  const r = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: ws.cwd, encoding: 'utf8' });
-  assert.equal(r.status, 0, `git init failed: ${r.stderr}`);
+  makeFixtureRepo((args) => { const r = spawnSync('git', args, { cwd: ws.cwd, encoding: 'utf8' }); assert.equal(r.status, 0, `git init failed: ${r.stderr}`); }, ws.cwd, ['-q', '-b', 'main']);
   return ws;
 };
 
@@ -808,7 +808,7 @@ const gitIn = (cwd, ...args) => {
 const repo = () => {
   const cwd = join(TMP, `repo-${seq += 1}`);
   mkdirSync(cwd, { recursive: true });
-  gitIn(cwd, 'init', '-q', '-b', 'main');
+  makeFixtureRepo((args) => gitIn(cwd, ...args), cwd, ['-q', '-b', 'main']);
   gitIn(cwd, 'config', 'user.email', 'coder-tools@proton.me');
   gitIn(cwd, 'config', 'user.name', 'coder-tool');
   writeFileSync(join(cwd, 'base.txt'), 'base\n');

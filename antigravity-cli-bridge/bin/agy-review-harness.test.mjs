@@ -166,6 +166,12 @@ export const farmFor = (exclude) => {
   return farms.get(key);
 };
 
+export const makeFixtureRepo = (run, dir, initArgs = []) => {
+  run(['init', ...initArgs, dir]);
+  run(['-C', dir, 'config', 'maintenance.auto', 'false']);
+  return dir;
+};
+
 const TEMPLATE_HOME = (() => {
   const home = join(SHARED_ROOT, 'template-home');
   const bin = join(home, '.local', 'bin');
@@ -174,7 +180,7 @@ const TEMPLATE_HOME = (() => {
   const repo = join(home, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), repo, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(repo, 'base.txt'), 'committed base\n');

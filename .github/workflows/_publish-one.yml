@@ -166,6 +166,14 @@ jobs:
       # ship as byte-identical mirror payload in the tarball, so the publish gate must exercise them too.
       # (The bridge wrappers also have canonical copies at the repo root that this publish job, scoped to
       # the kit dir, does not see — the byte-identical mirror is what ships.)
+      - name: Seal package directories
+        working-directory: ${{ github.workspace }}
+        run: node scripts/testing/package-seal.mjs seal
+
+      - name: Check package seal
+        working-directory: ${{ github.workspace }}
+        run: node scripts/testing/package-seal.mjs check
+
       - name: Test the package before publish
         run: |
           set -euo pipefail
@@ -176,6 +184,11 @@ jobs:
           else
             node --test scripts/*.test.mjs bin/*.test.mjs 'references/scripts/**/*.test.mjs'
           fi
+
+      - name: Restore package directories
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: node scripts/testing/package-seal.mjs restore
 
       # Pack the REAL tarball ONCE, to $RUNNER_TEMP (outside the package dir, so the exact-count
       # package-content tests above saw an unpolluted tree). This SAME .tgz is what we publish AND

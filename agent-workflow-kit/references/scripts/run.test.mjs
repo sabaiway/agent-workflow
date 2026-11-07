@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { readFamily } from './family.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -212,8 +213,10 @@ const unitTestsTree = () => {
   mkdirSync(kit, { recursive: true });
   copyFileSync(join(HERE, 'run.mjs'), join(kit, 'run.mjs'));
   place(at(kit, REPORTER), readFileSync(at(HERE, REPORTER), 'utf8'));
-  const git = spawnSync('git', ['init', '-q', root], { encoding: 'utf8' });
-  assert.equal(git.status, 0, git.stderr);
+  makeFixtureRepo((args) => {
+    const git = spawnSync('git', args, { encoding: 'utf8' });
+    assert.equal(git.status, 0, git.stderr);
+  }, root, ['-q']);
   place(join(root, 'tests', 'red.test.mjs'), "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\ntest('the red one', () => { assert.equal(1, 2); });\n");
   place(join(root, 'tests', 'green.test.mjs'), "import { test } from 'node:test';\ntest('the green one', () => {});\n");
   const run = (paths, env = {}) => {

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // Dynamic import so this spec LOADS against the pre-fix tree (the red-first doctrine).
 const {
   EXIT, runCli, handoffBasename, parseProvisionRecord,
@@ -39,7 +40,7 @@ const VISIBLE_EXCLUDES = ['/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md
 const makeRepo = (name, { pkg = { name: 'r', version: '1.0.0' }, excludes = EXCLUDES, trackDocsAi = false, vscode = false } = {}) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'README.md'), 'fixture\n');

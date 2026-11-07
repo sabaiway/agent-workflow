@@ -7,6 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSyn
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv, withGitPath } from '../git-env.mjs';
 import { main } from '../source-size-check.mjs';
 import { makeTree, write, writeJson } from '../plan-shape-harness.test.mjs';
@@ -44,7 +45,7 @@ const writeTree = (cwd, files) => {
 const createProject = ({ files = {}, config = null, links = {} } = {}) => {
   const cwd = mkdtempSync(join(TMP, 'p'));
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  runGit(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => runGit(cwd, args), cwd, ['-q', '-b', 'main']);
   writeTree(cwd, files);
   for (const [rel, target] of Object.entries(links)) symlinkSync(target, join(cwd, rel));
   if (config !== null) writeFileSync(configPath(cwd), JSON.stringify(config, null, 2));

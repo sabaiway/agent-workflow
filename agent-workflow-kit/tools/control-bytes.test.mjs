@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { stripGitLocationEnv } from './git-env.mjs';
 import { fixtures, makeRepo, skipWithoutGit } from './hostile-git-harness.test.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const tool = await import('./control-bytes.mjs').catch(() => ({}));
 const lex = await import('./repo-lex.mjs');
@@ -82,7 +83,7 @@ describe('control-bytes — S1 the domain and the three surfaces', { skip: skipW
   it('S1: an untracked nested repository is name-only and counted as a skip by kind, never refused', () => withRepo((r) => {
     const nested = join(r.dir, 'nes\x01ted');
     mkdirSync(nested);
-    r.must(['init', '-q'], { cwd: nested });
+    makeFixtureRepo((args) => r.must(args, { cwd: nested }), nested, ['-q']);
     writeFileSync(join(nested, 'inner.txt'), 'x\0');
     const result = run(r);
     assert.equal(result.code, 1);

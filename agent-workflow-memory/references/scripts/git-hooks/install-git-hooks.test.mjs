@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
 import { MAGIC_MARKER, isManaged } from './install-git-hooks.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -45,7 +46,7 @@ const deploy = (root) => { mkdirSync(dirname(join(root, KIT_INSTALLER)), { recur
 const mkProject = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'install-hooks-')));
   const g = (...a) => git(root, ...a);
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   deploy(root);
   writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
   writeFileSync(join(root, 'base.txt'), 'base\n');

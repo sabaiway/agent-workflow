@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { makeFixtureRepo } from './testing/fixture-repo.mjs';
 import {
   SCHEMA,
   countAssertCallSites,
@@ -396,7 +397,7 @@ describe('snapshot --git-rev — a post-edit freeze still counts the PRE-state a
   const seedRepo = () => {
     const root = makeTmp();
     const g = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: cwdBoundGitEnv() });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     writeFileSync(join(root, 'a.test.mjs'), 'assert.ok(1);\nassert.ok(2);\nassert.ok(3);\n');

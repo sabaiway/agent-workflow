@@ -29,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { DELEGATION_SCHEMA_VERSION } from './dispatch-record.mjs';
 import { DELEGATION_STORE_BASENAME } from './dispatch-store.mjs';
 import { execReceiptBasename, execReportBasename } from './exec-receipt.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const DISPATCH = join(TOOLS, 'dispatch.mjs');
@@ -161,7 +162,7 @@ const makeFixture = (tag, codexScript) => {
     // itself the first time it ran.
     CODEX_HARD_TIMEOUT: String(CAP_S),
   };
-  gitIn(root, env, 'init', '-q', '-b', 'main');
+  makeFixtureRepo((args) => gitIn(root, env, ...args), root, ['-q', '-b', 'main']);
   gitIn(root, env, 'config', 'user.email', 'coder-tools@proton.me');
   gitIn(root, env, 'config', 'user.name', 'coder-tool');
   writeFileSync(join(root, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (lane fixture).\n');

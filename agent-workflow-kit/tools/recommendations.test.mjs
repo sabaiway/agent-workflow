@@ -33,6 +33,7 @@ import {
 import { shellQuoteArg } from './review-state.mjs';
 import { quoteArg } from './jev-facts.mjs';
 import { GIT_MAX_BUFFER, hermeticGitEnv } from './git-env.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // The producer body is READ from the shared vocabulary leaf, never re-typed: the inert-declaration
 // item decides through that predicate, so a fixture spelling its own body would drift off it.
 // The inert item's cause-A apply is a PREVIEW of this fill, so its non-vacuity is the fill's own
@@ -159,7 +160,7 @@ const guardProject = () => {
 const guardDeps = (root, extra = {}) => hermeticDeps(root, { gitHooksPath: () => join(root, 'hooks'), ...extra });
 // A git deployment carrying the bundled installer and an empty hooks/; `piles` tracked files in lib/ put lib/ past the entries band.
 const layoutRoot = ({ piles = 0, installer = true, root = makeProject() } = {}) => {
-  runFixtureGit(root, ['init', '-q']);
+  makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
   if (installer) cpSync(join(BUNDLED_SCRIPTS, INSTALLER_MODULE), join(root, KIT_INSTALLER));
   mkdirSync(join(root, 'hooks'));
   mkdirSync(join(root, 'lib'));
@@ -573,7 +574,7 @@ const buildInventoryFixtures = () => {
   }));
   rmSync(root5, { recursive: true, force: true });
   const root6 = mkdtempSync(join(tmpdir(), 'recommendations-inventory-'));
-  runFixtureGit(root6, ['init', '-q']);
+  makeFixtureRepo((args) => runFixtureGit(root6, args), root6, ['-q']);
   mkdirSync(join(root6, 'docs', 'ai'), { recursive: true });
   writeFileSync(join(root6, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
   const fakeChar = {
@@ -827,7 +828,7 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
       const root = makeProject();
       mkdirSync(join(root, '.claude'));
       if (kind === 'real-project-settings') writeFileSync(join(root, SETTINGS_REL), '{}');
-      if (kind === 'mcp') runFixtureGit(root, ['init', '-q']);
+      if (kind === 'mcp') makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
       if (kind === 'worktrees') {
         mkdirSync(join(root, 'farm'));
         writeFileSync(join(root, 'docs', 'ai', 'worktrees.json'), JSON.stringify({ parentDir: join(root, 'farm') }));
@@ -1055,7 +1056,7 @@ describe('recommendations — item probes over fixtures', () => {
   it('sandbox masks visible with no managed block fire the sandbox-masks apply one-liner (git fixture)', () => {
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-'));
     const g = (...args) => runFixtureGit(root, args);
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     const fakeChar = {
@@ -2590,7 +2591,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
     // block is non-empty — a plain --apply REFUSES there, so the rendered one-liner must carry
     // --clear (Segment B).
     const root = mkdtempSync(join(tmpdir(), 'recommendations-stalereal-'));
-    runFixtureGit(root, ['init', '-q']);
+    makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     mkdirSync(join(root, '.git', 'info'), { recursive: true });
@@ -2616,7 +2617,7 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
 
   it('a throwing untracked walk skips the sandbox-masks item (git fixture)', () => {
     const root = mkdtempSync(join(tmpdir(), 'recommendations-git-skip-'));
-    runFixtureGit(root, ['init', '-q']);
+    makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
     const deps = hermeticDeps(root, {
@@ -2833,7 +2834,7 @@ describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', (
 describe('spec:init-project/S75 the advisor\'s hook-checks item over the managed flat hook', () => {
   const targets = [KIT_COMMAND_PATH, ...Object.values(KIT_COMMANDS).map((path) => `scripts/agent-workflow/${path}`)];
   const flatProject = (t) => {
-    const root = makeProject(); t.after(() => rmSync(root, { recursive: true, force: true })); runFixtureGit(root, ['init', '-q']);
+    const root = makeProject(); t.after(() => rmSync(root, { recursive: true, force: true })); makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
     const env = gitPathEnv(root); delete env.NODE_TEST_CONTEXT;
     mkdirSync(join(root, 'scripts'), { recursive: true }); cpSync(join(KIT_ROOT, 'test/fixtures/script-priors/8.4.0/install-git-hooks.mjs.txt'), join(root, 'scripts/install-git-hooks.mjs'));
     const installed = spawnSync(process.execPath, [join(root, 'scripts/install-git-hooks.mjs')], { cwd: root, env, encoding: 'utf8' }); assert.equal(installed.status, 0, installed.stderr);
@@ -3731,7 +3732,7 @@ describe('spec:init-project/S54 the advisor arms by their tables', () => {
     }
     addBuilt(collect(draftsRoot));
     const vendoredRoot = makeRoot(t);
-    runFixtureGit(vendoredRoot, ['init', '-q', '-b', 'main']);
+    makeFixtureRepo((args) => runFixtureGit(vendoredRoot, args), vendoredRoot, ['-q', '-b', 'main']);
     mkdirSync(join(vendoredRoot, 'src'));
     mkdirSync(join(vendoredRoot, 'vendor'));
     writeFileSync(join(vendoredRoot, 'src', 'a.mjs'), 'export const a = 1;\n');

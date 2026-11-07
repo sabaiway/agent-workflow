@@ -8,6 +8,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EXIT, runCli, rebaseAbsolutePins, composeProvisionArgv, spawnGit, handoffBasename } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-attest-'));
@@ -24,7 +25,7 @@ const EXCLUDES = ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAU
 const makeRepo = (name, { vscode = false, nodeModules = false } = {}) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'README.md'), 'fixture\n');

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main, mergeFlowBlock, evaluateArmingFloors, FLOW_BOOKKEEPING_FLOOR_RESIDUAL } from './set-flow.mjs';
 import { CONFIG_REL, FLOW_SCHEMA_VERSION, FLOW_SCHEMA_1_FIXTURE, loadConfig } from './orchestration-config.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-set-flow-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -22,7 +23,7 @@ let seq = 0;
 const makeRepo = ({ tracked = true } = {}) => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'docs', 'debt.md'), '# debt\n');

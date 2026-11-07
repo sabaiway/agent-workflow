@@ -19,6 +19,7 @@ import {
 } from './dispatch-record.mjs';
 import { computeTreeFingerprint, computeFingerprintPayload } from './core-evidence.mjs';
 import { createStoreAppendLane } from './store-append.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-dispatch-store-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -33,7 +34,7 @@ let seq = 0;
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');

@@ -14,6 +14,7 @@ import { spawnSync } from 'node:child_process';
 import { collectUnansweredRedRefusals, decideFlowCheck } from './flow-check.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest } from './flow-record.mjs';
 import { parseFlowStoreText } from './flow-store.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // Namespace-imported ON PURPOSE: a named import of a not-yet-exported constant is a link-time
 // error, which would make the RED observation a load failure instead of a failed assertion.
 import * as coreEvidence from './core-evidence.mjs';
@@ -120,7 +121,7 @@ describe('flow-check — the #65 CONTENT-FREE red arm', () => {
       const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
       assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
     };
-    sh(['init', '-q', '-b', 'main']);
+    makeFixtureRepo((args) => sh(args), root, ['-q', '-b', 'main']);
     sh(['config', 'user.email', 'coder-tools@proton.me']);
     sh(['config', 'user.name', 'coder-tool']);
     writeFileSync(join(root, 'base.txt'), 'base\n');

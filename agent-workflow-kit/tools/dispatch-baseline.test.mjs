@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { computeFingerprintPayload, computeTreeFingerprint, isTreeClean } from './core-evidence.mjs';
 import { HEAD_BASELINE } from './dispatch-record.mjs';
 import { hermeticGitEnv } from './git-env.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const leaf = await import('./dispatch-baseline.mjs').catch(() => ({}));
 const snapshotScope = leaf.snapshotScope ?? (() => ({ ok: false, reason: 'absent' }));
@@ -35,7 +36,7 @@ const put = (root, path, bytes) => {
 };
 const makeRepo = (seed = {}, { unborn = false } = {}) => {
   const root = mkdtempSync(join(TMP, 'repo-'));
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   for (const [path, bytes] of Object.entries({ 'base.txt': 'base\n', ...seed })) put(root, path, bytes);

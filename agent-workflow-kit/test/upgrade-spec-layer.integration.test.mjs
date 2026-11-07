@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { stripGitLocationEnv } from '../tools/git-env.mjs';
 import { DEPLOYED_SCRIPTS, INSTALLER_REL } from '../tools/node-evidence.mjs';
 import { SCRIPT_PRIORS, digestOf } from '../tools/script-priors.mjs';
@@ -90,7 +91,7 @@ const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false, bodie
     const state = READER.includes(path) ? reader : CHECKER.includes(path) ? checker : 'current';
     writeAt(project, path, bodies[path] ?? stateBody(path, state));
   }
-  execFileSync('git', ['init', '-q'], { cwd: project, stdio: 'pipe', env: strippedEnv() });
+  makeFixtureRepo((args) => execFileSync('git', args, { cwd: project, stdio: 'pipe', env: strippedEnv() }), project, ['-q']);
   execFileSync(process.execPath, [join(project, INSTALLER_REL)], { cwd: project, stdio: 'pipe', env: strippedEnv() });
   return project;
 };
@@ -261,7 +262,7 @@ const declinedDeployment = () => {
   cpSync(join(TEMPLATES, 'AGENTS.md'), join(project, 'AGENTS.md'));
   writeFileSync(join(project, 'package.json'), '{"name":"fixture"}\n');
   for (const entry of readdirSync(TEMPLATES)) if (!SKILL_HOME_ONLY.has(entry)) cpSync(join(TEMPLATES, entry), join(project, 'docs', 'ai', entry), { recursive: true });
-  execFileSync('git', ['init', '-q'], { cwd: project, stdio: 'pipe', env: strippedEnv() });
+  makeFixtureRepo((args) => execFileSync('git', args, { cwd: project, stdio: 'pipe', env: strippedEnv() }), project, ['-q']);
   return project;
 };
 // The detail lines one op printed under its token line.

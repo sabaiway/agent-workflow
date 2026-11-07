@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../dispatch.mjs';
 import { DELEGATION_STORE_BASENAME, readDelegationStore } from '../dispatch-store.mjs';
 import { EXEC_RECEIPT_SCHEMA_VERSION, EXEC_RECEIPT_KIND, execReceiptBasename, execReportBasename } from '../exec-receipt.mjs';
@@ -45,7 +46,7 @@ const success = (result) => {
 };
 const makeRepo = () => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
-  sh(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => sh(cwd, args), cwd, ['-q', '-b', 'main']);
   sh(cwd, ['config', 'user.email', 'coder-tools@proton.me']);
   sh(cwd, ['config', 'user.name', 'coder-tool']);
   writeFileSync(join(cwd, 'base.txt'), 'base\n');

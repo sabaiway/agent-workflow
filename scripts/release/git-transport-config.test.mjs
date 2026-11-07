@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { makeFixtureRepo } from '../testing/fixture-repo.mjs';
 import { runGitProcess } from './git-process.mjs';
 import { makeWorld, ROOT } from './release-run-harness.test.mjs';
 import { EXIT } from './release-stages.mjs';
@@ -38,9 +39,7 @@ const createGitFixture = async (t) => {
   const env = { PATH: process.env.PATH, HOME: mkdtempSync(join(cwd, 'home-')),
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
   const git = (argv, options) => runGitProcess(argv, options);
-  const init = await git(['init', '-q'], { cwd, env });
-  assert.equal(init.error, null);
-  assert.equal(init.status, 0, String(init.stderr));
+  makeFixtureRepo((args) => execFileSync('git', args, { cwd, env, stdio: 'pipe' }), cwd, ['-q']);
   const warnings = [];
   return { cwd, env, git, warnings, warn: (line) => warnings.push(line) };
 };

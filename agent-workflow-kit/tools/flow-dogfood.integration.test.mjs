@@ -23,6 +23,7 @@ import { FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest } from './flow-rec
 import { EVIDENCE_SCHEMA_VERSION } from './core-evidence.mjs';
 import { planWith } from './plan-shape-harness.test.mjs';
 import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const SET_FLOW = join(TOOLS, 'set-flow.mjs');
@@ -118,7 +119,7 @@ const makeFixture = (tag) => {
   writeFileSync(join(root, 'docs', 'convergence.md'), '# Convergence\n');
   writeFileSync(join(root, PLAN_REL), '# Dogfood plan\n\nStep 4.1 exercises the armed flow end to end.\n');
   writeFileSync(join(root, 'app.txt'), 'ok\n');
-  git(fx, 'init', '-q', '-b', 'main');
+  makeFixtureRepo((args) => git(fx, ...args), root, ['-q', '-b', 'main']);
   git(fx, 'add', '-A');
   git(fx, 'commit', '-qm', 'base');
   git(fx, 'ls-files', '--error-unmatch', 'docs/ai/gates.json', 'docs/ai/orchestration.json');

@@ -19,12 +19,13 @@ import {
   parsePositiveIntKnob,
   probeVerdict,
 } from './changed-surface.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 // A dirty git fixture: one committed base, then a mixed working set covering every counted class.
 const makeRepo = () => {
   const root = mkdtempSync(join(tmpdir(), 'changed-surface-'));
   const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   g('config', 'user.email', 'p@e');
   g('config', 'user.name', 'p');
   return { root, g };

@@ -1,6 +1,9 @@
 # Machine-local plans -- NEVER committed (family workflow methodology: plans are ephemeral).
 docs/plans/
 
+# Test repositories
+.test-repos/
+
 # Node
 node_modules/
 *.log

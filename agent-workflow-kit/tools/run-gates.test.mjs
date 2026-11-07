@@ -20,6 +20,7 @@ import {
   spawnGateViaBash,
   isFinalCapableDeclaration,
 } from './run-gates.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_TEMPLATE = join(HERE, '..', 'references', 'templates', 'gates.json');
@@ -401,7 +402,7 @@ describe('run-gates --final — the ONE receipt the commit guard consumes', () =
   const REPO_TEMPLATE = (() => {
     const dir = mkdtempSync(join(tmpdir(), 'run-gates-final-template-'));
     const g = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), dir, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     mkdirSync(join(dir, 'docs', 'ai'), { recursive: true });
@@ -1200,7 +1201,7 @@ describe('run-gates — --pre-review under an ARMED flow (Plan 4 Decision 7/8)',
   const makeFlowRepo = (gates, { config = { 'plan-execution': { review: 'solo' } } } = {}) => {
     const root = join(ATMP, `repo-${aseq += 1}`);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    gitIn(root, 'init', '-q', '-b', 'main');
+    makeFixtureRepo((args) => gitIn(root, ...args), root, ['-q', '-b', 'main']);
     gitIn(root, 'config', 'user.email', 'probe@example.com');
     gitIn(root, 'config', 'user.name', 'probe');
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify(config));
@@ -1678,7 +1679,7 @@ describe('run-gates — --final binds the flow store (Plan 4 Decision 2 / D10)',
   const makeFinalRepo = (extraGates = []) => {
     const root = join(FTMP, `repo-${fseq += 1}`);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
-    gitIn(root, 'init', '-q', '-b', 'main');
+    makeFixtureRepo((args) => gitIn(root, ...args), root, ['-q', '-b', 'main']);
     gitIn(root, 'config', 'user.email', 'probe@example.com');
     gitIn(root, 'config', 'user.name', 'probe');
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ 'plan-execution': { review: 'solo' } }));

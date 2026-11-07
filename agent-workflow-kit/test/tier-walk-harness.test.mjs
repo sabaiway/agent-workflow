@@ -10,6 +10,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkS
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { cutRegion } from './doc-region-harness.test.mjs';
 
 export const LF = String.fromCharCode(10);
@@ -110,7 +111,7 @@ export const probeEnvironment = (ground) => {
 };
 export const prepareSubstrate = (ground, state) => {
   const { project, kit, git } = ground;
-  git('init', ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git('init', [...args]), project, ['-q', '-b', 'main']);
   git('email', ['config', 'user.email', 'coder-tools@proton.me']);
   git('name', ['config', 'user.name', 'coder-tool']);
   writeFixture(join(project, MODULE), renderLines(["export const greet = () => 'Hello';"]));

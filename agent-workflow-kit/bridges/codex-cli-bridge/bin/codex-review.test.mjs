@@ -9,6 +9,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-review.sh');
@@ -79,7 +80,7 @@ const TEMPLATE_ROOT = (() => {
   const repo = join(root, 'repo');
   mkdirSync(repo);
   const g = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), repo, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');
@@ -566,7 +567,7 @@ describe('codex-review.sh — assemble & output edge cases', { concurrency: 2 },
     const nested = join(sb.repo, 'nested');
     mkdirSync(nested, { recursive: true });
     const g = (...a) => spawnSync('git', a, { cwd: nested, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), nested, ['-q']);
     writeFileSync(join(nested, 'inner.txt'), 'INNER_SHOULD_NOT_BE_INLINED\n');
     const r = await run(sb, { args: ['code'] });
     rmSync(sb.root, { recursive: true, force: true });

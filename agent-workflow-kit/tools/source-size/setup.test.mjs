@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv, withGitPath } from '../git-env.mjs';
 import { INITIAL_ADOPTION_REASON, loadSourceSizeConfig } from '../source-size-config.mjs';
 import { judgeTree, stopsOf } from '../source-size-judge.mjs';
@@ -36,7 +37,7 @@ const configPath = (cwd) => join(cwd, 'docs', 'ai', 'source-size.json');
 const project = ({ files = {}, config = null, raw = config && JSON.stringify(config, null, 2) } = {}) => {
   const cwd = mkdtempSync(join(TMP, 'p'));
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   writeTree(cwd, raw === null ? files : { ...files, 'docs/ai/source-size.json': raw });
   git(cwd, ['add', '-A']);
   return cwd;

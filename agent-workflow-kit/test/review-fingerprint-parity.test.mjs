@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo, addFixtureSubmodule } from '../../scripts/testing/fixture-repo.mjs';
 import { computeTreeFingerprint, computeFingerprintPayload } from '../tools/review-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -84,7 +85,7 @@ before(() => {
     const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
     assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   };
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   writeFileSync(join(root, 'tracked-a.txt'), 'alpha v1\n');
@@ -150,9 +151,9 @@ describe('fingerprint parity — one fixture state, three implementations, one h
   it('the extracted preflight sees a staged gitlink despite diff.ignoreSubmodules=all', () => {
     const base = mkdtempSync(join(tmpdir(), 'fp-gitlink-')), sub = join(base, 'origin'), repo = join(base, 'repo'); mkdirSync(sub); mkdirSync(repo);
     const git = (cwd, ...args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`); };
-    try { for (const cwd of [sub, repo]) { git(cwd, 'init', '-q'); git(cwd, 'config', 'user.email', 'probe@example.com'); git(cwd, 'config', 'user.name', 'probe'); }
+    try { for (const cwd of [sub, repo]) { makeFixtureRepo((args) => git(cwd, ...args), cwd, ['-q']); git(cwd, 'config', 'user.email', 'probe@example.com'); git(cwd, 'config', 'user.name', 'probe'); }
       writeFileSync(join(sub, 'f.txt'), 'one\n'); git(sub, 'add', '-A'); git(sub, 'commit', '-qm', 'base');
-      git(repo, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor'); git(repo, 'commit', '-qm', 'gitlink');
+      addFixtureSubmodule((args) => git(repo, '-c', 'protocol.file.allow=always', ...args), repo, sub, 'vendor', ['-q']); git(repo, 'commit', '-qm', 'gitlink');
       writeFileSync(join(repo, 'vendor', 'f.txt'), 'two\n'); git(join(repo, 'vendor'), 'config', 'user.email', 'probe@example.com'); git(join(repo, 'vendor'), 'config', 'user.name', 'probe'); git(join(repo, 'vendor'), 'add', '-A'); git(join(repo, 'vendor'), 'commit', '-qm', 'move'); git(repo, 'add', 'vendor'); git(repo, 'config', 'diff.ignoreSubmodules', 'all');
       assert.equal(bashEval('if git diff --quiet && git diff --cached --quiet; then echo CLEAN; else echo DIRTY; fi', repo), 'CLEAN');
       for (const wrapper of [CODEX_WRAPPER, AGY_WRAPPER]) assert.equal(bashPreflight(wrapper, repo), 'DIRTY');
@@ -224,7 +225,7 @@ describe('repo file map budget — the fixed preamble stops taxing the change bu
       const r = spawnSync('git', args, { cwd: mapRoot, encoding: 'utf8' });
       assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
     };
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), mapRoot, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     mkdirSync(join(mapRoot, LONG_DIR), { recursive: true });
@@ -282,7 +283,7 @@ describe('repo file map budget — the fixed preamble stops taxing the change bu
       const r = spawnSync('git', args, { cwd: delRoot, encoding: 'utf8' });
       assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
     };
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), delRoot, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     mkdirSync(join(delRoot, LONG_DIR), { recursive: true });
@@ -358,7 +359,7 @@ git() {
       const r = spawnSync('git', args, { cwd: mroot, encoding: 'utf8' });
       assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
     };
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), mroot, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     writeFileSync(join(mroot, 'tracked.txt'), 'tracked v1\n');
@@ -394,7 +395,7 @@ git() {
   it('(iii) a tree whose ONLY untracked path is filtered-class reads clean/no-diff in BOTH wrappers', () => {
     const clean = mkdtempSync(join(tmpdir(), 'fp-clean-'));
     const g = (...args) => spawnSync('git', args, { cwd: clean, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), clean, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     writeFileSync(join(clean, 'a.txt'), 'committed\n');

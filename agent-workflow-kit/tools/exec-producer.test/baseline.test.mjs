@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { enumerateReturnedObjects, computeReturnedDiff } from '../exec-producer.mjs';
 import { HEAD_BASELINE, validateDelegationRecord } from '../dispatch-record.mjs';
 import { computeBasePayload, computeBaseFingerprint } from '../dispatch-baseline.mjs';
@@ -32,7 +33,7 @@ const put = (root, path, bytes) => {
 };
 const makeRepo = ({ unborn = false } = {}) => {
   const root = mkdtempSync(join(TMP, 'repo-'));
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.name', 'coder-tool'], root);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   put(root, 'base.txt', 'base\n');
@@ -68,7 +69,7 @@ describe('exec-producer base-relative walk — spec:dispatch-baseline/S4', () =>
     const root = makeRepo();
     const sub = join(root, 'sub');
     mkdirSync(sub);
-    sh(['init', '-q', '-b', 'main'], sub);
+    makeFixtureRepo((args) => sh(args, sub), sub, ['-q', '-b', 'main']);
     sh(['config', 'user.name', 'coder-tool'], sub);
     sh(['config', 'user.email', 'coder-tools@proton.me'], sub);
     put(sub, 'f.txt', 'one\n');

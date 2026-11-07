@@ -11,6 +11,7 @@ import {
   acquireSubsetRunLock, probeFlowAppendLock,
 } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION } from './flow-record.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-flow-races-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -31,7 +32,7 @@ const GATES_DECLARATION = JSON.stringify({ gates: [
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');

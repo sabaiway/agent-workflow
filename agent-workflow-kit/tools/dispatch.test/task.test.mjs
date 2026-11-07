@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'nod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../dispatch.mjs';
 import * as vocabulary from '../dispatch-record.mjs';
 import { DELEGATION_STORE_BASENAME, readDelegationStore } from '../dispatch-store.mjs';
@@ -33,7 +34,7 @@ const run = (ws, argv) => main(argv, { cwd: ws.cwd, env: ws.env, now: ws.now });
 const success = (result) => { assert.equal(result.code, 0, result.stderr); return result; };
 const makeRepo = () => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
-  sh(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => sh(cwd, args), cwd, ['-q', '-b', 'main']);
   sh(cwd, ['config', 'user.email', 'coder-tools@proton.me']);
   sh(cwd, ['config', 'user.name', 'coder-tool']);
   writeFileSync(join(cwd, 'base.txt'), 'base\n');

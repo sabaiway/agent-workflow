@@ -21,6 +21,7 @@ import {
   readReceipts,
   RECEIPTS_BASENAME,
 } from './review-state.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // The obligations derivation is a NEW export authored WITH its fixtures — imported dynamically so this
 // spec LOADS (each fixture failing individually) against a pre-hardening tree; the behavior fixtures
 // below import only the pre-existing surface.
@@ -1116,7 +1117,7 @@ describe('review-domain filter — fingerprint + isTreeClean over a lying lstat 
     const { root, baselineFp } = makeMaskRepo();
     rmSync(join(root, 'mask.txt'));
     mkdirSync(join(root, 'embedded'));
-    spawnSync('git', ['init', '-q'], { cwd: join(root, 'embedded'), encoding: 'utf8' });
+    makeFixtureRepo((args) => spawnSync('git', args, { cwd: join(root, 'embedded'), encoding: 'utf8' }), join(root, 'embedded'), ['-q']);
     const fp = computeTreeFingerprint(root);
     const clean = isTreeClean(root);
     rmSync(root, { recursive: true, force: true });

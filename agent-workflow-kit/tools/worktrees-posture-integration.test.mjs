@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EXIT, runCli, parseProvisionRecord, handoffBasename } from './worktrees.mjs';
 // Authored WITH the fixtures below: imported dynamically so this spec LOADS against the pre-fix
 // tree and each fixture fails on its OWN assertion (the red-first doctrine).
@@ -30,7 +31,7 @@ const EXCLUDES = ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAU
 const makeRepo = (name, pkg) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'README.md'), 'fixture\n');

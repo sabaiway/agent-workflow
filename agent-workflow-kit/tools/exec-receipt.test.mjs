@@ -23,6 +23,7 @@ import {
   parseExecReceipt,
   wrapperOutcomeFor,
 } from './exec-receipt.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TS = '2026-08-10T00:00:00.000Z';
 const D = (pair) => pair.repeat(32);
@@ -354,7 +355,7 @@ const minted = (() => {
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(bin, 'codex'), FAKE_CODEX, { mode: 0o755 });
   const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  git('init', '-q');
+  makeFixtureRepo((args) => git(...args), repo, ['-q']);
   git('config', 'user.email', 'probe@example.com');
   git('config', 'user.name', 'probe');
   writeFileSync(join(repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');

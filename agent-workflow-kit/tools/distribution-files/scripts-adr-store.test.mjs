@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../ensure-configs.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { SCRIPT_PRIORS } from '../script-priors.mjs';
@@ -76,7 +77,7 @@ const SEEDED = (F) => Object.fromEntries([...F.pairs, ...F.shared].map((p) => [p
 const putK = (dir, bodies) => { for (const [p, body] of Object.entries(bodies)) if (body !== null) { mkdirSync(dirname(join(dir, KF, p)), { recursive: true }); writeFileSync(join(dir, KF, p), body); } };
 // A temp project whose kit folder holds every family file on its bundled body but as `bodies` says (null: absent).
 const withKit = (F, bodies, fn, opts = {}) => withTree(bodies, fn, { ...opts, lay: (dir, b) => putK(dir, Object.fromEntries(F.family.map((p) => [p, p in b ? b[p] : kb(p)]))) });
-const gitKit = (F, bodies, store, fn) => withKit(F, bodies, fn, { setup: (dir) => { const g = sh(dir, 'git', 'init', '-q'); assert.equal(g.status, 0, `${g.stdout}${g.stderr}`); store(dir); } });
+const gitKit = (F, bodies, store, fn) => withKit(F, bodies, fn, { setup: (dir) => { makeFixtureRepo((args) => { const g = sh(dir, 'git', ...args); assert.equal(g.status, 0, `${g.stdout}${g.stderr}`); }, dir, ['-q']); store(dir); } });
 const holdsK = (dir, want) => { for (const [p, body] of Object.entries(want)) { const at = join(dir, KF, p); assert.equal(existsSync(at) && sha(readFileSync(at)), sha(body), `${p} holds the expected body`); } };
 // The catalog seam: OLD(path) catalogued under its manifest path as a body a release shipped.
 const priorsK = (...paths) => [...SCRIPT_PRIORS, ...paths.map((file) => ({ file, digest: sha(OLD(file)) }))];

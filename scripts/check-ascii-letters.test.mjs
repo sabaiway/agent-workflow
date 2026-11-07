@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from './testing/fixture-repo.mjs';
 import { EXIT, findNonAsciiLetters, judgeTree, judgeMessages, main } from './check-ascii-letters.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-ascii-letters-'));
@@ -31,7 +32,7 @@ let seq = 0;
 const repo = (files, { commitMessage = 'seed: fixture', commit = true } = {}) => {
   const cwd = join(TMP, `r${seq += 1}`);
   mkdirSync(cwd, { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) {
     const full = join(cwd, rel);
     mkdirSync(join(full, '..'), { recursive: true });

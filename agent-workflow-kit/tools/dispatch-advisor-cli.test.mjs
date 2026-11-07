@@ -12,6 +12,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from 'node:f
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 // The NAMESPACE form: a missing export surfaces as a failing assertion inside the test that needs
 // it, never as a link-time error that reddens the whole file — the red-first discipline needs every
 // proof to fail for its OWN reason.
@@ -34,8 +35,7 @@ const plainDir = () => {
 // it runs in.
 const workspace = () => {
   const cwd = plainDir();
-  const r = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd, encoding: 'utf8' });
-  assert.equal(r.status, 0, `git init failed: ${r.stderr}`);
+  makeFixtureRepo((args) => { const r = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, `git init failed: ${r.stderr}`); }, cwd, ['-q', '-b', 'main']);
   const store = join(cwd, DELEGATION_STORE_BASENAME);
   return { cwd, store, env: { AW_DELEGATION_STORE: store } };
 };

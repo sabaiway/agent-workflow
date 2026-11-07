@@ -9,13 +9,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { main } from './grounding.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 describe('grounding --extra — a mappable toplevel with an unmappable git dir refuses @file reads (fail closed)', () => {
   it('rev-parse --absolute-git-dir failing inside a real repo is a loud STOP, nothing emitted', () => {
     const root = mkdtempSync(join(tmpdir(), 'grounding-gitdir-arm-'));
     writeFileSync(join(root, 'AGENTS.md'), '# P\n\n## 🚫 Hard Constraints\n\nx\n');
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-    assert.equal(g('init', '-q').status, 0);
+    makeFixtureRepo((args) => assert.equal(g(...args).status, 0), root, ['-q']);
     const extra = join(root, 'facts.md');
     writeFileSync(extra, 'live fact\n');
     // A PATH-front git stub: passthrough for every query except the git-dir ones — the only
@@ -49,8 +50,8 @@ describe('grounding --extra — round-2 council folds (ambient GIT_* scrub, leaf
     const repoA = mkdtempSync(join(tmpdir(), 'grounding-gitenv-a-'));
     const repoB = mkdtempSync(join(tmpdir(), 'grounding-gitenv-b-'));
     const g = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
-    assert.equal(g(repoA, 'init', '-q').status, 0);
-    assert.equal(g(repoB, 'init', '-q').status, 0);
+    makeFixtureRepo((args) => assert.equal(g(repoA, ...args).status, 0), repoA, ['-q']);
+    makeFixtureRepo((args) => assert.equal(g(repoB, ...args).status, 0), repoB, ['-q']);
     writeFileSync(join(repoA, '.git', 'sneak.md'), 'repo A internals\n');
     const saved = process.env.GIT_DIR;
     process.env.GIT_DIR = join(repoB, '.git');
@@ -82,7 +83,7 @@ describe('grounding --extra — round-2 council folds (ambient GIT_* scrub, leaf
   it('a linked worktree .git GITFILE refuses — repository metadata never enters the payload (R2-3)', () => {
     const repo = mkdtempSync(join(tmpdir(), 'grounding-wtrepo-'));
     const g = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' });
-    assert.equal(g(repo, 'init', '-q').status, 0);
+    makeFixtureRepo((args) => assert.equal(g(repo, ...args).status, 0), repo, ['-q']);
     g(repo, 'config', 'user.email', 'p@e');
     g(repo, 'config', 'user.name', 'p');
     writeFileSync(join(repo, 'f.txt'), 'x\n');

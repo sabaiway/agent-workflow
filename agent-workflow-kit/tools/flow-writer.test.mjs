@@ -13,6 +13,7 @@ import { computeTreeFingerprint, resolveBase, RECEIPTS_BASENAME, EVIDENCE_BASENA
 import { runFlowCheck } from './flow-check.mjs';
 import { planWith } from './plan-shape-harness.test.mjs';
 import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const WRITER_TOOL = fileURLToPath(new URL('./flow-writer.mjs', import.meta.url));
 const q = (v) => `'${String(v).replaceAll("'", "'\\''")}'`;
@@ -29,7 +30,7 @@ let seq = 0;
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(join(root, 'docs', 'plans'), { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');

@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
 
@@ -362,8 +363,10 @@ describe('spec:standalone-scripts/S12 hook advice and repository location', () =
   it('real git: an ambient GIT_DIR cannot redirect CLI hook advice or writes', async () => {
     const cwd = createTree(), other = createTree(false), home = createTree(false), env = createChildEnv(home);
     for (const project of [cwd, other]) {
-      const initialized = spawnSync('git', ['init', '-q', project], { cwd: project, env, encoding: 'utf8' });
-      assert.equal(initialized.status, 0, `real git init: ${initialized.error?.code ?? ''} ${initialized.stderr ?? ''}`);
+      makeFixtureRepo((args) => {
+        const initialized = spawnSync('git', args, { cwd: project, env, encoding: 'utf8' });
+        assert.equal(initialized.status, 0, `real git init: ${initialized.error?.code ?? ''} ${initialized.stderr ?? ''}`);
+      }, project, ['-q']);
     }
     for (const [question, suffix] of [['--absolute-git-dir', '.git'], ['--git-common-dir', '.git'], ['--show-toplevel', '']]) {
       const identities = [env, { ...env, GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other }].map((childEnv) => {

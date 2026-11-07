@@ -12,6 +12,7 @@ import {
 } from './exec-producer.mjs';
 import { computeNumerator, parseIntegrationBundle, expectedBundleLength } from './dispatch-record.mjs';
 import { computeFingerprintPayload } from './core-evidence.mjs';
+import { makeFixtureRepo, addFixtureSubmodule, updateFixtureSubmodules } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-exec-producer-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -26,7 +27,7 @@ let seq = 0;
 const makeRepo = (seed = {}) => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');
@@ -320,8 +321,12 @@ describe('exec-producer — object ids are read at full width', () => {
   it('nothing is matched in a SHA-256 repository either, and both objects still size correctly', () => {
     const root = join(TMP, `sha256-${seq += 1}`);
     mkdirSync(root, { recursive: true });
-    const init = spawnSync('git', ['init', '-q', '-b', 'main', '--object-format=sha256', '.'], { cwd: root, encoding: 'utf8' });
-    if (init.status !== 0) return; // this git was built without SHA-256 — the arm is unreachable here
+    const failures = [];
+    makeFixtureRepo((args) => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+      if (result.status !== 0) failures.push(result);
+    }, root, ['-q', '-b', 'main', '--object-format=sha256']);
+    if (failures.length) return; // this git was built without SHA-256 — the arm is unreachable here
     sh(['config', 'user.email', 'coder-tools@proton.me'], root);
     sh(['config', 'user.name', 'coder-tool'], root);
     writeFileSync(join(root, 'old.txt'), 'content here\n');
@@ -563,8 +568,7 @@ describe('exec-producer — the status × type precedence matrix', () => {
   it('a submodule contributes ZERO bytes in its created, deleted and modified variants', () => {
     const inner = makeRepo();
     const root = makeRepo();
-    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], { cwd: root, encoding: 'utf8' });
-    assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`);
+    addFixtureSubmodule((args) => { const add = spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd: root, encoding: 'utf8' }); assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`); }, root, inner, 'sub', ['-q']);
     const created = byPath(entriesOf(root), 'sub');
     assert.equal(created.kind, 'submodule');
     assert.equal(created.sizeBytes, 0);
@@ -574,7 +578,7 @@ describe('exec-producer — the status × type precedence matrix', () => {
     writeFileSync(join(inner, 'more.txt'), 'more\n');
     sh(['add', '-A'], inner);
     sh(['commit', '-q', '-m', 'more'], inner);
-    sh(['-c', 'protocol.file.allow=always', 'submodule', 'update', '--remote', '--merge', 'sub'], root);
+    updateFixtureSubmodules((args) => sh(['-c', 'protocol.file.allow=always', ...args], root), root, ['--remote', '--merge', 'sub']);
     const modified = byPath(entriesOf(root), 'sub');
     assert.equal(modified.kind, 'submodule');
     assert.equal(modified.sizeBytes, 0);
@@ -595,8 +599,7 @@ describe('exec-producer — the status × type precedence matrix', () => {
     const root = makeRepo({ 'sub': 'was a regular file\n' });
     sh(['rm', '-q', '--cached', 'sub'], root); // the INDEX entry must go too, or submodule add refuses
     unlinkSync(join(root, 'sub'));
-    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], { cwd: root, encoding: 'utf8' });
-    assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`);
+    addFixtureSubmodule((args) => { const add = spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd: root, encoding: 'utf8' }); assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`); }, root, inner, 'sub', ['-q']);
     const entry = byPath(entriesOf(root), 'sub');
     assert.equal(entry.kind, 'submodule');
     assert.equal(entry.objectId, `${PRE_IMAGE_ID_PREFIX}sub`);
@@ -611,8 +614,7 @@ describe('exec-producer — the status × type precedence matrix', () => {
     sh(['commit', '-q', '-m', 'link'], root);
     sh(['rm', '-q', '--cached', 'sub'], root);
     unlinkSync(join(root, 'sub'));
-    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], { cwd: root, encoding: 'utf8' });
-    assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`);
+    addFixtureSubmodule((args) => { const add = spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd: root, encoding: 'utf8' }); assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`); }, root, inner, 'sub', ['-q']);
     const entry = byPath(entriesOf(root), 'sub');
     assert.equal(entry.kind, 'submodule');
     assert.equal(entry.sizeBytes, 8, 'the counted image is the symlink blob — the link text "base.txt"');
@@ -621,8 +623,7 @@ describe('exec-producer — the status × type precedence matrix', () => {
   it('a gitlink replaced by a regular file keeps the deliberate ZERO — the counted image IS the gitlink', () => {
     const inner = makeRepo();
     const root = makeRepo();
-    const add = spawnSync('git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', inner, 'sub'], { cwd: root, encoding: 'utf8' });
-    assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`);
+    addFixtureSubmodule((args) => { const add = spawnSync('git', ['-c', 'protocol.file.allow=always', ...args], { cwd: root, encoding: 'utf8' }); assert.equal(add.status, 0, `submodule add failed: ${add.stderr}`); }, root, inner, 'sub', ['-q']);
     sh(['commit', '-q', '-m', 'sub'], root);
     sh(['rm', '-q', '--cached', 'sub'], root);
     rmSync(join(root, 'sub'), { recursive: true, force: true });
@@ -746,7 +747,7 @@ describe('exec-producer — fail closed', () => {
   it('BOTH entry points refuse on an unborn branch — no pre-image to attribute bytes against', () => {
     const root = join(TMP, `unborn-${seq += 1}`);
     mkdirSync(root, { recursive: true });
-    sh(['init', '-q', '-b', 'main'], root);
+    makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
     writeFileSync(join(root, 'a.txt'), 'x\n');
     assert.match(enumerateReturnedObjects(root).reason, /unborn/);
     assert.match(computeReturnedDiff(root).reason, /unborn/);

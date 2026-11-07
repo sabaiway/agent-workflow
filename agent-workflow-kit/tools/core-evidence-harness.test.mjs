@@ -4,12 +4,13 @@ import { mkdtempSync, writeFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 // ── hermetic fixtures (the family idiom: mkdtemp repo + a clean AW_-stripped env) ─────────────────
 
 export const gitInit = (root) => {
   const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   return g;

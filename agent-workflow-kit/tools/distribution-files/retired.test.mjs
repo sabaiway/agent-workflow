@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { PRIOR_FILES, SCRIPT_PRIORS, classifyDeployedScript, digestOf } from '../script-priors.mjs';
 
@@ -85,7 +86,7 @@ const assertNoAfterLines = (result) => assert.deepEqual(result.lines.filter((lin
 const initGit = (dir) => {
   const home = join(dir, 'git-home'); mkdirSync(home);
   const env = Object.fromEntries(Object.entries(hermeticGitEnv(process.env, home)).filter(([key]) => key !== 'NODE_TEST_CONTEXT'));
-  const result = spawnSync('git', ['init', '-q'], { cwd: dir, env, encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr);
+  makeFixtureRepo((args) => { const result = spawnSync('git', args, { cwd: dir, env, encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr); }, dir, ['-q']);
   const header = Buffer.alloc(12); header.write('DIRC'); header.writeUInt32BE(2, 4);
   writeFileSync(join(dir, '.git', 'index'), Buffer.concat([header, createHash('sha1').update(header).digest()]));
   const calls = [], git = (command, args, options) => {

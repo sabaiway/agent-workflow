@@ -1,12 +1,13 @@
 // codex-review-jev.test.mjs — spec jev-every-run on codex-review: the key rule, the review profile (no write entry),
 // the fallback, the loud failure on each attempt's own trace, the banner, the fence home's skill link and the
 // directives. Standalone harness with its own fake codex and a fake uname.
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, cpSync, chmodSync, realpathSync, symlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.mjs';
 const stripGitLocationEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -14,13 +15,7 @@ const REVIEW = join(HERE, 'codex-review.sh');
 const HOSTS = 'api.typesafe.ai,docs.typesafe.ai';
 const childEnv = (home, env = {}) => ({ ...stripGitLocationEnv(env), HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
   GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1', LC_ALL: 'C' });
-// The same layout as codex-exec-jev: repositories under the package's node_modules, TMPDIR their sibling.
-const FIXTURES = join(HERE, '..', 'node_modules', '.aw-fixtures');
-const TMP = join(FIXTURES, 'tmp');
-mkdirSync(TMP, { recursive: true });
-mkdirSync(join(FIXTURES, 'repos'), { recursive: true });
-const ROOT = mkdtempSync(join(FIXTURES, 'repos', 'review-jev-'));
-after(() => rmSync(ROOT, { recursive: true, force: true }));
+const { tmp } = await openSuiteScopes('codex-review-jev');
 const REAL_UNAME = spawnSync('bash', ['-c', 'type -P uname'], { encoding: 'utf8' }).stdout.trim();
 
 // Every spawn appends its kind and key states; a run also records argv, stdin and what $HOME/.agents/skills is.
@@ -57,15 +52,20 @@ const FAKE_CODEX = [
 const FAKE_UNAME = ['#!/usr/bin/env bash', 'if [[ $# -eq 0 || "$1" == "-s" ]]; then echo "${CODEX_FAKE_UNAME:-Linux}"; exit 0; fi',
   `exec "${REAL_UNAME}" "$@"`, ''].join('\n');
 
-const TEMPLATE = join(ROOT, 'template');
+const TEMPLATE = join(tmp, 'template');
 mkdirSync(join(TEMPLATE, 'bin'), { recursive: true });
 mkdirSync(join(TEMPLATE, 'home'));
 mkdirSync(join(TEMPLATE, 'repo'));
 writeFileSync(join(TEMPLATE, 'bin', 'codex'), FAKE_CODEX);
 writeFileSync(join(TEMPLATE, 'bin', 'uname'), FAKE_UNAME);
 {
-  const git = (...args) => spawnSync('git', args, { cwd: join(TEMPLATE, 'repo'), encoding: 'utf8', env: childEnv(join(TEMPLATE, 'home'), { PATH: process.env.PATH }) });
-  git('init', '-q');
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: join(TEMPLATE, 'repo'), encoding: 'utf8', env: childEnv(join(TEMPLATE, 'home'), { PATH: process.env.PATH }) });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  makeFixtureRepo((args) => git(...args), join(TEMPLATE, 'repo'), ['-q']);
   git('config', 'user.email', 'probe@example.com');
   git('config', 'user.name', 'probe');
   writeFileSync(join(TEMPLATE, 'repo', 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');
@@ -75,7 +75,7 @@ writeFileSync(join(TEMPLATE, 'bin', 'uname'), FAKE_UNAME);
 }
 
 const sandbox = ({ skills = true } = {}) => {
-  const dir = mkdtempSync(join(ROOT, 'sb-'));
+  const dir = mkdtempSync(join(tmp, 'sb-'));
   cpSync(TEMPLATE, dir, { recursive: true });
   for (const name of ['codex', 'uname']) chmodSync(join(dir, 'bin', name), 0o755);
   const sb = { dir, bin: join(dir, 'bin'), home: join(dir, 'home'), repo: join(dir, 'repo'),
@@ -93,7 +93,7 @@ const drive = (sb, args, env = {}, cwd = sb.repo) => {
   for (const name of ['log', 'argv', 'stdin', 'skills']) rmSync(cap(name), { force: true });
   const r = spawnSync('bash', [sb.wrapper ?? REVIEW, ...args], {
     cwd, input: '', encoding: 'utf8', timeout: 60000,
-    env: childEnv(sb.home, { PATH: `${sb.bin}:${process.env.PATH}`, TMPDIR: TMP, CODEX_FAKE_LOG: cap('log'), CODEX_FAKE_ARGV: cap('argv'),
+    env: childEnv(sb.home, { PATH: `${sb.bin}:${process.env.PATH}`, TMPDIR: tmp, CODEX_FAKE_LOG: cap('log'), CODEX_FAKE_ARGV: cap('argv'),
       CODEX_FAKE_STDIN: cap('stdin'), CODEX_FAKE_SKILLS: cap('skills'), ...env }),
   });
   assert.ifError(r.error);

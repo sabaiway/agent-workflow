@@ -12,6 +12,7 @@ import { readRegistration, mergeMcpJson, mergeSettings, formatJson, MCP_JSON_REL
 import { READY, NEEDS_SKILL } from './detect-backends.mjs';
 import { allowedLabel } from './bridge-settings-read.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WHY } from './source-size-core.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ENGINE_DIR = join(HERE, '..', '..', 'agent-workflow-engine');
@@ -1125,7 +1126,7 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
       const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
       assert.equal(r.status, 0, r.stderr);
     };
-    g('init', '-q', '-b', 'main');
+    makeFixtureRepo((args) => g(...args), root, ['-q', '-b', 'main']);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     writeFileSync(join(root, CONFIG_REL), JSON.stringify({ flow: FLOW_BLOCK }));
     const probeRun = () => main(['plan-execution'], { cwd: root, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(READY, READY) });

@@ -5,6 +5,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
 
 const SKILL_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -245,8 +246,10 @@ describe('spec:standalone-scripts/S11 follow-up lines and the project git locati
   });
   it('REAL git: an ambient GIT_DIR for another repository cannot answer for a project outside git', () => {
     const cwd = makeProject({ all: true }), other = makeRoot(), home = makeRoot(), env = makeEnv(home);
-    const initialized = spawnSync('git', ['init', '-q'], { cwd: other, env, encoding: 'utf8' });
-    assert.equal(initialized.status, 0, initialized.stderr);
+    makeFixtureRepo((args) => {
+      const initialized = spawnSync('git', args, { cwd: other, env, encoding: 'utf8' });
+      assert.equal(initialized.status, 0, initialized.stderr);
+    }, other, ['-q']);
     putFile(cwd, `scripts/${FLAT_NAME}`, readBody(FLAT_NAME));
     const result = spawnSync(process.execPath, [join(SKILL_ROOT, 'scripts/kit-folder.mjs'), '--project', cwd], {
       cwd, env: { ...env, GIT_DIR: join(other, '.git') }, encoding: 'utf8',

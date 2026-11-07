@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import {
   runBaseDiff, computeBasePayload, computeBaseFingerprint, isCleanAgainstBase,
 } from '../dispatch-baseline.mjs';
@@ -38,7 +39,7 @@ const put = (root, path, bytes) => {
 };
 const makeRepo = ({ ignore = false } = {}) => {
   const root = mkdtempSync(join(TMP, 'repo-'));
-  runGit(root, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => runGit(root, args), root, ['-q', '-b', 'main']);
   runGit(root, ['config', 'user.name', 'coder-tool']);
   runGit(root, ['config', 'user.email', 'coder-tools@proton.me']);
   put(root, 'base.txt', 'base\n');

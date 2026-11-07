@@ -11,6 +11,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { main, sliceSection, trimToBudget, DEFAULT_MAX_PROMPT_BYTES } from './grounding.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const CONSTRAINTS_SECTION = [
   '## 🚫 Hard Constraints',
@@ -162,7 +163,7 @@ describe('grounding --autonomy — effective policy from the git-top docs/ai/aut
   const makePolicyRepo = ({ policy = POLICY } = {}) => {
     const root = mkdtempSync(join(tmpdir(), 'grounding-autonomy-'));
     const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     writeFileSync(join(root, 'AGENTS.md'), AGENTS_MD);
     mkdirSync(join(root, 'docs', 'ai'), { recursive: true });
     if (policy != null) writeFileSync(join(root, 'docs', 'ai', 'autonomy.json'), policy);
@@ -249,7 +250,7 @@ describe('grounding --out — scratch-only writer honesty', () => {
   const makeRepo = () => {
     const root = mkdtempSync(join(tmpdir(), 'grounding-repo-'));
     const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'probe@example.com');
     g('config', 'user.name', 'probe');
     writeFileSync(join(root, 'AGENTS.md'), AGENTS_MD);
@@ -378,7 +379,7 @@ describe('grounding — coverage of the defensive arms', () => {
   it('a LOST create-only race (EEXIST at write time) is a loud refusal (the wx arm)', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'p@e');
     g('config', 'user.name', 'p');
     writeFileSync(join(root, '.gitignore'), 'facts-*.md\n');
@@ -401,7 +402,7 @@ describe('grounding --out — an in-repo destination is CREATE-ONLY (review-grou
   it('an EXISTING gitignored in-repo file refuses; a fresh gitignored path writes; temp overwrites fine', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'p@e');
     g('config', 'user.name', 'p');
     writeFileSync(join(root, '.gitignore'), '.env\nfacts-*.md\n');
@@ -445,7 +446,7 @@ describe('grounding --out — the segment-safe outside test (Issue-004 class, re
   it('an in-repo gitignored file literally named "..facts" is IN-repo (the ignored check runs) and writes fine', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'p@e');
     g('config', 'user.name', 'p');
     writeFileSync(join(root, '.gitignore'), '..facts\n');
@@ -637,7 +638,7 @@ describe('grounding --extra — round-1 council folds (F1 git-dir carve-out, F2 
   it('an @file inside the git dir refuses even though it sits under the work tree AND the temp surface (F1)', () => {
     const root = makeDir();
     const g = (...a) => spawnSync('git', a, { cwd: root, encoding: 'utf8' });
-    g('init', '-q');
+    makeFixtureRepo((args) => g(...args), root, ['-q']);
     g('config', 'user.email', 'p@e');
     g('config', 'user.name', 'p');
     writeFileSync(join(root, '.git', 'sneak.md'), 'repository internals\n');

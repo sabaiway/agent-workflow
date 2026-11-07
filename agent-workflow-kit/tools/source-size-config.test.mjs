@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main, sameFile } from './source-size-check.mjs';
 import { validateSourceSizeConfig, loadSourceSizeConfig, matchesSourceSizeGate, SOURCE_SIZE_DEFAULTS } from './source-size-core.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-config-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -43,8 +44,7 @@ let seq = 0;
 const project = (files, rawConfig) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  const init = spawnSync('git', ['init', '-q', '-b', 'main'], { cwd, encoding: 'utf8' });
-  assert.equal(init.status, 0, init.stderr);
+  makeFixtureRepo((args) => { const init = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(init.status, 0, init.stderr); }, cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) {
     mkdirSync(join(cwd, rel, '..'), { recursive: true });
     writeFileSync(join(cwd, rel), body);

@@ -21,11 +21,11 @@ import { buildOffer, sourceSizeCandidate, applyFill } from './gates-init.mjs';
 import { loadDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = join(HERE, 'source-size-check.mjs');
-
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-adopt-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
@@ -52,7 +52,7 @@ const project = ({ config = AUTHORED, scripts = { test: 'node --test' }, gates }
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts }, null, 2));
   placeKitCommand(cwd);
@@ -263,7 +263,7 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
     // minted record and no gate — half an adoption, reported as the way out.
     const cwd = join(TMP, 'dq"unsafe');
     mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-    git(cwd, ['init', '-q', '-b', 'main']);
+    makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
     const result = main(['--adopt', '--reason', 'initial adoption', '--cwd', cwd]);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /no paste-ready command is printed/, 'the render is withheld on this path');

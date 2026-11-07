@@ -4,6 +4,7 @@ import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main, parseBrief } from '../task-brief.mjs';
 import { main as checkpointMain } from '../checkpoint.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
@@ -94,7 +95,7 @@ const runGit = (ws, args) => {
 const makeRepo = ({ brief = renderBrief(), unborn = false } = {}) => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));
   const ws = { cwd, env: { ...ENV, AW_DELEGATION_STORE: join(cwd, '.git', 'refusal-ledger.jsonl') } };
-  runGit(ws, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => runGit(ws, args), ws.cwd, ['-q', '-b', 'main']);
   runGit(ws, ['config', 'user.email', 'coder-tools@proton.me']);
   runGit(ws, ['config', 'user.name', 'coder-tool']);
   for (const path of [MODULE, TEST]) put(ws, path, INITIAL);

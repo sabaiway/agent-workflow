@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CANON = dirname(HERE);
@@ -125,7 +126,7 @@ describe('spec:script-family/S8 the project root is three levels above the modul
 
   it('the installer writes the hook of the deployment root repository and resolves a relative guard there', async () => {
     await withDeployment(({ root, home, cli }) => {
-      exits(spawnSync('git', ['init', '-q'], { cwd: root, env: envAt(home), encoding: 'utf8' }), 0);
+      makeFixtureRepo((args) => exits(spawnSync('git', args, { cwd: root, env: envAt(home), encoding: 'utf8' }), 0), root, ['-q']);
       exits(cli('git-hooks/install-git-hooks.mjs', ['--commit-guard', 'guard.mjs']), 0);
       const hook = readFileSync(join(root, '.git', 'hooks', 'pre-commit'), 'utf8');
       assert.ok(hook.includes(`node "${join(root, 'guard.mjs')}" --check\n`), hook);

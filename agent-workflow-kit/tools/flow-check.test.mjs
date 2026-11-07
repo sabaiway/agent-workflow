@@ -15,6 +15,7 @@ import { FALLBACK_LENS_ADDITIONAL_ONLY } from './cheap-agents.mjs';
 import { resolveFlowStorePath, parseFlowStoreText } from './flow-store.mjs';
 import { FLOW_SCHEMA_VERSION, canonicalFlowDigest, flowProjectionHash } from './flow-record.mjs';
 import { EVIDENCE_SCHEMA_VERSION, resolveEvidencePath, parseEvidenceText, computeTreeFingerprint, resolveReceiptsPath } from './core-evidence.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TOOL = fileURLToPath(new URL('./flow-check.mjs', import.meta.url));
 // The pasteable-recovery command anchor: the SAME absolute tool path + POSIX single-quoting the
@@ -34,7 +35,7 @@ let seq = 0;
 const makeRepo = () => {
   const root = join(TMP, `repo-${seq += 1}`);
   mkdirSync(root, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], root);
+  makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], root);
   sh(['config', 'user.name', 'coder-tool'], root);
   writeFileSync(join(root, 'base.txt'), 'base\n');

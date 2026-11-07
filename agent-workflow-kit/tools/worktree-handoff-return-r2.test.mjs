@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { composeProvisionRecordSection } from './worktrees-record.mjs';
 import { readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 import { main as dispatchMain } from './dispatch.mjs';
@@ -36,7 +37,7 @@ const realGit = (args, cwd) => spawnSync('git', args, { cwd, encoding: 'utf8' })
 const makeFixture = (name, slug) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'base.txt'), 'base content\n');

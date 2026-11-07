@@ -1,9 +1,10 @@
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, cpSync, readdirSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, readdirSync, symlinkSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXEC = join(HERE, 'codex-exec.sh');
@@ -53,20 +54,22 @@ const ALL = ['low', 'medium', 'high', 'xhigh'];
 const STANDARD = { models: [entry('gpt-6.1-sol', 1, ALL, 'low'), entry('gpt-6-astra', 2, ALL), entry('gpt-6-luna', 3, ['low', 'medium', 'high'])] };
 const HOST_SETTING = 'CODEX_MODEL=gpt-6-luna\nCODEX_EFFORT=medium\n';
 
-// The repositories sit outside every temp root (spec jev-every-run): under node_modules, TMPDIR their sibling.
-const FIXTURES = join(HERE, '..', 'node_modules', '.aw-fixtures');
-for (const dir of ['repos', 'tmp']) mkdirSync(join(FIXTURES, dir), { recursive: true });
-const SHARED = mkdtempSync(join(FIXTURES, 'repos', 'codex-posture-'));
-after(() => rmSync(SHARED, { recursive: true, force: true }));
+const { repos, tmp, profileSkip } = await openSuiteScopes('codex-model-posture');
 const TEMPLATE = (() => {
-  const home = join(SHARED, 'template');
+  const home = join(tmp, 'template');
   const repo = join(home, 'repo');
   mkdirSync(join(home, 'bin'), { recursive: true });
   mkdirSync(repo);
   writeFileSync(join(home, 'bin', 'codex'), FAKE_CODEX, { mode: 0o755 });
   writeFileSync(join(home, 'bin', 'uname'), FAKE_UNAME, { mode: 0o755 });
-  const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
-  git('init', '-q');
+  const git = (...args) => {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8', env });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null, result.stderr);
+    assert.equal(result.status, 0, result.stderr);
+  };
+  makeFixtureRepo((args) => git(...args), repo, ['-q']);
   git('config', 'user.email', 'probe@example.com');
   git('config', 'user.name', 'probe');
   writeFileSync(join(repo, 'AGENTS.md'), '# AGENTS\n\nHard Constraints: none (test fixture).\n');
@@ -75,10 +78,8 @@ const TEMPLATE = (() => {
   writeFileSync(join(repo, 'plan.md'), '# a plan under review\n');
   return home;
 })();
-
-let sequence = 0;
-const sandbox = ({ settings, catalog = STANDARD, catalogText, userCatalog, fakeTimeout = false } = {}) => {
-  const home = join(SHARED, `sb-${++sequence}`);
+const sandbox = ({ settings, catalog = STANDARD, catalogText, userCatalog, fakeTimeout = false, root = tmp } = {}) => {
+  const home = mkdtempSync(join(root, 'sb-'));
   cpSync(TEMPLATE, home, { recursive: true });
   const sb = {
     home, repo: join(home, 'repo'), bin: join(home, 'bin'), log: join(home, 'calls.log'),
@@ -94,12 +95,11 @@ const sandbox = ({ settings, catalog = STANDARD, catalogText, userCatalog, fakeT
   if (fakeTimeout) writeFileSync(join(sb.bin, 'timeout'), FAKE_TIMEOUT, { mode: 0o755 });
   return sb;
 };
-
 const drive = (sb, [wrapper, args], env = {}) => {
   const r = spawnSync('bash', [wrapper, ...args], {
     cwd: sb.repo, input: 'do the thing', encoding: 'utf8', timeout: 60000,
     env: {
-      PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: join(FIXTURES, 'tmp'),
+      PATH: `${sb.bin}:${process.env.PATH}`, HOME: sb.home, TMPDIR: tmp,
       CODEX_FAKE_LOG: sb.log, CODEX_FAKE_CATALOG: sb.catalog, CODEX_FAKE_USER_CATALOG: sb.userCatalog, ...env,
     },
   });
@@ -138,8 +138,8 @@ const assertRefusedUnspent = (r) => {
 };
 
 describe('a fresh host runs the built-in default — spec:bridge-model/S1', () => {
-  it('codex-exec and codex-review run gpt-6.1-sol at effort high and the banner names source default', () => {
-    const exec = drive(sandbox(), FRESH_EXEC);
+  it('codex-exec and codex-review run gpt-6.1-sol at effort high and the banner names source default', { skip: profileSkip }, () => {
+    const exec = drive(sandbox({ root: repos }), FRESH_EXEC);
     assertRan(exec, 'gpt-6.1-sol', 'high');
     assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=jev-profile session=fresh '
       + 'jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=3600s');

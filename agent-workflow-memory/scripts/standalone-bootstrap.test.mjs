@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { writeStampAtomic, LINEAGE_HEAD } from './stamp-takeover.mjs';
 
 const SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -61,7 +62,7 @@ const bootstrap = (project) => {
     cpSync(join(TEMPLATES, entry), join(docsAi, entry), { recursive: true });
   }
 
-  execute('git', ['init', '-q'], project);
+  makeFixtureRepo((args) => execute('git', args, project), project, ['-q']);
   assertCompleted(runScript(project, ['--enforcement']));
   execute(process.execPath, ['scripts/agent-workflow/run.mjs', 'install-git-hooks'], project);
 
@@ -187,7 +188,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
     const project = makeProject();
     bootstrap(project);
     const foreign = makeProject();
-    execute('git', ['init', '-q'], foreign);
+    makeFixtureRepo((args) => execute('git', args, foreign), foreign, ['-q']);
     writeFileSync(join(foreign, '.gitignore'), 'scripts/agent-workflow/\n');
     const foreignHook = join(foreign, '.git', 'hooks', 'pre-commit');
     writeFileSync(foreignHook, '#!/bin/sh\nexit 42\n');
@@ -249,7 +250,7 @@ describe('standalone substrate bootstrap (end-to-end, real temp project)', () =>
       assert.equal(existsSync(root), false);
     }
     const noNode = makeProject();
-    execute('git', ['init', '-q'], noNode);
+    makeFixtureRepo((args) => execute('git', args, noNode), noNode, ['-q']);
     assert.equal(ensureStoreRoot(noNode), 'skipped-no-node-evidence');
     assertCompleted(scriptRuns.at(-1));
     assert.equal(existsSync(join(noNode, 'package.json')), false);

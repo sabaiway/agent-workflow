@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { applySlot } from './write-lanes.mjs';
 import {
   EXIT, WORKTREES_STOP, CONFIG_REL, SLUG_RE, validateSlug, loadWorktreesConfig, resolveTargetDir,
@@ -33,7 +34,7 @@ const HIDDEN_EXCLUDES = ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md',
 const makeRepo = (name, { excludes = HIDDEN_EXCLUDES, footprint = true, nodeModules = 'dir' } = {}) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
-  sh(['init', '-q', '-b', 'main'], main);
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   sh(['config', 'user.email', 'coder-tools@proton.me'], main);
   sh(['config', 'user.name', 'coder-tool'], main);
   writeFileSync(join(main, 'README.md'), 'fixture\n');
@@ -410,7 +411,7 @@ describe('worktrees — provision (real git)', () => {
     sh(['worktree', 'add', '-q', '-b', 'aw/gamma', gammaDir], MAIN);
     rmSync(gammaDir, { recursive: true, force: true });
     mkdirSync(gammaDir);
-    sh(['init', '-q', '-b', 'main'], gammaDir);
+    makeFixtureRepo((args) => sh(args, gammaDir), gammaDir, ['-q', '-b', 'main']);
     sh(['config', 'user.email', 'coder-tools@proton.me'], gammaDir);
     sh(['config', 'user.name', 'coder-tool'], gammaDir);
     writeFileSync(join(gammaDir, 'f'), 'x');

@@ -15,6 +15,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { CENSUS_VERDICT, censusFact, takeCensus } from '../tools/tracked-tree-census.mjs';
 
 const ROOTS = [];
@@ -25,7 +26,7 @@ const mkTracked = (relPaths) => {
   const root = mkdtempSync(join(tmpdir(), 'tracked-census-'));
   ROOTS.push(root);
   const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  git('init', '-q');
+  makeFixtureRepo((args) => git(...args), root, ['-q']);
   for (const rel of relPaths) {
     const abs = join(root, rel);
     mkdirSync(dirname(abs), { recursive: true });

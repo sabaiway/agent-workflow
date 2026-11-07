@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { makeFixtureRepo, cloneFixtureRepo } from '../testing/fixture-repo.mjs';
 import {
   REPO_ROOT,
   EXIT,
@@ -1589,7 +1590,7 @@ const buildGitGraph = () => {
     '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false', '-c', 'init.defaultBranch=main',
     '-c', 'core.hooksPath=/dev/null', ...args,
   ], { cwd: dir, encoding: 'utf8', env: HERMETIC_GIT_ENV, timeout: 30_000 }).trim();
-  git('init', '--quiet');
+  makeFixtureRepo((args) => git(...args), dir, ['--quiet']);
   git('commit', '--allow-empty', '--quiet', '-m', 'A');
   const shaA = git('rev-parse', 'HEAD');
   git('commit', '--allow-empty', '--quiet', '-m', 'B');
@@ -1668,7 +1669,7 @@ describe('AD-098 — the ancestry probes, answered by real git on a graph this t
     const graph = buildGitGraph();
     const clone = mkdtempSync(join(tmpdir(), 'aw-ancestry-shallow-'));
     try {
-      execFileSync('git', ['clone', '--quiet', '--depth', '1', `file://${graph.dir}`, clone], { encoding: 'utf8', env: HERMETIC_GIT_ENV, timeout: 60_000 });
+      cloneFixtureRepo((args) => execFileSync('git', args, { encoding: 'utf8', env: HERMETIC_GIT_ENV, timeout: 60_000 }), `file://${graph.dir}`, clone, ['--quiet', '--depth', '1']);
       const complete = await runGitProcess(['rev-parse', '--is-shallow-repository'], { cwd: clone, env: HERMETIC_GIT_ENV });
       assert.equal(complete.status, 0);
       assert.equal(complete.stdout.trim(), 'true');

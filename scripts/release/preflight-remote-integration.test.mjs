@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo, cloneFixtureRepo } from '../testing/fixture-repo.mjs';
 
 // Every assumption that CAUSED this plan was found by running real git, and a stub runner cannot check
 // one of them. So these tests build real repositories: a bare "remote" and a working clone in a temp
@@ -68,8 +69,8 @@ const createFixture = (label) => {
   roots.push(root);
   const bare = join(root, 'origin.git');
   const work = join(root, 'work');
-  runGitOrFail(['init', '--bare', '-b', 'main', bare], root);
-  runGitOrFail(['init', '-b', 'main', work], root);
+  makeFixtureRepo((args) => runGitOrFail(args, root), bare, ['--bare', '-b', 'main']);
+  makeFixtureRepo((args) => runGitOrFail(args, root), work, ['-b', 'main']);
   const first = commitFile(work, 'a.txt', 'one\n');
   runGitOrFail(['remote', 'add', 'origin', bare], work);
   runGitOrFail(['push', '-u', 'origin', 'main'], work);
@@ -115,7 +116,7 @@ describe('preflight-remote (real git) — the verdicts', () => {
   it('names a catch-up command that REALLY fast-forwards when the remote is ahead', () => {
     const fx = createFixture('behind');
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     const remoteTip = commitFile(other, 'b.txt', 'two\n');
     runGitOrFail(['push', 'origin', 'main'], other);
 
@@ -134,7 +135,7 @@ describe('preflight-remote (real git) — the verdicts', () => {
   it('reports a real divergence with both counts and offers no fast-forward', () => {
     const fx = createFixture('diverged');
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     commitFile(other, 'theirs.txt', 'theirs\n');
     commitFile(other, 'theirs2.txt', 'theirs2\n');
     runGitOrFail(['push', 'origin', 'main'], other);
@@ -157,7 +158,7 @@ describe('preflight-remote (real git) — the force-push it prints', () => {
     runGitOrFail([...AUTHOR, 'branch', 'keep-me'], fx.work);
     runGitOrFail(['push', 'origin', 'keep-me'], fx.work);
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     commitFile(other, 'theirs.txt', 'theirs\n');
     runGitOrFail(['push', 'origin', 'main'], other);
     const mine = commitFile(fx.work, 'mine.txt', 'mine\n');
@@ -201,7 +202,7 @@ describe("preflight-remote (real git) — the counted OID is this run's own", ()
   it('ignores a STALE tracking ref and counts against what it just fetched', () => {
     const fx = createFixture('stale');
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     const remoteTip = commitFile(other, 'theirs.txt', 'theirs\n');
     runGitOrFail(['push', 'origin', 'main'], other);
     // Point the tracking ref at the OLD commit deliberately: a run that read it would report "in sync".
@@ -217,7 +218,7 @@ describe("preflight-remote (real git) — the counted OID is this run's own", ()
   it('neither reads nor writes FETCH_HEAD, so a concurrent fetch cannot lend it an OID', () => {
     const fx = createFixture('fetchhead');
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     commitFile(other, 'theirs.txt', 'theirs\n');
     runGitOrFail(['push', 'origin', 'main'], other);
     // A FETCH_HEAD left by someone else, naming a commit that is NOT the remote tip.
@@ -245,7 +246,7 @@ describe('preflight-remote (real git) — a branch and a tag sharing one name', 
   it('fetches the BRANCH, because the refspec addresses refs/heads explicitly', () => {
     const fx = createFixture('sharedname');
     const other = join(fx.root, 'other');
-    runGitOrFail(['clone', fx.bare, other], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), fx.bare, other);
     runGitOrFail(['checkout', '-b', 'release'], other);
     const branchTip = commitFile(other, 'branch.txt', 'branch\n');
     runGitOrFail(['push', 'origin', 'release'], other);
@@ -284,7 +285,7 @@ describe('preflight-remote (real git) — a shallow clone never reaches the coun
     runGitOrFail(['push', 'origin', 'main'], fx.work);
 
     const shallow = join(fx.root, 'shallow');
-    runGitOrFail(['clone', '--quiet', '--depth', '1', `file://${fx.bare}`, shallow], fx.root);
+    cloneFixtureRepo((args) => runGitOrFail(args, fx.root), `file://${fx.bare}`, shallow, ['--quiet', '--depth', '1']);
     assert.equal(runGitOrFail(['rev-parse', '--is-shallow-repository'], shallow), 'true', 'the fixture really is shallow');
 
     const run = runPreflight(shallow);

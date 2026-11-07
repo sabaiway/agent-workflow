@@ -11,6 +11,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { GIT_MAX_BUFFER, hermeticGitEnv, stripGitLocationEnv } from './git-env.mjs';
+import { makeFixtureRepo, addFixtureSubmodule } from '../../scripts/testing/fixture-repo.mjs';
 
 // The real git, resolved ONCE from the process PATH: the shims below embed it, and every fixture
 // call bypasses the shim by using it directly.
@@ -45,7 +46,7 @@ export const makeRepo = (label, files = { 'f.txt': 'one\n' }) => {
     mkdirSync(dirname(join(dir, rel)), { recursive: true });
     writeFileSync(join(dir, rel), content);
   };
-  must(['init', '-q']);
+  makeFixtureRepo((args) => must(args), dir, ['-q']);
   for (const [rel, content] of Object.entries(files)) write(rel, content);
   must(['add', '-A']);
   must(['commit', '-qm', 'base']);
@@ -99,7 +100,7 @@ export const fixtures = {
     const home = scratch('bare');
     const cwd = join(home, 'bare.git');
     const env = hermeticGitEnv(process.env, home);
-    assert.equal(spawnSync(REAL_GIT, [...IDENTITY, 'init', '-q', '--bare', cwd], { env, windowsHide: true }).status, 0);
+    makeFixtureRepo((args) => assert.equal(spawnSync(REAL_GIT, [...IDENTITY, ...args], { env, windowsHide: true }).status, 0), cwd, ['-q', '--bare']);
     return { home, cwd, env, cleanup: () => rmSync(home, { recursive: true, force: true }) };
   },
   insideGitDir: () => {
@@ -203,7 +204,7 @@ export const fixtures = {
   ignoreSubmodulesAll: () => {
     const a = makeRepo('ignore-submodules');
     const sub = makeRepo('submodule');
-    a.must(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub.dir, 'sub']);
+    addFixtureSubmodule((args) => a.must(['-c', 'protocol.file.allow=always', ...args]), a.dir, sub.dir, 'sub', ['-q']);
     a.must(['commit', '-qm', 'submodule']);
     a.must(['commit', '--allow-empty', '-qm', 'bump'], { cwd: join(a.dir, 'sub') });
     a.must(['config', 'diff.ignoreSubmodules', 'all']);

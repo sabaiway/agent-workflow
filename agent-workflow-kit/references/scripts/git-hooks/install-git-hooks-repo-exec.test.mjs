@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INSTALLER = join(HERE, 'install-git-hooks.mjs');
@@ -39,7 +40,7 @@ const spawnChecked = (command, args, options) => {
 
 const mkRepo = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'hooks-repo-exec-')));
-  assert.equal(spawnChecked('git', ['init', '-q'], { cwd: root, env: envAt(root) }).status, 0);
+  makeFixtureRepo((args) => assert.equal(spawnChecked('git', args, { cwd: root, env: envAt(root) }).status, 0), root, ['-q']);
   writeFileSync(join(root, 'guard.mjs'), '// a stand-in commit-guard tool\n');
   return { root, gitDir: join(root, '.git') };
 };
@@ -193,7 +194,8 @@ const commitRepo = (root, side) => {
 if (!process.argv.includes('--check-index')) writeFileSync(${JSON.stringify(record)}, String(existsSync(${JSON.stringify(marker)})));\n`);
   for (const name of ['archive-changelog', 'archive-issues', 'archive-decisions']) writeFileSync(join(kit, 'archives', `${name}.mjs`), 'process.exit(0);\n');
   copyFileSync(join(HERE, '..', 'run.mjs'), join(kit, 'run.mjs'));
-  for (const args of [['init', '-q'], ['add', '-A'], ['commit', '-qm', 'base']]) passes(git(...args));
+  makeFixtureRepo((args) => passes(git(...args)), root, ['-q']);
+  for (const args of [['add', '-A'], ['commit', '-qm', 'base']]) passes(git(...args));
   passes(spawnChecked(process.execPath, [INSTALLER], { env: bareAt(root, { GIT_DIR: join(root, '.git') }) }));
   const head = () => git('rev-parse', 'HEAD').stdout.trim();
   const commit = (body) => {

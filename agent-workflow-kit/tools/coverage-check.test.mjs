@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, resolveBase } from './core-evidence.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const cov = await import('./coverage-check.mjs').catch(() => null);
 const {
@@ -35,7 +36,7 @@ const {
 
 const gitInit = (root) => {
   const g = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
-  g('init', '-q');
+  makeFixtureRepo((args) => g(...args), root, ['-q']);
   g('config', 'user.email', 'probe@example.com');
   g('config', 'user.name', 'probe');
   return g;

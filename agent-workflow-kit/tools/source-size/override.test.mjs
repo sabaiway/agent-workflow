@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../source-size-check.mjs';
 import { INITIAL_ADOPTION_REASON, reasonDefect } from '../source-size-core.mjs';
 
@@ -46,7 +47,7 @@ let seq = 0;
 const project = ({ files = FILES, config = CONFIG(RECORD) } = {}) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) {
     mkdirSync(join(cwd, rel, '..'), { recursive: true });
     writeFileSync(join(cwd, rel), body);

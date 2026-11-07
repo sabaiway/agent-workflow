@@ -18,6 +18,7 @@ import * as core from './source-size-core.mjs';
 import { hermeticGitEnv } from './git-env.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID } = core;
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -46,7 +47,7 @@ const project = ({ config = AUTHORED, gates } = {}) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  git(cwd, ['init', '-q', '-b', 'main']);
+  makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n');
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts: {} }, null, 2));
   writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
