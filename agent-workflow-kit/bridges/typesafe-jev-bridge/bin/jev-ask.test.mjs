@@ -1,100 +1,16 @@
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const BRIDGE = resolve(HERE, '..');
-const REPO = resolve(BRIDGE, '..');
-const HOST = 'api.jev.invalid';
-const ENDPOINT = `https://${HOST}/v1/systemone`;
-const KEY_VARIABLE = 'TYPESAFE_API_KEY';
-const REQUEST_ID = 'req-1';
-const STATE_LIMIT = 30000;
-const BODY_LIMIT = 60000;
-const made = [];
-const client = () => import('./jev-client.mjs');
-const read = (path) => readFileSync(path, 'utf8');
-const readManifest = () => JSON.parse(read(join(BRIDGE, 'capability.json')));
-const getModel = () => { const model = readManifest().posture?.model; assert.ok(model, 'capability.json posture.model is absent'); return model; };
-const getFacts = () => [read(join(REPO, 'codex-cli-bridge/service-facts.txt')).split('\n')[0], `HOST=${HOST}`, `RUN_HOST=${HOST}`, `PASSED_VARIABLE=${KEY_VARIABLE}`, ''].join('\n');
-const makeQuestion = (instructions = 'Choose the supported option.') => ({ type: 'choice', instructions, criteria: { yes: 'Supported', no: 'Unsupported' } });
-const makeRequest = () => ({ state: 'The build passed and the change is ready for review.', questions: { ready: makeQuestion(), safe: { ...makeQuestion(), criteria: { yes: 'Safe', no: 'Unsafe', unsure: 'Unclear' } } } });
-const makeAnswer = (model, request = makeRequest()) => ({ model, answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [id, { type: 'choice', choice: Object.keys(question.criteria)[0], probabilities: Object.fromEntries(Object.keys(question.criteria).map((option, index) => [option, index === 0 ? 1 : 0])), confidence: 0.9 }])) });
-const makeResponse = (body, status = 200, headers = { 'x-typesafe-request-id': REQUEST_ID }) => new Response(typeof body === 'string' ? body : JSON.stringify(body), { status, headers });
-const neverCall = () => assert.fail('transport must not be called');
-const makeFixture = (context, wrapper = false) => {
-  if (wrapper) read(join(HERE, 'jev-ask.sh'));
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'jev-ask-')));
-  made.push(root);
-  const home = join(root, 'home');
-  mkdirSync(home);
-  if (wrapper) cpSync(HERE, join(root, 'bin'), { recursive: true });
-  cpSync(join(BRIDGE, 'capability.json'), join(root, 'capability.json'));
-  writeFileSync(join(root, 'service-facts.txt'), getFacts());
-  const path = join(root, 'request.json');
-  writeFileSync(path, JSON.stringify(makeRequest()));
-  const key = `tsk-test-${Buffer.from(context.name).toString('hex')}-${'Q7xZp3'.repeat(6)}`;
-  const preload = join(root, 'no-network.mjs');
-  writeFileSync(preload, "globalThis.fetch = async () => { throw new Error('unexpected transport call'); };\n");
-  const env = { PATH: process.env.PATH ?? '', HOME: home, LC_ALL: 'C', [KEY_VARIABLE]: key, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` };
-  return { root, path, key, env, argv: ['--host', HOST, '--key-variable', KEY_VARIABLE, path] };
-};
-after(() => made.forEach((root) => rmSync(root, { recursive: true, force: true })));
-const assertOutcome = (result, key, code, posture = false, shared = false) => {
-  assert.equal(result.code, code, result.stderr);
-  for (const stream of [result.stdout, result.stderr]) { assert.equal(typeof stream, 'string'); assert.equal(stream.includes(key.trim()), false, 'key leaked'); }
-  const lines = result.stderr === '' ? [] : result.stderr.split('\n').slice(0, -1);
-  assert.equal(result.stderr, lines.length ? `${lines.join('\n')}\n` : '');
-  assert.equal(lines.length, Number(posture) + Number(code !== 0), result.stderr);
-  if (posture) assert.match(lines[0], /^judge posture: /);
-  if (code !== 0) { assert.equal(result.stdout, ''); assert.match(lines.at(-1), shared ? /^error: / : /^jev-ask: /); }
-  return result;
-};
-const runClient = async (cli, fixture, code, options = {}, posture = false) => {
-  const calls = [];
-  const transport = (...args) => { calls.push(args); return (options.transport ?? neverCall)(...args); };
-  const result = await cli.runJudgeCli({ argv: fixture.argv, env: fixture.env, folder: fixture.root, ...options, transport });
-  assertOutcome(result, fixture.key, code, posture);
-  assert.equal(calls.length, Number(posture), 'one request only after posture');
-  return result;
-};
-const runWrapper = (fixture, argv, code, overrides = {}, posture = false, shared = false, bash = 'bash') => {
-  const result = spawnSync(bash, [join(fixture.root, 'bin/jev-ask.sh'), ...argv], { cwd: fixture.root, env: { ...fixture.env, ...overrides }, encoding: 'utf8', timeout: 5000 });
-  assert.ifError(result.error);
-  assert.equal(result.signal, null, result.stderr);
-  return assertOutcome({ code: result.status, stdout: result.stdout, stderr: result.stderr }, fixture.key, code, posture, shared);
-};
-const addPreload = (fixture, body, status = 200) => {
-  const log = join(fixture.root, 'fetch.log');
-  const preload = join(fixture.root, 'preload.mjs');
-  writeFileSync(preload, `import { appendFileSync } from 'node:fs';\nglobalThis.fetch = async (url) => { appendFileSync(${JSON.stringify(log)}, String(url) + '\\n'); return new Response(${JSON.stringify(JSON.stringify(body))}, { status: ${status}, headers: { 'x-typesafe-request-id': '${REQUEST_ID}' } }); };\n`);
-  return { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, log };
-};
-const addRecordingNode = (fixture) => {
-  const bin = join(fixture.root, 'recording');
-  mkdirSync(bin);
-  const argv = join(fixture.root, 'node.argv');
-  const env = join(fixture.root, 'node.env');
-  const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-  writeFileSync(join(bin, 'node'), `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${quote(argv)}\nprintf '%s' "\${TYPESAFE_API_KEY-}" > ${quote(env)}\nexec ${quote(process.execPath)} "$@"\n`);
-  chmodSync(join(bin, 'node'), 0o755);
-  return { PATH: `${bin}:${fixture.env.PATH}`, argv, env };
-};
-const listFiles = (root, relative = '') => readdirSync(join(root, relative), { withFileTypes: true }).flatMap((entry) => entry.name === 'node_modules' ? [] : entry.isDirectory() ? listFiles(root, join(relative, entry.name)) : [join(relative, entry.name)]).sort();
-const scanFolder = (root) => {
-  const files = listFiles(root).filter((file) => !file.endsWith('.test.mjs'));
-  const hits = files.flatMap((file) => {
-    const text = read(join(root, file));
-    return [file !== 'service-facts.txt' && /[a-z0-9.-]*typesafe\.ai\b/i.test(text) ? `${file}: host` : null, file !== 'capability.json' && /\bjev-(?:\d+(?:\.\d+)*|latest)\b/i.test(text) ? `${file}: model` : null].filter(Boolean);
-  });
-  return { files, hits };
-};
+import {
+  HERE, BRIDGE, REPO, HOST, ENDPOINT, KEY_VARIABLE, REQUEST_ID, STATE_LIMIT, BODY_LIMIT,
+  client, read, readManifest, getModel, getFacts, makeQuestion, makeRequest, makeAnswer, makeResponse,
+  neverCall, makeArgv, makePosture, writeManifest, writeSettings, makeFixture, assertOutcome,
+  runClient, runWrapper, addPreload, addRecordingNode, listFiles, scanFolder,
+} from './jev-ask-harness.test.mjs';
 
 it('spec:typesafe-jev-bridge/S1 posts the pinned two-question request and prints only normalized notes', async (context) => {
   const cli = await client();
@@ -105,9 +21,9 @@ it('spec:typesafe-jev-bridge/S1 posts the pinned two-question request and prints
     const answer = makeAnswer(model);
     const transport = async (...args) => { calls.push(args); return makeResponse(answer, 200, requestId ? { 'x-typesafe-request-id': requestId } : {}); };
     const result = await runClient(cli, fixture, 0, { env: { [KEY_VARIABLE]: `  ${fixture.key}  ` }, transport }, true);
-    assert.equal(result.stderr, `judge posture: model=${model} host=${HOST} timeout=10s\n`);
+    assert.equal(result.stderr, `${makePosture(model, 'default')}\n`);
     assert.match(result.stdout, /[^\n]\n$/);
-    assert.deepEqual(JSON.parse(result.stdout), { model, requestId, notes: Object.fromEntries(Object.entries(answer.answers).map(([id, { type, ...note }]) => [id, note])) });
+    assert.deepEqual(JSON.parse(result.stdout), { model, calibrated: true, requestId, notes: Object.fromEntries(Object.entries(answer.answers).map(([id, { type, ...note }]) => [id, note])) });
     assert.equal(calls.length, 1);
     const [url, init] = calls[0];
     assert.equal(String(url), ENDPOINT);
@@ -266,8 +182,13 @@ describe('spec:typesafe-jev-bridge/S10 every missing facts line, manifest model 
     const cli = await client();
     const fixture = makeFixture(context);
     const path = join(fixture.root, 'capability.json');
-    for (const body of [null, '{not json', '{}', JSON.stringify({ posture: { model: '' } })]) {
-      if (body === null) rmSync(path); else writeFileSync(path, body);
+    const manifest = { ...readManifest(), settings: [{ key: 'JEV_MODEL', kind: 'posture', default: getModel(), appliesTo: ['jev-ask'], effect: 'Selects the judge model.', offered: [getModel(), 'jev-1.14.0'] }] };
+    const { settings, ...withoutSettings } = manifest;
+    const { offered, ...withoutOffered } = settings[0];
+    const invalid = [null, '{not json', {}, { posture: { model: '' } }, withoutSettings, { ...manifest, settings: [] },
+      { ...manifest, settings: [withoutOffered] }, ...[[], 'jev-1.14.0', [13]].map((offered) => ({ ...manifest, settings: [{ ...settings[0], offered }] }))];
+    for (const body of invalid) {
+      if (body === null) rmSync(path); else writeManifest(fixture, body);
       const result = await runClient(cli, fixture, 127);
       assert.ok(result.stderr.includes(path));
     }
@@ -278,7 +199,7 @@ describe('spec:typesafe-jev-bridge/S11 the posture line precedes the request and
     const cli = await client();
     const fixture = makeFixture(context);
     const result = await runClient(cli, fixture, 8, { transport: async () => { throw new TypeError(`failed ${fixture.key}\nagain`, { cause: new Error(`cause ${fixture.key}\nagain`) }); } }, true);
-    assert.equal(result.stderr.split('\n')[0], `judge posture: model=${getModel()} host=${HOST} timeout=10s`);
+    assert.equal(result.stderr.split('\n')[0], makePosture(getModel(), 'default'));
   });
   it('removes a key of any bytes from outside text before it is made one line or encoded', async (context) => {
     const cli = await client();
@@ -309,7 +230,7 @@ describe('spec:typesafe-jev-bridge/S11 the posture line precedes the request and
     const argv = read(recording.argv);
     assert.equal(argv.includes(fixture.key), false);
     assert.deepEqual(argv.split('\n').slice(0, -1), ['--disable-warning=UNDICI-EHPA', join(fixture.root, 'bin/jev-client.mjs'), ...fixture.argv]);
-    assert.equal(read(preload.log), `${ENDPOINT}\n`);
+    assert.equal(read(preload.log), `${JSON.stringify({ url: ENDPOINT, model: getModel() })}\n`);
   });
 });
 it('spec:typesafe-jev-bridge/S12 prints help and keeps the version and exact bundle consistent', (context) => {
@@ -321,7 +242,7 @@ it('spec:typesafe-jev-bridge/S12 prints help and keeps the version and exact bun
   assert.ok(frontmatter);
   assert.match(frontmatter, /^name:\s*['"]?typesafe-jev-bridge['"]?\s*$/m);
   assert.equal(frontmatter.match(/^metadata:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+version:\s*['"]?([^\s'"\n]+)['"]?\s*$/m)?.[1], version);
-  assert.deepEqual(listFiles(BRIDGE), ['SKILL.md', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md']);
+  assert.deepEqual(listFiles(BRIDGE), ['SKILL.md', 'bin/jev-ask-harness.test.mjs', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md']);
   const setup = read(join(BRIDGE, 'setup/README.md'));
   assert.ok(setup.includes('jev-connect.mjs'));
   assert.match(setup, /restart/i);
@@ -331,8 +252,10 @@ it('spec:typesafe-jev-bridge/S13 scans every shipped file and catches planted ho
   const fixture = makeFixture(context);
   mkdirSync(join(fixture.root, 'bin'));
   writeFileSync(join(fixture.root, 'SKILL.md'), 'API.TypeSafe.AI');
-  writeFileSync(join(fixture.root, 'bin/jev-client.mjs'), 'jev-1.13.0');
-  assert.deepEqual(scanFolder(fixture.root).hits, ['SKILL.md: host', 'bin/jev-client.mjs: model']);
+  for (const model of ['jev-1.13.0', 'jev-latest', 'jev-preview']) {
+    writeFileSync(join(fixture.root, 'bin/jev-client.mjs'), model);
+    assert.deepEqual(scanFolder(fixture.root).hits, ['SKILL.md: host', 'bin/jev-client.mjs: model']);
+  }
   const scanned = scanFolder(BRIDGE);
   assert.deepEqual(scanned.hits, []);
   for (const file of ['SKILL.md', 'bin/jev-ask.sh', 'bin/jev-client.mjs', 'setup/README.md']) assert.ok(scanned.files.includes(file), `scan did not read ${file}`);
@@ -347,7 +270,7 @@ it('spec:typesafe-jev-bridge/S15 forwards client outcomes unchanged for success 
     const wrapped = runWrapper(fixture, [fixture.path], code, { NODE_OPTIONS: preload.NODE_OPTIONS }, true);
     const direct = await runClient(cli, fixture, code, { transport: async () => makeResponse(body, status) }, true);
     assert.deepEqual(wrapped, direct);
-    assert.equal(read(preload.log), `${ENDPOINT}\n`);
+    assert.equal(read(preload.log), `${JSON.stringify({ url: ENDPOINT, model: getModel() })}\n`);
     rmSync(preload.log);
   }
 });
@@ -389,4 +312,85 @@ it('spec:typesafe-jev-bridge/S16 the wrapper reaches a loopback CONNECT proxy by
   } finally {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+});
+describe('spec:typesafe-jev-bridge/S17 the wrapper selects the host model and reports its source', () => {
+  const cases = [
+    ['no setting', undefined, {}, getModel(), 'default', 0],
+    ['file setting', 'jev-1.14.0', {}, 'jev-1.14.0', 'setting', 0],
+    ['environment overrides file', 'jev-1.13.0', { JEV_MODEL: 'jev-1.14.0' }, 'jev-1.14.0', 'environment', 0],
+    ['empty environment selects default', 'jev-1.14.0', { JEV_MODEL: '' }, getModel(), 'environment', 0],
+    ['empty file warns', '', {}, getModel(), 'default', 1],
+    ['control-byte file warns', 'jev-1.14.0\x01', {}, getModel(), 'default', 1],
+  ];
+  for (const [name, setting, overrides, model, source, warnings] of cases) it(name, (context) => {
+    const fixture = makeFixture(context, true);
+    if (setting !== undefined) writeSettings(fixture, `JEV_MODEL=${setting}\n`);
+    const preload = addPreload(fixture, makeAnswer(model));
+    const calibrated = model === getModel();
+    const result = runWrapper(fixture, [fixture.path], 0, { ...overrides, NODE_OPTIONS: preload.NODE_OPTIONS }, true, false, 'bash', warnings);
+    assert.equal(result.stderr.split('\n')[warnings], makePosture(model, source, calibrated));
+    assert.deepEqual(read(preload.log).trim().split('\n').map((line) => JSON.parse(line)), [{ url: ENDPOINT, model }]);
+    assert.equal(JSON.parse(result.stdout).model, model);
+    assert.equal(JSON.parse(result.stdout).calibrated, calibrated);
+    if (warnings) assert.doesNotMatch(result.stderr.split('\n')[0], /[\x00-\x1f\x7f-\x9f\u2028\u2029]|''/u);
+  });
+});
+describe('spec:typesafe-jev-bridge/S18 unoffered models fail before reading the request and invalid sources fail usage', () => {
+  for (const source of ['setting', 'environment']) for (const model of ['jev-0.0.1', 'jev-latest', 'jev-preview']) it(`${source}: ${model}`, (context) => {
+    const fixture = makeFixture(context, true);
+    const path = join(fixture.root, 'absent-request.json');
+    if (source === 'setting') writeSettings(fixture, `JEV_MODEL=${model}\n`);
+    const result = runWrapper(fixture, [path], 2, source === 'environment' ? { JEV_MODEL: model } : {});
+    assert.match(result.stderr, /^jev-ask: /);
+    for (const text of [model, getModel(), 'jev-1.14.0', 'JEV_MODEL=', '/agent-workflow-kit bridge-settings']) assert.ok(result.stderr.includes(text), result.stderr);
+    if (source === 'environment') assert.ok(result.stderr.includes('unset'), result.stderr);
+    assert.equal(result.stderr.includes(path), false, result.stderr);
+    assert.doesNotMatch(result.stderr, /request file/i);
+  });
+  for (const source of ['setting', 'environment']) it(`the client names the offered list and the remedy for ${source}`, async (context) => {
+    const cli = await client();
+    const fixture = makeFixture(context);
+    const result = await runClient(cli, fixture, 2, { argv: makeArgv(fixture, { model: 'jev-0.0.1', source }) });
+    for (const text of ['jev-0.0.1', getModel(), 'jev-1.14.0', 'JEV_MODEL=', '/agent-workflow-kit bridge-settings']) assert.ok(result.stderr.includes(text), result.stderr);
+    assert.equal(result.stderr.includes('unset JEV_MODEL'), source === 'environment', result.stderr);
+  });
+  it('refuses a source outside default, setting and environment', async (context) => {
+    const cli = await client();
+    const fixture = makeFixture(context);
+    await runClient(cli, fixture, 2, { argv: makeArgv(fixture, { source: 'flag' }) });
+  });
+});
+it('spec:typesafe-jev-bridge/S19 offered versions mark only the default model as calibrated', async (context) => {
+  const cli = await client();
+  const fixture = makeFixture(context);
+  for (const [model, source, calibrated] of [['jev-1.14.0', 'setting', false], [getModel(), 'default', true]]) {
+    const models = [];
+    const result = await runClient(cli, fixture, 0, { argv: makeArgv(fixture, { model, source }), transport: async (url, init) => {
+      models.push(JSON.parse(init.body).model);
+      return makeResponse(makeAnswer(model));
+    } }, true);
+    assert.deepEqual(models, [model]);
+    assert.equal(result.stderr, `${makePosture(model, source, calibrated)}\n`);
+    assert.equal(JSON.parse(result.stdout).model, model);
+    assert.equal(JSON.parse(result.stdout).calibrated, calibrated);
+    if (calibrated) assert.doesNotMatch(result.stderr, /uncalibrated/);
+  }
+});
+it('spec:typesafe-jev-bridge/S20 the manifest offers pinned judge versions and rejects aliases', () => {
+  const checkManifest = (manifest) => {
+    const setting = manifest.settings?.find((entry) => entry.key === 'JEV_MODEL');
+    assert.ok(setting, 'capability.json JEV_MODEL entry is absent');
+    assert.equal(setting.kind, 'posture');
+    assert.equal(setting.default, manifest.posture.model);
+    assert.deepEqual(setting.appliesTo, ['jev-ask']);
+    assert.ok(Array.isArray(setting.offered));
+    assert.ok(setting.offered.includes(manifest.posture.model));
+    for (const model of setting.offered) { assert.equal(typeof model, 'string'); assert.match(model, /^jev-\d+\.\d+\.\d+$/); }
+    for (const alias of ['jev-latest', 'jev-preview']) assert.equal(setting.offered.includes(alias), false);
+  };
+  const manifest = readManifest();
+  checkManifest(manifest);
+  const copy = structuredClone(manifest);
+  copy.settings.find((entry) => entry.key === 'JEV_MODEL').offered.push('jev-latest');
+  assert.throws(() => checkManifest(copy), assert.AssertionError);
 });

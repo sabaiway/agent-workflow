@@ -106,7 +106,7 @@ export const TEMPLATE_HARD_EXCLUDES = Object.freeze(['agent_rules.md', 'decision
 // must never enter the comparison, and therefore never enter the shipped kit tarball.
 const WALK_EXCLUDES = new Set(['node_modules', '.git']);
 
-const walkFiles = (root) => {
+export const walkFiles = (root) => {
   const out = [];
   const recurse = (rel) => {
     for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {

@@ -17,14 +17,11 @@ import {
   isAssemblerBanner, seedFedChangeSet, inlineArtifactOf, bodyOf, requestedBlockOf, requestedOf, fedRun,
 } from './agy-review-harness.test.mjs';
 
-// ── the pre-spend capability door (AGY-1.1.13, Decision 2) ───────────────────────────────────────
-// The wrapper drives agy in --output-format json and reads the returned envelope in node, so a host
-// that cannot do that must refuse BEFORE a subscription turn is spent. The door probes CAPABILITY,
-// never a version floor — the release that introduced the flag is unmeasurable from one installed
-// build. Every case asserts ZERO paid dispatch: the fake answers --help/--version without touching
-// the invocation sentinel, so a probe can never read as a spent run.
-const FAKE_OLD_NODE = '#!/usr/bin/env bash\nprintf "v18.20.0\\n"\n';
-
+const makeFakeNode = (version) => `#!/usr/bin/env bash
+if [[ "\${1:-}" == "--version" ]]; then printf '%s\\n' '${version}'; else exec '${process.execPath.replaceAll("'", "'\\''")}' "$@"; fi
+`;
+const NODE_FLOOR = /\bnode(?: must be)?\s*(?:>=|\u2265)?\s*22\.21\b/i;
+const BARE_NODE_FLOOR = /\bnode(?:\.js)?(?: must be)?\s*(?:>=|\u2265)?\s*22(?!\.21\b)\b/i;
 describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concurrency: 2 }, () => {
   for (const flag of ['--output-format', '--disable-slash-commands']) {
     it(`a --help that does not advertise ${flag} refuses pre-spend and names it`, async () => {
@@ -39,11 +36,6 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concu
       assert.equal(receipts.length, 0);
     });
   }
-
-  // Each required flag buys something DIFFERENT, so the refusal must name the cost of the flag that
-  // is actually missing: a build lacking --disable-slash-commands answers perfectly readably and
-  // corrupts the delivered BODY instead, which the envelope explanation would send an operator
-  // hunting the wrong bug.
   it('the refusal names what the MISSING flag buys, not one blanket envelope explanation', async () => {
     const sb = makeSandbox();
     const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_OMIT: '--disable-slash-commands' } });
@@ -53,7 +45,6 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concu
     assert.match(r.stderr, /slash command/i, 'the stated cost is command expansion of the change-set body');
     assert.doesNotMatch(r.stderr, /cannot read/, 'the unreadable-answer cost belongs to --output-format alone');
   });
-
   it('`agy --help` exiting non-zero refuses with a DISTINCT cause — never read as "capability present"', async () => {
     const sb = makeSandbox();
     const r = await run(sb, { args: ['code', '--facts', 'f'], env: { AGY_FAKE_HELP_EXIT: '3' } });
@@ -63,35 +54,48 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concu
     assert.match(r.stderr, /'agy --help' exited 3/, 'the failed probe is the stated cause');
     assert.doesNotMatch(r.stderr, /does not advertise the flag/, 'a failed probe is not a missing-flag verdict');
   });
-
-  it('node ABSENT refuses pre-spend, naming Node and the floor', async () => {
-    const sb = makeSandbox();
-    const r = await run(sb, {
-      args: ['code', '--facts', 'f'],
-      env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'node'])}` },
+  describe('Node 22.21 family floor — spec:jev-judge/S11', () => {
+    it('node ABSENT refuses pre-spend, naming Node 22.21', async () => {
+      const sb = makeSandbox();
+      const r = await run(sb, { args: ['code', '--facts', 'f'], env: { PATH: `${sb.bin}:${farmFor(['agy', 'agy-run', 'node'])}` } });
+      rmSync(sb.home, { recursive: true, force: true });
+      assert.notEqual(r.status, 0, r.stderr);
+      assert.equal(r.invoked, false);
+      assert.match(r.stderr, /'node' is not on PATH/);
+      assert.match(r.stderr, NODE_FLOOR);
     });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.notEqual(r.status, 0, r.stderr);
-    assert.equal(r.invoked, false);
-    assert.match(r.stderr, /'node' is not on PATH/);
-    assert.match(r.stderr, /Node >= 22/);
+    for (const [version, admitted] of [['v22.3.0', false], ['v22.20.0', false], ['v22.21.0', true], ['v23.0.0', true]]) {
+      it(`node ${version} ${admitted ? 'passes the floor check (unchanged behavior)' : 'refuses pre-spend, naming Node 22.21'}`, async () => {
+        const sb = makeSandbox();
+        writeFileSync(join(sb.bin, 'node'), makeFakeNode(version), { mode: 0o755 });
+        writeFileSync(join(sb.home, 'plan.md'), '# Plan\n');
+        const r = await run(sb, { args: ['plan', join(sb.home, 'plan.md'), '--facts', 'f'] });
+        const receipts = readReceipts(sb.repo);
+        rmSync(sb.home, { recursive: true, force: true });
+        if (admitted) {
+          assert.doesNotMatch(r.stderr, /below the family floor/);
+          assert.equal(r.status, 0, r.stderr);
+          assert.equal(r.invoked, true);
+        } else {
+          assert.equal(r.invoked, false, 'the door refuses BEFORE any paid dispatch');
+          assert.notEqual(r.status, 0, r.stderr);
+          assert.ok(r.stderr.includes(version), 'the refusal quotes the version it read');
+          assert.match(r.stderr, NODE_FLOOR);
+          assert.equal(receipts.length, 0);
+        }
+      });
+    }
+    it('help, review contract notes and shipped floor text name Node 22.21', () => {
+      const root = join(HERE, '..');
+      const files = readdirSync(root, { recursive: true }).filter((path) =>
+        !path.split(/[\\/]/).includes('node_modules') && (/\.md$/i.test(path) || /^bin\/[^/]+\.sh$/.test(path)));
+      const bareFloors = files.flatMap((path) => readFileSync(join(root, path), 'utf8').split('\n')
+        .flatMap((line, index) => BARE_NODE_FLOOR.test(line) ? [`${path}:${index + 1}: ${line.trim()}`] : []));
+      const notes = REVIEW_CONTRACT.notes.join('\n');
+      assert.deepEqual({ help: NODE_FLOOR.test(runHelp('--help').stdout), notes: NODE_FLOOR.test(notes),
+        bareNotes: BARE_NODE_FLOOR.test(notes), bareFloors }, { help: true, notes: true, bareNotes: false, bareFloors: [] });
+    });
   });
-
-  it('node PRESENT but BELOW the floor refuses pre-spend — the version comparison really runs', async () => {
-    const sb = makeSandbox();
-    // Into $HOME/.local/bin, which the wrapper itself prepends — so the fake wins over the real node.
-    writeFileSync(join(sb.bin, 'node'), FAKE_OLD_NODE, { mode: 0o755 });
-    const r = await run(sb, { args: ['code', '--facts', 'f'] });
-    rmSync(sb.home, { recursive: true, force: true });
-    assert.notEqual(r.status, 0, r.stderr);
-    assert.equal(r.invoked, false, 'an existence-only check would have dispatched here');
-    assert.match(r.stderr, /v18\.20\.0/, 'the refusal quotes the version it read');
-    assert.match(r.stderr, /below the family floor \(Node >= 22\)/);
-  });
-
-  // The door reads option DECLARATIONS, not substrings. A near-miss flag and a prose mention are the
-  // two ways a substring search opens the door to a build that cannot honour the flag — and the
-  // failure would then surface only AFTER a subscription turn was already spent.
   for (const [name, extraHelpLine] of [
     ['a NEAR-MISS flag name', '  --output-formatting   a longer flag that is not the one we pass'],
     ['a prose mention outside any declaration', 'Note: pass --output-format json to get structured output.'],
@@ -112,8 +116,6 @@ describe('agy-review.sh — the pre-spend capability door (Decision 2)', { concu
     });
   }
 
-  // The other direction: a declaration the parser fails to READ refuses a build that CAN honour the
-  // flag — the false refusal Decision 2 exists to avoid. Both common clustered renderings count.
   for (const [name, extraHelpLine] of [
     ['a comma-clustered alias', '  -o, --output-format   the clustered rendering'],
     ['a metavar rendering', '  -o FORMAT, --output-format FORMAT   the metavar rendering'],
@@ -2641,9 +2643,9 @@ describe('agy-review.sh — bridge settings file (bridges 2.3.0)', { concurrency
 // ── settings surface ⟷ manifest (drift guard, D6) — same contract as the codex bridge ──
 const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
 const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'codex-cli-bridge', 'capability.json'), 'utf8'));
-const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const JUDGE_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'typesafe-jev-bridge', 'capability.json'), 'utf8'));
+const ALL_SETTINGS = [MANIFEST, SIBLING_MANIFEST, JUDGE_MANIFEST].flatMap((manifest) => manifest.settings ?? []);
 const SETTINGS_CMD = 'agy-review';
-
 describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
   it('--help Settings section keys set-EQUAL the manifest appliesTo subset', async () => {
     const help = runHelp('--help').stdout;
@@ -2656,14 +2658,12 @@ describe('agy-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
   });
 
   const source = readFileSync(WRAPPER, 'utf8');
-
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
+  it('aw_settings_known carries exactly the UNION of three bridges settings keys, JEV_MODEL among them', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
-    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
-    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
+    assert.ok(m[1].trim().split(/\s+/).includes('JEV_MODEL'), 'the registry must know the judge model setting');
+    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ three-manifest union');
   });
-
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');

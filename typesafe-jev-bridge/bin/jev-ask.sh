@@ -77,7 +77,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL JEV_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -177,7 +177,11 @@ aw_read_posture() {
         AW_HOST_VALUE="$value"
         AW_HOST_SOURCE="setting"
       elif (( notify )); then
-        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        if [[ -n "$default" ]]; then
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        else
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the manifest's default." >&2
+        fi
       fi
     fi
   fi
@@ -244,7 +248,7 @@ aw_scrub_billing_keys() {
   return 0
 }
 
-AW_BRIDGE_VERSION="1.0.1"  # aw-version-anchor
+AW_BRIDGE_VERSION="1.1.0"  # aw-version-anchor
 case "${1:-}" in
   --help|-h)
     printf '%s\n' "jev-ask — judge notes through typesafe-jev-bridge $AW_BRIDGE_VERSION." '' \
@@ -269,9 +273,10 @@ if (( ${#AW_FACT_PASSED_VARIABLE[@]} == 0 )); then
   exit 127
 fi
 aw_scrub_billing_keys
+aw_read_posture JEV_MODEL "" ""
 if ! command -v node >/dev/null 2>&1; then
   printf '%s\n' 'jev-ask: node not found on PATH; install Node.js 22.21 or newer' >&2
   exit 127
 fi
 export NODE_USE_ENV_PROXY=1
-exec node --disable-warning=UNDICI-EHPA "$HERE/jev-client.mjs" --host "${AW_FACT_RUN_HOST[0]}" --key-variable "${AW_FACT_PASSED_VARIABLE[0]}" "$1"
+exec node --disable-warning=UNDICI-EHPA "$HERE/jev-client.mjs" --host "${AW_FACT_RUN_HOST[0]}" --key-variable "${AW_FACT_PASSED_VARIABLE[0]}" --model "$AW_RUN_VALUE" --model-source "$AW_RUN_SOURCE" "$1"

@@ -232,6 +232,7 @@ describe('effectiveOf — kind posture mirrors the wrappers host-posture reader 
       CODEX_MODEL: ['codex-cli-bridge', 'gpt-6-luna', 'setting'],
       CODEX_EFFORT: ['codex-cli-bridge', 'high', 'default'],
       AGY_MODEL: ['antigravity-cli-bridge', null, 'environment'],
+      JEV_MODEL: ['typesafe-jev-bridge', 'jev-1.13.0', 'default'],
     });
     assert.deepEqual(snap.active, []);
   });

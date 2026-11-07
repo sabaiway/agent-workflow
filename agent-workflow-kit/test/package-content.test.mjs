@@ -78,6 +78,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'bridges/codex-cli-bridge/bin/codex-await-guard.test.mjs',
       'bridges/codex-cli-bridge/bin/codex-model-posture.test.mjs',
       'bridges/typesafe-jev-bridge/bin/jev-ask.test.mjs',
+      'bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs',
     ];
     const missing = required.filter((p) => !packed.includes(p));
     assert.deepEqual(missing, [], 'a deploy/mirror payload test was dropped from the tarball');
@@ -510,7 +511,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
   it('spec:jev-judge/S9 ships every file of the judge bridge mirror', () => {
     const prefix = 'bridges/typesafe-jev-bridge/';
     assert.deepEqual(packed.filter((path) => path.startsWith(prefix)).sort(), [
-      'SKILL.md', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md',
+      'SKILL.md', 'bin/jev-ask-harness.test.mjs', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md',
     ].map((path) => `${prefix}${path}`));
   });
 
@@ -925,7 +926,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     //       - story S12 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
     // 393 = 386 + bridges/typesafe-jev-bridge/{capability.json,SKILL.md,service-facts.txt,setup/README.md,bin/jev-ask.sh,bin/jev-client.mjs,bin/jev-ask.test.mjs} - story S17 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [393, []], `tarball file count drifted (${packed.length}\u2260 393), or a retired leaf ships`);
+    // 394 = 393 + bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs - story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [394, []], `tarball file count drifted (${packed.length}\u2260 394), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

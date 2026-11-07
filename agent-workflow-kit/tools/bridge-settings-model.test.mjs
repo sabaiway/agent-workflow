@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { main } from './bridge-settings.mjs';
 import { surveyBridges } from './family-registry.mjs';
+import { settingsSnapshot } from './bridge-settings-read.mjs';
+import { composeConfiguredPosture, composeStatusLine, buildReport } from './recipes.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '..', '..');
@@ -59,6 +61,16 @@ const sandbox = ({ codex = 'ok', agy = 'ok', settings } = {}) => {
 };
 const calls = (sb) => (existsSync(sb.log) ? readFileSync(sb.log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
 const bridgeOf = (json, name) => json.bridges.find((b) => b.bridge === name);
+const JUDGE = 'typesafe-jev-bridge'; const JUDGE_OFFERED = ['jev-1.14.0', 'jev-1.13.0'];
+const makeJudgeBundle = (catalog = { offered: JUDGE_OFFERED }) => {
+  const bundleRoot = mkdtempSync(join(SHARED, 'bundle-'));
+  for (const name of ['codex-cli-bridge', 'antigravity-cli-bridge', JUDGE]) {
+    const manifest = JSON.parse(readFileSync(join(REPO, name, 'capability.json'), 'utf8'));
+    if (name === JUDGE) manifest.settings = [{ key: 'JEV_MODEL', kind: 'posture', default: manifest.posture.model, appliesTo: ['jev-ask'], effect: 'Selects the judge model.', ...catalog }];
+    mkdirSync(join(bundleRoot, name)); writeFileSync(join(bundleRoot, name, 'capability.json'), JSON.stringify(manifest));
+  }
+  return bundleRoot;
+};
 
 // The wrappers' own host-posture reader, extracted verbatim (the reader-parity idiom).
 const extractBashFn = (source, name) => {
@@ -325,5 +337,69 @@ describe('a set reads only that bridge catalog — spec:bridge-settings/S14', ()
     const c = sandbox();
     assert.equal((await main(['--set', 'CODEX_EFFORT=low'], c.ctx())).code, 0);
     assert.deepEqual(calls(c).map((x) => x.cli), ['codex']);
+  });
+});
+describe('the judge catalog comes from its manifest — spec:bridge-settings/S15', () => {
+  it('shows the default and the unsorted offered list without another CLI call', async () => {
+    const sb = sandbox(); const bundleRoot = makeJudgeBundle(); const read = await main([], sb.ctx({}, { bundleRoot }));
+    const json = await main(['--json'], sb.ctx({}, { bundleRoot }));
+    assert.equal(read.code, 0, read.stderr); assert.equal(json.code, 0, json.stderr);
+    const judge = bridgeOf(JSON.parse(json.stdout), JUDGE); assert.deepEqual([judge?.model.value, judge?.model.source], ['jev-1.13.0', 'default']);
+    assert.match(read.stdout, /typesafe-jev-bridge: model jev-1\.13\.0 \[default\]/);
+    assert.deepEqual(calls(sb).map((call) => call.cli).sort(), ['agy', 'agy', 'codex', 'codex']);
+    assert.deepEqual(judge.catalog.entries, JUDGE_OFFERED.map((model) => ({ model }))); assert.equal(judge.catalog.state, 'offered');
+    assert.match(read.stdout, /offered: jev-1\.14\.0, jev-1\.13\.0/);
+  });
+  for (const [name, catalog] of [['absent', {}], ['empty', { offered: [] }], ['non-array', { offered: 'jev-1.13.0' }], ['non-string', { offered: [42] }]]) {
+    it(`the ${name} offered list is unreadable and a set is unchecked without a CLI call`, async () => {
+      const sb = sandbox(); const bundleRoot = makeJudgeBundle(catalog);
+      const read = await main([], sb.ctx({}, { bundleRoot })); const json = await main(['--json'], sb.ctx({}, { bundleRoot })); const before = calls(sb); const set = await main(['--set', 'JEV_MODEL=jev-1.14.0', '--apply'], sb.ctx({}, { bundleRoot }));
+      assert.equal(read.code, 0, read.stderr); assert.equal(json.code, 0, json.stderr); assert.equal(set.code, 0, set.stderr);
+      assert.equal(before.length, 4); assert.deepEqual(calls(sb), before); assert.equal(readFileSync(sb.conf, 'utf8'), 'JEV_MODEL=jev-1.14.0\n'); assert.match(set.stdout, /the value was not checked/);
+      const { state, cause, entries } = bridgeOf(JSON.parse(json.stdout), JUDGE).catalog;
+      assert.equal(state, 'unreadable'); assert.deepEqual(entries, []); assert.match(cause, /offered/i); assert.ok(read.stdout.split('\n').some((line) => line.includes(JUDGE) && line.includes('unreadable') && line.includes(cause)), read.stdout);
+    });
+  }
+});
+describe('the judge set checks offered versions before writing — spec:bridge-settings/S16', () => {
+  it('writes an offered version without a CLI call and refuses unoffered versions before writing', async () => {
+    const accepted = sandbox(); const sb = sandbox(); const bundleRoot = makeJudgeBundle();
+    const result = await main(['--set', 'JEV_MODEL=jev-1.14.0', '--apply'], accepted.ctx({}, { bundleRoot }));
+    assert.equal(result.code, 0, result.stderr); assert.equal(readFileSync(accepted.conf, 'utf8'), 'JEV_MODEL=jev-1.14.0\n'); assert.deepEqual(calls(accepted), []);
+    for (const model of ['jev-9.99.0', 'jev-latest']) for (const extra of [[], ['--apply']]) {
+      const result = await main(['--set', `JEV_MODEL=${model}`, ...extra], sb.ctx({}, { bundleRoot }));
+      assert.equal(existsSync(sb.conf), false); assert.deepEqual(calls(sb), []); assert.equal(result.code, 2, result.stderr);
+      for (const offered of JUDGE_OFFERED) assert.ok(result.stderr.includes(offered), result.stderr);
+    }
+  });
+});
+describe('the judge environment notes describe its own run — spec:bridge-settings/S17', () => {
+  it('the shadow line names the run value, offered check and uncalibrated mark', async () => {
+    const sb = sandbox(); const result = await main(['--set', 'JEV_MODEL=jev-1.13.0'], sb.ctx({ JEV_MODEL: 'jev-1.14.0' }, { bundleRoot: makeJudgeBundle() }));
+    assert.equal(result.code, 0, result.stderr); const shadow = result.stdout.split('\n').find((line) => /JEV_MODEL.*environment/.test(line));
+    assert.ok(shadow, result.stdout); for (const word of ['jev-1.14.0', 'offered', 'uncalibrated']) assert.ok(shadow.includes(word), shadow);
+  });
+  it('an empty environment value names the default, not a turned-away value', async () => {
+    const sb = sandbox(); const result = await main(['--set', 'JEV_MODEL=jev-1.14.0'], sb.ctx({ JEV_MODEL: '' }, { bundleRoot: makeJudgeBundle() }));
+    assert.equal(result.code, 0, result.stderr); const shadow = result.stdout.split('\n').find((line) => /JEV_MODEL.*environment/.test(line));
+    assert.ok(shadow, result.stdout); assert.match(shadow, /empty value selects the default/); assert.doesNotMatch(shadow, /runs for that run|turns it away/);
+  });
+  it('a control-byte note names jev-ask and no codex wrapper', async () => {
+    const result = await main(['--json'], sandbox().ctx({ JEV_MODEL: 'x\x01y' }, { bundleRoot: makeJudgeBundle() })); assert.equal(result.code, 0, result.stderr);
+    const note = bridgeOf(JSON.parse(result.stdout), JUDGE).model.note; assert.match(note, /jev-ask/); assert.doesNotMatch(note, /codex/);
+  });
+});
+describe('the judge stays out of renders and is a known setting — spec:bridge-settings/S18', () => {
+  it('file and environment values add no judge model; every wrapper accepts the key', async () => {
+    const sb = sandbox({ settings: 'JEV_MODEL=jev-1.14.0\n' }); const ctx = sb.ctx({ JEV_MODEL: 'jev-1.13.0' });
+    const settings = settingsSnapshot(ctx); const posture = composeConfiguredPosture({ settings }); const report = buildReport([], settings, null, posture);
+    const survey = surveyBridges({ ...ctx, detect: () => [], findOnPath: (cmd) => ({ bin: cmd, state: 'missing', path: null }) });
+    for (const rendered of [posture, composeStatusLine([], report.recommendation, settings, null, posture), JSON.stringify(report), JSON.stringify(survey)]) assert.doesNotMatch(rendered, /JEV_MODEL|jev-\d|(?:judge|jev|typesafe-jev-bridge)\s+model=/);
+    assert.doesNotMatch(JSON.stringify(survey), /"model"/i); assert.deepEqual(calls(sb), []);
+    const warnings = [...WRAPPERS, `${JUDGE}/bin/jev-ask.sh`].map((rel) => {
+      const shell = runShell(rel, ['aw_settings_file', 'aw_settings_known', 'aw_int_in_range', 'aw_settings_valid', 'aw_apply_settings'], 'unset AW_SETTINGS_NOTIFIED; AW_SETTINGS_APPLIED=""; aw_apply_settings', sb.home);
+      assert.equal(shell.status, 0, `${rel}: ${shell.stderr}`); return { wrapper: rel, stderr: shell.stderr };
+    }).filter(({ stderr }) => /unknown key/.test(stderr));
+    const reader = await main(['--json'], ctx); assert.equal(reader.code, 0, reader.stderr); assert.deepEqual({ unknown: JSON.parse(reader.stdout).unknownKeys, warnings }, { unknown: [], warnings: [] });
   });
 });

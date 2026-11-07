@@ -84,7 +84,7 @@ passthrough (it owns the posture). The service can still **stall on large/substa
 (Issue-001), so keep reviews **focused**; the hard timeout is the guard.
 
 **Host requirements, enforced BEFORE any run is spent.** Because the review reads agy's JSON
-envelope in node, `agy-review` needs **Node ≥ 22** on `PATH`; and because it passes flags the CLI
+envelope in node, `agy-review` needs **Node ≥ 22.21** on `PATH`; and because it passes flags the CLI
 must honour, it probes `agy --help` for **`--output-format`** and **`--disable-slash-commands`**
 first. A missing flag, an unreadable `agy --help`, a missing or too-old node, or a missing
 `bin/agy-envelope.mjs` each refuse with a named cause and spend nothing. This is a **capability

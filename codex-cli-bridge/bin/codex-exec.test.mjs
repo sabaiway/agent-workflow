@@ -1453,15 +1453,10 @@ describe('codex-exec.sh — bridge settings file semantics (bridges 2.3.0)', { c
   });
 });
 
-// ── settings surface ⟷ manifest (drift guard, D6) ────────────────────────────────
-// The manifest `settings` block is the single source: the --help Settings section
-// renders this wrapper's applied subset, and the shell constants (registry, applied
-// subset, typed validation arms) stay set-equal to the UNION of both bridges' blocks
-// (the reader recognizes every family key). The sibling manifest resolves identically
-// in the repo layout and in the kit's bridges/ mirror layout.
 const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
 const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'antigravity-cli-bridge', 'capability.json'), 'utf8'));
-const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const JUDGE_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'typesafe-jev-bridge', 'capability.json'), 'utf8'));
+const ALL_SETTINGS = [MANIFEST, SIBLING_MANIFEST, JUDGE_MANIFEST].flatMap((manifest) => manifest.settings ?? []);
 const SETTINGS_CMD = 'codex-exec';
 
 describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
@@ -1477,10 +1472,10 @@ describe('codex-exec.sh — settings surface ⟷ manifest (D6, manifest-pinned)'
 
   const source = readFileSync(WRAPPER, 'utf8');
 
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
+  it('aw_settings_known carries exactly the UNION of three bridges settings keys', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
-    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
+    assert.ok(ALL_SETTINGS.some((setting) => setting.key === 'JEV_MODEL'), 'the manifest union must include JEV_MODEL');
     setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
   });
 

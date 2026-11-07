@@ -24,9 +24,15 @@ const HTTP_MAX = 299;
 const PROBABILITY_MIN = 0;
 const PROBABILITY_MAX = 1;
 const MILLISECONDS_PER_SECOND = 1000;
-const ARGUMENT_COUNT = 5;
+const ARGUMENT_COUNT = 9;
 const HOST_FLAG = '--host';
 const KEY_FLAG = '--key-variable';
+const MODEL_FLAG = '--model';
+const MODEL_SOURCE_FLAG = '--model-source';
+const ENVIRONMENT_SOURCE = 'environment';
+const MODEL_SOURCES = ['default', 'setting', ENVIRONMENT_SOURCE];
+const MODEL_SETTING = 'JEV_MODEL';
+const MIN_OFFERED_MODELS = 1;
 const MANIFEST_FILE = 'capability.json';
 const REQUEST_ID_HEADER = 'x-typesafe-request-id';
 const AUTHORIZATION_HEADER = 'authorization';
@@ -83,7 +89,7 @@ const checkAnswer = (answer, questions) => isPlainObject(answer) && typeof answe
   });
 const makeNotes = (answers) => Object.fromEntries(Object.entries(answers).map(([id, { choice, probabilities, confidence }]) =>
   [id, { choice, probabilities, confidence }]));
-const readAnswer = async (response, model, questions, key) => {
+const readAnswer = async (response, model, calibratedModel, questions, key) => {
   const header = response.headers.get(REQUEST_ID_HEADER);
   const requestId = header === null ? null : cleanOutsideText(header, key);
   if (response.status < HTTP_MIN || response.status > HTTP_MAX) return makeFailure(EXIT.HTTP,
@@ -91,11 +97,11 @@ const readAnswer = async (response, model, questions, key) => {
   const body = await response.text();
   const answer = (() => { try { return JSON.parse(body); } catch { return null; } })();
   if (!checkAnswer(answer, questions)) return makeFailure(EXIT.ANSWER, 'malformed answer');
-  if (answer.model !== model) return makeFailure(EXIT.MODEL, `requested model ${model}; answering model ${cleanOutsideText(answer.model, key)}`);
-  return { code: EXIT.OK, stdout: JSON.stringify({ model, requestId, notes: makeNotes(answer.answers) }) + NEWLINE, stderr: EMPTY };
+  if (answer.model !== model) return makeFailure(EXIT.MODEL, `requested model ${cleanOutsideText(model, key)}; answering model ${cleanOutsideText(answer.model, key)}`);
+  return { code: EXIT.OK, stdout: JSON.stringify({ model: cleanOutsideText(model, key), calibrated: answer.model === calibratedModel, requestId, notes: makeNotes(answer.answers) }) + NEWLINE, stderr: EMPTY };
 };
 
-export const askJudge = async ({ host, key, model, state, questions, transport, timeoutMs = JUDGE_TIMEOUT_MS }) => {
+export const askJudge = async ({ host, key, model, calibratedModel = model, state, questions, transport, timeoutMs = JUDGE_TIMEOUT_MS }) => {
   const trimmedKey = key.trim();
   const controller = new AbortController();
   const deadline = { timer: null };
@@ -107,7 +113,7 @@ export const askJudge = async ({ host, key, model, state, questions, transport, 
       method: REQUEST_METHOD, headers: { [AUTHORIZATION_HEADER]: `Bearer ${trimmedKey}`, [CONTENT_TYPE_HEADER]: JSON_CONTENT_TYPE },
       body: JSON.stringify({ state, model, questions }), redirect: REDIRECT_MODE, signal: controller.signal,
     });
-    return readAnswer(response, model, questions, trimmedKey);
+    return readAnswer(response, model, calibratedModel, questions, trimmedKey);
   })().catch((error) => makeFailure(EXIT.TRANSPORT, describeError(error, trimmedKey)));
   try {
     return scrubOutcome(await Promise.race([timeout, work]), trimmedKey);
@@ -118,17 +124,25 @@ export const askJudge = async ({ host, key, model, state, questions, transport, 
 };
 
 export const runJudgeCli = async ({ argv, env, folder, transport, timeoutMs = JUDGE_TIMEOUT_MS }) => {
-  const [hostFlag, host, keyFlag, variable, path] = Array.isArray(argv) ? argv : [];
+  const [hostFlag, host, keyFlag, variable, modelFlag, handedModel, sourceFlag, source, path] = Array.isArray(argv) ? argv : [];
   const key = typeof env?.[variable] === STRING_TYPE ? env[variable].trim() : EMPTY;
   const finish = (outcome) => scrubOutcome(outcome, key);
   try {
     if (!Array.isArray(argv) || argv.length !== ARGUMENT_COUNT || hostFlag !== HOST_FLAG || keyFlag !== KEY_FLAG ||
-      ![host, variable, path].every(isNonemptyString)) return finish(makeFailure(EXIT.REQUEST, 'usage: --host <host> --key-variable <variable> <request-file>'));
+      modelFlag !== MODEL_FLAG || sourceFlag !== MODEL_SOURCE_FLAG || typeof handedModel !== STRING_TYPE ||
+      !MODEL_SOURCES.includes(source) || ![host, variable, path].every(isNonemptyString)) return finish(makeFailure(EXIT.REQUEST, 'usage: --host <host> --key-variable <variable> --model <value> --model-source <source> <request-file>'));
     const manifestPath = resolve(folder, MANIFEST_FILE);
-    const model = await readFile(manifestPath, UTF8).then((text) => {
-      try { return JSON.parse(text)?.posture?.model; } catch { return null; }
+    const manifest = await readFile(manifestPath, UTF8).then((text) => {
+      try { return JSON.parse(text); } catch { return null; }
     }, () => null);
-    if (!isNonemptyString(model)) return finish(makeFailure(EXIT.INSTALL, `${manifestPath}: no readable posture.model; ${REMEDY}`));
+    const calibratedModel = manifest?.posture?.model;
+    if (!isNonemptyString(calibratedModel)) return finish(makeFailure(EXIT.INSTALL, `${manifestPath}: no readable posture.model; ${REMEDY}`));
+    const offered = Array.isArray(manifest.settings) ? manifest.settings.find((entry) => entry?.key === MODEL_SETTING)?.offered : null;
+    if (!Array.isArray(offered) || offered.length < MIN_OFFERED_MODELS || !offered.every((value) => typeof value === STRING_TYPE)) return finish(makeFailure(EXIT.INSTALL, `${manifestPath}: no readable ${MODEL_SETTING} offered list; ${REMEDY}`));
+    const model = handedModel === EMPTY ? calibratedModel : handedModel;
+    if (!offered.includes(model)) return finish(makeFailure(EXIT.REQUEST,
+      `model ${cleanOutsideText(model, key)} is not offered; offered: ${cleanOutsideText(offered.join(', '), key)}; set ${MODEL_SETTING}=<an offered version> through /agent-workflow-kit bridge-settings${source === ENVIRONMENT_SOURCE ? `; unset ${MODEL_SETTING} in the environment` : EMPTY}`));
+    const calibrated = model === calibratedModel;
     const text = await readFile(path, UTF8).catch(() => null);
     if (text === null) return finish(makeFailure(EXIT.REQUEST, `${path}: cannot read request file`));
     const parsed = (() => {
@@ -143,8 +157,8 @@ export const runJudgeCli = async ({ argv, env, folder, transport, timeoutMs = JU
     const bodyBytes = measureBytes({ state, model, questions });
     if (bodyBytes > BODY_LIMIT) return finish(makeFailure(EXIT.REQUEST, `request measures ${bodyBytes} bytes; bound ${BODY_LIMIT}`));
     if (!keyIsSet(env, variable)) return finish(makeFailure(EXIT.KEY, `${variable} is unset or blank`));
-    const posture = flattenText(`judge posture: model=${model} host=${host} timeout=${renderTimeout(timeoutMs)}`) + NEWLINE;
-    const outcome = await askJudge({ host, key, model, state, questions, transport, timeoutMs });
+    const posture = flattenText(`judge posture: model=${cleanOutsideText(model, key)} source=model:${source} ${calibrated ? EMPTY : 'uncalibrated '}host=${host} timeout=${renderTimeout(timeoutMs)}`) + NEWLINE;
+    const outcome = await askJudge({ host, key, model, calibratedModel, state, questions, transport, timeoutMs });
     return finish({ ...outcome, stderr: posture + outcome.stderr });
   } catch (error) {
     return finish(makeFailure(EXIT.TRANSPORT, describeError(error, key)));

@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-06 — AD-229: the judge's model is a host setting from the versions its manifest offers (kit 23.4.0 MINOR; judge bridge 1.1.0 MINOR; codex 6.0.1 and agy 8.0.1 PATCH; memory and engine unchanged)
+
+**`typesafe-jev-bridge/capability.json` declares `JEV_MODEL`** (kind `posture`, default `posture.model` `jev-1.13.0`,
+`offered` `jev-1.13.0`, `jev-1.14.0`); `manifest/validate.mjs` admits `offered` on a posture entry only (non-empty,
+unique, valid values, the default among them). `jev-ask.sh` reads the key through `aw_read_posture` and hands
+`--model` and `--model-source` to `jev-client.mjs`, which refuses a version `offered` lacks before the request file is
+read (exit 2) and writes `source=model:<s>`, `uncalibrated` off the default, and `calibrated` in the output.
+`bridge-settings.mjs` reads the judge's catalog from `offered` (no CLI, no bound) and gives it its own shadow line;
+`bridge-settings-read.mjs` labels the offered values. Every wrapper's `aw_settings_known` lists `JEV_MODEL`, and its
+empty-default warning names the manifest's default. `codex-review.sh` and `agy-review.sh` check Node 22.21 (major and
+minor). `scripts/release/version-sync.mjs` lists the judge (alias `jev`), and every `--expect` pass runs the new
+`scripts/release/bridge-baseline.mjs`: a bridge whose canon bytes differ from its kit mirror at the commit that set the
+kit version HEAD carries, at an equal version, is refused; it walks with `walkFiles`, now exported by
+`scripts/sync-mirrors.mjs`. The jev suite's fixtures move to `jev-ask-harness.test.mjs`. Debt row
+BRIDGE-BYTES-CHANGE-WITHOUT-A-VERSION-BUMP closes.
+
 ## 2026-11-06 — AD-228 amended: the judge prints no runtime warning under a proxy on Node 22 (kit 23.3.1 PATCH, judge bridge 1.0.1; memory, engine, codex and agy bridges unchanged)
 
 **`typesafe-jev-bridge/bin/jev-ask.sh` starts node with `--disable-warning=UNDICI-EHPA`**: CI's floor job ran bridge

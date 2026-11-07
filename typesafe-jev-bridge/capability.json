@@ -3,7 +3,7 @@
   "schema": 1,
   "name": "typesafe-jev-bridge",
   "kind": "execution-backend",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "available": true,
   "provides": ["judge"],
   "roles": {
@@ -17,6 +17,16 @@
   "posture": {
     "model": "jev-1.13.0"
   },
+  "settings": [
+    {
+      "key": "JEV_MODEL",
+      "kind": "posture",
+      "default": "jev-1.13.0",
+      "appliesTo": ["jev-ask"],
+      "offered": ["jev-1.13.0", "jev-1.14.0"],
+      "effect": "the judge model every run uses (the host posture); a set value is checked against the manifest's offered versions before the request file is read. /agent-workflow-kit bridge-settings shows the versions offered."
+    }
+  ],
   "detect": {
     "installed": {
       "env": "TYPESAFE_JEV_BRIDGE_DIR",

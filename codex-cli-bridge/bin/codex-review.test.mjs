@@ -303,23 +303,30 @@ describe('codex-review.sh — hard timeout (1.3)', { concurrency: 2 }, () => {
     assert.equal(r.capStdin, '', 'codex must NOT be invoked when the preflight refuses');
   });
 
-  it('refuses by name BEFORE any run when node is missing or below the family floor', async () => {
-    const missing = makeSandbox();
-    const r1 = await run(missing, { path: `${missing.bin}:${farmFor(['node'])}` });
-    rmSync(missing.root, { recursive: true, force: true });
-    assert.equal(r1.status, 127);
-    assert.match(r1.stderr, /'node' is not on PATH/);
-    assert.equal(r1.capStdin, '', 'codex must NOT be invoked without node');
-
-    const old = makeSandbox();
-    const shim = join(old.root, 'node-shim');
-    mkdirSync(shim);
-    writeFileSync(join(shim, 'node'), '#!/bin/sh\necho v18.0.0\n', { mode: 0o755 });
-    const r2 = await run(old, { path: `${shim}:${old.bin}:${farmFor(['node'])}` });
-    rmSync(old.root, { recursive: true, force: true });
-    assert.equal(r2.status, 127);
-    assert.match(r2.stderr, /node 'v18\.0\.0' is below the family floor/);
-    assert.equal(r2.capStdin, '', 'codex must NOT be invoked on a too-old node');
+  it('checks the numeric Node 22.21 floor before any run, in help and shipped text spec:jev-judge/S10', async (context) => {
+    await context.test('missing node refuses before any run', async () => {
+      const missing = makeSandbox();
+      const r1 = await run(missing, { path: `${missing.bin}:${farmFor(['node'])}` });
+      rmSync(missing.root, { recursive: true, force: true });
+      assert.equal(r1.status, 127);
+      assert.match(r1.stderr, /'node' is not on PATH/);
+      assert.equal(r1.capStdin, '', 'codex must NOT be invoked without node');
+    });
+    for (const [version, admitted] of [['v22.3.0', false], ['v22.20.0', false], ['v22.21.0', true], ['v23.0.0', true]]) await context.test(version, async () => {
+      const sandbox = makeSandbox();
+      writeFileSync(join(sandbox.bin, 'node'), `#!/bin/sh\nif [ "$1" = --version ]; then echo ${version}; else exec '${process.execPath.replaceAll("'", "'\\''")}' "$@"; fi\n`, { mode: 0o755 });
+      const result = await run(sandbox, { path: `${sandbox.bin}:${farmFor(['node'])}` });
+      rmSync(sandbox.root, { recursive: true, force: true });
+      assert.equal(result.status, admitted ? 0 : 127, `${version}: ${result.stderr}`);
+      if (admitted) { assert.doesNotMatch(result.stderr, /below the family floor/); assert.notEqual(result.capStdin, '', 'codex runs after the check'); }
+      else { assert.equal(result.capStdin, '', 'codex must NOT run below the floor'); assert.match(result.stderr, /family floor[^\n]*Node[^\n]*22\.21\b/); }
+    });
+    await context.test('--help names Node 22.21', () => assert.match(runHelp('--help').stdout, /\bNode\s*(?:>=\s*|\u2265\s*)?22\.21\b/));
+    await context.test('Markdown and bin/*.sh name the full floor', () => {
+      const paths = readdirSync(join(HERE, '..'), { recursive: true }).filter((path) => !path.split('/').includes('node_modules') && (path.endsWith('.md') || /^bin\/[^/]+\.sh$/.test(path)));
+      const stale = paths.flatMap((path) => readFileSync(join(HERE, '..', path), 'utf8').split('\n').flatMap((line, index) => /\bNode(?:\.js)?\s*(?:>=\s*|\u2265\s*)?22(?!\.21\b)(?=\D|$)/.test(line) ? [`${path}:${index + 1}: ${line}`] : []));
+      assert.deepEqual(stale, [], 'every shipped floor names the minor 21');
+    });
   });
 });
 
@@ -1538,12 +1545,9 @@ describe('codex-review.sh — bridge settings file semantics (bridges 2.3.0)', {
   });
 });
 
-// ── settings surface ⟷ manifest (drift guard, D6) — same contract as codex-exec ──
 const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
-const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'antigravity-cli-bridge', 'capability.json'), 'utf8'));
-const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const ALL_SETTINGS = [MANIFEST, ...['antigravity-cli-bridge', 'typesafe-jev-bridge'].map((directory) => JSON.parse(readFileSync(join(HERE, '..', '..', directory, 'capability.json'), 'utf8')))].flatMap((manifest) => manifest.settings ?? []);
 const SETTINGS_CMD = 'codex-review';
-
 describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned)', { concurrency: 2 }, () => {
   it('--help Settings section keys set-EQUAL the manifest appliesTo subset', async () => {
     const help = runHelp('--help').stdout;
@@ -1554,16 +1558,13 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
     setEq(got, want, 'help Settings keys ⟷ manifest settings.appliesTo');
     assert.ok(section.some((l) => l.includes('agent-workflow/bridge-settings.conf')), 'the section names the settings file');
   });
-
   const source = readFileSync(WRAPPER, 'utf8');
-
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', async () => {
+  it('aw_settings_known carries exactly the UNION of three bridges settings keys spec:bridge-model/S18', async () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
-    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
     setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
+    assert.ok(m[1].trim().split(/\s+/).includes('JEV_MODEL'), 'the three-manifest union includes JEV_MODEL');
   });
-
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', async () => {
     const m = source.match(/^AW_SETTINGS_APPLIED="([^"]*)"$/m);
     assert.ok(m, 'AW_SETTINGS_APPLIED not found');
@@ -1571,7 +1572,6 @@ describe('codex-review.sh — settings surface ⟷ manifest (D6, manifest-pinned
     assert.ok(want.length > 0);
     setEq(m[1].trim().split(/\s+/), want, 'applied subset ⟷ manifest appliesTo');
   });
-
   it('aw_settings_valid arms carry the manifest typed constants per key', async () => {
     const body = source.match(/aw_settings_valid\(\) \{[\s\S]*?\n\}/);
     assert.ok(body, 'aw_settings_valid not found');

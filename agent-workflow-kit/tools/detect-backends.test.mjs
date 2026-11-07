@@ -327,9 +327,13 @@ describe('detectBackend — readiness over an ok manifest', () => {
 const readManifest = (dir) => JSON.parse(readFileSync(join(dir, 'capability.json'), 'utf8'));
 
 it('spec:jev-judge/S1 the in-repo judge manifest has exactly the shipped fields, shared provenance and a valid verdict', () => {
-  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.0.1","available":true,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
+  const expected = JSON.parse('{"family":"agent-workflow","schema":1,"name":"typesafe-jev-bridge","kind":"execution-backend","version":"1.1.0","available":true,"provides":["judge"],"roles":{"judge":{"cmd":"jev-ask","source":"bin/jev-ask.sh","output":"advisory"}},"services":["jev"],"detect":{"installed":{"env":"TYPESAFE_JEV_BRIDGE_DIR","default":"~/.claude/skills/typesafe-jev-bridge","file":"SKILL.md"}},"provenance":{"author":"sabaiway","source":"github:sabaiway/agent-workflow"},"posture":{"model":"jev-1.13.0"}}');
   const manifest = readManifest(join(REPO, JUDGE));
+  expected.settings = [{ key: 'JEV_MODEL', kind: 'posture', default: 'jev-1.13.0', appliesTo: ['jev-ask'], offered: ['jev-1.13.0', 'jev-1.14.0'], effect: manifest.settings?.[0]?.effect }];
   assert.deepEqual(manifest, expected);
+  assert.equal(typeof manifest.settings[0].effect, 'string');
+  assert.ok(manifest.settings[0].effect.trim());
+  assert.doesNotMatch(manifest.settings[0].effect, /jev-\d|latest|preview/i);
   for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) assert.deepEqual(manifest.provenance, readManifest(join(REPO, bridge)).provenance);
   const result = validateManifest(join(REPO, JUDGE));
   assert.equal(result.result, VALID, result.errors.join('; '));

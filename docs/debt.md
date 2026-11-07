@@ -58,14 +58,27 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   view, while the same check passed alone a minute later. Narrow fix: the commit stage keeps only the hook's failure
   lines, or each stage's reason prints last. Proof: a release-run test whose fake commit prints 60 KB and whose
   preflight fails; the reason is the last line. Residual exposure, NOT live: the stage re-run alone shows it.
-- **BRIDGE-BYTES-CHANGE-WITHOUT-A-VERSION-BUMP** — invariant: a byte change in a shipped bridge bundle ships with a new
-  bridge version, the premise of the equal-version drift report (`agent-workflow-kit/tools/setup-backends.mjs:644`).
-  Origin: kit 23.3.1 changed `typesafe-jev-bridge/bin/jev-ask.sh` with no checker to require the bump (bumped by hand
-  to 1.0.1), and `scripts/release/version-sync.mjs:52-58` does not list the judge. Narrow fix: version-sync lists the
-  judge, and a release check refuses a bridge whose bundle bytes differ from the last release tag at an equal version.
-  Proof: a version-sync test with a fixture bridge whose bytes changed at an equal version, refused; `--expect` names
-  the judge. Residual exposure, NOT live: after the 1.0.1 bump no shipped bridge differs from its last release at an
-  equal version.
+- **BRIDGE-BASELINE-ADMITS-A-LOWERED-VERSION** — invariant: changed bridge bytes ship with a bridge version greater
+  than the baseline's. Origin: `scripts/release/bridge-baseline.mjs:81` compares `currentVersion === baselineVersion`
+  (story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE, raised by the lens at its diff review). Narrow fix: refuse when the
+  bytes changed and `compareSemver(currentVersion, baselineVersion) <= 0`, importing `compareSemver` from
+  `agent-workflow-kit/tools/semver-lite.mjs` (no second comparator); the refusal names both versions. Proof: a
+  bridge-baseline cell with changed bytes and a hand-lowered version, refused. Residual exposure, NOT live:
+  `version-sync --bump` refuses a version below the current one (`scripts/release/version-sync.mjs:522-523`), so only a
+  hand edit of a manifest reaches it.
+- **BRIDGE-SETTINGS-OFFERED-CATALOG-HAS-THREE-SEAMS** — invariant: one predicate decides an offered-catalog posture
+  entry across the settings reader and writer (the allowed label, the control-byte note, the catalog, the shadow line).
+  Origin: `agent-workflow-kit/tools/bridge-settings-read.mjs:78` (`allowedLabel` falls back to the CLI text when
+  `offered` is absent or not an array, and prints an empty label for an empty array), `bridge-settings-read.mjs:185`
+  (`JUDGE_MODEL_KEY`), `agent-workflow-kit/tools/bridge-settings.mjs:16` (`usesOfferedCatalog`); raised by codex, agy
+  and the lens at the S18 diff review. Narrow fix: export one predicate from `bridge-settings-read.mjs` (an entry with
+  `offered`, or a bridge with no CLI catalog bound) and key all four on it, the label reading "the bundled manifest has
+  no usable offered list" when it is unusable; `CATALOG_BOUNDS_MS` moves to a leaf with no `node:child_process` import
+  that both `bridge-catalog.mjs` and `bridge-settings-read.mjs` import, so the read-only core gains no spawn import.
+  Proof: a bridge-settings-model cell over the S15 broken-bundle fixture whose read-out label names the unusable list;
+  a cell with a fixture posture bridge that has neither a bound nor `offered`. Residual exposure, NOT live: `manifest
+  validate --strict` refuses a present but unusable `offered`, `jev-ask.test.mjs` S20 pins that the shipped
+  `JEV_MODEL` carries one, and the judge is the only posture bridge without a CLI catalog bound.
 
 - **USER-SERVICES-LIST-READS-A-NON-REGULAR-FILE** — invariant: the user loader refuses a `services.json` that is not
   a regular file, as `agent-workflow-kit/tools/bridge-settings-read.mjs:119` does for its sibling settings file.
@@ -1093,6 +1106,13 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual exposure, NOT live: `git grep "from '../../"` over both canon bridge folders is empty after the fix.
 
 ## Closed
+
+- **BRIDGE-BYTES-CHANGE-WITHOUT-A-VERSION-BUMP** — invariant: a byte change in a shipped bridge bundle ships with a new
+  bridge version, the premise of the equal-version drift report (`agent-workflow-kit/tools/setup-backends.mjs:644`).
+  Origin: kit 23.3.1 changed `typesafe-jev-bridge/bin/jev-ask.sh` with no checker to require the bump. Closed in story
+  S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE (kit 23.4.0, AD-229): version-sync lists the judge, and every `--expect`
+  pass runs `scripts/release/bridge-baseline.mjs`, which refuses a bridge whose canon bytes differ from its kit mirror
+  at the commit that set the kit version HEAD carries, at an equal version (`scripts/release/bridge-baseline.test.mjs`).
 
 - **READMES-DIAGRAM-SAYS-SCRIPTS-COME-ON-A-YES** — invariant: every README line that says where the kit's scripts live
   and when they arrive is true of the release it ships in. Raised by the lens, round 1 of the KIT-SCRIPTS S9 diff

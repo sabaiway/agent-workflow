@@ -610,6 +610,16 @@ export const validateManifest = (skillDir, options = {}) => {
             if (!cmds.has(c)) errors.push(`${at}.appliesTo names "${c}" which is no roles.*.cmd of this manifest`);
           }
         }
+        if (Object.hasOwn(entry, 'offered')) {
+          const offered = entry.offered;
+          const validOffered = entry.kind === 'posture' && Array.isArray(offered) && offered.length > 0
+            && offered.every((value) => typeof value === 'string' && settingValueValid(entry, value))
+            && new Set(offered).size === offered.length
+            && typeof entry.default === 'string' && offered.includes(entry.default);
+          if (!validOffered) {
+            errors.push(`${at}.offered (${JSON.stringify(entry.key)}) must be a non-empty array of unique posture values containing the string default (posture kind only)`);
+          }
+        }
         if (!SETTING_KINDS.has(entry.kind)) {
           errors.push(`${at}.kind must be one of enum|integer|duration|boolean|posture`);
           return; // the typed checks below are meaningless without a kind

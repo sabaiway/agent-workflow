@@ -194,7 +194,7 @@ Honesty + posture (D4/D5):
   refuses pre-spend in every mode.
 
 Environment: CODEX_REVIEW_SCHEMA=1 (structured JSON findings), CODEX_HARD_TIMEOUT (seconds, default 1800), CODEX_PROBE=1 (throwaway probe only), AW_REVIEW_RECEIPTS (receipt file override), AW_REVIEW_NONCE (dispatch nonce — mints the finding manifest beside the receipt; the --nonce <n> flag is its plain-argument equivalent).
-Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, Node >= 22, a git work tree with a root AGENTS.md (--help needs none of these).
+Requires at run time: the codex CLI on PATH, a ChatGPT-subscription login, Node >= 22.21, a git work tree with a root AGENTS.md (--help needs none of these).
 HELP
     exit 0
     ;;
@@ -227,7 +227,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL JEV_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -327,7 +327,11 @@ aw_read_posture() {
         AW_HOST_VALUE="$value"
         AW_HOST_SOURCE="setting"
       elif (( notify )); then
-        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        if [[ -n "$default" ]]; then
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        else
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the manifest's default." >&2
+        fi
       fi
     fi
   fi
@@ -412,7 +416,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="6.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="6.0.1"  # aw-version-anchor
 # Generous hard cap for a slow review at the host posture's effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
@@ -1241,17 +1245,20 @@ set -- "${scan_args[@]+"${scan_args[@]}"}"
 # parse and the nonce finding-manifest mint run in node, so a missing or too-old node refuses by
 # name BEFORE any codex run — never a spent run with the wrong diagnostic.
 AW_MIN_NODE_MAJOR=22
+AW_MIN_NODE_MINOR=21
 if ! command -v node >/dev/null 2>&1; then
   echo "error: 'node' is not on PATH. This review runs node for the plan artifact-path normalization," >&2
-  echo "       the CODEX_REVIEW_SCHEMA parse and the nonce finding-manifest mint (family floor: Node >= ${AW_MIN_NODE_MAJOR})." >&2
-  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  echo "       the CODEX_REVIEW_SCHEMA parse and the nonce finding-manifest mint (family floor: Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR})." >&2
+  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}, then re-run." >&2
   exit 127
 fi
 aw_node_version="$(node --version 2>/dev/null || true)"
 aw_node_major="${aw_node_version#v}"; aw_node_major="${aw_node_major%%.*}"
-if [[ ! "$aw_node_major" =~ ^[0-9]+$ ]] || (( aw_node_major < AW_MIN_NODE_MAJOR )); then
-  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}) this review needs." >&2
-  echo "       Refusing BEFORE any run is spent. Upgrade Node to >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+aw_node_minor="${aw_node_version#*.}"; aw_node_minor="${aw_node_minor%%.*}"
+if [[ ! "$aw_node_major" =~ ^[0-9]+$ || ! "$aw_node_minor" =~ ^[0-9]+$ ]] ||
+    (( 10#$aw_node_major < AW_MIN_NODE_MAJOR || (10#$aw_node_major == AW_MIN_NODE_MAJOR && 10#$aw_node_minor < AW_MIN_NODE_MINOR) )); then
+  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}) this review needs." >&2
+  echo "       Refusing BEFORE any run is spent. Upgrade Node to >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}, then re-run." >&2
   exit 127
 fi
 
@@ -1482,7 +1489,7 @@ if [[ -f "$out" && -s "$out" ]]; then
     # every item carries a severity inside the closed enum, read ONCE — a legal multiline layout
     # parses, a decoy "verdict" inside a findings string never substitutes, malformed / out-of-enum /
     # uncountable stays empty (the D4 failed-run arm): a payload the wrapper cannot count is never
-    # receipted as "0 blocking". Node >=22 is a family floor, so the one-liner adds no dependency.
+    # receipted as "0 blocking". Node >=22.21 is a family floor, so the one-liner adds no dependency.
     schema_parse="$(node -e 'try{const v=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));const sev=["blocker","major","minor","nit"];if(["ship","revise","rethink"].includes(v.verdict)&&Array.isArray(v.findings)&&v.findings.every((f)=>f!==null&&typeof f==="object"&&sev.includes(f.severity)))process.stdout.write(v.verdict+"\t"+v.findings.filter((f)=>f.severity==="blocker"||f.severity==="major").length);}catch{}' "$out" 2>/dev/null || true)"
     verdict="${schema_parse%%$'\t'*}"
     blocking_count="${schema_parse#*$'\t'}"

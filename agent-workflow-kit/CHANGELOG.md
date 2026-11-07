@@ -4,6 +4,22 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.4.0 — the judge's model is a setting you choose once (AD-229)
+
+**You now pick the Jev version the judge asks in `/agent-workflow-kit bridge-settings`, from the versions the bridge
+offers, and every `jev-ask` run uses it.** The setting is `JEV_MODEL`; with none set, the judge runs its default
+version, as before. A version the bridge does not offer is turned away before anything is sent, with a line naming
+the offered versions and how to set one.
+
+- **Notes from another version say so.** The default version is the calibrated one. On any other offered version the
+  posture line carries `uncalibrated` and the output's new `calibrated` field is `false`; on the default it is `true`.
+- **An environment `JEV_MODEL` sets that run's version**, turned away like a set one when the bridge does not offer
+  it; an empty `JEV_MODEL=` selects the default. A `bridge-settings` change warns when the environment also sets the key.
+- **`codex-review` and `agy-review` now refuse a Node older than 22.21**, the family floor, by name before any run is
+  spent; Node 22.0 to 22.20 used to pass their check.
+- **The bridges refresh by version:** the judge goes to 1.1.0, codex to 6.0.1 and agy to 8.0.1, and your next `init` or
+  `/agent-workflow-kit upgrade` refreshes each one you placed.
+
 ## 23.3.1 — the judge prints no runtime warning under a proxy on Node 22 (AD-228)
 
 **On Node 22, a `jev-ask` run under a proxy no longer prints Node's experimental-feature warning for its proxy agent,

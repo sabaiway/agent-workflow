@@ -18,7 +18,7 @@ agy --version                          # captured here from 1.1.13 — see the c
   release that introduced each flag is not measurable from one installed build, so a guessed floor
   would refuse working installs. What actually gates a review is a **capability probe** —
   `agy-review` reads `agy --help` and refuses BEFORE spending a run unless the install advertises
-  both **`--output-format`** and **`--disable-slash-commands`**, plus **Node ≥ 22** on `PATH` (the
+  both **`--output-format`** and **`--disable-slash-commands`**, plus **Node ≥ 22.21** on `PATH` (the
   review parses agy's JSON envelope in node) and the skill's own `bin/agy-envelope.mjs`. Each
   refusal names the missing capability and the recovery. `agy-run` needs none of these.
 

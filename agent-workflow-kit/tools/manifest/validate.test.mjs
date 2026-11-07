@@ -333,3 +333,37 @@ describe('spec:manifest-validate/S7 judge joins the closed role vocabulary', () 
     assert.deepEqual(line.match(/`([^`]+)`/)[1].split('|').map((word) => word.trim()).sort(), expected);
   });
 });
+
+describe('spec:manifest-validate/S8 offered is admitted on posture only', () => {
+  const entry = { key: 'FIX_MODEL', kind: 'posture', default: 'model-a', appliesTo: ['fixture-exec'], effect: 'a posture knob' };
+  for (const [name, extra, expected = INVALID] of [
+    ['valid posture', { offered: ['Model 2 (High)', 'model-a'] }, VALID],
+    ['enum', { kind: 'enum', values: ['model-a'], offered: ['model-a'] }],
+    ['integer', { kind: 'integer', min: 1, max: 2, default: '1', offered: ['1'] }],
+    ['duration', { kind: 'duration', default: '1s', offered: ['1s'] }], ['boolean', { kind: 'boolean', default: '1', offered: ['1'] }],
+    ['null', { offered: null }], ['empty array', { offered: [] }],
+    ['string', { offered: 'model-a' }], ['object', { offered: { id: 'model-a' } }],
+    ['repeated id', { offered: ['model-a', 'model-a'] }], ['non-string id', { offered: ['model-a', 1] }],
+    ['empty id', { offered: ['model-a', ''] }], ['leading whitespace', { offered: ['model-a', ' model-b'] }],
+    ['trailing whitespace', { offered: ['model-a', 'model-b '] }], ['control-byte id', { offered: ['model-a', 'model-\u0000b'] }],
+    ['missing default', { offered: ['model-b'] }], ['null default', { default: null, offered: ['model-a'] }],
+  ]) it(`offered ${name} → ${expected}`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'manifest-offered-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
+    cpSync(at('settings-valid'), dir, { recursive: true });
+    writeFileSync(join(dir, 'capability.json'), JSON.stringify({ ...manifestOf('settings-valid'), settings: [{ ...entry, ...extra }] }));
+    const result = validateManifest(dir);
+    assert.equal(result.result, expected, result.errors.join('; '));
+    if (expected === VALID) assert.deepEqual(result.errors, []);
+    else assert.ok(result.errors.some((error) => error.includes('offered') && error.includes(entry.key)), result.errors.join('; '));
+  });
+  it('the canon judge is valid and declares JEV_MODEL with offered', () => {
+    const dir = fileURLToPath(new URL('../../../typesafe-jev-bridge/', import.meta.url));
+    const manifest = JSON.parse(readFileSync(join(dir, 'capability.json'), 'utf8')); const result = validateManifest(dir);
+    assert.equal(result.result, VALID, result.errors.join('; ')); assert.deepEqual(result.errors, []);
+    assert.ok(Array.isArray(manifest.settings?.find((setting) => setting.key === 'JEV_MODEL')?.offered));
+  });
+  for (const bridge of ['codex-cli-bridge', 'antigravity-cli-bridge']) it(`${bridge} settings carry no offered`, () => {
+    const manifest = JSON.parse(readFileSync(new URL(`../../../${bridge}/capability.json`, import.meta.url), 'utf8'));
+    assert.ok(manifest.settings.every((setting) => !Object.hasOwn(setting, 'offered')));
+  });
+});

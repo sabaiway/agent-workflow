@@ -479,8 +479,8 @@ describe('agy.sh — default model pin', () => {
 // resolves identically in the repo layout and in the kit's bridges/ mirror layout.
 const SETTINGS_HEADER = 'Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):';
 const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
-const SIBLING_MANIFEST = JSON.parse(readFileSync(join(HERE, '..', '..', 'codex-cli-bridge', 'capability.json'), 'utf8'));
-const ALL_SETTINGS = [...(MANIFEST.settings ?? []), ...(SIBLING_MANIFEST.settings ?? [])];
+const ALL_SETTINGS = [MANIFEST, ...['codex-cli-bridge', 'typesafe-jev-bridge'].map((bridge) =>
+  JSON.parse(readFileSync(join(HERE, '..', '..', bridge, 'capability.json'), 'utf8')))].flatMap((manifest) => manifest.settings ?? []);
 const SETTINGS_CMD = 'agy-run';
 const setEq = (got, want, msg) => assert.deepEqual([...got].sort(), [...want].sort(), msg);
 const helpSection = (text, header) => {
@@ -519,11 +519,11 @@ describe('agy.sh — settings surface ⟷ manifest (D6, manifest-pinned)', () =>
 
   const source = readFileSync(WRAPPER, 'utf8');
 
-  it('aw_settings_known carries exactly the UNION of both bridges settings keys', () => {
+  it('aw_settings_known carries exactly the UNION of three bridges settings keys', () => {
     const m = source.match(/aw_settings_known\(\) \{\n  case " ([^"]+) " in/);
     assert.ok(m, 'aw_settings_known registry case not found');
-    assert.ok(ALL_SETTINGS.length >= 5, 'both manifests must contribute settings');
-    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ manifest union');
+    assert.ok(ALL_SETTINGS.some((s) => s.key === 'JEV_MODEL'), 'the three-manifest union must include JEV_MODEL');
+    setEq(m[1].trim().split(/\s+/), ALL_SETTINGS.map((s) => s.key), 'shell registry ⟷ three-manifest union');
   });
 
   it('AW_SETTINGS_APPLIED equals the manifest appliesTo subset for this wrapper', () => {

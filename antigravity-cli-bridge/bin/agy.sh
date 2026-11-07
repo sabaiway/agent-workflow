@@ -158,7 +158,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL JEV_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -258,7 +258,11 @@ aw_read_posture() {
         AW_HOST_VALUE="$value"
         AW_HOST_SOURCE="setting"
       elif (( notify )); then
-        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        if [[ -n "$default" ]]; then
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        else
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the manifest's default." >&2
+        fi
       fi
     fi
   fi

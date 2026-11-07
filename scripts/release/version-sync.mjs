@@ -43,6 +43,7 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readAuthoritativeVersion } from '../../agent-workflow-kit/tools/manifest/validate.mjs';
 import { syncBridgeMirror, BRIDGE_DIRS } from '../sync-mirrors.mjs';
+import { checkBridgeBaselines } from './bridge-baseline.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
@@ -55,6 +56,7 @@ export const FAMILY_DIRS = Object.freeze([
   'agent-workflow-kit',
   'codex-cli-bridge',
   'antigravity-cli-bridge',
+  'typesafe-jev-bridge',
 ]);
 
 // Short aliases (the publish.yml package vocabulary + the bridge shorthands) → package dir.
@@ -65,6 +67,7 @@ export const PACKAGE_ALIASES = Object.freeze({
   codex: 'codex-cli-bridge',
   agy: 'antigravity-cli-bridge',
   antigravity: 'antigravity-cli-bridge',
+  jev: 'typesafe-jev-bridge',
 });
 
 export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
@@ -624,6 +627,7 @@ export const runCli = (argv, deps = {}) => {
       if (!report) problems.push(`${dir}: expected ${version} but the package dir is absent`);
       else problems.push(...checkExpectation(report, version));
     }
+    if (opts.expect.length > 0) problems.push(...checkBridgeBaselines(root, BRIDGE_DIRS));
     if (opts.json) {
       log(JSON.stringify({ inSync: problems.length === 0, packages: reports, problems }, null, 2));
     } else {

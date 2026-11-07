@@ -2,7 +2,7 @@
 name: antigravity-cli-bridge
 description: Delegate work to Google's Antigravity CLI (`agy`) — the successor to Gemini CLI — to reach Gemini, Claude, and GPT-OSS models under a Google AI Pro/Ultra subscription from the terminal. Use when the user wants to run a headless `agy` prompt, hand a focused task or second-opinion review to `agy`, install or authenticate Antigravity CLI, check or economise its quota/models, bridge project context into `agy`, set up a second delegated-execution backend beside Codex, or troubleshoot `agy` flags, models, auth, conversations, or its headless behaviour.
 metadata:
-  version: '8.0.0'
+  version: '8.0.1'
 ---
 
 # antigravity-cli-bridge
@@ -142,7 +142,7 @@ turn** exits non-zero the captured stdout is published as-is (the CLI's own fail
 envelope is parsed only on a zero exit), so a failing run may print a JSON or partial payload — an
 **intermediate** feed turn is the exception, its output stays private (Invariant E) and its failure
 prints only a named error. So it **probes before
-spending anything**: `agy --help` must advertise both flags, **Node ≥ 22** must be on `PATH`, and
+spending anything**: `agy --help` must advertise both flags, **Node ≥ 22.21** must be on `PATH`, and
 `bin/agy-envelope.mjs` must be present — each refusal names the missing capability and its recovery.
 A version floor is deliberately not used (the release that introduced a flag is not measurable from
 one installed build, so a guessed floor would refuse working installs), and a failed probe is never

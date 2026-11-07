@@ -162,7 +162,7 @@ Notes:
   envelope is parsed only on a zero exit); an INTERMEDIATE feed turn is the exception, its output
   stays private (Invariant E) and its failure prints only a named error. Enforced by a PRE-SPEND
   capability probe, not a version floor: agy --help must advertise --output-format and
-  --disable-slash-commands, node must be >= 22, and bin/agy-envelope.mjs must be present — otherwise
+  --disable-slash-commands, node must be >= 22.21, and bin/agy-envelope.mjs must be present — otherwise
   the review refuses before any run is spent and names the missing capability
   pre-dispatch host-diff: before the FIRST dispatch of this bridge, diff the hosts of the services its manifest names
   against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE
@@ -242,7 +242,7 @@ Honesty + posture (D4/D5):
   mode.
 
 Closed grammar: unknown flags are rejected; no '--' passthrough (the flag escape is --ungrounded; the env escape is AGY_PROBE=1).
-Requires at run time: the agy CLI on PATH, a Google AI subscription login, Node >= 22 (--help needs none of these).
+Requires at run time: the agy CLI on PATH, a Google AI subscription login, Node >= 22.21 (--help needs none of these).
 HELP
     exit 0
     ;;
@@ -271,7 +271,7 @@ aw_settings_file() {
   printf '%s/agent-workflow/bridge-settings.conf' "${XDG_CONFIG_HOME:-$HOME/.config}"
 }
 aw_settings_known() {
-  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL " in
+  case " CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES AGY_HARD_TIMEOUT AGY_REVIEW_ALLOW_ADDDIR AGY_REVIEW_MAX_TOTAL_BYTES CODEX_MODEL CODEX_EFFORT AGY_MODEL JEV_MODEL " in
     *" $1 "*) return 0 ;;
     *) return 1 ;;
   esac
@@ -371,7 +371,11 @@ aw_read_posture() {
         AW_HOST_VALUE="$value"
         AW_HOST_SOURCE="setting"
       elif (( notify )); then
-        echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        if [[ -n "$default" ]]; then
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the built-in default '$default'." >&2
+        else
+          echo "warning: $key in bridge settings file '$file' is empty or carries a control byte — using the manifest's default." >&2
+        fi
       fi
     fi
   fi
@@ -459,7 +463,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="8.0.0"  # aw-version-anchor
+AW_BRIDGE_VERSION="8.0.1"  # aw-version-anchor
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
 # newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
@@ -644,6 +648,7 @@ AGY_RUN="$HERE/agy.sh"
 # a usable node. A probe that FAILS is never read as "capability present" (fail closed).
 AW_REQUIRED_AGY_FLAGS=(--output-format --disable-slash-commands)
 AW_MIN_NODE_MAJOR=22
+AW_MIN_NODE_MINOR=21
 aw_agy_version() {
   local v
   v="$(agy --version 2>/dev/null | LC_ALL=C awk 'NR == 1 { print }' || true)"
@@ -713,17 +718,20 @@ if (( ${#aw_missing_flags[@]} > 0 )); then
   exit 127
 fi
 if ! command -v node >/dev/null 2>&1; then
-  echo "error: 'node' is not on PATH, and this review parses agy's JSON envelope in node (Node >= ${AW_MIN_NODE_MAJOR})." >&2
-  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  echo "error: 'node' is not on PATH, and this review parses agy's JSON envelope in node (Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR})." >&2
+  echo "       Refusing BEFORE any run is spent. Install Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}, then re-run." >&2
   exit 127
 fi
 aw_node_version="$(node --version 2>/dev/null || true)"
 aw_node_major="${aw_node_version#v}"
 aw_node_major="${aw_node_major%%.*}"
-if [[ ! "$aw_node_major" =~ ^[0-9]+$ ]] || (( aw_node_major < AW_MIN_NODE_MAJOR )); then
-  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}) this review needs" >&2
+aw_node_minor="${aw_node_version#*.}"
+aw_node_minor="${aw_node_minor%%.*}"
+if [[ ! "$aw_node_major" =~ ^[0-9]+$ || ! "$aw_node_minor" =~ ^[0-9]+$ ]] ||
+    (( 10#$aw_node_major < AW_MIN_NODE_MAJOR || (10#$aw_node_major == AW_MIN_NODE_MAJOR && 10#$aw_node_minor < AW_MIN_NODE_MINOR) )); then
+  echo "error: node '${aw_node_version:-<unreadable>}' is below the family floor (Node >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}) this review needs" >&2
   echo "       to parse agy's JSON envelope. Refusing BEFORE any run is spent." >&2
-  echo "       Upgrade Node to >= ${AW_MIN_NODE_MAJOR}, then re-run." >&2
+  echo "       Upgrade Node to >= ${AW_MIN_NODE_MAJOR}.${AW_MIN_NODE_MINOR}, then re-run." >&2
   exit 127
 fi
 if [[ ! -f "$AGY_ENVELOPE_READER" ]]; then

@@ -79,9 +79,12 @@ this block). Each entry:
 - `default` (string|null, **required property** — a missing key fails validation) — `null` = no
   file default, the wrapper built-ins apply (state them in `effect`); a non-null default must
   itself pass the kind's validation.
+- `offered` (string[], optional; `posture` only) — when present, a non-empty array of distinct
+  strings, each passing the posture value rule, that contains the entry's string `default`.
+  On another kind, or in any other shape (`null` included), it makes the manifest invalid.
 - `appliesTo` (string[], required) — the wrapper `cmd` names (from `roles.*.cmd` of THIS
   manifest) that APPLY the key. Every wrapper still RECOGNIZES the whole family registry (the
-  union of both bridges' `settings` keys) and skips other wrappers' keys silently.
+  union of every bundled bridge's `settings` keys) and skips other wrappers' keys silently.
 - `effect` (string, required) — what the knob does, incl. built-in defaults and any spend/risk
   caveat (the credit-rate caveat rides here for the tier knob).
 - `retired` (string, optional; **>= 20 chars when present**) — the STATED reason a key is kept only

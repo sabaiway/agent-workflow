@@ -39,7 +39,7 @@ const bridgeDirs = (ctx) =>
     .filter((m) => m.kind === 'execution-backend')
     .map((m) => ({ name: m.name, dir: join(ctx.bundleRoot ?? DEFAULT_BUNDLE_ROOT, m.name) }));
 
-// Load the union of both bridges' `settings` blocks → a Map keyed by settings key, each entry carrying
+// Load the union of the bundled bridges' `settings` blocks → a Map keyed by settings key, each entry carrying
 // its typed rule + the owning bridge. A missing/corrupt bundle is a loud STOP (a writer cannot be
 // honored without a trustworthy allowlist; a reader/snapshot caller catches it to degrade). The
 // registry is validated at build time (manifest validate --strict + the mirror drift-guard); here we
@@ -75,7 +75,9 @@ export const allowedLabel = (entry) => {
     case 'integer': return `integer ${entry.min}..${entry.max}`;
     case 'duration': return 'duration (e.g. 5m, 30m, 90s — a unit is required, nonzero)';
     case 'boolean': return '"0" | "1"';
-    case 'posture': return 'a value the installed CLI offers (checked when set)';
+    case 'posture': return Array.isArray(entry.offered)
+      ? entry.offered.map((value) => `"${value}"`).join(' | ')
+      : 'a value the installed CLI offers (checked when set)';
     default: return entry.kind;
   }
 };
@@ -180,13 +182,16 @@ const REFUSED = (key, v) => ({ value: null, source: 'default', configuredIn: 'en
 // (AGY_MODEL: no model, agy's own settings decide); else a non-empty, control-free file value; else the
 // default. Its sources are the wrappers' banner words: default, setting, environment.
 const EMPTY_ENV_DROPS_MODEL = new Set(['AGY_MODEL']);
+const JUDGE_MODEL_KEY = 'JEV_MODEL';
 const postureOf = (entry, parsed, getenv) => {
   const key = entry.key;
   if (Object.prototype.hasOwnProperty.call(getenv, key)) {
     const v = getenv[key];
     if (v === '' && EMPTY_ENV_DROPS_MODEL.has(key)) return { value: null, source: 'environment', configuredIn: 'env', note: `the env ${key}= drops the model — agy's own settings decide` };
     if (v === '') return { value: entry.default, source: 'environment', configuredIn: 'env', note: `the env ${key}= selects the built-in default` };
-    if (hasControlByte(v)) return { value: null, source: 'environment', configuredIn: 'env', note: `env value "${safeShow(v)}" carries control bytes for ${key} — ${entry.bridge === 'antigravity-cli-bridge'
+    if (hasControlByte(v)) return { value: null, source: 'environment', configuredIn: 'env', note: `env value "${safeShow(v)}" carries control bytes for ${key} — ${key === JUDGE_MODEL_KEY
+      ? `${entry.appliesTo.join(', ')} refuses the run before any request`
+      : entry.bridge === 'antigravity-cli-bridge'
       ? 'agy-review refuses the run pre-spend; agy-run has no control-byte screen and refuses it only through its catalog check (it runs it when the catalog is unreadable)'
       : 'the codex wrappers refuse the run pre-spend'}` };
     return { value: v, source: 'environment', configuredIn: 'env' };
