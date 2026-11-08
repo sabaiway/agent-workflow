@@ -4,11 +4,16 @@ import { join } from 'node:path';
 export const VEHICLES_REL = 'docs/ai/vehicles.json';
 export const EXECUTOR_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high', fallback: 'sonnet' });
 export const REVIEW_LENS_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high' });
+export const JUDGE_LANES = Object.freeze({ 'gate-triage': 'the raw failing output a gate run printed' });
+export const JUDGE_CONSENT = "Naming a lane in the lanes array of the judge object of docs/ai/vehicles.json consents to sending that lane's content to the judge bridge's vendor whenever a kit step of that lane runs, and to nothing else.";
 
 const README_KEY = '_README';
 const EXECUTOR_KEY = 'executor';
 const LENS_KEY = 'review-lens';
-const TOP_LEVEL_KEYS = Object.freeze([README_KEY, EXECUTOR_KEY, LENS_KEY]);
+const JUDGE_KEY = 'judge';
+const LANES_KEY = 'lanes';
+const JUDGE_DEFAULTS = Object.freeze({ [LANES_KEY]: Object.freeze([]) });
+const TOP_LEVEL_KEYS = Object.freeze([README_KEY, EXECUTOR_KEY, LENS_KEY, JUDGE_KEY]);
 const EXECUTOR_KEYS = Object.freeze(Object.keys(EXECUTOR_DEFAULTS));
 const LENS_KEYS = Object.freeze(Object.keys(REVIEW_LENS_DEFAULTS));
 const OBJECT_TYPE = 'object';
@@ -29,6 +34,9 @@ const REQUIRED_KEY = 'required key is missing';
 const OBJECT_REQUIRED = 'must be a plain object';
 const STRING_REQUIRED = 'must be a string';
 const NONEMPTY_REQUIRED = 'must not be empty';
+const ARRAY_REQUIRED = 'must be an array';
+const JUDGE_LANE_REQUIRED = 'is not a judge lane';
+const DISTINCT_LANE_REQUIRED = 'is repeated';
 const TOKEN_REQUIRED = 'must be a bare token';
 const DISTINCT_FALLBACK_REQUIRED = 'fallback must differ from model';
 const DIRECTORY_KIND = 'directory';
@@ -66,6 +74,27 @@ const validateSection = (value, rel, name, keys) => {
   return { ok: true, values: Object.fromEntries(keys.map((key) => [key, section[key]])) };
 };
 
+const validateJudge = (value, rel) => {
+  const section = value[JUDGE_KEY];
+  if (!isPlainObject(section)) return refuseValue(rel, JUDGE_KEY, OBJECT_REQUIRED);
+  for (const key of Object.keys(section)) {
+    if (key !== LANES_KEY) return refuseValue(rel, `${JUDGE_KEY}.${key}`, UNKNOWN_KEY);
+  }
+  const qualifiedKey = `${JUDGE_KEY}.${LANES_KEY}`;
+  if (!Object.hasOwn(section, LANES_KEY)) return refuseValue(rel, qualifiedKey, REQUIRED_KEY);
+  const lanes = section[LANES_KEY];
+  if (!Array.isArray(lanes)) return refuseValue(rel, qualifiedKey, ARRAY_REQUIRED);
+  if (!lanes.length) return refuseValue(rel, qualifiedKey, NONEMPTY_REQUIRED);
+  for (const [index, lane] of lanes.entries()) {
+    const key = `${qualifiedKey}[${index}]`;
+    if (typeof lane !== STRING_TYPE) return refuseValue(rel, key, STRING_REQUIRED);
+    const quotedLane = JSON.stringify(lane);
+    if (!Object.hasOwn(JUDGE_LANES, lane)) return refuseValue(rel, key, `${quotedLane} ${JUDGE_LANE_REQUIRED}`);
+    if (lanes.indexOf(lane) !== index) return refuseValue(rel, key, `${quotedLane} ${DISTINCT_LANE_REQUIRED}`);
+  }
+  return { ok: true, values: { [LANES_KEY]: Object.freeze([...lanes]) } };
+};
+
 export const validateVehicles = (value, rel = VEHICLES_REL) => {
   if (!isPlainObject(value)) return refuseValue(rel, BODY_NAME, OBJECT_REQUIRED);
   for (const key of Object.keys(value)) {
@@ -80,10 +109,16 @@ export const validateVehicles = (value, rel = VEHICLES_REL) => {
   if (executor.values.fallback === executor.values.model) {
     return refuseValue(rel, EXECUTOR_KEY, DISTINCT_FALLBACK_REQUIRED);
   }
-  const settings = { executor: executor.values };
-  if (!Object.hasOwn(value, LENS_KEY)) return { ok: true, settings };
-  const lens = validateSection(value, rel, LENS_KEY, LENS_KEYS);
-  return lens.ok ? { ok: true, settings: { ...settings, [LENS_KEY]: lens.values } } : lens;
+  const lens = Object.hasOwn(value, LENS_KEY) ? validateSection(value, rel, LENS_KEY, LENS_KEYS) : null;
+  if (lens && !lens.ok) return lens;
+  const judge = Object.hasOwn(value, JUDGE_KEY) ? validateJudge(value, rel) : null;
+  if (judge && !judge.ok) return judge;
+  const settings = {
+    [EXECUTOR_KEY]: executor.values,
+    ...(lens && { [LENS_KEY]: lens.values }),
+    ...(judge && { [JUDGE_KEY]: judge.values }),
+  };
+  return { ok: true, settings };
 };
 
 const probeEntry = (path, lstat) => {
@@ -126,24 +161,16 @@ export const loadVehicles = (cwd, readFile = readFileSync, lstat = lstatSync) =>
   return answer;
 };
 
-export const resolveExecutor = (answer) => {
-  if (answer?.state === PRESENT) {
-    return { posture: { ...answer.settings.executor, source: FILE_SOURCE }, reason: null };
-  }
-  if (answer?.state === ABSENT) {
-    return { posture: { ...EXECUTOR_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
-  }
+const resolveSection = (answer, name, defaults) => {
   if (answer?.state === UNREADABLE) return { posture: null, reason: answer.reason };
-  throw fail(CONFIG_EXIT_CODE, `${VEHICLES_REL}: ${UNKNOWN_STATE} ${String(answer?.state)}`);
+  if (answer?.state !== PRESENT && answer?.state !== ABSENT) {
+    throw fail(CONFIG_EXIT_CODE, `${VEHICLES_REL}: ${UNKNOWN_STATE} ${String(answer?.state)}`);
+  }
+  const fromFile = answer.state === PRESENT && Object.hasOwn(answer.settings, name);
+  const values = fromFile ? answer.settings[name] : defaults;
+  return { posture: { ...values, source: fromFile ? FILE_SOURCE : DEFAULT_SOURCE }, reason: null };
 };
 
-export const resolveReviewLens = (answer) => {
-  if (answer?.state === PRESENT && Object.hasOwn(answer.settings, LENS_KEY)) {
-    return { posture: { ...answer.settings[LENS_KEY], source: FILE_SOURCE }, reason: null };
-  }
-  if (answer?.state === PRESENT || answer?.state === ABSENT) {
-    return { posture: { ...REVIEW_LENS_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
-  }
-  if (answer?.state === UNREADABLE) return { posture: null, reason: answer.reason };
-  throw fail(CONFIG_EXIT_CODE, `${VEHICLES_REL}: ${UNKNOWN_STATE} ${String(answer?.state)}`);
-};
+export const resolveExecutor = (answer) => resolveSection(answer, EXECUTOR_KEY, EXECUTOR_DEFAULTS);
+export const resolveReviewLens = (answer) => resolveSection(answer, LENS_KEY, REVIEW_LENS_DEFAULTS);
+export const resolveJudgeLanes = (answer) => resolveSection(answer, JUDGE_KEY, JUDGE_DEFAULTS);
