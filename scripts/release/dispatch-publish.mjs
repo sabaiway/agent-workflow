@@ -5,7 +5,7 @@
 // Publishing: one invocation dispatches .github/workflows/publish.yml — either ONE `all` run
 // covering the whole family (the preferred form: 2 workflow runs per family release; ordering
 // inside the workflow via `kit needs: [memory, engine]`, and an unchanged member no-ops via the
-// Issue-007 Release-step branch in _publish-one.yml) or one run per named package (the
+// judge step of _publish-one.yml (spec release/shipped-change)) or one run per named package (the
 // per-package fallback) — polls every run to conclusion, and (in live mode) verifies the
 // published artifact on npm + the GitHub Release.
 //

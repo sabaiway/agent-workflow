@@ -3,6 +3,40 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **PUBLISHED-VERSION-WITHOUT-A-TAG-IS-REFUSED-ON-MOVED-BYTES** — invariant: a version this repository published is
+  never refused only because its tag push did not happen. Origin: `scripts/release/shipped-change.mjs:118`, a published
+  version with no tag whose fresh pack's integrity differs exits 1 even when this commit published it (a run that
+  stopped before its tag push, then npm's pack output moved), since nothing proves which commit was published (spec
+  release/shipped-change, Stated limits). Narrow fix: none in code; the recovery is a lightweight tag pushed at the
+  published commit, then a re-run. Proof: the S2 cell `differing integrities with absent tag` (exit 1). Residual exposure,
+  not live: the published memory 11.0.1, engine 6.0.3 and kit 23.3.1 carry their tags on origin. Raised by the lens at the S20 spec review
+  (2026-11-08).
+
+- **CODEX-POSTURE-FUNCTIONS-ONE-HOME** — invariant: a posture function both codex wrappers run has one source.
+  Origin: `codex-cli-bridge/bin/codex-exec.sh:633-669` and `codex-review.sh:541-584` carry the same posture functions
+  by hand (out of scope for S19, spec testing/fixture-isolation). Narrow fix: one sourced file in the bridge's `bin/`
+  both wrappers source, mirrored by `scripts/sync-mirrors.mjs`. Proof: the wrapper suites green with one definition and
+  a drift cell gone. Residual exposure, not live: the two copies are equal today. Raised at the S19 spec review.
+- **FIXTURE-CENSUS-MISSES-A-GIT-LED-ARGV** — invariant: a literal subcommand that brings a repository into being counts
+  as invoking wherever a literal `'git'` precedes it, in a list as in a call. Origin:
+  `scripts/testing/fixture-scopes.test.mjs:71-77`: an all-literal list `['git', 'init', '-q']` falls to the word-list
+  arm (`:75-76`) as passing, and `:67` passes any one-name call directly inside a bare `assert(`. Narrow fix: the
+  `'git'`-prefix arm for `[` parents in `:71`, `:67` requires a member `assert.`; both shapes join the invoking table,
+  red first. Proof: the S5 cell names a fixture holding each shape. Residual exposure, not live: no tracked source holds
+  either shape today. Raised by the review lens at the S19 diff review (2026-11-07).
+- **FIXTURE-HELPER-CONFIG-STATUS-UNREAD** — invariant: a failed `config maintenance.auto false` of the fixture helper
+  fails its test. Origin: `agent-workflow-kit/test/tier-walk-harness.test.mjs:114` records the helper's config call
+  under the label `init` (the getStep of `tier-walk-e2e.test.mjs:137` reads only the first), and
+  `agent-workflow-kit/tools/core-evidence-store.test.mjs:282-285` and `exec-producer.test.mjs:327-329` read any failed
+  call as "no sha256" and skip. Narrow fix: label the config call apart and assert its status; collect only the init
+  result for the skip. Proof: a runner whose config call fails turns each cell red. Residual exposure, not live: the
+  config call has not failed on any host. Raised by the review lens at the S19 diff review (2026-11-07).
+- **PACKAGE-SEAL-ROOT-NOT-REALPATH** — invariant: the restore unmounts every seal mount whatever symlink the workspace
+  path holds. Origin: `scripts/testing/package-seal.mjs:9` resolves the checkout root without `realpathSync`, while the
+  kernel records the resolved mount point, so `planRestore` (`:29-36`) matches no mount under a symlinked workspace.
+  Narrow fix: `realpathSync` at `:9`. Proof: an S7 row with a symlinked root. Residual exposure, not live: GitHub-hosted
+  runners have no symlink in the workspace path. Raised by the review lens at the S19 diff review (2026-11-07).
+
 - **GATE-HOOK-RESTATES-THE-DECLARATION-SCHEMA** — invariant: every constant the bundled gate hook shares with a kit
   module is a generated, drift-checked copy of that module's export, never a hand copy. Origin:
   `agent-workflow-kit/references/hooks/gate-approve.mjs:175-182` restates the gate id rule, `GATE_KEYS` and
@@ -175,11 +209,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   text. Narrow fix: the S23 sweep also reads each table row with its column header. Proof: a cell `OFF` under a
   `Network?` header fails S23. Residual exposure, not live: no shipped page carries such a cell today. Raised by the
   review lens at the S10 diff review (2026-10-05).
-- **JEV-S10-PROFILE-SUITES-UNDER-TMP** — invariant: the profile suites pass wherever the checkout lives. Origin:
-  `codex-cli-bridge/bin/codex-exec-jev.test.mjs:16` and `codex-model-posture.test.mjs` build fixture repos under
-  the checkout, so a checkout under `/tmp` takes the correct temp-root fallback and the profile cells fail. Narrow
-  fix: place the profile fixtures by a temp-root-free path the suite chooses, or skip with a stated reason. Proof:
-  the suites pass from a checkout under `/tmp`. Raised by codex at the S10 release review (2026-10-06).
 - **JEV-S10-EXIT-72-DROPS-NESTED-SANDBOX-HINT** — invariant: a nested-sandbox failure always prints its recovery
   hint. Origin: `codex-cli-bridge/bin/codex-exec.sh:1707`, the exit-72 branch on `bwrap: execvp … Permission
   denied` returns before `aw_scan_nested_sandbox`, so the earlier diagnosis and its recovery lane are not printed.
@@ -921,13 +950,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   there. Fix direction, to weigh when taken: name every fenced marker line in the refusal's line; treating a fenced
   marker line as blocking an insert also refuses a file that only quotes the markers in a sample, a new upgrade STOP,
   so the taker weighs that against the silent duplicate insert. Raised by the KIT-TEXT S1 spec review (lens).
-- **PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES** — invariant: the kit's publish test step passes whatever order its suites
-  run in. Origin: `agent-workflow-kit/bin/install.test.mjs:704` runs `npm pack` over the kit folder while the codex
-  bridge suites (`bridges/*/bin/*.test.mjs` in `.github/workflows/_publish-one.yml:171`) create and delete fixture
-  repos under `bridges/codex-cli-bridge/node_modules/.aw-fixtures/`; a file removed mid-walk fails the pack with
-  ENOENT. The kit 20.0.0 publish run 40652332877 failed on it, and the re-dispatch passed. Narrow fix: the bridge
-  suites build their fixtures under the OS temp folder, never inside the package. Residual exposure, live: a release
-  publish fails at random and needs a hand re-run. Raised at the KIT-TEXT release.
 - **CI-FLOOR-RUNS-TESTS-BEFORE-THE-ROOT-HOOK-ENDS** — invariant: every suite passes on the Node floor CI pins.
   Origin: on Node 22.0.0 (`.github/workflows/ci.yml:43`) the file-level async `before` of
   `agent-workflow-kit/test/tier-walk-e2e.test.mjs:146-152` is not awaited past its first `await`, so the `seeded`
@@ -1106,6 +1128,16 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   Residual exposure, NOT live: `git grep "from '../../"` over both canon bridge folders is empty after the fix.
 
 ## Closed
+
+- **PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES** — invariant: the kit's publish test step passes whatever order its suites
+  run in. Origin: the kit 20.0.0 publish run 40652332877 and the S18 run 42336443694 failed when a bridge suite wrote
+  fixtures inside the package while the kit's pack walked it (Issue-034). Closed in story S19 of
+  JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE (AD-230), shipped with kit 23.4.0: no test writes under a package folder, the
+  publish job seals every package folder read-only for its test step (`scripts/testing/package-seal.test.mjs`).
+
+- **JEV-S10-PROFILE-SUITES-UNDER-TMP** — invariant: the profile suites pass wherever the checkout lives. Closed in story
+  S19 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE (AD-230): the profile suites take their roots from
+  `codex-cli-bridge/bin/codex-fixtures-harness.test.mjs`, repositories in the git-ignored `.test-repos/`.
 
 - **BRIDGE-BYTES-CHANGE-WITHOUT-A-VERSION-BUMP** — invariant: a byte change in a shipped bridge bundle ships with a new
   bridge version, the premise of the equal-version drift report (`agent-workflow-kit/tools/setup-backends.mjs:644`).

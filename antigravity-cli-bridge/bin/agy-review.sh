@@ -463,7 +463,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by agy-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="agy"
-AW_BRIDGE_VERSION="8.0.1"  # aw-version-anchor
+AW_BRIDGE_VERSION="8.0.2"  # aw-version-anchor
 # D5 control-byte screen — IMMEDIATELY after resolution, BEFORE any interpolation can echo raw
 # newline/ESC bytes into stderr/the terminal (round-2 fold).
 if [[ "$AGY_MODEL" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then

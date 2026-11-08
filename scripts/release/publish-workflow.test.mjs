@@ -179,3 +179,92 @@ describe('spec:script-family/S10 the gate, CI and publish run every suite of bot
     assert.deepEqual(treeWords(step, 'references/scripts/'), ['references/scripts/{,*/}*.test.mjs']);
   });
 });
+
+const readWorkflowStep = (name) => {
+  const body = stepBody(source, name);
+  const lines = body.split('\n');
+  const indent = lines.find((line) => line.trim()).search(/\S/u);
+  const keys = Object.fromEntries(lines.filter((line) => line.search(/\S/u) === indent && !line.trim().startsWith('#'))
+    .map((line) => line.trim().match(/^([\w-]+):\s*(.*)$/u)?.slice(1)).filter(Boolean));
+  const runAt = lines.findIndex((line) => line.search(/\S/u) === indent && line.trim().startsWith('run:'));
+  assert.notEqual(runAt, -1, `${name} has a run`);
+  const run = [keys.run.replace(/^[|>][-+]?$/u, ''), ...lines.slice(runAt + 1)]
+    .map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+  return { body, keys, run };
+};
+
+describe('spec:shipped-change/S5 the workflow judges what an already-published package ships before publishing', () => {
+  const judgeName = 'Judge an already-published package by what it ships';
+  it('the judge has its id, workspace root, sole already-published condition and no continue-on-error', () => {
+    const { keys } = readWorkflowStep(judgeName);
+    assert.equal(keys.id, 'judge');
+    assert.equal(keys['working-directory'], '${{ github.workspace }}');
+    assert.equal(keys.if.replace(/^\$\{\{\s*|\s*\}\}$/gu, '').trim(), "steps.target.outputs.already_published == 'yes'");
+    assert.equal(Object.hasOwn(keys, 'continue-on-error'), false);
+  });
+  it('the judge follows pack and precedes both Publish steps', () => {
+    stepBody(source, judgeName);
+    const names = [...source.matchAll(/^\s*- name: (.+)$/gmu)].map((match) => match[1]);
+    const order = ['Pack the tarball once', judgeName, 'Publish (dry run \u2014 pack-only, no OIDC exchange)', 'Publish (OIDC trusted publishing)'];
+    for (const name of order) assert.ok(names.includes(name), `step "${name}" exists`);
+    assert.ok(names.indexOf(order[0]) < names.indexOf(judgeName));
+    for (const name of order.slice(2)) assert.ok(names.indexOf(judgeName) < names.indexOf(name));
+  });
+  it('the judge runs exactly one script invocation with the six quoted flag values', () => {
+    const { run } = readWorkflowStep(judgeName);
+    const commands = run.join('\n').replace(/\\\n\s*/gu, ' ').split('\n');
+    assert.equal(commands.length, 1);
+    const words = commands[0].match(/"[^"]*"|'[^']*'|\S+/gu) ?? [];
+    assert.deepEqual(words.slice(0, 2), ['node', 'scripts/release/shipped-change.mjs']);
+    assert.equal(words.length, 14);
+    const pairs = words.slice(2).flatMap((word, index, rest) => index % 2 === 0 ? [[word, rest[index + 1]]] : []);
+    const expected = [
+      ['--root', '"$GITHUB_WORKSPACE"'], ['--dir', '"${{ inputs.dir }}"'], ['--to', '"$GITHUB_SHA"'],
+      ['--packed', '"$RUNNER_TEMP/pack.json"'], ['--packument', '"$RUNNER_TEMP/packument.json"'],
+      ['--github-output', '"$GITHUB_OUTPUT"'],
+    ];
+    const byFlag = ([left], [right]) => left.localeCompare(right);
+    assert.deepEqual(pairs.sort(byFlag), expected.sort(byFlag));
+  });
+  it('pack writes its JSON record and takes the filename only through the script', () => {
+    const { run } = readWorkflowStep('Pack the tarball once');
+    const text = run.join('\n');
+    assert.match(text, />\s*"\$RUNNER_TEMP\/pack\.json"/u);
+    assert.match(text, /node\s+"?(?:\$GITHUB_WORKSPACE\/)?scripts\/release\/shipped-change\.mjs"?\s+--filename\s+"\$RUNNER_TEMP\/pack\.json"/u);
+    assert.doesNotMatch(text, /JSON\.parse|d\[0\]\.filename/u);
+  });
+  it('target writes the packument file the judge reads', () => {
+    assert.match(readWorkflowStep('Show publish target').run.join('\n'), /(?:-o|>)\s*"\$RUNNER_TEMP\/packument\.json"/u);
+  });
+});
+
+describe('spec:shipped-change/S6 the Release step takes the judge no-op before repair and the tag guard', () => {
+  const releaseName = 'Create or repair the GitHub Release (draft-first, immutable-safe)';
+  const marker = 'nothing to publish, nothing to repair';
+  it('the no-op marker is a live echo immediately followed by exit 0', () => {
+    const lines = readWorkflowStep(releaseName).body.split('\n').map((line) => line.trim()).filter(Boolean);
+    const at = lines.findIndex((line) => /^echo\s/u.test(line) && line.includes(marker));
+    assert.ok(at >= 0, 'the no-op marker exists');
+    assert.equal(lines[at + 1], 'exit 0');
+  });
+  it('the nearest shell if before the no-op marker tests the judge noop against yes', () => {
+    const { run } = readWorkflowStep(releaseName);
+    const at = run.findIndex((line) => line.includes(marker));
+    assert.ok(at >= 0, 'the no-op marker exists');
+    const condition = run.slice(0, at).filter((line) => /^if \[/u.test(line)).at(-1);
+    assert.match(condition ?? '', /^if \[\s*"\$\{\{\s*steps\.judge\.outputs\.noop\s*\}\}"\s*=\s*"yes"\s*\];\s*then$/u);
+  });
+  it('the no-op marker precedes dist.tarball, which precedes the tag-move guard', () => {
+    const text = readWorkflowStep(releaseName).run.join('\n');
+    const positions = [marker, 'dist.tarball', 'refusing to move it'].map((part) => text.indexOf(part));
+    assert.ok(positions.every((position) => position >= 0));
+    assert.ok(positions[0] < positions[1] && positions[1] < positions[2]);
+  });
+  for (const command of ['diff', 'fetch']) {
+    it(`the Release step holds no git ${command}`, () => {
+      const text = readWorkflowStep(releaseName).run.join('\n');
+      assert.doesNotMatch(text, new RegExp(`\\bgit\\b[^\\n]*\\b${command}\\b`, 'u'));
+      if (command === 'fetch') assert.doesNotMatch(text, /fetch --depth/u);
+    });
+  }
+});

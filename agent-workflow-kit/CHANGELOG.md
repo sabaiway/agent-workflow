@@ -17,7 +17,7 @@ the offered versions and how to set one.
   it; an empty `JEV_MODEL=` selects the default. A `bridge-settings` change warns when the environment also sets the key.
 - **`codex-review` and `agy-review` now refuse a Node older than 22.21**, the family floor, by name before any run is
   spent; Node 22.0 to 22.20 used to pass their check.
-- **The bridges refresh by version:** the judge goes to 1.1.0, codex to 6.0.1 and agy to 8.0.1, and your next `init` or
+- **The bridges refresh by version:** the judge goes to 1.1.0, codex to 6.0.2 and agy to 8.0.2, and your next `init` or
   `/agent-workflow-kit upgrade` refreshes each one you placed.
 
 ## 23.3.1 — the judge prints no runtime warning under a proxy on Node 22 (AD-228)

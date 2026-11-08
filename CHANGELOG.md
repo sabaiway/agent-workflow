@@ -7,6 +7,33 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-08 — AD-231: the publish judges an already-published package by the bytes it ships (ships kit 23.4.0 with AD-229 and AD-230; codex 6.0.2 and agy 8.0.2 PATCH; memory 11.0.1 and engine 6.0.3 unchanged)
+
+**`.github/workflows/_publish-one.yml` gains the step `judge`**, after `Pack the tarball once` and before both Publish
+steps, in the dry run and the live run alike, taken only for an already-published version. It runs the new
+`scripts/release/shipped-change.mjs`: equal integrities of the fresh pack and the registry's version give the no-op
+when the tag is at another commit, and the Release step's repair when there is no tag or a lightweight tag at this commit;
+differing ones give the no-op only when the tag's commit and this one differ in no covered path (the folder and the root's
+`.gitattributes`, `.gitignore`, `.npmignore`, `package.json`) and the package declares no `prepack`, `prepare` or
+`postpack` script and no bundled dependencies; an annotated tag at this commit, a git failure or an unreadable record
+exits 2. The pack step writes npm's JSON to `$RUNNER_TEMP/pack.json` and takes the filename through the script's
+`--filename`, which reads npm 11's array and npm 12's keyed form. The Release step's no-op follows `steps.judge.outputs.noop`;
+its tag fetch and folder diff are gone, and their pins move from `dispatch-publish.test.mjs` to
+`publish-workflow.test.mjs`. New spec `release/shipped-change`. Codex and agy go to 6.0.2 and 8.0.2 (6.0.1 and 8.0.1
+were never published) because AD-230 moved their shipped tests after the commit that set kit 23.4.0.
+
+## 2026-11-07 — AD-230: every fixture tree has one owner scope outside the package folders (no release; ships with kit 23.4.0)
+
+**No test writes under a package folder.** The codex profile suites take their roots from the new
+`codex-cli-bridge/bin/codex-fixtures-harness.test.mjs` (repositories in the git-ignored `.test-repos/`, a private child
+`TMPDIR`); every repository a test makes comes from the new `scripts/testing/fixture-repo.mjs` or its package's own
+helper with `maintenance.auto` false, pinned by the census `scripts/testing/fixture-scopes.test.mjs`, whose one control
+repository turns maintenance on to prove a commit's trace shows git's maintenance child. CI and the
+publish job seal every package folder read-only for the test step (`scripts/testing/package-seal.mjs`, self-checked);
+the local unit-tests gate runs under a before/after census (`scripts/testing/package-census.mjs`). New spec
+`testing/fixture-isolation`. Debt rows PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES and JEV-S10-PROFILE-SUITES-UNDER-TMP
+close (Issue-034).
+
 ## 2026-11-06 — AD-229: the judge's model is a host setting from the versions its manifest offers (kit 23.4.0 MINOR; judge bridge 1.1.0 MINOR; codex 6.0.1 and agy 8.0.1 PATCH; memory and engine unchanged)
 
 **`typesafe-jev-bridge/capability.json` declares `JEV_MODEL`** (kind `posture`, default `posture.model` `jev-1.13.0`,
