@@ -15,7 +15,7 @@ const OUTCOMES = ['ok', 'EROFS', 'EACCES', 'ENOENT', 'signal SIGKILL', 'spawn EN
 const CI_ARGUMENTS = [
   'agent-workflow-memory/{scripts,bin}/*.test.mjs',
   "'agent-workflow-memory/references/scripts/**/*.test.mjs'",
-  'agent-workflow-kit/{tools,tools/manifest,tools/services,tools/gate-log-groups,tools/project-rules,tools/source-size,bin}/*.test.mjs',
+  'agent-workflow-kit/{tools,tools/manifest,tools/services,tools/project-rules,tools/source-size,bin}/*.test.mjs',
   "'agent-workflow-kit/references/scripts/**/*.test.mjs'",
   'agent-workflow-kit/tools/*.test/*.test.mjs',
   'agent-workflow-kit/test/*.test.mjs',
@@ -32,7 +32,7 @@ const CI_ARGUMENTS = [
 ];
 const PUBLISH_RUN = `set -euo pipefail
 if [ "\${{ inputs.dir }}" = "agent-workflow-kit" ]; then
-  node --test tools/*.test.mjs tools/manifest/*.test.mjs tools/services/*.test.mjs tools/gate-log-groups/*.test.mjs tools/project-rules/*.test.mjs tools/source-size/*.test.mjs tools/*.test/*.test.mjs 'references/scripts/**/*.test.mjs' bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
+  node --test tools/*.test.mjs tools/manifest/*.test.mjs tools/services/*.test.mjs tools/project-rules/*.test.mjs tools/source-size/*.test.mjs tools/*.test/*.test.mjs 'references/scripts/**/*.test.mjs' bin/*.test.mjs test/*.test.mjs bridges/*/bin/*.test.mjs
 elif [ "\${{ inputs.dir }}" = "agent-workflow-engine" ]; then
   node --test test/*.test.mjs
 else
