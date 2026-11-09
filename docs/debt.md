@@ -1127,6 +1127,16 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   three mirror files red before the fix (`ERR_MODULE_NOT_FOUND`, 3/3), green after (130/130 with the canon copies).
   Residual exposure, NOT live: `git grep "from '../../"` over both canon bridge folders is empty after the fix.
 
+- **JUDGE-LANE-SETTINGS-NAMED-AFTER-THEIR-REVERSE** — invariant: a sibling epic's first judge story scopes the restore
+  of S3's mechanism (the `judge` section of `docs/ai/vehicles.json`, its reader, its resolver and the consent copies)
+  with its own lane and consent text. Origin: JEV S6 reversed `8fb9cac` before any release shipped it, while
+  `docs/ai/epics/SEMANTIC-NOTES-ON-PROSE-RULES-AND-RESTATEMENTS.md:44`,
+  `docs/ai/epics/COUNCIL-FINDINGS-JUDGED-BEFORE-THE-ORCHESTRATOR-READS.md:36` and
+  `docs/ai/specs/kit/jev-judge/index.md:85` still name S3's lane settings, or S5 and S6, as live. Narrow fix: none in
+  code; that story's spec session rewrites those sentences and states the old meaning of S5 and S6 in jev-judge's
+  next revision. Proof: a read of those three places after that session. Residual exposure, NOT live: no sibling
+  story is planned, and no release shipped the section.
+
 ## Closed
 
 - **PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES** — invariant: the kit's publish test step passes whatever order its suites

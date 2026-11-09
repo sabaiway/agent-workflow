@@ -1,10 +1,13 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
+  readdirSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JEV_TEXT } from './jev-guide.mjs';
+
 const MODULE_PATH = './vehicle-settings.mjs';
 const ENSURE_MODULE_PATH = './ensure-ops.mjs';
 const VOCABULARY_MODULE_PATH = './ensure-vocabulary.mjs';
@@ -13,7 +16,6 @@ const EXPORT_NAMES = Object.freeze({
   read: 'readVehicles', load: 'loadVehicles', resolve: 'resolveExecutor',
   ensure: 'ensureVehicles', implementations: 'OWN_IMPLEMENTATIONS', operations: 'ENSURE_OPS',
   lensDefaults: 'REVIEW_LENS_DEFAULTS', resolveLens: 'resolveReviewLens',
-  judgeLanes: 'JUDGE_LANES', judgeConsent: 'JUDGE_CONSENT', resolveJudge: 'resolveJudgeLanes',
 });
 const ABSENT_PREFIX = 'absent: ';
 const absent = (name) => () => { throw new Error(`${ABSENT_PREFIX}${name}`); };
@@ -28,12 +30,10 @@ const loadVehicles = loaded.loadVehicles ?? absent(EXPORT_NAMES.load);
 const resolveExecutor = loaded.resolveExecutor ?? absent(EXPORT_NAMES.resolve);
 const REVIEW_LENS_DEFAULTS = loaded.REVIEW_LENS_DEFAULTS ?? absent(EXPORT_NAMES.lensDefaults);
 const resolveReviewLens = loaded.resolveReviewLens ?? absent(EXPORT_NAMES.resolveLens);
-const JUDGE_LANES = loaded.JUDGE_LANES ?? absent(EXPORT_NAMES.judgeLanes);
-const JUDGE_CONSENT = loaded.JUDGE_CONSENT ?? absent(EXPORT_NAMES.judgeConsent);
-const resolveJudgeLanes = loaded.resolveJudgeLanes ?? absent(EXPORT_NAMES.resolveJudge);
 const ensureVehicles = loadedEnsures.ensureVehicles ?? absent(EXPORT_NAMES.ensure);
 const OWN_IMPLEMENTATIONS = loadedEnsures.OWN_IMPLEMENTATIONS ?? absent(EXPORT_NAMES.implementations);
 const ENSURE_OPS = loadedVocabulary.ENSURE_OPS ?? absent(EXPORT_NAMES.operations);
+
 const SETTINGS_REL = 'docs/ai/vehicles.json';
 const DEPLOYMENT_REL = 'docs/ai';
 const PARENT_REL = '..';
@@ -104,22 +104,7 @@ const TEMPLATE_REASON = /^template-unreadable\b/;
 const REGEX_SPECIAL = /[.*+?^${}()|[\]\\]/g;
 const REGEX_ESCAPE = '\\$&';
 const WORD_BOUNDARY = '\\b';
-const JUDGE_KEY = 'judge';
-const LANES_KEY = 'lanes';
-const EXPECTED_LANE_IDS = Object.freeze(['gate-triage']);
-const UNKNOWN_LANE_IDS = Object.freeze([UNKNOWN_KEY, 'constructor', 'toString', '__proto__']);
-const SETUP_REL = 'references/modes/setup.md';
-const RETENTION_PREFIX = 'Retention as the vendor states it:';
-const BRIDGE_NAME = 'typesafe-jev-bridge';
-const BACKENDS_COMMAND = '/agent-workflow-kit backends';
-const EXPECTED_CONSENT = "Naming a lane in the lanes array of the judge object of docs/ai/vehicles.json consents to sending that lane's content to the judge bridge's vendor whenever a kit step of that lane runs, and to nothing else.";
-const ORIGINAL_TEMPLATE_README = "The executor vehicle's model, effort and fallback as a project setting, read by the kit's vehicle-settings readers into one posture, which the placed executor's body follows: the agents writer derives it from model and effort, the upgrade reports a differing body as pending, and fallback names the model of the one retry; seeded once and never clobbered, hand-edited as three bare tokens with fallback differing from model. The optional review-lens section holds the bundled review lens's model and effort, opus and high by default: the agents writer derives the placed review-lens.md from them and re-derives a differing copy.";
-const COMMA_SPACE = ', ';
-const NEWLINE = '\n';
-const JSON_INDENT = 2;
-const SINGLE_MATCH_COUNT = 1;
-const FORBIDDEN_JUDGE_NAMES = /\bjev\b|typesafe/i;
-const nonObjects = [[], null, NON_OBJECT_STRING, NON_OBJECT_NUMBER];
+
 const matchWord = (word) => new RegExp(`${WORD_BOUNDARY}${word.replace(REGEX_SPECIAL, REGEX_ESCAPE)}${WORD_BOUNDARY}`);
 const withProject = (run) => {
   const directory = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
@@ -151,25 +136,6 @@ const assertUnreadable = (answer, expectedWord) => {
   assertReason(answer.reason, expectedWord);
   assert.deepEqual(resolveExecutor(answer), { posture: null, reason: answer.reason });
 };
-const assertMalformed = (value, reason, resolvers = [resolveReviewLens]) => withProject((directory) => {
-  writeSettings(directory, value);
-  const answer = readVehicles(directory);
-  assertUnreadable(answer, reason);
-  for (const resolvePosture of resolvers) assert.deepEqual(resolvePosture(answer), { posture: null, reason: answer.reason });
-  assertLoadFailure(() => loadVehicles(directory), answer.reason);
-  const validation = validateVehicles(value);
-  assert.equal(validation.ok, false);
-  assertReason(validation.reason, reason);
-  assert.equal(answer.reason, validation.reason);
-});
-const withJudgeSettings = (run) => [VALID_BODY, LENS_BODY].forEach((base) => withProject((directory) => {
-  const absentAnswer = readVehicles(directory);
-  writeSettings(directory, base);
-  const before = readVehicles(directory);
-  const value = { ...base, judge: { lanes: Object.keys(JUDGE_LANES) } };
-  writeSettings(directory, value);
-  run({ directory, base, absentAnswer, before, value, answer: readVehicles(directory) });
-}));
 const assertOutcome = (answer, token, cause) => {
   assert.equal(answer.op, VEHICLES_OP);
   assert.equal(answer.token, token);
@@ -194,6 +160,7 @@ it('reads and resolves authored values (spec:vehicle-settings/S1)', () => {
     assert.equal(VEHICLES_REL, SETTINGS_REL);
   });
 });
+
 it('resolves absence to frozen defaults and pins the seed (spec:vehicle-settings/S2)', () => {
   withProject((directory) => {
     const answer = readVehicles(directory);
@@ -212,7 +179,9 @@ it('resolves absence to frozen defaults and pins the seed (spec:vehicle-settings
     assert.equal(existsSync(join(directory, SETTINGS_REL)), false);
   });
 });
+
 it('refuses every malformed form without a posture (spec:vehicle-settings/S3)', () => {
+  const nonObjects = [[], null, NON_OBJECT_STRING, NON_OBJECT_NUMBER];
   const malformed = [
     ...nonObjects.map((value) => ({ value, reason: NON_OBJECT_REASON })),
     { value: { ...VALID_BODY, [UNKNOWN_KEY]: true }, reason: matchWord(UNKNOWN_KEY) },
@@ -239,7 +208,19 @@ it('refuses every malformed form without a posture (spec:vehicle-settings/S3)', 
       value: { ...LENS_BODY, [LENS_KEY]: { ...CUSTOM_LENS, [key]: value } }, reason: matchWord(lensKey(key)),
     }))),
   ];
-  for (const { value, reason } of malformed) assertMalformed(value, reason);
+  for (const { value, reason } of malformed) {
+    withProject((directory) => {
+      writeSettings(directory, value);
+      const answer = readVehicles(directory);
+      assertUnreadable(answer, reason);
+      assert.deepEqual(resolveReviewLens(answer), { posture: null, reason: answer.reason });
+      assertLoadFailure(() => loadVehicles(directory), answer.reason);
+      const validation = validateVehicles(value);
+      assert.equal(validation.ok, false);
+      assertReason(validation.reason, reason);
+      assert.equal(answer.reason, validation.reason);
+    });
+  }
   withProject((directory) => {
     writeFileSync(join(directory, SETTINGS_REL), INVALID_JSON);
     const answer = readVehicles(directory);
@@ -253,6 +234,7 @@ it('refuses every malformed form without a posture (spec:vehicle-settings/S3)', 
     return true;
   });
 });
+
 it('refuses node kinds and IO errors before following links (spec:vehicle-settings/S4)', () => {
   const cases = [
     { kind: DIRECTORY_KIND, reason: DIRECTORY_REASON, events: [LSTAT_EVENT] },
@@ -295,6 +277,7 @@ it('refuses node kinds and IO errors before following links (spec:vehicle-settin
     });
   }
 });
+
 it('seeds once, preserves authored bytes and owns the fourth slot (spec:vehicle-settings/S5)', () => {
   withProject((directory) => {
     const answer = ensureVehicles({ cwd: directory, kitRoot: KIT_ROOT });
@@ -346,13 +329,13 @@ it('seeds once, preserves authored bytes and owns the fourth slot (spec:vehicle-
   assert.equal(ENSURE_OPS[VEHICLES_INDEX], VEHICLES_OP);
   assert.equal(ENSURE_OPS[AUTONOMY_INDEX], AUTONOMY_OP);
 });
+
 it('resolves the review lens from its section or the frozen defaults (spec:vehicle-settings/S6)', () => {
   assert.deepEqual(REVIEW_LENS_DEFAULTS, EXPECTED_LENS_DEFAULTS);
   assert.equal(Object.isFrozen(REVIEW_LENS_DEFAULTS), true);
   assert.deepEqual(Object.keys(loaded).sort(), [
     EXPORT_NAMES.path, EXPORT_NAMES.defaults, EXPORT_NAMES.validate, EXPORT_NAMES.read,
     EXPORT_NAMES.load, EXPORT_NAMES.resolve, EXPORT_NAMES.lensDefaults, EXPORT_NAMES.resolveLens,
-    EXPORT_NAMES.judgeLanes, EXPORT_NAMES.judgeConsent, EXPORT_NAMES.resolveJudge,
   ].sort());
   const defaultLens = { posture: { ...EXPECTED_LENS_DEFAULTS, source: DEFAULT_SOURCE }, reason: null };
   withProject((directory) => {
@@ -378,62 +361,4 @@ it('resolves the review lens from its section or the frozen defaults (spec:vehic
   for (const answer of [{ state: UNKNOWN_STATE }, null]) {
     assert.throws(() => resolveReviewLens(answer), (error) => error instanceof Error && error.exitCode === EXIT_FAILURE);
   }
-});
-
-it('reads judge lanes strictly with and without a review lens (spec:vehicle-settings/S7)', () => {
-  const lanes = Object.keys(JUDGE_LANES);
-  assert.deepEqual(lanes, EXPECTED_LANE_IDS, EXPORT_NAMES.judgeLanes);
-  assert.equal(Object.isFrozen(JUDGE_LANES), true);
-  for (const content of Object.values(JUDGE_LANES)) assert.ok(typeof content === STRING_TYPE && content.length > FIRST_INDEX);
-  const malformed = [
-    ...nonObjects.map((value) => ({ value, reason: matchWord(JUDGE_KEY) })),
-    { value: { lanes, [UNKNOWN_KEY]: true }, reason: matchWord(`${JUDGE_KEY}.${UNKNOWN_KEY}`) },
-    ...[without({ lanes }, LANES_KEY), ...[NON_OBJECT_STRING, {}, null, [], [NON_OBJECT_NUMBER], [null]].map((lanes) => ({ lanes }))].map((value) => ({ value, reason: matchWord(`${JUDGE_KEY}.${LANES_KEY}`) })),
-    ...UNKNOWN_LANE_IDS.map((lane) => ({ value: { lanes: [lane] }, reason: matchWord(lane) })),
-    { value: { lanes: [...lanes, ...lanes] }, reason: matchWord(lanes[FIRST_INDEX]) },
-  ];
-  withJudgeSettings(({ directory, base, before, value, answer }) => {
-    assert.equal(Object.hasOwn(before.settings, JUDGE_KEY), false);
-    assert.deepEqual(answer, { state: PRESENT, settings: without(value, README_KEY) });
-    assert.deepEqual(validateVehicles(value), { ok: true, settings: answer.settings });
-    assert.deepEqual(loadVehicles(directory), answer);
-    for (const { value, reason } of malformed) assertMalformed({ ...base, judge: value }, reason, [resolveReviewLens, resolveJudgeLanes]);
-  });
-});
-
-it('resolves judge lanes independently over every reader state (spec:vehicle-settings/S8)', () => {
-  const defaultJudge = { posture: { lanes: [], source: DEFAULT_SOURCE }, reason: null };
-  withJudgeSettings(({ directory, absentAnswer, before, value, answer }) => {
-    assert.deepEqual(resolveJudgeLanes(absentAnswer), defaultJudge);
-    assert.deepEqual(resolveJudgeLanes(before), defaultJudge);
-    assert.deepEqual(resolveJudgeLanes(answer), { posture: { ...value.judge, source: FILE_SOURCE }, reason: null });
-    for (const resolvePosture of [resolveExecutor, resolveReviewLens]) assert.deepEqual(resolvePosture(answer), resolvePosture(before));
-    writeFileSync(join(directory, SETTINGS_REL), INVALID_JSON);
-    const unreadableAnswer = readVehicles(directory);
-    assertUnreadable(unreadableAnswer, PARSE_REASON);
-    assert.deepEqual(resolveJudgeLanes(unreadableAnswer), { posture: null, reason: unreadableAnswer.reason });
-  });
-  for (const answer of [{ state: UNKNOWN_STATE }, null]) assert.throws(() => resolveJudgeLanes(answer), (error) => error instanceof Error && error.exitCode === EXIT_FAILURE);
-});
-
-it('pins judge consent copies and preserves the seed bytes (spec:vehicle-settings/S9)', () => {
-  assert.equal(JUDGE_CONSENT, EXPECTED_CONSENT, EXPORT_NAMES.judgeConsent);
-  const retention = JEV_TEXT.filter((text) => text.startsWith(RETENTION_PREFIX));
-  assert.equal(retention.length, SINGLE_MATCH_COUNT);
-  const judgeForm = `"${JUDGE_KEY}": { "${LANES_KEY}": [${Object.keys(JUDGE_LANES).map((lane) => JSON.stringify(lane)).join(COMMA_SPACE)}] }`;
-  const pieces = [JUDGE_CONSENT, judgeForm, ...Object.entries(JUDGE_LANES).map(([lane, content]) => `${lane}: ${content}`), ...retention];
-  const templateBytes = readFileSync(join(KIT_ROOT, TEMPLATE_REL), ENCODING);
-  const template = JSON.parse(templateBytes);
-  const setupLines = readFileSync(join(KIT_ROOT, SETUP_REL), ENCODING).split(NEWLINE).filter((line) => line.includes(JUDGE_CONSENT));
-  assert.equal(setupLines.length, SINGLE_MATCH_COUNT);
-  for (const text of [template._README, setupLines[FIRST_INDEX]]) pieces.reduce((end, piece) => {
-    const start = text.indexOf(piece, end);
-    assert.ok(start >= FIRST_INDEX, piece);
-    return start + piece.length;
-  }, FIRST_INDEX);
-  for (const required of [BRIDGE_NAME, BACKENDS_COMMAND]) assert.ok(setupLines[FIRST_INDEX].includes(required));
-  assert.equal(Object.hasOwn(template, JUDGE_KEY), false);
-  assert.ok(template._README.startsWith(`${ORIGINAL_TEMPLATE_README} `));
-  assert.doesNotMatch(template._README.slice(ORIGINAL_TEMPLATE_README.length), FORBIDDEN_JUDGE_NAMES);
-  assert.equal(templateBytes, JSON.stringify({ _README: template._README, executor: EXPECTED_DEFAULTS, [LENS_KEY]: EXPECTED_LENS_DEFAULTS }, null, JSON_INDENT) + NEWLINE);
 });
