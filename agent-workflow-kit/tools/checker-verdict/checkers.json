@@ -1,0 +1,2325 @@
+{
+  "files": [
+    {
+      "path": "agent-workflow-engine/bin/install.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/bin/install.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/launchers/install-launchers.sh",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/references/hooks/gate-approve.mjs",
+      "word": "hook"
+    },
+    {
+      "path": "agent-workflow-kit/references/hooks/state-block-guard.mjs",
+      "word": "hook"
+    },
+    {
+      "path": "agent-workflow-kit/tools/ack-write.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/apply-danger-check.mjs",
+      "commandLines": [
+        {
+          "name": "apply-danger-check",
+          "arguments": [
+            "--variant",
+            "gate-hook.not-current",
+            "--cwd",
+            "."
+          ],
+          "redCases": [
+            {
+              "name": "hook-change-beyond-scope",
+              "places": [
+                ".claude/settings.json",
+                ".claude/hooks/agent-workflow-gates.mjs",
+                ".claude",
+                ".claude/hooks"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/attribution.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-config.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-doctor.mjs",
+      "commandLines": [
+        {
+          "name": "autonomy-doctor",
+          "arguments": [
+            "--verify"
+          ],
+          "redCases": [
+            {
+              "name": "deployment-absent",
+              "places": [
+                "docs/ai"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-write.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/bridge-settings.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/changed-surface.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/cheap-agents.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/checker-gates.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/checkpoint.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/commands.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/commit-guard.mjs",
+      "commandLines": [
+        {
+          "name": "commit-guard",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "index-lags-work-tree",
+              "places": [
+                "."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/control-bytes.mjs",
+      "commandLines": [
+        {
+          "name": "control-bytes",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "control-byte-in-tracked-file",
+              "places": [
+                "notes.txt"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/core-evidence.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/coverage-check.mjs",
+      "commandLines": [
+        {
+          "name": "coverage-check",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "changed-line-uncovered",
+              "places": [
+                "changed.mjs:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/delegation.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/detect-backends.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/direct-run.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "commandLines": [
+        {
+          "name": "dispatch",
+          "arguments": [
+            "check",
+            "dispatch.md"
+          ],
+          "redCases": [
+            {
+              "name": "dispatch-contract-absent",
+              "places": [
+                "dispatch.md"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "dispatch",
+          "arguments": [
+            "await",
+            "--nonce",
+            "fixture-nonce"
+          ],
+          "redCases": [
+            {
+              "name": "dispatch-deadline-passed",
+              "places": [
+                ".git/agent-workflow-delegation.jsonl"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/doc-parity.mjs",
+      "commandLines": [
+        {
+          "name": "doc-parity",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "bound-token-absent",
+              "places": [
+                "agent-workflow-kit/references/modes/receipt-deadline.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/engine-source.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/ensure-configs.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
+      "commandLines": [
+        {
+          "name": "epic-shape",
+          "arguments": [
+            "--check",
+            "docs/ai/epics/FIXTURE.md"
+          ],
+          "redCases": [
+            {
+              "name": "epic-frontmatter-absent",
+              "places": [
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1",
+                "docs/ai/epics/FIXTURE.md:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/family-registry.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/feedback-record-cli.mjs",
+      "commandLines": [
+        {
+          "name": "feedback-record",
+          "arguments": [
+            "--check",
+            "record.md"
+          ],
+          "redCases": [
+            {
+              "name": "record-head-mismatch",
+              "places": [
+                "record.md:5"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-check.mjs",
+      "commandLines": [
+        {
+          "name": "flow-check",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "malformed-flow-store",
+              "places": [
+                ".git/agent-workflow-flow.jsonl:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-writer.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/fold-scope-cli.mjs",
+      "commandLines": [
+        {
+          "name": "fold-scope",
+          "arguments": [
+            "--class",
+            "in-scope",
+            "--claim",
+            "missing criterion",
+            "--plan",
+            "docs/plans/fixture.md",
+            "--queue",
+            "docs/plans/queue.md"
+          ],
+          "redCases": [
+            {
+              "name": "claim-not-in-acceptance",
+              "places": [
+                "docs/plans/fixture.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/gate-hook.mjs",
+      "word": "hook"
+    },
+    {
+      "path": "agent-workflow-kit/tools/gates-init.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/git-hooks.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/grounding.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/hide-footprint.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/init-project.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/inject-methodology.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/jev-connect.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/jev-guide.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/jev-skill.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/known-footprint.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/lcov.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/manifest/validate.mjs",
+      "commandLines": [
+        {
+          "name": "manifest-validate",
+          "arguments": [
+            "--strict",
+            "skill"
+          ],
+          "redCases": [
+            {
+              "name": "manifest-root-not-object",
+              "places": [
+                "skill/capability.json"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/mcp-server.mjs",
+      "commandLines": [
+        {
+          "name": "mcp-server",
+          "arguments": [
+            "--self-check"
+          ],
+          "redCases": [
+            {
+              "name": "reader-answers-an-error",
+              "places": [
+                "agent-workflow-kit/tools/path-inventory.mjs"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/mcp.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/migration-blocks.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/migration-notes.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/now-cli.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/orchestration-write.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/path-inventory.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "commandLines": [
+        {
+          "name": "plan-shape",
+          "arguments": [
+            "--check",
+            "docs/plans/fixture.md"
+          ],
+          "redCases": [
+            {
+              "name": "plan-sections-absent",
+              "places": [
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "plan-shape",
+          "arguments": [
+            "--check",
+            "--in-flight"
+          ],
+          "redCases": [
+            {
+              "name": "plan-sections-absent",
+              "places": [
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "plan-shape",
+          "arguments": [
+            "--verify",
+            "docs/plans/fixture.md"
+          ],
+          "redCases": [
+            {
+              "name": "plan-create-not-landed",
+              "places": [
+                "docs/plans/fixture.md:5"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "plan-shape",
+          "arguments": [
+            "--verify",
+            "--in-flight"
+          ],
+          "redCases": [
+            {
+              "name": "plan-sections-absent",
+              "places": [
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/procedures.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",
+      "commandLines": [
+        {
+          "name": "project-rules",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "rule-without-record",
+              "places": [
+                "docs/ai/rules/project-layout.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-audit-cli.mjs",
+      "commandLines": [
+        {
+          "name": "queue-audit",
+          "arguments": [
+            "--check",
+            "docs/plans/queue.md",
+            "--section",
+            "## Pending"
+          ],
+          "redCases": [
+            {
+              "name": "terminal-row-still-listed",
+              "places": [
+                "docs/plans/queue.md:2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-audit-rows.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-audit.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-purge-cli.mjs",
+      "commandLines": [
+        {
+          "name": "queue-purge",
+          "arguments": [
+            "--check",
+            "docs/plans/queue.md",
+            "--section",
+            "## Pending",
+            "--archive",
+            "archive.txt"
+          ],
+          "redCases": [
+            {
+              "name": "archive-not-intact",
+              "places": [
+                "archive.txt"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-row-name.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/receipt-deadline.mjs",
+      "commandLines": [
+        {
+          "name": "receipt-deadline",
+          "arguments": [
+            "--backend",
+            "codex",
+            "--watermark",
+            "4",
+            "--timeout",
+            "1"
+          ],
+          "redCases": [
+            {
+              "name": "receipts-shorter-than-watermark",
+              "places": [
+                "receipts.jsonl"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/recipes.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/recommendations.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/release-scan.mjs",
+      "commandLines": [
+        {
+          "name": "release-scan",
+          "arguments": [
+            "tools"
+          ],
+          "redCases": [
+            {
+              "name": "version-pin-without-probe",
+              "places": [
+                "tools/pin.mjs:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/repo-search.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-rounds-cli.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "commandLines": [
+        {
+          "name": "review-state",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "council-without-receipts",
+              "places": [
+                "."
+              ]
+            }
+          ]
+        },
+        {
+          "name": "review-state",
+          "arguments": [
+            "--await",
+            "--timeout",
+            "1"
+          ],
+          "redCases": [
+            {
+              "name": "council-without-receipts",
+              "places": [
+                "."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/robustness-brief.mjs",
+      "commandLines": [
+        {
+          "name": "robustness-brief",
+          "arguments": [
+            "--plan",
+            "docs/plans/fixture.md",
+            "--coverage"
+          ],
+          "redCases": [
+            {
+              "name": "robustness-class-untagged",
+              "places": [
+                "docs/plans/fixture.md:5"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/run-gates.mjs",
+      "word": "launcher"
+    },
+    {
+      "path": "agent-workflow-kit/tools/sandbox-masks.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/session-close-check.mjs",
+      "commandLines": [
+        {
+          "name": "session-close-check",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "handover-section-absent",
+              "places": [
+                "docs/ai/handover.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/set-autonomy.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/set-flow.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/set-recipe.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/setup-backends.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size-check.mjs",
+      "commandLines": [
+        {
+          "name": "source-size",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "file-past-its-cap",
+              "places": [
+                "src/big.mjs"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size/piles-cli.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "commandLines": [
+        {
+          "name": "spec-check",
+          "arguments": [
+            "--all"
+          ],
+          "redCases": [
+            {
+              "name": "spec-contract-absent",
+              "places": [
+                "docs/ai/specs/broken.md"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "spec-check",
+          "arguments": [
+            "--op",
+            "modify=docs/ai/specs/broken.md"
+          ],
+          "redCases": [
+            {
+              "name": "spec-contract-absent",
+              "places": [
+                "docs/ai/specs/broken.md"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "spec-check",
+          "arguments": [
+            "--ops-file",
+            "docs/plans/spec-ops.list"
+          ],
+          "redCases": [
+            {
+              "name": "spec-contract-absent",
+              "places": [
+                "docs/ai/specs/broken.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-coverage-cli.mjs",
+      "commandLines": [
+        {
+          "name": "spec-coverage",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "tool-without-contract",
+              "places": [
+                "src/tool.mjs"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-coverage.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-kit/tools/state-block-hook.mjs",
+      "word": "hook"
+    },
+    {
+      "path": "agent-workflow-kit/tools/task-brief.mjs",
+      "commandLines": [
+        {
+          "name": "task-brief",
+          "arguments": [
+            "check",
+            "brief.md"
+          ],
+          "redCases": [
+            {
+              "name": "brief-without-title",
+              "places": [
+                "brief.md:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/tier-guide.mjs",
+      "word": "advisor"
+    },
+    {
+      "path": "agent-workflow-kit/tools/tier-preview.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/transition/index.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/uninstall.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-kit/tools/velocity-profile.mjs",
+      "commandLines": [
+        {
+          "name": "velocity-profile",
+          "arguments": [
+            "--autonomy",
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "autonomy-settings-drift",
+              "places": [
+                ".claude/settings.json"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/worktrees.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-memory/bin/install.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-caps.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
+      "commandLines": [
+        {
+          "name": "archive-changelog",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "changelog-entry-overdue",
+              "places": [
+                "docs/ai/changelog.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-decisions.mjs",
+      "commandLines": [
+        {
+          "name": "archive-decisions",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "legacy-decisions-monolith",
+              "places": [
+                "docs/ai/history/decisions-archive.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
+      "commandLines": [
+        {
+          "name": "archive-issues",
+          "arguments": [
+            "--check"
+          ],
+          "redCases": [
+            {
+              "name": "resolved-issue-overdue",
+              "places": [
+                "docs/ai/known_issues.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "commandLines": [
+        {
+          "name": "docs-size",
+          "arguments": [],
+          "redCases": [
+            {
+              "name": "document-over-cap",
+              "places": [
+                "docs/ai/oversized.md"
+              ]
+            }
+          ]
+        },
+        {
+          "name": "docs-size",
+          "arguments": [
+            "--check-index"
+          ],
+          "redCases": [
+            {
+              "name": "docs-index-stale",
+              "places": [
+                "docs/ai/index.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/gates/migrate-gates.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/git-hooks/install-git-hooks.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/run.mjs",
+      "word": "launcher"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/shared/markdown-blocks.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/spec-schema/spec-schema.mjs",
+      "word": "library"
+    },
+    {
+      "path": "agent-workflow-memory/scripts/kit-folder.mjs",
+      "word": "installer"
+    },
+    {
+      "path": "agent-workflow-memory/scripts/stamp-takeover.mjs",
+      "word": "writer"
+    },
+    {
+      "path": "antigravity-cli-bridge/bin/agy-envelope.mjs",
+      "word": "bridge"
+    },
+    {
+      "path": "antigravity-cli-bridge/bin/agy-review.sh",
+      "word": "bridge"
+    },
+    {
+      "path": "antigravity-cli-bridge/bin/agy.sh",
+      "word": "bridge"
+    },
+    {
+      "path": "codex-cli-bridge/bin/codex-exec.sh",
+      "word": "bridge"
+    },
+    {
+      "path": "codex-cli-bridge/bin/codex-review.sh",
+      "word": "bridge"
+    },
+    {
+      "path": "typesafe-jev-bridge/bin/jev-ask.sh",
+      "word": "bridge"
+    }
+  ],
+  "redExceptions": [
+    {
+      "path": "agent-workflow-kit/tools/apply-danger-check.mjs",
+      "arguments": [
+        "--variant",
+        "gate-hook.not-current",
+        "--cwd",
+        "."
+      ],
+      "redCase": "hook-change-beyond-scope",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-doctor.mjs",
+      "arguments": [
+        "--verify"
+      ],
+      "redCase": "deployment-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/commit-guard.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "index-lags-work-tree",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/control-bytes.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "control-byte-in-tracked-file",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/coverage-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "changed-line-uncovered",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "check",
+        "dispatch.md"
+      ],
+      "redCase": "dispatch-contract-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "await",
+        "--nonce",
+        "fixture-nonce"
+      ],
+      "redCase": "dispatch-deadline-passed",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/doc-parity.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "bound-token-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/ai/epics/FIXTURE.md"
+      ],
+      "redCase": "epic-frontmatter-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/feedback-record-cli.mjs",
+      "arguments": [
+        "--check",
+        "record.md"
+      ],
+      "redCase": "record-head-mismatch",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "malformed-flow-store",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/fold-scope-cli.mjs",
+      "arguments": [
+        "--class",
+        "in-scope",
+        "--claim",
+        "missing criterion",
+        "--plan",
+        "docs/plans/fixture.md",
+        "--queue",
+        "docs/plans/queue.md"
+      ],
+      "redCase": "claim-not-in-acceptance",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/manifest/validate.mjs",
+      "arguments": [
+        "--strict",
+        "skill"
+      ],
+      "redCase": "manifest-root-not-object",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/mcp-server.mjs",
+      "arguments": [
+        "--self-check"
+      ],
+      "redCase": "reader-answers-an-error",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "redCase": "plan-sections-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "--in-flight"
+      ],
+      "redCase": "plan-sections-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "docs/plans/fixture.md"
+      ],
+      "redCase": "plan-create-not-landed",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "--in-flight"
+      ],
+      "redCase": "plan-sections-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "rule-without-record",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-audit-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/queue.md",
+        "--section",
+        "## Pending"
+      ],
+      "redCase": "terminal-row-still-listed",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-purge-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/queue.md",
+        "--section",
+        "## Pending",
+        "--archive",
+        "archive.txt"
+      ],
+      "redCase": "archive-not-intact",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/receipt-deadline.mjs",
+      "arguments": [
+        "--backend",
+        "codex",
+        "--watermark",
+        "4",
+        "--timeout",
+        "1"
+      ],
+      "redCase": "receipts-shorter-than-watermark",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/release-scan.mjs",
+      "arguments": [
+        "tools"
+      ],
+      "redCase": "version-pin-without-probe",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "council-without-receipts",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--await",
+        "--timeout",
+        "1"
+      ],
+      "redCase": "council-without-receipts",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/robustness-brief.mjs",
+      "arguments": [
+        "--plan",
+        "docs/plans/fixture.md",
+        "--coverage"
+      ],
+      "redCase": "robustness-class-untagged",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/session-close-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "handover-section-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "file-past-its-cap",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--all"
+      ],
+      "redCase": "spec-contract-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--op",
+        "modify=docs/ai/specs/broken.md"
+      ],
+      "redCase": "spec-contract-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--ops-file",
+        "docs/plans/spec-ops.list"
+      ],
+      "redCase": "spec-contract-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-coverage-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "tool-without-contract",
+      "missKinds": [
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/task-brief.mjs",
+      "arguments": [
+        "check",
+        "brief.md"
+      ],
+      "redCase": "brief-without-title",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/velocity-profile.mjs",
+      "arguments": [
+        "--autonomy",
+        "--check"
+      ],
+      "redCase": "autonomy-settings-drift",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "changelog-entry-overdue",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-decisions.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "legacy-decisions-monolith",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "redCase": "resolved-issue-overdue",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [],
+      "redCase": "document-over-cap",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [
+        "--check-index"
+      ],
+      "redCase": "docs-index-stale",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    }
+  ],
+  "faultExceptions": [
+    {
+      "path": "agent-workflow-kit/tools/apply-danger-check.mjs",
+      "arguments": [
+        "--variant",
+        "gate-hook.not-current",
+        "--cwd",
+        "."
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/apply-danger-check.mjs",
+      "arguments": [
+        "--variant",
+        "gate-hook.not-current",
+        "--cwd",
+        "."
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-doctor.mjs",
+      "arguments": [
+        "--verify"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/autonomy-doctor.mjs",
+      "arguments": [
+        "--verify"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/commit-guard.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/commit-guard.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/commit-guard.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/control-bytes.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/control-bytes.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/control-bytes.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/coverage-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/coverage-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/coverage-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "check",
+        "dispatch.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "await",
+        "--nonce",
+        "fixture-nonce"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "await",
+        "--nonce",
+        "fixture-nonce"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/dispatch.mjs",
+      "arguments": [
+        "await",
+        "--nonce",
+        "fixture-nonce"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/doc-parity.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/ai/epics/FIXTURE.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/ai/epics/FIXTURE.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/ai/epics/FIXTURE.md"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/feedback-record-cli.mjs",
+      "arguments": [
+        "--check",
+        "record.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/feedback-record-cli.mjs",
+      "arguments": [
+        "--check",
+        "record.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/feedback-record-cli.mjs",
+      "arguments": [
+        "--check",
+        "record.md"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/flow-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/fold-scope-cli.mjs",
+      "arguments": [
+        "--class",
+        "in-scope",
+        "--claim",
+        "missing criterion",
+        "--plan",
+        "docs/plans/fixture.md",
+        "--queue",
+        "docs/plans/queue.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/manifest/validate.mjs",
+      "arguments": [
+        "--strict",
+        "skill"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/mcp-server.mjs",
+      "arguments": [
+        "--self-check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/mcp-server.mjs",
+      "arguments": [
+        "--self-check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "--in-flight"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "--in-flight"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--check",
+        "--in-flight"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "--in-flight"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "--in-flight"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
+      "arguments": [
+        "--verify",
+        "--in-flight"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-audit-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/queue.md",
+        "--section",
+        "## Pending"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-purge-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/queue.md",
+        "--section",
+        "## Pending",
+        "--archive",
+        "archive.txt"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/queue-purge-cli.mjs",
+      "arguments": [
+        "--check",
+        "docs/plans/queue.md",
+        "--section",
+        "## Pending",
+        "--archive",
+        "archive.txt"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/receipt-deadline.mjs",
+      "arguments": [
+        "--backend",
+        "codex",
+        "--watermark",
+        "4",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/receipt-deadline.mjs",
+      "arguments": [
+        "--backend",
+        "codex",
+        "--watermark",
+        "4",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/release-scan.mjs",
+      "arguments": [
+        "tools"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/release-scan.mjs",
+      "arguments": [
+        "tools"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/release-scan.mjs",
+      "arguments": [
+        "tools"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--await",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--await",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--await",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/review-state.mjs",
+      "arguments": [
+        "--await",
+        "--timeout",
+        "1"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/robustness-brief.mjs",
+      "arguments": [
+        "--plan",
+        "docs/plans/fixture.md",
+        "--coverage"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/robustness-brief.mjs",
+      "arguments": [
+        "--plan",
+        "docs/plans/fixture.md",
+        "--coverage"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/session-close-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/session-close-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/source-size-check.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--all"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--all"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--all"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--op",
+        "modify=docs/ai/specs/broken.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--op",
+        "modify=docs/ai/specs/broken.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--ops-file",
+        "docs/plans/spec-ops.list"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--ops-file",
+        "docs/plans/spec-ops.list"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-coverage-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-coverage-cli.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/task-brief.mjs",
+      "arguments": [
+        "check",
+        "brief.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/task-brief.mjs",
+      "arguments": [
+        "check",
+        "brief.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/task-brief.mjs",
+      "arguments": [
+        "check",
+        "brief.md"
+      ],
+      "faultPoint": "spawn"
+    },
+    {
+      "path": "agent-workflow-kit/tools/velocity-profile.mjs",
+      "arguments": [
+        "--autonomy",
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/velocity-profile.mjs",
+      "arguments": [
+        "--autonomy",
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-decisions.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
+      "arguments": [
+        "--check"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [],
+      "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [
+        "--check-index"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [
+        "--check-index"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs",
+      "arguments": [
+        "--check-index"
+      ],
+      "faultPoint": "list"
+    }
+  ]
+}

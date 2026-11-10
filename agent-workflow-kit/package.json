@@ -55,6 +55,7 @@
     "!tools/**/*.test.mjs",
     "!tools/manifest/fixtures/**",
     "!tools/project-rules/fixtures/**",
+    "!tools/checker-verdict/**",
     "!references/scripts/**/*.test.mjs",
     "!references/scripts/archives/index.mjs",
     "!references/scripts/test-support/**"

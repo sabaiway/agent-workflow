@@ -2,7 +2,7 @@ import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -513,6 +513,13 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     assert.deepEqual(packed.filter((path) => path.startsWith(prefix)).sort(), [
       'SKILL.md', 'bin/jev-ask-harness.test.mjs', 'bin/jev-ask.sh', 'bin/jev-ask.test.mjs', 'bin/jev-client.mjs', 'capability.json', 'service-facts.txt', 'setup/README.md',
     ].map((path) => `${prefix}${path}`));
+  });
+
+  it('spec:checker-verdict/S14 packs no path under tools/checker-verdict/, whose plain modules stand on disk', () => {
+    const prefix = 'tools/checker-verdict/';
+    const modules = ['index.mjs', 'form.mjs', 'record.mjs', 'checkers.json'].map((name) => `${prefix}${name}`);
+    assert.deepEqual(modules.filter((path) => !existsSync(join(ROOT, path))), [], 'the module stands on disk, so the pin is not empty');
+    assert.deepEqual(packed.filter((path) => path.startsWith(prefix)), []);
   });
 
   // Exact-count pin: update this number only when intentionally adding/removing a shipped file;

@@ -138,10 +138,10 @@ describe('mount-masks — the leaf is library-only (spec:sandbox-masks/S15)', ()
     assert.ok(specifiers.length > 0 && specifiers.every((s) => s.startsWith('node:')), `imports: ${specifiers.join(', ')}`);
   });
 
-  it('the package ships it: tools/ is in files and no negation strips a non-test module', () => {
+  it('the package ships it: tools/ is in files and the tools negations are tests, fixtures and the checker-verdict module', () => {
     const pkg = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
     assert.ok(existsSync(LEAF) && pkg.files.includes('tools/'));
-    assert.deepEqual(pkg.files.filter((f) => f.startsWith('!tools/')), ['!tools/**/*.test.mjs', '!tools/manifest/fixtures/**', '!tools/project-rules/fixtures/**']);
+    assert.deepEqual(pkg.files.filter((f) => f.startsWith('!tools/')), ['!tools/**/*.test.mjs', '!tools/manifest/fixtures/**', '!tools/project-rules/fixtures/**', '!tools/checker-verdict/**']);
   });
 });
 

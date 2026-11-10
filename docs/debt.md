@@ -3,6 +3,43 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **KIT-COMMAND-LAUNCHER-ERROR-PRINTS-A-STACK** — invariant: the stable kit command reports an error it has no name
+  for in one line that names the check, never a stack. Origin: `agent-workflow-memory/references/scripts/run.mjs:33`
+  and `:67`, a throw of the file status or the process start leaves `main` uncaught (`:90`). Narrow fix: one catch at
+  the launcher's top that prints the check's verdict line. Proof: a cell of the launcher's suite with an injected
+  throw. Residual exposure, not live: seen only under an injected fault at the S1 spec session of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10), never in a real gate run; the census leaves the
+  launcher's process out (spec kit/checker-verdict, Out of scope). Raised by the lens at that spec review.
+
+- **CHECKER-RECORD-READS-AN-EXCEPTION-WITH-NO-MISS-KIND** — invariant: every red exception of the census record names
+  at least one miss kind, so the record shrinks only to what is true. Origin:
+  `agent-workflow-kit/tools/checker-verdict/record.mjs:111-122` checks each listed kind but not that the list holds
+  one, and part checker-record says "one or more" while its refusal list leaves the empty list out; the stale check
+  (`run-harness.test.mjs:139`) compares lengths, so an emptied entry is never reported. Narrow fix: one refusal
+  sentence in part checker-record, the refusal in `assertRedException`, one S6 cell. Residual exposure, not live: no
+  redExceptions entry is empty today (all name three kinds but spec-coverage-cli, which names two); an entry emptied
+  instead of deleted would stay unreported, so the plan of S2 deletes an entry whose case follows the form. Raised by
+  the lens and agy at the S1 diff review of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10).
+
+- **CENSUS-READS-A-STACK-LINE-AS-A-HEAD-FINDING** — invariant: under a fired fault, the census counts the fault's
+  phrase only in the verdict line or in a real finding line, never in a stack. Origin:
+  `agent-workflow-kit/tools/checker-verdict/run-harness.test.mjs:66-76`, `readHead` admits any line whose text before
+  `: ` is a valid place, and `judgePlace('Error')` is true, so `Error: checker-verdict fault at read` and its frames
+  pass as a finding with continuations. Narrow fix: in a fault run count a head finding only when its place is `.` or
+  a path that exists in the fixture project, with one S12 cell of a checker that prints a bare verdict line, then the
+  stack. Proof: that cell red before the fix. Residual exposure, not live: of today's checkers only spec-coverage-cli
+  opens a red block with its verdict line (`spec-coverage-cli.mjs:205`), and its error path prints the bare message
+  with no verdict line (`:174-176`), so every counted fault run today misses on its first line before the head is
+  read. Bound to S3 of that epic. Raised by the lens at its S1 diff review (2026-11-10).
+
+- **DIRECT-RUN-GUARD-EXITS-GREEN-WHEN-ITS-PATH-DOES-NOT-RESOLVE** — invariant: a kit command line whose own path
+  cannot be resolved fails, never exits 0 without running. Origin: `agent-workflow-kit/tools/direct-run.mjs:36-46`,
+  the guard's catch answers false, so `main` never runs and the process exits 0 with no output. Narrow fix: none
+  agreed; a failed resolve of a path Node is already running is not reachable by a known state. Proof: none yet.
+  Residual exposure, not live: no run shows it; the census's `stat` fault point leaves path resolving out for this
+  reason (spec kit/checker-verdict, part census). Raised by the lens at the S1 spec review of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10).
+
 - **PUBLISHED-VERSION-WITHOUT-A-TAG-IS-REFUSED-ON-MOVED-BYTES** — invariant: a version this repository published is
   never refused only because its tag push did not happen. Origin: `scripts/release/shipped-change.mjs:118`, a published
   version with no tag whose fresh pack's integrity differs exits 1 even when this commit published it (a run that
