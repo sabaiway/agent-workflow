@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
 import { PRIOR_FILES } from '../script-priors.mjs';
-import { DEPLOYED_SCRIPTS } from '../node-evidence.mjs';
+import { readDeployedScripts } from '../node-evidence.mjs';
 import { UPGRADE_RUNLIST } from '../upgrade-runlist.mjs';
 import { KIT_COMMANDS } from '../../references/scripts/run.mjs';
 import { ALARM_WORDS, INTERNAL_NAMES, scannable } from '../../../scripts/testing/composed-lines-scan.mjs';
@@ -116,7 +116,7 @@ describe('spec:distribution-files/S38 one plain upgrade of a 1af99af deployment 
       const upgrade = run('step 1: plain upgrade', process.execPath, join(KIT_ROOT, 'tools', 'ensure-configs.mjs'), '--reconcile', '--cwd', project);
       assert.deepEqual(PRIOR_FILES.filter((name) => existsSync(join(project, 'scripts', name))), [],
         'step 1: one plain upgrade removes all 25 flat kit files');
-      for (const { path, deployed } of DEPLOYED_SCRIPTS) {
+      for (const { path, deployed } of readDeployedScripts()) {
         assert.ok(lstatSync(join(project, deployed), { throwIfNoEntry: false })?.isFile(), `step 1: ${deployed} stands as a regular file`);
         assert.ok(readFileSync(join(project, deployed)).equals(readFileSync(join(BUNDLE, path))), `step 1: ${deployed} is bundled`);
       }

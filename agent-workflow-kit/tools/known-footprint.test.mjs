@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { readDeployedScripts, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
 import { PRIOR_FILES } from './script-priors.mjs';
 import {
   KIT_OWN_PATHS,
@@ -150,7 +150,7 @@ describe('frozen snapshot', () => {
   // manifest names every file a deployment places in the kit folder, so a placed file no pattern covers
   // is a file a hidden deployment leaves in `git status` — the leak the registry exists to prevent.
   it('every DEPLOYED enforcement script is registered (the manifest is the source of truth)', () => {
-    const deployed = DEPLOYED_SCRIPTS.map((entry) => entry.deployed).sort();
+    const deployed = readDeployedScripts().map((entry) => entry.deployed).sort();
     assert.ok(deployed.length > 0, 'the deploy payload must be non-empty for this guard to mean anything');
     assert.ok(deployed.every((path) => path.startsWith(`${KIT_SCRIPTS_DIR}/`)), 'every deployed file sits in the kit folder');
     const missing = deployed.filter((path) => !KIT_OWN_PATHS.some((pattern) => covers(pattern, path)));

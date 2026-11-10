@@ -24,7 +24,7 @@ import { planFor } from './jev-skill.mjs';
 import { SKILL_FILES, claudeDirOf, skillAccepted, skillState, skillTargets } from './jev-facts.mjs';
 import { findOnPath } from './detect-backends.mjs';
 import { consoleArgv } from './write-lanes.mjs';
-import { DEPLOYED_SCRIPTS, INSTALLER_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
+import { readDeployedScripts, INSTALLER_REL, formatPlan, planGitHooks } from './git-hooks.mjs';
 import { ATTRIBUTION_HIDDEN, ATTRIBUTION_KEY, writeAttribution } from './attribution.mjs';
 import { globalRemovalOf, planGlobalRemoval } from './hide-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -234,7 +234,7 @@ export const scopeOf = (variant, facts, deps = {}) => {
   }
   if (GIT_VARIANTS.includes(variant)) {
     // Each deployed path under the kit folder, and each folder on its way below the root.
-    const copies = variant === 'hook-checks' ? [] : DEPLOYED_SCRIPTS.map(({ deployed }) => join(facts.root, deployed));
+    const copies = variant === 'hook-checks' ? [] : readDeployedScripts().map(({ deployed }) => join(facts.root, deployed));
     directories.splice(0);
     for (const path of copies) {
       for (let at = dirname(path); at !== facts.root && covers(facts.root, at) && !directories.includes(at); at = dirname(at)) directories.push(at);

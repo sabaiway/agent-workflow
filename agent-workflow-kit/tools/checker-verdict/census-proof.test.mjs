@@ -167,7 +167,6 @@ describe('fault census proofs (spec:checker-verdict/S12)', () => {
     ['escape', 'an error escaping before the verdict'],
     ['below-head', 'a phrase only below the head'],
     ['no-phrase', 'a phrase printed nowhere'],
-    ['exit-zero', 'exit 0 after catching a fired fault'],
   ]) {
     it(`reports four misses for ${description}`, async () => {
       const { readRecord, FAULT_POINTS } = await import('./record.mjs');
@@ -183,6 +182,15 @@ describe('fault census proofs (spec:checker-verdict/S12)', () => {
       await assertCensus(readRecord, checker, { faultPoints: FAULT_POINTS }, []);
     });
   }
+
+  for (const listed of [false, true]) it(`reports fault-exit-0 for exit 0 after catching a fired fault (${listed ? 'listed' : 'unlisted'})`, async () => {
+    const { readRecord, FAULT_POINTS } = await import('./record.mjs');
+    const checker = createChecker(`fault-exit-zero-${listed}`, { fault: 'exit-zero' });
+    await assertCensus(readRecord, checker, { faultPoints: listed ? FAULT_POINTS : [] }, [
+      ...FAULT_POINTS.map((faultPoint) => ({ problem: 'fault-exit-0', faultPoint })),
+      ...(listed ? FAULT_POINTS.map((faultPoint) => ({ problem: 'stale-fault-miss', faultPoint })) : []),
+    ]);
+  });
 
   it('accepts the fault phrase in a finding line of the head', async () => {
     const { readRecord } = await import('./record.mjs');
@@ -343,5 +351,43 @@ describe('own package census proof (spec:checker-verdict/S15)', () => {
     } finally {
       rmSync(project, { recursive: true, force: true });
     }
+  });
+});
+
+describe('import census proofs (spec:checker-verdict/S19)', () => {
+  const createImportFile = (name, body, packagePath = 'agent-workflow-kit') => {
+    mkdirSync(join(workspace.root, packagePath), { recursive: true });
+    const path = `${packagePath}/${name}.mjs`;
+    writeFileSync(join(workspace.root, path), body);
+    return { path };
+  };
+  const imports = "import { readFileSync, statSync, readdirSync } from 'node:fs'; import { spawnSync } from 'node:child_process';";
+  const calls = { read: 'readFileSync(import.meta.filename)', stat: 'statSync(import.meta.filename)', list: "readdirSync('.')", spawn: "spawnSync(process.execPath, ['--version'])" };
+  for (const [faultPoint, call] of Object.entries(calls)) it(`reports a caught ${faultPoint} call at import by its mark`, async () => {
+    const { runImportCensus } = await import('./import-harness.test.mjs');
+    const { readRecord } = await import('./record.mjs');
+    const file = createImportFile(`caught-${faultPoint}`, `${imports}\ntry { ${call}; } catch {}`);
+    const record = readFixtureRecord(readRecord, file);
+    assert.deepEqual(await runImportCensus({ record, root: workspace.root }), [{ problem: 'fault-at-import', path: file.path, faultPoint }]);
+  });
+  it('reports import-failed for every point when import throws without a fault call', async () => {
+    const { runImportCensus } = await import('./import-harness.test.mjs');
+    const { readRecord, FAULT_POINTS } = await import('./record.mjs');
+    const file = createImportFile('throws', "throw new Error('import rejected');"), record = readFixtureRecord(readRecord, file);
+    assert.deepEqual(await runImportCensus({ record, root: workspace.root }), FAULT_POINTS.map((faultPoint) => ({ problem: 'import-failed', path: file.path, faultPoint })));
+  });
+  it('accepts fault-point calls inside an exported function never called at import', async () => {
+    const { runImportCensus } = await import('./import-harness.test.mjs');
+    const { readRecord } = await import('./record.mjs');
+    const file = createImportFile('deferred', `${imports}\nexport const run = () => { ${Object.values(calls).join('; ')}; };`);
+    assert.deepEqual(await runImportCensus({ record: readFixtureRecord(readRecord, file), root: workspace.root }), []);
+  });
+  it('ignores a memory file reading at import beside a kit file making no call', async () => {
+    const { runImportCensus } = await import('./import-harness.test.mjs');
+    const { readRecord } = await import('./record.mjs');
+    const files = [createImportFile('quiet', 'export const value = true;'), createImportFile('reads', `${imports}\ntry { ${calls.read}; } catch {}`, 'agent-workflow-memory')];
+    const records = files.map((file) => readFixtureRecord(readRecord, file));
+    const record = readRecord(JSON.stringify({ files: records.flatMap(({ files }) => files), redExceptions: [], faultExceptions: [] }));
+    assert.deepEqual(await runImportCensus({ record, root: workspace.root }), []);
   });
 });

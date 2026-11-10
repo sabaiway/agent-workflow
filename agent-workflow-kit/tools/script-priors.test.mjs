@@ -8,7 +8,7 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hermeticGitEnv } from './git-env.mjs';
-import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { readDeployedScripts } from './node-evidence.mjs';
 import { KIT_LIMITS } from './source-size/index.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
@@ -52,7 +52,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const fixturePath = (row) => join(FIXTURES, row.firstShipped, `${row.file}.txt`);
 const readFixtures = () => readdirSync(FIXTURES).flatMap((firstShipped) => readdirSync(join(FIXTURES, firstShipped))
   .map((name) => ({ file: name.replace(/\.txt$/, ''), firstShipped })));
-const DEPLOYED_BY_NAME = new Map(DEPLOYED_SCRIPTS.map((entry) => [posix.basename(entry.path), entry]));
+const DEPLOYED_BY_NAME = new Map(readDeployedScripts().map((entry) => [posix.basename(entry.path), entry]));
 const deployedBundleBytes = (file) => DEPLOYED_BY_NAME.has(file) ? readFileSync(join(KIT_ROOT, DEPLOYED_BY_NAME.get(file).bundled)) : OTHER_BYTES;
 const { readFamily } = await import('../references/scripts/family.mjs').catch(() => ({}));
 const MANIFEST_PATH = new Map((readFamily?.(BUNDLE) ?? []).map((entry) => [posix.basename(entry.path), entry.path]));

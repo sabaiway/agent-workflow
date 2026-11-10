@@ -85,7 +85,7 @@ import { nearestExistingDir, worktreesGrantDir, worktreesGrantHoldsHome } from '
 import { readBundledAgents, writeCheapAgents, EXECUTOR_VEHICLE } from './cheap-agents.mjs';
 import { ATTRIBUTION_KEY, LEGACY_ATTRIBUTION_KEY, attributionHidesText, effectiveAttribution, readAttributionChoice, wrongTypedKey } from './attribution.mjs';
 import { planGlobalRemoval } from './hide-footprint.mjs';
-import { DEPLOYED_SCRIPTS, INSTALLER_REL, NODE_EVIDENCE, probeNodeEvidence } from './node-evidence.mjs';
+import { readDeployedScripts, INSTALLER_REL, NODE_EVIDENCE, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
 import { surveyExecutorVehicle, readExecutorPosture, agentsAccepted, readStamp, readFsDeps, AGENTS_DIR, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
@@ -1064,7 +1064,7 @@ const enforcementOffer = (root, deps) => {
     if (!listings.has(folder)) listings.set(folder, readDir(folder));
     return listings.get(folder).includes(name);
   });
-  if (!DEPLOYED_SCRIPTS.every(({ path }) => inBundle(path))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
+  if (!readDeployedScripts().every(({ path }) => inBundle(path))) throw new Error(`${bundleRoot}: a runnable enforcement script is missing`);
   // Evidence none with nothing of the wrong kind already proves the destination clean: every deployed path is a
   // probe, so each is absent and scripts/, the kit folder and each module folder are absent or plain directories.
   if (readHookState(root, deps).state === 'unmanaged') throw new Error(ENFORCEMENT_UNMANAGED_HOOK);

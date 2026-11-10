@@ -3,13 +3,16 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripGitLocationEnv } from './git-env.mjs';
 
 const evidence = await import('./node-evidence.mjs').catch(() => ({}));
-const { NODE_EVIDENCE, NODE_EVIDENCE_SCRIPTS, NODE_EVIDENCE_PROBES, probeNodeEvidence, hasNodeEvidence, describeNodeProbes } = evidence;
+const { NODE_EVIDENCE, readNodeEvidenceScripts, readNodeEvidenceProbes, readDeployedScripts, probeNodeEvidence, hasNodeEvidence, describeNodeProbes } = evidence;
 
 const KIT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 // The nine flat runnable names probed before revision 8, frozen: a flat deployment keeps its evidence.
@@ -69,7 +72,7 @@ describe('probeNodeEvidence — enumerated by proof', () => {
     assert.ok(r.probed.includes(KIT_INSTALLER), `${KIT_INSTALLER} is probed`);
     const deployed = deployedOf(await kitFamily()).map(({ path }) => path);
     assert.deepEqual([...r.probed], ['package.json', ...FLAT_NAMES.map((name) => `scripts/${name}`), ...[...deployed].sort().map((path) => `${KIT_DIR}/${path}`)]);
-    assert.deepEqual([...NODE_EVIDENCE_PROBES], [...r.probed]);
+    assert.deepEqual([...readNodeEvidenceProbes()], [...r.probed]);
     for (const name of [...FLAT_NAMES, ...deployed]) assert.ok(describeNodeProbes().includes(name), `${name} is named in the description`);
     assert.ok(describeNodeProbes().startsWith('package.json'));
   });
@@ -162,25 +165,54 @@ describe('probeNodeEvidence — enumerated by proof', () => {
     assert.match(denied.error, /EACCES on scripts\/agent-workflow$/);
   });
 
-  it('the probed set equals the nine frozen flat names at scripts/, then the manifest\'s deployed paths at scripts/agent-workflow/, sorted; DEPLOYED_SCRIPTS, INSTALLER_REL and KIT_SCRIPTS_DIR come from the family and BUNDLED_SCRIPT_NAMES is no export (spec:node-evidence/S5)', async () => {
-    assert.equal(evidence.INSTALLER_REL, KIT_INSTALLER);
-    assert.equal('BUNDLED_SCRIPT_NAMES' in evidence, false, 'BUNDLED_SCRIPT_NAMES retires');
-    const { KIT_FOLDER_ROOT } = await import('./source-size-config.mjs');
-    assert.equal(evidence.KIT_SCRIPTS_DIR, KIT_FOLDER_ROOT);
-    const family = await kitFamily();
-    const deployed = deployedOf(family);
-    assert.deepEqual([...NODE_EVIDENCE_PROBES.slice(1)],
-      [...FLAT_NAMES.map((name) => `scripts/${name}`), ...deployed.map(({ path }) => path).sort().map((path) => `${KIT_DIR}/${path}`)]);
-    for (const { path, role } of family.filter(({ role }) => role !== 'deployed')) assert.equal(NODE_EVIDENCE_PROBES.includes(`${KIT_DIR}/${path}`), false, `${role} ${path}`);
-    assert.ok(Object.isFrozen(NODE_EVIDENCE_SCRIPTS) && Object.isFrozen(NODE_EVIDENCE_PROBES));
-    const list = evidence.DEPLOYED_SCRIPTS;
-    assert.ok(Object.isFrozen(list), 'DEPLOYED_SCRIPTS is frozen');
-    assert.deepEqual(list.map(({ path, module, seed }) => ({ path, module, seed })), deployed.map(({ path, module, seed }) => ({ path, module, seed })));
-    for (const entry of list) {
-      const paths = Object.values(entry);
-      assert.ok(paths.includes(`${KIT_DIR}/${entry.path}`) && paths.includes(`references/scripts/${entry.path}`), `${entry.path} carries its deployed and bundled paths`);
-    }
-    assert.ok(deployed.some(({ path }) => `${KIT_DIR}/${path}` === KIT_INSTALLER), 'the installer is a deployed entry');
-    assert.deepEqual(Object.values(NODE_EVIDENCE).sort(), ['deployed-node-scripts', 'none', 'package-json', 'unreadable']);
+  describe('the family readers defer manifest reads (spec:node-evidence/S5)', () => {
+    it('returns the manifest deployed entries and flat probes as stable frozen values without retired exports', async () => {
+      const family = await kitFamily(), deployed = deployedOf(family);
+      const scripts = [...FLAT_NAMES, ...deployed.map(({ path }) => path).sort().map((path) => `agent-workflow/${path}`)];
+      assert.deepEqual(readNodeEvidenceScripts(), scripts);
+      assert.deepEqual(readNodeEvidenceProbes(), ['package.json', ...scripts.map((path) => `scripts/${path}`)]);
+      assert.deepEqual(readDeployedScripts(), deployed.map(({ path, module, seed }) => ({ path, module, seed, deployed: `${KIT_DIR}/${path}`, bundled: `references/scripts/${path}` })));
+      for (const read of [readDeployedScripts, readNodeEvidenceScripts, readNodeEvidenceProbes]) {
+        const value = read();
+        assert.equal(read(), value);
+        assert.ok(Object.isFrozen(value));
+      }
+      for (const { path, role } of family.filter(({ role }) => role !== 'deployed')) assert.equal(readNodeEvidenceProbes().includes(`${KIT_DIR}/${path}`), false, `${role} ${path}`);
+      assert.equal(evidence.INSTALLER_REL, KIT_INSTALLER);
+      assert.deepEqual(readDeployedScripts().filter(({ module }) => module === 'git-hooks').map(({ deployed }) => deployed), [evidence.INSTALLER_REL]);
+      const { KIT_FOLDER_ROOT } = await import('./source-size-config.mjs');
+      assert.equal(evidence.KIT_SCRIPTS_DIR, KIT_FOLDER_ROOT);
+      for (const name of ['DEPLOYED_SCRIPTS', 'NODE_EVIDENCE_SCRIPTS', 'NODE_EVIDENCE_PROBES', 'BUNDLED_SCRIPT_NAMES']) assert.equal(name in evidence, false, name);
+      assert.deepEqual(Object.values(NODE_EVIDENCE).sort(), ['deployed-node-scripts', 'none', 'package-json', 'unreadable']);
+    });
+    it('imports without reading, checking status or listing files', () => {
+      const script = `import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module';
+        const calls = [];
+        for (const name of ['readFileSync', 'readFile', 'statSync', 'lstatSync', 'existsSync', 'readdirSync', 'readdir']) {
+          const original = fs[name];
+          fs[name] = (...args) => {
+            if (!(new Error().stack.split('\\n')[2] ?? '').includes('node:')) calls.push([name, String(args[0])]);
+            return original.apply(fs, args);
+          };
+        }
+        syncBuiltinESMExports(); await import(${JSON.stringify(new URL('./node-evidence.mjs', import.meta.url).href)});
+        console.log(JSON.stringify(calls));`;
+      const env = Object.fromEntries(Object.entries(stripGitLocationEnv(process.env)).filter(([name]) => name !== 'NODE_TEST_CONTEXT'));
+      const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { env, encoding: 'utf8' });
+      assert.ifError(child.error);
+      assert.equal(child.status, 0, child.stderr);
+      assert.deepEqual(JSON.parse(child.stdout), []);
+    });
+    for (const name of ['readDeployedScripts', 'probeNodeEvidence']) it(`${name} throws the refused manifest message from its first call`, async () => {
+      const { readFamily } = await import('../references/scripts/family.mjs');
+      const original = fs.readFileSync, refused = {}, manifest = join(KIT_ROOT, 'references/scripts/family.json');
+      fs.readFileSync = (path, ...args) => String(path) === manifest ? '{}' : original(path, ...args);
+      syncBuiltinESMExports();
+      try {
+        assert.throws(() => readFamily(), (error) => { refused.message = error.message; return true; });
+        const fresh = await import(`./node-evidence.mjs?refused-${name}`);
+        assert.throws(() => fresh[name](...(name === 'probeNodeEvidence' ? [project()] : [])), { message: refused.message });
+      } finally { fs.readFileSync = original; syncBuiltinESMExports(); }
+    });
   });
 });

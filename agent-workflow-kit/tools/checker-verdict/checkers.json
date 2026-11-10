@@ -1623,21 +1623,7 @@
       "arguments": [
         "--verify"
       ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-kit/tools/autonomy-doctor.mjs",
-      "arguments": [
-        "--verify"
-      ],
       "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/commit-guard.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
     },
     {
       "path": "agent-workflow-kit/tools/commit-guard.mjs",

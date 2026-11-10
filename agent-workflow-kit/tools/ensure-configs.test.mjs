@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { main } from './ensure-configs.mjs';
 import { bundledImportsOf, DRY_RUN_TOKENS, ENSURE_OPS, RELAYED_ENSURE_TOKENS, WRITE_TOKENS } from './ensure-ops.mjs';
 import { KIT_OWN_PATHS } from './known-footprint.mjs';
-import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { readDeployedScripts } from './node-evidence.mjs';
 import { CONFIG_REL } from './orchestration-config.mjs';
 
 const withProject = (fn, { deploy = true, node = true } = {}) => {
@@ -48,9 +48,9 @@ const tokensOf = (stdout) =>
 const KIT = fileURLToPath(new URL('..', import.meta.url));
 // The spec layer's pair files (the spec-schema and docs-size modules' deployed entries) at their bundled bodies in the
 // kit folder, each manifest path in `edited` holding an edit of its own instead, beside an edited kit script.
-const PAIR_FILES = DEPLOYED_SCRIPTS.filter(({ module }) => module === 'spec-schema' || module === 'docs-size');
+const PAIR_FILES = readDeployedScripts().filter(({ module }) => module === 'spec-schema' || module === 'docs-size');
 const [CHECKER, READER, READER_INDEX] = ['docs-size/check-docs-size.mjs', 'spec-schema/spec-schema.mjs', 'spec-schema/index.mjs'];
-const entryOf = (manifestPath) => DEPLOYED_SCRIPTS.find(({ path }) => path === manifestPath);
+const entryOf = (manifestPath) => readDeployedScripts().find(({ path }) => path === manifestPath);
 const KIT_SCRIPT = entryOf('archives/archive-caps.mjs');
 const edit = (path) => `// my own ${path}\n`;
 const withSpecLayer = (fn, edited = [CHECKER]) => withProject((dir) => {
@@ -199,7 +199,7 @@ describe('the reconcile run', () => {
 
 describe('spec:distribution-files/S36 the op order on a flat tree without package.json', () => {
   const flat = [['spec-schema.mjs', 'references/scripts/spec-schema/spec-schema.mjs'], ['spec-schema.test.mjs', 'test/fixtures/script-priors/8.7.0/spec-schema.test.mjs.txt'],
-    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']], SEEDS = DEPLOYED_SCRIPTS.filter((e) => e.seed && e.module && !['spec-schema', 'docs-size'].includes(e.module) && e.path !== 'run.mjs');
+    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']], SEEDS = readDeployedScripts().filter((e) => e.seed && e.module && !['spec-schema', 'docs-size'].includes(e.module) && e.path !== 'run.mjs');
   for (const [label, flags] of [['one plain run places the pairs, closure, command and every seed entry before removing the flat pairs', []], ['--only scripts places every seed entry and no other file, removes nothing, keeping each flat file with its line naming run.mjs', ['--only', 'scripts']]]) {
     it(label, () => withProject((dir) => {
       mkdirSync(join(dir, 'scripts'));

@@ -11,9 +11,10 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync, cpSync } from 'node:fs';
+import fs, { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync, cpSync, chmodSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -198,6 +199,41 @@ describe('coverage-check --check — the coverage arm', () => {
     const gone = keyFor(root, 'vanished-under-us.mjs');
     assert.equal(gone, join(root, 'vanished-under-us.mjs'), 'the fallback key reads as absent-from-map → file-level red');
     rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('coverage-check --check — the status of the lcov path — spec:checker-verdict/S16', () => {
+  const checkAt = (t, root, lcovPath, fault = null) => {
+    const original = fs.lstatSync;
+    const mocked = t.mock.method(fs, 'lstatSync', (path, ...args) => { if (fault && path === lcovPath) throw fault; return original(path, ...args); });
+    syncBuiltinESMExports();
+    try {
+      return main(['--check', '--cwd', root], { env: fixtureEnv({ AW_LCOV_FILE: lcovPath }) });
+    } finally { mocked.mock.restore(); syncBuiltinESMExports(); }
+  };
+  for (const { code, lcovAt, locked, fault } of [
+    { code: 'ENOTDIR', lcovAt: (root) => join(root, 'base.txt', LCOV_BASENAME) },
+    { code: 'EACCES', lcovAt: (root) => join(mkdirSync(join(root, '.git', 'locked'), { recursive: true, mode: 0o000 }), LCOV_BASENAME), locked: true },
+    { code: 'EIO', lcovAt: (root) => join(root, '.git', LCOV_BASENAME), fault: Object.assign(new Error('i/o error'), { code: 'EIO' }) },
+    { code: null, lcovAt: (root) => join(root, '.git', LCOV_BASENAME), fault: new Error('status failed') },
+  ]) {
+    it(`a status failing with ${code ?? 'no code'} exits 1 naming the path, both machine lines once, no PASS`, { skip: locked && process.getuid?.() === 0 }, (t) => {
+      const { root } = makeRepo();
+      const lcovPath = lcovAt(root);
+      writeLcov(root, lcovFor(root, [1, 2, 3]));
+      t.after(() => { if (locked) chmodSync(dirname(lcovPath), 0o700); rmSync(root, { recursive: true, force: true }); });
+      const { code: exit, stdout } = checkAt(t, root, lcovPath, fault);
+      const count = (pattern) => (stdout.match(pattern) ?? []).length;
+      assert.deepEqual([exit, stdout.split('\n').some((line) => line.includes(lcovPath) && line.includes(code ?? '')), count(/^coverage-check: lcov-sha256=none$/gm), count(/^coverage-check: attested=no$/gm), /PASS/.test(stdout)], [1, true, 1, 1, false], stdout);
+    });
+  }
+  it('an lcov path that does not exist keeps skipped-no-lcov: exit 0, and 1 beside a malformed store as today', (t) => {
+    const { root } = makeRepo();
+    const passing = checkAt(t, root, join(root, '.git', LCOV_BASENAME));
+    writeFileSync(storeOf(root), 'not json at all\n');
+    const malformed = checkAt(t, root, join(root, '.git', LCOV_BASENAME));
+    rmSync(root, { recursive: true, force: true });
+    assert.deepEqual([passing, malformed].map((r) => [r.code, /skipped-no-lcov/.test(r.stdout), /malformed/.test(r.stdout)]), [[0, true, false], [1, true, true]], passing.stdout + malformed.stdout);
   });
 });
 

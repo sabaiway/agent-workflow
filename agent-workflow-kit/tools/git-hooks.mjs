@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { DEPLOYED_SCRIPTS, INSTALLER_REL, NODE_EVIDENCE_SCRIPTS, SCRIPTS_DIR } from './node-evidence.mjs';
+import { readDeployedScripts, INSTALLER_REL, readNodeEvidenceScripts, SCRIPTS_DIR } from './node-evidence.mjs';
 import { shellQuoteArg } from './repo-lex.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { KIT_COMMAND_PATH, KIT_COMMANDS } from '../references/scripts/run.mjs';
@@ -21,7 +21,7 @@ import { readLayoutSetup } from './source-size-core.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 export const SCRIPTS_REL = SCRIPTS_DIR;
-export { DEPLOYED_SCRIPTS, INSTALLER_REL };
+export { readDeployedScripts, INSTALLER_REL };
 
 const EXIT_OK = 0;
 const EXIT_INCOMPLETE = 1;
@@ -172,7 +172,7 @@ export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSyn
     nodes.set(rel, node);
     return node;
   };
-  for (const rel of enforcing ? DEPLOYED_SCRIPTS.map(({ deployed }) => deployed) : [INSTALLER_REL]) {
+  for (const rel of enforcing ? readDeployedScripts().map(({ deployed }) => deployed) : [INSTALLER_REL]) {
     for (const folder of foldersOf(rel)) if (!nodes.has(folder)) (folders.push(folder), probe(folder, isPlainDir, 'a plain directory'));
     probe(rel, isFile, 'a regular file');
   }
@@ -180,8 +180,8 @@ export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSyn
   if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, installerNode: nodes.get(INSTALLER_REL), lstat, readFile, deps });
   // A flat evidence name is no copy path: another node kind there is not evidence, never a refusal.
   const evidence = (rel) => (nodes.has(rel) ? isFile(nodes.get(rel)) : nodes.get(SCRIPTS_REL) !== null && isFile(nodeAt(join(root, rel), lstat)));
-  const deployed = enforcing && NODE_EVIDENCE_SCRIPTS.some((name) => evidence(`${SCRIPTS_REL}/${name}`));
-  const copies = enforcing && !deployed ? DEPLOYED_SCRIPTS.map(({ deployed: rel, bundled }) =>
+  const deployed = enforcing && readNodeEvidenceScripts().some((name) => evidence(`${SCRIPTS_REL}/${name}`));
+  const copies = enforcing && !deployed ? readDeployedScripts().map(({ deployed: rel, bundled }) =>
     ({ rel, path: join(root, rel), action: 'created', bytes: readFile(join(toolsDir, '..', bundled)) })) : [];
   const placed = copies.find(({ rel }) => rel === INSTALLER_REL);
   if (!placed && !isFile(nodes.get(INSTALLER_REL))) throw refusal(`${installer} is absent — nothing here places the hook installer`);

@@ -98,3 +98,9 @@ describe('real record census (spec:checker-verdict/S10)', () => {
     assert.deepEqual(await runCensus({ record, fixtures: FIXTURES }), []);
   });
 });
+
+it('imports every kit checker file under each fault point without a mark or failure (spec:checker-verdict/S18)', async () => {
+  const { runImportCensus } = await import('./import-harness.test.mjs');
+  const record = await readRealRecord();
+  assert.deepEqual(await runImportCensus({ record }), []);
+});

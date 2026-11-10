@@ -19,7 +19,7 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from '../atomic-write.mjs';
 import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from '../ensure-ops.mjs';
-import { DEPLOYED_SCRIPTS, INSTALLER_REL, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
+import { readDeployedScripts, INSTALLER_REL, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
 import { SCRIPT_PRIORS, classifyDeployedScript } from '../script-priors.mjs';
 import { VEHICLES_REL } from '../vehicle-settings.mjs';
 import { retireScripts } from './retired.mjs';
@@ -34,10 +34,6 @@ export const HOOK_CHANNEL = '.claude/hooks/<name>.local.mjs';
 const ROTATOR = 'archives/archive-decisions.mjs';
 // The family: every deployed entry outside the specs op's files (its three modules and the command), in manifest order.
 const SPECS_MODULES = ['spec-schema', 'docs-size', 'test-reporter'];
-const FAMILY = DEPLOYED_SCRIPTS.filter((e) => e.module && !SPECS_MODULES.includes(e.module));
-// The manifest paths a run of a component that is not accepted judges: the rotator and what it loads.
-export const SEED_NAMES = Object.freeze(FAMILY.filter((e) => e.seed).map((e) => e.path));
-const FOLDERS = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...FAMILY.map((e) => posix.dirname(e.deployed))])];
 
 const causeOf = (err) => String((err && err.message) || err);
 const kindOfDir = (st) => (st.isSymbolicLink() ? 'a symlink' : st.isFile() ? 'a regular file' : 'not a directory');
@@ -49,8 +45,9 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 const inWriteOrder = (files) => [...files.filter((f) => f.rel === INSTALLER_REL), ...dependenciesFirst(files.filter((f) => f.rel !== INSTALLER_REL))];
 
 // Each folder on the way, lstat-ed without following a link: → { refusal } | {}.
-const surveyFolders = (cwd, lstat) => {
-  for (const rel of FOLDERS) {
+const surveyFolders = (cwd, family, lstat) => {
+  const folders = [...new Set([SCRIPTS_DIR, KIT_SCRIPTS_DIR, ...family.map((e) => posix.dirname(e.deployed))])];
+  for (const rel of folders) {
     const st = lstatNoFollow(join(cwd, rel), lstat);
     if (st !== null && (!st.isDirectory() || st.isSymbolicLink())) return { refusal: wrongKind(`${rel}/`, kindOfDir(st)) };
   }
@@ -60,13 +57,15 @@ const surveyFolders = (cwd, lstat) => {
 // → { refusal } | { files, accepted }. A family path of another node kind is judged before the
 // component, so a linked family file is never placed over.
 const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
-  const folders = surveyFolders(cwd, lstat);
+  const family = readDeployedScripts().filter((e) => e.module && !SPECS_MODULES.includes(e.module));
+  const seedNames = family.filter((e) => e.seed).map((e) => e.path);
+  const folders = surveyFolders(cwd, family, lstat);
   if (folders.refusal) return folders;
-  const probes = FAMILY.map((e) => ({ path: e.path, rel: e.deployed, bundled: e.bundled, probe: probeSeedTarget(join(cwd, e.deployed), lstat) }));
+  const probes = family.map((e) => ({ path: e.path, rel: e.deployed, bundled: e.bundled, probe: probeSeedTarget(join(cwd, e.deployed), lstat) }));
   const wrong = probes.find((f) => f.probe.wrongKind);
   if (wrong) return { refusal: wrongKind(wrong.rel, wrong.probe.wrongKind) };
   const flatInstaller = probeSeedTarget(join(cwd, SCRIPTS_DIR, posix.basename(INSTALLER_REL)), lstat);
-  const accepted = probes.some((f) => f.probe.present && !SEED_NAMES.includes(f.path)) || (flatInstaller.present && !flatInstaller.wrongKind);
+  const accepted = probes.some((f) => f.probe.present && !seedNames.includes(f.path)) || (flatInstaller.present && !flatInstaller.wrongKind);
   const byPath = new Map();
   for (const f of probes) {
     try {
@@ -76,7 +75,7 @@ const survey = ({ cwd, kitRoot, deps, read, lstat }) => {
       return { refusal: composeFailure(OP, 'bundle-unreadable', `${f.rel}: the bundled script could not be read, so nothing was written — reinstall the kit. ${causeOf(err)}`) };
     }
   }
-  const files = inWriteOrder([...byPath.values()]).filter((f) => accepted || SEED_NAMES.includes(f.path)).map(({ path, rel, bundle, probe }) => {
+  const files = inWriteOrder([...byPath.values()]).filter((f) => accepted || seedNames.includes(f.path)).map(({ path, rel, bundle, probe }) => {
     const bytes = probe.present ? read(join(cwd, rel)) : undefined;
     return { path, rel, bundle, state: probe.present ? classifyDeployedScript(bytes, path, bundle, deps.priors ?? SCRIPT_PRIORS) : 'absent' };
   });

@@ -174,7 +174,7 @@ Sandbox-safe: runs fully inside an OS sandbox (fs + git reads, no network) — t
 Human residual: git commit --no-verify and receipt-file deletion remain possible — this is a
 self-discipline mechanism, not a security boundary.
 
-Exit codes: 0 pass (or plain report); 1 check failed or config error (loud); 2 usage.`;
+Exit codes: 0 pass (or plain report); 1 check failed, config error or unreadable docs/plans (loud); 2 usage.`;
 
 const KNOWN_ARGS = new Set(['--help', '-h', '--check', '--json']);
 

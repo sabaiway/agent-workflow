@@ -24,16 +24,12 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { readDeployedScripts } from './node-evidence.mjs';
 import { SCRIPT_PRIORS, classifyDeployedScript } from './script-priors.mjs';
 import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, nodeEvidenceRefusal, probeSeedTarget, tmpNote } from './ensure-ops.mjs';
 import { fileLine, hookLine } from './distribution-files/index.mjs';
 
 const OP = 'specs';
-const READER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'spec-schema');
-const CHECKER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'docs-size');
-const REPORTER = DEPLOYED_SCRIPTS.filter((e) => e.module === 'test-reporter');
-const COMMAND = DEPLOYED_SCRIPTS.find((e) => !e.module);
 const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
@@ -47,8 +43,13 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 
 // The bundled side: the pairs, the reporter, the command and their whole import closure in write order → { files } | { refusal }.
 const readBundles = (kitRoot, read) => {
+  const deployed = readDeployedScripts();
+  const reader = deployed.filter((e) => e.module === 'spec-schema');
+  const checker = deployed.filter((e) => e.module === 'docs-size');
+  const reporter = deployed.filter((e) => e.module === 'test-reporter');
+  const command = deployed.find((e) => !e.module);
   const byPath = new Map();
-  const queue = [...READER, ...CHECKER, ...REPORTER, COMMAND];
+  const queue = [...reader, ...checker, ...reporter, command];
   for (const entry of queue) {
     if (byPath.has(entry.path)) continue;
     let bundle;
@@ -59,12 +60,12 @@ const readBundles = (kitRoot, read) => {
     }
     const imports = bundledImportsOf(entry.path, bundle);
     byPath.set(entry.path, { path: entry.path, rel: entry.deployed, bundle, imports });
-    queue.push(...DEPLOYED_SCRIPTS.filter((e) => imports.includes(e.path)));
+    queue.push(...deployed.filter((e) => imports.includes(e.path)));
   }
   const of = (entries) => (path) => entries.some((e) => e.path === path);
   const group = (keep) => dependenciesFirst([...byPath.values()].filter((f) => keep(f.path)));
-  const own = [READER, CHECKER, REPORTER].map(of);
-  return { files: [...group((p) => !own.some((is) => is(p)) && p !== COMMAND.path), ...own.flatMap(group), ...group((p) => p === COMMAND.path)] };
+  const own = [reader, checker, reporter].map(of);
+  return { files: [...group((p) => !own.some((is) => is(p)) && p !== command.path), ...own.flatMap(group), ...group((p) => p === command.path)] };
 };
 
 // Each folder on the way to a pair file or a file it imports, lstat-ed without following a link → a refusal or null.

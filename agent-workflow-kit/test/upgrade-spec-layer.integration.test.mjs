@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { stripGitLocationEnv } from '../tools/git-env.mjs';
-import { DEPLOYED_SCRIPTS, INSTALLER_REL } from '../tools/node-evidence.mjs';
+import { readDeployedScripts, INSTALLER_REL } from '../tools/node-evidence.mjs';
 import { SCRIPT_PRIORS, digestOf } from '../tools/script-priors.mjs';
 
 const { main } = await import('../tools/ensure-configs.mjs').catch(() => ({}));
@@ -30,7 +30,7 @@ const MEMORY = join(KIT_ROOT, '..', 'agent-workflow-memory');
 const TEMPLATES = join(MEMORY, 'references', 'templates');
 const PRIORS = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
 // The pairs: the spec-schema module's deployed entries and the docs-size module's, by manifest path.
-const pathsOf = (name) => DEPLOYED_SCRIPTS.filter(({ module }) => module === name).map(({ path }) => path);
+const pathsOf = (name) => readDeployedScripts().filter(({ module }) => module === name).map(({ path }) => path);
 const [READER, CHECKER] = [pathsOf('spec-schema'), pathsOf('docs-size')];
 const READER_BODY = 'spec-schema/spec-schema.mjs';
 const CHECKER_SUITE = 'docs-size/check-docs-size.test.mjs';
@@ -86,7 +86,7 @@ const deploy = ({ checker = 'prior', reader = 'absent', legacyAdr = false, bodie
     mkdirSync(join(docsAi, 'history'), { recursive: true });
     writeFileSync(join(docsAi, 'history', 'decisions-archive.md'), '# old monolith\n');
   }
-  for (const { path } of DEPLOYED_SCRIPTS) {
+  for (const { path } of readDeployedScripts()) {
     if (READER.includes(path) && reader === 'absent' && !(path in bodies)) continue;
     const state = READER.includes(path) ? reader : CHECKER.includes(path) ? checker : 'current';
     writeAt(project, path, bodies[path] ?? stateBody(path, state));
@@ -275,7 +275,7 @@ const opLines = (stdout, op) => {
 describe('spec:test-reporter/S9 a deployment whose scripts component is not accepted gets the test reporter with the command', () => {
   it('one plain upgrade places it through the specs op, byte-equal to the kit; that run and a second one place no family file outside the seed entries and print the not-accepted line', () => {
     const project = declinedDeployment(), reporter = 'test-reporter/reporter.mjs';
-    const outsideSeeds = DEPLOYED_SCRIPTS.filter((e) => !e.seed && e.path !== 'run.mjs' && !['spec-schema', 'docs-size', 'test-reporter'].includes(e.module)).map((e) => e.path);
+    const outsideSeeds = readDeployedScripts().filter((e) => !e.seed && e.path !== 'run.mjs' && !['spec-schema', 'docs-size', 'test-reporter'].includes(e.module)).map((e) => e.path);
     const notAccepted = 'scripts/agent-workflow/: the enforcement scripts were not accepted in this project, so no other kit script is placed';
     try {
       assert.ok(outsideSeeds.includes(INSTALLER_REL.replace('scripts/agent-workflow/', '')), outsideSeeds.join(' '));

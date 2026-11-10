@@ -123,8 +123,12 @@ export const runCensus = async ({ record, fixtures, root = REPOSITORY_ROOT }) =>
         const result = await runFixture(firstFixture, point);
         if (!result.counted) continue;
         countedPoints.push(point);
+        if (result.code === SUCCESS_CODE) {
+          problems.push({ problem: 'fault-exit-0', ...identity, faultPoint: point });
+          continue;
+        }
         const lines = result.block.split('\n');
-        const followsForm = result.code !== SUCCESS_CODE && judgeVerdictLine(lines[0], command.name)
+        const followsForm = judgeVerdictLine(lines[0], command.name)
           && readHead(lines, command.name).some((line) => line.includes(faultPhrase(point)));
         if (followsForm) continue;
         const key = keyOf(path, commandArguments, point);

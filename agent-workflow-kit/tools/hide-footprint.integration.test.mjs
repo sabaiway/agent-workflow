@@ -13,7 +13,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { hideFootprint, excludePath, main, START_MARKER, START_MARKER as S, END_MARKER as E } from './hide-footprint.mjs';
 import { MASKS_FENCE_START as MS, MASKS_FENCE_END as ME } from './sandbox-masks.mjs';
-import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { readDeployedScripts, KIT_SCRIPTS_DIR } from './node-evidence.mjs';
 import { PRIOR_FILES } from './script-priors.mjs';
 import { hermeticGitEnv, stripGitLocationEnv } from './git-env.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
@@ -149,7 +149,7 @@ describe('hide-footprint integration (real git)', { skip: !gitOk }, () => {
 
   it('a bootstrapped spec layer is hidden: real check-ignore on both kit-folder spec-schema files and docs/ai/specs/x.md', () => {
     const { dir, git, deps } = env;
-    const pair = DEPLOYED_SCRIPTS.filter(({ module }) => module === 'spec-schema');
+    const pair = readDeployedScripts().filter(({ module }) => module === 'spec-schema');
     assert.equal(pair.length, 2, 'the spec-schema module deploys a pair');
     writeFileSync(join(dir, 'AGENTS.md'), '# entry\n');
     mkdirSync(join(dir, 'docs', 'ai', 'specs'), { recursive: true });

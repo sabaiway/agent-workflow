@@ -4,6 +4,23 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.4.1 — a check that cannot read its input fails instead of passing (AD-232)
+
+**`coverage-check --check` now fails when it cannot read the status of its lcov file, and `review-state --check`,
+`review-state --await` and `commit-guard --check` now fail when they cannot list `docs/plans`.** Before, a permission
+error or a disk error there read as "no lcov file" or "no plan in flight", and the check passed while it had seen
+nothing. Each failure names the path and the error code and exits 1. A file or folder that does not exist means
+what it meant before: nothing to check.
+
+- **Plain `review-state` and `review-state --json` also exit 1** when `docs/plans` cannot be listed, and the help
+  text of `review-state` and `coverage-check` says so.
+- **No check in the kit's `tools/` reads a file when it is loaded.** The kit's list of its own scripts is read when a
+  check first needs it, so a failed read reaches the check as its own failure, never as a crash on start. The changelog
+  and known-issues rotations still read `package.json` when they load.
+- **The kit's own tests now run every check command against a failure at each kind of read**, and a check that
+  passes under one is a failing test. It found three of the four cases above; `commit-guard --check` shares
+  review-state's listing of `docs/plans`.
+
 ## 23.4.0 — the judge's model is a setting you choose once (AD-229)
 
 **You now pick the Jev version the judge asks in `/agent-workflow-kit bridge-settings`, from the versions the bridge

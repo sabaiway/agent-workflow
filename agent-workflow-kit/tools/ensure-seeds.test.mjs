@@ -116,8 +116,8 @@ describe('spec:node-evidence/S6 the scripts ensure proceeds on a deployed script
   }, { node: false }));
   it('a deployed kit script without a package.json is Node evidence: the op places every other kit script, token seeded, no entries field', async () => {
     // The kit folder's family: the manifest's deployed entries less the spec layer's modules, at their deployed paths.
-    const { DEPLOYED_SCRIPTS } = await import('./node-evidence.mjs');
-    const family = DEPLOYED_SCRIPTS.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter' && e.path !== 'run.mjs');
+    const { readDeployedScripts } = await import('./node-evidence.mjs');
+    const family = readDeployedScripts().filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter' && e.path !== 'run.mjs');
     const caps = family.find((e) => e.path === 'archives/archive-caps.mjs');
     withProject((dir) => {
       mkdirSync(dirname(join(dir, caps.deployed)), { recursive: true });

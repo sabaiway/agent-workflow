@@ -17,7 +17,7 @@
 // side effects on import (the isDirectRun idiom) — tests import the helpers with nothing run.
 
 import { existsSync, statSync, readFileSync, lstatSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve, dirname, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { resolveDir, detectBackends, findOnPath } from './detect-backends.mjs';
@@ -85,8 +85,8 @@ import { toViewModel } from './view-model.mjs';
 import { render } from './renderers.mjs';
 // The feature-spec adoption state (contract: kit/spec-adoption) — read-only leaves, no cycle.
 import { ADOPTION, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
-// The kit's one door to the script family: where a deployment holds the decisions rotator.
-import { DEPLOYED_SCRIPTS } from './node-evidence.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import { KIT_SCRIPTS_DIR } from './node-evidence.mjs';
 
 // ── manifestState values — re-export the EXACT public subset family-registry exported before B1 ─────
 // (the 7 state constants + DISPLAY_NAMES) so every existing importer (uninstall.mjs, the test suites)
@@ -357,7 +357,7 @@ export const ADR_LAYOUT_PATHS = Object.freeze({
   // The DEPLOYED rotator is the discriminator: the new-scheme file names the store path, the
   // pre-migration one does not. Never "has decisions.md, lacks adr/" — that shape false-positives a
   // tree whose NEW rotator already reds its own gate, and every No-Node project.
-  rotator: DEPLOYED_SCRIPTS.find(({ path }) => path === 'archives/archive-decisions.mjs').deployed,
+  rotator: posix.join(KIT_SCRIPTS_DIR, KIT_COMMANDS['archive-decisions']),
   storeMarker: 'docs/ai/adr',
 });
 const ENOENT = 'ENOENT';

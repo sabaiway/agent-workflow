@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from './fixture-repo.mjs';
 import { GIT_MAX_BUFFER, hermeticGitEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
 import { PRIOR_FILES, SCRIPT_PRIORS } from '../../agent-workflow-kit/tools/script-priors.mjs';
-import { NODE_EVIDENCE_PROBES } from '../../agent-workflow-kit/tools/node-evidence.mjs';
+import { readNodeEvidenceProbes } from '../../agent-workflow-kit/tools/node-evidence.mjs';
 import { readFamily } from '../../agent-workflow-memory/references/scripts/family.mjs';
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
@@ -61,7 +61,7 @@ it('spec:standalone-scripts/S13 flat names, bodies covering 9.0.0 and Node probe
   const actualPairs = FLAT_BODIES.map(({ file, digest }) => `${file} ${digest}`);
   assert.equal(new Set(actualPairs).size, actualPairs.length, 'memory has no duplicate file/digest pair');
   assert.deepEqual(new Set(actualPairs), expectedPairs, 'memory pins exactly the catalog rows covering 9.0.0');
-  assert.deepEqual(memoryProbes, NODE_EVIDENCE_PROBES, 'memory probes the same paths in the same order');
+  assert.deepEqual(memoryProbes, readNodeEvidenceProbes(), 'memory probes the same paths in the same order');
   assert.ok(Object.isFrozen(FLAT_NAMES));
   assert.ok(Object.isFrozen(FLAT_BODIES) && FLAT_BODIES.every(Object.isFrozen));
   assert.ok(Object.isFrozen(memoryProbes));

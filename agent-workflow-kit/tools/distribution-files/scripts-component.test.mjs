@@ -1,7 +1,7 @@
 // scripts-component.test.mjs — the scripts op's component in the kit folder: the tree it judges before anything
 // else is read, the seed paths the manifest marks, and a declined project's seed entries.
-// The op, SEED_NAMES and the family's manifest reader are imported dynamically, so a tree without them fails each
-// cell, never the load.
+// The op and the family's manifest reader are imported dynamically; the seed set is derived in each cell.
+// A tree without the modules fails each cell, never the load.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { dirname, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PRIOR_FILES } from '../script-priors.mjs';
 
-const { ensureScripts, SCRIPT_CHANNEL, SEED_NAMES } = await import('./scripts.mjs').catch(() => ({}));
+const scripts = await import('./scripts.mjs').catch(() => ({})), { ensureScripts, SCRIPT_CHANNEL } = scripts;
 
 const KIT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT, 'references', 'scripts');
@@ -200,10 +200,11 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
     });
   });
 
-  it("SEED_NAMES is frozen and equals the seed paths of the scripts op's family", async () => {
+  it("exports no SEED_NAMES and the seed set equals the manifest seed paths outside the spec layer and run.mjs", async () => {
     const K = await kitLayout();
-    assert.ok(Array.isArray(SEED_NAMES) && Object.isFrozen(SEED_NAMES), 'SEED_NAMES is a frozen export of scripts.mjs');
-    assert.deepEqual([...SEED_NAMES].sort(), [...K.seeds].sort());
+    assert.equal('SEED_NAMES' in scripts, false);
+    assert.ok(K.seeds.length > 0);
+    assert.deepEqual([...K.seeds].sort(), K.entries.filter((e) => e.role === 'deployed' && e.seed && !['spec-schema', 'docs-size', 'test-reporter'].includes(e.module) && e.path !== 'run.mjs').map((e) => e.path).sort());
   });
 
   it("every non-empty subset of the seed files on edited bodies beside the spec layer's files: every seed entry the bundled bytes, each standing one replaced and each absent one placed, every import resolving, nothing else placed, one store run", async () => {
@@ -219,7 +220,7 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
     });
   });
 
-  it('one family file outside SEED_NAMES standing accepts the component: every other family file placed create-only, each absent module folder created, seeded, one hook-run line, no suite or support file', async () => {
+  it('one family file outside the seed set standing accepts the component: every other family file placed create-only, each absent module folder created, seeded, one hook-run line, no suite or support file', async () => {
     const K = await kitLayout(), outside = K.order.filter((p) => !K.seeds.includes(p)).sort()[0], others = K.order.filter((p) => p !== outside);
     withTree((dir) => put(dir, { ...pairBodies(K), [outside]: bundled(outside) }), (dir) => {
       const [links, renames] = [[], []];

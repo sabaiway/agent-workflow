@@ -3,6 +3,50 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **COVERAGE-CHECK-READS-A-FAILED-GIT-QUERY-AS-NO-WORK-TREE** — invariant: the coverage check passes outside a git
+  work tree only when git itself answers so; a git query that could not run fails the run. Origin:
+  `agent-workflow-kit/tools/coverage-check.mjs:51-55` returns null for a failed start and for any non-zero status
+  alike, and `:240-241` reads null as "not a git work tree — nothing to check", exit 0. Narrow fix: the query tells a
+  failed start from git's own not-a-repository answer, as `resolveGitLocation` of `git-env.mjs` does for review-state;
+  a failed start exits 1. Proof: one cell of the checker's suite with an injected failing start. Residual exposure,
+  not live: found by reading at the S2 spec session of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10); a
+  final gate run computes the tree's fingerprint through git before it starts the checker, and the census's `spawn`
+  fault throws instead of returning an error, so no measured run passed this way.
+
+- **PLAN-LISTING-READS-EVERY-FAILURE-AS-NO-PLANS-FOR-ITS-OTHER-CALLERS** — invariant: a caller that decides on the
+  plans in flight tells an absent `docs/plans` from one it could not read. Origin:
+  `agent-workflow-kit/tools/plan-files.mjs:36-42` answers an empty list for every listing failure; S2 of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE fixes the review-state build leaf at its call site only, and the
+  epic's Non-goals keep the meaning for tools that are no checkers: `flow-writer.mjs:402` and `:1028` and
+  `worktrees.mjs:1025` and `:2373` (writers), `procedures.mjs:763` and `now-plan-facts.mjs:110` (advisors). Narrow fix: each of those call sites lists through
+  `readPlanEntries`, as `plan-shape-cli.mjs:67-68` and `tier-guide-facts.mjs:142-143` do, and names the failure in
+  its own refusal or note. Proof: one cell per caller with a listing that fails with EACCES. Residual exposure, not
+  live: found by reading at the same spec session (2026-11-10), no run observed.
+
+- **PLAN-LISTING-READS-A-DANGLING-LINK-AS-NO-PLANS** — invariant: absence of `docs/plans` is ENOENT from a status
+  that does not follow a link, taken of `docs` and then of `docs/plans`, every status before it answering a real
+  directory; a link at either lists only when its target lists, and any other answer fails the run. Origin:
+  `agent-workflow-kit/tools/plan-files.mjs:14-19` lists through the link, so a `docs/plans` or a `docs` that is a
+  link to a missing target answers ENOENT and reads as no plan in flight; the review-state build leaf takes that
+  reading from S2 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE on, and
+  `agent-workflow-kit/references/modes/worktrees.md:120-122` already treats a linked `docs/plans` or ancestor as
+  unreadable. Narrow fix: a no-follow status of `docs`, then of `docs/plans`, at the build leaf's call site before
+  the listing. Proof: two cells of the build leaf's suite, a `docs/plans` link and a `docs` link, each to a missing
+  target. Residual exposure, not live: raised by the lens at round 2 of the S2 spec review (2026-11-10) by reading;
+  it needs the plans directory or its parent to be a link whose target is gone.
+
+- **CHANGED-SURFACE-AND-FINGERPRINT-FOLD-A-FAILED-READ-INTO-A-VALUE** — invariant: a read of the changed surface or
+  of the tree's fingerprint that fails on anything but a proven absence fails the check that asked for it. Origin:
+  `agent-workflow-kit/tools/changed-surface.mjs:128-134` reads an unreadable file as no lines, `:138-144` reads any
+  failed status as a non-regular leaf (a note at `coverage-check.mjs:102-104`, never a failure), `:160-163` reads a
+  failed git diff or listing as empty; `agent-workflow-kit/tools/core-evidence-tree.mjs:82-86` reads a failed status
+  of an untracked file as a name-only note. Under the census's `stat` fault the last one runs before
+  `coverage-check.mjs:75`, so a census run stays green on it. Narrow fix: each site tells ENOENT from every other
+  failure and carries the other as a refusal of its caller. Proof: one cell per site with a status or a read that
+  fails with EACCES. Residual exposure, not live: raised by the lens at the S2 spec review of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10) by reading, no run observed; S2 fixes the lcov status
+  and the plan listing only.
+
 - **KIT-COMMAND-LAUNCHER-ERROR-PRINTS-A-STACK** — invariant: the stable kit command reports an error it has no name
   for in one line that names the check, never a stack. Origin: `agent-workflow-memory/references/scripts/run.mjs:33`
   and `:67`, a throw of the file status or the process start leaves `main` uncaught (`:90`). Narrow fix: one catch at

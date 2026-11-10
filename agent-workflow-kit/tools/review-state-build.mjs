@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { detectBackends } from './detect-backends.mjs';
 import { resolveActivityRecipe, DISPLAY_ALIASES, requiredBackendsForConfiguredRecipe, composeReadiness } from './recipes.mjs';
 import { loadConfig } from './orchestration-config.mjs';
-import { plansInFlight } from './plan-files.mjs';
+import { plansInFlight, readPlanEntries } from './plan-files.mjs';
 import { GIT_MAX_BUFFER, resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';
 import {
   computeTreeFingerprint,
@@ -86,7 +86,8 @@ export const buildState = ({ cwd, env = process.env, detect = detectBackends, su
   const resolved = resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: ACTIVITY, slot: SLOT });
   const obligations = requiredBackendsForConfiguredRecipe({ config: config ?? {}, readiness: detection, detectionFailed: detectionWarning != null });
   const requiredBackends = obligations.backends;
-  const plans = plansInFlight(root);
+  const entries = readPlanEntries(root);
+  const plans = plansInFlight(root, () => entries);
   // The injected lstat threads through EVERY stat-dependent computation (fingerprint, clean, the
   // mask count) — a partial injection would let a test observe an inconsistent state.
   const fingerprint = location.state === 'work-tree' ? computeTreeFingerprint(cwd, { lstat, env }) : null;

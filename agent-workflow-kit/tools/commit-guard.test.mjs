@@ -351,6 +351,24 @@ describe('commit-guard — module + refusal classes (unit --check)', () => {
   });
 });
 
+describe('commit-guard — the review arm lists docs/plans — spec:checker-verdict/S20', () => {
+  it('a green final record with no docs/plans passes as today; with docs/plans unlistable (EACCES) it refuses naming both', { skip: process.getuid?.() === 0 }, (t) => {
+    const { root } = makeRepo();
+    const plans = join(root, 'docs', 'plans');
+    t.after(() => { if (existsSync(plans)) chmodSync(plans, 0o700); rmSync(root, { recursive: true, force: true }); });
+    seedFinal(root, computeTreeFingerprint(root));
+    const absent = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    assert.equal(absent.code, 0, absent.stdout + absent.stderr);
+    assert.match(absent.stdout, /^commit-guard: PASS/);
+    mkdirSync(plans, { mode: 0o000 });
+    seedFinal(root, computeTreeFingerprint(root));
+    const locked = main(['--check', '--cwd', root], { env: fixtureEnv() });
+    assert.equal(locked.code, 1, locked.stdout + locked.stderr);
+    assert.match(locked.stdout + locked.stderr, /docs\/plans/);
+    assert.match(locked.stdout + locked.stderr, /EACCES/);
+  });
+});
+
 describe('commit-guard — integration: a REAL git commit is refused per violation class', () => {
   it('no receipt → the commit is refused by the pre-commit hook; with a current green receipt it lands', () => {
     const { root, g } = makeRepo();

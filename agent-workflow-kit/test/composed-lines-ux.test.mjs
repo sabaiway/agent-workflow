@@ -18,7 +18,7 @@ const [{ applyGitHooks, UPGRADE_ROUTE }, { hermeticGitEnv }] = await Promise.all
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
 const { ensureScripts } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
 import { readFamily } from '../references/scripts/family.mjs';
-import { DEPLOYED_SCRIPTS } from '../tools/node-evidence.mjs';
+import { readDeployedScripts } from '../tools/node-evidence.mjs';
 import { SCRIPT_PRIORS } from '../tools/script-priors.mjs';
 import { CONFIG_REL, KNOWN_PRIOR_README } from '../tools/orchestration-config.mjs';
 import { PARITY, parityVerdict, unverifiableParity } from '../tools/refresh-parity.mjs';
@@ -57,7 +57,7 @@ const project = ({ node = true } = {}) => {
 const [KEPT_CHECKER, KEPT_READER] = ['docs-size/check-docs-size.mjs', 'spec-schema/spec-schema.mjs'];
 const projectWithScripts = (customPath, customBody) => {
   const dir = project();
-  for (const { path, deployed, bundled: from } of DEPLOYED_SCRIPTS.filter(({ module }) => ['docs-size', 'spec-schema', 'shared'].includes(module))) {
+  for (const { path, deployed, bundled: from } of readDeployedScripts().filter(({ module }) => ['docs-size', 'spec-schema', 'shared'].includes(module))) {
     const body = readFileSync(join(KIT, from), 'utf8');
     mkdirSync(dirname(join(dir, deployed)), { recursive: true });
     writeFileSync(join(dir, deployed), path === customPath ? customBody ?? `${body}// mine\n` : body);
@@ -212,7 +212,7 @@ const fxUnwitnessed = (table) => table.flatMap(([id, , ...lines]) => lines.filte
 }
 {
   const dir = projectWithScripts(KEPT_READER);
-  const checkerOf = DEPLOYED_SCRIPTS.find(({ path }) => path === KEPT_CHECKER);
+  const checkerOf = readDeployedScripts().find(({ path }) => path === KEPT_CHECKER);
   const keptIndexFx = (id, cwd = projectWithRejectingChecker(), extra = {}) => ensureFx(`index-kept-${id}`, ensureIndex({ cwd, kitRoot: KIT, deps: {}, ...extra }));
   keptIndexFx('regenerated', dir);
   keptIndexFx('already-current', dir);

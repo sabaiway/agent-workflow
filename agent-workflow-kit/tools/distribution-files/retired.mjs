@@ -3,11 +3,11 @@ import { lstatSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { lstatNoFollow } from '../atomic-write.mjs';
 import { stripGitLocationEnv } from '../git-env.mjs';
-import { DEPLOYED_SCRIPTS, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
+import { readDeployedScripts, KIT_SCRIPTS_DIR, SCRIPTS_DIR } from '../node-evidence.mjs';
 import { PRIOR_FILES, SCRIPT_PRIORS, digestOf } from '../script-priors.mjs';
 
-const DEPLOYED_BY_NAME = new Map(DEPLOYED_SCRIPTS.map((entry) => [posix.basename(entry.path), entry]));
-const COMMAND = DEPLOYED_SCRIPTS.find((entry) => !entry.module);
+const readDeployedByName = () => new Map(readDeployedScripts().map((entry) => [posix.basename(entry.path), entry]));
+const readCommand = () => readDeployedScripts().find((entry) => !entry.module);
 const normalizeBody = (bytes) => String(bytes).replaceAll('\r\n', '\n');
 const flatPath = (name) => `${SCRIPTS_DIR}/${name}`;
 const isRegular = (cwd, rel, lstat) => lstatNoFollow(join(cwd, rel), lstat)?.isFile() === true;
@@ -16,7 +16,7 @@ const errorCode = (error) => error.code ?? error.message;
 export const isRetiredKitScript = (name, bytes, kitRoot, read = readFileSync) => {
   const digest = digestOf(normalizeBody(bytes));
   if (SCRIPT_PRIORS.some((row) => row.file === name && row.digest === digest)) return true;
-  const entry = DEPLOYED_BY_NAME.get(name);
+  const entry = readDeployedByName().get(name);
   return Boolean(entry && digest === digestOf(normalizeBody(read(join(kitRoot, entry.bundled)))));
 };
 
@@ -56,7 +56,7 @@ export const retireScripts = ({ cwd, kitRoot, dryRun = false, deps = {}, placedS
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
   const standing = (rel) => (dryRun && placedScripts.includes(rel)) || isRegular(cwd, rel, lstat);
-  const commandStands = standing(COMMAND.deployed);
+  const commandStands = standing(readCommand().deployed);
   const classified = new Map();
   const removed = [];
   const lines = [];
@@ -79,8 +79,8 @@ export const retireScripts = ({ cwd, kitRoot, dryRun = false, deps = {}, placedS
     if (owned === null) continue;
     classified.set(name, owned ? 'kit' : 'foreign');
     if (!owned) { lines.push(foreignLine(name)); continue; }
-    const replacement = DEPLOYED_BY_NAME.get(name);
-    const missing = !commandStands ? COMMAND.deployed : replacement && !standing(replacement.deployed) ? replacement.deployed : null;
+    const replacement = readDeployedByName().get(name);
+    const missing = !commandStands ? readCommand().deployed : replacement && !standing(replacement.deployed) ? replacement.deployed : null;
     if (missing) { lines.push(keptLine(name, missing, dryRun)); continue; }
     if (!dryRun) {
       try {

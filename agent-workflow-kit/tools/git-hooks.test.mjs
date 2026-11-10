@@ -354,17 +354,17 @@ describe('spec:init-project/S34 the git-hook writer by proof on a temp git proje
     assert.deepEqual(snapshot(root), before);
   });
 
-  it('DEPLOYED_SCRIPTS equals the manifest\'s deployed entries, no suite, support or skill-home file among them, re-exported with INSTALLER_REL from node-evidence', async () => {
+  it('readDeployedScripts returns the manifest\'s deployed entries, no suite, support or skill-home file among them, re-exported with INSTALLER_REL from node-evidence', async () => {
     assert.equal(need('INSTALLER_REL'), KIT_INSTALLER);
-    assert.equal('BUNDLED_SCRIPT_NAMES' in leaf, false, 'BUNDLED_SCRIPT_NAMES retires');
+    for (const name of ['DEPLOYED_SCRIPTS', 'BUNDLED_SCRIPT_NAMES']) assert.equal(name in leaf, false, `${name} retires`);
     assert.equal(need('SCRIPTS_REL'), 'scripts');
     const family = (await import('../references/scripts/family.mjs')).readFamily(BUNDLE);
-    const list = need('DEPLOYED_SCRIPTS');
+    const list = need('readDeployedScripts')();
     assert.ok(Object.isFrozen(list));
     assert.deepEqual(list.map(({ path }) => path), family.filter(({ role }) => role === 'deployed').map(({ path }) => path));
     for (const { path, role } of family.filter(({ role }) => role !== 'deployed')) assert.equal(list.some((entry) => entry.path === path), false, `${role} ${path}`);
     const evidence = await import('./node-evidence.mjs');
-    assert.deepEqual([list === evidence.DEPLOYED_SCRIPTS, need('INSTALLER_REL') === evidence.INSTALLER_REL], [true, true]);
+    assert.deepEqual([need('readDeployedScripts') === evidence.readDeployedScripts, need('INSTALLER_REL') === evidence.INSTALLER_REL], [true, true]);
   });
 
   it('maps the project installer exit 7 to exit 1 with its original status named', (t) => {

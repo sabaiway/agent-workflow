@@ -73,11 +73,12 @@ const checkCoverage = ({ rootTop, lcovPath }) => {
   let st = null;
   try {
     st = lstatSync(lcovPath);
-  } catch {
-    st = null;
-  }
-  if (st == null) {
-    return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null };
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null };
+    }
+    failures.push(`${lcovPath}: status could not be read (${error?.code ?? 'fs error'})`);
+    return { failures, notes, skipped: false, lcovSha256: null };
   }
   if (!st.isFile()) {
     failures.push(`${lcovPath}: not a regular file (a symlink/device is never read — fail closed)`);
@@ -318,9 +319,9 @@ deleted fresh by run-gates --final), lists uncovered CHANGED executable Node lin
 lists changed out-of-domain files (the coverage claim is narrowed to Node lines), and VERIFIES
 every current-base red-proof record: bound test present, content hash unchanged, green N/N
 (AW_CORE_EVIDENCE_RERUNS, default 3), pre-fix fingerprint differing from the current tree.
-An absent lcov file is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran, stated); a
-symlinked lcov path, an uncovered line, a broken red-proof obligation, or a malformed evidence
-store fails (exit 1).
+An absent lcov file (ENOENT) is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran, stated).
+Any other lcov status failure, a symlinked lcov path, an uncovered line, a broken red-proof
+obligation, or a malformed evidence store fails (exit 1).
 
 A coverage VERDICT is issued ONLY inside the run that owns the artifact's lifetime: run-gates
 --final deletes the lcov before any gate spawns and hands this checker an attestation context

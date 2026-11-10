@@ -36,7 +36,7 @@ import { GATES_REL } from './gates-declaration.mjs';
 import { AUTONOMY_REL } from './autonomy-config.mjs';
 import { VEHICLES_REL } from './vehicle-settings.mjs';
 import { ENSURE_TOKENS, FAILURE_CAUSES } from './ensure-vocabulary.mjs';
-import { DEPLOYED_SCRIPTS, NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
+import { readDeployedScripts, NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
 import { classifyDeployedScript } from './script-priors.mjs';
 import { parseFrontmatter } from '../references/scripts/docs-size/index.mjs';
 
@@ -233,7 +233,7 @@ export const nodeEvidenceRefusal = (op, cwd, lstat) => {
 const INDEX_REL = 'docs/ai/index.md';
 // The docs checker is the docs-size module's one deployed entry: bundled, it is the generator; deployed,
 // the kept probe. A flat scripts/check-docs-size.mjs is no deployed checker (story S4 reads it).
-const CHECKER = DEPLOYED_SCRIPTS.find(({ module }) => module === 'docs-size');
+const readChecker = () => readDeployedScripts().find(({ module }) => module === 'docs-size');
 const ENSURE_INDEX_OUTCOME = /^ensure-index: (regenerated|already-current)\b/m;
 const ENSURE_INDEX_REFUSAL = /^ensure-index: (write-refused|probe-failed)\b/m;
 // The probe has no machine line, so its two ANSWERS are matched against the canonical sentences it
@@ -249,21 +249,21 @@ const describeExit = (result) => (result.signal ? `on signal ${result.signal}` :
 const bothStreams = (result) => `${String(result.stdout ?? '')}${String(result.stderr ?? '')}`.trim();
 const describeExitWithOutput = (result, subject = 'it') => `${subject} exited ${describeExit(result)}${bothStreams(result) ? `: ${bothStreams(result)}` : ''}`;
 
-const KEPT_JUDGE = `the project's own checker (${CHECKER.deployed} --check-index)`;
-const KEPT_FITS = `in sync under ${KEPT_JUDGE} and within the maxLines it stamps`;
+const describeKeptJudge = () => `the project's own checker (${readChecker().deployed} --check-index)`;
+const describeKeptFits = () => `in sync under ${describeKeptJudge()} and within the maxLines it stamps`;
 const KEPT_ROUTE = "the spec layer's write of the bundled modules the project's hook loads, then this step again";
 const KEPT_PROBE_TIMEOUT_MS = 30_000;
 const countLines = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 const readStampedCap = (text) => { const value = parseFrontmatter(text)?.maxLines; const cap = value ? Number(value) : NaN; return Number.isNaN(cap) ? undefined : cap; };
 
-const DEPLOYED_BY_PATH = new Map(DEPLOYED_SCRIPTS.map((entry) => [entry.path, entry]));
+const readDeployedByPath = () => new Map(readDeployedScripts().map((entry) => [entry.path, entry]));
 const RELATIVE_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const pathIn = (root, rel) => join(root, ...rel.split('/'));
 
 // The one reading of the family's bundled imports, shared by the index, scripts and specs ops: the deployed
 // manifest paths `bundle` (the bytes at manifest path `path`) imports by a relative specifier.
 export const bundledImportsOf = (path, bundle) => [...String(bundle).matchAll(RELATIVE_IMPORT)]
-  .map(([, spec]) => posix.join(posix.dirname(path), spec)).filter((dep) => DEPLOYED_BY_PATH.has(dep));
+  .map(([, spec]) => posix.join(posix.dirname(path), spec)).filter((dep) => readDeployedByPath().has(dep));
 // Each of `files` ({ path, imports }) after every one of them it imports, by manifest path in code-unit order
 // otherwise, so each file a run leaves loads. A cycle is a broken bundle, never a silent order.
 export const dependenciesFirst = (files) => {
@@ -281,10 +281,10 @@ export const dependenciesFirst = (files) => {
 // The modules the project's hook loads, the checker first: the deployed files of the docs-size and
 // spec-schema modules, and the shared files the checker reaches through its bundled relative imports.
 const hookModulesOf = (bundleOf) => {
-  const reached = new Set([CHECKER.path]);
-  for (const path of reached) for (const dep of bundledImportsOf(path, bundleOf(DEPLOYED_BY_PATH.get(path)).bytes ?? '')) reached.add(dep);
+  const reached = new Set([readChecker().path]);
+  for (const path of reached) for (const dep of bundledImportsOf(path, bundleOf(readDeployedByPath().get(path)).bytes ?? '')) reached.add(dep);
   const loaded = ({ module, path }) => module === 'docs-size' || module === 'spec-schema' || (module === 'shared' && reached.has(path));
-  return [CHECKER, ...DEPLOYED_SCRIPTS.filter((entry) => entry !== CHECKER && loaded(entry))];
+  return [readChecker(), ...readDeployedScripts().filter((entry) => entry !== readChecker() && loaded(entry))];
 };
 
 // A regular file where a folder on the way belongs (ENOTDIR) holds no module.
@@ -293,12 +293,12 @@ const probeHookModule = (cwd, entry, lstat) => { try { return probeSeedTarget(pa
 // → one { rel, state } per hook module: absent, wrong-kind, bundle-unreadable or the classifier's word.
 // No deployed checker → that one entry, absent; every kind is probed before any project file is read.
 const surveyHook = (cwd, kitRoot, read, lstat) => {
-  const checker = probeHookModule(cwd, CHECKER, lstat);
-  if (checker.wrongKind || !checker.present) return [{ rel: CHECKER.deployed, state: checker.wrongKind ? 'wrong-kind' : 'absent', wrongKind: checker.wrongKind }];
+  const checker = probeHookModule(cwd, readChecker(), lstat);
+  if (checker.wrongKind || !checker.present) return [{ rel: readChecker().deployed, state: checker.wrongKind ? 'wrong-kind' : 'absent', wrongKind: checker.wrongKind }];
   const bundles = new Map();
   const readBundle = (entry) => { try { return { bytes: read(pathIn(kitRoot, entry.bundled)) }; } catch (err) { return { error: causeOf(err) }; } };
   const bundleOf = (entry) => (bundles.has(entry.path) ? bundles : bundles.set(entry.path, readBundle(entry))).get(entry.path);
-  const probes = hookModulesOf(bundleOf).map((entry) => ({ entry, rel: entry.deployed, probe: entry === CHECKER ? checker : probeHookModule(cwd, entry, lstat) }));
+  const probes = hookModulesOf(bundleOf).map((entry) => ({ entry, rel: entry.deployed, probe: entry === readChecker() ? checker : probeHookModule(cwd, entry, lstat) }));
   const wrong = probes.find(({ probe }) => probe.wrongKind);
   if (wrong) return [{ rel: wrong.rel, state: 'wrong-kind', wrongKind: wrong.probe.wrongKind }];
   return probes.map(({ entry, rel, probe }) => {
@@ -310,7 +310,7 @@ const surveyHook = (cwd, kitRoot, read, lstat) => {
 };
 
 const judgeKept = ({ cwd, spawn, read, lstat, deps }) => {
-  const result = spawn(process.execPath, [pathIn(cwd, CHECKER.deployed), '--check-index'], { cwd, encoding: 'utf8', timeout: deps.keptProbeTimeoutMs ?? KEPT_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  const result = spawn(process.execPath, [pathIn(cwd, readChecker().deployed), '--check-index'], { cwd, encoding: 'utf8', timeout: deps.keptProbeTimeoutMs ?? KEPT_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' });
   if (result.error) return { error: `${causeOf(result.error)}${result.signal ? `, killed on signal ${result.signal}` : ''}` };
   if (result.status !== 0) return { accepted: false, said: describeExitWithOutput(result), half: 'its index check' };
   const text = lstatNoFollow(join(cwd, INDEX_REL), lstat)?.isFile() ? String(read(join(cwd, INDEX_REL), 'utf8')) : null;
@@ -340,15 +340,15 @@ const putBackIndex = (cwd, found, deps) => {
 
 const ensureKeptIndex = ({ cwd, drive, spawn, read, lstat, deps }) => {
   const judge = () => judgeKept({ cwd, spawn, read, lstat, deps });
-  const reportUnanswered = (verdict, after) => loud('index', 'index-probe-failed', `${INDEX_REL}: ${KEPT_JUDGE} could not be launched or did not answer in time (${verdict.error}) — ${after}`);
+  const reportUnanswered = (verdict, after) => loud('index', 'index-probe-failed', `${INDEX_REL}: ${describeKeptJudge()} could not be launched or did not answer in time (${verdict.error}) — ${after}`);
   const first = judge();
   if (first.error) return reportUnanswered(first, 'nothing was written');
-  if (first.accepted) return ok('index', 'already-current', `${INDEX_REL}: ${KEPT_FITS} — nothing written`);
+  if (first.accepted) return ok('index', 'already-current', `${INDEX_REL}: ${describeKeptFits()} — nothing written`);
   const found = lstatNoFollow(join(cwd, INDEX_REL), lstat) === null ? null : read(join(cwd, INDEX_REL));
   const restored = found === null ? 'the navigator was put back: found absent, it was removed again' : 'the navigator was put back byte for byte';
   const restoreThen = (failure, compose) => {
     const refused = putBackIndex(cwd, found, deps);
-    return refused === null ? compose() : loud('index', 'write-refused', `${INDEX_REL}: putting the navigator back failed (${refused})${failure ? ` after ${failure}` : ''} — a navigator ${KEPT_JUDGE} rejects may stand; re-read it before re-running`);
+    return refused === null ? compose() : loud('index', 'write-refused', `${INDEX_REL}: putting the navigator back failed (${refused})${failure ? ` after ${failure}` : ''} — a navigator ${describeKeptJudge()} rejects may stand; re-read it before re-running`);
   };
   const run = drive('--ensure-index');
   const refusal = String(run.stderr ?? '').match(ENSURE_INDEX_REFUSAL);
@@ -359,19 +359,19 @@ const ensureKeptIndex = ({ cwd, drive, spawn, read, lstat, deps }) => {
   }
   let second;
   try { second = judge(); } catch (err) { return restoreThen(`the navigator could not be read back (${causeOf(err)})`, () => loud('index', 'unexpected-error', `${INDEX_REL}: the navigator could not be read back after the bundled write (${causeOf(err)}) — ${restored}`)); }
-  if (second.error) return restoreThen(`${KEPT_JUDGE} could not answer (${second.error})`, () => reportUnanswered(second, restored));
-  if (second.accepted) return ok('index', 'regenerated', `${INDEX_REL}: written by the bundled generator — ${KEPT_FITS}`);
-  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX_REL}: ${KEPT_JUDGE} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${KEPT_ROUTE}`));
+  if (second.error) return restoreThen(`${describeKeptJudge()} could not answer (${second.error})`, () => reportUnanswered(second, restored));
+  if (second.accepted) return ok('index', 'regenerated', `${INDEX_REL}: written by the bundled generator — ${describeKeptFits()}`);
+  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX_REL}: ${describeKeptJudge()} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${KEPT_ROUTE}`));
 };
 
 const buildKeptDryRunNote = (hook) =>
-  `a module the project's hook loads (${hook.filter((entry) => entry.state !== 'current').map((entry) => entry.rel).join(', ')}) is not the bundled one: unless the spec-layer step of this run first refreshes every such module, the real run judges the navigator by ${KEPT_JUDGE} and puts back a write it rejects`;
+  `a module the project's hook loads (${hook.filter((entry) => entry.state !== 'current').map((entry) => entry.rel).join(', ')}) is not the bundled one: unless the spec-layer step of this run first refreshes every such module, the real run judges the navigator by ${describeKeptJudge()} and puts back a write it rejects`;
 
 export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const lstat = deps.lstat ?? lstatSync;
   const read = deps.readFile ?? readFileSync;
   const spawn = deps.spawnSync ?? spawnSync;
-  const generator = pathIn(kitRoot, CHECKER.bundled);
+  const generator = pathIn(kitRoot, readChecker().bundled);
   const drive = (mode) => spawn(process.execPath, [generator, mode, `--root=${cwd}`], { encoding: 'utf8' });
   const unlaunchable = (result) =>
     loud('index', 'generator-unlaunchable', `${INDEX_REL}: the bundled generator could not be started, so nothing was probed or written — reinstall the kit. ${causeOf(result.error)}`);

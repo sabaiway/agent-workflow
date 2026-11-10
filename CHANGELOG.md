@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-10 — AD-232: a kit checker that cannot read its state fails; no checker file in the kit's tools reads at import (kit 23.4.1 PATCH; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/coverage-check.mjs` fails a non-ENOENT status of its lcov path** naming the path and the
+code; `review-state-build.mjs` lists `docs/plans` through `readPlanEntries`, so `review-state` (every mode) and
+`commit-guard --check` exit 1 on a non-ENOENT listing failure. `node-evidence.mjs` reads the family manifest at the
+first call through `readDeployedScripts`, `readNodeEvidenceScripts` and `readNodeEvidenceProbes`; the constants
+`DEPLOYED_SCRIPTS`, `NODE_EVIDENCE_SCRIPTS`, `NODE_EVIDENCE_PROBES` and `distribution-files/scripts.mjs`'s
+`SEED_NAMES` retire; eight of their nine importers call the readers where they run, and the ninth,
+`family-registry.mjs`, composes `ADR_LAYOUT_PATHS.rotator` from `KIT_COMMANDS`. S1 (`221b8e0`, unreleased until now) added `tools/checker-verdict/`: one verdict form, the record
+`checkers.json` and a census that runs every kit checker command line red through the gate runner and under a fault
+at each read; S2 adds `import-harness.test.mjs` (every checker file of the kit package in the record, imported under each fault
+point, leaves no mark; the changelog and issues rotations, the kit's and memory's copies, still read `package.json`
+at import),
+reads a counted fault run that exits 0 as red even when listed, and drops the two `faultExceptions` entries the
+census now reports stale. Specs `kit/checker-verdict` revision 2, `kit/node-evidence` 10,
+`kit/review-domain/review-state` 3, and seven contracts where a retired name moved.
+
 ## 2026-11-08 — AD-231: the publish judges an already-published package by the bytes it ships (ships kit 23.4.0 with AD-229 and AD-230; codex 6.0.2 and agy 8.0.2 PATCH; memory 11.0.1 and engine 6.0.3 unchanged)
 
 **`.github/workflows/_publish-one.yml` gains the step `judge`**, after `Pack the tarball once` and before both Publish
