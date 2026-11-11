@@ -74,7 +74,30 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   stack. Proof: that cell red before the fix. Residual exposure, not live: of today's checkers only spec-coverage-cli
   opens a red block with its verdict line (`spec-coverage-cli.mjs:205`), and its error path prints the bare message
   with no verdict line (`:174-176`), so every counted fault run today misses on its first line before the head is
-  read. Bound to S3 of that epic. Raised by the lens at its S1 diff review (2026-11-10).
+  read. Bound to S4 of that epic. Raised by the lens at its S1 diff review (2026-11-10).
+
+- **FORM-JUDGE-ACCEPTS-A-PLACE-THAT-OPENS-WITH-A-SPACE-OR-HOLDS-A-LINE-BREAK** — invariant: the form judge accepts a
+  place only when a finding line opening with it is one line at column one. Origin:
+  `agent-workflow-kit/tools/checker-verdict/form.mjs:21-32`, `judgePlace` tests the path for a backslash, a `..`
+  segment and a leading `./` only, so a place of two spaces and a word, or one holding a line feed, is a place; the
+  record reader judges a red case's places with it (`record.mjs`), and part form says a finding line opens at column
+  one. Narrow fix: `judgePlace` refuses a place that opens with a space or holds a carriage return or a line feed,
+  with two S2 cells. Proof: those cells red before the fix. Residual exposure, not live: the record is kept by hand
+  and holds no such place, and the composer of story S3 refuses both itself (spec verdict-block, the closed list;
+  its kit-side suite holds the two rules equal but for these two refusals). Raised at the S3 spec review of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE by the orchestrator's self-review (2026-11-10).
+
+- **VERDICT-BLOCK-SUITE-LEAVES-FOUR-MUTATIONS-ALIVE** — invariant: each rule of the composer's contract
+  (`docs/ai/specs/memory/verdict-block.md`) goes red in its suite when the code breaks it. Origin
+  (`agent-workflow-memory/references/scripts/shared/verdict-block.mjs`): (1) exit codes 1 and 255 are never tested as
+  accepted, so a tightened bound at the guard's exit-code check passes; (2) dropping `': '` from the late-line check
+  (`validateLateLine`) passes S1 and S6; (3) removing `error instanceof Error &&` from the stack read passes S3; (4) a
+  thrown Error whose `stack` getter throws, or a revoked Proxy, makes the guard throw instead of answering
+  `{ exitCode, lines }` (the process still exits 1). Narrow fix: an S4 cell where the guard accepts 1 and 255 and calls
+  its run; an `after` line `.gitignore checked` beside place `.` in S1; an S3 row throwing `{ stack: 'a\nb' }`; the
+  stack read under the same try as the error's line, with an S3 row. Proof: each cell red on its mutation. Residual
+  exposure, not live: no checker calls the composer before S4, whose rotations pass literal lists and real Errors.
+  Raised by the lens, round 1 of the S3 diff review of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-11).
 
 - **DIRECT-RUN-GUARD-EXITS-GREEN-WHEN-ITS-PATH-DOES-NOT-RESOLVE** — invariant: a kit command line whose own path
   cannot be resolved fails, never exits 0 without running. Origin: `agent-workflow-kit/tools/direct-run.mjs:36-46`,
@@ -1219,6 +1242,13 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   story is planned, and no release shipped the section.
 
 ## Closed
+
+- **VERDICT-BLOCK-SPEC-REVIEW-MINORS** — invariant: the draft contract `docs/ai/specs/memory/verdict-block.md` and the
+  shared index's header say what the code and its suites hold. Raised by the lens, round 2 of the S3 spec review of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-10). Closed in story S3 (2026-11-11): (2) scenario S6 states
+  its places include none opening with the name used and (3) "Bound to the form" names `judgeRemedyLine`, both in the tests
+  session before any binding; (1) the header of `shared/index.mjs:1` names no part of the module, in the code session
+  with its mirror.
 
 - **PUBLISH-PACK-RACES-THE-BRIDGE-FIXTURES** — invariant: the kit's publish test step passes whatever order its suites
   run in. Origin: the kit 20.0.0 publish run 40652332877 and the S18 run 42336443694 failed when a bridge suite wrote

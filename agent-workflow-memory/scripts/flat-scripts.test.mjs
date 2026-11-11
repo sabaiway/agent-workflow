@@ -13,7 +13,7 @@ const BUNDLE = join(SKILL_ROOT, 'references/scripts');
 const KIT_FOLDER = 'scripts/agent-workflow';
 const DEPLOYED = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
 const BY_NAME = new Map(DEPLOYED.map(({ path }) => [basename(path), path]));
-const BODY_NAMES = [...BY_NAME.keys()].filter((name) => !['run.mjs', 'index.mjs', 'project-root.mjs', 'reporter.mjs'].includes(name));
+const BODY_NAMES = [...BY_NAME.keys()].filter((name) => !['run.mjs', 'index.mjs', 'project-root.mjs', 'verdict-block.mjs', 'reporter.mjs'].includes(name));
 const FLAT_COUNT = 25;
 const FLAT_NAME = 'archive-caps.mjs';
 const EDITED_SUITE = 'archive-caps.test.mjs';

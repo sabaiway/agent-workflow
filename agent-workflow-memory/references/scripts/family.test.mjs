@@ -18,7 +18,7 @@ const TREE = {
     'archive-issues.test.mjs', 'archive-decisions.test.mjs', 'archive-caps.test.mjs', 'archive-conservation.test.mjs', 'archiver-structure.test.mjs'],
   'git-hooks': ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'],
   gates: ['migrate-gates.mjs', 'kit-command-gates.mjs', 'migrate-gates.test.mjs', 'migrate-gates-branches.test.mjs', 'kit-command-gates.test.mjs'],
-  shared: ['markdown-blocks.mjs', 'project-root.mjs', 'index.mjs', 'markdown-blocks.test.mjs', 'project-root.test.mjs'],
+  shared: ['markdown-blocks.mjs', 'project-root.mjs', 'verdict-block.mjs', 'index.mjs', 'markdown-blocks.test.mjs', 'project-root.test.mjs', 'verdict-block.test.mjs'],
   'test-support': ['_expect-shim.mjs', 'index.mjs'],
   'test-reporter': ['reporter.mjs', 'reporter.test.mjs'],
 };
@@ -51,9 +51,9 @@ const bijectionProblems = (files, paths) => [
 ];
 
 describe('spec:script-family/S1 the canon tree and the manifest are one bijection', () => {
-  it('the tree holds exactly the 41 files: five top-level and those of the eight modules, each file but family.json one manifest entry', async () => {
+  it('the tree holds exactly the 43 files: five top-level and those of the eight modules, each file but family.json one manifest entry', async () => {
     assert.deepEqual(walk(HERE), [...FILES, ...MODULES.map((module) => `${module}/`)].sort());
-    assert.equal(FILES.length, 41);
+    assert.equal(FILES.length, 43);
     const files = walk(HERE).filter((node) => !node.endsWith('/'));
     const paths = (await readFamily(HERE)).map((entry) => entry.path);
     assert.deepEqual(bijectionProblems(files, paths), []);

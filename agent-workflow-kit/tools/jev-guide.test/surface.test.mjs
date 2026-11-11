@@ -28,7 +28,7 @@ const FACTS = ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP',
 const NAMED = new Map([['node:fs', ['lstatSync', 'readFileSync', 'readdirSync', 'statSync']], ['node:os', ['homedir', 'hostname']],
   ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/shared/index.mjs', ['fail']],
   ['tools/jev-facts.mjs', FACTS]]);
-// The shared module's files (its index, markdown-blocks.mjs and project-root.mjs) count as one module, its index.
+// The shared module's files count as one module, its index.
 const moduleOf = (identity) => (identity.startsWith('references/scripts/shared/') ? 'references/scripts/shared/index.mjs' : identity);
 // The one module the graph may reach beyond the guide's own imports, and only through the facts leaf.
 const THROUGH_FACTS = 'node:crypto';

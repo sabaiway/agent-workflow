@@ -15,7 +15,7 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const ARCHIVERS = ['archive-changelog.mjs', 'archive-issues.mjs', 'archive-decisions.mjs'];
 // The two archivers' load closure as module paths, deployed into a fixture's kit folder like a consumer.
 const ARCHIVER_CLOSURE = ['archives/archive-changelog.mjs', 'archives/archive-issues.mjs', 'archives/archive-caps.mjs',
-  'shared/index.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs'];
+  'shared/index.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs'];
 const FIXED_DATE = '2026-09-02';
 const MALFORMED_PACKAGE_JSON = '{ not json';
 const NAMED_PACKAGE_JSON = '{"name":"named-fixture"}';

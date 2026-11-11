@@ -107,8 +107,12 @@ const tokenFor = (K, table, dry = false) => {
 // The retired words, judged by stems: no line says withheld, customized, kept aside, the user's yes,
 // the block below or that the user edited a file; no pair line says preserved.
 const RETIRED = /withh|customi|aside|\byes\b|\bblock\b|\bedited\b|carr(?:ies|ied) an edit/i;
+const KIT_FOLDER_PATH = /scripts\/agent-workflow\/[^\s"'`<>()\[\]{},;:]*/g;
 const assertNoRetired = (r) => {
-  assert.deepEqual(r.lines.filter((l) => RETIRED.test(l) || (l.startsWith('scripts/') && /preserv/i.test(l))), [], r.lines.join('\n'));
+  assert.deepEqual(r.lines.filter((line) => {
+    const text = line.replace(KIT_FOLDER_PATH, '');
+    return RETIRED.test(text) || (line.startsWith('scripts/') && /preserv/i.test(text));
+  }), [], r.lines.join('\n'));
   assert.equal('entries' in r, false, 'no outcome carries an entries field');
 };
 

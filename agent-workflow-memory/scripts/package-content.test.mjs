@@ -220,6 +220,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      tooling; their suites do not ship) — story S5 of KIT-SCRIPTS.
     // 56 = 55 + bin/payload-prune.mjs (the prune canon the installer converges its home with; the kit
     //      ships its generated copy) — story S8 of KIT-SCRIPTS.
-    assert.equal(packed.length, 57, `tarball file count drifted (${packed.length} ≠ 57)`);
+    // 58 = 57 + references/scripts/shared/verdict-block.mjs (the composer of a checker's red block, deployed) — story S3 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE.
+    assert.equal(packed.length, 58, `tarball file count drifted (${packed.length} ≠ 58)`);
   });
 });
