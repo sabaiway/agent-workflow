@@ -43,7 +43,7 @@ const FROZEN_PRIORS = [
   ['spec-schema.mjs', '8.0.0', '8.6.3', '238e9a0ab3839f56b9f488b8c3232e8289c90d9808c772864dd5a95405b8488c'],
   ['spec-schema.test.mjs', '8.0.0', '8.6.3', '192661dd459c130004b2639d506676ee023fb24e862aad09656adc8c1418af04'],
 ];
-const CATALOG_ROWS = 45;
+const CATALOG_ROWS = 46;
 const LAST_FLAT_RELEASE = '1af99af';
 const LAST_FLAT_VERSION = '9.0.0';
 const OTHER_BYTES = Buffer.from('not a shipped script body\n');
@@ -202,7 +202,7 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
     lines.splice(at + 1, 2);
     return lines.join('\n');
   };
-  it('appends exactly the 23 last-flat bodies after the frozen prefix, with fixture folders, digests and lastShipped 9.0.0', () => {
+  it('appends exactly the 24 last-flat bodies after the frozen prefix, with fixture folders, digests and lastShipped 9.0.0', () => {
     assert.deepEqual(Object.keys(scriptPriors).sort(), ['CHECKER_PAIR', 'INSTALLER_SET', 'PRIOR_FILES', 'READER_PAIR', 'SCRIPT_PRIORS', 'classifyDeployedScript', 'digestOf']);
     for (const folder of [FIXTURES, ...readdirSync(FIXTURES).map((version) => join(FIXTURES, version))]) {
       assert.ok(readdirSync(folder).length <= KIT_LIMITS['entries-per-directory'].value, folder);
@@ -225,7 +225,7 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
       assert.equal(classifyDeployedScript(canon, `scripts/${file}`, OTHER_BYTES), 'custom', 'the classifier consults only the given name');
       return [row];
     });
-    assert.deepEqual(current.sort(), ['markdown-blocks.mjs', 'spec-schema.mjs']);
+    assert.deepEqual(current.sort(), ['spec-schema.mjs']);
     assert.equal(expected.length, CATALOG_ROWS - FROZEN_PRIORS.length);
     const sortRows = (rows) => [...rows].sort((left, right) => left.file.localeCompare(right.file));
     assert.deepEqual(sortRows(SCRIPT_PRIORS.slice(FROZEN_PRIORS.length)), sortRows(expected));

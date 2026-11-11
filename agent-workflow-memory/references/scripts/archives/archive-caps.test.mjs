@@ -3,14 +3,9 @@ import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, readdirSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { expect } from '../test-support/index.mjs';
-import { runCli } from './archive-changelog.mjs';
+import { runCli, parseChangelogText, buildCondensedIndex, groupByMonth } from './archive-changelog.mjs';
 
-// RED-FIRST, and deliberately a DYNAMIC import: `archive-caps.mjs` does not exist when these arms
-// are first recorded, and a STATIC import of an absent module makes the WHOLE file unloadable — every
-// arm would then be recorded as "unresolvable" rather than as failing, which proves nothing about the
-// behaviour it pins. Imported this way the file still loads and each arm fails on its own missing
-// symbol.
-const caps = await import('./archive-caps.mjs').catch(() => ({}));
+import * as caps from './archive-caps.mjs';
 
 // The tier table, restated here on purpose. A test that imports the table it is checking agrees with
 // the source by construction and pins nothing; these three rows are the frozen contract, and moving a
@@ -58,10 +53,10 @@ const warmWindow = (count) =>
 // own ceiling — the only shape in which META can be the tier that refuses.
 const manyMonths = (months, perMonth) => {
   const dates = [];
-  for (let m = 0; m < months; m += 1) {
+  for (const m of Array.from({ length: months }, (_, i) => i)) {
     const year = 2019 + Math.floor(m / 12);
     const month = String((m % 12) + 1).padStart(2, '0');
-    for (let i = 0; i < perMonth; i += 1) dates.push(`${year}.${month}.${day(i)}`);
+    for (const i of Array.from({ length: perMonth }, (_, i) => i)) dates.push(`${year}.${month}.${day(i)}`);
   }
   return dates;
 };
@@ -74,19 +69,19 @@ const run = (root, argv) => {
     log: (m) => out.push(String(m)),
     logError: (m) => err.push(String(m)),
   });
-  return { code, out: out.join('\n'), err: err.join('\n') };
+  return { code, out: out.join('\n'), err: err.join('\n'), log: out, logError: err };
 };
 
 const historyDir = (root) => join(root, 'docs', 'ai', 'history');
 const emitted = (root, name) => readFileSync(join(historyDir(root), name), 'utf8');
 
 // A refusal must leave the tree BYTE-unchanged, and "the history dir is still empty" does not say
-// that: it would miss a rewritten changelog.md. Snapshot every file under docs/ai instead.
+// that: it would miss a rewritten changelog.md. Snapshot every file under the root instead.
 // Built with fromCharCode, not an escape literal: the separator only has to be deterministic, and
 // spelling it in code points keeps a stray byte out of a file the NUL guard scans.
 const SEP = String.fromCharCode(10, 64, 64, 10);
 const snapshot = (root) => {
-  const base = join(root, 'docs', 'ai');
+  const base = root;
   const walk = (dir, prefix) =>
     readdirSync(dir, { withFileTypes: true })
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -227,86 +222,96 @@ describe('the archiver stamps a cap it can honour', () => {
   });
 });
 
-describe('the archiver refuses past a ceiling, identically in every mode', () => {
+describe('spec:archive-rotations/S9 tier refusals and sharding warning seams', () => {
   // The refusal has to fire in --check and --dry-run as well as the default run, or the standing
   // `--check` gate would go green on a corpus the next real run cannot write. That is only true if
   // every output is BUILT before the mode branch — which is what these three arms pin.
   const modes = [[], ['--dry-run'], ['--check']];
-
   // Each mode gets its OWN fixture: sharing one root lets an earlier mode's write hide inside a
   // later mode's assertion. And the tree is compared WHOLE before and after, so a rewritten
   // changelog.md is caught as well as a written archive.
-  const refusesInEveryMode = (dates, tall, ceiling) => {
-    for (const argv of modes) {
+  for (const [tier, dates, tall, file, remedyFragment] of [
+    ['cold', oneMonth(400), true, 'docs/ai/history/2026-03.md', 'already one file per month'],
+    ['warm', warmWindow(700), true, 'docs/ai/history/recent.md', '--warm-days'],
+    ['meta', manyMonths(62, 50), false, 'docs/ai/history/condensed-index.md', 'condensed-index-YYYY.md'],
+  ]) for (const argv of modes) {
+    it(`${tier}: past its ceiling ${JSON.stringify(argv)} refuses without writing`, () => {
       withRoot((root) => {
         seed(root, dates, tall);
         const before = snapshot(root);
         const result = run(root, argv);
         expect(result.code).toBe(1);
-        expect(result.err).toContain(`${ceiling}-line ceiling`);
         expect(snapshot(root)).toBe(before);
+        expect(result.log).toHaveLength(3);
+        expect(result.log[0]).toBe(`archive-changelog: FAIL — the ${tier} tier ${file} is past its ceiling`);
+        expect(result.log[1].startsWith(`${file}: ${tier} archive is `)).toBe(true);
+        expect(result.log[1]).toContain('-line ceiling');
+        expect(result.log[2]).toBe(`archive-changelog: REMEDY — ${caps.CAP_TABLE[tier].remedy}`);
+        expect(result.log[2]).toContain(remedyFragment);
+        expect(result.logError).toEqual([]);
       });
-    }
+    });
+  }
+
+  const warningFor = (root) => {
+    const { entries } = parseChangelogText(readFileSync(join(root, 'docs/ai/changelog.md'), 'utf8'));
+    const index = buildCondensedIndex([], groupByMonth(entries), TODAY);
+    return `[archive-changelog] WARNING: ${caps.shardingWarning({ tier: 'meta', count: countOf(index) })}`;
   };
-
-  it('cold: a month past the ceiling refuses in all three modes', () => {
-    refusesInEveryMode(oneMonth(400), true, 3000);
-  });
-
-  it('warm: a window past the ceiling refuses in all three modes', () => {
-    refusesInEveryMode(warmWindow(700), true, 7000);
-  });
-
-  it('meta: a corpus past the ceiling refuses in all three modes', () => {
-    refusesInEveryMode(manyMonths(62, 50), false, 3000);
-  });
-
-  // Two arms, deliberately separate: this one pins that a refusal is ACTIONABLE at all — it names
-  // the tier, the measured size and a remedy clause, rather than a bare number the reader has to
-  // interpret.
-  it('the refusal names the tier and the remedy, not just the number', () => {
-    withRoot((root) => {
-      seed(root, oneMonth(400));
-      const cold = run(root, ['--check']);
-      expect(cold.err).toContain('cold archive is');
-      expect(cold.err).toContain('-line ceiling');
-      expect(cold.err).toContain('Remedy:');
+  for (const mode of ['default', 'dry-run', 'check after rotation']) {
+    it(`meta past its floor: green ${mode} warns on logError`, () => {
+      withRoot((root) => {
+        seed(root, manyMonths(32, 50), false);
+        const warning = warningFor(root);
+        if (mode === 'check after rotation') expect(run(root, []).code).toBe(0);
+        const result = run(root, mode === 'default' ? [] : [mode === 'dry-run' ? '--dry-run' : '--check']);
+        expect(result.code).toBe(0);
+        expect(result.logError).toEqual([warning]);
+        expect(result.log).not.toContain(warning);
+      });
     });
-  });
+  }
 
-  // And this one pins that the remedy is RIGHT for the tier it is printed for. One piece of advice
-  // would be wrong for two of the three: COLD is already one file per month, and WARM's size is a
-  // flag rather than a layout. A remedy must also never name a layout the archiver cannot read back.
-  it('the refusal names the tier and a remedy that fits THAT tier', () => {
-    withRoot((root) => {
-      seed(root, oneMonth(400));
-      const cold = run(root, ['--check']);
-      expect(cold.err).toContain('already one file per month');
-      expect(cold.err).toContain('NOT implemented');
-    });
-    withRoot((root) => {
-      seed(root, warmWindow(700));
-      const warm = run(root, ['--check']);
-      expect(warm.err).toContain('warm archive is');
-      expect(warm.err).toContain('--warm-days');
-    });
-    withRoot((root) => {
-      seed(root, manyMonths(62, 50), false);
-      const meta = run(root, ['--check']);
-      expect(meta.err).toContain('meta archive is');
-      expect(meta.err).toContain('condensed-index-YYYY.md');
-    });
-  });
-});
-
-describe('the sharding tripwire', () => {
-  it('meta past its floor warns while still passing, so the remedy lands before the ceiling', () => {
+  it('meta past its floor: red check puts its warning after the remedy on log', () => {
     withRoot((root) => {
       seed(root, manyMonths(32, 50), false);
+      const warning = warningFor(root);
+      const before = snapshot(root);
+      const text = readFileSync(join(root, 'docs/ai/changelog.md'), 'utf8');
+      const findings = text.split('\n').flatMap((line, index) => {
+        const heading = /^## (.+) — (.+)$/.exec(line);
+        return heading ? [`docs/ai/changelog.md:${index + 1}: ${heading[1]} — ${heading[2]}`] : [];
+      });
+      const result = run(root, ['--check']);
+      expect(result.code).toBe(1);
+      expect(snapshot(root)).toBe(before);
+      expect(findings).toHaveLength(1600);
+      expect(result.log).toEqual([
+        'archive-changelog: FAIL — entries of docs/ai/changelog.md older than 3 days (relative to 2026-06-15): 1600',
+        ...findings,
+        'archive-changelog: REMEDY — rotate them with node scripts/agent-workflow/run.mjs archive-changelog',
+        warning,
+      ]);
+      expect(result.logError).toEqual([]);
+    });
+  });
+
+  it('meta past its floor: a failed index write puts the warning after the unexpected-error stack on log', () => {
+    withRoot((root) => {
+      seed(root, manyMonths(32, 50), false);
+      const warning = warningFor(root);
+      const path = join(historyDir(root), 'condensed-index.md');
+      mkdirSync(path);
       const result = run(root, []);
-      expect(result.code).toBe(0);
-      expect(result.err).toContain('past its 1500-line floor');
-      expect(result.err).toContain('condensed-index-YYYY.md');
+      expect(result.code).toBe(1);
+      expect(result.log[0]).toMatch(/^archive-changelog: FAIL — unexpected error: /);
+      expect(result.log[1]).toBe('archive-changelog: REMEDY — fix the cause the stack below names, then re-run');
+      expect(result.log.length).toBeGreaterThan(4);
+      expect(result.log[2]).toMatch(/^Error: /);
+      expect(result.log.at(-1)).toBe(warning);
+      expect(result.log.slice(0, -1).join('\n')).not.toContain(warning);
+      for (const line of result.log) expect(line).not.toMatch(/[\r\n]/);
+      expect(result.logError).toEqual([]);
     });
   });
 
@@ -315,7 +320,7 @@ describe('the sharding tripwire', () => {
       seed(root, oneMonth(4));
       const result = run(root, []);
       expect(result.code).toBe(0);
-      expect(result.err).not.toMatch(/floor/);
+      expect(result.logError).toEqual([]);
     });
   });
 });

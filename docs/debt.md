@@ -3,6 +3,91 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **PROJECT-NAME-READ-STANDS-IN-THREE-FILES** — invariant: the project's name is read by one function of the script
+  family's shared module, so its state table (absent, unreadable, readable and nameless, named) is written once.
+  Origin: `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:23-35`,
+  `agent-workflow-memory/references/scripts/archives/archive-issues.mjs:19-31` and
+  `agent-workflow-memory/references/scripts/docs-size/check-docs-size.mjs:89-109`. Narrow fix, shipped by S4 of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE: the two rotations' copies change alike and one table over both files
+  pins them (`docs/ai/specs/memory/archive-rotations.md`, scenario S5). Generalization: one `readProjectName` in
+  `shared/project-root.mjs` behind the shared index, taken by the two rotations and the docs checker; it moves the
+  shared index's export list and the contracts that state it (`docs/ai/specs/memory/verdict-block.md`,
+  `docs/ai/specs/memory/script-family.md`). Proof: the table of S5 over the one function, and the three callers'
+  suites. Residual exposure, not live: the copies can drift only by an edit the S5 table turns red for the rotations;
+  the docs checker's copy is pinned by its own suite. Bound to no story of that epic (its Specs paragraph, 2026-11-11).
+  Raised in the spec session of S4 (2026-11-11); the epic's lens ruled the binding.
+
+- **FLAT-BODY-SEEDS-KEPT-BY-HAND-IN-FOUR-TESTS** — invariant: a test seed of a flat script body is the body the last
+  flat release shipped under that name, derived in one place from the catalog. Origin:
+  `agent-workflow-kit/tools/distribution-files/retired.test.mjs:22` and
+  `agent-workflow-kit/tools/distribution-files/scripts-component.test.mjs:69` seed `markdown-blocks.mjs` with today's
+  bundled body, which no release shipped flat since S4 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE changed it;
+  that story corrected the two move seeds (`move.integration.test.mjs:37-39`, `standalone-flat-move.test.mjs:27-29`)
+  by hand. Narrow fix: drop `'markdown-blocks.mjs'` from `retired.test.mjs:22` and delete
+  `scripts-component.test.mjs:69`. Generalization: one helper derives the last flat body (a name with a
+  `SCRIPT_PRIORS` row whose `lastShipped` is the last flat version takes that row's fixture, any other name the
+  bundled body), imported by the four seeds. Proof: a seed cell over a name whose body changed after the last flat
+  release, red on a hand list. Residual exposure, not live: the cells that seed every flat name
+  (`retired.test.mjs:105,122,140,162,284`, `scripts-component.test.mjs:140,160`) remove a flat `markdown-blocks.mjs`
+  through the bundled-body arm, not the prior-row arm a real 9.0.0 project takes; that arm is covered for every
+  fixture version at `retired.test.mjs:172-186`, by S23 and by the two move tests. Raised by the lens, round 1 of the
+  S4 diff review (2026-11-11), below the bar: no write or remove decision changes.
+
+- **FLOW-CHECK-READS-A-FAILED-GIT-SPAWN-AS-AN-UNBORN-HEAD** — invariant: the flow check's rungs skip on an unborn HEAD
+  only when git itself answers so; a git query that fails to run is a failure, never an absence. Origin: `gitBuf`
+  (`agent-workflow-kit/tools/core-evidence-tree.mjs:13-17`) answers null on a spawn error as on a non-zero status, so
+  `resolveBase` (`:25`) is null, `currentBase` at `agent-workflow-kit/tools/flow-check.mjs:96` is null, and the rung at
+  `agent-workflow-kit/tools/flow-check-rungs.mjs:222` (`bases[0] !== currentBase`) skips its refusal without a word.
+  Seen once and unproven: on 2026-11-11, in the S3 diff review, `run-gates --pre-review` went red on one test,
+  `agent-workflow-kit/tools/flow-dogfood.integration.test.mjs:604` (no #65 refusal recorded), 14 496 of 14 497 green,
+  with 716 MB of swap in use; the case alone, its file whole and the following `--final` were green. Narrow fix: none
+  shipped; the cause is a hypothesis by code. Next step: a second red of that test stops the work for the council and
+  Fable (the maintainer's ruling of 2026-11-11). Generalization: `gitBuf` tells a failed spawn from git's own answer,
+  and every caller that reads null as absence states which it means. Residual exposure, declared: under memory
+  pressure a flow-check rung may pass a tree it should refuse; the commit guard's other arms and the final gate matrix
+  still judge that tree.
+
+- **ROTATIONS-READ-AN-UNREADABLE-STATUS-AS-ABSENCE** — invariant: a rotation reads a file as absent only on a proven
+  absence (`ENOENT`); a status it cannot read fails the run. Origin: `existsSync` answers false on any error, at
+  `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:413,424,429,434` and
+  `agent-workflow-memory/references/scripts/archives/archive-issues.mjs:293,363`, so a source whose status cannot be
+  read is reported as not found, and a legacy, WARM or history file in that state is left out of the corpus. The
+  census cannot see it: its fault replaces `existsSync` with a throw
+  (`agent-workflow-kit/tools/checker-verdict/fault-harness.test.mjs:28,42-47`). Narrow fix: none in S4, which applies
+  the `ENOENT` rule to `package.json` alone (`docs/ai/specs/memory/archive-rotations.md`, Out of scope;
+  `docs/ai/specs/kit/checker-verdict/index.md`, the reads revision 2 leaves). Generalization: each of those status
+  reads becomes a read or a status that tells `ENOENT` from every other failure, red first on a directory whose
+  entries cannot be listed. Residual exposure, declared: an unreadable source still exits 1 (as not found); a
+  `--check` run that leaves a WARM file out builds a smaller tier and can miss its ceiling refusal; a default run that
+  cannot read a tier's status cannot write it either and ends red, after its rewrite of `docs/ai/changelog.md` (row
+  ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE). Raised by the lens, round 1 of the S4 spec review of
+  KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-11).
+
+- **ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE** — invariant: a default run of the changelog rotation that fails
+  leaves every entry in at least one file; no file is rewritten without an entry before that entry's new file is
+  written. Origin: `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:529` rewrites
+  `docs/ai/changelog.md` before the tier writes at `:531`, so a refused tier write (a full disk, a read-only
+  `docs/ai/history/recent.md`) ends the run after the entries leaving HOT were removed and before they reached any
+  archive; and the tiers themselves are written `recent.md` first (built in that order at `:475-489`), so an entry that aged out of the old
+  `recent.md` is lost when its month file's write is refused. A LIVE defect of the rotation as shipped today, outside S4's
+  contract (its Out of scope names it). Narrow fix: none is correct: writing the HOT file last covers only entries
+  leaving HOT; month files first, then `recent.md`, then the index, then HOT covers every move toward an older tier
+  and still loses an entry that a widened `--warm-days` or `--hot-days` moves toward a newer one. Generalization, a
+  story of its own with its own design consult: the run writes every new file whole beside its target and replaces
+  the targets only after every write succeeded, whatever the direction of a move; the replace step, one rename per
+  file, can itself fail partway, so the design consult also decides how a run recovers from a failed replace; red
+  first on an existing month file
+  that can be read and not written while `recent.md` holds an entry aging into that month (a read-only file refuses a
+  write only for a user who is not root, and a directory at a month path fails earlier, at its read). The issues
+  rotation loses data too: `writeFileSync` truncates its target first, so a write that fails partway or a killed run
+  at `archive-issues.mjs:365` cuts `issues-resolved.md`, whose earlier sections live only in memory, and at `:373`
+  cuts `known_issues.md`; the same holds for the changelog's HOT write at `archive-changelog.mjs:529`. The story
+  covers both rotations, a partway write and a kill between any two steps. The project's release rule applies: an
+  open defect blocks the release of its package unless that release closes it. Ruled 2026-11-11 by the council and
+  Fable: S4 is committed after its diff review with no release, and this row's story runs next, its last session
+  shipping S3, S4 and itself (queue row of the same id). Raised by the lens, round 2 of the S4
+  spec review (2026-11-11); a fold into S4 was tried at the fold ask and withdrawn when it bred three new states.
+
 - **COVERAGE-CHECK-READS-A-FAILED-GIT-QUERY-AS-NO-WORK-TREE** — invariant: the coverage check passes outside a git
   work tree only when git itself answers so; a git query that could not run fails the run. Origin:
   `agent-workflow-kit/tools/coverage-check.mjs:51-55` returns null for a failed start and for any non-zero status
@@ -67,14 +152,17 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 - **CENSUS-READS-A-STACK-LINE-AS-A-HEAD-FINDING** — invariant: under a fired fault, the census counts the fault's
   phrase only in the verdict line or in a real finding line, never in a stack. Origin:
-  `agent-workflow-kit/tools/checker-verdict/run-harness.test.mjs:66-76`, `readHead` admits any line whose text before
+  `agent-workflow-kit/tools/checker-verdict/run-harness.test.mjs:69-79`, `readHead` admits any line whose text before
   `: ` is a valid place, and `judgePlace('Error')` is true, so `Error: checker-verdict fault at read` and its frames
   pass as a finding with continuations. Narrow fix: in a fault run count a head finding only when its place is `.` or
   a path that exists in the fixture project, with one S12 cell of a checker that prints a bare verdict line, then the
-  stack. Proof: that cell red before the fix. Residual exposure, not live: of today's checkers only spec-coverage-cli
-  opens a red block with its verdict line (`spec-coverage-cli.mjs:205`), and its error path prints the bare message
-  with no verdict line (`:174-176`), so every counted fault run today misses on its first line before the head is
-  read. Bound to S4 of that epic. Raised by the lens at its S1 diff review (2026-11-10).
+  stack. Proof: that cell red before the fix. Residual exposure, not live: spec-coverage-cli's error path prints the
+  bare message with no verdict line (`spec-coverage-cli.mjs:174-176`); the two rotations, which open with a verdict
+  line since S4, carry the error's first line in the verdict line itself, and the composer's remedy line stands before
+  any stack and ends the head (`run-harness.test.mjs:69-79`). So no counted fault run passes through a stack line.
+  Bound to S5 of that epic. Moved from S4 in its spec session (2026-11-11), the lens accepting: no fault run of S4's
+  two command lines passes through a head finding, and the proof suite stood at 393 of its 400 lines. Raised by the
+  lens at its S1 diff review (2026-11-10).
 
 - **FORM-JUDGE-ACCEPTS-A-PLACE-THAT-OPENS-WITH-A-SPACE-OR-HOLDS-A-LINE-BREAK** — invariant: the form judge accepts a
   place only when a finding line opening with it is one line at column one. Origin:

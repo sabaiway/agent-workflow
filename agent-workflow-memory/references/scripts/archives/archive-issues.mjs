@@ -1,54 +1,34 @@
 #!/usr/bin/env node
-// Rotate resolved issues from docs/ai/known_issues.md → docs/ai/history/issues-resolved.md.
-//
-// The file is read through the shared block tokenizer (markdown-blocks.mjs). The section model:
-// H2 and H3 heading tokens bound chunks; an H3 chunk is a SECTION, everything else — the preamble,
-// category H2s (## 🔴 Open / ## 🟢 Resolved) and the trailing `---` + blockquote footer — is a
-// FILE-structural chunk that survives every rotation untouched. A section contains only its own
-// issue. Rewrites are VERBATIM: kept chunks re-emit byte-exact, archived sections land in the
-// archive byte-exact, so kept + archive conserve the input line for line.
-//
-// Archivability (Decision 7): a recognised, line-leading, dated resolution marker decides ALONE —
-// strikethrough on the heading is cosmetic. The marker is the FIRST `**Status:**` / `**Resolved:**`
-// field line (list-item prefix optional, fenced samples ignored):
-//   - **Resolved:** <date> …                 the taught shape (see the template)
-//   - **Status:** ✅ FIXED (<date>) …        legacy
-//   - **Status:** **Resolved** (FIXED <date>, …) …
-// Both separators (YYYY-MM-DD / YYYY.MM.DD) read, with a strict calendar round-trip. Arm C: a
-// resolution claim with NO recognisable date, or a malformed/impossible date, REFUSES loudly with
-// file:line in every mode — never a silent skip. An explicit non-resolved Status (Open, Mitigated)
-// classifies open; a later stray date never overrides it.
-//
-// Modes:
-//   (default)   append archivable sections to history/issues-resolved.md, remove from known_issues.md
-//   --dry-run   print plan, no file changes
-//   --check     exit 1 if known_issues.md still has archivable issues
-//
-// Every mode parses and classifies BEFORE any write, so a refusal fires identically for the
-// default run, --dry-run and --check, and nothing is written on a refused input.
-//
-// CLI:
-//   --cutoff-days=N (default 14)
-//   --today=YYYY-MM-DD (default UTC today)
+// The issues rotation (spec archive-rotations).
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tokenizeMarkdown, fail, findProjectRoot } from '../shared/index.mjs';
+import { tokenizeMarkdown, fail, findProjectRoot, composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
-
+const CHECKER_NAME = 'archive-issues';
+const PACKAGE_REL = 'package.json';
+const GUARD = Object.freeze({ name: CHECKER_NAME, exitCode: 1, remedy: 'fix the cause the stack below names, then re-run' });
+const shown = (text) => text.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+const composeFailure = (failed, findings, remedy) => ({
+  exitCode: 1,
+  lines: composeRedBlock({ name: CHECKER_NAME, failed: shown(failed),
+    findings: findings.map(({ place, text }) => ({ place, text: shown(text) })), remedies: [shown(remedy)] }),
+});
 export const readProjectName = (root) => {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-    if (pkg.name) return pkg.name;
-  } catch {
-    /* no package.json — fall back to repo dir basename */
+    const text = readFileSync(resolve(root, PACKAGE_REL), 'utf8');
+    try {
+      return JSON.parse(text)?.name || basename(root);
+    } catch {
+      return basename(root);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return basename(root);
   }
-  return basename(root);
 };
-const PROJECT_NAME = readProjectName(ROOT);
-
 const KNOWN_REL = 'docs/ai/known_issues.md';
 const HISTORY_REL = 'docs/ai/history';
 const RESOLVED_REL = 'docs/ai/history/issues-resolved.md';
@@ -114,15 +94,12 @@ const parseArgs = (argv) => {
     else if (arg === '--help' || arg === '-h') flags.help = true;
     else if (arg.startsWith('--cutoff-days=')) opts.cutoffDays = Number(arg.slice('--cutoff-days='.length));
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
-    else throw fail(2, `unknown argument: ${arg}\n${USAGE}`);
+    else return { unknown: arg };
   }
   return { flags, opts };
 };
 
-// Parse → { frontmatter, frontLines, sections }. A chunk's `heading` is the trailing-whitespace-free
-// token text (null for the preamble and the footer); `structural` marks chunks that belong to the
-// FILE; `lines` stay byte-exact for re-emission; `start` is the chunk's body-line index; `fenced`
-// holds chunk-relative indexes of fenced lines so classification never reads a fenced sample.
+// Sections retain byte-exact lines, body-relative starts and section-relative fenced indexes.
 export const parseKnownIssues = (text, label = KNOWN_REL) => {
   const { frontmatter, frontLines, lines, headings, fencedLines } = tokenizeMarkdown(text, label);
 
@@ -135,13 +112,13 @@ export const parseKnownIssues = (text, label = KNOWN_REL) => {
           'canonical issue heading — expected `### Issue-NNN — title` (level 3, column 0, exactly ' +
           'one space, ~~strikethrough~~ optional). It would previously have been silently glued ' +
           'into the section above it or declassified to prose; fix the heading, then re-run.',
+        `${label}:${frontLines + heading.index + 1}`,
       );
     }
     if (heading.level === 2 || heading.level === 3) boundaries.set(heading.index, heading);
   }
 
-  // The trailing footer belongs to the FILE: a terminal run of blank / blockquote lines introduced
-  // by a `---` thematic break (outside any fence), whose quote text IS the canonical closing note.
+  // Only an unfenced terminal `---` + canonical quote run belongs to the file, not the issue.
   let footerStart = -1;
   let tail = lines.length - 1;
   while (tail >= 0 && !fencedLines.has(tail) && (matchable(lines[tail]) === '' || FOOTER_QUOTE_RE.test(lines[tail]))) tail -= 1;
@@ -183,10 +160,8 @@ export const parseKnownIssues = (text, label = KNOWN_REL) => {
   return { frontmatter, frontLines, sections };
 };
 
-// Partition tripwire: the concatenated chunks must reproduce the body EXACTLY — element-wise, in
-// order — or nothing proceeds. Unreachable through a correct chunk loop by construction — it
-// exists so a future edit that drops, duplicates or reorders lines (an equal-cardinality
-// corruption included) refuses BEFORE any write instead of silently losing data.
+// Refuse before any write if chunks fail to reproduce the body element-wise and in order,
+// including equal-cardinality corruption a future edit to the chunk loop might introduce.
 export const verifySectionPartition = (sections, bodyLines, label = KNOWN_REL) => {
   const rebuilt = sections.flatMap((s) => s.lines);
   const exact = rebuilt.length === bodyLines.length && rebuilt.every((line, i) => line === bodyLines[i]);
@@ -195,6 +170,7 @@ export const verifySectionPartition = (sections, bodyLines, label = KNOWN_REL) =
       1,
       `${label}: internal section-model error — the ${rebuilt.length}-line section partition does ` +
         `not reproduce the ${bodyLines.length}-line body; refusing before any write.`,
+      label,
     );
   }
 };
@@ -264,16 +240,13 @@ export const classifySection = (section, cutoffDate) => {
   return { kind: ISSUE_TITLE_RE.test(title) ? 'open' : 'other' };
 };
 
-export const buildResolvedFile = (existing, newSections, todayStr) => {
+export const buildResolvedFile = (existing, newSections, todayStr, projectName = readProjectName(ROOT)) => {
   const header = existing
     ? existing
-    : `---\ntype: history\nlastUpdated: ${todayStr}\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: 3500\n---\n\n# Resolved Issues — ${PROJECT_NAME}\n\n> Append-only archive of issues closed > 14 days ago. Sourced from \`../known_issues.md\`.\n\n---\n`;
+    : `---\ntype: history\nlastUpdated: ${todayStr}\nscope: permanent\nstaleAfter: never\nowner: none\nmaxLines: 3500\n---\n\n# Resolved Issues — ${projectName}\n\n> Append-only archive of issues closed > 14 days ago. Sourced from \`../known_issues.md\`.\n\n---\n`;
   if (newSections.length === 0) return header;
-  // Sections are appended VERBATIM — every archived CONTENT line lands in the archive byte-exact.
-  // Only the trailing blank run (the source's section separator) is normalised to exactly one
-  // blank line, the same droppable-decoration accounting the changelog conservation harness uses.
-  // Blank trimming is per-ELEMENT (trim() eats a CR), and the separator follows the block's own
-  // line-ending flavor — a CRLF corpus gets exact `\r\n\r\n` separators, never mixed EOL runs.
+  // Preserve content verbatim; trim only trailing blank elements (trim() eats a CR).
+  // One blank separator follows each block's EOL flavor, as the conservation harness allows.
   const blocks = newSections
     .map((s) => {
       const kept = [...s.lines];
@@ -282,22 +255,29 @@ export const buildResolvedFile = (existing, newSections, todayStr) => {
       return kept.join('\n') + separator;
     })
     .join('');
-  // The header/blocks separator follows the HEADER's own EOL flavor, and the trailing run
-  // collapses to ONE terminator of its own flavor — an existing CRLF archive never gains a
-  // mixed `\r\n\n` run on append. (An archive whose existing content and new blocks use
-  // different flavors stays mixed at that boundary by nature; only runs are guaranteed pure.)
+  // Header separators and the single final terminator retain their own EOL flavors.
+  // Only runs stay pure; differing header/block flavors remain mixed at their boundary.
   const headerEndsBlank = /(\r?\n){2}$/.test(header);
   const headerEol = header.endsWith('\r\n') ? '\r\n' : '\n';
   return (header + (headerEndsBlank ? '' : headerEol) + blocks).replace(/(\r?\n)+$/, '$1');
 };
-
-export const runCli = (argv, deps = {}) => {
-  const { root = ROOT, log = console.log, logError = console.error } = deps;
+const rotate = (argv, root, log) => {
   try {
-    const { flags, opts } = parseArgs(argv);
+    const { flags, opts, unknown } = parseArgs(argv);
+    if (unknown !== undefined) return { exitCode: 2, lines: composeUsageRefusal({
+      name: CHECKER_NAME, failed: shown('unknown argument: ' + unknown), usage: USAGE,
+    }) };
     if (flags.help) {
       log(USAGE);
       return 0;
+    }
+    const project = {};
+    try {
+      project.name = readProjectName(root);
+    } catch (error) {
+      return composeFailure(`cannot read ${PACKAGE_REL}: ${error.message.split(/\r\n|[\r\n]/)[0]}`,
+        [{ place: PACKAGE_REL, text: "the project's name cannot be read from it" }],
+        'make package.json a readable file, or remove it, then re-run');
     }
     const today = opts.today
       ? new Date(`${opts.today}T00:00:00Z`)
@@ -311,38 +291,33 @@ export const runCli = (argv, deps = {}) => {
     const resolvedPath = resolve(root, RESOLVED_REL);
 
     if (!existsSync(knownIssuesPath)) {
-      logError(`[archive-issues] ${KNOWN_REL} not found — nothing to do.`);
-      return 1;
+      return composeFailure(`${KNOWN_REL} not found`,
+        [{ place: KNOWN_REL, text: 'the file this rotation reads does not exist' }],
+        `create ${KNOWN_REL}, then re-run`);
     }
-
     const { frontmatter, frontLines, sections } = parseKnownIssues(readFileSync(knownIssuesPath, 'utf8'), KNOWN_REL);
     const classified = sections.map((s) => ({ section: s, ...classifySection(s, cutoffDate) }));
 
-    // Arm C: a resolution claim the parser cannot date — or contradictory open/resolved state —
-    // is a refusal in EVERY mode, before any write.
     const loud = classified.filter((c) => c.kind === 'fixed-undated' || c.kind === 'bad-date' || c.kind === 'conflict');
     if (loud.length > 0) {
-      for (const c of loud) {
+      const findings = loud.map((c) => {
         const line = frontLines + c.section.start + (c.markerLine ?? 0) + 1;
+        const place = `${KNOWN_REL}:${line}`;
         if (c.kind === 'conflict') {
           const openLine = frontLines + c.section.start + c.openLine + 1;
-          logError(
-            `[archive-issues] ${KNOWN_REL}:${line}: "${c.marker.trim()}" contradicts the explicit open status ` +
+          return { place, text: `"${c.marker.trim()}" contradicts the explicit open status ` +
               `"${c.openMarker.trim()}" (line ${openLine}) — an issue is either open or resolved; delete the ` +
-              'stale line, then re-run.',
-          );
-        } else {
-          logError(
-            c.kind === 'bad-date'
-              ? `[archive-issues] ${KNOWN_REL}:${line}: resolution marker date "${c.raw}" in "${c.marker.trim()}" ` +
-                  'is not a valid calendar date in one separator form (YYYY-MM-DD or YYYY.MM.DD) — fix the date, then re-run.'
-              : `[archive-issues] ${KNOWN_REL}:${line}: "${(c.marker ?? c.section.heading).trim()}" claims resolution ` +
-                  'but carries no recognisable date — add a line-leading `- **Resolved:** YYYY-MM-DD` (or ' +
-                  '`- **Status:** … FIXED (YYYY-MM-DD)`). Previously this section was silently skipped forever.',
-          );
+              'stale line, then re-run.' };
         }
-      }
-      return 1;
+        return { place, text: c.kind === 'bad-date'
+              ? `resolution marker date "${c.raw}" in "${c.marker.trim()}" ` +
+                  'is not a valid calendar date in one separator form (YYYY-MM-DD or YYYY.MM.DD) — fix the date, then re-run.'
+              : `"${(c.marker ?? c.section.heading).trim()}" claims resolution ` +
+                  'but carries no recognisable date — add a line-leading `- **Resolved:** YYYY-MM-DD` (or ' +
+                  '`- **Status:** … FIXED (YYYY-MM-DD)`). Previously this section was silently skipped forever.' };
+      });
+      return composeFailure(`sections claiming a resolution the rotation cannot accept in ${KNOWN_REL}: ${loud.length}`,
+        findings, 'fix each section named above, then re-run');
     }
 
     const archivable = classified.filter((c) => c.kind === 'archivable');
@@ -358,13 +333,10 @@ export const runCli = (argv, deps = {}) => {
 
     if (flags.check) {
       if (archivable.length > 0) {
-        logError(`[archive-issues] FAIL: ${archivable.length} archivable issues found in ${KNOWN_REL}.`);
-        for (const c of archivable) logError(`  - ${c.section.heading.trim()}`);
-        logError('Run the issues archive script (without --check) to rotate.');
-        return 1;
+        return composeFailure(`archivable issues in ${KNOWN_REL}: ${archivable.length}`,
+          archivable.map((c) => ({ place: `${KNOWN_REL}:${frontLines + c.section.start + 1}`, text: c.section.heading.trim() })),
+          'archive them with node scripts/agent-workflow/run.mjs archive-issues');
       }
-      // The verdict names what it acted on — with the loud path in the parser, a low section
-      // count can only mean the sections are genuinely absent, never a file that failed to parse.
       log(
         `[archive-issues] OK — ${KNOWN_REL}: ${issueSectionCount} issue sections (${countLine || 'none'}), ` +
           `0 archivable with a recognised date older than ${cutoffStr} (cutoff ${opts.cutoffDays} days, relative to ${todayStr}).`,
@@ -389,11 +361,9 @@ export const runCli = (argv, deps = {}) => {
 
     mkdirSync(historyDir, { recursive: true });
     const existing = existsSync(resolvedPath) ? readFileSync(resolvedPath, 'utf8') : '';
-    const updatedResolved = buildResolvedFile(existing, archivable.map((c) => c.section), todayStr);
+    const updatedResolved = buildResolvedFile(existing, archivable.map((c) => c.section), todayStr, project.name);
     writeFileSync(resolvedPath, updatedResolved, 'utf8');
 
-    // VERBATIM rebuild: the kept chunks re-emit byte-exact in original order — structural chunks
-    // (preamble, category H2s, the footer) survive by construction, nothing is re-flowed.
     const rebuilt =
       frontmatter +
       classified
@@ -405,14 +375,19 @@ export const runCli = (argv, deps = {}) => {
     log(`[archive-issues] archived ${archivable.length} issue(s) to ${RESOLVED_REL}`);
     return 0;
   } catch (err) {
-    logError(`[archive-issues] ${err.message}`);
-    return err.exitCode ?? 1;
+    if (err.exitCode && err.place) return composeFailure(`cannot parse ${err.place.replace(/:\d+$/, '')}`,
+      [{ place: err.place, text: err.message.slice(err.place.length + 2) }], 'fix the place named above, then re-run');
+    throw err;
   }
 };
-
-// Run main() only when executed directly, never on import. Compare by REAL path: an entry point
-// reached through a symlink resolves to its target, so a raw string compare reads the two as
-// different and the CLI never runs. realpathSync collapses the link so both sides match.
+export const runCli = (argv, deps = {}) => {
+  const { root = ROOT, log = console.log } = deps;
+  const answer = guardChecker(GUARD, () => rotate(argv, root, log));
+  if (typeof answer === 'number') return answer;
+  for (const line of answer.lines) log(line);
+  return answer.exitCode;
+};
+// Run only directly; realpathSync makes a symlinked entry match its target too.
 const isDirectRun = (() => {
   const invoked = process.argv[1];
   if (!invoked) return false;

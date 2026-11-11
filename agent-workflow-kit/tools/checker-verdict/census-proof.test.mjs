@@ -382,12 +382,14 @@ describe('import census proofs (spec:checker-verdict/S19)', () => {
     const file = createImportFile('deferred', `${imports}\nexport const run = () => { ${Object.values(calls).join('; ')}; };`);
     assert.deepEqual(await runImportCensus({ record: readFixtureRecord(readRecord, file), root: workspace.root }), []);
   });
-  it('ignores a memory file reading at import beside a kit file making no call', async () => {
+  it('reports a memory file reading at import by its mark beside a kit file making no call', async () => {
     const { runImportCensus } = await import('./import-harness.test.mjs');
     const { readRecord } = await import('./record.mjs');
     const files = [createImportFile('quiet', 'export const value = true;'), createImportFile('reads', `${imports}\ntry { ${calls.read}; } catch {}`, 'agent-workflow-memory')];
     const records = files.map((file) => readFixtureRecord(readRecord, file));
     const record = readRecord(JSON.stringify({ files: records.flatMap(({ files }) => files), redExceptions: [], faultExceptions: [] }));
-    assert.deepEqual(await runImportCensus({ record, root: workspace.root }), []);
+    assert.deepEqual(await runImportCensus({ record, root: workspace.root }), [
+      { problem: 'fault-at-import', path: 'agent-workflow-memory/reads.mjs', faultPoint: 'read' },
+    ]);
   });
 });

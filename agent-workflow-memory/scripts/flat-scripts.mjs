@@ -35,6 +35,7 @@ export const FLAT_BODIES = Object.freeze([
   ['install-git-hooks-repo-exec.test.mjs', 'a1e00887d9ebd4f5ee3c8066ba04a557cdfad1c462b1805f54da61fe51bfed9e'],
   ['install-git-hooks.mjs', '0c4d1eb6bdd6dec492c7be8f3d92751f330b53786bf0e07936b0fe7cf6118395'],
   ['install-git-hooks.test.mjs', '9d9475be5bcef99ba5b233d9d676d78203cff3be834a8525adc8b14d4210247e'],
+  ['markdown-blocks.mjs', '5a9fb45d4248c53dee9694b2d95c1cf98fe08a55c41429cf72826aa218f0ad2d'],
   ['markdown-blocks.test.mjs', 'd2289da8783ce6df8260e83eb52d62f8dfc1233555b074087997e94117047ffd'],
   ['migrate-gates-branches.test.mjs', '59734b15ddf98762c6db0c048edf374f949f7b92c53ea4fd986d72b7f44e283f'],
   ['migrate-gates.mjs', 'd9c3f9da27397dd94ad866c3cbac72e529ad2e6311ffa15de7478a960800cdfa'],

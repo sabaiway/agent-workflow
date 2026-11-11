@@ -26,7 +26,6 @@ const GIT_IDENTITY = ['-c', 'user.name=coder-tool', '-c', 'user.email=coder-tool
 const INTEGRATION_TIMEOUT = 120_000;
 const BUNDLED_FLAT_BODIES = {
   'spec-schema.mjs': 'spec-schema/spec-schema.mjs',
-  'markdown-blocks.mjs': 'shared/markdown-blocks.mjs',
 };
 const GIT_LOCATION_KEYS = [
   'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX',

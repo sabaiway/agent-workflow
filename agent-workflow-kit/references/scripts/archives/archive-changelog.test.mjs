@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { expect } from '../test-support/index.mjs';
 import {
+  runCli,
   parseChangelogText,
   stripTrailingSeparator,
   stripBlockquoteHistoryNotice,
@@ -21,6 +22,13 @@ import {
 
 const FM = '---\ntype: history\nlastUpdated: 2026-05-24\nmaxLines: 700\n---\n';
 const TEMPLATES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
+const USAGE = 'Usage: archive-changelog.mjs [--dry-run|--check] [--hot-days=N] [--warm-days=N] [--today=YYYY-MM-DD]';
+const run = (root, argv) => {
+  const logs = [];
+  const errs = [];
+  const code = runCli(argv, { root, log: (line) => logs.push(line), logError: (line) => errs.push(line) });
+  return { code, logs, errs };
+};
 
 const makeEntry = (dateStr, title = '') => {
   const [year, month, day] = dateStr.split('.');
@@ -174,8 +182,6 @@ describe('buildRecent', () => {
     expect(result).toMatch(/## 2026\.05\.10/);
   });
 
-  // 3500/1500/1500 are tier FLOORS reached through capFor (archive-caps.mjs), not literals a builder
-  // still carries — this pins all three onto that path; band/ceiling/fixed point: archive-caps.test.mjs.
   it('every builder stamps its own tier floor on a corpus that fits under it', () => {
     expect(buildCold('2026', '03', [makeEntry('2026.03.10', 'c')], '2026-05-24')).toMatch(/maxLines: 1500/);
     expect(buildCondensedIndex([makeEntry('2026.05.10', 'w')], new Map(), '2026-05-24')).toMatch(/maxLines: 1500/);
@@ -215,11 +221,6 @@ describe('groupByMonth', () => {
   });
 });
 
-// ── date-form contract ────────────────────────────────────────────────────────────────
-// Dotted archives exist on disk in every deployed project, so acceptance WIDENS to ISO rather
-// than moving to it. The two describes below are deliberately separated: the first pins behaviour
-// that is already correct (characterization — green before and after, never a red-proof candidate),
-// the second is the genuinely-red set for the widening.
 
 describe('date-form characterization — already green, guards a sloppy widening', () => {
   it('keeps dotted entry headings parsing unchanged', () => {
@@ -242,17 +243,15 @@ describe('date-form characterization — already green, guards a sloppy widening
   });
 });
 
-// The loud path (Arm A). A date-shaped heading that does not parse REFUSES, naming file:line —
-// never absorbed as body text, never a silent footer boundary, never normalised. Both halves are
-// pinned: the predicate (what refuses) and the disposition (a typed exitCode-1 error naming the
-// offender, with no partial result escaping).
 const expectRefusal = (fn, messageRe) => {
-  let threw = null;
-  try {
-    fn();
-  } catch (err) {
-    threw = err;
-  }
+  const threw = (() => {
+    try {
+      fn();
+      return null;
+    } catch (err) {
+      return err;
+    }
+  })();
   expect(threw).not.toBe(null);
   expect(threw.exitCode).toBe(1);
   if (messageRe) expect(threw.message).toMatch(messageRe);
@@ -403,26 +402,21 @@ describe('date-form contract — ISO accepted alongside dots', () => {
   });
 });
 
-// Arm B at the CLI seam. `runCli` is imported dynamically so this file still LOADS against a
-// parser that predates it — the tests then fail as honest reds instead of taking the whole
-// suite down with a module-load error.
 describe('reading modes agree on refusal and write nothing', () => {
   const seedTree = (dir, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
     writeFileSync(join(dir, 'docs/ai/changelog.md'), text, 'utf8');
   };
-
   for (const mode of [['--check'], ['--dry-run'], []]) {
-    it(`${JSON.stringify(mode)} refuses the same malformed heading with exit 1 and leaves the tree untouched`, async () => {
-      const { runCli } = await import('./archive-changelog.mjs');
+    it(`${JSON.stringify(mode)} refuses the same malformed heading with exit 1 and leaves the tree untouched`, () => {
       const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
       try {
         seedTree(dir, between('## 2026/07/20 — slash'));
         const before = readFileSync(join(dir, 'docs/ai/changelog.md'), 'utf8');
-        const errs = [];
-        const code = runCli(mode, { root: dir, log: () => {}, logError: (m) => errs.push(m) });
-        expect(code).toBe(1);
-        expect(errs.join('\n')).toContain('docs/ai/changelog.md:13');
+        const result = run(dir, mode);
+        expect(result.code).toBe(1);
+        expect(result.logs.join('\n')).toContain('docs/ai/changelog.md:13: ');
+        expect(result.errs).toEqual([]);
         expect(readFileSync(join(dir, 'docs/ai/changelog.md'), 'utf8')).toBe(before);
         expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
       } finally {
@@ -430,39 +424,38 @@ describe('reading modes agree on refusal and write nothing', () => {
       }
     });
   }
-
-  it('the check verdict names the counts it acted on', async () => {
-    const { runCli } = await import('./archive-changelog.mjs');
-    const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
-    try {
-      seedTree(dir, `${FM}\n# Changelog\n\n## 2026-07-28 — fresh\n\nbody.\n`);
-      const logs = [];
-      const code = runCli(['--check', '--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) });
-      expect(code).toBe(0);
-      const out = logs.join('\n');
-      expect(out).toContain('1 parsed entries');
-      expect(out).toContain('HOT 1');
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
-describe('rotation end to end through runCli', () => {
+describe('spec:archive-rotations/S6 green changelog lines keep their wording and seams', () => {
   const seedTree = (dir, rel, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
     writeFileSync(join(dir, rel), text, 'utf8');
   };
   const FULL = `${FM}\n# Changelog\n\n## 2026-07-28 — hot iso\n\nbody hot.\n\n## 2026.07.10 — warm dotted\n\nbody warm.\n\n## 2026.03.02 — cold dotted\n\n**Goal:** cold body.\n\n## Footer\n\nstray.\n`;
 
-  it('a default run writes every tier, keeps the footer, and a second run is a byte fixed point', async () => {
-    const { runCli, parseChangelogText } = await import('./archive-changelog.mjs');
+  it('the check verdict names the counts it acted on', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
+    try {
+      seedTree(dir, 'docs/ai/changelog.md', `${FM}\n# Changelog\n\n## 2026-07-28 — fresh\n\nbody.\n`);
+      expect(run(dir, ['--check', '--today=2026-07-28'])).toEqual({ code: 0, errs: [], logs: [
+        '[archive-changelog] OK — docs/ai/changelog.md: 1 parsed entries, all within 3 days of 2026-07-28; corpus 1 (HOT 1 / WARM 0 / COLD 0).',
+      ] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a default run writes every tier, keeps the footer, and a second run is a byte fixed point', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
     try {
       seedTree(dir, 'docs/ai/changelog.md', FULL);
       seedTree(dir, 'docs/ai/changelog-archive.md', `${FM}\n# Legacy\n\n## 2026.03.05 — legacy one\n\nbody legacy.\n`);
-      const code = runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} });
-      expect(code).toBe(0);
+      expect(run(dir, ['--today=2026-07-28'])).toEqual({ code: 0, errs: [], logs: [
+        '[archive-changelog] migrated:',
+        '  HOT (docs/ai/changelog.md): 1',
+        '  WARM (docs/ai/history/recent.md): 1',
+        '  COLD (docs/ai/history/2026-03.md): 2',
+      ] });
       expect(existsSync(join(dir, 'docs/ai/history/recent.md'))).toBe(true);
       expect(existsSync(join(dir, 'docs/ai/history/2026-03.md'))).toBe(true);
       expect(existsSync(join(dir, 'docs/ai/history/condensed-index.md'))).toBe(true);
@@ -471,9 +464,9 @@ describe('rotation end to end through runCli', () => {
       expect(parsed.entries.map((e) => e.dateStr)).toEqual(['2026.07.28']);
       expect(parsed.footer).toContain('## Footer');
       expect(readFileSync(join(dir, 'docs/ai/history/2026-03.md'), 'utf8')).toContain('legacy one');
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--check', '--today=2026-07-28']).code).toBe(0);
       const warmBefore = readFileSync(join(dir, 'docs/ai/history/recent.md'), 'utf8');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       expect(readFileSync(join(dir, 'docs/ai/changelog.md'), 'utf8')).toBe(hot);
       expect(readFileSync(join(dir, 'docs/ai/history/recent.md'), 'utf8')).toBe(warmBefore);
     } finally {
@@ -481,33 +474,35 @@ describe('rotation end to end through runCli', () => {
     }
   });
 
-  it('a dry run prints the per-file census and writes nothing', async () => {
-    const { runCli } = await import('./archive-changelog.mjs');
+  it('a dry run prints the per-file census and writes nothing', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
     try {
       seedTree(dir, 'docs/ai/changelog.md', FULL);
-      const logs = [];
-      const code = runCli(['--dry-run', '--today=2026-07-28', '--hot-days=60', '--warm-days=90'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) });
-      expect(code).toBe(0);
-      const out = logs.join('\n');
-      expect(out).toContain('"perFile"');
-      expect(out).toContain('"hot": 2');
+      const result = run(dir, ['--dry-run', '--today=2026-07-28', '--hot-days=60', '--warm-days=90']);
+      expect(result).toEqual({ code: 0, errs: [], logs: [
+        '[archive-changelog] DRY-RUN — no files will be changed.',
+        JSON.stringify({
+          today: '2026-07-28', hotCutoff: '2026-05-30', warmCutoff: '2026-04-30',
+          totals: { all: 3, hot: 2, warm: 0, cold: 1 },
+          perFile: { 'docs/ai/changelog.md': 3 },
+          hotDates: ['2026.07.28', '2026.07.10'], warmDates: [], coldDates: ['2026.03.02'],
+          coldFiles: ['2026-03'],
+        }, null, 2),
+      ] });
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('a zero-corpus default run is a stated no-op — nothing written anywhere', async () => {
-    const { runCli } = await import('./archive-changelog.mjs');
+  it('a zero-corpus default run is a stated no-op — nothing written anywhere', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
     try {
       seedTree(dir, 'docs/ai/changelog.md', `${FM}\n# Changelog\n\n> no entries yet.\n`);
       const before = readFileSync(join(dir, 'docs/ai/changelog.md'), 'utf8');
-      const logs = [];
-      const code = runCli(['--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) });
-      expect(code).toBe(0);
-      expect(logs.join('\n')).toContain('nothing to rotate');
+      expect(run(dir, ['--today=2026-07-28'])).toEqual({
+        code: 0, errs: [], logs: ['[archive-changelog] nothing to rotate — 0 entries across every source.'],
+      });
       expect(readFileSync(join(dir, 'docs/ai/changelog.md'), 'utf8')).toBe(before);
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
     } finally {
@@ -515,36 +510,40 @@ describe('rotation end to end through runCli', () => {
     }
   });
 
-  it('a stale HOT tier fails the check naming each overdue entry', async () => {
-    const { runCli } = await import('./archive-changelog.mjs');
+  it('a stale HOT tier fails the check naming each overdue entry', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
     try {
       seedTree(dir, 'docs/ai/changelog.md', FULL);
-      const errs = [];
-      const code = runCli(['--check', '--today=2026-07-28'], { root: dir, log: () => {}, logError: (m) => errs.push(m) });
-      expect(code).toBe(1);
-      const out = errs.join('\n');
-      expect(out).toContain('2026.07.10');
-      expect(out).toContain('2026.03.02');
-      expect(out).toContain('without --check');
+      expect(run(dir, ['--check', '--today=2026-07-28'])).toEqual({ code: 1, errs: [], logs: [
+        'archive-changelog: FAIL — entries of docs/ai/changelog.md older than 3 days (relative to 2026-07-28): 2',
+        'docs/ai/changelog.md:13: 2026.07.10 — warm dotted',
+        'docs/ai/changelog.md:17: 2026.03.02 — cold dotted',
+        'archive-changelog: REMEDY — rotate them with node scripts/agent-workflow/run.mjs archive-changelog',
+      ] });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('help exits 0, an unknown argument exits 2, a missing changelog exits 1', async () => {
-    const { runCli } = await import('./archive-changelog.mjs');
-    const logs = [];
-    const errs = [];
-    expect(runCli(['--help'], { root: '/nonexistent', log: (m) => logs.push(m), logError: () => {} })).toBe(0);
-    expect(logs.join('\n')).toContain('Usage');
-    expect(runCli(['--wat'], { root: '/nonexistent', log: () => {}, logError: (m) => errs.push(m) })).toBe(2);
-    expect(errs.join('\n')).toContain('unknown argument');
+  it('help logs exactly the usage line and exits 0', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
     try {
-      const missing = [];
-      expect(runCli([], { root: dir, log: () => {}, logError: (m) => missing.push(m) })).toBe(1);
-      expect(missing.join('\n')).toContain('not found');
+      expect(run(dir, ['--help'])).toEqual({ code: 0, errs: [], logs: [USAGE] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const arg of ['--wat', null]) it(`${arg ?? 'missing changelog'} has a red block on log`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-changelog-'));
+    try {
+      expect(run(dir, arg === null ? [] : [arg])).toEqual({
+        code: arg === null ? 1 : 2, errs: [], logs: arg === null ? [
+          'archive-changelog: FAIL — docs/ai/changelog.md not found',
+          'docs/ai/changelog.md: the file this rotation reads does not exist',
+          'archive-changelog: REMEDY — create docs/ai/changelog.md, then re-run',
+        ] : ['archive-changelog: FAIL — unknown argument: --wat', USAGE],
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

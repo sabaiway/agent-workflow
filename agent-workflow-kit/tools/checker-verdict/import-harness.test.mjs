@@ -8,7 +8,7 @@ import { FAULT_POINTS } from './record.mjs';
 import { faultEnvironment, readFaultMarks } from './fault-harness.test.mjs';
 import { KIT_OVERRIDE, REPOSITORY_ROOT } from './run-harness.test.mjs';
 
-const KIT_PACKAGE_PREFIX = 'agent-workflow-kit/';
+const KIT_PACKAGE_PREFIX = /^agent-workflow-(?:kit|memory)\//;
 const SUCCESS_CODE = 0;
 
 export const runImportCensus = async ({ record, root = REPOSITORY_ROOT }) => {
@@ -16,7 +16,7 @@ export const runImportCensus = async ({ record, root = REPOSITORY_ROOT }) => {
   const environment = Object.fromEntries(Object.entries(stripGitLocationEnv(process.env))
     .filter(([key]) => !KIT_OVERRIDE.test(key) && key !== 'NODE_TEST_CONTEXT'));
   for (const { path, commandLines } of record.files) {
-    if (!path.startsWith(KIT_PACKAGE_PREFIX) || !commandLines?.length) continue;
+    if (!KIT_PACKAGE_PREFIX.test(path) || !commandLines?.length) continue;
     for (const faultPoint of FAULT_POINTS) {
       const directory = mkdtempSync(join(tmpdir(), 'checker-import-'));
       try {

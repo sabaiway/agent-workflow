@@ -36,7 +36,6 @@ const EXPECTED_GATES = [
 ];
 const BUNDLED_FLAT_BODIES = {
   'spec-schema.mjs': 'spec-schema/spec-schema.mjs',
-  'markdown-blocks.mjs': 'shared/markdown-blocks.mjs',
 };
 const GIT_IDENTITY = ['-c', 'user.name=coder-tool', '-c', 'user.email=coder-tools@proton.me', '-c', 'commit.gpgsign=false'];
 

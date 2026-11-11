@@ -88,6 +88,7 @@ export const SCRIPT_PRIORS = Object.freeze([
   prior('migrate-gates.mjs', '8.1.5', '9.0.0', 'd9c3f9da27397dd94ad866c3cbac72e529ad2e6311ffa15de7478a960800cdfa'),
   prior('migrate-gates.test.mjs', '8.1.5', '9.0.0', '8f99a2f65f1f3db0eb3464a0382c208ca5076388b6df0596cf099d53ab2a1f86'),
   prior('spec-schema.test.mjs', '8.7.0', '9.0.0', '6a602a93e9f9f21f0bc10c50e356de693936d3e204987efbab1a1d7674030498'),
+  prior('markdown-blocks.mjs', '4.0.0', '9.0.0', '5a9fb45d4248c53dee9694b2d95c1cf98fe08a55c41429cf72826aa218f0ad2d'),
 ]);
 
 export const digestOf = (bytes) => createHash('sha256').update(bytes).digest('hex');

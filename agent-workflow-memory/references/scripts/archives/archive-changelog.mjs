@@ -1,62 +1,38 @@
 #!/usr/bin/env node
-// Rolling-window archive for docs/ai/changelog.md.
-//
-// HOT  (changelog.md)               — last HOT_DAYS days
-// WARM (history/recent.md)          — entries HOT_DAYS..WARM_DAYS old
-// COLD (history/YYYY-MM.md)         — entries older than WARM_DAYS, compressed
-// META (history/condensed-index.md) — one-line TL;DRs of every archived entry
-//
-// The file is read through the shared block tokenizer (markdown-blocks.mjs): headings are
-// recognised only OUTSIDE fenced regions, CRLF and trailing whitespace never change the block
-// structure, and an unclosed fence is a loud error instead of a silent absorber. On top of the
-// tokens this archiver applies its own unit grammar and FAILS CLOSED: a date-shaped heading that
-// does not parse as an entry refuses with file:line — it is never glued into the previous entry,
-// never duplicated into the footer, never normalised into a different calendar date.
-//
-// NOTE (multi-year scaling): condensed-index.md grows O(total archived entries) and never sheds, so
-// on a multi-year horizon it is the tier that runs out of room first (~1159 lines over 2y in a
-// stress test). Its floor is 1500 and its ceiling 3000 (archive-caps.mjs): past the FLOOR every run
-// prints a sharding warning, and once the count goes PAST the ceiling the run refuses outright
-// rather than stamp a cap it cannot honour — the ceiling itself is still stamped. The remedy is per-year sharding (condensed-index-YYYY.md) — a queued row, never
-// something a run decides for itself. Stress-test rotation via the exported pure functions against
-// a temp copy seeded with a synthetic multi-year dataset (include burst periods).
-//
-// Modes:
-//   (default)   run rotation, mutate files in place
-//   --dry-run   print planned distribution, do not change files
-//   --check     exit 1 if changelog.md still holds entries that should be archived
-//
-// Every mode parses every source AND builds every tier-STAMPED output (WARM, COLD, META) BEFORE any
-// write, so a refusal — an unparsable source, or a tier that has outgrown its ceiling — fires
-// identically for the default run, --dry-run and --check, and nothing is written on a refused input.
-// The HOT changelog is deliberately NOT in that set: buildChangelog passes the file's OWN
-// frontmatter through and reaches a literal only when the file carries none. That fallback is
-// unguarded, and it is a filed queue row rather than an oversight.
-//
-// CLI overrides:
-//   --hot-days=N  (default 3)
-//   --warm-days=N (default 30)
-//   --today=YYYY-MM-DD (default today UTC) — useful for tests / reproducible runs
+// The changelog rotation (spec archive-rotations); META grows one line per archived entry, ~1159 lines over 2y in a stress test.
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tokenizeMarkdown, findParagraphBreak, fail, findProjectRoot } from '../shared/index.mjs';
-import { capFor, countLines, shardingWarning } from './archive-caps.mjs';
+import { tokenizeMarkdown, findParagraphBreak, fail, findProjectRoot,
+  composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
+import { CAP_TABLE, capFor, countLines, shardingWarning } from './archive-caps.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
-
+const CHECKER_NAME = 'archive-changelog';
+const PACKAGE_REL = 'package.json';
+const GUARD = Object.freeze({ name: CHECKER_NAME, exitCode: 1, remedy: 'fix the cause the stack below names, then re-run' });
+const INDEX_REL = 'docs/ai/history/condensed-index.md';
+const shown = (text) => text.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+const composeFailure = (failed, findings, remedy, after = []) => ({
+  exitCode: 1,
+  lines: composeRedBlock({ name: CHECKER_NAME, failed: shown(failed),
+    findings: findings.map(({ place, text }) => ({ place, text: shown(text) })),
+    remedies: [shown(remedy)], after }),
+});
 export const readProjectName = (root) => {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-    if (pkg.name) return pkg.name;
-  } catch {
-    /* no package.json — fall back to repo dir basename */
+    const text = readFileSync(resolve(root, PACKAGE_REL), 'utf8');
+    try {
+      return JSON.parse(text)?.name || basename(root);
+    } catch {
+      return basename(root);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return basename(root);
   }
-  return basename(root);
 };
-const PROJECT_NAME = readProjectName(ROOT);
-
 const CHANGELOG_REL = 'docs/ai/changelog.md';
 const HISTORY_REL = 'docs/ai/history';
 const RECENT_REL = 'docs/ai/history/recent.md';
@@ -94,7 +70,7 @@ const parseArgs = (argv) => {
     else if (arg.startsWith('--hot-days=')) opts.hotDays = Number(arg.slice('--hot-days='.length));
     else if (arg.startsWith('--warm-days=')) opts.warmDays = Number(arg.slice('--warm-days='.length));
     else if (arg.startsWith('--today=')) opts.today = arg.slice('--today='.length);
-    else throw fail(2, `unknown argument: ${arg}\n${USAGE}`);
+    else return { unknown: arg };
   }
   return { flags, opts };
 };
@@ -114,9 +90,7 @@ export const stripTrailingSeparator = (block) => {
   return lines.join('\n');
 };
 
-// Parse one tier's text → { frontmatter, preamble, entries, footer }. Fails closed: any
-// unit-shaped heading that does not parse as an entry is exit 1 naming `label:line`, and an entry
-// appearing after the footer boundary refuses rather than being duplicated into the footer.
+// Refuse malformed date-shaped headings and entries after the footer, naming label:line.
 export const parseChangelogText = (text, label = 'changelog') => {
   const { frontmatter, frontLines, lines, headings } = tokenizeMarkdown(text, label);
   const fileLine = (index) => frontLines + index + 1;
@@ -138,6 +112,7 @@ export const parseChangelogText = (text, label = 'changelog') => {
           `${label}:${fileLine(heading.index)}: "${heading.text}" is date-shaped but ` +
             `${year}-${month}-${day} is not a real calendar date — it would previously have been ` +
             'silently normalised into a different month; fix the date, then re-run.',
+          `${label}:${fileLine(heading.index)}`,
         );
       }
       if (footerIdx !== -1) {
@@ -147,6 +122,7 @@ export const parseChangelogText = (text, label = 'changelog') => {
             `footer boundary at line ${fileLine(footerIdx)} — the footer must be the last section; ` +
             'it would previously have been silently duplicated into the footer; move the entry ' +
             'above the footer, then re-run.',
+          `${label}:${fileLine(heading.index)}`,
         );
       }
       entryHeadings.push({ index: heading.index, match: m });
@@ -159,6 +135,7 @@ export const parseChangelogText = (text, label = 'changelog') => {
           'as an entry heading — expected `## YYYY-MM-DD — title` or `## YYYY.MM.DD — title` at ' +
           'column 0 with a real calendar date. It would previously have been silently absorbed ' +
           'into the previous entry; fix the heading, then re-run.',
+        `${label}:${fileLine(heading.index)}`,
       );
     }
     if (heading.level === 2 && entryHeadings.length > 0 && footerIdx === -1 && NON_ENTRY_H2_RE.test(heading.text)) {
@@ -194,6 +171,7 @@ export const parseChangelogText = (text, label = 'changelog') => {
       month,
       day,
       title: title ?? '',
+      line: fileLine(index),
       block,
     };
   });
@@ -358,8 +336,8 @@ export const buildChangelog = ({ frontmatter, preamble, hot, footer, hasArchive 
 // capFor refuses outright past the tier's ceiling; see archive-caps.mjs.
 const stamped = (tier, render) => render(capFor({ tier, count: countLines(render(0)) }));
 
-export const buildRecent = (entries, todayStr) => {
-  const preamble = `# Changelog WARM Archive — ${PROJECT_NAME}\n\n> Entries aged **7–30 days** from today. Newer → [\`../changelog.md\`](../changelog.md). Older → [\`condensed-index.md\`](./condensed-index.md) plus per-month \`YYYY-MM.md\` files.`;
+export const buildRecent = (entries, todayStr, projectName = readProjectName(ROOT)) => {
+  const preamble = `# Changelog WARM Archive — ${projectName}\n\n> Entries aged **7–30 days** from today. Newer → [\`../changelog.md\`](../changelog.md). Older → [\`condensed-index.md\`](./condensed-index.md) plus per-month \`YYYY-MM.md\` files.`;
   const body = renderEntries(entries);
   return stamped('warm', (cap) => `${FRONTMATTER('history', cap, todayStr)}\n${preamble}\n\n---\n\n${body}\n`);
 };
@@ -370,8 +348,8 @@ export const buildCold = (year, month, entries, todayStr) => {
   return stamped('cold', (cap) => `${FRONTMATTER('history', cap, todayStr)}\n${preamble}\n\n---\n\n${compressed}\n`);
 };
 
-export const buildCondensedIndex = (warmEntries, coldByMonth, todayStr) => {
-  const intro = `# Condensed Index — ${PROJECT_NAME} Changelog\n\n> One-line TL;DR for every archived entry. Each line links to the file holding the full text.`;
+export const buildCondensedIndex = (warmEntries, coldByMonth, todayStr, projectName = readProjectName(ROOT)) => {
+  const intro = `# Condensed Index — ${projectName} Changelog\n\n> One-line TL;DR for every archived entry. Each line links to the file holding the full text.`;
 
   const lines = [];
   if (warmEntries.length > 0) {
@@ -399,31 +377,45 @@ export const groupByMonth = (entries) => {
   return map;
 };
 
-export const runCli = (argv, deps = {}) => {
-  const { root = ROOT, log = console.log, logError = console.error } = deps;
+const buildTier = (tier, place, build) => {
   try {
-    const { flags, opts } = parseArgs(argv);
+    return build();
+  } catch (error) {
+    if (error.exitCode && !error.place) throw Object.assign(error, { tier, archivePlace: place });
+    throw error;
+  }
+};
+const rotate = (argv, root, log, warnings) => {
+  try {
+    const { flags, opts, unknown } = parseArgs(argv);
+    if (unknown !== undefined) return { exitCode: 2, lines: composeUsageRefusal({
+      name: CHECKER_NAME, failed: shown('unknown argument: ' + unknown), usage: USAGE,
+    }) };
     if (flags.help) {
       log(USAGE);
       return 0;
     }
+    const project = {};
+    try {
+      project.name = readProjectName(root);
+    } catch (error) {
+      return composeFailure(`cannot read ${PACKAGE_REL}: ${error.message.split(/\r\n|[\r\n]/)[0]}`,
+        [{ place: PACKAGE_REL, text: "the project's name cannot be read from it" }],
+        'make package.json a readable file, or remove it, then re-run');
+    }
     const cutoffs = computeCutoffs(opts.today, opts.hotDays, opts.warmDays);
     const todayStr = cutoffs.today.toISOString().slice(0, 10);
-
     const changelogPath = resolve(root, CHANGELOG_REL);
     const historyDir = resolve(root, HISTORY_REL);
     const recentPath = resolve(root, RECENT_REL);
     const indexPath = resolve(historyDir, 'condensed-index.md');
     const legacyPath = resolve(root, LEGACY_REL);
-
     if (!existsSync(changelogPath)) {
-      logError(`[archive-changelog] ${CHANGELOG_REL} not found — nothing to do.`);
-      return 1;
+      return composeFailure(`${CHANGELOG_REL} not found`,
+        [{ place: CHANGELOG_REL, text: 'the file this rotation reads does not exist' }],
+        `create ${CHANGELOG_REL}, then re-run`);
     }
-
-    // EVERY mode parses EVERY source before any write: a refusal in the main file, the legacy
-    // archive, recent.md or a monthly COLD file fires identically for the default run, --dry-run
-    // and --check, naming that file's own file:line — and nothing is written.
+    // Every mode parses every source before any write, so a refusal names its file:line and writes nothing.
     const perFile = {};
     const parsed = parseChangelogText(readFileSync(changelogPath, 'utf8'), CHANGELOG_REL);
     perFile[CHANGELOG_REL] = parsed.entries.length;
@@ -479,39 +471,30 @@ export const runCli = (argv, deps = {}) => {
       coldFiles: [...coldByMonth.keys()].sort(),
     };
 
-    // EVERY cap-bearing output is BUILT here, before the mode branch, and capFor refuses a tier that
-    // has outgrown its ceiling. That refusal has to fire identically in all three modes: a `--check`
-    // that went green on a corpus the next real run cannot write would be exactly the fail-open the
-    // parse above already refuses to be. Building is pure — nothing reaches disk until the writes
-    // below, so a refusal still leaves the tree untouched.
+    // Build every cap-bearing tier in every mode before any write; a ceiling refusal leaves the tree untouched.
     const archives = [];
-    if (warm.length > 0) archives.push({ path: recentPath, text: buildRecent(warm, todayStr) });
+    if (warm.length > 0) archives.push({ path: recentPath,
+      text: buildTier('warm', RECENT_REL, () => buildRecent(warm, todayStr, project.name)) });
     for (const [key, entries] of coldByMonth) {
       const [year, month] = key.split('-');
-      archives.push({ path: resolve(historyDir, `${year}-${month}.md`), text: buildCold(year, month, entries, todayStr) });
+      const place = `${HISTORY_REL}/${year}-${month}.md`;
+      archives.push({ path: resolve(historyDir, `${year}-${month}.md`),
+        text: buildTier('cold', place, () => buildCold(year, month, entries, todayStr)) });
     }
     if (warm.length > 0 || cold.length > 0) {
-      const index = buildCondensedIndex(warm, coldByMonth, todayStr);
-      // The sharding tripwire. META grows O(total) and never sheds, so it is the tier that reaches
-      // its ceiling first; warning at the floor puts the remedy in front of whoever runs the
-      // archiver while there is still room, instead of at the ceiling where the run refuses.
+      const index = buildTier('meta', INDEX_REL, () => buildCondensedIndex(warm, coldByMonth, todayStr, project.name));
       const warning = shardingWarning({ tier: 'meta', count: countLines(index) });
-      if (warning) logError(`[archive-changelog] WARNING: ${warning}`);
+      if (warning) warnings.push(`[archive-changelog] WARNING: ${warning}`);
       archives.push({ path: indexPath, text: index });
     }
 
     if (flags.check) {
       const tooOldInHot = parsed.entries.filter((e) => e.dateObj < cutoffs.hotCutoff);
       if (tooOldInHot.length > 0) {
-        logError(
-          `[archive-changelog] FAIL: ${tooOldInHot.length} entries in ${CHANGELOG_REL} are older than ${opts.hotDays} days (relative to ${todayStr}).`,
-        );
-        for (const e of tooOldInHot) logError(`  - ${e.dateStr} — ${e.title}`);
-        logError('Run the changelog archive script (without --check) to rotate.');
-        return 1;
+        return composeFailure(`entries of ${CHANGELOG_REL} older than ${opts.hotDays} days (relative to ${todayStr}): ${tooOldInHot.length}`,
+          tooOldInHot.map((entry) => ({ place: `${CHANGELOG_REL}:${entry.line}`, text: `${entry.dateStr} — ${entry.title}` })),
+          'rotate them with node scripts/agent-workflow/run.mjs archive-changelog', warnings.splice(0));
       }
-      // The verdict names what it acted on: a zero-entry tier is a DECISION — with the loud path
-      // above, zero can only mean nothing unit-shaped is present, never a file that failed to parse.
       log(
         `[archive-changelog] OK — ${CHANGELOG_REL}: ${parsed.entries.length} parsed entries, all within ` +
           `${opts.hotDays} days of ${todayStr}; corpus ${allEntries.length} (HOT ${hot.length} / WARM ${warm.length} / COLD ${cold.length}).`,
@@ -555,9 +538,25 @@ export const runCli = (argv, deps = {}) => {
     }
     return 0;
   } catch (err) {
-    logError(`[archive-changelog] ${err.message}`);
-    return err.exitCode ?? 1;
+    if (err.exitCode && err.place) return composeFailure(`cannot parse ${err.place.replace(/:\d+$/, '')}`,
+      [{ place: err.place, text: err.message.slice(err.place.length + 2) }], 'fix the place named above, then re-run');
+    if (err.exitCode && err.archivePlace) return composeFailure(`the ${err.tier} tier ${err.archivePlace} is past its ceiling`,
+      [{ place: err.archivePlace, text: err.message }], CAP_TABLE[err.tier].remedy);
+    throw err;
   }
+};
+export const runCli = (argv, deps = {}) => {
+  const { root = ROOT, log = console.log, logError = console.error } = deps;
+  const greenLines = [];
+  const warnings = [];
+  const answer = guardChecker(GUARD, () => rotate(argv, root, (line) => greenLines.push(line), warnings));
+  if (typeof answer === 'number') {
+    for (const warning of warnings) logError(warning);
+    for (const line of greenLines) log(line);
+    return answer;
+  }
+  for (const line of [...answer.lines, ...warnings]) log(line);
+  return answer.exitCode;
 };
 
 // Run main() only when executed directly, never on import. Compare by REAL path: an entry point

@@ -20,7 +20,8 @@
 // Line content is returned BYTE-EXACT. Normalisation applies only to the view used for matching, so
 // re-emitting a block reproduces the file. Dependency-free, Node >= 22. No side effects on import.
 
-export const fail = (exitCode, message) => Object.assign(new Error(message), { exitCode });
+export const fail = (exitCode, message, place) =>
+  Object.assign(new Error(message), { exitCode }, place === undefined ? {} : { place });
 
 const FRONTMATTER_RE = /^(---\r?\n[\s\S]*?\r?\n---\r?\n)/;
 // Up to three leading spaces, then a run of at least three backticks or tildes (CommonMark).
@@ -83,6 +84,7 @@ export const tokenizeMarkdown = (text, label = 'document') => {
           'so it is either frontmatter holding a heading or fence, or a thematic break whose closing `---` ' +
           'belongs to the body — and the two are indistinguishable here. Separate them: keep frontmatter ' +
           'free of `#` and fence lines, or put a blank line and prose before the first `---`.',
+        `${label}:${suspectAt + 1}`,
       );
     }
   }
@@ -125,6 +127,7 @@ export const tokenizeMarkdown = (text, label = 'document') => {
       `${label}:${frontLines + open.index + 1}: "${lines[open.index]}" opens a code fence that is ` +
         'never closed, so every heading after it is invisible and its text is silently absorbed. ' +
         `Close it with a bare \`${open.char.repeat(open.length)}\`, then re-run.`,
+      `${label}:${frontLines + open.index + 1}`,
     );
   }
 

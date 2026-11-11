@@ -1,10 +1,36 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { tokenizeMarkdown, findParagraphBreak } from './markdown-blocks.mjs';
+import { tokenizeMarkdown, findParagraphBreak, fail } from './markdown-blocks.mjs';
 
 const FM = '---\ntype: history\nlastUpdated: 2026-07-28\nmaxLines: 700\n---\n';
 const B = '```';
 const T = '~~~';
+
+describe('spec:archive-rotations/S8 failures preserve their message and carry an optional place', () => {
+  for (const place of [undefined, 'a.md:3']) {
+    it(`fail with ${place ?? 'no place'} preserves the error shape`, () => {
+      const err = place === undefined ? fail(1, 'm') : fail(1, 'm', place);
+      assert.ok(err instanceof Error);
+      assert.equal(err.message, 'm');
+      assert.equal(err.exitCode, 1);
+      assert.equal(Object.hasOwn(err, 'place'), place !== undefined);
+      if (place !== undefined) assert.equal(err.place, place);
+    });
+  }
+  for (const [title, text, place] of [
+    ['ambiguous leading block', '---\n\n# Doc\n\n## 2026-07-20 — a\n\n---\n\n## 2026-07-19 — b\n', 'docs/ai/changelog.md:3'],
+    ['unclosed fence', `${FM}\n## 2026-07-20 — real\n\n${B}markdown\n## 2026-07-19 — hidden\n`, 'docs/ai/changelog.md:9'],
+  ]) {
+    it(`${title} carries its file and line`, () => {
+      assert.throws(() => tokenizeMarkdown(text, 'docs/ai/changelog.md'), (err) => {
+        assert.equal(err.exitCode, 1);
+        assert.ok(err.message.startsWith(`${place}: `));
+        assert.equal(err.place, place);
+        return true;
+      });
+    });
+  }
+});
 
 describe('frontmatter', () => {
   it('splits the leading block and counts its lines, leaving the body byte-exact', () => {

@@ -1,11 +1,12 @@
 import { describe, it } from 'node:test';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join, resolve, dirname } from 'node:path';
+import { basename, join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { expect } from '../test-support/index.mjs';
 import {
+  runCli,
   parseKnownIssues,
   classifySection,
   buildResolvedFile,
@@ -16,6 +17,13 @@ const CUTOFF = new Date('2026-05-20T00:00:00Z');
 // Past every real-corpus resolution date, so the exact real-world marker strings classify archivable.
 const LATE_CUTOFF = new Date('2026-08-20T00:00:00Z');
 const TEMPLATES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
+const USAGE = 'Usage: archive-issues.mjs [--dry-run|--check] [--cutoff-days=N] [--today=YYYY-MM-DD]';
+const run = (root, argv) => {
+  const logs = [];
+  const errs = [];
+  const code = runCli(argv, { root, log: (line) => logs.push(line), logError: (line) => errs.push(line) });
+  return { code, logs, errs };
+};
 
 // A hand-built section in the parser's shape: the heading line is lines[0].
 const sec = (heading, ...body) => ({ heading, lines: [heading, ...body] });
@@ -41,8 +49,6 @@ describe('parseKnownIssues — the section model', () => {
     expect(parsed.sections[0].lines.join('\n')).toContain('preamble text');
   });
 
-  // Phase 3.1 (L8): category H2s, the preamble and the trailing footer belong to the FILE — an
-  // issue section contains only its own issue, so a rotation can never carry them into an archive.
   it('a category H2 between two issues belongs to the file, not to the preceding issue', () => {
     const text = `${FM}\n# Known Issues\n\n### ~~Issue-001 — done~~\n\n- **Status:** ✅ FIXED (2026.04.10)\n\n## 🟢 Resolved\n\n### Issue-002 — listed resolved\n\n- **Resolved:** 2026-04-11 — fixed.\n`;
     const parsed = parseKnownIssues(text);
@@ -72,12 +78,11 @@ describe('parseKnownIssues — the section model', () => {
     const footer = parsed.sections[parsed.sections.length - 1];
     expect(footer.structural).toBe(true);
     expect(footer.lines.join('\n')).toContain('> Resolved issues');
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       mkdirSync(join(dir, 'docs/ai'), { recursive: true });
       writeFileSync(join(dir, 'docs/ai/known_issues.md'), text, 'utf8');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const kept = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       expect(kept).toContain('  ---');
       expect(kept).toContain('> Resolved issues older than the window');
@@ -96,12 +101,11 @@ describe('parseKnownIssues — the section model', () => {
     const last = parsed.sections[parsed.sections.length - 1];
     expect(last.structural).toBe(false);
     expect(last.lines.join('\n')).toContain('about Issue-071 itself');
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       mkdirSync(join(dir, 'docs/ai'), { recursive: true });
       writeFileSync(join(dir, 'docs/ai/known_issues.md'), text, 'utf8');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       expect(readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8')).toContain('about Issue-071 itself');
       expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).not.toContain('about Issue-071 itself');
     } finally {
@@ -137,8 +141,6 @@ describe('classifySection', () => {
   });
 });
 
-// Phase 3.2/3.3 (Decision 7): strikethrough stops gating archivability — a recognised, line-leading,
-// dated resolution marker decides alone. Fixtures are the exact real-world strings.
 describe('the marker contract — real-world resolution shapes', () => {
   it('a struck heading with an ISO dated marker classifies archivable', () => {
     const result = classifySection(
@@ -216,8 +218,6 @@ describe('the marker contract — real-world resolution shapes', () => {
     expect(result.kind).toBe('open');
   });
 
-  // The pre-4.0.0 template seeded this EXACT example section; a pristine legacy deployment must
-  // not red its gate forever over our own blank. Only the exact heading+placeholder pair is inert.
   it('the pristine pre-4.0.0 template seed classifies template-blank and keeps the gate green', async () => {
     expect(
       classifySection(
@@ -226,15 +226,15 @@ describe('the marker contract — real-world resolution shapes', () => {
       ).kind,
     ).toBe('template-blank');
     const LEGACY = `---\ntype: reference\nlastUpdated: {{DATE}}\nscope: permanent\nstaleAfter: 30d\nowner: none\nmaxLines: 300\n---\n\n# Known Issues\n\n> Every bug we hit. Status, workaround, impact, plan. Avoids re-discovering pain.\n\n## 🔴 Open\n\n### Issue-001 — {{Title}}\n- **Discovered:** {{DATE}}\n- **Status:** Open\n- **Impact:** {{user-facing? dev-only? blocking?}}\n- **Workaround:** {{if any}}\n- **Plan:** {{next action}}\n- **Related files:** \`{{src/...}}\`\n\n## 🟢 Resolved\n\n### Issue-XXX — {{Title}}\n- **Resolved:** {{DATE}}\n- **Resolution:** {{what fixed it}}\n- **Commit:** {{SHA}}\n\n---\n\n> Resolved issues older than the window are rotated to \`history/issues-resolved.md\` by the issue-archive script.\n`;
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       mkdirSync(join(dir, 'docs/ai'), { recursive: true });
       writeFileSync(join(dir, 'docs/ai/known_issues.md'), LEGACY, 'utf8');
-      const logs = [];
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) })).toBe(0);
+      const { code, logs, errs } = run(dir, ['--check', '--today=2026-07-28']);
+      expect(code).toBe(0);
+      expect(errs).toEqual([]);
       expect(logs.join('\n')).toContain('template-blank 1');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
       expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(LEGACY);
     } finally {
@@ -247,32 +247,27 @@ describe('the marker contract — real-world resolution shapes', () => {
     expect(classifySection(sec('### Issue-055 — real unstruck', '- **Resolved:** {{DATE}}'), LATE_CUTOFF).kind).toBe('fixed-undated');
   });
 
-  // The blank's identity is the exact literal heading — no real issue carries `{{Title}}` — so a
-  // half-substituted blank (an agent dated the placeholders) still never enters the archive.
   it('the legacy blank stays inert after an agent substitutes the date placeholders', async () => {
     expect(
       classifySection(sec('### Issue-XXX — {{Title}}', '- **Resolved:** 2026-05-12', '- **Resolution:** {{what fixed it}}'), LATE_CUTOFF).kind,
     ).toBe('template-blank');
     const LEGACY = `---\ntype: reference\nlastUpdated: {{DATE}}\nscope: permanent\nstaleAfter: 30d\nowner: none\nmaxLines: 300\n---\n\n# Known Issues\n\n> Every bug we hit.\n\n## 🔴 Open\n\n### Issue-001 — {{Title}}\n- **Discovered:** {{DATE}}\n- **Status:** Open\n\n## 🟢 Resolved\n\n### Issue-XXX — {{Title}}\n- **Resolved:** {{DATE}}\n- **Resolution:** {{what fixed it}}\n- **Commit:** {{SHA}}\n\n---\n\n> Resolved issues older than the window are rotated to \`history/issues-resolved.md\` by the issue-archive script.\n`;
     const substituted = LEGACY.replaceAll('{{DATE}}', '2026-05-12');
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       mkdirSync(join(dir, 'docs/ai'), { recursive: true });
       writeFileSync(join(dir, 'docs/ai/known_issues.md'), substituted, 'utf8');
-      const logs = [];
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) })).toBe(0);
+      const { code, logs, errs } = run(dir, ['--check', '--today=2026-07-28']);
+      expect(code).toBe(0);
+      expect(errs).toEqual([]);
       expect(logs.join('\n')).toContain('template-blank 1');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  // Contradictory state refuses: Resolved-priority would silently archive a genuinely reopened
-  // issue, Status-priority would silently skip a resolved one forever — loud is the only
-  // direction that hides nothing.
   it('contradictory open status and dated resolution marker classify conflict, in either order', () => {
     expect(
       classifySection(sec('### Issue-080 — forgot to flip', '- **Status:** Open', '- **Resolved:** 2026-04-10 — fixed.'), LATE_CUTOFF)
@@ -294,13 +289,9 @@ describe('the marker contract — real-world resolution shapes', () => {
   it('a struck heading with an explicit open status classifies open — strikethrough is cosmetic in both directions', () => {
     expect(classifySection(sec('### ~~Issue-060 — reopened~~', '- **Status:** Open — reopened 2026-07-25'), LATE_CUTOFF).kind).toBe('open');
     expect(classifySection(sec('### ~~Issue-061 — mitigated~~', '- **Status:** Mitigated forward in kit `1.8.0`'), LATE_CUTOFF).kind).toBe('open');
-    // A bare struck heading with NO status/resolved field stays a loud undated resolution claim.
     expect(classifySection(sec('### ~~Issue-062 — bare struck~~', 'prose only.'), LATE_CUTOFF).kind).toBe('fixed-undated');
   });
 
-  // A struck heading is itself a resolution signal: an UNRECOGNISED status value under it is a
-  // resolution claim with no recognisable date (Arm C loud) — while UNSTRUCK sections keep a free
-  // status vocabulary, so an allowlist can never false-red a legitimately open issue.
   it('a struck heading with an unrecognised status is a loud undated claim, not silently open', () => {
     expect(classifySection(sec('### ~~Issue-085 — closed word~~', '- **Status:** Closed — long ago'), LATE_CUTOFF).kind).toBe('fixed-undated');
     expect(classifySection(sec('### ~~Issue-086 — done word~~', '- **Status:** DONE'), LATE_CUTOFF).kind).toBe('fixed-undated');
@@ -348,7 +339,6 @@ describe('the marker contract — real-world resolution shapes', () => {
   // section inserted directly under the bare `## 🟢 Resolved` heading archives ALONE, never
   // carrying the instructions, categories or footer with it.
   it('the full template rotates cleanly with a real issue inserted directly under the Resolved category', { skip: !existsSync(resolve(TEMPLATES_DIR, 'known_issues.md')) && 'deployed copy: the template ships in the package, not at the consumer' }, async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const template = readFileSync(resolve(TEMPLATES_DIR, 'known_issues.md'), 'utf8').replaceAll('{{DATE}}', '2026-01-10');
     const inserted = template.replace(
       '## 🟢 Resolved\n',
@@ -358,7 +348,7 @@ describe('the marker contract — real-world resolution shapes', () => {
     try {
       mkdirSync(join(dir, 'docs/ai'), { recursive: true });
       writeFileSync(join(dir, 'docs/ai/known_issues.md'), inserted, 'utf8');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const kept = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       expect(kept).toContain('```markdown');
       expect(kept).toContain('## 🔴 Open');
@@ -382,9 +372,6 @@ describe('the marker contract — real-world resolution shapes', () => {
   });
 });
 
-// Phase 2 (the tokenizer contract): section boundaries are heading TOKENS — column-0 headings
-// outside fences — and an ISSUE-shaped heading anywhere else is loud, never silently glued or
-// silently split.
 describe('sections split only at real heading tokens', () => {
   const FENCE = '```';
 
@@ -406,12 +393,14 @@ describe('sections split only at real heading tokens', () => {
 
   it('an unclosed fence refuses loudly naming its opening line', () => {
     const text = `${FM}\n# Known Issues\n\n### Issue-001 — x\n\n${FENCE}markdown\n### Issue-002 — hidden\n`;
-    let threw = null;
-    try {
-      parseKnownIssues(text, 'docs/ai/known_issues.md');
-    } catch (err) {
-      threw = err;
-    }
+    const threw = (() => {
+      try {
+        parseKnownIssues(text, 'docs/ai/known_issues.md');
+        return null;
+      } catch (err) {
+        return err;
+      }
+    })();
     expect(threw).not.toBeNull();
     expect(threw.exitCode).toBe(1);
     expect(threw.message).toMatch(/never closed/);
@@ -420,12 +409,14 @@ describe('sections split only at real heading tokens', () => {
   it('a wrong-level or indented issue heading refuses naming file and line', () => {
     for (const bad of ['## Issue-020 — wrong level', '#### Issue-021 — too deep', '  ### Issue-022 — indented', '###  Issue-123 — double space', '###\tIssue-124 — tab separated']) {
       const text = `${FM}\n# Known Issues\n\n### Issue-001 — good\n\nbody.\n\n${bad}\n\norphan body.\n`;
-      let threw = null;
-      try {
-        parseKnownIssues(text, 'ki.md');
-      } catch (err) {
-        threw = err;
-      }
+      const threw = (() => {
+        try {
+          parseKnownIssues(text, 'ki.md');
+          return null;
+        } catch (err) {
+          return err;
+        }
+      })();
       expect(threw).not.toBeNull();
       expect(threw.exitCode).toBe(1);
       expect(threw.message).toMatch(/^ki\.md:\d+:/);
@@ -442,9 +433,6 @@ describe('sections split only at real heading tokens', () => {
   });
 });
 
-// Arm B at the CLI seam. `runCli` is imported dynamically so this file still LOADS against an
-// archiver that predates it — the tests then fail as honest reds instead of taking the whole
-// suite down with a module-load error.
 describe('reading modes agree on refusal and write nothing', () => {
   const seedTree = (dir, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
@@ -454,15 +442,14 @@ describe('reading modes agree on refusal and write nothing', () => {
 
   for (const mode of [['--check'], ['--dry-run'], []]) {
     it(`${JSON.stringify(mode)} refuses the same malformed heading with exit 1 and leaves the tree untouched`, async () => {
-      const { runCli } = await import('./archive-issues.mjs');
       const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
       try {
         seedTree(dir, malformed);
         const before = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
-        const errs = [];
-        const code = runCli(mode, { root: dir, log: () => {}, logError: (m) => errs.push(m) });
+        const { code, logs, errs } = run(dir, mode);
         expect(code).toBe(1);
-        expect(errs.join('\n')).toContain('docs/ai/known_issues.md:');
+        expect(errs).toEqual([]);
+        expect(logs.join('\n')).toContain('docs/ai/known_issues.md:');
         expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(before);
         expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
       } finally {
@@ -472,24 +459,21 @@ describe('reading modes agree on refusal and write nothing', () => {
   }
 
   it('the check verdict names the counts it acted on', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, `${FM}\n# Known Issues\n\n### Issue-001 — open one\n\n**Status:** Open\n\n### ~~Issue-002 — struck~~\n\n**Status:** ✅ FIXED (2026.05.23)\n`);
-      const logs = [];
-      const code = runCli(['--check', '--today=2026-05-24'], { root: dir, log: (m) => logs.push(m), logError: (m) => logs.push(m) });
+      const { code, logs, errs } = run(dir, ['--check', '--today=2026-05-24']);
+      expect(errs).toEqual([]);
       expect(code).toBe(0);
-      const out = logs.join('\n');
-      expect(out).toContain('2 issue sections');
-      expect(out).toContain('0 archivable');
+      expect(logs).toEqual([
+        '[archive-issues] OK — docs/ai/known_issues.md: 2 issue sections (open 1 / fixed-recent 1), 0 archivable with a recognised date older than 2026-05-11 (cutoff 14 days, relative to 2026-05-24).',
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
-// Arm C at the CLI seam: the predicate (a resolution claim without a recognisable date, or a
-// malformed date) AND the disposition (exit 1, file:line, nothing written) — in every mode.
 describe('a resolved section with no recognisable date is reported LOUDLY, never silently skipped', () => {
   const seedTree = (dir, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
@@ -499,16 +483,15 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
 
   for (const mode of [['--check'], ['--dry-run'], []]) {
     it(`${JSON.stringify(mode)} refuses the undated resolution claim with exit 1 and writes nothing`, async () => {
-      const { runCli } = await import('./archive-issues.mjs');
       const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
       try {
         seedTree(dir, undated);
         const before = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
-        const errs = [];
-        const code = runCli(mode, { root: dir, log: () => {}, logError: (m) => errs.push(m) });
+        const { code, logs, errs } = run(dir, mode);
         expect(code).toBe(1);
-        expect(errs.join('\n')).toMatch(/known_issues\.md:\d+/);
-        expect(errs.join('\n')).toContain('✅ FIXED');
+        expect(errs).toEqual([]);
+        expect(logs.join('\n')).toMatch(/known_issues\.md:\d+/);
+        expect(logs.join('\n')).toContain('✅ FIXED');
         expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(before);
         expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
       } finally {
@@ -518,15 +501,15 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
   }
 
   it('a struck unrecognised status refuses without writing', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, `${FM}\n# Known Issues\n\n### ~~Issue-085 — closed word~~\n\n- **Status:** Closed — long ago\n`);
       const before = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
-      const errs = [];
-      expect(runCli(['--check'], { root: dir, log: () => {}, logError: (m) => errs.push(m) })).toBe(1);
-      expect(errs.join('\n')).toMatch(/known_issues\.md:\d+/);
-      expect(errs.join('\n')).toContain('Closed');
+      const { code, logs, errs } = run(dir, ['--check']);
+      expect(code).toBe(1);
+      expect(errs).toEqual([]);
+      expect(logs.join('\n')).toMatch(/known_issues\.md:\d+/);
+      expect(logs.join('\n')).toContain('Closed');
       expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(before);
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
     } finally {
@@ -535,15 +518,14 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
   });
 
   it('a status/resolution conflict refuses naming both lines and writes nothing', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, `${FM}\n# Known Issues\n\n### Issue-080 — forgot to flip\n\n- **Status:** Open\n- **Resolved:** 2026-04-10 — fixed.\n`);
       const before = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
-      const errs = [];
-      const code = runCli(['--check'], { root: dir, log: () => {}, logError: (m) => errs.push(m) });
+      const { code, logs, errs } = run(dir, ['--check']);
       expect(code).toBe(1);
-      const out = errs.join('\n');
+      expect(errs).toEqual([]);
+      const out = logs.join('\n');
       expect(out).toMatch(/known_issues\.md:\d+/);
       expect(out).toContain('**Resolved:** 2026-04-10');
       expect(out).toContain('**Status:** Open');
@@ -555,7 +537,6 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
   });
 
   it('an impossible or mixed-separator marker date is refused, not normalised', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     for (const [marker, token] of [
       ['- **Status:** ✅ FIXED (2026.02.30)', '2026.02.30'],
       ['- **Resolved:** 2026-07.20 — x', '2026-07.20'],
@@ -564,11 +545,11 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
       try {
         seedTree(dir, `${FM}\n# Known Issues\n\n### ~~Issue-009 — bad date~~\n\n${marker}\n`);
         const before = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
-        const errs = [];
-        const code = runCli(['--check'], { root: dir, log: () => {}, logError: (m) => errs.push(m) });
+        const { code, logs, errs } = run(dir, ['--check']);
         expect(code).toBe(1);
-        expect(errs.join('\n')).toMatch(/known_issues\.md:\d+/);
-        expect(errs.join('\n')).toContain(token);
+        expect(errs).toEqual([]);
+        expect(logs.join('\n')).toMatch(/known_issues\.md:\d+/);
+        expect(logs.join('\n')).toContain(token);
         expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(before);
         expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
       } finally {
@@ -578,71 +559,96 @@ describe('a resolved section with no recognisable date is reported LOUDLY, never
   });
 });
 
-describe('rotation end to end through runCli', () => {
+describe('spec:archive-rotations/S7 green issues lines keep their wording and seams', () => {
   const seedTree = (dir, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
     writeFileSync(join(dir, 'docs/ai/known_issues.md'), text, 'utf8');
   };
   const MIXED = `${FM}\n# Known Issues\n\n### ~~Issue-001 — done long ago~~\n\n- **Status:** ✅ FIXED (2026.04.10)\n\n### Issue-002 — still open\n\n**Status:** Open\n`;
 
-  it('a default run archives the struck dated issue and keeps the open one', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
+  it('a default run archives the struck dated issue and keeps the open one', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, MIXED);
-      const code = runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} });
-      expect(code).toBe(0);
+      expect(run(dir, ['--today=2026-07-28'])).toEqual({ code: 0, errs: [], logs: [
+        '[archive-issues] archived 1 issue(s) to docs/ai/history/issues-resolved.md',
+      ] });
       const resolved = readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8');
       expect(resolved).toContain('Issue-001');
       const kept = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       expect(kept).toContain('Issue-002');
       expect(kept).not.toContain('Issue-001');
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--check', '--today=2026-07-28']).code).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('check fails naming the archivable set; dry-run prints the plan and writes nothing', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
+  it('check fails naming the archivable set and the stable rotation command', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, MIXED);
-      const errs = [];
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: () => {}, logError: (m) => errs.push(m) })).toBe(1);
-      expect(errs.join('\n')).toContain('Issue-001');
-      const logs = [];
-      expect(runCli(['--dry-run', '--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: () => {} })).toBe(0);
-      expect(logs.join('\n')).toContain('archivable: 1');
+      expect(run(dir, ['--check', '--today=2026-07-28'])).toEqual({ code: 1, errs: [], logs: [
+        'archive-issues: FAIL — archivable issues in docs/ai/known_issues.md: 1',
+        'docs/ai/known_issues.md:9: ### ~~Issue-001 — done long ago~~',
+        'archive-issues: REMEDY — archive them with node scripts/agent-workflow/run.mjs archive-issues',
+      ] });
       expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('a nothing-to-archive run names the counts; help 0, unknown argument 2, missing file 1', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
+  it('dry-run prints exactly the plan and writes nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
+    try {
+      seedTree(dir, MIXED);
+      expect(run(dir, ['--dry-run', '--today=2026-07-28'])).toEqual({ code: 0, errs: [], logs: [
+        '[archive-issues] DRY-RUN — no files will be changed.',
+        '  cutoffDate: 2026-07-15',
+        '  total sections: 3',
+        '  issue sections: 2 (archivable 1 / open 1)',
+        '  archivable: 1',
+        '    - ### ~~Issue-001 — done long ago~~',
+      ] });
+      expect(existsSync(join(dir, 'docs/ai/history'))).toBe(false);
+      expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(MIXED);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a nothing-to-archive run names the counts exactly', () => {
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, `${FM}\n# Known Issues\n\n### Issue-002 — still open\n\n**Status:** Open\n`);
-      const logs = [];
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: (m) => logs.push(m), logError: () => {} })).toBe(0);
-      expect(logs.join('\n')).toContain('nothing to archive');
-      expect(logs.join('\n')).toContain('1 issue sections');
-      const help = [];
-      expect(runCli(['--help'], { root: dir, log: (m) => help.push(m), logError: () => {} })).toBe(0);
-      expect(help.join('\n')).toContain('Usage');
-      const errs = [];
-      expect(runCli(['--wat'], { root: dir, log: () => {}, logError: (m) => errs.push(m) })).toBe(2);
-      expect(errs.join('\n')).toContain('unknown argument');
-      const missing = [];
-      const empty = mkdtempSync(join(tmpdir(), 'archive-issues-'));
-      try {
-        expect(runCli([], { root: empty, log: () => {}, logError: (m) => missing.push(m) })).toBe(1);
-        expect(missing.join('\n')).toContain('not found');
-      } finally {
-        rmSync(empty, { recursive: true, force: true });
-      }
+      expect(run(dir, ['--today=2026-07-28'])).toEqual({ code: 0, errs: [], logs: [
+        '[archive-issues] nothing to archive — 1 issue sections (open 1).',
+      ] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('help logs exactly the usage line and exits 0', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
+    try {
+      expect(run(dir, ['--help'])).toEqual({ code: 0, errs: [], logs: [USAGE] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const arg of ['--wat', null]) it(`${arg ?? 'missing issues'} has a red block on log`, () => {
+    const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
+    try {
+      expect(run(dir, arg === null ? [] : [arg])).toEqual({
+        code: arg === null ? 1 : 2, errs: [], logs: arg === null ? [
+          'archive-issues: FAIL — docs/ai/known_issues.md not found',
+          'docs/ai/known_issues.md: the file this rotation reads does not exist',
+          'archive-issues: REMEDY — create docs/ai/known_issues.md, then re-run',
+        ] : ['archive-issues: FAIL — unknown argument: --wat', USAGE],
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -657,8 +663,6 @@ describe('rotation end to end through runCli', () => {
   });
 });
 
-// Phase 3.1 at the write path: structural lines survive, and a rewrite is verbatim — nothing
-// silently dropped OR duplicated (the L8 data-loss class, pinned as conservation).
 describe('rotation keeps the file structure and conserves every line', () => {
   const seedTree = (dir, text) => {
     mkdirSync(join(dir, 'docs/ai'), { recursive: true });
@@ -669,11 +673,10 @@ describe('rotation keeps the file structure and conserves every line', () => {
   const STRUCTURED = `${FM}\n# Known Issues\n\n> Every bug we hit.\n\n## 🔴 Open\n\n### Issue-101 — still open\n- **Discovered:** 2026-04-01\n- **Status:** Open\n\n### ~~Issue-102 — struck resolved~~\n- **Status:** ✅ FIXED (2026.04.10)\n\n## 🟢 Resolved\n\n### Issue-103 — unstruck resolved\n- **Resolved:** 2026-07-01 — fixed for good ([[AD-031]]).\n\n---\n\n> Resolved issues older than the window are rotated to \`history/issues-resolved.md\` by the issue-archive script.\n`;
 
   it('the trailing separator and closing note survive a rotation that archives the last issue', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, STRUCTURED);
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const kept = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       expect(kept).toContain('## 🔴 Open');
       expect(kept).toContain('## 🟢 Resolved');
@@ -692,7 +695,6 @@ describe('rotation keeps the file structure and conserves every line', () => {
   });
 
   it('rotation conserves content — every input line lands in exactly one of kept file and archive', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       const parsed = parseKnownIssues(STRUCTURED);
@@ -705,7 +707,7 @@ describe('rotation keeps the file structure and conserves every line', () => {
           .flatMap((s) => s.lines)
           .join('\n');
       seedTree(dir, STRUCTURED);
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const kept = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       expect(kept).toBe(keptExpected);
       const archive = readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8');
@@ -713,7 +715,7 @@ describe('rotation keeps the file structure and conserves every line', () => {
       // The accounting reads the ACTUAL written files, never the parsed chunks — a writer that
       // duplicated blocks or invented lines must fail here. Blank lines are the stated droppable
       // decoration (the changelog conservation harness accounting); everything else is a multiset.
-      const header = buildResolvedFile('', [], '2026-07-28');
+      const header = buildResolvedFile('', [], '2026-07-28', basename(dir));
       expect(archive.startsWith(header)).toBe(true);
       const counts = (text) => {
         const map = {};
@@ -734,12 +736,11 @@ describe('rotation keeps the file structure and conserves every line', () => {
   });
 
   it('a CRLF corpus rotates with exact CRLF separators in the archive', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const lf = `${FM}\n# Known Issues\n\n### ~~Issue-201 — first done~~\n- **Status:** ✅ FIXED (2026.04.10)\n\n### ~~Issue-202 — second done~~\n- **Status:** ✅ FIXED (2026.04.11)\n`;
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, lf.replace(/\n/g, '\r\n'));
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const archive = readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8');
       // The between-block separator is EXACTLY one CRLF blank line — no lone-CR lines, no
       // mixed-EOL runs between the archived CRLF blocks.
@@ -752,25 +753,22 @@ describe('rotation keeps the file structure and conserves every line', () => {
   });
 
   it('a second rotation is a no-op — the rotated tree is a fixed point', async () => {
-    const { runCli } = await import('./archive-issues.mjs');
     const dir = mkdtempSync(join(tmpdir(), 'archive-issues-'));
     try {
       seedTree(dir, STRUCTURED);
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       const keptOnce = readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8');
       const archiveOnce = readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8');
-      expect(runCli(['--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--today=2026-07-28']).code).toBe(0);
       expect(readFileSync(join(dir, 'docs/ai/known_issues.md'), 'utf8')).toBe(keptOnce);
       expect(readFileSync(join(dir, 'docs/ai/history/issues-resolved.md'), 'utf8')).toBe(archiveOnce);
-      expect(runCli(['--check', '--today=2026-07-28'], { root: dir, log: () => {}, logError: () => {} })).toBe(0);
+      expect(run(dir, ['--check', '--today=2026-07-28']).code).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 });
 
-// The partition tripwire's own refusal contract — predicate AND disposition. Imported dynamically
-// so this file still loads against an archiver that predates the export.
 describe('the section-model partition tripwire', () => {
   it('a partition that drops, duplicates or reorders lines refuses with a typed error naming the file', async () => {
     const { verifySectionPartition } = await import('./archive-issues.mjs');
@@ -781,12 +779,14 @@ describe('the section-model partition tripwire', () => {
       [[{ lines: ['b', 'a'] }], ['a', 'b']], // reordered
     ];
     for (const [sections, body] of corruptions) {
-      let threw = null;
-      try {
-        verifySectionPartition(sections, body, 'ki.md');
-      } catch (err) {
-        threw = err;
-      }
+      const threw = (() => {
+        try {
+          verifySectionPartition(sections, body, 'ki.md');
+          return null;
+        } catch (err) {
+          return err;
+        }
+      })();
       expect(threw).not.toBeNull();
       expect(threw.exitCode).toBe(1);
       expect(threw.message).toContain('ki.md');

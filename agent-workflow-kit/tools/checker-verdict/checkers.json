@@ -960,7 +960,7 @@
             {
               "name": "changelog-entry-overdue",
               "places": [
-                "docs/ai/changelog.md"
+                "docs/ai/changelog.md:12"
               ]
             }
           ]
@@ -998,7 +998,7 @@
             {
               "name": "resolved-issue-overdue",
               "places": [
-                "docs/ai/known_issues.md"
+                "docs/ai/known_issues.md:12"
               ]
             }
           ]
@@ -1539,35 +1539,11 @@
       ]
     },
     {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "changelog-entry-overdue",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
       "path": "agent-workflow-memory/references/scripts/archives/archive-decisions.mjs",
       "arguments": [
         "--check"
       ],
       "redCase": "legacy-decisions-monolith",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "resolved-issue-overdue",
       "missKinds": [
         "verdict",
         "place",
@@ -2242,35 +2218,7 @@
       "faultPoint": "stat"
     },
     {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-changelog.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "stat"
-    },
-    {
       "path": "agent-workflow-memory/references/scripts/archives/archive-decisions.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-memory/references/scripts/archives/archive-issues.mjs",
       "arguments": [
         "--check"
       ],

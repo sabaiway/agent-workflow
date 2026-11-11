@@ -94,7 +94,7 @@ describe('spec:script-family/S8 the project root is three levels above the modul
     await withDeployment(({ root, cli }) => {
       const checked = cli('archives/archive-changelog.mjs', ['--check', TODAY]);
       exits(checked, 1);
-      assert.match(checked.stderr, /2026\.07\.10 — warm dotted/);
+      assert.match(checked.stdout, /2026\.07\.10 — warm dotted/);
       exits(cli('archives/archive-changelog.mjs', [TODAY]), 0);
       assert.match(readFileSync(docsAt(root, 'history/recent.md'), 'utf8'), /warm dotted/);
       exits(cli('archives/archive-changelog.mjs', ['--check', TODAY]), 0);
@@ -105,7 +105,7 @@ describe('spec:script-family/S8 the project root is three levels above the modul
     await withDeployment(({ root, cli }) => {
       const checked = cli('archives/archive-issues.mjs', ['--check', TODAY]);
       exits(checked, 1);
-      assert.match(checked.stderr, /Issue-001/);
+      assert.match(checked.stdout, /Issue-001/);
       exits(cli('archives/archive-issues.mjs', [TODAY]), 0);
       assert.match(readFileSync(docsAt(root, 'history/issues-resolved.md'), 'utf8'), /Issue-001/);
       exits(cli('archives/archive-issues.mjs', ['--check', TODAY]), 0);
