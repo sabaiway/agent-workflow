@@ -934,8 +934,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     const retired = /^tools\/(?:distribution-files\/(?:replace-set|kept-aside)|lens-region|rules-regions|rules-insert|project-rules\/memory-map-row)\.mjs$/;
     // 393 = 386 + bridges/typesafe-jev-bridge/{capability.json,SKILL.md,service-facts.txt,setup/README.md,bin/jev-ask.sh,bin/jev-client.mjs,bin/jev-ask.test.mjs} - story S17 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     // 394 = 393 + bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs - story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE; 396 = 394 + bridges/codex-cli-bridge/bin/{codex-fixtures-harness.test.mjs,codex-fixtures.test.mjs} - story S19 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
-    // 397 = 396 + references/scripts/shared/verdict-block.mjs (the composer of a checker's red block, deployed) — story S3 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE.
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [397, []], `tarball file count drifted (${packed.length}\u2260 397), or a retired leaf ships`);
+    // 397 = 396 + references/scripts/shared/verdict-block.mjs (the composer of a checker's red block, deployed) — story S3 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE; 399 = 397 + references/scripts/archives/whole-write.mjs (the whole-file write, deployed) and references/scripts/archives/rotation-conservation.mjs (the changelog carry and the issues skip, deployed) - story S1 of ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE.
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [399, []], `tarball file count drifted (${packed.length}\u2260 399), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

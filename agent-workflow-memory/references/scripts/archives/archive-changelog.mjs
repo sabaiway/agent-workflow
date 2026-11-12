@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // The changelog rotation (spec archive-rotations); META grows one line per archived entry, ~1159 lines over 2y in a stress test.
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, mkdirSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tokenizeMarkdown, findParagraphBreak, fail, findProjectRoot,
   composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
 import { CAP_TABLE, capFor, countLines, shardingWarning } from './archive-caps.mjs';
+import { fsIo, writeWhole } from './whole-write.mjs';
+import { CARRY_REL, readCarry, renderCarry, unionEntries } from './rotation-conservation.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
 const CHECKER_NAME = 'archive-changelog';
@@ -385,7 +387,7 @@ const buildTier = (tier, place, build) => {
     throw error;
   }
 };
-const rotate = (argv, root, log, warnings) => {
+const rotate = (argv, root, log, warnings, io) => {
   try {
     const { flags, opts, unknown } = parseArgs(argv);
     if (unknown !== undefined) return { exitCode: 2, lines: composeUsageRefusal({
@@ -441,21 +443,11 @@ const rotate = (argv, root, log, warnings) => {
       }
     }
 
-    // Dedupe by (date + title) — favour the freshest occurrence by file source order.
-    const seen = new Set();
-    const allEntries = [
-      ...parsed.entries,
-      ...legacyEntries,
-      ...warmExistingEntries,
-      ...coldExistingEntries,
-    ]
-      .filter((e) => {
-        const key = `${e.dateStr}|${e.title}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
+    const carry = readCarry(root);
+    const carryEntries = carry === null ? [] : parseChangelogText(carry, CARRY_REL).entries;
+    if (carry !== null) perFile[CARRY_REL] = carryEntries.length;
+    const { entries: allEntries, lastOnly } = unionEntries([parsed.entries, legacyEntries, warmExistingEntries, coldExistingEntries, carryEntries]);
+    allEntries.sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
     const { hot, warm, cold } = categorize(allEntries, cutoffs);
     const coldByMonth = groupByMonth(cold);
 
@@ -489,6 +481,9 @@ const rotate = (argv, root, log, warnings) => {
     }
 
     if (flags.check) {
+      if (carry !== null) return composeFailure(`${CARRY_REL} stands with ${carryEntries.length} entries a rotation run left unfinished`,
+        [{ place: CARRY_REL, text: 'a default run stopped before it finished; this file holds every entry that run was moving' }],
+        'complete the rotation with node scripts/agent-workflow/run.mjs archive-changelog', warnings.splice(0));
       const tooOldInHot = parsed.entries.filter((e) => e.dateObj < cutoffs.hotCutoff);
       if (tooOldInHot.length > 0) {
         return composeFailure(`entries of ${CHANGELOG_REL} older than ${opts.hotDays} days (relative to ${todayStr}): ${tooOldInHot.length}`,
@@ -509,15 +504,14 @@ const rotate = (argv, root, log, warnings) => {
     }
 
     // Zero-corpus policy, default mode: with the loud path above, zero entries across EVERY
-    // source can only mean genuinely nothing to rotate — a stated no-op, never a gratuitous
-    // mkdir + rewrite. Checked against allEntries (not just HOT) so an empty HOT never blocks
+    // source can only mean genuinely nothing to rotate: no mkdir, no rewrite, only a standing
+    // carry removed. Checked against allEntries (not just HOT) so an empty HOT never blocks
     // servicing existing WARM/COLD entries.
     if (allEntries.length === 0) {
+      if (carry !== null) io.removeFile(resolve(root, CARRY_REL));
       log('[archive-changelog] nothing to rotate — 0 entries across every source.');
       return 0;
     }
-
-    mkdirSync(historyDir, { recursive: true });
 
     const newChangelog = buildChangelog({
       frontmatter: parsed.frontmatter || FRONTMATTER('history', 700, todayStr),
@@ -526,9 +520,11 @@ const rotate = (argv, root, log, warnings) => {
       footer: parsed.footer,
       hasArchive: warm.length > 0 || cold.length > 0,
     });
-    writeFileSync(changelogPath, newChangelog, 'utf8');
-
-    for (const archive of archives) writeFileSync(archive.path, archive.text, 'utf8');
+    mkdirSync(historyDir, { recursive: true });
+    writeWhole(io, resolve(root, CARRY_REL), renderCarry(allEntries));
+    writeWhole(io, changelogPath, newChangelog);
+    for (const archive of archives) writeWhole(io, archive.path, archive.text);
+    io.removeFile(resolve(root, CARRY_REL));
 
     log('[archive-changelog] migrated:');
     log(`  HOT (${CHANGELOG_REL}): ${hot.length}`);
@@ -536,6 +532,7 @@ const rotate = (argv, root, log, warnings) => {
     for (const key of coldByMonth.keys()) {
       log(`  COLD (${HISTORY_REL}/${key}.md): ${coldByMonth.get(key).length}`);
     }
+    for (const entry of lastOnly) log(`[archive-changelog] restored from ${CARRY_REL}: ${entry.dateSource} — ${entry.title}`);
     return 0;
   } catch (err) {
     if (err.exitCode && err.place) return composeFailure(`cannot parse ${err.place.replace(/:\d+$/, '')}`,
@@ -549,7 +546,8 @@ export const runCli = (argv, deps = {}) => {
   const { root = ROOT, log = console.log, logError = console.error } = deps;
   const greenLines = [];
   const warnings = [];
-  const answer = guardChecker(GUARD, () => rotate(argv, root, (line) => greenLines.push(line), warnings));
+  const io = fsIo(deps);
+  const answer = guardChecker(GUARD, () => rotate(argv, root, (line) => greenLines.push(line), warnings, io));
   if (typeof answer === 'number') {
     for (const warning of warnings) logError(warning);
     for (const line of greenLines) log(line);

@@ -163,7 +163,7 @@ describe('spec:standalone-scripts/S7 survey and Node evidence', () => {
 describe('spec:standalone-scripts/S8 component and writes', () => {
   it('a declined project gets exactly the spec closure and every seed', async () => {
     const cwd = createTree(), result = await run(cwd);
-    assert.deepEqual([DEPLOYED.length, SPEC.size, DECLINED.length], [14, 9, 10]);
+    assert.deepEqual([DEPLOYED.length, SPEC.size, DECLINED.length], [16, 9, 11]);
     assert.equal(result.exitCode, 0); assertBodies(cwd, DECLINED);
     assert.equal(result.lines.filter((line) => /not accepted/.test(line)).length, 1);
   });

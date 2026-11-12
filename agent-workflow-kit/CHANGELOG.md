@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.5.0 — a rotation run that fails no longer loses journal entries or resolved issues (AD-233)
+
+**After `/agent-workflow-kit upgrade`, `run.mjs archive-changelog` and `run.mjs archive-issues` keep every entry and
+every issue when a run stops halfway** (a full disk, a read-only file, a crash, a killed process); the next run
+finishes the job. Before, a stop between two writes could lose the entries being moved.
+
+- **Every file is written whole**, beside its target and swapped in with one rename, so an interrupted write leaves the
+  old file intact.
+- **The changelog rotation keeps a carry**, `docs/ai/history/changelog.carry`, written before any other file and
+  removed last; the next run takes its entries back and prints one `restored from` line for each entry no other file
+  held. While a carry stands, `archive-changelog --check` is red and names the command that finishes the rotation.
+- **The issues rotation writes the archive first and never adds an issue twice**, so a rerun after a failure adds
+  nothing twice.
+- **A red run of either rotation opens with its failure**: one red block on standard output, first the failure, then
+  the places it names and the fix; a `package.json` that exists and cannot be read is now a red block that names it,
+  where the run used the folder's name before (a missing one, or one that is not valid JSON, still gives the folder's
+  name).
+- The upgrade places three new script files in `scripts/agent-workflow/` (`shared/verdict-block.mjs`,
+  `archives/whole-write.mjs`, `archives/rotation-conservation.mjs`) before the rotations that use them; nothing to do
+  by hand. Memory 11.1.0 carries the same scripts.
+
 ## 23.4.1 — a check that cannot read its input fails instead of passing (AD-232)
 
 **`coverage-check --check` now fails when it cannot read the status of its lcov file, and `review-state --check`,

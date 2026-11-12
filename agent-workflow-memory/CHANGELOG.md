@@ -4,6 +4,32 @@ All notable changes to the memory substrate. Versions are this **package's** npm
 they are distinct from the **deployment-lineage** stamp written into a project's
 `docs/ai/.memory-version` (which tracks the shared `agent-workflow` lineage, head `5.0.0`).
 
+## 11.1.0 — a rotation run that fails no longer loses journal entries or resolved issues (AD-233)
+
+**`run.mjs archive-changelog` and `run.mjs archive-issues` keep every entry and every issue when a run stops halfway**
+(a full disk, a read-only file, a crash, a killed process); the next run finishes the job. In 11.0.1 the changelog
+rotation rewrote `docs/ai/changelog.md` before the history files and both rotations wrote files in place, so such a
+stop could lose the entries being moved.
+
+- **Every file is written whole.** Both rotations write each file beside its target and swap it in with one rename,
+  so an interrupted write leaves the old file intact. The write lives in the new deployed file
+  `scripts/agent-workflow/archives/whole-write.mjs`; the decisions rotation already used it and now imports it.
+- **The changelog rotation keeps a carry.** Before it touches any file it writes every entry to
+  `docs/ai/history/changelog.carry` and removes that file last. A run that finds a carry takes its entries back and
+  prints one `restored from docs/ai/history/changelog.carry` line for each entry no other file held. While a carry
+  stands, `archive-changelog --check` is red and names the command that finishes the rotation.
+- **The issues rotation writes the archive first and never adds an issue twice.** It reads
+  `docs/ai/history/issues-resolved.md` before any write, writes it before `docs/ai/known_issues.md`, and skips a
+  section the archive already holds, so a rerun after a failure adds nothing twice.
+- **A red run opens with its failure.** Both rotations print one red block on standard output whose first line names
+  the failure, then the places it names and the fix; they read the project's name when they run, so a `package.json`
+  that exists and cannot be read is now a red block that names it, where the run used the folder's name before (a
+  missing one, or one that is not valid JSON, still gives the folder's name). The block's composer is the deployed file
+  `scripts/agent-workflow/shared/verdict-block.mjs`.
+- The script family grows by three deployed files (`shared/verdict-block.mjs`, `archives/whole-write.mjs`,
+  `archives/rotation-conservation.mjs`), placed by the next upgrade. A temporary `*.tmp` file a killed run leaves
+  beside its target is never read; removing it is yours.
+
 ## 11.0.1 — the package needs Node.js 22.21 or newer (AD-228)
 
 `package.json`'s `engines.node` is `>=22.21`, the floor of the whole family since kit 23.3.0, whose judge bridge

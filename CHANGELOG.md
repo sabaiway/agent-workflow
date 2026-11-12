@@ -7,6 +7,21 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-12 — AD-233: a rotation run that fails loses no journal entry and no issue; both rotations lead a red block with its failure (memory 11.1.0 and kit 23.5.0 MINOR; engine and the bridges unchanged)
+
+**`agent-workflow-memory/references/scripts/archives/whole-write.mjs`** holds `fsIo` and `writeWhole`, moved unchanged
+out of `archive-decisions.mjs`, which imports them; **`archives/rotation-conservation.mjs`** (`node:` imports only)
+holds the changelog carry (`CARRY_REL`, `readCarry`, `renderCarry`, `unionEntries`) and the issues skip
+(`trimmedLines`, `sectionsToAppend` with a required `bare`). `archive-changelog.mjs` reads the carry as its last source,
+writes it whole with every entry before any target, writes every target whole and removes the carry last; `--check`
+is red while one stands. `archive-issues.mjs` parses its archive before any write, writes it whole first and appends no
+section the archive holds, the canonical closing note compared away on both sides. `archives/rotation-faults.test.mjs`
+fails every seam call of a clean run, thrown, partly written and killed. Story S3 (`2baa886`, unreleased until now)
+adds `shared/verdict-block.mjs` to the deployed family; story S4 (`f9a6a8d`) has both rotations lead every red block
+with it on stdout and read the project's name in the run. Kit mirror by `scripts/sync-mirrors.mjs`. Specs
+`memory/rotation-conservation` revision 1 (new), `memory/archive-rotations` 2, `memory/script-family` 12,
+`memory/adr-navigator` 9, `kit/install/distribution-files` 29.
+
 ## 2026-11-10 — AD-232: a kit checker that cannot read its state fails; no checker file in the kit's tools reads at import (kit 23.4.1 PATCH; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/coverage-check.mjs` fails a non-ENOENT status of its lcov path** naming the path and the

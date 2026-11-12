@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // The issues rotation (spec archive-rotations).
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tokenizeMarkdown, fail, findProjectRoot, composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
+import { fsIo, writeWhole } from './whole-write.mjs';
+import { trimmedLines, sectionsToAppend } from './rotation-conservation.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
 const CHECKER_NAME = 'archive-issues';
@@ -249,8 +251,7 @@ export const buildResolvedFile = (existing, newSections, todayStr, projectName =
   // One blank separator follows each block's EOL flavor, as the conservation harness allows.
   const blocks = newSections
     .map((s) => {
-      const kept = [...s.lines];
-      while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+      const kept = trimmedLines(s);
       const separator = kept.length > 0 && kept[kept.length - 1].endsWith('\r') ? '\n\r\n' : '\n\n';
       return kept.join('\n') + separator;
     })
@@ -261,7 +262,7 @@ export const buildResolvedFile = (existing, newSections, todayStr, projectName =
   const headerEol = header.endsWith('\r\n') ? '\r\n' : '\n';
   return (header + (headerEndsBlank ? '' : headerEol) + blocks).replace(/(\r?\n)+$/, '$1');
 };
-const rotate = (argv, root, log) => {
+const rotate = (argv, root, log, io) => {
   try {
     const { flags, opts, unknown } = parseArgs(argv);
     if (unknown !== undefined) return { exitCode: 2, lines: composeUsageRefusal({
@@ -359,18 +360,14 @@ const rotate = (argv, root, log) => {
       return 0;
     }
 
-    mkdirSync(historyDir, { recursive: true });
     const existing = existsSync(resolvedPath) ? readFileSync(resolvedPath, 'utf8') : '';
-    const updatedResolved = buildResolvedFile(existing, archivable.map((c) => c.section), todayStr, project.name);
-    writeFileSync(resolvedPath, updatedResolved, 'utf8');
-
-    const rebuilt =
-      frontmatter +
-      classified
-        .filter((c) => c.kind !== 'archivable')
-        .flatMap((c) => c.section.lines)
-        .join('\n');
-    writeFileSync(knownIssuesPath, rebuilt, 'utf8');
+    const bare = (section) => (section.structural ? section : parseKnownIssues(section.lines.join('\n'), RESOLVED_REL).sections[0]);
+    const pending = sectionsToAppend(parseKnownIssues(existing, RESOLVED_REL).sections, archivable.map((c) => c.section), bare);
+    const updatedResolved = buildResolvedFile(existing, pending, todayStr, project.name);
+    const rebuilt = frontmatter + classified.filter((c) => c.kind !== 'archivable').flatMap((c) => c.section.lines).join('\n');
+    mkdirSync(historyDir, { recursive: true });
+    writeWhole(io, resolvedPath, updatedResolved);
+    writeWhole(io, knownIssuesPath, rebuilt);
 
     log(`[archive-issues] archived ${archivable.length} issue(s) to ${RESOLVED_REL}`);
     return 0;
@@ -382,7 +379,8 @@ const rotate = (argv, root, log) => {
 };
 export const runCli = (argv, deps = {}) => {
   const { root = ROOT, log = console.log } = deps;
-  const answer = guardChecker(GUARD, () => rotate(argv, root, log));
+  const io = fsIo(deps);
+  const answer = guardChecker(GUARD, () => rotate(argv, root, log, io));
   if (typeof answer === 'number') return answer;
   for (const line of answer.lines) log(line);
   return answer.exitCode;

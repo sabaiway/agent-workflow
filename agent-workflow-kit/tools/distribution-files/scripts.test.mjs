@@ -243,8 +243,8 @@ describe('spec:distribution-files/S19 write order through a recording writer', (
   const tree = (K, bodies = Object.fromEntries(K.order.slice(0, -1).map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]]))) => ({ bodies, priors: priorsWith(...K.order), due: K.order.filter((n) => n in bodies) });
   it("one plain run's refreshes, replacements and placements: the installer, then each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
     const K = await kitLayout(), { bodies, priors, due } = tree(K);
-    assert.deepEqual(K.order.slice(0, 5).map((n) => SRC.get(n)), [SRC.get(K.installer), 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
-    assert.deepEqual(K.order.slice(5).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
+    assert.deepEqual(K.order.slice(0, 7).map((n) => SRC.get(n)), [SRC.get(K.installer), 'archives/rotation-conservation.mjs', 'archives/whole-write.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
+    assert.deepEqual(K.order.slice(7).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
     const order = withTree(bodies, (dir) => { const { order: written, deps } = recorder(dir); run(dir, { would: K.would, deps: { ...deps, priors } }); return written; }, { family: K.order });
     assert.deepEqual(order, due);
   });

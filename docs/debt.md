@@ -49,8 +49,8 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 - **ROTATIONS-READ-AN-UNREADABLE-STATUS-AS-ABSENCE** — invariant: a rotation reads a file as absent only on a proven
   absence (`ENOENT`); a status it cannot read fails the run. Origin: `existsSync` answers false on any error, at
-  `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:413,424,429,434` and
-  `agent-workflow-memory/references/scripts/archives/archive-issues.mjs:293,363`, so a source whose status cannot be
+  `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:415,426,431,436` and
+  `agent-workflow-memory/references/scripts/archives/archive-issues.mjs:294,363`, so a source whose status cannot be
   read is reported as not found, and a legacy, WARM or history file in that state is left out of the corpus. The
   census cannot see it: its fault replaces `existsSync` with a throw
   (`agent-workflow-kit/tools/checker-verdict/fault-harness.test.mjs:28,42-47`). Narrow fix: none in S4, which applies
@@ -58,35 +58,43 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `docs/ai/specs/kit/checker-verdict/index.md`, the reads revision 2 leaves). Generalization: each of those status
   reads becomes a read or a status that tells `ENOENT` from every other failure, red first on a directory whose
   entries cannot be listed. Residual exposure, declared: an unreadable source still exits 1 (as not found); a
-  `--check` run that leaves a WARM file out builds a smaller tier and can miss its ceiling refusal; a default run that
-  cannot read a tier's status cannot write it either and ends red, after its rewrite of `docs/ai/changelog.md` (row
-  ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE). Raised by the lens, round 1 of the S4 spec review of
+  `--check` run that leaves a WARM file out builds a smaller tier and can miss its ceiling refusal; a default run whose
+  history folder cannot be searched fails at its first read inside that folder and ends red before any write; a
+  `docs/ai/history/recent.md` that links to a file the run cannot reach is read as absent and, when the run has WARM
+  entries, replaced by a new file, the link's target keeping its entries. Raised by the lens, round 1 of the S4 spec review of
   KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-11).
 
-- **ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE** — invariant: a default run of the changelog rotation that fails
-  leaves every entry in at least one file; no file is rewritten without an entry before that entry's new file is
-  written. Origin: `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:529` rewrites
-  `docs/ai/changelog.md` before the tier writes at `:531`, so a refused tier write (a full disk, a read-only
-  `docs/ai/history/recent.md`) ends the run after the entries leaving HOT were removed and before they reached any
-  archive; and the tiers themselves are written `recent.md` first (built in that order at `:475-489`), so an entry that aged out of the old
-  `recent.md` is lost when its month file's write is refused. A LIVE defect of the rotation as shipped today, outside S4's
-  contract (its Out of scope names it). Narrow fix: none is correct: writing the HOT file last covers only entries
-  leaving HOT; month files first, then `recent.md`, then the index, then HOT covers every move toward an older tier
-  and still loses an entry that a widened `--warm-days` or `--hot-days` moves toward a newer one. Generalization, a
-  story of its own with its own design consult: the run writes every new file whole beside its target and replaces
-  the targets only after every write succeeded, whatever the direction of a move; the replace step, one rename per
-  file, can itself fail partway, so the design consult also decides how a run recovers from a failed replace; red
-  first on an existing month file
-  that can be read and not written while `recent.md` holds an entry aging into that month (a read-only file refuses a
-  write only for a user who is not root, and a directory at a month path fails earlier, at its read). The issues
-  rotation loses data too: `writeFileSync` truncates its target first, so a write that fails partway or a killed run
-  at `archive-issues.mjs:365` cuts `issues-resolved.md`, whose earlier sections live only in memory, and at `:373`
-  cuts `known_issues.md`; the same holds for the changelog's HOT write at `archive-changelog.mjs:529`. The story
-  covers both rotations, a partway write and a kill between any two steps. The project's release rule applies: an
-  open defect blocks the release of its package unless that release closes it. Ruled 2026-11-11 by the council and
-  Fable: S4 is committed after its diff review with no release, and this row's story runs next, its last session
-  shipping S3, S4 and itself (queue row of the same id). Raised by the lens, round 2 of the S4
-  spec review (2026-11-11); a fold into S4 was tried at the fold ask and withdrawn when it bred three new states.
+- **ROTATION-LEGACY-COPY-WINS-THE-DEDUPE** — invariant: when two sources of the changelog rotation hold one entry
+  (one `date|title`), the copy a run keeps is the newest text. Origin:
+  `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:449` unions HOT, the legacy
+  `docs/ai/changelog-archive.md`, WARM, COLD and the carry, first copy kept; the legacy file is never rewritten, so its
+  copy wins over a later edit of the same entry in `docs/ai/history/recent.md` or a month file. Narrow fix: none in
+  story S1 of ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE, which keeps today's source order (spec
+  rotation-conservation, Out of scope). Residual exposure, declared: an edit of an entry the legacy file also holds is
+  dropped; text only, never an entry; only a project that still holds the legacy file. Raised by codex at the design
+  consult of that story (2026-11-11), confirmed in its spec review.
+
+- **READ-GRAPH-PURITY-WALK-STOPS-AT-THE-TOOLS-BOUNDARY** — invariant: the read roots' transitive import graph reaches
+  no module that writes, whatever package folder the module lives in. Origin:
+  `agent-workflow-kit/test/read-graph-purity.test.mjs:36-47` collects import edges only for files under `tools/`, and
+  `edges.get(file) ?? []` at `:66` ends the walk at any import outside it, such as
+  `references/scripts/shared/index.mjs`, which 19 kit tools import; `WRITE_MODULES` at `:35` names `tools/` files only.
+  So the first placement of the whole-file write behind the shared index was seen by a reviewer, not by this suite.
+  Narrow fix: none needed now: the write lives in `archives/whole-write.mjs`, which no read root imports. Residual
+  exposure, declared not live: a writer placed behind the shared index would pass the suite; the shared module holds
+  no writer today. Raised by Fable at the placement consult of story S1 of ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE
+  (2026-11-11).
+
+- **ISSUES-SKIP-SUITE-NEVER-BUILDS-A-NOTE-INSIDE-AN-ARCHIVED-SECTION** — invariant: the S9 suite of spec
+  rotation-conservation fails when the issues skip stops removing a terminal `---` and canonical closing note from an
+  archived section the parser keeps mid-file. Origin:
+  `agent-workflow-memory/references/scripts/archives/rotation-faults.test.mjs:351` archives A alone (`.slice(0, 1)`),
+  so the note always ends the archive and the parser splits it off; no cell holds a section after A, and keying the
+  archive side without `bare` at `rotation-conservation.mjs:43` passes the suite. Narrow fix: none in story S1 of
+  ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE (a minor below its diff review's bar); the fix archives the open
+  section after A in the `archive note` and `both notes` cells (`.slice(0, 2)`), red first on that mutation. Residual
+  exposure, declared not live: the shipped code removes the note on both sides; only a later change to the skip could
+  regress unseen. Raised by the lens, round 2 of the diff review of that story (2026-11-12).
 
 - **COVERAGE-CHECK-READS-A-FAILED-GIT-QUERY-AS-NO-WORK-TREE** — invariant: the coverage check passes outside a git
   work tree only when git itself answers so; a git query that could not run fails the run. Origin:
@@ -1330,6 +1338,16 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   story is planned, and no release shipped the section.
 
 ## Closed
+
+- **ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE** — invariant: a default run of the changelog or issues rotation
+  that fails at any step leaves every entry and issue section in at least one file, and the next run completes the
+  rotation. Origin: `archive-changelog.mjs` rewrote `docs/ai/changelog.md` before the tier writes and wrote every file
+  in place; `archive-issues.mjs` truncated `issues-resolved.md` and `known_issues.md` in place. Closed in story S1 of
+  ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE (spec rotation-conservation): every write of both rotations goes whole
+  through `archives/whole-write.mjs`; the changelog rotation writes a carry of every entry before any target and
+  removes it last, and `--check` is red while one stands; the issues rotation parses its archive before any write,
+  writes it first and appends no section twice. Proof: `archives/rotation-faults.test.mjs` fails every step of a clean
+  run, thrown, partly written and killed, red first on the refused month-file rename (S5).
 
 - **VERDICT-BLOCK-SPEC-REVIEW-MINORS** — invariant: the draft contract `docs/ai/specs/memory/verdict-block.md` and the
   shared index's header say what the code and its suites hold. Raised by the lens, round 2 of the S3 spec review of

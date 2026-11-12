@@ -17,6 +17,7 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const ARCHIVERS = ['archive-changelog.mjs', 'archive-issues.mjs', 'archive-decisions.mjs'];
 // The two archivers' load closure as module paths, deployed into a fixture's kit folder like a consumer.
 const ARCHIVER_CLOSURE = ['archives/archive-changelog.mjs', 'archives/archive-issues.mjs', 'archives/archive-caps.mjs',
+  'archives/whole-write.mjs', 'archives/rotation-conservation.mjs',
   'shared/index.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs'];
 const FIXED_DATE = '2026-09-02';
 const FM = '---\ntype: history\nlastUpdated: 2026-07-28\nmaxLines: 700\n---\n';
@@ -191,6 +192,84 @@ describe('spec:archive-rotations/S4 unexpected source read errors lead with thei
       for (const line of result.log) assert.doesNotMatch(line, /[\r\n]/);
     }));
   }
+});
+
+describe('spec:rotation-conservation/S6 carry red states refuse every mode without writes', () => {
+  const rotation = ROTATIONS[0];
+  const file = 'docs/ai/history/changelog.carry';
+  for (const argv of MODES) {
+    it(`carry directory ${JSON.stringify(argv)}`, () => withRoot((root) => {
+      writeFileSync(join(root, rotation.file), `${INTRO}## 2026-07-28 — fresh\nbody.\n`);
+      mkdirSync(join(root, file), { recursive: true });
+      const error = catchError(() => readFileSync(join(root, file), 'utf8'));
+      const firstLine = error.message.split(/\r\n|[\r\n]/)[0];
+      const before = snapshot(root);
+      const result = runRotation(rotation, root, argv);
+      assert.equal(result.code, 1);
+      assert.deepEqual(result.logError, []);
+      assert.equal(result.log[0], `archive-changelog: FAIL — unexpected error: ${firstLine}`);
+      assert.equal(result.log[1], 'archive-changelog: REMEDY — fix the cause the stack below names, then re-run');
+      assert.ok(result.log.length > 3);
+      assert.ok(result.log[2].startsWith('Error: '));
+      assert.ok(result.log[2].includes(firstLine));
+      for (const line of result.log) assert.doesNotMatch(line, /[\r\n]/);
+      assert.deepEqual(snapshot(root), before);
+    }));
+    it(`carry impossible calendar date ${JSON.stringify(argv)}`, () => withRoot((root) => {
+      const text = '## 2026-02-30 — x\n';
+      const expected = expectedBlock({ ...rotation, file }, { text, place: `${file}:1` }, text);
+      writeFileSync(join(root, rotation.file), `${INTRO}## 2026-07-28 — fresh\nbody.\n`);
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), text);
+      const before = snapshot(root);
+      const result = runRotation(rotation, root, argv);
+      assert.equal(result.code, 1);
+      assert.deepEqual(result.log, expected);
+      assert.deepEqual(result.logError, []);
+      assert.deepEqual(snapshot(root), before);
+    }));
+  }
+});
+
+describe('spec:rotation-conservation/S10 issues archive parse refusal precedes writes', () => {
+  it('archive issue-shaped heading at the wrong level', () => withRoot((root) => {
+    const rotation = ROTATIONS[1];
+    const file = 'docs/ai/history/issues-resolved.md';
+    const text = `${INTRO}## Issue-020 — wrong level\n`;
+    const expected = expectedBlock({ ...rotation, file }, { text, place: `${file}:9` }, text);
+    writeFileSync(join(root, rotation.file), `${INTRO}### Issue-001 — x\n- **Resolved:** 2026-04-10\n`);
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text);
+    const before = snapshot(root);
+    const result = runRotation(rotation, root, []);
+    assert.equal(result.code, 1);
+    assert.deepEqual(result.log, expected);
+    assert.deepEqual(result.logError, []);
+    assert.deepEqual(snapshot(root), before);
+  }));
+});
+
+describe('spec:archive-rotations/S10 standing carry wins over overdue HOT entries', () => {
+  for (const overdue of [false, true]) it(`carry check with overdue HOT entry ${overdue}`, () => withRoot((root) => {
+    const file = 'docs/ai/history/changelog.carry';
+    writeFileSync(join(root, ROTATIONS[0].file), `${INTRO}## ${overdue ? '2026-07-20' : '2026-07-28'} — x\nbody.\n`);
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), '## 2026-07-27 — first\nbody.\n\n## 2026-07-26 — second\nbody.\n');
+    const before = snapshot(root);
+    const result = runRotation(ROTATIONS[0], root, ['--check']);
+    assert.equal(result.code, 1);
+    assert.deepEqual(result.logError, []);
+    const [verdict, finding, ...remedies] = result.log;
+    assert.ok(verdict.startsWith('archive-changelog: FAIL — '));
+    assert.ok(verdict.includes(file));
+    assert.match(verdict, /\b2\b/);
+    assert.ok(finding.startsWith(file));
+    assert.ok(remedies.length > 0);
+    for (const line of remedies) assert.ok(line.startsWith('archive-changelog: REMEDY — '));
+    assert.ok(remedies.some((line) => line.includes('node scripts/agent-workflow/run.mjs archive-changelog')));
+    for (const line of result.log) assert.ok(!line.startsWith('docs/ai/changelog.md'));
+    assert.deepEqual(snapshot(root), before);
+  }));
 });
 
 const buildArchiveHeadings = async (directory, run) => {
