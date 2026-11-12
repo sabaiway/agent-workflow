@@ -13,7 +13,7 @@ import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv, withGitPath } from '../git-env.mjs';
 import { INITIAL_ADOPTION_REASON, loadSourceSizeConfig } from '../source-size-config.mjs';
 import { judgeTree, stopsOf } from '../source-size-judge.mjs';
-import { checkReportLines, schema1StopLines, unmintedRefusalLines } from '../source-size-report.mjs';
+import { checkReportLines } from '../source-size-report.mjs';
 import { main, runCheck } from '../source-size-check.mjs';
 
 const { checkTargetOf, layoutSetupOf } = await import('./setup.mjs').catch(() => ({}));
@@ -59,7 +59,7 @@ let absentCache;
 const absentConfigOf = () => (absentCache ??=runCheck({ cwd: project({ files: ONE }), deps: DEPS }).config);
 const practiceOf = (reason) => ({ loadSourceSizeConfig, judgeTree, stopsOf, absentConfig: absentConfigOf(), reason });
 
-describe('spec:source-size/S39 checkTargetOf states what a check judges and runCheck answers by it, its lines and exits unchanged', () => {
+describe('spec:source-size/S39 checkTargetOf states what a check judges and runCheck answers stops as block parts and passing trees as lines', () => {
   const STATES = [
     ['a schema-1 config', { files: ONE, config: SCHEMA1 }, { stop: 'schema-1' }],
     ['an authored config', { files: ONE, config: AUTH }, { stop: 'unminted', state: 'authored', missing: ['baseline', 'aggregate'] }],
@@ -69,7 +69,8 @@ describe('spec:source-size/S39 checkTargetOf states what a check judges and runC
     ['a minted config without layout', { files: { ...ONE, 'src/big.mjs': lines(441) }, config: MINTED() }, { stop: null, judged: { absent: false, layout: false } }],
   ];
   for (const [what, fixture, expected] of STATES) {
-    it(`${what}: ${expected.stop === null ? `the config to judge, absent ${expected.judged.absent} and layout ${expected.judged.layout}` : `the ${expected.stop} stop`}, and runCheck renders it as before`, () => {
+    it(`${what}: ${expected.stop === null ? `the config to judge, absent ${expected.judged.absent} and layout ${expected.judged.layout}` : `the ${expected.stop} stop`}, and runCheck answers its block or lines`, async () => {
+      const { schema1StopBlock, unmintedStopBlock, checkStopBlock } = await import('../source-size-report.mjs');
       assert.equal(typeof checkTargetOf, 'function', 'setup.mjs exports checkTargetOf');
       const cwd = project(fixture);
       const absentConfig = absentConfigOf();
@@ -80,12 +81,14 @@ describe('spec:source-size/S39 checkTargetOf states what a check judges and runC
       if (loaded.state === 'absent') assert.equal(target.config, absentConfig, 'the absent config is the one handed in');
       const run = runCheck({ cwd, deps: DEPS });
       assert.deepEqual(run.config, config);
-      if (expected.stop === 'schema-1') assert.deepEqual([run.code, run.lines], [1, schema1StopLines(cwd)]);
-      if (expected.stop === 'unminted') assert.deepEqual([run.code, run.lines], [1, unmintedRefusalLines(cwd, { state: expected.state, missing: expected.missing })]);
+      if (expected.stop === 'schema-1') assert.deepEqual([run.code, run.block], [1, schema1StopBlock(cwd)]);
+      if (expected.stop === 'unminted') assert.deepEqual([run.code, run.block], [1, unmintedStopBlock(cwd, { state: expected.state, missing: expected.missing })]);
       if (expected.stop !== null) return;
       const verdict = judgeTree(cwd, config, DEPS, expected.judged);
-      const before = [expected.judged, checkReportLines({ cwd, config, verdict, absent: expected.judged.absent }), stopsOf(verdict.findings).length === 0 ? 0 : 1];
-      assert.deepEqual([run.judged, run.lines, run.code], before);
+      assert.deepEqual(run.judged, expected.judged);
+      if (stopsOf(verdict.findings).length > 0) {
+        assert.deepEqual([run.code, run.block], [1, checkStopBlock({ cwd, verdict, absent: expected.judged.absent })]);
+      } else assert.deepEqual([run.code, run.lines], [0, checkReportLines({ cwd, config, verdict, absent: expected.judged.absent })]);
     });
   }
 });

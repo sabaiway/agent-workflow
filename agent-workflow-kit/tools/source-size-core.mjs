@@ -92,6 +92,7 @@ export {
   pilesOf,
   queueChecksOf,
   spliceLater,
+  helpText,
 } from './source-size/index.mjs';
 
 export {

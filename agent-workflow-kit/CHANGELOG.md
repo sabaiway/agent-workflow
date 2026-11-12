@@ -4,6 +4,28 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.7.0 — a failed size check shows what failed and the fix first (AD-235)
+
+**After `/agent-workflow-kit upgrade`, a red `source-size-check.mjs --check` run opens with its failure, and so do, in
+every mode, a tree the check cannot judge, a config error, a usage refusal and an unexpected error.** Before, a `--check`
+that stopped printed the five limit lines, the notes and the warnings first, and the findings came last, indented under
+a FAIL line; a refusal of the tree, the config or the command line went to standard error, apart from everything else.
+
+- **A stop leads with three parts:** `source-size: FAIL — <what failed>`, each finding at column one starting with its
+  file or folder, and `source-size: REMEDY — <the command that fixes it>` (where the command cannot be printed safely,
+  the way to run it by hand). The limits, the not-judged notes, the warnings and the hand-record lines follow, in
+  their old order.
+- **Every red output goes to standard output**, standard error stays empty: a file past its cap, a schema-1 or
+  unminted config, a tree the check cannot judge, a config error and a usage refusal of any mode.
+- **The refusals the writing modes print themselves keep their lines**, as before — among them `--write-baseline`
+  raising a record without `--reason`, `--override` on a record the tree outgrew, and `--adopt` or `--override` on an
+  absent config. `--adopt` on a record the tree outgrew prints the check's new block, after any schema-1 move it wrote,
+  then that the gate was not declared.
+- **An unexpected error exits 2** (it exited 1) and prints `source-size: FAIL — unexpected error: <its message>`, a
+  REMEDY line and the stack.
+- **`--help`** states the new order and the new exit code. Every other run that exits 0 prints what it printed
+  before, and every other exit code is unchanged.
+
 ## 23.6.0 — a changed file that a test runs elsewhere can be committed through the final run (AD-234)
 
 **After `/agent-workflow-kit upgrade`, a project can list in `docs/ai/coverage-declared.json` the changed files that

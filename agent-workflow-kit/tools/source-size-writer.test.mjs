@@ -293,12 +293,12 @@ describe('source-size — what the writer says it did', () => {
 });
 
 describe('source-size — spec:source-size/S18 the check stops on a schema-1 config and names the move', () => {
-  it('check-stops-on-schema-1: the limit lines, then the one line naming --write-baseline, exit 1, the file untouched', () => {
+  it('check-stops-on-schema-1: verdict, finding and --write-baseline remedy, then limits and WHY, exit 1, the file untouched', () => {
     const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: SCHEMA1({ defaults: { maxLines: 300, maxLineBytes: 1000 }, ...RECORDS }) });
     const before = readFileSync(configPath(cwd));
     const result = check(cwd);
-    assert.deepEqual(result.stdout.split('\n'), ['source-size: limit lines-per-file 300, tolerance 10% — from override: carried from schema 1', ...KIT_LIMIT_LINES.slice(1), `source-size: STOPPED — ${configPath(cwd)} is schema 1, which the check no longer judges; --write-baseline moves it to schema 2 in its one write (a raise riding it still takes --reason): node "${TOOL}" --write-baseline --cwd "${cwd}"`, `source-size: WHY — ${SOURCE_SIZE_WHY}`], out(result));
-    assert.equal(result.code, 1, out(result));
+    assert.deepEqual(result.stdout.split('\n'), [`source-size: FAIL — ${configPath(cwd)} is schema 1, which the check no longer judges`, 'docs/ai/source-size.json: --write-baseline moves it to schema 2 in its one write (a raise riding it still takes --reason)', `source-size: REMEDY — node "${TOOL}" --write-baseline --cwd "${cwd}"`, 'source-size: limit lines-per-file 300, tolerance 10% — from override: carried from schema 1', ...KIT_LIMIT_LINES.slice(1), `source-size: WHY — ${SOURCE_SIZE_WHY}`], out(result));
+    assert.deepEqual([result.code, result.stderr], [1, ''], out(result));
     assert.deepEqual(readFileSync(configPath(cwd)), before, 'the check writes nothing');
   });
 });
@@ -351,9 +351,9 @@ describe('source-size — spec:source-size/S19 the writer moves a schema-1 confi
     git(cwd, ['rm', '-q', '--cached', 'src/a.mjs', 'src/big.mjs']);
     const result = adopt(cwd);
     assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical(MOVED(RECORDS)), 'the move was written');
-    assert.equal(result.stdout, movedLine(cwd), out(result));
-    assert.match(result.stderr, /the declared scope matches ZERO tracked files/);
-    assert.equal(result.code, 1, out(result));
+    assert.match(result.stdout.split('\n')[0], /^source-size: FAIL — the declared scope matches ZERO tracked files/);
+    assert.deepEqual(result.stdout.split('\n').slice(1), ['source-size: REMEDY — fix the tree condition the verdict line names, then re-run', movedLine(cwd)]);
+    assert.deepEqual([result.code, result.stderr], [1, ''], out(result));
   });
 
   it('adopt-moves-a-minted-schema-1-config-in-its-own-write: the adopted arm moves and converges; an authored one with no --reason writes nothing', () => {

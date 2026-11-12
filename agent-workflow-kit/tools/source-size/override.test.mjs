@@ -253,9 +253,10 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
 
 const assertUsage = (cwd, before, args, expected) => {
   const result = override(cwd, args);
-  assert.match(result.stderr, expected, `${args.join(' ')}:${NL}${out(result)}`);
+  assert.match(result.stdout, expected, `${args.join(' ')}:${NL}${out(result)}`);
   assert.equal(result.code, 2, `${args.join(' ')}: ${out(result)}`);
-  assert.equal(result.stdout, '', `a usage error prints no limit line: ${args.join(' ')}`);
+  assert.equal(result.stderr, '', args.join(' '));
+  assert.doesNotMatch(result.stdout, /^source-size: limit /m, `a usage error prints no limit line: ${args.join(' ')}`);
   assert.deepEqual(bytesOf(cwd), before, `a usage error writes nothing: ${args.join(' ')}`);
 };
 
@@ -311,9 +312,10 @@ describe('spec:source-size/S22 --override usage errors exit 2, print no limit li
       for (const option of [['--value', '7'], ['--tolerance', '5'], ['--kit-default']]) {
         const result = main([mode, ...option, '--cwd', cwd]);
         const label = `${mode} ${option.join(' ')}`;
-        assert.match(result.stderr, new RegExp(`${option[0]} belongs to --override`), `${label}:${NL}${out(result)}`);
+        assert.match(result.stdout, new RegExp(`${option[0]} belongs to --override`), `${label}:${NL}${out(result)}`);
         assert.equal(result.code, 2, label);
-        assert.equal(result.stdout, '', `a usage error prints no limit line: ${label}`);
+        assert.equal(result.stderr, '', label);
+        assert.doesNotMatch(result.stdout, /^source-size: limit /m, `a usage error prints no limit line: ${label}`);
         assert.deepEqual(bytesOf(cwd), before, `a usage error writes nothing: ${label}`);
       }
     }

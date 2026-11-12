@@ -133,7 +133,8 @@ describe('source-size — the config validator refuses what it cannot judge', ()
     symlinkSync(join(cwd, 'nowhere.json'), join(cwd, 'docs', 'ai', 'source-size.json'));
     const result = main(['--check', '--cwd', cwd]);
     assert.equal(result.code, 2, `a present-but-unreadable config is an input error:\n${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /could not be read/);
+    assert.match(result.stdout, /could not be read/);
+    assert.equal(result.stderr, '');
     assert.doesNotMatch(`${result.stdout}${result.stderr}`, /is absent/, 'a broken link is never reported as an undeclared practice');
   });
 
@@ -141,8 +142,9 @@ describe('source-size — the config validator refuses what it cannot judge', ()
     const cwd = project({ 'src/a.mjs': 'x\n' }, '{ this is not json');
     const result = main(['--check', '--cwd', cwd]);
     assert.equal(result.code, 2);
-    assert.match(result.stderr, /is not valid JSON/);
-    assert.ok(result.stderr.includes(join(cwd, 'docs/ai/source-size.json')), `the STOP names the file to fix:\n${result.stderr}`);
+    assert.match(result.stdout, /is not valid JSON/);
+    assert.ok(result.stdout.includes(join(cwd, 'docs/ai/source-size.json')), `the STOP names the file to fix:\n${result.stdout}`);
+    assert.equal(result.stderr, '');
   });
 });
 
@@ -164,7 +166,8 @@ describe('source-size — the layout record is a machine key read by its own gra
     const cwd = project({ 'src/a.mjs': 'x\n' }, JSON.stringify(CONFIG({ layout: { roots: {} } }), null, 2));
     const result = main(['--check', '--cwd', cwd]);
     assert.equal(result.code, 2, `a defective layout record is a config stop:\n${result.stdout}${result.stderr}`);
-    assert.match(result.stderr, /"layout" is missing directories/);
+    assert.match(result.stdout, /"layout" is missing directories/);
+    assert.equal(result.stderr, '');
   });
 
   it('layout-on-schema-1-stops: a schema-1 config records no layout, so the key there is a stop naming the move', () => {

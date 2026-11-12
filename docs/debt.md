@@ -3,6 +3,42 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **SIZE-CHECK-S61-CELL-THROWS-BEFORE-THE-MODE** — invariant: each mode of the size check is invoked with valid
+  arguments and a deployed cwd, and an injected error with no exit code inside its run reaches `guardChecker`. Origin:
+  `agent-workflow-kit/tools/source-size/red-block.test.mjs:185-198`; its `ctx.cwd = 42` throws at
+  `source-size-check.mjs:338` before the mode is chosen, so the four modes run one line, and a bare `--override` stops
+  as a usage refusal before any run (`:346`, `:359-360`). Narrow fix: run `--check`, `--write-baseline`, `--adopt` and
+  `--override depth --value 6 --reason fixture` on a deployed fixture with
+  `deps: { get readFile() { throw new Error('x') } }`, read at `source-size-config.mjs:275`. Proof: a run that catches
+  such an error and returns exit 1 turns the cell red. Residual exposure, not live: the injected getter error escapes
+  all four runs today; `--adopt`'s gate declaration failures keep their partial-report contract, exit 1
+  (`source-size-check.mjs:212-214`, `:228`). Raised by the KIT-CHECKER S5 diff review (2026-11-12).
+
+- **SIZE-CHECK-COMMAND-LINE-HAS-NO-ROOM** — invariant: `source-size-check.mjs` stays one meaning, the command line,
+  so its next change does not cram. Origin: `agent-workflow-kit/tools/source-size-check.mjs` at 400 of 400 lines, with
+  imports packed two to a line (`:46`, `:67`, `:78-79`) and `guardedMain`'s try/catch on two lines (`:385-386`). Narrow
+  fix: move the writer half (`:109-285`) into its own file, e.g. `tools/source-size-writer.mjs`, outside the
+  `tools/source-size/` door (the read core re-exports the door, so a writer there would enter the read graph), and keep
+  the path `source-size-check.mjs` as the command line (gates, hooks and the velocity profile name it); the suites
+  that import `runWriteBaseline`, `runAdopt` and `runOverride` from it change their imports in the same split, with no
+  re-export. Proof: the size check and read-graph purity stay green with the file well under 400. Residual exposure,
+  not live: no behaviour; a later edit of this file meets the cap first. Raised by the KIT-CHECKER S5 diff review
+  (2026-11-12).
+
+- **CHANGED-SURFACE-CALLS-A-LINKED-SOURCE-FAIL-CLOSED** — invariant: a comment of the changed surface states what the
+  checker does with a linked or non-regular changed source. Origin: `agent-workflow-kit/tools/changed-surface.mjs:137`,
+  `:154` and `:176` say such a leaf "fails closed", while it is routed to `unsupported` and the coverage check only
+  prints it in its unsupported note (exit unchanged). Narrow fix: the three comments say "routed to unsupported, a
+  note, never followed". Proof: none needed (comments only). Residual exposure, not live: the behaviour is the one the
+  coverage-declared contract keeps as a quieter exit. Raised by the COVERAGE-DECLARED S1 plan (2026-11-12).
+
+- **CHANGED-SURFACE-KEYS-NON-UTF8-NAMES-BY-REPLACEMENT-CHARACTERS** — invariant: a changed path git names is keyed by
+  its exact bytes. Origin: `agent-workflow-kit/tools/changed-surface.mjs:69` decodes an unquoted name as UTF-8 and
+  `:121` reads git's output as UTF-8, so a name that is not valid UTF-8 is keyed by U+FFFD and two such names can
+  collide. Narrow fix: read git's output as bytes and key by them, as `listGitNamedPaths` in
+  `tracked-tree-census.mjs` now does. Proof: a fixture with two names differing only in an invalid byte yields two
+  keys. Residual exposure, not live: no known project tracks such a name. Raised by the COVERAGE-DECLARED S1 plan (2026-11-12).
+
 - **DECLARED-LIST-GUARD-REFUSAL-WORDING-UNPINNED** — invariant: the guard's refusal line for a declared coverage list
   names the state it found (`absent`, `another list`, `not readable`) and the receipt's binding, pinned whole per
   state. Origin: `agent-workflow-kit/tools/coverage-declared/config.mjs:180-185`; `final-run.test.mjs:111-116`

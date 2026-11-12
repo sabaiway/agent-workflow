@@ -345,8 +345,8 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
 
   it('the no-mode usage error names every mode this tool has, --adopt included', () => {
     const result = main(['--cwd', project()]);
-    assert.equal(result.code, 2);
-    assert.match(result.stderr, /--adopt/, `a mode missing from its own usage line is unreachable by reading: ${result.stderr}`);
+    assert.deepEqual([result.code, result.stderr], [2, '']);
+    assert.match(result.stdout, /--adopt/, `a mode missing from its own usage line is unreachable by reading: ${result.stdout}`);
   });
 
   it('a repeated mode is still a usage error — the exactly-ONE-mode guard counts occurrences, not kinds', () => {

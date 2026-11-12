@@ -1452,18 +1452,6 @@
       ]
     },
     {
-      "path": "agent-workflow-kit/tools/source-size-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "file-past-its-cap",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
       "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
       "arguments": [
         "--all"
@@ -2088,27 +2076,6 @@
         "--check"
       ],
       "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/source-size-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-kit/tools/source-size-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/source-size-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "spawn"
     },
     {
       "path": "agent-workflow-kit/tools/spec-check-cli.mjs",

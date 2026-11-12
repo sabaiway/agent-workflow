@@ -2,18 +2,13 @@
 // per directory, depth and files per root judged with their bands, a stop exactly where the
 // regeneration would raise, the --layout start, the spec store as one more root, the absent config.
 
-import { describe, it, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
 import { main } from '../source-size-check.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
-
-const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-layout-'));
-after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const NL = String.fromCharCode(10);
 const R = 'recorded by hand';
@@ -21,47 +16,12 @@ const WARN = 'source-size: WARNING — ';
 const FAIL = 'source-size: FAIL — ';
 const STORE_ROOT_STOP = 'at or inside the spec store docs/ai/specs — where layout is judged the store is a root of its own, so declare a root outside it';
 
-const runGit = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
-  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
-};
-
-const makeLines = (n) => `x${NL}`.repeat(n);
-const makeMany = (dir, n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${dir}/f${i}.txt`, 'x']));
-const writeTree = (cwd, files) => {
-  for (const [rel, body] of Object.entries(files)) {
-    mkdirSync(dirname(join(cwd, rel)), { recursive: true });
-    writeFileSync(join(cwd, rel), body);
-  }
-};
-
-// `store` is written AFTER the index is staged, so the spec store stays untracked, as a hidden one is.
-const createProject = ({ files = {}, config = null, store = {} } = {}) => {
-  const cwd = mkdtempSync(join(TMP, 'p'));
-  mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  makeFixtureRepo((args) => runGit(cwd, args), cwd, ['-q', '-b', 'main']);
-  writeTree(cwd, files);
-  if (config !== null) writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(config, null, 2));
-  runGit(cwd, ['add', '-A']);
-  writeTree(cwd, store);
-  return cwd;
-};
-
-const configPath = (cwd) => join(cwd, 'docs', 'ai', 'source-size.json');
 const readBytes = (cwd) => (existsSync(configPath(cwd)) ? readFileSync(configPath(cwd)) : null);
 const readConfig = (cwd) => JSON.parse(readFileSync(configPath(cwd), 'utf8'));
 const listDocsAi = (cwd) => readdirSync(join(cwd, 'docs', 'ai')).sort();
-const runCli = (cwd, ...args) => main([...args, '--cwd', cwd]);
 const showRun = (result) => `${result.stdout}${NL}${result.stderr}`;
 const collectWarnings = (result) => result.stdout.split(NL).filter((line) => line.startsWith(WARN)).map((line) => line.slice(WARN.length));
-const collectFindings = (result) => {
-  const all = result.stdout.split(NL);
-  const at = all.findIndex((line) => line.startsWith(FAIL));
-  if (at === -1) return [];
-  const rest = all.slice(at + 1);
-  const end = rest.findIndex((line) => !line.startsWith('  '));
-  return (end === -1 ? rest : rest.slice(0, end)).map((line) => line.slice(2)).sort();
-};
+const collectFindings = (result) => { assert.equal(result.stderr, ''); return readBlock(result.stdout).findings.toSorted(); };
 const collectRaises = (result) => result.stdout.split(NL).filter((line) => line.endsWith(' (raise)')).map((line) => line.trim()).sort();
 const assertHas = (result, text) => assert.ok(result.stdout.includes(text), `expected «${text}»:${NL}${showRun(result)}`);
 
@@ -258,9 +218,9 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
     const before = readBytes(cwd);
     for (const args of [['--check'], ['--adopt'], ['--override', 'depth', '--value', '7', '--reason', 'r']]) {
       const result = runCli(cwd, ...args, '--layout');
-      assert.ok(result.stderr.includes('--layout belongs to --write-baseline — it starts the layout record'), `${args[0]}:${NL}${showRun(result)}`);
+      assert.ok(result.stdout.includes('--layout belongs to --write-baseline — it starts the layout record'), `${args[0]}:${NL}${showRun(result)}`);
       assert.equal(result.code, 2, args[0]);
-      assert.equal(result.stdout, '', args[0]);
+      assert.equal(result.stderr, '', args[0]);
       assert.deepEqual(readBytes(cwd), before, `${args[0]} --layout writes nothing`);
     }
   });
@@ -284,7 +244,8 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
     const cwd = createProject({ files: { 'docs/ai/specs/a.mjs': makeLines(441) }, config: store });
     const before = readBytes(cwd);
     const started = runCli(cwd, '--write-baseline', '--layout', '--reason', 'r');
-    assert.ok(started.stderr.includes(`"roots" declares "docs/ai/specs", ${STORE_ROOT_STOP}`), showRun(started));
+    assert.ok(started.stdout.includes(`"roots" declares "docs/ai/specs", ${STORE_ROOT_STOP}`), showRun(started));
+    assert.equal(started.stderr, '');
     assert.equal(started.code, 2);
     assert.deepEqual(readBytes(cwd), before);
     const inside = createProject({
@@ -292,7 +253,8 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
       config: { ...store, roots: ['docs/ai/specs/kit'], aggregate: { 'docs/ai/specs/kit': { lines: 1, reason: R } }, layout: { roots: {}, directories: {} } },
     });
     const recorded = runCli(inside, '--check');
-    assert.ok(recorded.stderr.includes(`"roots" declares "docs/ai/specs/kit", ${STORE_ROOT_STOP}`), showRun(recorded));
+    assert.ok(recorded.stdout.includes(`"roots" declares "docs/ai/specs/kit", ${STORE_ROOT_STOP}`), showRun(recorded));
+    assert.equal(recorded.stderr, '');
     assert.equal(recorded.code, 2);
     const lines = runCli(cwd, '--check');
     assert.equal(lines.code, 1, showRun(lines));
@@ -320,7 +282,7 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
       store: makeMany('docs/ai/specs/kit', 23),
     });
     const result = runCli(cwd, '--check');
-    assertHas(result, `${FAIL}3 finding(s) under the kit's values (${configPath(cwd)} is absent):`);
+    assert.equal(result.stdout.split(NL)[0], `${FAIL}3 finding(s) under the kit's values (${configPath(cwd)} is absent)`);
     assert.equal(result.code, 1, showRun(result));
     assert.deepEqual(collectFindings(result), [overDepth('a/b/c/d/e/g'), overEntries('docs/ai/specs/kit', 23), overEntries('wider', 23)]);
     assert.equal(existsSync(configPath(cwd)), false);
@@ -385,7 +347,8 @@ describe('the spec store that is not a directory is refused, never walked throug
       symlinkSync(join(cwd, 'elsewhere', 'specs'), join(cwd, 'docs', 'ai', 'specs'));
       const before = readBytes(cwd);
       const result = runCli(cwd, '--check');
-      assert.ok(result.stderr.includes(`${join(cwd, 'docs', 'ai', 'specs')}: the spec store docs/ai/specs could not be walked (present but not a directory)`), showRun(result));
+      assert.ok(result.stdout.includes(`${join(cwd, 'docs', 'ai', 'specs')}: the spec store docs/ai/specs could not be walked (present but not a directory)`), showRun(result));
+      assert.equal(result.stderr, '');
       assert.equal(result.code, 1);
       assert.deepEqual(readBytes(cwd), before, 'a refusal writes nothing');
     }
@@ -415,7 +378,8 @@ describe('what a declared root counts, and what MINTED means beside the layout r
     assert.equal(runCli(cwd, '--check').code, 0, 'one entry under the name: counted, clean');
     fill(1, 23);
     const result = runCli(cwd, '--check');
-    assert.ok(result.stderr.includes('is not valid UTF-8 (bytes 7372632f6fff) and it is beyond its band'), showRun(result));
+    assert.ok(result.stdout.includes('is not valid UTF-8 (bytes 7372632f6fff) and it is beyond its band'), showRun(result));
+    assert.equal(result.stderr, '');
     assert.equal(result.code, 1);
   });
 

@@ -266,7 +266,7 @@ describe('spec:source-size/S26 a file within its line band warns on every run an
 
   it('441 lines stop with no record, and a record of them holds them', () => {
     const result = check(project({ 'src/a.mjs': lines(441) }, {}));
-    assert.match(result.stdout, /^ {2}src\/a\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)$/m, result.stdout);
+    assert.match(result.stdout, /^src\/a\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)$/m, result.stdout);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /"src\/a\.mjs": \{ "lines": 441, "reason": "<why this size is accepted>" \}/);
     const held = check(project({ 'src/a.mjs': lines(441) }, { 'src/a.mjs': { lines: 441, reason: 'recorded' } }));

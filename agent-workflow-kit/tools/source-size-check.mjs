@@ -29,10 +29,11 @@
 // removes one reasoned override of a kit limit and regenerates the machine keys under the new limits
 // in the same write. Every write here moves a schema-1 config to schema 2; --check stops on one.
 //
-// Exit codes: 0 green / 1 violation or refusal / 2 usage, config or enumeration error.
+// Exit codes: 0 green / 1 violation or refusal / 2 usage, config or enumeration error, or an unexpected error.
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { resolve } from 'node:path';
+import { composeRedBlock, composeUsageRefusal, guardChecker } from '../references/scripts/shared/index.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic } from './atomic-write.mjs';
 import { isDirectRun, sameFile } from './direct-run.mjs';
 import {
@@ -42,7 +43,7 @@ import {
   SOURCE_SIZE_SCHEMA,
   applyOverride,
   assertNoStoreRoot,
-  checkTargetOf,
+  checkTargetOf, escapeForLine,
   isRaise,
   loadSourceSizeConfig,
   matchesSourceSizeGate,
@@ -63,7 +64,7 @@ import {
   TEMPLATE_READMES,
   absentRefusalLines,
   adoptAbsentRefusalLines,
-  checkReportLines,
+  checkReportLines, checkStopBlock, escapeLeadingSpace,
   gateAlreadyDeclaredLines,
   gateDeclaredLines,
   gateRefusedLines,
@@ -74,15 +75,18 @@ import {
   reasonRequiredLines,
   recordNoLongerHoldsLines,
   recordRecognizedLines,
-  schema1MovedLines,
-  schema1StopLines,
-  statedLimitLines,
-  unmintedRefusalLines,
+  schema1MovedLines, schema1StopBlock,
+  statedLimitLines, unmintedRefusalLines, unmintedStopBlock,
   warningLines,
   writtenLines,
 } from './source-size-report.mjs';
 
-const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
+const ERROR_PREFIX = '[agent-workflow-kit] ';
+const CHECKER_NAME = 'source-size';
+const USAGE_REFUSAL = Symbol('usage refusal');
+const HELP_LINES = HELP.split('\n');
+const USAGE = HELP_LINES.slice(HELP_LINES.indexOf('Usage:')).slice(0, 6).join('\n');
+const usageFail = (message) => Object.assign(new Error(`${ERROR_PREFIX}${message}`), { exitCode: 2, [USAGE_REFUSAL]: true });
 const RECORD_NOUN = 'the source-size record';
 const LAYOUT_GROWTH_LEAD = 'source-size: --layout REFUSED — it starts the layout record and raises nothing else, but the record no longer holds for this tree, so that growth takes --write-baseline --reason first; nothing was written.';
 
@@ -94,10 +98,12 @@ const ABSENT = Object.freeze({ _README: TEMPLATE_README, schema: SOURCE_SIZE_SCH
 export const runCheck = ({ cwd, deps = {} }) => {
   const target = checkTargetOf({ loaded: loadSourceSizeConfig(cwd, deps), absentConfig: validateSourceSizeConfig(ABSENT) });
   const { config, judged } = target;
-  if (target.stop === 'schema-1') return { code: 1, lines: schema1StopLines(cwd), config };
-  if (target.stop === 'unminted') return { code: 1, lines: unmintedRefusalLines(cwd, { state: target.state, missing: target.missing }), config };
+  if (target.stop === 'schema-1') return { code: 1, block: schema1StopBlock(cwd), config };
+  if (target.stop === 'unminted') return { code: 1, block: unmintedStopBlock(cwd, { state: target.state, missing: target.missing }), config };
   const verdict = judgeTree(cwd, config, deps, judged);
-  return { code: stopsOf(verdict.findings).length === 0 ? 0 : 1, lines: checkReportLines({ cwd, config, verdict, absent: judged.absent }), config, judged };
+  const report = { cwd, config, verdict, absent: judged.absent };
+  return stopsOf(verdict.findings).length > 0 ? { code: 1, block: checkStopBlock(report), config, judged }
+    : { code: 0, lines: checkReportLines(report), config, judged };
 };
 
 // ── the writer ────────────────────────────────────────────────────────────────────────────────────
@@ -233,7 +239,7 @@ const gateIsDeclared = (cwd, deps) => {
 // certain to red the matrix is what the offer rules refuse everywhere else.
 const recognizeRecord = ({ cwd, deps }) => {
   const verdict = runCheck({ cwd, deps });
-  if (verdict.code !== 0) return { code: verdict.code, lines: [...verdict.lines, ...recordNoLongerHoldsLines(GATES_REL)] };
+  if (verdict.code !== 0) return { code: verdict.code, lines: [...composeRedBlock({ name: CHECKER_NAME, ...verdict.block }), ...recordNoLongerHoldsLines(GATES_REL)] };
   return { code: 0, lines: recordRecognizedLines(cwd) };
 };
 
@@ -357,14 +363,29 @@ export const main = (argv, ctx = {}) => {
       ? overrideOptions({ id: idOption.value, value: valueOption.value, tolerance: toleranceOption.value, kitDefault })
       : {};
     const deps = ctx.deps ?? {};
-    const { code, lines, config, judged } = RUNS[mode]({ cwd, reason: reasonOption.value, layout, deps, ...override });
+    const { code, lines, block, config, judged } = RUNS[mode]({ cwd, reason: reasonOption.value, layout, deps, ...override });
     const states = STATES_LIMITS.includes(mode) && config;
     const limits = states ? statedLimitLines(config) : [];
     const notJudged = states && judged ? notJudgedLines(cwd, { ...judged, config }) : [];
-    return { code, stdout: [...limits, ...notJudged, ...lines].join('\n'), stderr: '' };
+    const output = block ? composeRedBlock({ name: CHECKER_NAME, ...block, after: [...limits, ...notJudged, ...block.after] }) : [...limits, ...notJudged, ...lines];
+    return { code, stdout: output.join('\n'), stderr: '' };
   } catch (err) {
-    return { code: err.exitCode ?? 1, stdout: (err.lines ?? []).join('\n'), stderr: `source-size-check: ${err.message}` };
+    if (err?.exitCode === undefined) throw err;
+    const message = err.message.startsWith(ERROR_PREFIX) ? err.message.slice(ERROR_PREFIX.length) : err.message;
+    const failed = escapeLeadingSpace(err[USAGE_REFUSAL] ? escapeForLine(message) : message);
+    const output = err[USAGE_REFUSAL] ? composeUsageRefusal({ name: CHECKER_NAME, failed, usage: USAGE })
+      : composeRedBlock({ name: CHECKER_NAME, failed, remedies: [err.exitCode === 2 ? 'fix the size config or the git index error the verdict line names, then re-run' : 'fix the tree condition the verdict line names, then re-run'], after: err.lines ?? [] });
+    return { code: err.exitCode, stdout: output.join('\n'), stderr: '' };
   }
+};
+
+export const guardedMain = (argv, ctx = {}) => {
+  const carried = [];
+  const result = guardChecker({ name: CHECKER_NAME, exitCode: 2, remedy: 'fix the cause the stack below names, then re-run' }, () => {
+    try { return main(argv, ctx); }
+    catch (err) { carried.push(...(err?.lines ?? [])); throw err; }
+  });
+  return result.lines ? { code: result.exitCode, stdout: [...result.lines, ...carried].join('\n'), stderr: '' } : result;
 };
 
 // The realpath-compare direct-run predicate now lives in tools/direct-run.mjs (the fix this file
@@ -372,7 +393,7 @@ export const main = (argv, ctx = {}) => {
 // because this module's tests bind it as a seam.
 export { sameFile };
 if (isDirectRun(import.meta.url)) {
-  const result = main(process.argv.slice(2));
+  const result = guardedMain(process.argv.slice(2));
   if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
   if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : `${result.stderr}\n`);
   process.exitCode = result.code;

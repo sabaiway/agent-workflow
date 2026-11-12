@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_WHY, measureFile, practiceFacts, validateSourceSizeConfig } from './source-size-core.mjs';
+import { GROWTH_REASON_PLACEHOLDER, unmintedRefusalLines } from './source-size-report.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-practice-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -139,7 +140,14 @@ describe('spec:source-size/S23 — an override reaches every reader', () => {
 describe('spec:source-size/S20 — every run that resolves a config states the limits it judges', () => {
   it('--check and --write-baseline under the kit limits open with the five kit lines, files-per-root none recorded or each root recorded', () => {
     const cwd = project({ files: { 'src/ok.mjs': lines(10) } });
-    assertLimitLines(check(cwd), 1, KIT_LINES);
+    const stopped = check(cwd);
+    const previous = unmintedRefusalLines(cwd, { state: 'authored', missing: ['baseline', 'aggregate'] });
+    assert.deepEqual(stopped.stdout.split('\n'), [
+      `source-size: FAIL — ${previous[0].slice('source-size: REFUSED — '.length, -1)}`,
+      `docs/ai/source-size.json: ${previous[1].slice(0, -1)}`,
+      `source-size: REMEDY — ${previous[2].trim()}`, ...KIT_LINES, WHY_LINE,
+    ]);
+    assert.deepEqual([stopped.code, stopped.stderr], [1, '']);
     assertLimitLines(main(['--write-baseline', '--cwd', cwd, '--reason', 'initial adoption']), 0, KIT_LINES);
     assertLimitLines(check(cwd), 0, KIT_LINES);
     assert.equal(main(['--write-baseline', '--layout', '--cwd', cwd, '--reason', 'layout starts']).code, 0);
@@ -148,7 +156,7 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     assert.deepEqual(recorded.stdout.split('\n').filter((line) => line.includes('NOTE')), [KIT_FOLDER], 'a config that records layout is judged on every dimension');
   });
 
-  it('then a line per dimension not judged, then the warnings, then the stops; warnings and no stop end in a green line that counts them', () => {
+  it('a stop leads with its verdict, findings and remedy before limits, notes and warnings; warnings alone end in a green line that counts them', () => {
     const near = project({ files: { 'src/near.mjs': lines(420) }, config: mintedAt(420) });
     const warned = check(near);
     assert.deepEqual(warned.stdout.split('\n').slice(5), [
@@ -168,14 +176,16 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     const stopped = project({ files: { 'src/near.mjs': lines(420), 'src/big.mjs': lines(441) }, config: mintedAt(861) });
     const failed = check(stopped);
     const said = failed.stdout.split('\n');
-    assert.deepEqual(said.slice(5, 10), [
+    assert.deepEqual(said.slice(0, 11), [
+      `source-size: FAIL — 1 finding(s) against ${configPath(stopped)}`,
+      'src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)',
+      `source-size: REMEDY — node "${fileURLToPath(new URL('./source-size-check.mjs', import.meta.url))}" --write-baseline --cwd "${stopped}" --reason "${GROWTH_REASON_PLACEHOLDER}"`,
+      ...KIT_LINES,
       NO_LAYOUT(stopped),
       KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
-      `source-size: FAIL — 1 finding(s) against ${configPath(stopped)}:`,
-      '  src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)',
     ], failed.stdout);
-    assert.equal(failed.code, 1);
+    assert.deepEqual([failed.code, failed.stderr], [1, '']);
   });
 
   it('--override and the check after it state the override with its reason; a usage, config, enumeration or scope error prints no limit line', () => {

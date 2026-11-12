@@ -142,8 +142,10 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     const result = checkMain(['--check', '--cwd', cwd]);
     chmodSync(join(cwd, bad), 0o644);
     assert.equal(result.code, 1);
-    assert.equal(result.stderr.split('\n').length, 1, `the stop is ONE line, got:\n${result.stderr}`);
-    assert.match(result.stderr, /src\/a\\u000ab\.mjs: in-scope but unverifiable/);
+    const verdicts = result.stdout.split('\n').filter((line) => line.startsWith('source-size: FAIL — '));
+    assert.equal(verdicts.length, 1, `the stop is ONE verdict line, got:\n${result.stdout}`);
+    assert.match(verdicts[0], /src\/a\\u000ab\.mjs: in-scope but unverifiable/);
+    assert.equal(result.stderr, '');
   });
 
   it('report-line-escapes-a-newline-bearing-path: the checker report cannot be forged either', () => {
@@ -294,16 +296,14 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     for (const code of LINE_UNSAFE_CODES) {
       const result = checkMain(['--write-baseline', '--cwd', cwd, '--reason', `why${CH(code)}forged`]);
       assert.equal(result.code, 2, `U+${code.toString(16).padStart(4, '0')} must be refused as a reason`);
-      assert.match(result.stderr, /must be ONE line/);
+      assert.match(result.stdout, /must be ONE line/);
+      assert.equal(result.stderr, '');
     }
   });
 
   it('every-finding-kind-names-its-own-escaped-target: every branch, stop or warning, each with its own hostile name', async () => {
-    // Every branch renders a different sentence about a project-controlled target — a file, a root or
-    // a directory. Giving each kind its OWN hostile target is what makes the check per-branch: a
-    // shared name would let one branch's correct line satisfy the assertion for a branch that dropped
-    // its target entirely. A warning opens after its one anchored prefix, a stop after its indent.
-    const { checkReportLines } = await import('./source-size-report.mjs');
+    const { checkStopBlock, warningLines } = await import('./source-size-report.mjs');
+    assert.equal(typeof checkStopBlock, 'function');
     const KINDS = [
       ['over-default', 'stop', 'rel', { dimension: 'lines', actual: 441, allowed: 400, ceiling: 440 }],
       ['grew', 'stop', 'rel', { dimension: 'lines', actual: 442, recorded: 441 }],
@@ -329,16 +329,19 @@ describe('source-size — a stop renders as ONE line whatever the project put in
     ];
     const targetFor = (kind) => `${kind}${plant([0x0a, 0x2028])}${CH(0xd800)}`;
     const findings = KINDS.map(([kind, severity, field, extra]) => ({ kind, severity, [field]: targetFor(kind), ...extra }));
-    const config = { ...AUTHORED, baseline: {}, aggregate: {} };
     // The pasteable suggestion reads the projection for every rel it names, so the synthetic verdict
     // carries one — a fixture missing it would fail on its own shape rather than on the rule.
     const projected = new Map(KINDS.filter(([, , field]) => field === 'rel').map(([kind]) => [targetFor(kind), { lines: 441 }]));
     const verdict = { findings, scope: { files: [], emptyRoots: [] }, projected };
 
-    const lines = checkReportLines({ cwd: join(TMP, 'synthetic'), config, verdict });
-    for (const [kind] of KINDS) {
+    const block = checkStopBlock({ cwd: join(TMP, 'synthetic'), verdict, absent: false });
+    const warnings = warningLines(findings.filter((finding) => finding.severity === 'warning'));
+    const lines = [...block.findings.map(({ place, text }) => `${place}: ${text}`), ...warnings];
+    for (const [kind, severity] of KINDS) {
       const expected = oracleEscape(targetFor(kind));
-      const own = lines.filter((line) => line.trim().replace(/^source-size: WARNING — /, '').startsWith(`${expected}:`));
+      const own = severity === 'stop'
+        ? block.findings.filter(({ place, text }) => place === '.' && text.startsWith(`${expected}:`))
+        : warnings.filter((line) => line.startsWith(`source-size: WARNING — ${expected}:`));
       assert.equal(own.length, 1, `${kind}: exactly one line must OPEN with this kind's own escaped target, got ${own.length}:\n${lines.join('\n')}`);
     }
     assert.deepEqual(lines.filter((line) => oracleUnsafe(line)), [], 'and no rendered line carries anything unsafe');

@@ -47,3 +47,7 @@ export {
   queueChecksOf,
   spliceLater,
 } from './piles.mjs';
+
+export {
+  helpText,
+} from './help.mjs';

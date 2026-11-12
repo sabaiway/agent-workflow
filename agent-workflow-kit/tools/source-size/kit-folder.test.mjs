@@ -161,7 +161,8 @@ describe('spec:source-size/S53 a declared root at or inside the kit folder is a 
         for (const args of [['--check'], ['--write-baseline', '--reason', R]]) {
           const result = runCli(cwd, ...args);
           assert.equal(result.code, 2, `${root} ${args[0]}:${NL}${showRun(result)}`);
-          assert.ok(result.stderr.includes(KIT_ROOT_STOP(root)), `${root} ${args[0]}:${NL}${showRun(result)}`);
+          assert.ok(result.stdout.includes(KIT_ROOT_STOP(root)), `${root} ${args[0]}:${NL}${showRun(result)}`);
+          assert.equal(result.stderr, '');
         }
         assert.deepEqual(readBytes(cwd), before, `${root}: a config stop writes nothing`);
       }
@@ -216,7 +217,8 @@ describe('spec:source-size/S55 a scope matching only inside the kit folder is no
     const cwd = createProject({ files: { 'lib/readme.txt': 'x', [`${KIT}/a.txt`]: 'x' }, config: MINTED('.', 0) });
     const check = runCli(cwd, '--check');
     assert.equal(check.code, 1, showRun(check));
-    assert.ok(check.stderr.includes('the declared scope matches ZERO tracked files'), showRun(check));
+    assert.ok(check.stdout.includes('the declared scope matches ZERO tracked files'), showRun(check));
+    assert.equal(check.stderr, '');
   });
 });
 

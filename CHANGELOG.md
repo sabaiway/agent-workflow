@@ -7,6 +7,23 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-12 — AD-235: the size check's `--check` opens its red output with its failure, and every red output goes to standard output (kit 23.7.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/source-size-report.mjs`** gains `checkStopBlock`, `schema1StopBlock` (replacing
+`schema1StopLines`) and `unmintedStopBlock`, each returning the composer's parts (`failed`, `findings` with their
+place, `remedies`, `after`), a finding whose path cannot be a place placed at `.`, and `escapeLeadingSpace`, which
+escapes the first character of a text that opens with a space.
+`checkReportLines` keeps only the passing order. `source-size-check.mjs` has `runCheck` answer a stop as a `block`,
+`main` compose a stop of `--check`, a thrown stop and a usage refusal through `composeRedBlock` or
+`composeUsageRefusal` of the shared scripts, a usage refusal told by a `Symbol` mark on its error; `recognizeRecord`
+hands `--adopt` the check's composed block for a record the tree outgrew; the writing modes' other rendered refusals
+keep their lines; and the new `guardedMain(argv, ctx)` run `main` under `guardChecker`, which composes an unexpected
+error (exit 2). The help text moves into **`tools/source-size/help.mjs`**
+(`helpText(values)`, importing nothing), re-exported by the door and the read core. `checker-verdict/checkers.json`
+loses the check's `redExceptions` entry and its three `faultExceptions` entries. New suites
+`tools/source-size/red-block.test.mjs` and its harness `cli-harness.test.mjs`, shared with the layout suite. Specs
+`kit/source-size` revision 10 (index, judge, setup, limits).
+
 ## 2026-11-12 — AD-234: a project's declared list of changed files the coverage check does not judge, bound by the final run (kit 23.6.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/coverage-declared/`** (`config.mjs`, `judge.mjs`, the door `index.mjs`) reads, shapes and
