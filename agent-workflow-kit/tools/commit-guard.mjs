@@ -26,10 +26,12 @@
 //      red record · fingerprintBefore ≠ fingerprintAfter · a LATER final-start with no completion
 //      (an attempt of unknown outcome) · a DECLARATION whose current {id, cmd} content differs
 //      from the recorded one · evidence hashes that no longer match the store's canonical
-//      red-proof/degrade serializations · an lcov file whose sha moved. The guard's own reads
+//      red-proof/degrade serializations · an lcov file whose sha moved · a declared coverage list
+//      the receipt did not bind. The guard's own reads
 //      resolve FIXED git-dir paths (env overrides are producer test seams, never guard inputs);
-//   3. consults the flow decision (Plan 3 Phase 2, two-tier): with NO flow store file the guard is
-//      byte-identical to the pre-flow guard; a PRESENT store must read clean and its refusals
+//   3. consults the flow decision (Plan 3 Phase 2, two-tier): with NO flow store file and a receipt
+//      carrying no evidenceHashes.flow, the flow arm adds nothing to the guard's decision or its
+//      PASS line; a PRESENT store must read clean and its refusals
 //      (open own chain, base motion, coverage, ordering) refuse the commit with the flow-check
 //      reason verbatim — a foreign worktree's chain stays advisory; the armed state extends the
 //      PASS line;
@@ -50,6 +52,7 @@ import {
   computeWorkingState, CONTENT_FREE_FINGERPRINT,
 } from './core-evidence.mjs';
 import { resolveLcovPath } from './coverage-check.mjs';
+import { checkDeclaredBinding, COVERAGE_DECLARED_REL } from './coverage-declared/index.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
 import { computeFlowDecision } from './flow-check.mjs';
 import { resolveGitLocation } from './git-env.mjs';
@@ -304,6 +307,8 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
       return { code: 1, lines: ['commit-guard: REFUSED — the lcov file the receipt consumed moved or vanished; re-run run-gates.mjs --final'] };
     }
   }
+  const declaredBinding = checkDeclaredBinding({ top: rootTop, field: current.evidenceHashes.coverageDeclared });
+  if (!declaredBinding.ok) return { code: 1, lines: [declaredBinding.line] };
   // The flow arm (#43/P3, two-tier over FIXED git-derived paths): no store file ⇒ byte-exact
   // prior behavior; a present store's refusals (malformed reads included) refuse with the
   // flow-check reason verbatim. The commit-guard consumer mode arms the D10 flow→final
@@ -329,7 +334,7 @@ export const runGuard = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const flowSuffix = flow.present && flow.armed
     ? ` — flow: armed${review.flowLabels?.length ? ` (${review.flowLabels.join('; ')})` : ''}`
     : '';
-  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied${flowSuffix}`, ...flowAdvisoryLines(flow)] };
+  return { code: 0, lines: [`commit-guard: PASS — a green final receipt binds this exact tree (${fingerprint.slice(0, 12)}…), the declaration and evidence hashes match, and the review obligations are satisfied${declaredBinding.suffix}${flowSuffix}`, ...flowAdvisoryLines(flow)] };
 };
 
 const HELP = `commit-guard — the read-only pre-commit guard (agent-workflow family, D10).
@@ -351,6 +356,7 @@ bytes: \`--allow-empty\`, a message-only \`--amend\`, an empty merge).
 Otherwise it binds
 the LATEST completed run-gates --final receipt — refusing on { no receipt for this tree · a red
 latest attempt · before≠after · declaration content drift · evidence-hash drift · lcov drift ·
+a declared coverage list (${COVERAGE_DECLARED_REL}) the receipt did not bind ·
 a flow-store refusal (a PRESENT store's open own chain / base motion / coverage — verbatim; no
 store file = byte-exact pre-flow behavior) · unsatisfied review obligations (the review-state
 decision, over a sanitized env — receipts/evidence/flow-store/delegation-store seams stripped) }. Wire it into

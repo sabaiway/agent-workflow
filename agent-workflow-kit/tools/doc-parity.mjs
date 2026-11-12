@@ -64,6 +64,7 @@ import { COVERAGE } from './coverage-state.mjs';
 // The canonical producer body: gates.md prints the whole command byte for byte, so the doc is a
 // hand copy of a moving constant unless it is bound here.
 import { COVERAGE_PRODUCER_BODY } from './coverage-producer.mjs';
+import { COVERAGE_DECLARED_REL } from './coverage-declared/index.mjs';
 // The ensure outcomes upgrade.md relays: the doc enumerates them for the agent, so an outcome the
 // tool renames or drops must fail here rather than leave the doc teaching a vocabulary nobody emits.
 // Imported from the VOCABULARY leaf, never from the ops: a read-only lint must not pull the ensure
@@ -86,6 +87,8 @@ const PROCEDURES_DOC = 'references/modes/procedures.md';
 const SET_FLOW_DOC = 'references/modes/set-flow.md';
 const RECEIPT_DEADLINE_DOC = 'references/modes/receipt-deadline.md';
 const GATES_DOC = 'references/modes/gates.md';
+const COVERAGE_CHECK_DOC = 'references/modes/coverage-check.md';
+const COMMIT_GUARD_DOC = 'references/modes/commit-guard.md';
 const MCP_DOC = 'references/modes/mcp.md';
 const UNINSTALL_DOC = 'references/modes/uninstall.md';
 const STATUS_DOC = 'references/modes/status.md';
@@ -230,6 +233,9 @@ export const BINDINGS = Object.freeze([
   // sees the doc. Bound here, a future move fails a declared gate instead of leaving the contract
   // doc quietly describing a command the kit no longer emits.
   valueBinding('coverage-producer-body', COVERAGE_PRODUCER_BODY, COVERAGE_PRODUCER_BODY, [GATES_DOC]),
+  valueBinding('coverage-declared-rel', COVERAGE_DECLARED_REL, `\`${COVERAGE_DECLARED_REL}\``, [
+    COVERAGE_CHECK_DOC, GATES_DOC, COMMIT_GUARD_DOC,
+  ]),
   // The MCP registration's four public strings (mode: mcp). TWO docs quote each of them: the mode
   // contract, which tells a reader what will be declared, and the uninstall KEEP list, which tells
   // them what to edit to undo it — so a renamed key or tool would otherwise leave one of the two
@@ -313,7 +319,8 @@ FORM-only + aggregate-refusal contract and the routing advisor's two honesty sen
 advice never gates, and the harness-subagent lane carries no availability verdict (dispatch.md), the
 runner's closed coverage= summary
 vocabulary (gates.md), the canonical coverage-producer-body command the same doc prints in full
-(gates.md), and the MCP registration's five public strings — mcp-json-rel, mcp-enabled-key,
+(gates.md), the declared coverage list's path coverage-declared-rel (coverage-check.md, gates.md,
+commit-guard.md), and the MCP registration's five public strings — mcp-json-rel, mcp-enabled-key,
 mcp-server-name and the two mcp-allow-rule entries, each quoted by BOTH the mcp mode contract and the
 uninstall KEEP list that undoes it (mcp.md, uninstall.md) — to
 the exact token its references/modes/*.md contract must carry, and

@@ -3,6 +3,31 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **DECLARED-LIST-GUARD-REFUSAL-WORDING-UNPINNED** — invariant: the guard's refusal line for a declared coverage list
+  names the state it found (`absent`, `another list`, `not readable`) and the receipt's binding, pinned whole per
+  state. Origin: `agent-workflow-kit/tools/coverage-declared/config.mjs:180-185`; `final-run.test.mjs:111-116`
+  asserts only the line's prefix, and the guard's unreadable-after-a-green-final cell never runs. Narrow fix: one
+  table cell per guard state asserting the whole line. Proof: a swap of `absent` and `another list` goes red. Residual
+  exposure, not live: the refuse/pass decision is pinned (`config.test.mjs:217-237`, S13, S15); only the wording can
+  drift. Raised by the lens, round 1 of the COVERAGE-DECLARED S1 diff review (2026-11-12).
+
+- **FINAL-PREFLIGHT-JOINS-AN-UNPROVEN-GIT-DIR** — invariant: the `--final` preflight removes the stale lcov under the
+  git dir its location proof answered. Origin: `agent-workflow-kit/tools/run-gates.mjs:618` joins the `gitDir` of a
+  separate `git rev-parse --absolute-git-dir` (`:594`) after `:616` proved a work tree; a git answer that differs
+  between the two probes in one directory and environment throws a TypeError, caught as exit 1 with the fail summary
+  and no start record. Narrow fix: none needed now (it fails closed). Generalization: one git-dir source for the run;
+  `finalLocation.gitDir` is a resolved real path, so `AW_GIT_DIR` bytes change and the move is a design step.
+  Residual exposure, not live: unreachable from the command line, where both probes run alike. Raised by codex and
+  agy, round 1 of the COVERAGE-DECLARED S1 diff review (2026-11-12).
+
+- **DECLARED-LIST-MODULE-HAS-TWO-ESCAPERS** — invariant: the coverage-declared module renders unsafe text in one form.
+  Origin: `agent-workflow-kit/tools/coverage-declared/config.mjs:56` (`renderSafeText`, `\uXXXX` for unsafe
+  characters) and `judge.mjs:26` (`renderAsciiLine`, `\u{XXXX}` for every non-ASCII character, used only for a lister
+  error message). Narrow fix: `judge.mjs` imports the one helper from `config.mjs`. Proof: the config-failure cell of a
+  throwing lister keeps its line one safe line. Residual exposure, not live: both forms give one safe line; no test
+  pins either form. Raised by the code session, the lens and agy, round 1 of the COVERAGE-DECLARED S1 diff review
+  (2026-11-12).
+
 - **PROJECT-NAME-READ-STANDS-IN-THREE-FILES** — invariant: the project's name is read by one function of the script
   family's shared module, so its state table (absent, unreadable, readable and nameless, named) is written once.
   Origin: `agent-workflow-memory/references/scripts/archives/archive-changelog.mjs:23-35`,

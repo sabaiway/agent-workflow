@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.6.0 — a changed file that a test runs elsewhere can be committed through the final run (AD-234)
+
+**After `/agent-workflow-kit upgrade`, a project can list in `docs/ai/coverage-declared.json` the changed files that
+nothing runs at their own path** — a fixture a test copies out and runs in a temporary folder, for example — each with
+a reason. Before, such a file had no executed line in the coverage data, so `coverage-check` failed it on every
+`run-gates --final` and the commit could not pass the guard.
+
+- **The list is written by hand**, one exact path per entry:
+  `{ "schema": 1, "entries": [{ "path": "tools/fixture.mjs", "reason": "copied out and run by fixture.test.mjs" }] }`.
+- **An entry can remove a coverage failure**: a listed changed file with no executed line in the coverage data is
+  not judged and is printed with its reason; a listed file that the run does execute is judged as any other file.
+  An entry naming a path git knows that is not a regular file (a link, a folder) fails the check, changed or not.
+- **Every run prints the list's lines** (`coverage-check: declared list — …`), and `run-gates` echoes them under a
+  green coverage gate, so nothing is skipped silently.
+- **The final run binds the list**: `run-gates --final` records its hash in the receipt, and `commit-guard` refuses a
+  list edited, created or deleted after that run. A list that is not valid fails the check with one line naming the
+  defect.
+- **Without the file nothing changes.** One exception: `run-gates --final` now stops before it starts unless git
+  names one work tree for the project (a git environment pointing elsewhere included, which the commit guard
+  already refused), and its refusal names the git location it found and why.
+
 ## 23.5.0 — a rotation run that fails no longer loses journal entries or resolved issues (AD-233)
 
 **After `/agent-workflow-kit upgrade`, `run.mjs archive-changelog` and `run.mjs archive-issues` keep every entry and

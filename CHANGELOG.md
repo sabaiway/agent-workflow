@@ -7,6 +7,19 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-12 — AD-234: a project's declared list of changed files the coverage check does not judge, bound by the final run (kit 23.6.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/coverage-declared/`** (`config.mjs`, `judge.mjs`, the door `index.mjs`) reads, shapes and
+judges `docs/ai/coverage-declared.json`: a changed assessable file listed there with no executed line in the lcov read
+is not judged and is printed with its reason. `coverage-check.mjs` reads the list once and compares
+`AW_FINAL_ATTEST_DECLARED` inside `attestationState`; `ATTEST_ENV_VARS` is exported and is run-gates'
+`RESERVED_CAPABILITY_ENV`. `run-gates.mjs --final` resolves its git location in the preflight, reads the list before
+the start record (unreadable → exit 8), re-reads it at the end (moved → red receipt) and binds
+`evidenceHashes.coverageDeclared`; one green-gate echo table prints the size check's warnings and the list's lines.
+`commit-guard.mjs` gains `checkDeclaredBinding` after its lcov arm; `core-evidence-store-read.mjs` validates the field;
+`tracked-tree-census.mjs` exports `listGitNamedPaths`; `doc-parity.mjs` binds `coverage-declared-rel`. Specs
+`kit/coverage-declared` revision 1 (new), `kit/review-domain/core-evidence` 2.
+
 ## 2026-11-12 — AD-233: a rotation run that fails loses no journal entry and no issue; both rotations lead a red block with its failure (memory 11.1.0 and kit 23.5.0 MINOR; engine and the bridges unchanged)
 
 **`agent-workflow-memory/references/scripts/archives/whole-write.mjs`** holds `fsIo` and `writeWhole`, moved unchanged

@@ -43,8 +43,11 @@ const splitOnNul = (buffer) => {
   return parts;
 };
 
-const listTrackedPaths = (root, spawn) => {
-  const result = spawn('git', ['ls-files', '-z'], { cwd: root, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+const TRACKED_PATH_ARGS = ['ls-files', '-z'];
+const ALL_NAMED_PATH_ARGS = ['ls-files', '-z', '--cached', '--others', '--exclude-standard'];
+export const listGitNamedPaths = (root, { untracked = false, spawn = spawnSync } = {}) => {
+  const args = untracked ? ALL_NAMED_PATH_ARGS : TRACKED_PATH_ARGS;
+  const result = spawn('git', args, { cwd: root, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
   if (result.error || result.status !== 0) {
     const reason = result.error ? (result.error.code ?? result.error.message) : `git exited ${result.status}`;
     throw Object.assign(new Error(`tracked-tree census unavailable: ${reason}`), { code: 'CENSUS_UNAVAILABLE' });
@@ -57,7 +60,7 @@ const listTrackedPaths = (root, spawn) => {
     const identity = part.toString('latin1'); // byte-exact key: one char per byte, never lossy
     if (seenBytes.has(identity)) continue;
     seenBytes.add(identity);
-    paths.push(part.toString('utf8'));
+    paths.push(part);
   }
   return paths;
 };
@@ -76,7 +79,8 @@ const listTrackedPaths = (root, spawn) => {
 export const takeCensus = (root, { spawn = spawnSync } = {}) => {
   const counts = { assessable: 0, unsupported: 0, 'out-of-domain': 0, 'excluded-test': 0 };
   const unsupportedExtensions = new Set();
-  for (const path of listTrackedPaths(root, spawn)) {
+  for (const name of listGitNamedPaths(root, { spawn })) {
+    const path = name.toString('utf8');
     const kind = classifyChangedPath(path);
     counts[kind] += 1;
     if (kind === 'unsupported') {

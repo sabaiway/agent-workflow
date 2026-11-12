@@ -56,7 +56,7 @@ import {
   commitmentFor,
   ATTEST_NONCE_ENV,
   ATTEST_FINGERPRINT_ENV,
-  ATTEST_BASE_ENV,
+  ATTEST_BASE_ENV, ATTEST_DECLARED_ENV, ATTEST_ENV_VARS,
 } from './coverage-check.mjs';
 // The declaration load/validation + the canonical checker predicate family live in the
 // gates-declaration.mjs LEAF (FLOW-READ-GRAPH-PURITY / the R10 rider: the locked subset-attempt
@@ -73,6 +73,10 @@ import {
 // only direction that has no cycle. Re-exported here: this module is the vocabulary's public face.
 import { COVERAGE } from './coverage-state.mjs';
 import { CHECKER_CLAIM, SOURCE_SIZE_WARNING_PREFIX, classifySourceSizeGate } from './source-size-core.mjs';
+import { checkerClaimTool, classifyCheckerClaim } from './checker-claim.mjs';
+import { resolveGitLocation } from './git-env.mjs';
+import { escapeForDisplay } from './repo-lex.mjs';
+import { COVERAGE_DECLARED_REL, DECLARED_LINE_PREFIX, DECLARED_MOVED_FAILURE, resolveDeclaredListPath, readDeclaredList, declaredStartRefusal, declaredAttestValue, compareDeclaredAttest } from './coverage-declared/index.mjs';
 
 export { GATES_REL, loadDeclaration, validateDeclaration, canonicalCheckerGates, isFinalCapableDeclaration, isReviewDependentGate };
 export { COVERAGE };
@@ -98,6 +102,7 @@ export const fail = (exitCode, message) => Object.assign(new Error(message), { e
 const NO_FAILED_IDS = '-';
 const SPAWN_FAILED_CODE = -1;
 const MAX_GATE_OUTPUT_BYTES = 64 * 1024 * 1024;
+const NO_ECHO_SKIP_INDEX = -1;
 
 const USAGE = [
   'usage: run-gates.mjs [--cwd <dir>] [--only <id>]... [--final] [--pre-review [--diagnosis <text>]] [--help]',
@@ -127,6 +132,9 @@ const USAGE = [
   'degrade evidence hashes, the lcov sha, the run\'s own coverage token, and — when a flow store',
   'exists — evidenceHashes.flow, the owner-scoped flow projection hash (D10; projection movement',
   'under the run is a red integrityFailure) }. --final refuses --only (a subset never attests).',
+  `--final needs one git work tree, and binds the declared coverage list ${COVERAGE_DECLARED_REL}: an`,
+  'unreadable list refuses (exit 8), a list that moves under the run is a red integrityFailure, its hash',
+  'rides evidenceHashes.coverageDeclared. A green coverage-check gate echoes the list lines on every run.',
   '',
   `Runs the gates declared in <cwd>/${GATES_REL} (one bash command line each, project root as cwd).`,
   'Prints a per-gate PASS/FAIL table + one machine-readable summary line; exit 0 iff all green.',
@@ -188,7 +196,7 @@ export const RESERVED_PRODUCER_ENV = Object.freeze(['AW_GIT_DIR', 'AW_LCOV_FILE'
 // other child (and any descendant it spawns) must see it absent, host-set copies included, or that
 // descendant could certify a foreign lcov later. Conflating the two lists made a gate that merely
 // MENTIONS the name refuse the whole run.
-export const RESERVED_CAPABILITY_ENV = Object.freeze([ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]);
+export const RESERVED_CAPABILITY_ENV = ATTEST_ENV_VARS;
 
 export const spawnGateViaBash = (cmd, cwd, extraEnv = {}) => {
   const env = { ...process.env };
@@ -228,19 +236,21 @@ export const BASH_PROBE_CMD = 'true';
 const formatSeconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
 const trimTrailingNewline = (text) => text.replace(/\n$/, '');
 
-// A green source-size check's warnings print on every run, so the matrix echoes them — and nothing
-// else of its output — under a gate running this checker or a regular-file copy of it elsewhere.
-const SOURCE_SIZE_CLAIMS = new Set([CHECKER_CLAIM.CANONICAL, CHECKER_CLAIM.ELSEWHERE]);
-const sourceSizeWarnings = (gate, cwd, stdout) => (SOURCE_SIZE_CLAIMS.has(classifySourceSizeGate(gate.cmd, cwd))
-  ? String(stdout).split(/\r?\n/).filter((line) => line.startsWith(SOURCE_SIZE_WARNING_PREFIX))
-  : []);
+// A green size or coverage check marks every-run lines with its prefix; the matrix echoes only
+// those lines under a gate running the canonical checker or a regular-file copy of it elsewhere.
+const COVERAGE_CHECK_TOOL = checkerClaimTool('coverage-check.mjs', FINAL_CORE_CHECKS[1].canonical);
+const GREEN_GATE_LINE_PREFIXES = Object.freeze([
+  [(cmd, cwd) => [CHECKER_CLAIM.CANONICAL, CHECKER_CLAIM.ELSEWHERE].includes(classifySourceSizeGate(cmd, cwd)), SOURCE_SIZE_WARNING_PREFIX],
+  [(cmd, cwd) => matchesCanonicalCheck(FINAL_CORE_CHECKS[1], cmd, cwd) || classifyCheckerClaim(COVERAGE_CHECK_TOOL, cmd, cwd) === CHECKER_CLAIM.ELSEWHERE, DECLARED_LINE_PREFIX],
+]);
+const selectGreenGateLines = (gate, cwd, stdout) => GREEN_GATE_LINE_PREFIXES.flatMap(([matches, prefix]) => matches(gate.cmd, cwd) ? String(stdout).split(/\r?\n/).filter((line) => line.startsWith(prefix)) : []);
 
 // Run the selected gates sequentially (declaration order). A green gate logs one PASS line (and a
 // source-size check its warnings); a failing gate logs FAIL + its captured stdout/stderr VERBATIM
 // (triage without re-running).
-export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log }) => {
+export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now, log = console.log, echoSkipAt = NO_ECHO_SKIP_INDEX }) => {
   const results = [];
-  for (const gate of gates) {
+  for (const [gateIndex, gate] of gates.entries()) {
     log(`── ${gate.id} — ${gate.title}`);
     const startedAt = now();
     const res = spawn(gate.cmd, cwd);
@@ -251,7 +261,7 @@ export const runGates = (gates, { cwd, spawn = spawnGateViaBash, now = Date.now,
     results.push({ id: gate.id, title: gate.title, ok, code, elapsedMs, stdout: res.stdout ? String(res.stdout) : '' });
     if (ok) {
       log(`   PASS (${formatSeconds(elapsedMs)})`);
-      for (const line of sourceSizeWarnings(gate, cwd, res.stdout ?? '')) log(line);
+      if (gateIndex !== echoSkipAt) for (const line of selectGreenGateLines(gate, cwd, res.stdout ?? '')) log(line);
     } else {
       log(`   FAIL exit=${code} (${formatSeconds(elapsedMs)})`);
       if (res.stdout) log(trimTrailingNewline(res.stdout));
@@ -584,6 +594,7 @@ export const runCli = (argv, deps = {}) => {
     const dirRes = spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: projectDir, windowsHide: true });
     const gitDir = dirRes.error || dirRes.status !== 0 ? null : dirRes.stdout.toString('utf8').replace(/\r?\n$/, '');
     let gateSpawn = gitDir === null ? spawn : (cmd, cwd2) => spawn(cmd, cwd2, { AW_GIT_DIR: gitDir });
+    const finalLocation = opts.final ? resolveGitLocation(projectDir, { env }) : null;
     // ── --final preflight (D3(a)): the declaration must carry the canonical core checks; the TRUE
     // git dir resolves AW_GIT_DIR; the stale lcov dies BEFORE the suite so it is never consumed.
     if (opts.final) {
@@ -602,7 +613,7 @@ export const runCli = (argv, deps = {}) => {
       if (!matchesCanonicalCheck(FINAL_CORE_CHECKS[1], lastGate.cmd, projectDir)) {
         throw fail(EXIT.malformed, `--final refuses the declaration — the CANONICAL coverage-check gate must be the LAST declared gate (nothing may run after the checker consumed the lcov; "${lastGate.id}" is declared last)`);
       }
-      if (gitDir === null) throw fail(EXIT.fail, '--final needs a git work tree (cannot resolve the git dir)');
+      if (finalLocation.state !== 'work-tree') throw fail(EXIT.fail, `--final needs a git work tree (${finalLocation.state}: ${escapeForDisplay(finalLocation.cause)})`);
       try {
         unlinkSync(join(gitDir, LCOV_BASENAME)); // a stale lcov is never consumed
       } catch (err) {
@@ -642,6 +653,12 @@ export const runCli = (argv, deps = {}) => {
     // --final needs the pre-run fingerprint (the receipt binds before == after == current).
     const finalFingerprintBefore = opts.final ? fingerprint(projectDir) : null;
     const finalBase = opts.final ? resolveBase(projectDir) ?? '' : null;
+    const declaredStart = opts.final ? readDeclaredList(resolveDeclaredListPath(finalLocation.top)) : null;
+    if (declaredStart?.state === 'unreadable') {
+      logError(declaredStartRefusal(declaredStart));
+      log(composeSummaryLine({ status: 'fail' }));
+      return EXIT.finalFailed;
+    }
     // The attestation handshake (see coverage-check.mjs): a fresh random nonce rides the child
     // environment, and the attempt id this run records is the one-way COMMITMENT over it plus the
     // identity. Persisting only the commitment is what makes the context unreproducible from the
@@ -661,6 +678,7 @@ export const runCli = (argv, deps = {}) => {
           [ATTEST_NONCE_ENV]: finalNonce,
           [ATTEST_FINGERPRINT_ENV]: finalFingerprintBefore ?? '',
           [ATTEST_BASE_ENV]: finalBase,
+          [ATTEST_DECLARED_ENV]: declaredAttestValue(declaredStart),
         });
       };
     }
@@ -742,7 +760,7 @@ export const runCli = (argv, deps = {}) => {
     // The checker's position is pinned BEFORE the matrix spawns; the tree it leaves behind never
     // gets to re-decide which gate this run selected.
     const checkerAt = resolveCheckerIndex(selected, projectDir);
-    const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now });
+    const results = runGates(selected, { cwd: projectDir, spawn: gateSpawn, log, now, echoSkipAt: opts.final ? checkerAt : NO_ECHO_SKIP_INDEX });
     // Decided once, from the checker's own machine lines, and carried to BOTH surfaces of this run:
     // the checker's table row and the machine summary field (Decision 7/8).
     const coverage = coverageSignal(checkerAt, results);
@@ -854,6 +872,7 @@ export const runCli = (argv, deps = {}) => {
             integrityFailure = 'the flow store moved under the final run (the owner-scoped projection changed)';
           }
         }
+        if (integrityFailure === null && !compareDeclaredAttest(declaredAttestValue(declaredStart), readDeclaredList(resolveDeclaredListPath(finalLocation.top))).accepted) integrityFailure = DECLARED_MOVED_FAILURE;
         // Exactly ONE full machine line binds the receipt — an unanchored first-match would let
         // an injected/duplicated line shadow the real one and skip the end re-hash.
         const shaLines = anchoredMachineLines(checkerRow?.stdout, LCOV_SHA_LINE_RE);
@@ -908,6 +927,7 @@ export const runCli = (argv, deps = {}) => {
                   degrade: sha256Hex(canonicalKindSerialization(endRead.records, 'degrade')),
                 }),
               ...(finalFlow?.present ? { flow: finalFlow.hash } : {}),
+              ...(declaredStart.state === 'regular' ? { coverageDeclared: declaredStart.hash } : {}),
             },
             lcovSha256,
             // The run's OWN coverage token, recorded rather than re-derived: `lcovSha256` says what

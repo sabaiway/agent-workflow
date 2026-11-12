@@ -32,7 +32,7 @@ const {
   attestationState,
   ATTEST_NONCE_ENV,
   ATTEST_FINGERPRINT_ENV,
-  ATTEST_BASE_ENV,
+  ATTEST_BASE_ENV, ATTEST_DECLARED_ENV,
 } = cov ?? {};
 
 const gitInit = (root) => {
@@ -249,7 +249,7 @@ describe('coverage-check --check — the attestation handshake', () => {
     return fixtureEnv({
       [ATTEST_NONCE_ENV]: nonce,
       [ATTEST_FINGERPRINT_ENV]: fp,
-      [ATTEST_BASE_ENV]: b,
+      [ATTEST_BASE_ENV]: b, [ATTEST_DECLARED_ENV]: 'none',
     });
   };
   const recordStart = (root, { nonce = 'n0nce', fingerprint, base } = {}) => {
@@ -401,7 +401,7 @@ describe('coverage-check --check — the attestation handshake', () => {
       cwd: root, encoding: 'utf8',
       env: {
         ...fixtureEnv(), PATH: `${bin}:${process.env.PATH}`,
-        [ATTEST_NONCE_ENV]: 'n', [ATTEST_FINGERPRINT_ENV]: 'f', [ATTEST_BASE_ENV]: 'b',
+        [ATTEST_NONCE_ENV]: 'n', [ATTEST_FINGERPRINT_ENV]: 'f', [ATTEST_BASE_ENV]: 'b', [ATTEST_DECLARED_ENV]: 'none',
       },
     });
     const leaked = (() => {

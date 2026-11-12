@@ -28,6 +28,7 @@ import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { computeChangedSurface } from './changed-surface.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { lcovCoveredMap, uncoveredChangedFromLcov } from './lcov.mjs';
+import { COVERAGE_DECLARED_REL, resolveDeclaredListPath, readDeclaredList, judgeDeclaredList, compareDeclaredAttest, declaredPassLine } from './coverage-declared/index.mjs';
 import {
   computeTreeFingerprint,
   resolveBase,
@@ -64,10 +65,9 @@ export const resolveLcovPath = (cwd, env = process.env) => {
 
 // ── the coverage arm (D3(d)) ──────────────────────────────────────────────────────────────────────
 
-// checkCoverage({ rootTop, lcovPath }) → { failures: ["file:line"...], notes: [...], skipped,
-// lcovSha256 } — the sha is of the EXACT bytes this check consumed (read once), so the final-run
-// receipt can bind what was CHECKED, not what happens to sit on disk later (M2, round 1).
-const checkCoverage = ({ rootTop, lcovPath }) => {
+// The lcov sha is of the EXACT bytes this check consumed (read once), so the final-run receipt can
+// bind what was CHECKED, not what happens to sit on disk later (M2, round 1).
+const checkCoverage = ({ rootTop, lcovPath, judgeDeclared }) => {
   const notes = [];
   const failures = [];
   let st = null;
@@ -75,20 +75,22 @@ const checkCoverage = ({ rootTop, lcovPath }) => {
     st = lstatSync(lcovPath);
   } catch (error) {
     if (error?.code === 'ENOENT') {
-      return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null };
+      return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null, declared: judgeDeclared(null) };
     }
     failures.push(`${lcovPath}: status could not be read (${error?.code ?? 'fs error'})`);
-    return { failures, notes, skipped: false, lcovSha256: null };
+    return { failures, notes, skipped: false, lcovSha256: null, declared: judgeDeclared(null) };
   }
   if (!st.isFile()) {
     failures.push(`${lcovPath}: not a regular file (a symlink/device is never read — fail closed)`);
-    return { failures, notes, skipped: false, lcovSha256: null };
+    return { failures, notes, skipped: false, lcovSha256: null, declared: judgeDeclared(null) };
   }
   const surface = computeChangedSurface(rootTop);
   const lcovBytes = readFileSync(lcovPath);
   const lcovSha256 = createHash('sha256').update(lcovBytes).digest('hex');
   const covered = lcovCoveredMap(lcovBytes.toString('utf8'), rootTop);
+  const declared = judgeDeclared(new Map([...surface.assessable.keys()].map((rel) => [rel, covered.get(keyFor(rootTop, rel))])));
   for (const [rel, lines] of surface.assessable) {
+    if (declared.notJudged.includes(rel)) continue;
     const key = keyFor(rootTop, rel);
     const uncovered = uncoveredChangedFromLcov(covered, key, lines);
     if (uncovered === null) {
@@ -103,7 +105,7 @@ const checkCoverage = ({ rootTop, lcovPath }) => {
   if (surface.unsupported.length > 0) {
     notes.push(`unsupported-source changed files (outside the narrowed Node domain): ${surface.unsupported.join(', ')}`);
   }
-  return { failures, notes, skipped: false, lcovSha256 };
+  return { failures, notes, skipped: false, lcovSha256, declared };
 };
 
 // lcovCoveredMap canonicalizes SF paths with realpath — the lookup key must mirror it. On an
@@ -140,7 +142,8 @@ export const keyFor = (rootTop, rel) => {
 export const ATTEST_NONCE_ENV = 'AW_FINAL_ATTEST_NONCE';
 export const ATTEST_FINGERPRINT_ENV = 'AW_FINAL_ATTEST_FINGERPRINT';
 export const ATTEST_BASE_ENV = 'AW_FINAL_ATTEST_BASE';
-const ATTEST_ENV_VARS = Object.freeze([ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]);
+export const ATTEST_DECLARED_ENV = 'AW_FINAL_ATTEST_DECLARED';
+export const ATTEST_ENV_VARS = Object.freeze([ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV, ATTEST_DECLARED_ENV]);
 
 // The commitment bytes: newline-joined, which is unambiguous because every field is hex or empty
 // (the nonce and fingerprint by construction, the base a git object id or '' on an unborn branch).
@@ -160,7 +163,7 @@ export const withoutAttestEnv = (env) => {
 // the ordinary non-attesting case, which is exit 0 and merely withholds the verdict.
 // Exported as a test seam (the keyFor idiom): the undecidable-identity arm below cannot be reached
 // through the CLI, where a resolvable work tree is a precondition of getting this far.
-export const attestationState = ({ env, records, fingerprint, base }) => {
+export const attestationState = ({ env, records, fingerprint, base, declared }) => {
   const nonce = env[ATTEST_NONCE_ENV];
   if (typeof nonce !== 'string' || nonce === '') {
     return { attesting: false, reason: 'no final-run attestation context — a verdict is issued only inside the run that owns the lcov (run-gates.mjs --final); findings below are informational' };
@@ -172,6 +175,10 @@ export const attestationState = ({ env, records, fingerprint, base }) => {
   }
   if (passedFingerprint !== fingerprint || passedBase !== (base ?? '')) {
     return { refusal: `the tree MOVED under the final run (the attestation context describes ${passedFingerprint.slice(0, 12)}…@${passedBase.slice(0, 12) || 'unborn'}, this tree is ${fingerprint.slice(0, 12)}…@${(base ?? '').slice(0, 12) || 'unborn'}) — a gate changed the working tree after the suite produced the lcov; re-run run-gates.mjs --final` };
+  }
+  const comparison = compareDeclaredAttest(env[ATTEST_DECLARED_ENV], declared);
+  if (!comparison.accepted) {
+    return { refusal: `the declared coverage list is not the one the final run started with (${comparison.handed} handed, ${comparison.read} read); re-run run-gates.mjs --final` };
   }
   const want = commitmentFor(nonce, fingerprint, base ?? '');
   if (!records.some((r) => r.kind === 'final-start' && r.attempt === want)) {
@@ -240,6 +247,7 @@ const verifyRedProofs = ({ rootTop, cwd, env }) => {
 export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const rootTop = gitLine(['rev-parse', '--show-toplevel'], cwd);
   if (rootTop == null) return { code: 0, lines: ['coverage-check: not a git work tree — nothing to check'] };
+  const read = readDeclaredList(resolveDeclaredListPath(rootTop));
   const lcovPath = resolveLcovPath(cwd, env);
   const lines = [];
   let failed = false;
@@ -248,20 +256,23 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const identityBefore = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
   const storePath = resolveEvidencePath(cwd, env);
   const storeRecords = storePath ? readEvidence(storePath).records : [];
-  const attestBefore = attestationState({ env, records: storeRecords, ...identityBefore });
-  const cov = checkCoverage({ rootTop, lcovPath });
+  const attestBefore = attestationState({ env, records: storeRecords, ...identityBefore, declared: read });
+  const cov = checkCoverage({ rootTop, lcovPath, judgeDeclared: (changed) => judgeDeclaredList({ top: rootTop, read, changed }) });
+  const declared = cov.declared;
   // The machine line the final-run receipt binds (M2): the sha of the exact bytes THIS check
   // consumed — `none` states loudly that no lcov was read.
   lines.push(`coverage-check: lcov-sha256=${cov.lcovSha256 ?? 'none'}`);
-  if (cov.skipped) {
-    lines.push(`coverage-check: ${cov.notes[0]}`);
-  } else {
-    for (const note of cov.notes) lines.push(`coverage-check: ${note}`);
-    if (cov.failures.length > 0) {
-      failed = true;
-      lines.push('coverage-check: FAIL — uncovered/unattributed changed Node lines:');
-      for (const f of cov.failures) lines.push(`  ${f}`);
-    }
+  for (const note of cov.notes) lines.push(`coverage-check: ${note}`);
+  lines.push(...declared.lines);
+  if (declared.configFailure) {
+    failed = true;
+    lines.push(declared.configFailure);
+  }
+  const failures = [...cov.failures, ...declared.failures];
+  if (failures.length > 0) {
+    failed = true;
+    lines.push('coverage-check: FAIL — uncovered/unattributed changed Node lines:');
+    for (const f of failures) lines.push(`  ${f}`);
   }
   // The probes must never inherit a live attestation capability (a detached descendant could keep it).
   const red = verifyRedProofs({ rootTop, cwd, env: withoutAttestEnv(env) });
@@ -280,7 +291,7 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   // Re-read the identity AFTER the coverage arm and re-decide: the attestation must describe the
   // tree the verdict was actually computed over, not the one it started over.
   const identityAfter = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
-  const attestAfter = attestationState({ env, records: storeRecords, ...identityAfter });
+  const attestAfter = attestationState({ env, records: storeRecords, ...identityAfter, declared: read });
   const attestation = attestBefore.refusal ? attestBefore : attestAfter;
   const contextValid = attestation.attesting === true && attestBefore.attesting === true;
   // `attested=` states whether a coverage VERDICT was ISSUED — pass OR fail — never that coverage
@@ -301,7 +312,7 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   // The attestation gates ONLY the coverage claim. Every pre-existing fail-closed refusal above
   // (symlinked lcov, malformed evidence store, unmet red-proof obligation) keeps its own exit 1.
   if (attesting && !failed && cov.failures.length === 0) {
-    lines.push('coverage-check: PASS — every changed Node line is covered');
+    lines.push(declaredPassLine(declared.notJudged.length));
   }
   return { code: failed ? 1 : 0, lines };
 };
@@ -322,6 +333,10 @@ every current-base red-proof record: bound test present, content hash unchanged,
 An absent lcov file (ENOENT) is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran, stated).
 Any other lcov status failure, a symlinked lcov path, an uncovered line, a broken red-proof
 obligation, or a malformed evidence store fails (exit 1).
+A changed file listed in ${COVERAGE_DECLARED_REL} (one { path, reason } entry per file nothing
+runs at its repository path) with no executed line in the lcov read is not judged; it and every
+other list line print on every run. An unreadable or malformed list fails (exit 1); with a context
+the list must be the one the final run started with (AW_FINAL_ATTEST_DECLARED), else REFUSED.
 
 A coverage VERDICT is issued ONLY inside the run that owns the artifact's lifetime: run-gates
 --final deletes the lcov before any gate spawns and hands this checker an attestation context
@@ -335,7 +350,7 @@ coverage VERDICT was ISSUED — pass OR fail — never that coverage passed.
                  changes an exit code: an absent lcov stays exit 0, a refused non-regular path
                  keeps its own fail-closed exit 1, and uncovered lines still exit 1. Findings are
                  still printed; run-gates carries the withheld verdict as coverage=not-run.
-  REFUSED (exit 1) → the context describes another tree, or matches no recorded attempt.
+  REFUSED (exit 1) → the context describes another tree or another declared list, or matches no recorded attempt.
 Residual, stated: ownership of the fixed path is CONVENTION, not enforcement — a concurrent writer
 to it can still place foreign evidence (queued as LCOV-EXCLUSIVE-OWNERSHIP).
 
@@ -372,8 +387,7 @@ if (isDirectRun(import.meta.url)) {
   // process.env, so leaving it in place would hand a live attestation context to each of them —
   // and a detached descendant could then certify a foreign lcov long after this run ended.
   const attest = Object.fromEntries(
-    [ATTEST_NONCE_ENV, ATTEST_FINGERPRINT_ENV, ATTEST_BASE_ENV]
-      .filter((k) => process.env[k] !== undefined)
+    ATTEST_ENV_VARS.filter((k) => process.env[k] !== undefined)
       .map((k) => [k, process.env[k]]),
   );
   for (const k of Object.keys(attest)) delete process.env[k];

@@ -40,6 +40,7 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const HEX40_RE = /^[0-9a-f]{40}$/;
+const COVERAGE_DECLARED_HASH_REASON = 'final: evidenceHashes.coverageDeclared, when present, must be a 64-hex sha256 of the declared coverage list';
 
 export const validateEvidenceRecord = (record) => {
   if (!isPlainObject(record)) return { ok: false, reason: 'record is not an object' };
@@ -104,6 +105,9 @@ export const validateEvidenceRecord = (record) => {
     // (still valid); present must be the 64-hex owner-scoped projection hash.
     if ('flow' in record.evidenceHashes && (typeof record.evidenceHashes.flow !== 'string' || !HEX64_RE.test(record.evidenceHashes.flow))) {
       return { ok: false, reason: 'final: evidenceHashes.flow, when present, must be a 64-hex sha256 of the owner-scoped flow projection' };
+    }
+    if ('coverageDeclared' in record.evidenceHashes && (typeof record.evidenceHashes.coverageDeclared !== 'string' || !HEX64_RE.test(record.evidenceHashes.coverageDeclared))) {
+      return { ok: false, reason: COVERAGE_DECLARED_HASH_REASON };
     }
     if (record.lcovSha256 !== null && (typeof record.lcovSha256 !== 'string' || !HEX64_RE.test(record.lcovSha256))) {
       return { ok: false, reason: 'final: lcovSha256 must be a 64-hex sha256 of the consumed lcov file, or null when none was produced' };

@@ -116,6 +116,22 @@ describe('validateEvidenceRecord — versioned schema, closed kinds, per-kind fi
       assert.match(v.reason, /evidenceHashes\.flow/);
     }
   });
+  it('spec:core-evidence/S7 evidenceHashes.coverageDeclared: absent valid, 64-hex valid, anything else malformed', () => {
+    const done = {
+      schema: 1, kind: 'final', status: 'green', attempt: 'a1',
+      fingerprintBefore: 'c'.repeat(64), fingerprintAfter: 'c'.repeat(64),
+      declared: [{ id: 'unit-tests', cmd: 'node --test x' }],
+      results: [{ id: 'unit-tests', ok: true, code: 0 }],
+      evidenceHashes: { redProof: 'a'.repeat(64), degrade: 'b'.repeat(64) },
+      lcovSha256: null, integrityFailure: null, timestamp: 't' };
+    assert.equal(validateEvidenceRecord(done).ok, true);
+    assert.equal(validateEvidenceRecord({ ...done, evidenceHashes: { ...done.evidenceHashes, coverageDeclared: 'd'.repeat(64) } }).ok, true);
+    for (const coverageDeclared of [42, null, '', 'd'.repeat(63), 'z'.repeat(64)]) {
+      const result = validateEvidenceRecord({ ...done, evidenceHashes: { ...done.evidenceHashes, coverageDeclared } });
+      assert.equal(result.ok, false, `coverageDeclared=${JSON.stringify(coverageDeclared)} must be malformed`);
+      assert.match(result.reason, /evidenceHashes\.coverageDeclared/);
+    }
+  });
   it('the final kinds enforce attempt linkage, 1:1 ordered results, and status consistency (fail closed)', () => {
     const done = {
       schema: 1, kind: 'final', status: 'green', attempt: 'a1',

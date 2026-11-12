@@ -285,7 +285,7 @@ const CATALOG = [
     invocation: invocationOf('coverage-check'),
     group: 'Orchestrate',
     kind: PROJECT_EXEC,
-    oneLine: 'The final-run checker: every CHANGED executable Node line must be covered by the lcov the declared unit-tests gate produced (uncovered lines listed file:line), and every current-base red-proof declaration must verify (bound test green N/N, content custody intact); --check turns it into a gate exit code.',
+    oneLine: 'The final-run checker: every CHANGED executable Node line must be covered by the lcov the declared unit-tests gate produced (uncovered lines listed file:line), and every current-base red-proof declaration must verify (bound test green N/N, content custody intact); a changed file listed in docs/ai/coverage-declared.json that nothing ran is not judged and is printed with its reason; --check turns it into a gate exit code.',
   },
   {
     key: 'commit-guard',
