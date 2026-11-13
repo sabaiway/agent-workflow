@@ -14,12 +14,13 @@ import assert from 'node:assert/strict';
 import fs, { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync, mkdirSync, realpathSync, cpSync, chmodSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { computeTreeFingerprint, resolveBase } from './core-evidence.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { judgeBlock } from './checker-verdict/index.mjs';
 
 const cov = await import('./coverage-check.mjs').catch(() => null);
 const {
@@ -224,7 +225,11 @@ describe('coverage-check --check — the status of the lcov path — spec:checke
       t.after(() => { if (locked) chmodSync(dirname(lcovPath), 0o700); rmSync(root, { recursive: true, force: true }); });
       const { code: exit, stdout } = checkAt(t, root, lcovPath, fault);
       const count = (pattern) => (stdout.match(pattern) ?? []).length;
-      assert.deepEqual([exit, stdout.split('\n').some((line) => line.includes(lcovPath) && line.includes(code ?? '')), count(/^coverage-check: lcov-sha256=none$/gm), count(/^coverage-check: attested=no$/gm), /PASS/.test(stdout)], [1, true, 1, 1, false], stdout);
+      const place = relative(root, lcovPath);
+      const findings = stdout.split('\n').filter((line) => line.startsWith(`${place}: `));
+      assert.deepEqual([exit, findings.length, findings[0]?.includes(code ?? fault.message), count(/^coverage-check: lcov-sha256=none$/gm), count(/^coverage-check: attested=no$/gm), /PASS/.test(stdout)], [1, 1, true, 1, 1, false], stdout);
+      assert.deepEqual(judgeBlock(stdout, { name: 'coverage-check', places: [place] }), []);
+      assert.doesNotMatch(stdout, /^  |REFUSED|^coverage-check: FAIL — uncovered\/unattributed changed Node lines:/m);
     });
   }
   it('an lcov path that does not exist keeps skipped-no-lcov: exit 0, and 1 beside a malformed store as today', (t) => {
@@ -259,6 +264,12 @@ describe('coverage-check --check — the attestation handshake', () => {
       schema: 1, kind: 'final-start', fingerprint: fp,
       attempt: commitmentFor(nonce, fp, b), timestamp: '2026-07-27T00:00:00Z',
     })}\n`);
+  };
+  const assertRefusalBlock = (stdout, fact) => {
+    assert.deepEqual(judgeBlock(stdout, { name: 'coverage-check', places: ['.'] }), []);
+    assert.match(stdout, new RegExp(`^\\.: .*${fact}`, 'm'));
+    assert.deepEqual([/^  |REFUSED|PASS/m.test(stdout), (stdout.match(/^\.: /gm) ?? []).length], [false, 1]);
+    assert.deepEqual([stdout.match(/^coverage-check: lcov-sha256=[0-9a-f]{64}$/gm)?.length, stdout.match(/^coverage-check: attested=no$/gm)?.length], [1, 1]);
   };
 
   it('a valid handshake ATTESTS — the PASS line returns', () => {
@@ -341,8 +352,7 @@ describe('coverage-check --check — the attestation handshake', () => {
     const r = main(['--check', '--cwd', root], { env: attestEnv(root, { fingerprint: 'a'.repeat(64) }) });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /REFUSED — the tree MOVED/);
-    assert.doesNotMatch(r.stdout, /PASS — every changed Node line is covered/);
+    assertRefusalBlock(r.stdout, 'the tree MOVED');
   });
 
   it('a handshake matching NO recorded attempt is a refusal (the store lost the start)', () => {
@@ -351,7 +361,7 @@ describe('coverage-check --check — the attestation handshake', () => {
     const r = main(['--check', '--cwd', root], { env: attestEnv(root) });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /REFUSED — the attestation context matches no recorded final-run attempt/);
+    assertRefusalBlock(r.stdout, 'matches no recorded final-run attempt');
   });
 
   it('a DIFFERENT nonce never matches the recorded commitment (the persisted half is not replayable)', () => {
@@ -361,7 +371,7 @@ describe('coverage-check --check — the attestation handshake', () => {
     const r = main(['--check', '--cwd', root], { env: attestEnv(root, { nonce: 'a-guess' }) });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 1);
-    assert.match(r.stdout, /REFUSED/);
+    assertRefusalBlock(r.stdout, 'matches no recorded final-run attempt');
   });
 
   it('an UNDECIDABLE identity refuses rather than attesting (the seam the CLI cannot reach)', () => {

@@ -18,11 +18,10 @@ const HEX_RADIX = 16;
 const ESCAPE_WIDTH = 4;
 const ESCAPE_PADDING = '0';
 const EMPTY_TEXT = '';
-const CONFIG_FAILURE_PREFIX = `coverage-check: FAIL — ${COVERAGE_DECLARED_REL}: `;
 const PASS_LINE = 'coverage-check: PASS — every changed Node line is covered';
 
 const makeResult = (configFailure = null) => ({ configFailure, notJudged: [], lines: [], failures: [] });
-const makeConfigFailure = (defect) => makeResult(`${CONFIG_FAILURE_PREFIX}${defect}`);
+const makeConfigFailure = (defect) => makeResult(defect);
 const renderAsciiLine = (value) => Array.from(String(value), (character) => {
   const codePoint = character.codePointAt(ZERO);
   return codePoint >= ASCII_FIRST && codePoint <= ASCII_LAST
@@ -55,7 +54,7 @@ export const judgeDeclaredList = ({ top, read, changed, spawn }) => {
       continue;
     }
     if (probe.outcome === FOREIGN || probe.outcome === ERROR) {
-      result.failures.push(`${entry.path}: listed in ${COVERAGE_DECLARED_REL} but not a regular file`);
+      result.failures.push({ path: entry.path, text: `listed in ${COVERAGE_DECLARED_REL} but not a regular file` });
       continue;
     }
     if (changed === null) continue;

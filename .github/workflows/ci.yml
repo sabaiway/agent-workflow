@@ -78,7 +78,7 @@ jobs:
           node --test \
             agent-workflow-memory/{scripts,bin}/*.test.mjs \
             'agent-workflow-memory/references/scripts/**/*.test.mjs' \
-            agent-workflow-kit/{tools,tools/manifest,tools/services,tools/project-rules,tools/source-size,tools/checker-verdict,tools/coverage-declared,bin}/*.test.mjs \
+            agent-workflow-kit/{tools,tools/manifest,tools/services,tools/project-rules,tools/source-size,tools/checker-verdict,tools/coverage-declared,tools/checker-block,tools/coverage-check,bin}/*.test.mjs \
             'agent-workflow-kit/references/scripts/**/*.test.mjs' \
             agent-workflow-kit/tools/*.test/*.test.mjs \
             agent-workflow-kit/test/*.test.mjs \

@@ -1240,11 +1240,27 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `records`); Node 24 passes. CI has been red on every release push since kit 19.1.0; only this cause was read.
   Narrow fix: build every fixture synchronously before the first `await`, or move the hook into a `describe`. Residual
   exposure, live: CI is red on main, so a real floor regression is not seen. Raised at the KIT-TEXT release.
-- **CI-GLOBS-MISS-THE-NEW-SUITE-FOLDERS** — invariant: CI and the publish step run every tracked suite the local gate
-  runs. Origin: `.github/workflows/ci.yml:68-71` and `_publish-one.yml:171` name fixed-depth globs, so
-  `agent-workflow-kit/tools/transition/*.test.mjs` and `agent-workflow-kit/tools/project-rules/*.test/*.test.mjs`
-  (KIT-TEXT S1, S2) never run there; the gate's `tools/**` runs them. Narrow fix: name both folders in both lists.
-  Residual exposure, live: the transition module ships with its suites run only locally. Raised at the KIT-TEXT release.
+- **CI-GLOBS-MISS-THE-NEW-SUITE-FOLDERS** — invariant: CI and the publish step run every tracked suite the local
+  gate runs. Origin: `.github/workflows/ci.yml:81` and `.github/workflows/_publish-one.yml:181` list the kit's test
+  folders one by one, and `scripts/testing/package-seal.test.mjs:15-35,188-194` pins that the listed entries stay,
+  never that every tracked `*.test.mjs` matches one; `agent-workflow-kit/tools/transition/*.test.mjs`,
+  `agent-workflow-kit/tools/distribution-files/*.test.mjs` and
+  `agent-workflow-kit/tools/project-rules/rules-ensure.test/*.test.mjs` run in neither list (KIT-TEXT S1, S2 and
+  later), while the gate's `tools/**` runs them. Narrow fix: name each such folder in both lists and in the seal
+  suite's two constants; story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE names its two (rows t8 and c1).
+  Proof of the generalization: one cell of the seal suite that expands both lists over the tracked tree and names
+  every `*.test.mjs` no entry reaches. Residual exposure, live: the transition, distribution-files and rules-ensure
+  engine-theme suites ship run only locally. Raised at the KIT-TEXT release; widened at round 2 of the S6 spec review
+  (2026-11-13), the rules-ensure folder kept at the re-read of codex and of the lens.
+- **SIZE-CHECK-KEEPS-ITS-OWN-COPY-OF-THE-FINDING-PLACE-RULE** — invariant: the rule that decides whether a path is a
+  finding's place has one home in the kit. Origin: `findingPart` in `agent-workflow-kit/tools/source-size-report.mjs:213-220`
+  judges a place by its own facts, while story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE adds the kit's
+  helper `agent-workflow-kit/tools/checker-block/place.mjs`. Narrow fix: none in S6, since a story of the
+  size-practice epic carried that file while S6 was specified; the fix has the size check's report hand its findings
+  to the helper. Proof: the size check's stop-rendering suite green over the helper, and one cell per fact the two
+  rules judge differently. Residual exposure, not live: both rules place a path that is no place at `.`; they differ
+  only in which paths they call no place, and no run printed a block outside the form. Raised at the S6 spec review
+  (2026-11-13).
 - **BRIDGE-REVIEWS-CANNOT-CARRY-A-LARGE-RELEASE-DIFF** — invariant: a council code review of a release's staged diff
   runs with no host change. Origin: the KIT-TEXT diff (139 files, 1.09 M characters) passed codex's 1 048 576-character
   input only through the host setting `CODEX_REVIEW_MAX_TOTAL_BYTES` (a file the sandbox cannot write, set with the

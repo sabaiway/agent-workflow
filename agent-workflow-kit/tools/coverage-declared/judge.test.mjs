@@ -8,12 +8,12 @@ import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv, resolveGitLocation, stripGitLocationEnv } from '../git-env.mjs';
 import { main } from '../coverage-check.mjs';
 import { isLineUnsafe } from '../source-size-refusal.mjs';
+import { judgeBlock } from '../checker-verdict/index.mjs';
 
 const declared = await import('./index.mjs').catch(() => ({}));
 const census = await import('../tracked-tree-census.mjs').catch(() => ({}));
 const LIST = 'docs/ai/coverage-declared.json';
 const PREFIX = 'coverage-check: declared list — ';
-const CONFIG_FAILURE = `coverage-check: FAIL — ${LIST}: `;
 const SHAPE = '{ "schema": 1, "_README"?: string, "entries": [{ "path": string, "reason": string }, ...] }';
 const REASON = 'Copied to a temporary directory and tested there.';
 const SOURCE = 'export const first = 1;\nexport const second = 2;\nexport const third = 3;\n';
@@ -85,7 +85,7 @@ const withLines = (lines, notJudged = [], failures = []) => ({ ...emptyResult(),
 const note = (path) => `${PREFIX}names no file of this tree: ${path}`;
 const applied = (path) => `${PREFIX}not judged, no executed line in the coverage data: ${path} — ${REASON}`;
 const executed = (path) => `${PREFIX}did not apply, the coverage data shows an executed line: ${path}`;
-const treeFailure = (path) => `${path}: listed in ${LIST} but not a regular file`;
+const treeFailure = (path) => ({ path, text: `listed in ${LIST} but not a regular file` });
 const NO_DATA = `${PREFIX}no coverage data was read, so no entry applied (1 listed)`;
 const UNCHANGED = `${PREFIX}1 listed file(s) unchanged, not looked up`;
 const changedAbsent = () => new Map([['lib.mjs', undefined]]);
@@ -168,8 +168,8 @@ it('spec:coverage-declared/S1 judges the complete run, entry, tree and change ta
       changed: Object.hasOwn(row, 'changed') ? row.changed : changedAbsent(), spawn });
     if (row.defect) {
       assert.equal(typeof result.configFailure, 'string');
-      assert.ok(result.configFailure.startsWith(CONFIG_FAILURE), result.configFailure);
-      const defect = result.configFailure.slice(CONFIG_FAILURE.length);
+      const defect = result.configFailure;
+      assert.doesNotMatch(defect, /^coverage-check:/);
       assert.equal(isLineUnsafe(defect), false);
       if (typeof row.defect === 'string') assert.ok(defect.includes(row.defect), defect);
       else assert.match(defect, row.defect);
@@ -180,7 +180,7 @@ it('spec:coverage-declared/S1 judges the complete run, entry, tree and change ta
         assert.equal(defect, parsed.defect);
       }
       if (row.gitFailure) assert.match(defect, /7|unavailable/);
-      assert.deepEqual(result, { ...emptyResult(), configFailure: `${CONFIG_FAILURE}${defect}` });
+      assert.deepEqual(result, { ...emptyResult(), configFailure: defect });
     } else assert.deepEqual(result, row.expected);
   }));
 });
@@ -205,11 +205,13 @@ it('spec:coverage-declared/S6 judges zero-hit changed lines when another line ex
   assert.equal(result.stderr, '');
   assert.equal(result.code, 1, result.stdout);
   assert.ok(lines.includes(executed('lib.mjs')), result.stdout);
-  assert.ok(lines.includes('  lib.mjs:2'), result.stdout);
-  assert.ok(lines.includes('  lib.mjs:3'), result.stdout);
-  assert.ok(!lines.includes('  lib.mjs:1'), result.stdout);
-  assert.ok(lines.indexOf(executed('lib.mjs')) < lines.indexOf('coverage-check: FAIL — uncovered/unattributed changed Node lines:'));
-  assert.doesNotMatch(result.stdout, /not judged, no executed line/);
+  const findings = lines.filter((line) => /^lib\.mjs:\d+: .+/.test(line));
+  const places = ['lib.mjs:2', 'lib.mjs:3'];
+  assert.deepEqual(findings.map((line) => line.split(': ')[0]), places);
+  assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places }), []);
+  assert.doesNotMatch(result.stdout, /^coverage-check: FAIL — uncovered\/unattributed changed Node lines:/m);
+  assert.ok(lines.indexOf(executed('lib.mjs')) > lines.findLastIndex((line) => line.startsWith('coverage-check: REMEDY — ')));
+  assert.doesNotMatch(result.stdout, /^  |REFUSED|coverage-check: PASS|not judged, no executed line/m);
 }));
 
 describe('spec:coverage-declared/S9 compares git names byte for byte before probing the tree', () => {
@@ -218,10 +220,15 @@ describe('spec:coverage-declared/S9 compares git names byte for byte before prob
     writeList(root, encodeList(['Lib.mjs']));
     writeLcov(root, [0, 0, 0]);
     const result = runChecker(root);
+    const lines = result.stdout.split('\n');
     assert.equal(result.code, 1, result.stdout);
-    assert.ok(result.stdout.split('\n').includes(note('Lib.mjs')), result.stdout);
-    for (const line of [1, 2, 3]) assert.ok(result.stdout.split('\n').includes(`  lib.mjs:${line}`), result.stdout);
-    assert.doesNotMatch(result.stdout, /not judged, no executed line/);
+    assert.ok(lines.includes(note('Lib.mjs')), result.stdout);
+    const places = [1, 2, 3].map((line) => `lib.mjs:${line}`);
+    assert.deepEqual(lines.filter((line) => /^lib\.mjs:\d+: .+/.test(line)).map((line) => line.split(': ')[0]), places);
+    assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places }), []);
+    assert.doesNotMatch(result.stdout, /^coverage-check: FAIL — uncovered\/unattributed changed Node lines:/m);
+    assert.ok(lines.indexOf(note('Lib.mjs')) > lines.findLastIndex((line) => line.startsWith('coverage-check: REMEDY — ')));
+    assert.doesNotMatch(result.stdout, /^  |REFUSED|coverage-check: PASS|not judged, no executed line/m);
   }));
 
   it('notes an unstaged deletion', () => withRepo((root) => {

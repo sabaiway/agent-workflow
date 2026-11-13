@@ -706,7 +706,7 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
   // The SECOND Decision-5 point of use (AD-044 Plan 4): the L0 checker tools each state their
   // sandbox-lane contract line on their own HELP/header surface (the canon-side twin is the engine's).
   it('the four L0 checker tools carry the sandbox-lane contract line on their own surfaces', () => {
-    for (const rel of ['run-gates.mjs', 'review-state.mjs', 'core-evidence.mjs', 'coverage-check.mjs']) {
+    for (const rel of ['run-gates.mjs', 'review-state.mjs', 'core-evidence.mjs', 'coverage-check/help.mjs']) {
       const src = readFileSync(join(HERE, rel), 'utf8');
       assert.match(src, /Sandbox-safe/, `${rel} states its sandbox-lane contract line`);
     }

@@ -4,6 +4,29 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.9.0 — a failed coverage check shows what failed and the fix first (AD-237)
+
+**After `/agent-workflow-kit upgrade`, a red `coverage-check.mjs --check` run opens with its failure, and so do a
+usage mistake and an unexpected error.** Before, a red run printed its machine lines and notes first and its failures
+after them in indented groups, a refused attestation context as a `REFUSED` line; a usage mistake and an unexpected
+error went to standard error.
+
+- **A red run prints one block on standard output:** `coverage-check: FAIL — <what failed>`, naming each class it
+  meets in a fixed order (the declared list, the lcov file, changed Node lines or files uncovered with their count,
+  red-proof obligations unmet with their count, the evidence store, the attestation context refused); then each
+  finding at column one starting with its place (`file:line`, a file, or `.` with the path leading its text when the
+  path cannot stand as a place); then one `coverage-check: REMEDY — …` line per class; then the lines a green run
+  prints, in their old order.
+- **A usage mistake** prints the verdict line and the `Usage:` lines (exit 2); **an unexpected error** prints the
+  verdict line naming it, a REMEDY line and the stack, with no machine line (exit 1). Standard error stays empty.
+- **What stays:** every exit code, everything the check judges, both machine lines (`lcov-sha256=` and `attested=`)
+  in count and content, and every run that exits 0, byte for byte. Two stated exceptions: `--help` says
+  "attestation context refused" where it said `REFUSED`; and in a red run with no attestation context
+  the `NO VERDICT` line says the findings stand above it.
+- **A new kit module, `tools/checker-block/`,** places each finding and makes the verdict text, each finding's
+  text, the remedies and the after lines safe before the shared composer; the later checkers of the kit's tools will
+  use it too.
+
 ## 23.8.0 — the size record's reasons stay honest, and every run says what its scope left out (AD-236)
 
 **After `/agent-workflow-kit upgrade`, the kit writes its own reason `initial adoption` only into record entries the

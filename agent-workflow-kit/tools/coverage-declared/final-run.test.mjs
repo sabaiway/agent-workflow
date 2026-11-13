@@ -12,6 +12,7 @@ import { computeTreeFingerprint } from '../core-evidence.mjs';
 import * as checker from '../coverage-check.mjs';
 import { runCli, runGates, spawnGateViaBash, RESERVED_CAPABILITY_ENV } from '../run-gates.mjs';
 import { runGuard } from '../commit-guard.mjs';
+import { judgeBlock } from '../checker-verdict/index.mjs';
 
 const declared = await import('./index.mjs').catch(() => ({}));
 const TOOLS = fileURLToPath(new URL('../', import.meta.url));
@@ -24,7 +25,6 @@ const REASON = 'Copied to the git directory and tested there, never loaded at it
 const SOURCE = "import assert from 'node:assert/strict';\nassert.equal(2 + 2, 4);\n";
 const PASS = 'coverage-check: PASS — every changed Node line is covered';
 const GUARD_REFUSAL = 'commit-guard: REFUSED — the declared coverage list is not the one the final run bound (';
-const CHECKER_REFUSAL = 'coverage-check: REFUSED — the declared coverage list is not the one the final run started with (';
 const MOVED = 'the declared coverage list moved under the final run';
 const CANONICAL = [
   { id: 'review-state', title: 'rs', cmd: `node "${join(TOOLS, 'review-state.mjs')}" --check` },
@@ -217,10 +217,24 @@ it('a gate replacing the start list is refused by the checker (spec:coverage-dec
   const producer = { ...UNIT_TESTS, cmd: `printf '%s' '${replacement}' > '${LIST}' && ${UNIT_TESTS.cmd}` };
   writeFileSync(join(root, 'docs/ai/gates.json'), JSON.stringify({ gates: [producer, ...CANONICAL] }));
   runGit(root, ['add', '-A']);
-  const result = runFinal(root);
+  const checkerOutput = [];
+  const result = runFinal(root, {}, (command, cwd, env) => {
+    const answer = spawnGateViaBash(command, cwd, env);
+    if (command === CANONICAL[1].cmd) checkerOutput.push(String(answer.stdout));
+    return answer;
+  });
   assert.notEqual(result.code, 0, result.output);
   assert.ok(result.output.split('\n').includes('coverage-check: attested=no'), result.output);
-  assert.ok(result.output.split('\n').some((line) => line.startsWith(CHECKER_REFUSAL)), result.output);
+  assert.equal(checkerOutput.length, 1, result.output);
+  const stdout = checkerOutput[0];
+  const lines = stdout.split('\n');
+  assert.deepEqual(lines.filter((line) => line.startsWith('.: ')),
+    [`.: the declared coverage list is not the one the final run started with (${hashBytes(encodeList()).slice(0, 12)} handed, ${hashBytes(replacement).slice(0, 12)} read); re-run run-gates.mjs --final`]);
+  assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('.: ')), lines.filter((line) => line.startsWith('.: ')));
+  assert.deepEqual(judgeBlock(stdout, { name: 'coverage-check', places: ['.'] }), []);
+  assert.deepEqual(lines.filter((line) => line.startsWith('coverage-check: attested=')), ['coverage-check: attested=no']);
+  assert.equal(lines.filter((line) => /^coverage-check: lcov-sha256=[0-9a-f]{64}$/.test(line)).length, 1);
+  assert.doesNotMatch(stdout, /^  |REFUSED|coverage-check: PASS/m);
   assert.equal(latestFinal(root).status, 'red');
 }));
 

@@ -400,6 +400,9 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // the D3(c)+(d) final-run checker (fixed git-dir lcov path + red-proof verification) and the
       // D10 read-only pre-commit guard that binds the run-gates --final receipt
       'tools/coverage-check.mjs',
+      'tools/checker-block/index.mjs', 'tools/checker-block/place.mjs',
+      'tools/checker-block/tail.mjs', 'tools/coverage-check/index.mjs',
+      'tools/coverage-check/block.mjs', 'tools/coverage-check/help.mjs',
       'tools/commit-guard.mjs',
       // the source-size practice: the pure read core (the ONE import point for the read surfaces)
       // and the CLI + writer half, plus the four leaves the core re-exports and the checker's own
@@ -938,7 +941,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 394 = 393 + bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs - story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE; 396 = 394 + bridges/codex-cli-bridge/bin/{codex-fixtures-harness.test.mjs,codex-fixtures.test.mjs} - story S19 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     // 403 = 402 + tools/source-size/help.mjs (the command line help) - story S5 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE
     // 405 = 403 + tools/source-size/reason.mjs and tools/source-size-runs.mjs - story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [405, []], `tarball file count drifted (${packed.length}\u2260 405), or a retired leaf ships`);
+    // 411 = 405 + tools/checker-block/{index,place,tail}.mjs and tools/coverage-check/{index,block,help}.mjs - story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [411, []], `tarball file count drifted (${packed.length}\u2260 411), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

@@ -22,13 +22,20 @@
 
 import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { computeChangedSurface } from './changed-surface.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { lcovCoveredMap, uncoveredChangedFromLcov } from './lcov.mjs';
-import { COVERAGE_DECLARED_REL, resolveDeclaredListPath, readDeclaredList, judgeDeclaredList, compareDeclaredAttest, declaredPassLine } from './coverage-declared/index.mjs';
+import { resolveDeclaredListPath, readDeclaredList, judgeDeclaredList, compareDeclaredAttest, declaredPassLine } from './coverage-declared/index.mjs';
+import { composeUsageRefusal } from '../references/scripts/shared/index.mjs';
+import { runCheckerTail } from './checker-block/index.mjs';
+import {
+  CHECKER_NAME, LCOV_BASENAME, composeCoverageBlock, isRed, composeHelp, composeUsage,
+  buildDeclaredFindings, buildLcovFindings, buildUncoveredFindings, buildRedProofFindings,
+  buildEvidenceFindings, buildAttestationFindings,
+} from './coverage-check/index.mjs';
 import {
   computeTreeFingerprint,
   resolveBase,
@@ -45,9 +52,12 @@ import {
 } from './core-evidence.mjs';
 
 export const COVERAGE_CHECK_STOP = 'COVERAGE_CHECK_STOP';
-const usageFail = (message) => Object.assign(new Error(`[agent-workflow-kit] ${message}`), { exitCode: 2 });
-
-export const LCOV_BASENAME = 'agent-workflow-lcov.info';
+export { LCOV_BASENAME };
+const USAGE_EXIT_CODE = 2;
+const ERROR_EXIT_CODE = 1;
+const NOT_FOUND = -1;
+const LINE_FEED = '\n';
+const ERROR_REMEDY = 'fix the cause the stack below names, then re-run';
 
 const gitLine = (args, cwd) => {
   const r = spawnSync('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
@@ -70,19 +80,18 @@ export const resolveLcovPath = (cwd, env = process.env) => {
 const checkCoverage = ({ rootTop, lcovPath, judgeDeclared }) => {
   const notes = [];
   const failures = [];
-  let st = null;
-  try {
-    st = lstatSync(lcovPath);
-  } catch (error) {
-    if (error?.code === 'ENOENT') {
-      return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null, declared: judgeDeclared(null) };
+  const status = (() => {
+    try {
+      return { file: lstatSync(lcovPath) };
+    } catch (error) {
+      return { error };
     }
-    failures.push(`${lcovPath}: status could not be read (${error?.code ?? 'fs error'})`);
-    return { failures, notes, skipped: false, lcovSha256: null, declared: judgeDeclared(null) };
+  })();
+  if (status.error?.code === 'ENOENT') {
+    return { failures, notes: [`skipped-no-lcov: no lcov file at ${lcovPath} — NO coverage check ran (produce it via the declared unit-tests gate cmd's lcov reporters)`], skipped: true, lcovSha256: null, declared: judgeDeclared(null) };
   }
-  if (!st.isFile()) {
-    failures.push(`${lcovPath}: not a regular file (a symlink/device is never read — fail closed)`);
-    return { failures, notes, skipped: false, lcovSha256: null, declared: judgeDeclared(null) };
+  if (status.error || !status.file.isFile()) {
+    return { failures, lcovFailure: { path: resolve(lcovPath), error: status.error }, notes, skipped: false, lcovSha256: null, declared: judgeDeclared(null) };
   }
   const surface = computeChangedSurface(rootTop);
   const lcovBytes = readFileSync(lcovPath);
@@ -94,10 +103,10 @@ const checkCoverage = ({ rootTop, lcovPath, judgeDeclared }) => {
     const key = keyFor(rootTop, rel);
     const uncovered = uncoveredChangedFromLcov(covered, key, lines);
     if (uncovered === null) {
-      failures.push(`${rel}: absent from coverage — the suite never executed this changed file`);
+      failures.push({ path: rel });
       continue;
     }
-    for (const n of uncovered) failures.push(`${rel}:${n}`);
+    for (const n of uncovered) failures.push({ path: rel, line: n });
   }
   if (surface.outOfDomain.length > 0) {
     notes.push(`out-of-domain changed files (no Node-line coverage claim; covered by their own suites): ${surface.outOfDomain.join(', ')}`);
@@ -209,17 +218,17 @@ const verifyRedProofs = ({ rootTop, cwd, env }) => {
   for (const record of bound) {
     const id = record.testId;
     if (record.fingerprint === fingerprint) {
-      failures.push(`${id}: the record's pre-fix fingerprint EQUALS the current tree — nothing changed since the observed red (reuse/forgery); re-observe on the pre-fix tree`);
+      failures.push({ file: record.file, testId: id, reason: "the record's pre-fix fingerprint EQUALS the current tree — nothing changed since the observed red (reuse/forgery); re-observe on the pre-fix tree" });
       continue;
     }
     const resolved = resolveTestFile(rootTop, record.file);
     if (!resolved.ok) {
-      failures.push(`${id}: the bound test file ${resolved.reason.includes('does not exist') ? 'was deleted — ' : ''}${resolved.reason}`);
+      failures.push({ file: record.file, testId: id, reason: `the bound test file ${resolved.reason.includes('does not exist') ? 'was deleted — ' : ''}${resolved.reason}` });
       continue;
     }
     const currentHash = hashFileBytes(resolved.abs);
     if (currentHash !== record.fileHash) {
-      failures.push(`${id}: the bound test file's content changed since the observed red (hash mismatch) — re-observe red at the new expectations`);
+      failures.push({ file: record.file, testId: id, reason: "the bound test file's content changed since the observed red (hash mismatch) — re-observe red at the new expectations" });
       continue;
     }
     let greens = 0;
@@ -232,11 +241,11 @@ const verifyRedProofs = ({ rootTop, cwd, env }) => {
       if (p.resolvable && p.baselineGreen) greens += 1;
     }
     if (executed === 0) {
-      failures.push(`${id}: the pattern selects no test (zero-match) — the declared red→green pin is gone`);
+      failures.push({ file: record.file, testId: id, reason: 'the pattern selects no test (zero-match) — the declared red→green pin is gone' });
       continue;
     }
     if (greens !== reruns) {
-      failures.push(`${id}: not green ${reruns}/${reruns} at the final run (${greens}/${reruns} green) — the declared fix is red`);
+      failures.push({ file: record.file, testId: id, reason: `not green ${reruns}/${reruns} at the final run (${greens}/${reruns} green) — the declared fix is red` });
     }
   }
   return { failures, verified: bound.length };
@@ -250,7 +259,6 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   const read = readDeclaredList(resolveDeclaredListPath(rootTop));
   const lcovPath = resolveLcovPath(cwd, env);
   const lines = [];
-  let failed = false;
   // The identity is read BEFORE the coverage arm and again AFTER it: a single up-front comparison
   // leaves a window in which the tree moves between the surface walk and the verdict.
   const identityBefore = { fingerprint: computeTreeFingerprint(cwd), base: resolveBase(cwd) };
@@ -264,29 +272,10 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   lines.push(`coverage-check: lcov-sha256=${cov.lcovSha256 ?? 'none'}`);
   for (const note of cov.notes) lines.push(`coverage-check: ${note}`);
   lines.push(...declared.lines);
-  if (declared.configFailure) {
-    failed = true;
-    lines.push(declared.configFailure);
-  }
-  const failures = [...cov.failures, ...declared.failures];
-  if (failures.length > 0) {
-    failed = true;
-    lines.push('coverage-check: FAIL — uncovered/unattributed changed Node lines:');
-    for (const f of failures) lines.push(`  ${f}`);
-  }
   // The probes must never inherit a live attestation capability (a detached descendant could keep it).
   const red = verifyRedProofs({ rootTop, cwd, env: withoutAttestEnv(env) });
-  if (red.storeFailure) {
-    failed = true;
-    lines.push(`coverage-check: FAIL — ${red.storeFailure}`);
-  } else {
-    if (red.failures.length > 0) {
-      failed = true;
-      lines.push('coverage-check: FAIL — red-proof obligations not satisfied:');
-      for (const f of red.failures) lines.push(`  ${f}`);
-    } else if (red.verified > 0) {
-      lines.push(`coverage-check: ${red.verified} red-proof record(s) verified green N/N with custody intact`);
-    }
+  if (!red.storeFailure && red.failures.length === 0 && red.verified > 0) {
+    lines.push(`coverage-check: ${red.verified} red-proof record(s) verified green N/N with custody intact`);
   }
   // Re-read the identity AFTER the coverage arm and re-decide: the attestation must describe the
   // tree the verdict was actually computed over, not the one it started over.
@@ -303,10 +292,16 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   // EXACTLY ONE fully anchored machine line, the lcov-sha256 contract's sibling — the runner binds
   // it, so a missing/duplicated/injected one is an integrity failure rather than a silent green.
   lines.push(`coverage-check: attested=${attesting ? 'yes' : 'no'}`);
-  if (attestation.refusal) {
-    failed = true;
-    lines.push(`coverage-check: REFUSED — ${attestation.refusal}`);
-  } else if (!attesting) {
+  const classes = [
+    buildDeclaredFindings(declared),
+    buildLcovFindings(cov.lcovFailure),
+    buildUncoveredFindings(cov.failures),
+    buildRedProofFindings(red.failures ?? []),
+    buildEvidenceFindings(red.storeFailure ? resolve(storePath) : storePath, red.storeFailure),
+    buildAttestationFindings(rootTop, attestation.refusal),
+  ];
+  const failed = isRed(classes);
+  if (!attestation.refusal && !attesting) {
     lines.push(`coverage-check: NO VERDICT — ${contextValid ? NO_BYTES_NO_VERDICT : attestation.reason}`);
   }
   // The attestation gates ONLY the coverage claim. Every pre-existing fail-closed refusal above
@@ -314,71 +309,28 @@ export const runCheck = ({ cwd = process.cwd(), env = process.env } = {}) => {
   if (attesting && !failed && cov.failures.length === 0) {
     lines.push(declaredPassLine(declared.notJudged.length));
   }
-  return { code: failed ? 1 : 0, lines };
+  return { code: failed ? 1 : 0, lines: composeCoverageBlock({ root: rootTop, classes, after: lines, withoutContext: !contextValid }) };
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 
-const HELP = `coverage-check — the D3(c)+(d) final-run checker (agent-workflow family).
-
-Usage:
-  node coverage-check.mjs --check [--cwd <dir>]
-
-Reads the FIXED kit-owned lcov file (<git dir>/${LCOV_BASENAME}; AW_LCOV_FILE overrides —
-produced by the declared unit-tests gate cmd's --experimental-test-coverage lcov reporters and
-deleted fresh by run-gates --final), lists uncovered CHANGED executable Node lines file:line,
-lists changed out-of-domain files (the coverage claim is narrowed to Node lines), and VERIFIES
-every current-base red-proof record: bound test present, content hash unchanged, green N/N
-(AW_CORE_EVIDENCE_RERUNS, default 3), pre-fix fingerprint differing from the current tree.
-An absent lcov file (ENOENT) is a LOUD skipped-no-lcov (exit 0 — NO coverage check ran, stated).
-Any other lcov status failure, a symlinked lcov path, an uncovered line, a broken red-proof
-obligation, or a malformed evidence store fails (exit 1).
-A changed file listed in ${COVERAGE_DECLARED_REL} (one { path, reason } entry per file nothing
-runs at its repository path) with no executed line in the lcov read is not judged; it and every
-other list line print on every run. An unreadable or malformed list fails (exit 1); with a context
-the list must be the one the final run started with (AW_FINAL_ATTEST_DECLARED), else REFUSED.
-
-A coverage VERDICT is issued ONLY inside the run that owns the artifact's lifetime: run-gates
---final deletes the lcov before any gate spawns and hands this checker an attestation context
-(a nonce whose one-way commitment over {nonce, fingerprint, base} is the final-start attempt id).
-One anchored machine line rides every run: coverage-check: attested=<yes|no>. It states whether a
-coverage VERDICT was ISSUED — pass OR fail — never that coverage passed.
-  attested=yes → a verdict was issued over the lcov BYTES this run read (a failing one still
-                 exits 1); the predicate is the consumed digest, never the skip flag.
-  attested=no  → NO VERDICT: no handshake, or no lcov bytes were read at all (an absent file or a
-                 refused path — nothing read, nothing certified). Withholding a verdict never
-                 changes an exit code: an absent lcov stays exit 0, a refused non-regular path
-                 keeps its own fail-closed exit 1, and uncovered lines still exit 1. Findings are
-                 still printed; run-gates carries the withheld verdict as coverage=not-run.
-  REFUSED (exit 1) → the context describes another tree or another declared list, or matches no recorded attempt.
-Residual, stated: ownership of the fixed path is CONVENTION, not enforcement — a concurrent writer
-to it can still place foreign evidence (queued as LCOV-EXCLUSIVE-OWNERSHIP).
-
-Sandbox-safe: no network; writes nothing; spawns read-only git queries and the bound-test
-probes (node --test, shell-free) — the D4 sandbox lane. The attestation variables are consumed and
-removed from this process's environment before anything spawns, so no child inherits the capability.
-Read-only. Exit codes: 0 pass / no-verdict / skipped-loud; 1 fail or REFUSED; 2 usage.`;
-
 export const main = (argv, ctx = {}) => {
+  if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: composeHelp(), stderr: '' };
   const env = ctx.env ?? process.env;
-  try {
-    if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
-    let cwd = ctx.cwd ?? process.cwd();
-    const rest = [...argv];
-    const cwdAt = rest.indexOf('--cwd');
-    if (cwdAt !== -1) {
-      cwd = rest[cwdAt + 1];
-      if (cwd === undefined) throw usageFail('--cwd needs a directory');
-      rest.splice(cwdAt, 2);
-    }
-    const checkAt = rest.indexOf('--check');
-    if (checkAt !== -1) rest.splice(checkAt, 1);
-    if (rest.length > 0) throw usageFail(`unknown argument: ${rest[0]}`);
-    const { code, lines } = runCheck({ cwd, env });
-    return { code, stdout: lines.join('\n'), stderr: '' };
-  } catch (err) {
-    return { code: err.exitCode ?? 1, stdout: '', stderr: `coverage-check: ${err.message}` };
-  }
+  const rest = [...argv];
+  const cwdAt = rest.indexOf('--cwd');
+  const refuseUsage = (failed) => ({
+    code: USAGE_EXIT_CODE,
+    stdout: composeUsageRefusal({ name: CHECKER_NAME, failed, usage: composeUsage() }).join(LINE_FEED),
+    stderr: '',
+  });
+  if (cwdAt !== NOT_FOUND && rest[cwdAt + 1] === undefined) return refuseUsage('--cwd needs a directory');
+  const cwd = cwdAt === NOT_FOUND ? ctx.cwd ?? process.cwd() : rest.splice(cwdAt, 2)[1];
+  const checkAt = rest.indexOf('--check');
+  if (checkAt !== NOT_FOUND) rest.splice(checkAt, 1);
+  if (rest.length > 0) return refuseUsage(`unknown argument: ${JSON.stringify(rest[0])}`);
+  const { code, lines } = runCheck({ cwd, env });
+  return { code, stdout: lines.join(LINE_FEED), stderr: '' };
 };
 
 if (isDirectRun(import.meta.url)) {
@@ -391,8 +343,6 @@ if (isDirectRun(import.meta.url)) {
       .map((k) => [k, process.env[k]]),
   );
   for (const k of Object.keys(attest)) delete process.env[k];
-  const r = main(process.argv.slice(2), { env: { ...process.env, ...attest } });
-  if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
-  if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
-  process.exitCode = r.code;
+  runCheckerTail({ name: CHECKER_NAME, exitCode: ERROR_EXIT_CODE, remedy: ERROR_REMEDY },
+    () => main(process.argv.slice(2), { env: { ...process.env, ...attest } }), process);
 }

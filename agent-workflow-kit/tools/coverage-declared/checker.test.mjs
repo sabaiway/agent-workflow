@@ -16,14 +16,12 @@ import { runCli } from '../run-gates.mjs';
 import { commandFor } from '../commands.mjs';
 import { BINDINGS, checkParity } from '../doc-parity.mjs';
 import { isLineUnsafe } from '../source-size-refusal.mjs';
+import { judgeBlock } from '../checker-verdict/index.mjs';
 
 const declared = await import('./index.mjs').catch(() => ({}));
 const LIST = 'docs/ai/coverage-declared.json';
 const PREFIX = 'coverage-check: declared list — ';
 const DECLARED_ENV = 'AW_FINAL_ATTEST_DECLARED';
-const CONFIG_FAILURE = `coverage-check: FAIL — ${LIST}: `;
-const DECLARED_REFUSAL = 'coverage-check: REFUSED — the declared coverage list is not the one the final run started with (';
-const REFUSAL_TAIL = ' read); re-run run-gates.mjs --final';
 const SHAPE = '{ "schema": 1, "_README"?: string, "entries": [{ "path": string, "reason": string }, ...] }';
 const FIXTURE = 'copied-fixture.mjs';
 const SECOND_FIXTURE = 'second-fixture.mjs';
@@ -124,7 +122,11 @@ it('an unlisted copied fixture keeps the absent-from-coverage failure (spec:cove
   const result = check(root, recordStart(root, 'none'));
   assert.equal(result.code, 1, result.stdout);
   assertMachineLines(result, 'yes');
-  assert.ok(outputLines(result).includes(`  ${FIXTURE}: absent from coverage — the suite never executed this changed file`));
+  assert.deepEqual(outputLines(result).filter((line) => line.startsWith(`${FIXTURE}: `)),
+    [`${FIXTURE}: absent from coverage — the suite never executed this changed file`]);
+  assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places: [FIXTURE] }), []);
+  assert.doesNotMatch(result.stdout, /^coverage-check: FAIL — uncovered\/unattributed changed Node lines:/m);
+  assert.doesNotMatch(result.stdout, /^  |REFUSED|coverage-check: PASS/m);
   assert.equal(outputLines(result).some((line) => line.includes('coverage-declared') || line.startsWith(PREFIX)), false);
 }));
 
@@ -135,10 +137,15 @@ it('a listed fixture executed in place fails its uncovered changed lines (spec:c
   const result = check(root, recordStart(root, hashBytes(bytes)));
   assert.equal(result.code, 1, result.stdout);
   assertMachineLines(result, 'yes');
-  assert.deepEqual(outputLines(result).filter((line) => line.startsWith(`  ${FIXTURE}:`)),
-    [`  ${FIXTURE}:2`, `  ${FIXTURE}:3`]);
+  const places = [2, 3].map((line) => `${FIXTURE}:${line}`);
+  assert.deepEqual(outputLines(result).filter((line) => line.startsWith(`${FIXTURE}:`) && /:\d+: .+/.test(line))
+    .map((line) => line.split(': ')[0]), places);
+  assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places }), []);
+  assert.doesNotMatch(result.stdout, /^coverage-check: FAIL — uncovered\/unattributed changed Node lines:/m);
+  assert.doesNotMatch(result.stdout, /^  |REFUSED|coverage-check: PASS/m);
   assert.deepEqual(listLines(result), [`${PREFIX}did not apply, the coverage data shows an executed line: ${FIXTURE}`]);
-  assert.ok(outputLines(result).indexOf(listLines(result)[0]) < outputLines(result).indexOf('coverage-check: FAIL — uncovered/unattributed changed Node lines:'));
+  assert.ok(outputLines(result).indexOf(listLines(result)[0]) > outputLines(result)
+    .findLastIndex((line) => line.startsWith('coverage-check: REMEDY — ')));
 }));
 
 describe('malformed lists fail even without lcov (spec:coverage-declared/S7)', () => {
@@ -158,12 +165,18 @@ describe('malformed lists fail even without lcov (spec:coverage-declared/S7)', (
     assert.equal(result.stderr, '');
     const failures = outputLines(result).filter((line) => line.startsWith('coverage-check: FAIL'));
     assert.equal(failures.length, 1, result.stdout);
-    assert.ok(failures[0].startsWith(CONFIG_FAILURE), failures[0]);
-    const defect = failures[0].slice(CONFIG_FAILURE.length);
+    assert.ok(!failures[0].startsWith(`coverage-check: FAIL — ${LIST}:`), failures[0]);
+    const findings = outputLines(result).filter((line) => line.startsWith(`${LIST}: `));
+    assert.equal(findings.length, 1, result.stdout);
+    const defect = findings[0].slice(`${LIST}: `.length);
+    assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places: [LIST] }), []);
+    assert.equal(defect, declared.parseDeclaredList(Buffer.from(bytes)).defect);
     assert.ok(defect.length > 0);
     assert.equal(isLineUnsafe(defect), false);
     if (keyword) assert.ok(defect.toLowerCase().includes(keyword.toLowerCase()), defect);
     assert.ok(defect.includes(SHAPE), defect);
+    assertMachineLines(result, 'no');
+    assert.doesNotMatch(result.stdout, /^  |REFUSED|coverage-check: PASS/m);
     assert.deepEqual(listLines(result), []);
     assert.match(result.stdout, /skipped-no-lcov/);
   }));
@@ -211,11 +224,13 @@ describe('the checker binds the declared attestation with a nonce (spec:coverage
     const result = check(root, recordStart(root, handed));
     assert.equal(result.code, 1, result.stdout);
     assertMachineLines(result, 'no');
-    const refusals = outputLines(result).filter((line) => line.startsWith('coverage-check: REFUSED'));
-    assert.equal(refusals.length, 1, result.stdout);
-    assert.ok(refusals[0].startsWith(DECLARED_REFUSAL), refusals[0]);
-    assert.ok(refusals[0].includes(' handed, '), refusals[0]);
-    assert.ok(refusals[0].endsWith(REFUSAL_TAIL), refusals[0]);
+    const displayedHanded = handed === undefined ? 'no value' : handed === 'none' ? 'none'
+      : /^[0-9a-f]{64}$/.test(handed) ? handed.slice(0, 12) : 'a malformed value';
+    const displayedRead = present ? hashBytes(encodeList([])).slice(0, 12) : 'none';
+    assert.deepEqual(outputLines(result).filter((line) => line.startsWith('.: ')),
+      [`.: the declared coverage list is not the one the final run started with (${displayedHanded} handed, ${displayedRead} read); re-run run-gates.mjs --final`]);
+    assert.deepEqual(judgeBlock(result.stdout, { name: 'coverage-check', places: ['.'] }), []);
+    assert.doesNotMatch(result.stdout, /^  |REFUSED/m);
     assert.equal(outputLines(result).some((line) => line.startsWith('coverage-check: PASS')), false);
   }));
   for (const present of [false, true]) it(present ? 'the matching list hash attests' : 'none beside no list attests', () => withRepo((root) => {

@@ -1142,18 +1142,6 @@
       ]
     },
     {
-      "path": "agent-workflow-kit/tools/coverage-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "changed-line-uncovered",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
       "path": "agent-workflow-kit/tools/dispatch.mjs",
       "arguments": [
         "check",
@@ -1619,27 +1607,6 @@
     },
     {
       "path": "agent-workflow-kit/tools/control-bytes.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "spawn"
-    },
-    {
-      "path": "agent-workflow-kit/tools/coverage-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-kit/tools/coverage-check.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/coverage-check.mjs",
       "arguments": [
         "--check"
       ],

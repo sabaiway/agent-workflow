@@ -7,6 +7,22 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-13 — AD-237: the coverage check's red output opens with its failure, through one kit helper of a checker's block (kit 23.9.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/checker-block/`** (new: `place.mjs`, `tail.mjs`, the door `index.mjs` exporting
+`composeCheckerBlock` and `runCheckerTail`) places each finding against the root, the checker's name and the after
+lines (`placeFinding`), escapes line breaks and a leading space (`escapeLineText`), hands the parts to `composeRedBlock`
+of the shared scripts, and runs a command line under `guardChecker` with one write on standard output.
+**`agent-workflow-kit/tools/coverage-check/`** (new: `block.mjs`, `help.mjs`, the door `index.mjs`) holds the six
+classes' finding builders, their verdict and remedy texts, `composeCoverageBlock`, `isRed`, the help and the usage.
+`coverage-check.mjs` collects its findings as data, answers a red run with the composed block, refuses usage through
+`composeUsageRefusal` and runs `main` under `runCheckerTail`; `coverage-declared/judge.mjs` hands the config failure
+as the bare defect and a non-regular entry as its path with its text. `checker-verdict/checkers.json` loses the
+check's `redExceptions` entry and its three `faultExceptions` entries; `references/modes/coverage-check.md` states
+the red output. Both workflows' kit test lists and the seal suite name the two new folders. New suites
+`tools/checker-block/place.test.mjs`, `tools/checker-block/tail.test.mjs` and `tools/coverage-check/block.test.mjs`.
+Specs `kit/checker-block` and `kit/coverage-check` revision 1 (new), `kit/coverage-declared` revision 2.
+
 ## 2026-11-13 — AD-236: the kit's adoption reason lands only where it is true, every run says what its scope left out, the advisor's size texts say what holds (kit 23.8.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/source-size/reason.mjs`** (new, the door's seventh file) holds `INITIAL_ADOPTION_REASON`,
