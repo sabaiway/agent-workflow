@@ -3,27 +3,49 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **PLACEHOLDER-SHAPE-HAS-TWO-HOMES** — invariant: the command line and the validator refuse one placeholder shape
+  from one home. Origin: `agent-workflow-kit/tools/source-size/reason.mjs:13` and
+  `agent-workflow-kit/tools/source-size-config.mjs:45` each write `/^<.*>$/`. Narrow fix: `reason.mjs` owns the shape
+  and the config validator imports it through the door (S14's pinned names grow by one). Proof: a cell that the
+  door's shape is the one both refusals use. Residual exposure, not live: the two copies are byte-equal today; S62
+  pins the command line's refusal (`source-size/reason.test.mjs:142`) and `source-size-config.test.mjs:76` the
+  validator's. Raised by the SIZE-PRACTICE S1 diff review (2026-11-13).
+
+- **EMPTY-SCOPE-REFUSAL-NEVER-NAMES-THE-EXCLUDE-THAT-EMPTIED-IT** — invariant: a refusal for an empty scope names every
+  declared key that emptied it. Origin: `agent-workflow-kit/tools/source-size-scope.mjs:169`: with roots `["src"]`
+  and exclude `["src"]` the refusal tells the reader to widen roots or extensions and never names `exclude`. Narrow
+  fix: the refusal names `"exclude"` beside roots and extensions when an entry's count equals the tracked matches of
+  the scope. Proof: a cell with that config reads the entry's name in the refusal. Residual exposure, not live: the
+  text predates revision 11 of the size contract and no rule of it depends on it. Raised by the SIZE-PRACTICE S1 spec
+  review (2026-11-13).
+
+- **WITHHELD-LANE-NAMES-HAND-ENTRIES-WHERE-NONE-FOLLOW** — invariant: the withheld lane names the hand entries and
+  their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:83`, used
+  at `:233` (a stop whose stops are aggregate or layout ones prints no entry), `:246` (the tighten warning, which
+  also says "with no reason") and `:274` (the reason-required refusal). Narrow fix: only the stop block that prints
+  entries carries the hand clause; the other sites take the lane without it. Proof: a green check on a path that
+  withholds the command, one record lowered, prints no "by hand below". Residual exposure, not live: "below" pointed
+  at absent entries before revision 11; the fold extends the clause by "your reason in place of the placeholder".
+  Raised by the SIZE-PRACTICE S1 spec review (2026-11-13).
+
+- **SIZE-EPIC-CLOSING-SAYS-EVERY-RUN-PRINTS-THE-EXCLUDE-LINES** — invariant: the size-practice epic's Closing says
+  what its Acceptance says about the exclude lines. Origin: the Closing of
+  `docs/ai/epics/THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE.md` says "one line per exclude entry on
+  every run that judges the tree", while its Acceptance says "Every check, regeneration and override". Narrow fix:
+  the Closing reads `one line per exclude entry on every check, regeneration and override that judges the tree`; it
+  rides the epic's next amendment, read by the lens then. Proof: a read of both sentences after that amendment.
+  Residual exposure, not live: epic prose, no shipped text. Raised by the SIZE-PRACTICE S1 spec review (2026-11-13).
+
 - **SIZE-CHECK-S61-CELL-THROWS-BEFORE-THE-MODE** — invariant: each mode of the size check is invoked with valid
   arguments and a deployed cwd, and an injected error with no exit code inside its run reaches `guardChecker`. Origin:
-  `agent-workflow-kit/tools/source-size/red-block.test.mjs:185-198`; its `ctx.cwd = 42` throws at
-  `source-size-check.mjs:338` before the mode is chosen, so the four modes run one line, and a bare `--override` stops
-  as a usage refusal before any run (`:346`, `:359-360`). Narrow fix: run `--check`, `--write-baseline`, `--adopt` and
-  `--override depth --value 6 --reason fixture` on a deployed fixture with
-  `deps: { get readFile() { throw new Error('x') } }`, read at `source-size-config.mjs:275`. Proof: a run that catches
+  `agent-workflow-kit/tools/source-size/red-block.test.mjs:186-199`; its `ctx.cwd = 42` throws at
+  `source-size-check.mjs:68` before the mode is read (`:72-75`), so the four modes run one line, and a bare
+  `--override` stops as a usage refusal before any run (`:76`, through `takeOption` `:29`). Narrow fix: run `--check`,
+  `--write-baseline`, `--adopt` and `--override depth --value 6 --reason fixture` on a deployed fixture with
+  `deps: { get readFile() { throw new Error('x') } }`, read at `source-size-config.mjs:273`. Proof: a run that catches
   such an error and returns exit 1 turns the cell red. Residual exposure, not live: the injected getter error escapes
   all four runs today; `--adopt`'s gate declaration failures keep their partial-report contract, exit 1
-  (`source-size-check.mjs:212-214`, `:228`). Raised by the KIT-CHECKER S5 diff review (2026-11-12).
-
-- **SIZE-CHECK-COMMAND-LINE-HAS-NO-ROOM** — invariant: `source-size-check.mjs` stays one meaning, the command line,
-  so its next change does not cram. Origin: `agent-workflow-kit/tools/source-size-check.mjs` at 400 of 400 lines, with
-  imports packed two to a line (`:46`, `:67`, `:78-79`) and `guardedMain`'s try/catch on two lines (`:385-386`). Narrow
-  fix: move the writer half (`:109-285`) into its own file, e.g. `tools/source-size-writer.mjs`, outside the
-  `tools/source-size/` door (the read core re-exports the door, so a writer there would enter the read graph), and keep
-  the path `source-size-check.mjs` as the command line (gates, hooks and the velocity profile name it); the suites
-  that import `runWriteBaseline`, `runAdopt` and `runOverride` from it change their imports in the same split, with no
-  re-export. Proof: the size check and read-graph purity stay green with the file well under 400. Residual exposure,
-  not live: no behaviour; a later edit of this file meets the cap first. Raised by the KIT-CHECKER S5 diff review
-  (2026-11-12).
+  (`source-size-runs.mjs:213-220`, `:229-236`). Raised by the KIT-CHECKER S5 diff review (2026-11-12).
 
 - **CHANGED-SURFACE-CALLS-A-LINKED-SOURCE-FAIL-CLOSED** — invariant: a comment of the changed surface states what the
   checker does with a linked or non-regular changed source. Origin: `agent-workflow-kit/tools/changed-surface.mjs:137`,
@@ -1400,6 +1422,14 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 ## Closed
 
+- **SIZE-CHECK-COMMAND-LINE-HAS-NO-ROOM** — invariant: `source-size-check.mjs` stays one meaning, the command line,
+  so its next change does not cram. Origin: `agent-workflow-kit/tools/source-size-check.mjs` at 400 of 400 lines.
+  Closed in story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE (2026-11-13): the four runs and
+  `usageFail` moved verbatim into `agent-workflow-kit/tools/source-size-runs.mjs`, outside the `tools/source-size/`
+  door; `source-size-check.mjs` keeps the command line alone (130 lines) and re-exports no run; the adopt, setup and
+  red-block suites import the runs from the new file. Proof: the size check and read-graph purity green, the purity
+  suite asserting that no read root reaches the runs file.
+
 - **ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE** — invariant: a default run of the changelog or issues rotation
   that fails at any step leaves every entry and issue section in at least one file, and the next run completes the
   rotation. Origin: `archive-changelog.mjs` rewrote `docs/ai/changelog.md` before the tier writes and wrote every file
@@ -1814,6 +1844,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   on the new checkpoint works. Narrow fix per item: (1) `--pre-review` prints the `coverage-check.mjs --check` line to
   run next; (2) the baseline writer names untracked files under a declared root; (3) the refusal names the fresh
   thread. Residual exposure, live: each costs a late red or a lost retry. Raised by the JEV S13 code session.
+  Item (2) closed in story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE (2026-11-13): every check,
+  regeneration and override asks git for the work tree's state and warns, naming them, of the untracked paths it would
+  judge that the index-based scope did not include (`agent-workflow-kit/tools/source-size-scope.mjs:105`,
+  `source-size-report.mjs:192`); proof `agent-workflow-kit/tools/source-size/scope-report.test.mjs` (S67).
 - **KIT-APPLY-MEETS-THE-HARNESS-DIALOG** — invariant: a kit apply the user said yes to in chat reaches the user only as
   the harness's own consent. Origin: the sandbox protects `.claude/` (its settings files, skills and hooks), so an
   apply into it meets the harness dialog. Narrow fix: none the kit can make alone; a route with no dialog needs a

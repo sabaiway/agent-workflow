@@ -14,7 +14,8 @@ import { hermeticGitEnv, withGitPath } from '../git-env.mjs';
 import { INITIAL_ADOPTION_REASON, loadSourceSizeConfig } from '../source-size-config.mjs';
 import { judgeTree, stopsOf } from '../source-size-judge.mjs';
 import { checkReportLines } from '../source-size-report.mjs';
-import { main, runCheck } from '../source-size-check.mjs';
+import { main } from '../source-size-check.mjs';
+import { runCheck } from '../source-size-runs.mjs';
 
 const { checkTargetOf, layoutSetupOf } = await import('./setup.mjs').catch(() => ({}));
 const core = await import('../source-size-core.mjs');
@@ -28,7 +29,7 @@ const DEPS = { env: ENV };
 
 const NL = String.fromCharCode(10);
 const R = 'recorded by hand';
-const LEAD = 'source-size: --layout REFUSED — it starts the layout record and raises nothing else, but the record no longer holds for this tree, so that growth takes --write-baseline --reason first; nothing was written.';
+const LEAD = 'source-size: --layout REFUSED — it starts the layout record and raises nothing else, but the record no longer holds for this tree, so that growth takes --write-baseline --reason first; no record was regenerated.';
 const lines = (n) => `x${NL}`.repeat(n);
 const many = (dir, n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${dir}/f${i}.txt`, 'x']));
 const git = (cwd, args) => ((r) => assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`))(spawnSync('git', args, { cwd, encoding: 'utf8', env: ENV }));
@@ -82,7 +83,12 @@ describe('spec:source-size/S39 checkTargetOf states what a check judges and runC
       const run = runCheck({ cwd, deps: DEPS });
       assert.deepEqual(run.config, config);
       if (expected.stop === 'schema-1') assert.deepEqual([run.code, run.block], [1, schema1StopBlock(cwd)]);
-      if (expected.stop === 'unminted') assert.deepEqual([run.code, run.block], [1, unmintedStopBlock(cwd, { state: expected.state, missing: expected.missing })]);
+      if (expected.stop === 'unminted') {
+        const { state, missing } = expected;
+        const reason = state === 'authored' ? 'initial adoption' : '<why this size is accepted>';
+        assert.ok(run.block.remedies[0].endsWith(`--reason "${reason}"`), `${what}: the remedy carries ${reason}`);
+        assert.deepEqual([run.code, run.block], [1, unmintedStopBlock(cwd, { state, missing, config, reason })]);
+      }
       if (expected.stop !== null) return;
       const verdict = judgeTree(cwd, config, DEPS, expected.judged);
       assert.deepEqual(run.judged, expected.judged);

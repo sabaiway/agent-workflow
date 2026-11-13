@@ -93,6 +93,12 @@ export {
   queueChecksOf,
   spliceLater,
   helpText,
+  GROWTH_REASON_PLACEHOLDER,
+  halfOf,
+  presentHalves,
+  refusedRaises,
+  mintReasonOf,
+  commandReasonDefect,
 } from './source-size/index.mjs';
 
 export {

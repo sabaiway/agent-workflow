@@ -26,6 +26,7 @@ const FILE_NAMES = {
   'setup.mjs': ['SETUP_ANSWERS', 'checkTargetOf', 'layoutSetupOf'],
   'piles.mjs': ['PILE_ANSWERS', 'PILE_HELD', 'PILE_QUEUE_MAX_BYTES', 'PILE_QUEUE_REL', 'pileIdOf', 'pileOfferOf', 'pileRowOf', 'pilesOf', 'queueChecksOf', 'spliceLater'],
   'help.mjs': ['helpText'],
+  'reason.mjs': ['INITIAL_ADOPTION_REASON', 'GROWTH_REASON_PLACEHOLDER', 'halfOf', 'presentHalves', 'refusedRaises', 'mintReasonOf', 'commandReasonDefect'],
 };
 const DOOR_NAMES = Object.values(FILE_NAMES).flat();
 const IDS = ['lines-per-file', 'bytes-per-line', 'entries-per-directory', 'depth', 'files-per-root'];
@@ -277,14 +278,15 @@ describe('the limit lines state every resolved limit', () => {
   });
 });
 
-describe('spec:source-size/S14 the door exports exactly the thirty-three names of limits.mjs, layout.mjs, record.mjs, setup.mjs, piles.mjs and help.mjs, and no kit module imports past it', () => {
-  it('re-exports the very exports of its six files through the door and the core, and no kit module reaches a file of it but the door', async () => {
+describe('spec:source-size/S14 the door exports exactly the forty names of seven files: limits.mjs, layout.mjs, record.mjs, setup.mjs, piles.mjs, help.mjs and reason.mjs, and no kit module imports past it', () => {
+  it('re-exports exactly forty names from its seven files through the door and the core, each the very export of its file, and no kit module reaches past the door', async () => {
     const door = await loadDoor();
     const modules = { 'limits.mjs': await loadLimits(), 'layout.mjs': await loadLayout(), 'record.mjs': await loadRecord(), 'setup.mjs': await loadSetup() };
     modules['piles.mjs'] = await loadPiles().catch(() => ({}));
     modules['help.mjs'] = await import('./help.mjs');
+    modules['reason.mjs'] = await import('./reason.mjs').catch(() => ({}));
     const core = await loadCore();
-    assert.equal(DOOR_NAMES.length, 33);
+    assert.equal(DOOR_NAMES.length, 40);
     assert.deepEqual(Object.keys(door).sort(), [...DOOR_NAMES].sort());
     for (const [file, names] of Object.entries(FILE_NAMES)) {
       assert.deepEqual(Object.keys(modules[file]).sort(), [...names].sort(), `the door exports exactly the exports of ${file}`);

@@ -71,7 +71,7 @@ import { takeCensus, censusFact, CENSUS_VERDICT } from './tracked-tree-census.mj
 // fill's own WRITER is never called from here — the advisor renders its consent-gated command, it
 // does not run it.
 import { buildOffer } from './gates-init.mjs';
-import { CHECKER_CLAIM, INITIAL_ADOPTION_REASON, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig, readLayoutSetup, readPileOffer } from './source-size-core.mjs';
+import { CHECKER_CLAIM, SOURCE_SIZE_GATE_ID, classifySourceSizeGate, loadSourceSizeConfig, mintReasonOf, presentHalves, readLayoutSetup, readPileOffer } from './source-size-core.mjs';
 // The declared-path resolution + segment containment this item's convergence lane shares with the
 // autonomy render's allowWrite degrade — ONE leaf, so the two answers cannot drift.
 import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './declared-paths.mjs';
@@ -133,6 +133,8 @@ const HOOK_CHECKS_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 t
 const HOOK_CHECKS_WAIT = 'the layout line follows the source-size.layout record \u2014 apply that item first; this item\'s check line then arms the layout line too';
 const HOOK_CHECKS_COMMAND = "the hook runs the kit's checks by flat paths this upgrade removes — once they are gone every commit stops until this item is applied";
 const LAYOUT_RECORD_RECIPE = 'the hook is per clone and the config per branch: a branch or linked worktree with no size config is judged under the kit\'s values and stops on its piles until it takes the record (a hidden deployment\'s linked worktree carries none); one with an older config without layout is not judged on layout; one whose config is schema 1 or unminted stops every commit on that config\'s own stop until it takes the current config';
+const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a half-written record, a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
+const SOURCE_SIZE_KEPT_WHAT = 'no source-size gate is declared — the size record is kept as it is; declaring the gate adds the size check to the gate matrix';
 const LAYOUT_HELD = {
   stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 record that growth first with the reasoned --write-baseline its stop names, then re-run',
   'store-root': ({ root }) => `the source-size config declares the root "${root}" at or inside the spec store docs/ai/specs \u2014 the layout record starts once that root is declared outside it`,
@@ -284,13 +286,13 @@ export const WHATS = Object.freeze({
   'gates-inert.no-verification': "all {n} declared gate(s) are the kit's own checkers — the matrix runs no project-verification command",
   'gates-inert.producer-unrecognized': 'the coverage checker ({id}) has NO producer declared and none offerable, on a tree the changed-line domain barely reaches',
   'gates-inert.coverage-domain-narrow': 'certification covers the assessable minority only — {ext} dominate(s) the tracked tree, and the changed-line domain excludes them',
-  'source-size': 'no source-size gate — module size drifts unmeasured, and an over-cap file is invisible instead of recorded debt',
+  'source-size': 'no source-size gate is declared — the gate matrix runs no size check, so no gate run stops a file beyond its limits',
   'source-size.unminted': 'the source-size gate is declared over an unminted record ({state}) — the check refuses it, or if absent judges layout alone, no line',
   'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write',
   'source-size.layout': 'the layout record is not started — starting it records any directory already beyond the layout limits, so the commit hook can judge layout',
   'source-size.piles': '{n} recorded pile(s) have no queue row planning their cleanup — one row each goes to the end of the queue\'s Later bucket',
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
-  'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the practice reads as declared while nothing measures module size',
+  'source-size.id-squatter': 'a gate carries the source-size id but is not this checker — the gate matrix reads as running the size check while it runs none',
   'gate-hook': '{n} declared gate(s) prompt per run — the gate-approval hook is not wired',
   'gate-hook.not-current': `${HOOK_FILE_REL} is absent or differs from the body the kit writes for it — written with that body, with no question`,
   'commit-guard': 'the gate matrix is final-run-capable but no commit-guard arms the pre-commit hook — a commit needs no green receipt yet',
@@ -857,9 +859,13 @@ export const probeGatesInert = ({ root, deps, add, skip }) => {
 // practice question outright; else any tool-elsewhere claim; else the id collision; else the offer.
 // A MINTED schema-1 config is asked first, ahead of the gate arms: the check stops on it whatever is
 // declared. Its line carries no reason, since a pinned one would launder a raise; an unreadable
-// config keeps today's arms, which report it.
-const schema1Minted = (root, deps) => {
-  try { const { state, config } = loadSourceSizeConfig(root, deps); return state === 'minted' && config.schema === 1; } catch { return false; }
+// config (null here) keeps today's arms, which report it.
+const readSizeConfig = (root, deps) => {
+  try {
+    return loadSourceSizeConfig(root, deps);
+  } catch {
+    return null;
+  }
 };
 
 // The layout setup's answer for the layout arm; its throw is a stated skip, and the other arms still speak.
@@ -889,8 +895,10 @@ const pilesArm = (root, declaration, deps, add, skip) => {
 const probeSourceSize = ({ root, deps, add, skip, shared }) => {
   try {
     const tool = toolPath('source-size-check.mjs');
-    if (schema1Minted(root, deps)) {
-      add('source-size', fillTemplate(WHATS['source-size.schema-1'], {}), `node ${q(tool)} --write-baseline --cwd ${q(root)}`, 'source-size.schema-1');
+    const loaded = readSizeConfig(root, deps);
+    const recipe = presentHalves(loaded?.config).length > 0 ? REASON_AUTHOR_RECIPE : null;
+    if (loaded?.state === 'minted' && loaded.config.schema === 1) {
+      add('source-size', fillTemplate(WHATS['source-size.schema-1'], {}), `node ${q(tool)} --write-baseline --cwd ${q(root)}`, 'source-size.schema-1', REASON_AUTHOR_RECIPE);
       return;
     }
     // The layout arm, additive: the record renders as its own item ahead of the other arms; a held answer
@@ -906,10 +914,8 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
     pilesArm(root, declaration, deps, add, skip);
     if (loadError !== null) throw loadError;
     const gates = declaration.outcome === 'loaded' ? declaration.gates : [];
-    // The reason string is PINNED, not composed: it is copied unchanged into every entry the first
-    // mint records, and a first mint records the whole tree — so "this is what the tree already
-    // carried when the practice arrived" is the one sentence that is true of all of them.
-    const adoptLine = `node ${q(tool)} --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
+    const mintReason = mintReasonOf(loaded?.config);
+    const adoptLine = `node ${q(tool)} --adopt --reason "${mintReason}" --cwd ${q(root)}`;
     const claims = gates.map((gate) => ({ gate, claim: classifySourceSizeGate(gate.cmd, root) }));
     const canonical = claims.filter((c) => c.claim === CHECKER_CLAIM.CANONICAL);
     const elsewhere = claims.filter((c) => c.claim === CHECKER_CLAIM.ELSEWHERE);
@@ -919,18 +925,13 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
       // absent one it judges layout alone and no line. The declaration alone would report that deployment
       // as adopted and say nothing about the one thing wrong with it. The split changes NOTHING here —
       // the outcome, its attention class and its immunity to every ack are the same whichever copy runs.
-      const { state } = loadSourceSizeConfig(root, deps);
+      const { state } = loaded ?? loadSourceSizeConfig(root, deps);
       if (state !== 'minted') {
         // Only the way OUT differs. With the gate declared through another copy, `--adopt` would
         // mint the record and then be refused by the fill on the id it is already looking at, so the
         // rendered verb is the mint alone: the declaration is not the half that is missing.
-        const mintLine = `node ${q(tool)} --write-baseline --reason "${INITIAL_ADOPTION_REASON}" --cwd ${q(root)}`;
-        add(
-          'source-size',
-          fillTemplate(WHATS['source-size.unminted'], { state }),
-          canonical.length > 0 ? adoptLine : mintLine,
-          'source-size.unminted',
-        );
+        const mintLine = `node ${q(tool)} --write-baseline --reason "${mintReason}" --cwd ${q(root)}`;
+        add('source-size', fillTemplate(WHATS['source-size.unminted'], { state }), canonical.length > 0 ? adoptLine : mintLine, 'source-size.unminted', recipe);
         return;
       }
       if (canonical.length > 0) return; // adopted through THIS copy and armed — converged
@@ -941,12 +942,9 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
       // realpaths, which are machine-specific and would churn a committed ack between machines.
       const fingerprint = factFingerprint(JSON.stringify([...new Set(elsewhere.map((c) => c.gate.cmd))].sort()));
       if (readAckValue(root, deps, ACKS_SOURCE_SIZE_COPY_KEY) === fingerprint) return; // acknowledged
-      add(
-        'source-size',
-        fillTemplate(WHATS['source-size.adopted-elsewhere'], { n: elsewhere.length }),
+      add('source-size', fillTemplate(WHATS['source-size.adopted-elsewhere'], { n: elsewhere.length }),
         `node ${q(toolPath('ack-write.mjs'))} --lane source-size-copy --fingerprint ${fingerprint} --cwd ${q(root)}`,
-        'source-size.adopted-elsewhere',
-      );
+        'source-size.adopted-elsewhere');
       return;
     }
     // The id SQUATTER — the id says the practice is declared, the cmd is not this checker under any
@@ -958,7 +956,8 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
         'source-size.id-squatter');
       return;
     }
-    add('source-size', fillTemplate(WHATS['source-size'], {}), adoptLine);
+    if (loaded?.state === 'minted') add('source-size', SOURCE_SIZE_KEPT_WHAT, `node ${q(tool)} --adopt --cwd ${q(root)}`, 'source-size', recipe);
+    else add('source-size', fillTemplate(WHATS['source-size'], {}), adoptLine, 'source-size', recipe);
   } catch (err) {
     skip('source-size', err);
   }

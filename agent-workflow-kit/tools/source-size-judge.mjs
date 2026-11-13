@@ -10,7 +10,7 @@
 //
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
-import { measureFile, resolveScope, specStoreEntries } from './source-size-scope.mjs';
+import { measureFile, resolveScope, specStoreEntries, workTreeOf } from './source-size-scope.mjs';
 import { scopeFail } from './source-size-refusal.mjs';
 import { SPEC_STORE_ROOT, bandOf, changesFor, isRaise, layoutCounts, ownEntry, projectLayout } from './source-size/index.mjs';
 
@@ -32,17 +32,19 @@ export const recordFor = (measured, limits) => Object.fromEntries(
 );
 
 const BAND_KINDS = new Set(['within-band', 'root-band', 'dir-band']);
+const WORK_TREE_KINDS = Object.freeze({ untracked: 'untracked', differing: 'unstaged' });
+const STANDING_KINDS = new Set([...BAND_KINDS, ...Object.values(WORK_TREE_KINDS)]);
 // D-9: the unmechanizable question — real decomposition, or the same coupling spread thinner? — is
 // asked exactly where a record went DOWN or disappeared, and the checker itself raises it there.
 const LOWERED_KINDS = new Set(['stale', 'record-obsolete', 'entry-gone', 'root-stale', 'root-gone', 'dir-stale', 'dir-obsolete', 'dir-gone']);
 
 export const stopsOf = (findings) => findings.filter((f) => f.severity === STOP);
 export const warningsOf = (findings) => findings.filter((f) => f.severity === WARNING);
-export const bandWarningsOf = (findings) => findings.filter((f) => BAND_KINDS.has(f.kind));
+export const bandWarningsOf = (findings) => findings.filter((f) => STANDING_KINDS.has(f.kind));
 // The warnings a write leaves standing: a value within its band, one whose obsolete record it drops included.
 const BAND_OF_OBSOLETE = Object.freeze({ 'record-obsolete': 'within-band', 'dir-obsolete': 'dir-band' });
 export const standingWarningsOf = (findings) => findings.flatMap((f) => {
-  if (BAND_KINDS.has(f.kind)) return [f];
+  if (STANDING_KINDS.has(f.kind)) return [f];
   const kind = BAND_OF_OBSOLETE[f.kind];
   return kind && f.dimension !== 'depth' && f.actual > f.allowed && f.actual <= f.ceiling ? [{ ...f, kind }] : [];
 });
@@ -165,7 +167,8 @@ const judgeLayout = (cwd, config, scope, deps, { absent }) => {
 // refuses even when its size is recorded debt. An absent config's aggregate is no finding.
 export const judgeTree = (cwd, config, deps = {}, { layout = false, absent = false } = {}) => {
   const scope = resolveScope(cwd, config, deps);
-  const measured = new Map(scope.files.map((rel) => [rel, measureFile(cwd, rel, deps)]));
+  const bytes = new Map();
+  const measured = new Map(scope.files.map((rel) => [rel, measureFile(cwd, rel, deps, (content) => bytes.set(rel, content))]));
   const projected = new Map(scope.files.map((rel) => [rel, recordFor(measured.get(rel), config.limits)]));
   const baseline = config.baseline ?? {};
   const findings = scope.files.flatMap((rel) => fileFindings(rel, measured.get(rel), projected.get(rel), ownEntry(baseline, rel), config.limits));
@@ -178,5 +181,8 @@ export const judgeTree = (cwd, config, deps = {}, { layout = false, absent = fal
   if (!absent) findings.push(...judgeAggregate(rootLines, config.aggregate ?? {}));
   const judged = layout ? judgeLayout(cwd, config, scope, deps, { absent }) : null;
   if (judged) findings.push(...judged.findings);
+  const tree = workTreeOf(cwd, config, { scope, bytes, layout }, deps);
+  findings.push(...Object.entries(WORK_TREE_KINDS).filter(([part]) => tree[part].length > 0)
+    .map(([part, kind]) => ({ kind, severity: WARNING, paths: tree[part] })));
   return { scope, measured, projected, rootLines, layout: judged, findings };
 };

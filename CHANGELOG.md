@@ -7,6 +7,27 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-13 — AD-236: the kit's adoption reason lands only where it is true, every run says what its scope left out, the advisor's size texts say what holds (kit 23.8.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/source-size/reason.mjs`** (new, the door's seventh file) holds `INITIAL_ADOPTION_REASON`,
+`GROWTH_REASON_PLACEHOLDER`, `halfOf`, `presentHalves`, `refusedRaises`, `mintReasonOf` and `commandReasonDefect`;
+the door and the read core carry them. **`agent-workflow-kit/tools/source-size-runs.mjs`** (new) takes `runCheck`,
+`runWriteBaseline`, `runOverride`, `runAdopt` and `usageFail` from `source-size-check.mjs`, moved verbatim and then
+extended; the command line keeps arguments, modes, output and the guard (130 lines), refuses a placeholder reason and
+`--override --reason "initial adoption"` as usage (exit 2), and re-exports no run; the read core reaches neither file.
+`runWriteBaseline` refuses a raise of `initial adoption` in a half the config holds and writes a minted schema-1
+config's move before refusing its raise. `source-size-scope.mjs` asks `git --no-optional-locks status` with each
+judgment of the tree for untracked paths, intent-to-add entries and work-tree changes (submodules ignored), hashes
+each judged file git reports changed as a blob against its index object id, and counts each `exclude` entry on the index before the kit's own folder is taken away; `source-size-judge.mjs` gains
+the `untracked` and `unstaged` warning kinds; `source-size-report.mjs` prints the exclude notes, both warnings, the
+kit-sentence refusal, the mint lines by `mintReasonOf` and the hand-record lead. `recommendations.mjs` and
+`gates-init.mjs` print their mint lines by `mintReasonOf`; the advisor's no-gate, record-kept and id-squatter texts
+and its reason recipe change, its keys, lanes and writers unchanged; `references/modes/recommendations.md` says the
+same. New suites `tools/source-size/reason.test.mjs`, `tools/source-size/scope-report.test.mjs`,
+`tools/source-size-schema1-move.test.mjs` and `tools/recommendations-source-size-reason.test.mjs`. Closes debt row
+SIZE-CHECK-COMMAND-LINE-HAS-NO-ROOM and item (2) of KIT-TOOL-STOPS-OF-THE-JEV-S13-CODE-AND-RELEASE. Spec
+`kit/source-size` revision 11 (new part judged-scope; index, judge, record, limits, setup, layout).
+
 ## 2026-11-12 — AD-235: the size check's `--check` opens its red output with its failure, and every red output goes to standard output (kit 23.7.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/source-size-report.mjs`** gains `checkStopBlock`, `schema1StopBlock` (replacing

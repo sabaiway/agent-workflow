@@ -408,6 +408,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       // load at all — and the count alone would hide it behind any other simultaneous drift.
       'tools/source-size-core.mjs',
       'tools/source-size-check.mjs',
+      'tools/source-size-runs.mjs',
       'tools/source-size-refusal.mjs',
       'tools/source-size-config.mjs',
       'tools/source-size-scope.mjs',
@@ -418,6 +419,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/source-size/limits.mjs',
       'tools/source-size/layout.mjs',
       'tools/source-size/record.mjs',
+      'tools/source-size/reason.mjs',
       'tools/source-size/setup.mjs', 'tools/source-size/help.mjs',
       'tools/source-size/piles.mjs',
       'tools/source-size/piles-cli.mjs',
@@ -935,7 +937,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 393 = 386 + bridges/typesafe-jev-bridge/{capability.json,SKILL.md,service-facts.txt,setup/README.md,bin/jev-ask.sh,bin/jev-client.mjs,bin/jev-ask.test.mjs} - story S17 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     // 394 = 393 + bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs - story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE; 396 = 394 + bridges/codex-cli-bridge/bin/{codex-fixtures-harness.test.mjs,codex-fixtures.test.mjs} - story S19 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     // 403 = 402 + tools/source-size/help.mjs (the command line help) - story S5 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [403, []], `tarball file count drifted (${packed.length}\u2260 403), or a retired leaf ships`);
+    // 405 = 403 + tools/source-size/reason.mjs and tools/source-size-runs.mjs - story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path))], [405, []], `tarball file count drifted (${packed.length}\u2260 405), or a retired leaf ships`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

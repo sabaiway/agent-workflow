@@ -258,10 +258,13 @@ describe('spec:source-size/S17 — the root "." judges every tracked path with a
     writeFileSync(join(cwd, 'untracked.mjs'), 'x\n'.repeat(500));
     const written = main(['--write-baseline', '--reason', 'initial adoption', '--cwd', cwd]);
     assert.equal(written.code, 0, `${written.stdout}${written.stderr}`);
+    const warning = 'source-size: WARNING — 1 path(s) this run would judge are untracked and not ignored, so the index-based scope did not include them: untracked.mjs';
+    assert.equal(written.stdout.split('\n').filter((line) => line === warning).length, 1, written.stdout);
     const { baseline, aggregate } = JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8'));
     assert.deepEqual([baseline, aggregate], [{ 'deep/x/big.mjs': { lines: 441, reason: 'initial adoption' } }, { '.': { lines: 442, reason: 'initial adoption' } }]);
     const check = main(['--check', '--cwd', cwd]);
-    assert.deepEqual([check.code, check.stdout.includes('PASS — 2 in-scope file(s)')], [0, true], `${check.stdout}${check.stderr}`);
+    assert.deepEqual([check.code, check.stdout.includes('PASS with 1 warning(s) — 2 in-scope file(s)')], [0, true], `${check.stdout}${check.stderr}`);
+    assert.equal(check.stdout.split('\n').filter((line) => line === warning).length, 1, check.stdout);
     for (const roots of [undefined, ['src']]) {
       const cwd = project({ 'src/big.mjs': `${'y'.repeat(1001)}\n`.repeat(441) }, JSON.stringify({ schema: 2, roots, baseline: {}, aggregate: { [roots ? 'src' : '.']: { lines: 0, reason: 'r' } } }, null, 2));
       const result = main(['--check', '--cwd', cwd]);

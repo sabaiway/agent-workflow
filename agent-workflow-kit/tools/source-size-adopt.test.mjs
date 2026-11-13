@@ -4,7 +4,6 @@
 // The two are tested together because they are one contract read from two ends: the candidate exists
 // only over a MINTED config, and --adopt is what produces that state — so a fixture that proves the
 // candidate absent before adoption and present after it is the honest test of both.
-//
 // Every fixture is a real git work tree: the scope rule reads the INDEX, so a project whose files are
 // merely on disk has no scope at all, and a green check over it would prove nothing.
 
@@ -15,7 +14,8 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { main, runAdopt } from './source-size-check.mjs';
+import { main } from './source-size-check.mjs';
+import { runAdopt } from './source-size-runs.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, matchesSourceSizeGate, measureFile } from './source-size-core.mjs';
 import { buildOffer, sourceSizeCandidate, applyFill } from './gates-init.mjs';
 import { loadDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';

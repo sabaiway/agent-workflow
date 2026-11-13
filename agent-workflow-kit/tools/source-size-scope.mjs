@@ -15,9 +15,10 @@
 // Dependency-free, Node >= 22. No side effects on import; the only child process is a read-only git
 // query, so the read-graph purity suite stays true.
 
-import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { configFail, configPathFor, scopeFail } from './source-size-refusal.mjs';
 import { KIT_FOLDER_ROOT, WHOLE_TREE_ROOT } from './source-size-config.mjs';
 import { SPEC_STORE_ROOT, walkSpecStore } from './source-size/index.mjs';
@@ -51,27 +52,65 @@ const bufSegmentPrefix = (path, prefix) =>
 const bufEndsWith = (path, suffix) =>
   path.length >= suffix.length && path.subarray(path.length - suffix.length).equals(suffix);
 
-// The enumeration-error class (exit 2) also refuses every git LOCATION but a work tree, by its own
-// state name — a redirecting GIT_DIR would otherwise enumerate ANOTHER repository's index in
-// silence — and a runner that throws, which is an answer here, never a raw stack.
-export const enumerateIndex = (cwd, deps = {}) => {
+const queryGit = (cwd, args, deps, what) => {
   const spawn = deps.spawn ?? spawnSync;
   const env = deps.env ?? process.env;
   const location = resolveGitLocation(cwd, { spawn, env });
   if (location.state !== 'work-tree') {
-    throw configFail(`the git index could not be enumerated in ${cwd} (the git location is ${location.state}: ${location.cause}) — the declared scope is unknown, so nothing is judged`);
+    throw configFail(`${what} in ${cwd} (the git location is ${location.state}: ${location.cause}) — the declared scope is unknown, so nothing is judged`);
   }
-  let result;
-  try {
-    result = spawn('git', ['ls-files', '-s', '-z'], { cwd, env: withGitPath(env), maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
-  } catch (err) {
-    result = { error: err };
-  }
+  const result = (() => {
+    try {
+      return spawn('git', args, { cwd, env: withGitPath(env), maxBuffer: GIT_MAX_BUFFER, windowsHide: true });
+    } catch (error) {
+      return { error };
+    }
+  })();
   if (result.error || result.status !== 0) {
     const why = result.error ? result.error.message : result.signal ? `git was killed by ${result.signal}` : `git exited ${result.status}`;
-    throw configFail(`the git index could not be enumerated in ${cwd} (${why}) — the declared scope is unknown, so nothing is judged`);
+    throw configFail(`${what} in ${cwd} (${why}) — the declared scope is unknown, so nothing is judged`);
   }
-  return parseIndexEntries(result.stdout);
+  return { stdout: result.stdout, top: location.top };
+};
+
+export const enumerateIndex = (cwd, deps = {}) => parseIndexEntries(
+  queryGit(cwd, ['ls-files', '-s', '-z'], deps, 'the git index could not be enumerated').stdout);
+
+const WORK_TREE_ARGS = Object.freeze(['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=all', '--no-renames']);
+const UNTRACKED_STATUS = '??';
+const INTENT_STATUS = ' A';
+const WORK_TREE_UNCHANGED = ' ';
+const SHA256_HEX_LENGTH = 64;
+const hashBlob = (bytes, oid) => createHash(oid.length === SHA256_HEX_LENGTH ? 'sha256' : 'sha1')
+  .update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+const rulesOf = (config) => ({
+  roots: config.roots.map((rel) => ({ rel, buf: Buffer.from(rel, 'utf8') })),
+  excludes: config.exclude.map((rel) => Buffer.from(rel, 'utf8')),
+  extensions: config.extensions.map((extension) => Buffer.from(extension, 'utf8')),
+});
+const rootOf = ({ roots }, path) => roots.find((root) => root.rel === WHOLE_TREE_ROOT || bufSegmentPrefix(path, root.buf));
+const isExcluded = ({ excludes }, path) => excludes.some((entry) => bufSegmentPrefix(path, entry));
+const isExtended = ({ extensions }, path) => extensions.some((extension) => bufEndsWith(path, extension));
+
+export const workTreeOf = (cwd, config, { scope, bytes, layout }, deps = {}) => {
+  const { stdout, top } = queryGit(cwd, WORK_TREE_ARGS, deps, "the git work tree's state could not be read");
+  const below = relative(realpathSync(top), realpathSync(cwd)).split(sep).join('/');
+  const prefix = below === '' ? Buffer.alloc(0) : Buffer.from(`${below}/`, 'utf8');
+  const entries = stdout.toString('latin1').split('\0').filter(Boolean)
+    .map((record) => ({ status: record.slice(0, 2), path: Buffer.from(record.slice(3), 'latin1') }))
+    .filter(({ path }) => path.subarray(0, prefix.length).equals(prefix))
+    .map((entry) => ({ ...entry, path: entry.path.subarray(prefix.length) }));
+  const rules = rulesOf(config);
+  const intents = new Set(entries.filter((entry) => entry.status === INTENT_STATUS).map((entry) => decodeStrict(entry.path)));
+  const untracked = entries.filter(({ status, path }) => status === UNTRACKED_STATUS
+    && rootOf(rules, path) !== undefined && !isExcluded(rules, path) && !bufSegmentPrefix(path, KIT_FOLDER)
+    && (isExtended(rules, path) || (layout && !bufSegmentPrefix(path, SPEC_STORE))))
+    .map(({ path }) => path.toString('utf8')).sort();
+  const changed = new Set(entries.filter(({ status }) => status !== UNTRACKED_STATUS && status[1] !== WORK_TREE_UNCHANGED)
+    .map((entry) => decodeStrict(entry.path)));
+  const differing = scope.files.filter((rel) => intents.has(rel)
+    || (changed.has(rel) && hashBlob(bytes.get(rel), scope.objectIds.get(rel)) !== scope.objectIds.get(rel)));
+  return { untracked, differing };
 };
 
 // resolveScope(cwd, config) → { files: [rel…] sorted, perRoot: Map<root, [rel…]>, layout: Map<root,
@@ -87,18 +126,23 @@ export const resolveScope = (cwd, config, deps = {}) => {
   if (unmerged.length > 0) {
     throw scopeFail(`the git index is UNMERGED (${unmerged.length} conflict-stage entr(ies)) — an ambiguous index cannot be judged; resolve the conflict, then re-run`);
   }
-  const roots = config.roots.map((rel) => ({ rel, buf: Buffer.from(rel, 'utf8') }));
-  const excludes = config.exclude.map((rel) => Buffer.from(rel, 'utf8'));
-  const extensions = config.extensions.map((ext) => Buffer.from(ext, 'utf8'));
+  const rules = rulesOf(config);
+  const { excludes, extensions } = rules;
+  const excluded = config.exclude.map((entry, at) => {
+    const carried = entries.filter(({ path }) => bufSegmentPrefix(path, excludes[at]));
+    const count = carried.filter(({ path }) => rootOf(rules, path) !== undefined).length;
+    return { entry, count, carried: carried.length };
+  });
+  const objectIds = new Map();
   const perRoot = new Map(config.roots.map((rel) => [rel, []]));
   const layout = new Map(config.roots.map((rel) => [rel, []]));
   const files = [];
   const kitMatched = new Set();
   for (const entry of entries) {
-    const root = roots.find((r) => r.rel === WHOLE_TREE_ROOT || bufSegmentPrefix(entry.path, r.buf));
+    const root = rootOf(rules, entry.path);
     if (!root) continue;
-    if (excludes.some((ex) => bufSegmentPrefix(entry.path, ex))) continue;
-    const extended = extensions.some((ext) => bufEndsWith(entry.path, ext));
+    if (isExcluded(rules, entry.path)) continue;
+    const extended = isExtended(rules, entry.path);
     if (bufSegmentPrefix(entry.path, KIT_FOLDER)) {
       if (extended) kitMatched.add(root.rel);
       continue;
@@ -115,10 +159,11 @@ export const resolveScope = (cwd, config, deps = {}) => {
       throw scopeFail(`an in-scope tracked path's NAME is not valid UTF-8 (bytes ${entry.path.toString('hex')}) — it cannot be addressed losslessly, so nothing is judged; rename it, or add its prefix to "exclude" in ${configPathFor(cwd)}`);
     }
     files.push(rel);
+    objectIds.set(rel, entry.sha);
     perRoot.get(root.rel).push(rel);
   }
   // A config declaring no extension judges no file, and the check says so instead of refusing.
-  if (extensions.length === 0) return { files, perRoot, layout, emptyRoots: [], kitFolderRoots: [] };
+  if (extensions.length === 0) return { files, perRoot, layout, emptyRoots: [], kitFolderRoots: [], excluded, objectIds };
   // A scope the kit's own folder alone matches judges no line, and is no misdeclaration.
   if (files.length === 0 && kitMatched.size === 0) {
     throw scopeFail(`the declared scope matches ZERO tracked files (roots: ${config.roots.join(', ')}; extensions: ${config.extensions.join(', ')}) — an empty scope is a misdeclaration, never an empty green; either widen "roots" / "extensions" in ${configPathFor(cwd)}, or track a file the declared scope covers`);
@@ -126,7 +171,7 @@ export const resolveScope = (cwd, config, deps = {}) => {
   files.sort();
   for (const list of perRoot.values()) list.sort();
   const emptyRoots = [...perRoot].filter(([, list]) => list.length === 0).map(([rel]) => rel);
-  return { files, perRoot, layout, emptyRoots, kitFolderRoots: emptyRoots.filter((rel) => kitMatched.has(rel)) };
+  return { files, perRoot, layout, emptyRoots, kitFolderRoots: emptyRoots.filter((rel) => kitMatched.has(rel)), excluded, objectIds };
 };
 
 // specStoreEntries(cwd) → the spec store's entries walked from disk, or null where it is absent. A
@@ -162,7 +207,7 @@ export const countBytes = (buf) => {
 // measureFile(cwd, rel) → { lines, maxLineBytes }. The judged bytes are the WORKTREE bytes of an
 // index-visible path; an in-scope file the checker cannot verify is exit 1 naming the exclude lane,
 // never a silent or green skip.
-export const measureFile = (cwd, rel, deps = {}) => {
+export const measureFile = (cwd, rel, deps = {}, observe = () => {}) => {
   const read = deps.readFile ?? readFileSync;
   let buf;
   try {
@@ -173,5 +218,6 @@ export const measureFile = (cwd, rel, deps = {}) => {
   if (decodeStrict(buf) === null) {
     throw scopeFail(`${rel}: in-scope but not valid UTF-8 — its size cannot be judged; add its prefix to "exclude" in ${configPathFor(cwd)}`);
   }
+  observe(buf);
   return countBytes(buf);
 };

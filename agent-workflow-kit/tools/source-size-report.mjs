@@ -16,17 +16,17 @@
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
-import { INITIAL_ADOPTION_REASON, KIT_FOLDER_ROOT, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
+import { KIT_FOLDER_ROOT, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
 import { hasLoweredRecord, hasStoreRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
-import { helpText, isRaise, limitLines } from './source-size/index.mjs';
+import { GROWTH_REASON_PLACEHOLDER, INITIAL_ADOPTION_REASON, helpText, isRaise, limitLines, mintReasonOf } from './source-size/index.mjs';
+
+export { GROWTH_REASON_PLACEHOLDER };
 
 // The project directory is project-controlled too, so the path every refusal names enters its line
 // escaped like any other such value. configPathFor itself stays literal — it also builds the real
 // filesystem path the writer opens.
 const namedConfig = (cwd) => escapeForLine(configPathFor(cwd));
-
-export const GROWTH_REASON_PLACEHOLDER = '<why this size is accepted>';
 
 // The `_README` the kit's schema-1 template carried, frozen: the move replaces a `_README` byte-equal
 // to it with the schema-2 text and carries any other verbatim.
@@ -50,13 +50,21 @@ export const statedLimitLines = (config) =>
 
 const KIT_FOLDER_LINE = `source-size: NOTE — ${KIT_FOLDER_ROOT} is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files`;
 
+const excludedLine = ({ entry, count, carried }) => {
+  const lead = `source-size: NOTE — the "exclude" entry "${escapeForLine(entry)}" leaves out`;
+  if (count > 0) return `${lead} ${count} tracked path(s) under the declared roots`;
+  const literal = `${lead} nothing: an entry is a literal path prefix, never a pattern, and`;
+  return carried === 0 ? `${literal} no tracked path carries it` : `${literal} the ${carried} tracked path(s) that carry it lie outside every declared root`;
+};
+
 // What a run does not judge is said once, before its warnings: no extension, no config, no layout,
-// and last the kit's own folder.
-export const notJudgedLines = (cwd, { absent, config, layout }) => {
+// each exclude entry, and last the kit's own folder.
+export const notJudgedLines = (cwd, { absent, config, layout, excluded = [] }) => {
   if (absent) return [`source-size: NOTE — ${namedConfig(cwd)} is absent, so the kit's values judge layout alone and no file is judged on lines or bytes`, KIT_FOLDER_LINE];
   return [
     ...(config.extensions.length === 0 ? [`source-size: NOTE — ${namedConfig(cwd)} declares no extension, so no file is judged on lines or bytes`] : []),
     ...(layout ? [] : [`source-size: NOTE — ${namedConfig(cwd)} records no "layout", so entries per directory, depth and files per root are not judged; --write-baseline --layout --reason "<text>" starts it`]),
+    ...excluded.map(excludedLine),
     KIT_FOLDER_LINE,
   ];
 };
@@ -72,7 +80,7 @@ const WITHHELD_LINE = 'source-size: no paste-ready command is printed — this p
 // The withheld fallback is the reader's ONLY remaining instruction, so it has to be the instruction
 // for what they were actually doing. Sending an adoption to the regenerator would leave them with a
 // record and no gate — half an adoption, handed over as the way out — so the lane is per MODE.
-const WITHHELD_LANE = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below.';
+const WITHHELD_LANE = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below, your reason in place of the placeholder.';
 const WITHHELD_ADOPT_LANE = `Run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" yourself, with the working directory set to this project — it mints the record and declares the gate in one step.`;
 
 // → { command, withheld }: exactly one of the two is non-null. ONE renderer for every mode this tool
@@ -113,23 +121,25 @@ const unmintedSentence = (cwd, { state, missing }) => state === 'incomplete'
   ? `${namedConfig(cwd)} is INCOMPLETE: it carries a machine half no regenerator produces (missing ${missing.map((key) => `"${key}"`).join(', ')}), so the ratchet holds only part of this tree.`
   : `${namedConfig(cwd)} is AUTHORED but not yet MINTED (it records no size yet), so there is nothing for the ratchet to hold.`;
 const MINT_LINE = 'Mint it — the regenerator records what this tree already carries; recording a value for the first time is a raise, so it takes a reason';
-const UNMINTED_LANE = `Run source-size-check.mjs --write-baseline --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project.`;
+const unmintedLane = (reason) => `Run source-size-check.mjs --write-baseline --reason "${reason}" with the working directory set to this project.`;
 
-export const unmintedRefusalLines = (cwd, { state, missing }) => {
-  const { command, withheld } = regenerator(cwd, INITIAL_ADOPTION_REASON);
+export const unmintedRefusalLines = (cwd, { state, missing, config }) => {
+  const reason = mintReasonOf(config);
+  const { command, withheld } = regenerator(cwd, reason);
   return refusal([
     `source-size: REFUSED — ${unmintedSentence(cwd, { state, missing })}`,
     `${MINT_LINE}:`,
-    command === null ? `${withheld} ${UNMINTED_LANE}` : `  ${command}`,
+    command === null ? `${withheld} ${unmintedLane(reason)}` : `  ${command}`,
   ]);
 };
 
-export const unmintedStopBlock = (cwd, { state, missing }) => {
-  const { command, withheld } = regenerator(cwd, INITIAL_ADOPTION_REASON);
+export const unmintedStopBlock = (cwd, { state, missing, config }) => {
+  const reason = mintReasonOf(config);
+  const { command, withheld } = regenerator(cwd, reason);
   return {
     failed: escapeLeadingSpace(unmintedSentence(cwd, { state, missing }).slice(0, -1)),
     findings: [{ place: SOURCE_SIZE_CONFIG_REL, text: MINT_LINE }],
-    remedies: [command ?? UNMINTED_LANE],
+    remedies: [command ?? unmintedLane(reason)],
     after: refusal(command === null ? [withheld] : []),
   };
 };
@@ -148,6 +158,8 @@ const lineSafeFinding = (finding) => ({
 });
 
 const BAND = (f) => `over the limit ${f.allowed} but within its band (up to ${f.ceiling})`;
+const NAMED_PATHS = 3;
+const namedPaths = (paths) => `${paths.slice(0, NAMED_PATHS).map(escapeForLine).join(', ')}${paths.length > NAMED_PATHS ? ` and ${paths.length - NAMED_PATHS} more` : ''}`;
 
 // A stop: the regeneration would raise.
 const FINDING_LINE = Object.freeze({
@@ -177,6 +189,8 @@ const WARNING_LINE = Object.freeze({
   'dir-stale': (f) => `${f.dir}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
   'dir-obsolete': (f) => (f.actual > f.ceiling ? `${f.dir}: its depth record ${f.recorded} no longer sits on the shallowest directory beyond the depth band — the regeneration removes it` : `${f.dir}: ${f.dimension} ${f.actual} is within its band (up to ${f.ceiling}), so its record is obsolete — the regeneration removes it`),
   'dir-gone': (f) => `${f.dir}: recorded in "layout"."directories" but no directory the run judges — the regeneration removes it`,
+  untracked: (f) => `${f.paths.length} path(s) this run would judge are untracked and not ignored, so the index-based scope did not include them: ${namedPaths(f.paths)}`,
+  unstaged: (f) => `${f.paths.length} judged file(s) hold work-tree bytes that differ from the index, and the work tree's bytes are the ones measured: ${namedPaths(f.paths)}`,
 });
 
 export const warningLines = (findings) =>
@@ -220,7 +234,7 @@ export const checkStopBlock = ({ cwd, verdict, absent = false }) => {
     after: refusal([
       ...emptyRootLines(verdict), ...warningLines(warnings),
       ...(command === null ? [withheld] : ['This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate.']),
-      ...(command !== null && entries.length > 0 ? ['Or record each size by hand under "baseline" — the validator accepts exactly these bytes:'] : []),
+      ...(command !== null && entries.length > 0 ? ['Or record each size by hand under "baseline" — replace the placeholder with your reason; the validator accepts the rest of these bytes as they are:'] : []),
       ...entries, ...(hasLoweredRecord(warnings) ? [SPLIT_QUALITY_FOCUS] : []),
     ]),
   };
@@ -255,15 +269,18 @@ export const deltaLines = (deltas) => deltas.map(
     `  ${escapeForLine(target)}: ${dimension} ${from ?? 'none'} → ${to ?? 'none'}${isRaise({ from, to }) ? ' (raise)' : ''}`);
 
 // A run that starts the layout record says so in the command it prints, or pasting it would not.
-export const reasonRequiredLines = (cwd, deltas, { layout = false } = {}) => {
+const regenerationRefusal = (lead, cwd, deltas, layout) => {
   const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER, layout);
-  const raises = deltas.filter(isRaise).length;
-  return refusal([
-    `source-size: REFUSED — this regeneration RAISES ${raises} recorded value(s), and a raise takes a reason (it lands verbatim in the entry it raises, in the commit message and in the CHANGELOG). The whole old→new it would write:`,
-    ...deltaLines(deltas),
-    command === null ? `${withheld} ${WITHHELD_LANE}` : `  ${command}`,
-  ]);
+  return refusal([lead, ...deltaLines(deltas), command === null ? `${withheld} ${WITHHELD_LANE}` : `  ${command}`]);
 };
+
+export const reasonRequiredLines = (cwd, deltas, { layout = false } = {}) => regenerationRefusal(
+  `source-size: REFUSED — this regeneration RAISES ${deltas.filter(isRaise).length} recorded value(s), and a raise takes a reason (it lands verbatim in the entry it raises, in the commit message and in the CHANGELOG). The whole old→new it would write:`,
+  cwd, deltas, layout);
+
+export const kitSentenceRefusedLines = (cwd, deltas, refused, { layout = false } = {}) => regenerationRefusal(
+  `source-size: REFUSED — --reason "${INITIAL_ADOPTION_REASON}" is the kit's own sentence, true only of a record half this write creates, and this regeneration RAISES ${refused} value(s) in a half the config already holds. The whole old→new it would write:`,
+  cwd, deltas, layout);
 
 // ── schema 1 and --override ───────────────────────────────────────────────────────────────────────
 

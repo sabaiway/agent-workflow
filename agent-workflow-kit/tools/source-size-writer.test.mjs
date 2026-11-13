@@ -227,7 +227,7 @@ describe('source-size — what the writer says it did', () => {
     const refused = check(cwd);
     assert.equal(refused.code, 1, `a machine half nobody's writer produces must not read as MINTED:\n${refused.stdout}`);
     assert.match(refused.stdout, /INCOMPLETE/);
-    assert.match(refused.stdout, /--write-baseline --cwd .+ --reason "initial adoption"/);
+    assert.match(refused.stdout, /--write-baseline --cwd .+ --reason "<why this size is accepted>"/);
 
     assert.equal(writeBaseline(cwd, INITIAL_ADOPTION_REASON).code, 0);
     assert.deepEqual(Object.keys(configOf(cwd)).slice(-2), ['baseline', 'aggregate'], 'the regenerator completes the pair');

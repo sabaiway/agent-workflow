@@ -99,7 +99,10 @@ const assertUnmintedRefusal = (cwd, before, result) => {
 
 const assertOutgrownRefusal = (cwd, before, result) => {
   assert.equal(result.code, 1, out(result));
-  assert.match(bodyLines(result)[0], OUTGROWN_LEAD, `the refusal is led by its own line:${NL}${result.stdout}`);
+  const warning = 'source-size: WARNING — 1 judged file(s) hold work-tree bytes that differ from the index, and the work tree\'s bytes are the ones measured: src/a.mjs';
+  assert.equal(bodyLines(result)[0], warning, result.stdout);
+  assert.match(bodyLines(result)[1], OUTGROWN_LEAD, `the refusal follows the warning:${NL}${result.stdout}`);
+  assert.equal(result.stdout.split(NL).filter((line) => line === warning).length, 1, result.stdout);
   assert.ok(result.stdout.includes('src: aggregate lines 451 → 461 (raise)'), `the projected drift is listed:${NL}${result.stdout}`);
   assert.ok(result.stdout.includes(`--write-baseline --cwd "${cwd}" --reason`), `the drift's own lane is named:${NL}${result.stdout}`);
   assert.doesNotMatch(result.stdout, /--adopt/);

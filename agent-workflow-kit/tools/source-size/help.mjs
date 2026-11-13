@@ -39,7 +39,8 @@ from the tree; on an absent config it writes a schema-2 one. --layout starts the
 present config that has none. The authored keys keep their values and their order; the file is
 canonically serialized. A regeneration that RAISES any recorded value needs --reason; the string is
 recorded in the entry it raised. A pure tighten needs none. A schema-1 config is moved to schema 2 in
-the same write; --check stops on one until it is.
+the same write, a minted one in a write of its own where the regeneration is refused; --check
+stops on one until it is.
 
 --adopt is the ONE-line adoption: it mints the record and declares the source-size gate (and NOTHING
 else) in docs/ai/gates.json. It is idempotent on an already-adopted project. With the config absent

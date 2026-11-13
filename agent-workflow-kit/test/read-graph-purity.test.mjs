@@ -128,29 +128,34 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
   // The split exists so that the practice can be asked about from the read surfaces while its WRITER
   // stays out of their reach. Both halves of that claim are pinned here, by name, because the whole
   // arrangement is invisible from either file alone.
-  it('core-import-is-write-free: the source-size read core reaches no write-API module, and its writer is not in the read graph', () => {
+  it('core-import-is-write-free: the core reaches no writer, and neither the runs file nor the command line is in the read graph', () => {
     const core = resolve(TOOLS_DIR, 'source-size-core.mjs');
     const checker = resolve(TOOLS_DIR, 'source-size-check.mjs');
+    const runs = resolve(TOOLS_DIR, 'source-size-runs.mjs');
     assert.ok(edges.has(core), 'the core is a tools module');
+    assert.ok(edges.has(runs), 'the runs file is a tools module');
     assert.ok((edges.get(core) ?? []).length > 0, 'and the walk really sees its re-export edges');
     const closure = [...closureOf([core])].map(rel);
     assert.deepEqual(closure.filter((r) => WRITE_MODULES.includes(r)), [], `the core reached: ${closure.sort().join(', ')}`);
     assert.equal(closure.includes('source-size-check.mjs'), false, 'the core must never reach its own writer');
-    // Non-vacuity from the other side: the CHECKER does reach a writer, so "reaches no write-API
-    // module" is a property of the core, not of the walk failing to see anything at all.
-    assert.ok([...closureOf([checker])].map(rel).includes('atomic-write.mjs'), 'the checker half really does write');
-    // And no read root reaches the checker either — the whole point of splitting it out.
+    assert.equal(closure.includes('source-size-runs.mjs'), false, 'the core must never reach the runs file');
+    assert.ok(closureOf([runs]).has(resolve(TOOLS_DIR, 'atomic-write.mjs')), 'the runs file really does reach a writer');
+    assert.ok(closureOf([checker]).has(runs), 'the command line reaches the runs file');
+    assert.ok([...closureOf([checker])].map(rel).includes('atomic-write.mjs'), 'the command line reaches the writer through the runs file');
     const readClosure = [...closureOf(READ_ROOTS.map((r) => resolve(TOOLS_DIR, r)))].map(rel);
     assert.equal(readClosure.includes('source-size-check.mjs'), false, `a read root reached the writer: ${readClosure.sort().join(', ')}`);
+    assert.equal(readClosure.includes('source-size-runs.mjs'), false, `a read root reached the runs file: ${readClosure.sort().join(', ')}`);
   });
 
-  it('no-cycle-checker-gatesinit: the checker imports the fill, the fill imports only the core, and neither closure re-enters the other', () => {
-    const checker = resolve(TOOLS_DIR, 'source-size-check.mjs');
+  it('no-cycle-checker-gatesinit: the runs file imports the fill, and the fill reaches neither the runs file nor the command line', () => {
+    const runs = resolve(TOOLS_DIR, 'source-size-runs.mjs');
     const gatesInit = resolve(TOOLS_DIR, 'gates-init.mjs');
-    assert.ok(edges.get(checker).map(rel).includes('gates-init.mjs'), 'the adopt verb composes the fill rather than re-implementing it');
+    assert.ok(edges.has(runs), 'the runs file is a tools module');
+    assert.ok(edges.get(runs).includes(gatesInit), 'the adopt verb composes the fill rather than re-implementing it');
     assert.ok(edges.get(gatesInit).map(rel).includes('source-size-core.mjs'), 'the fill asks the practice through its core');
     const fillClosure = [...closureOf([gatesInit])].map(rel);
     assert.equal(fillClosure.includes('source-size-check.mjs'), false, `the fill must not reach the checker: ${fillClosure.sort().join(', ')}`);
+    assert.equal(fillClosure.includes('source-size-runs.mjs'), false, `the fill must not reach the runs file: ${fillClosure.sort().join(', ')}`);
   });
 
   // ── the flow-check tranche's own boundaries (baseline-practices tranche 1) ────────────

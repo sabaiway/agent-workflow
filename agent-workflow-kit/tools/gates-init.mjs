@@ -71,12 +71,12 @@ import { assertDocsAiDeployment, writeDocsAiFileAtomic, lstatNoFollow } from './
 // The source-size practice, through its PURE READ core only (D-18): this module asks whether the
 // practice is minted, never how to mint it — the checker's writer half stays outside the read graph.
 import {
-  INITIAL_ADOPTION_REASON,
   SOURCE_SIZE_GATE_ID,
   SOURCE_SIZE_TOOL_PATH,
   escapeForLine,
   isLineUnsafe,
   loadSourceSizeConfig,
+  mintReasonOf,
 } from './source-size-core.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -469,7 +469,7 @@ export const sourceSizeCandidate = (cwd, deps = {}) => {
       // every run, so pointing there would hand the reader their next failure as the way out.
       const lane = state === 'minted'
         ? `${schema1 ? 'move the record to schema 2 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then ' : ''}declare the gate by hand`
-        : `mint the record first — run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" with the working directory set to this project, then declare the gate by hand`;
+        : `mint the record first — run source-size-check.mjs --adopt --reason "${mintReasonOf(config)}" with the working directory set to this project, then declare the gate by hand`;
       return {
         candidate: null,
         note:
@@ -480,14 +480,14 @@ export const sourceSizeCandidate = (cwd, deps = {}) => {
     }
     if (state !== 'minted') {
       // The named recovery is the reader's next keystroke, so it is a command they can actually run:
-      // the resolved absolute path and an explicit --cwd, carrying the reason a FIRST mint requires
+      // the resolved absolute path and an explicit --cwd, carrying the reason the mint's rule gives
       // (recording a value for the first time is a raise, and the bare verb would refuse). The
       // PROJECT path is screened by the same predicate — a rendered command naming a path the shell
       // would read differently could run somewhere other than the project it names.
       const project = resolve(cwd);
       const recovery = unrenderableToolPath(project)
-        ? `run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" yourself, with the working directory set to this project (no command is printed: this project's path cannot be rendered into one)`
-        : `run node "${toolPath}" --adopt --reason "${INITIAL_ADOPTION_REASON}" --cwd "${project}"`;
+        ? `run source-size-check.mjs --adopt --reason "${mintReasonOf(config)}" yourself, with the working directory set to this project (no command is printed: this project's path cannot be rendered into one)`
+        : `run node "${toolPath}" --adopt --reason "${mintReasonOf(config)}" --cwd "${project}"`;
       return {
         candidate: null,
         note:

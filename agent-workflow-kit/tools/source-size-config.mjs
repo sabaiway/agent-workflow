@@ -26,9 +26,7 @@ export const SOURCE_SIZE_DEFAULTS = Object.freeze({
   maxLineBytes: KIT_LIMITS['bytes-per-line'].value,
 });
 export const REASON_MAX_BYTES = 300;
-// The reason a FIRST mint records: every value is new, so every value is a raise, and "this is what
-// the tree already carried when the practice arrived" is the honest sentence for all of them.
-export const INITIAL_ADOPTION_REASON = 'initial adoption';
+export { INITIAL_ADOPTION_REASON } from './source-size/index.mjs';
 // The root an absent `roots` declares: every tracked path. Admitted only as the sole root.
 export const WHOLE_TREE_ROOT = '.';
 // The kit's own folder: taken away from every judgment by this fixed path, with no config key.

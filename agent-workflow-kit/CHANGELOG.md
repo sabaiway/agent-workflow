@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.8.0 — the size record's reasons stay honest, and every run says what its scope left out (AD-236)
+
+**After `/agent-workflow-kit upgrade`, the kit writes its own reason `initial adoption` only into record entries the
+write itself creates, and every size check, regeneration and override says what its declared scope did not judge.**
+Before, the recovery line of a half-written size record printed `--reason "initial adoption"`, and run as printed it
+replaced a reason a person had written on a grown entry; an `exclude` entry that matched nothing, and a new file git
+did not know yet, were said by no line.
+
+- **`initial adoption` is accepted only for a part of the record the config does not hold yet.** A regeneration that
+  raises an entry in a part that already exists refuses it by name and prints the whole change it would write;
+  `--override` never takes it.
+- **Every line the kit prints to mint or recover a record carries the placeholder `<why this size is accepted>`**
+  wherever the kit's sentence would be refused, and the command line refuses a placeholder as a reason (exit 2,
+  `--reason still carries the placeholder …`). The reason is the agent's to write, with no question to the user.
+- **A minted schema-1 config whose tree grew moves to schema 2 even when the regeneration is refused:** the move is written
+  and said first, then the raise is refused.
+- **One note per `exclude` entry** on every check, regeneration and override: how many tracked paths under the
+  declared roots it left out, or that it left out nothing and why (no tracked path carries it, or the paths that do
+  lie outside every declared root). An entry is a literal path prefix, never a pattern.
+- **Two warnings, echoed by `run-gates`:** paths the run would judge that are untracked and not ignored, so the
+  index-based scope did not include them, and judged files whose work-tree bytes differ from the index, which the check measures as they stand on
+  disk. Each names the first few paths. A refused regeneration or override prints them ahead of its refusal.
+- **The advisor's size item says what holds:** with no gate declared it says so, and never that sizes go unmeasured;
+  over a minted record it says the record is kept, and its `--adopt` line carries no reason.
+- **Stated limits:** `--adopt` prints no note and no warning when its check is green; a placeholder already in a
+  config, or pasted by hand from the check's hand-record entries, keeps reading; the spec store's layout is counted
+  from disk; a judged file differs only where git reports a work-tree change and its bytes differ from the index, so
+  a change of file mode alone or a line-ending conversion is no differing file.
+
 ## 23.7.0 — a failed size check shows what failed and the fix first (AD-235)
 
 **After `/agent-workflow-kit upgrade`, a red `source-size-check.mjs --check` run opens with its failure, and so do, in
