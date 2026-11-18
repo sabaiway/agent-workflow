@@ -3,6 +3,16 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **BRIDGE-SETTINGS-S10-SKIPS-THE-CODEX-SETUP-README** — invariant: every shipped bridge text that names a codex
+  default is read by the S10 scan of spec `bridges/bridge-settings`. Origin:
+  `agent-workflow-kit/tools/bridge-settings-model.test.mjs:280`: `NAMING` lists the codex `SKILL.md` and both
+  references but not `codex-cli-bridge/setup/README.md`, whose line 77 names the default. Narrow fix: the README
+  joins the scan of vendor models beside the two manifests (it names no `/agent-workflow-kit bridge-settings`, so it
+  stays out of the command and unsettable cells, or gains the command first). Proof: a cell that reads the README
+  red on a second model name. Residual exposure, not live: line 77 names only `gpt-6.2-sol`, set by row c4 of the
+  codex default story and read in its diff review; the agy setup README names no model. Raised by the
+  THE-CODEX-BRIDGE-RUNS-THE-NEWEST-MODEL-BY-DEFAULT S1 spec review (2026-11-18).
+
 - **PLACEHOLDER-SHAPE-HAS-TWO-HOMES** — invariant: the command line and the validator refuse one placeholder shape
   from one home. Origin: `agent-workflow-kit/tools/source-size/reason.mjs:13` and
   `agent-workflow-kit/tools/source-size-config.mjs:45` each write `/^<.*>$/`. Narrow fix: `reason.mjs` owns the shape

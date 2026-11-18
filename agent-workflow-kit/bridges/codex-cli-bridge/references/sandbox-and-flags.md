@@ -78,7 +78,7 @@ failure is proven.
 ## Host posture (model & effort)
 
 The wrappers run on the host posture: `CODEX_MODEL` / `CODEX_EFFORT` from the bridge settings file, else
-the built-in default `gpt-6.1-sol` / `high`, checked pre-spend against the installed CLI's catalog
+the built-in default `gpt-6.2-sol` / `high`, checked pre-spend against the installed CLI's catalog
 (`codex debug models`); `/agent-workflow-kit bridge-settings` shows the models offered and sets one. A model or effort the catalog does not offer, and an environment value off the
 host posture (a one-off), are **refused** (exit 2, loud) with the settings-file remedy; a weaker model
 is the user's choice in the setting, never a per-call downgrade. (Whether the default is the strongest
@@ -240,7 +240,7 @@ exec` over the precomputed diff instead, keeping every invariant intact.
 | `-o, --output-last-message <f>` | write ONLY the final message (clean capture) |
 | `--json` | structured event stream (`thread.started` ⇒ session id) |
 | `--output-schema <f>` | constrain output to a JSON schema (`CODEX_REVIEW_SCHEMA=1`) |
-| `-m <model>` | model (the host posture: the `CODEX_MODEL` setting, else `gpt-6.1-sol`) |
+| `-m <model>` | model (the host posture: the `CODEX_MODEL` setting, else `gpt-6.2-sol`) |
 | `-c model_reasoning_effort=<effort>` | reasoning effort (the host posture: the `CODEX_EFFORT` setting, else `high`) |
 | `codex debug models` | the model catalog as JSON `models[]` (`slug`, `visibility`, `priority`, `supported_reasoning_levels`, `default_reasoning_level`) — the wrappers' pre-spend check; reads no stdin (probed on 0.160.0) |
 | `--ignore-user-config` | do NOT load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME` |

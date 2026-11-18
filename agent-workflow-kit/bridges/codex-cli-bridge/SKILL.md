@@ -2,7 +2,7 @@
 name: codex-cli-bridge
 description: Delegate work to the OpenAI Codex CLI (`codex`) under a ChatGPT subscription — run plan/instruction EXECUTION in a sandboxed workspace, or get a read-only ADVISORY review of a plan or working-tree diff — as a second delegated-execution backend beside Antigravity. Use when the user wants to hand a bounded coding task or plan to `codex exec`, get a second-opinion review from codex, install or authenticate Codex CLI, understand its sandbox/network/approval policy, drive codex efficiently from the main agent (exec vs review, resume, the commit boundary), bridge project context (`AGENTS.md`) into codex, or troubleshoot codex flags, models, auth, or its no-TTY headless behaviour.
 metadata:
-  version: '6.0.2'
+  version: '6.1.0'
 ---
 
 # codex-cli-bridge
@@ -51,7 +51,7 @@ this skill. Both wrappers enforce the subscription path before invoking codex:
 
 Delegated codex work runs on the **host posture**: `CODEX_MODEL` and `CODEX_EFFORT` from the bridge
 settings file `${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf`, else the built-in
-default `gpt-6.1-sol` / `high`. **`/agent-workflow-kit bridge-settings`** shows the models the
+default `gpt-6.2-sol` / `high`. **`/agent-workflow-kit bridge-settings`** shows the models the
 installed `codex` offers and sets the host posture (checked against that list before it writes).
 Before any run is spent the wrappers check the effective model and
 effort against the installed CLI's catalog (`codex debug models`, the entries offered for listing): a
@@ -79,7 +79,7 @@ a precomputed review diff, `resume` instead of re-sending context), never from a
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | the setting, else `gpt-6.1-sol` | model passed to `-m`; an environment value off the host posture is a one-off, REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | the setting, else `gpt-6.2-sol` | model passed to `-m`; an environment value off the host posture is a one-off, REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_EFFORT` | the setting, else `high` | reasoning effort (`-c model_reasoning_effort=…`); an environment value off the host posture is a one-off, REFUSED unless `CODEX_PROBE=1` |
 
 `codex --version` reports the CLI version, **not** the model list. Quota is metered in **messages**
@@ -169,10 +169,10 @@ anything that would defeat a policy is guarded — see [§ Models](#models-the-h
 
 | Variable | Default | Effect |
 |---|---|---|
-| `CODEX_MODEL` | the setting, else `gpt-6.1-sol` | model; off the host posture REFUSED unless `CODEX_PROBE=1` |
+| `CODEX_MODEL` | the setting, else `gpt-6.2-sol` | model; off the host posture REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_EFFORT` | the setting, else `high` | reasoning effort; off the host posture REFUSED unless `CODEX_PROBE=1` |
 | `CODEX_HARD_TIMEOUT` | `3600` (exec) / `1800` (review) | hard wall-clock cap (seconds) via `timeout`/`gtimeout`; exit 124/137 ⇒ "exceeded hard cap". No `timeout` binary ⇒ a nonce-less exec warns loudly + runs uncapped, a **nonced** exec REFUSES pre-spend (an accounted dispatch that cannot be capped can never honour the terminal-exit rule), and `codex-review` REFUSES pre-spend (fail-closed preflight). |
-| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = "2x speed, **increased usage**" in the codex catalog's own words for gpt-6.1-sol (cache fetched 2026-10-03); it states no credit-rate figure — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-verified), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
+| `CODEX_SERVICE_TIER` | unset (standard tier) | **SPEND knob**: `priority` (catalog name "Fast") = "2x speed, **increased usage**" in the codex catalog's own words for gpt-6.2-sol (cache fetched 2026-11-18); it states no credit-rate figure — quality-neutral (same model). codex accepts any `-c service_tier` string silently (probe-verified), so the wrapper validates: an unsupported value warns and runs standard. Env or settings file. |
 | `CODEX_SESSION_FILE` | `./.codex-last-session` | where `codex-exec` records the session id and where `--resume-last` reads it |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | `1500000` | `codex-review code`: above this the assembled diff goes via a git-dir temp file instead of inline — never truncated |
 | `AW_REVIEW_NONCE` | unset | the flow dispatch nonce (safe grammar `[A-Za-z0-9._-]{1,64}` — anything else refuses pre-spend). `codex-review … --nonce <n>` is the plain-argument equivalent (one seam; flag and a non-empty env must agree, a disagreeing pair refuses pre-spend) — the lane for hosts whose dispatch policy has no env-prefix form. When supplied, a successful review first mints the finding MANIFEST `agent-workflow-finding-manifest-codex-<nonce>.json` beside the receipts file (atomic, no-clobber, ORDERED before the receipt append) — a failed mint EXCLUDES the receipt, so a nonce-supplied dispatch never lands a receipt without its readable manifest; nonce-less runs add no nonce field and mint nothing (the `wrapperVersion` field every receipt carries moves with each release) |

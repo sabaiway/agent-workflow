@@ -13,6 +13,7 @@ import { makeFixtureRepo } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-exec.sh');
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 
 // A hermetic fake `codex`: answers `login status` and `debug models`, captures argv/env/stdin to the
 // files named by CODEX_FAKE_*, honours -o by writing a final-message file, and
@@ -25,7 +26,7 @@ const FAKE_CODEX = [
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
   'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli ${CODEX_FAKE_VERSION:-0.160.0}"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then cat <<EOF',
-  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
+  `{"models":[{"slug":"${MANIFEST.posture.model}","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}`,
   'EOF',
   'exit 0; fi',
   'if [[ -n "${CODEX_FAKE_STDERR:-}" ]]; then echo "$CODEX_FAKE_STDERR" >&2; fi',
@@ -642,7 +643,7 @@ describe('codex-exec.sh — preflight (unchanged invariants)', { concurrency: 2 
 
 describe('codex-exec.sh — resume entrypoint restates every invariant (3.1)', { concurrency: 2 }, () => {
   const RESUME_INVARIANTS = [
-    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, /(^|\n)gpt-6\.1-sol(\n|$)/,
+    /(^|\n)resume(\n|$)/, /(^|\n)--ignore-user-config(\n|$)/, new RegExp(`(^|\\n)${MANIFEST.posture.model.replaceAll('.', '\\.')}(\\n|$)`),
     /model_reasoning_effort=high/, /sandbox_mode=workspace-write/,
     /approval_policy=never/, /sandbox_workspace_write\.network_access=false/,
   ];
@@ -969,7 +970,6 @@ describe('codex-exec.sh — session id absent', { concurrency: 2 }, () => {
 // git-shim heredoc's own `case` arms are NOT CLI modes and must be skipped).
 // Helpers are inline — each bridge test file stays standalone (mirror byte-equality).
 
-const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 const EXEC_CONTRACT = MANIFEST.roles.execute.contract;
 const norm = (s) => s.replace(/\s+/g, ' ').trim();
 const setEq = (got, want, msg) => assert.deepEqual([...got].sort(), [...want].sort(), msg);
@@ -1522,7 +1522,7 @@ describe('codex-exec.sh — dispatch-posture labeling (D5, AD-061)', { concurren
     assert.equal(r.status, 0, r.stderr);
     const lines = banners(r.stderr);
     assert.equal(lines.length, 1, 'EXACTLY ONE banner line per run');
-    assert.equal(lines[0], `exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (repository under ${root}) source=model:default,effort:default timeout=3600s`);
+    assert.equal(lines[0], `exec posture: model=${MANIFEST.posture.model} effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (repository under ${root}) source=model:default,effort:default timeout=3600s`);
   });
 
   it('an ARMED Fast tier rides the banner (tier=priority)', async () => {
@@ -2020,7 +2020,7 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2
     assert.equal(r.status, 71, r.stderr);
     assert.equal(held.state, 'reserved');
     assert.equal(held.wrapperVersion, MANIFEST.version, 'the receipt stamps the bridge version version-sync bumps');
-    assert.deepEqual(held.posture, { model: 'gpt-6.1-sol', effort: 'high', tier: null });
+    assert.deepEqual(held.posture, MANIFEST.posture);
     assert.equal(held.capS, 3600);
     assert.equal(held.killGraceS, 15);
     assert.match(held.contractDigest, /^[0-9a-f]{64}$/);

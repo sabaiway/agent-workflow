@@ -11,6 +11,7 @@ import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.
 const stripGitLocationEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 const REVIEW = join(HERE, 'codex-review.sh');
 const HOSTS = 'api.typesafe.ai,docs.typesafe.ai';
 const childEnv = (home, env = {}) => ({ ...stripGitLocationEnv(env), HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
@@ -28,7 +29,7 @@ const FAKE_CODEX = [
   '  login) rec login; echo "Logged in using ChatGPT"; exit 0 ;;',
   '  --version) rec version; echo "${CODEX_FAKE_VERSION-codex-cli 0.160.0}"; exit 0 ;;',
   '  debug) rec catalog; cat <<EOF',
-  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}',
+  `{"models":[{"slug":"${MANIFEST.posture.model}","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}`,
   'EOF',
   '    exit 0 ;;',
   'esac',
@@ -148,7 +149,7 @@ const assertFallback = (r) => {
   assert.equal(r.argv[r.argv.indexOf('--sandbox') + 1], 'read-only', r.argv.join(' '));
 };
 const bannerOf = (r) => r.stderr.split('\n').find((line) => line.startsWith('review posture: ')) ?? '';
-const banner = (jev) => `review posture: model=gpt-6.1-sol effort=high tier=standard jev=${jev} source=model:default,effort:default timeout=1800s`;
+const banner = (jev) => `review posture: model=${MANIFEST.posture.model} effort=high tier=standard jev=${jev} source=model:default,effort:default timeout=1800s`;
 const KEYS = { TYPESAFE_API_KEY: 'jev-key', OPENAI_API_KEY: 'sk-live', CODEX_API_KEY: 'ck', FOO_API_KEY: 'foo', OPENAI_BASE_URL: 'http://proxy' };
 const PASSED = 'key=[jev-key] openai=unset codex=unset foo=unset base=unset bar=unset';
 const runEnv = (r) => (r.spawns.find(([kind]) => kind === 'run') ?? [])[1];

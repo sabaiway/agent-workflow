@@ -21,7 +21,7 @@ judgment.
 ## Model & effort: the host posture
 
 Delegated codex work runs on the host posture: `CODEX_MODEL` / `CODEX_EFFORT` from the bridge settings
-file, else the built-in default `gpt-6.1-sol` / `high`, checked against the installed CLI's catalog
+file, else the built-in default `gpt-6.2-sol` / `high`, checked against the installed CLI's catalog
 before any spend. `/agent-workflow-kit bridge-settings` shows the models the installed codex offers and
 sets the host posture. An environment value off the host posture is a one-off and is **refused** (exit 2)
 with the settings-file remedy unless `CODEX_PROBE=1` — do not "tune down" the model or effort per call;

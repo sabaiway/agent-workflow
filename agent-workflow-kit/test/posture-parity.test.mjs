@@ -45,12 +45,12 @@ for (const base of [ROOT, join(ROOT, 'agent-workflow-kit', 'bridges')]) {
     it('the kit RENDER composes exactly the manifest pins (+ the bridge-settings tier overlay) — spec:bridge-model/S16', () => {
       const bundleRoot = base === ROOT ? join(ROOT, 'agent-workflow-kit', 'bridges') : base;
       const rendered = composeConfiguredPosture({ bundleRoot, settings: { active: [] } });
-      assert.equal(rendered, 'codex model=gpt-6.1-sol effort=high tier=standard · agy model=Gemini 3.8 Flash (High)');
+      assert.equal(rendered, 'codex model=gpt-6.2-sol effort=high tier=standard · agy model=Gemini 3.8 Flash (High)');
       const fast = composeConfiguredPosture({
         bundleRoot,
         settings: { active: [{ key: 'CODEX_SERVICE_TIER', value: 'priority', source: 'file', bridge: 'codex-cli-bridge' }] },
       });
-      assert.match(fast, /codex model=gpt-6\.1-sol effort=high tier=priority \(bridge-settings\)/, 'an armed tier knob overlays the pin and names its source');
+      assert.match(fast, /codex model=gpt-6\.2-sol effort=high tier=priority \(bridge-settings\)/, 'an armed tier knob overlays the pin and names its source');
       const empty = composeConfiguredPosture({ bundleRoot: join(HERE, '__no_bundle__') });
       assert.equal(empty, null, 'no posture-declaring bundle → null (every surface stays byte-identical)');
       const hostile = composeConfiguredPosture({ bundleRoot, settings: { active: 42 } });

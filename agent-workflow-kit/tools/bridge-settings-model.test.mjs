@@ -24,7 +24,7 @@ const ABSENT = 'bridge-catalog.mjs is not present';
 const leaf = (name) => catalogLeaf[name] ?? (() => { throw new Error(ABSENT); })();
 
 const CODEX_CATALOG = JSON.stringify({ models: [
-  { slug: 'gpt-6.1-sol', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }] },
+  { slug: 'gpt-6.2-sol', visibility: 'list', priority: 1, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }] },
   { slug: 'gpt-6-luna', visibility: 'list', priority: 2, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }] },
   { slug: 'gpt-6-hidden', visibility: 'hide', priority: 3, supported_reasoning_levels: [{ effort: 'low' }] },
 ] });
@@ -89,9 +89,9 @@ describe('the read-out on a fresh host — spec:bridge-settings/S1', () => {
     const sb = sandbox();
     const r = await main([], sb.ctx());
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /codex-cli-bridge: model gpt-6\.1-sol \[default\] · effort high \[default\]/);
+    assert.match(r.stdout, /codex-cli-bridge: model gpt-6\.2-sol \[default\] · effort high \[default\]/);
     assert.match(r.stdout, /antigravity-cli-bridge: model Gemini 3\.8 Flash \(High\) \[default\]/);
-    assert.match(r.stdout, /offered: gpt-6\.1-sol \(low, medium, high\), gpt-6-luna \(low, medium\)\n/);
+    assert.match(r.stdout, /offered: gpt-6\.2-sol \(low, medium, high\), gpt-6-luna \(low, medium\)\n/);
     assert.match(r.stdout, /offered: Gemini 3\.8 Flash \(High\), Astra Two \(Low\)\n/);
     assert.doesNotMatch(r.stdout, /gpt-6-hidden/, 'only visibility list entries are offered');
   });
@@ -118,7 +118,7 @@ describe('environment values read as environment — spec:bridge-settings/S3', (
     assert.deepEqual([bridgeOf(set, 'codex-cli-bridge').model.value, bridgeOf(set, 'codex-cli-bridge').model.source], ['gpt-6.1-sol', 'environment']);
     const empty = JSON.parse((await main(['--json'], sb.ctx({ CODEX_MODEL: '', CODEX_EFFORT: '', AGY_MODEL: '' }))).stdout);
     const codex = bridgeOf(empty, 'codex-cli-bridge');
-    assert.deepEqual([codex.model.value, codex.model.source, codex.effort.value, codex.effort.source], ['gpt-6.1-sol', 'environment', 'high', 'environment']);
+    assert.deepEqual([codex.model.value, codex.model.source, codex.effort.value, codex.effort.source], ['gpt-6.2-sol', 'environment', 'high', 'environment']);
     const agy = bridgeOf(empty, 'antigravity-cli-bridge');
     assert.deepEqual([agy.model.value, agy.model.source], [null, 'environment'], 'an empty AGY_MODEL is no model');
     assert.match((await main([], sb.ctx({ AGY_MODEL: '' }))).stdout, /antigravity-cli-bridge: model \(none\) \[environment\]/);
@@ -140,8 +140,8 @@ describe('a model or effort the catalog does not offer is refused before any wri
   };
   it('an unoffered codex model, and a hidden one', async () => {
     const sb = sandbox({ settings: '# mine\n' });
-    await refused(sb, ['--set', 'CODEX_MODEL=gpt-9-nope'], 'gpt-6.1-sol, gpt-6-luna');
-    await refused(sb, ['--set', 'CODEX_MODEL=gpt-6-hidden'], 'gpt-6.1-sol, gpt-6-luna');
+    await refused(sb, ['--set', 'CODEX_MODEL=gpt-9-nope'], 'gpt-6.2-sol, gpt-6-luna');
+    await refused(sb, ['--set', 'CODEX_MODEL=gpt-6-hidden'], 'gpt-6.2-sol, gpt-6-luna');
   });
   it('an effort the resulting model does not offer, set alone against a stored model included', async () => {
     await refused(sandbox({ settings: '' }), ['--set', 'CODEX_EFFORT=xhigh'], 'low, medium, high');
@@ -275,7 +275,7 @@ describe('the catalog read carries no API key or base URL and runs no model — 
 });
 
 describe('the shipped text names each default and the command — spec:bridge-settings/S10', () => {
-  const DEFAULTS = ['gpt-6.1-sol', 'Gemini 3.8 Flash (High)'];
+  const DEFAULTS = ['gpt-6.2-sol', 'Gemini 3.8 Flash (High)'];
   const MODEL_RE = /\bgpt-\d[\w.-]*|\bcodex-mini[\w.-]*|\bGemini \d+(?:\.\d+)? (?:Flash|Pro)(?: \((?:Low|Medium|High)\))?|\bClaude (?:Sonnet|Opus|Haiku) \d+(?:\.\d+)?(?: \(Thinking\))?|\bGPT-OSS \d+B(?: \(\w+\))?/g;
   const NAMING = ['codex-cli-bridge/SKILL.md', 'codex-cli-bridge/references/driving-codex.md', 'codex-cli-bridge/references/sandbox-and-flags.md',
     'antigravity-cli-bridge/SKILL.md', 'antigravity-cli-bridge/references/driving-agy.md', 'antigravity-cli-bridge/references/models-and-flags.md',
@@ -320,8 +320,8 @@ describe('--json is one document for each catalog state — spec:bridge-settings
   it('offered, unreadable and not-installed', async () => {
     const out = JSON.parse((await main(['--json'], sandbox({ agy: 'fail' }).ctx())).stdout);
     const codex = bridgeOf(out, 'codex-cli-bridge');
-    assert.deepEqual([codex.model.value, codex.model.source, codex.effort.value, codex.effort.source], ['gpt-6.1-sol', 'default', 'high', 'default']);
-    assert.deepEqual(codex.catalog, { state: 'offered', cause: null, entries: [{ model: 'gpt-6.1-sol', efforts: ['low', 'medium', 'high'] }, { model: 'gpt-6-luna', efforts: ['low', 'medium'] }] });
+    assert.deepEqual([codex.model.value, codex.model.source, codex.effort.value, codex.effort.source], ['gpt-6.2-sol', 'default', 'high', 'default']);
+    assert.deepEqual(codex.catalog, { state: 'offered', cause: null, entries: [{ model: 'gpt-6.2-sol', efforts: ['low', 'medium', 'high'] }, { model: 'gpt-6-luna', efforts: ['low', 'medium'] }] });
     assert.deepEqual(bridgeOf(out, 'antigravity-cli-bridge').catalog, { state: 'unreadable', cause: 'agy models exited 3', entries: [] });
     const none = JSON.parse((await main(['--json'], sandbox({ codex: 'absent' }).ctx())).stdout);
     assert.deepEqual(bridgeOf(none, 'codex-cli-bridge').catalog, { state: 'not-installed', cause: 'codex is not on PATH', entries: [] });

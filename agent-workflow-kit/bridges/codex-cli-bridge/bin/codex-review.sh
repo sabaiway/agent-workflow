@@ -24,7 +24,7 @@
 # back as a validated JSON object, with a raw-text fallback.
 #
 # Auth/policy: subscription-only, identical to codex-exec.sh. The review runs on the host
-# posture — the built-in default gpt-6.1-sol at effort high unless the user set another with
+# posture — the built-in default gpt-6.2-sol at effort high unless the user set another with
 # `/agent-workflow-kit bridge-settings` (advisory findings still bear on what ships, so the same
 # one-off refusal applies; CODEX_PROBE=1 is the one route to a one-off, and a probe receipt never
 # attests).
@@ -166,7 +166,7 @@ Receipt:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6.1-sol, cache fetched 2026-10-03; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6.2-sol, cache fetched 2026-11-18; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 1800)
   CODEX_REVIEW_MAX_TOTAL_BYTES — inline-payload cap, integer bytes 1..100000000 (default 1500000); above it the diff rides via a git-dir temp file
 
@@ -202,7 +202,7 @@ esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT CODEX_REVIEW_MAX_TOTAL_BYTES"
-DEFAULT_CODEX_MODEL="gpt-6.1-sol"
+DEFAULT_CODEX_MODEL="gpt-6.2-sol"
 DEFAULT_CODEX_EFFORT="high"
 # This wrapper's filesystem part of the permissions profile `jev` (the shared block below): the whole disk read
 # and no write entry at all (P14: the tree, .git and /tmp refused writes).
@@ -416,7 +416,7 @@ aw_scrub_billing_keys() {
 # Review-receipt identity (AD-038). AW_BRIDGE_VERSION mirrors this bridge's SKILL.md/capability.json
 # version (drift-guarded by codex-review.test.mjs against capability.json).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="6.0.2"  # aw-version-anchor
+AW_BRIDGE_VERSION="6.1.0"  # aw-version-anchor
 # Generous hard cap for a slow review at the host posture's effort (subscription latency varies).
 CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-1800}"
 # Above this assembled-payload size (bytes), the diff goes via a git-dir-local temp
@@ -431,8 +431,8 @@ AW_REVIEW_MAP_BUDGET_BYTES=1500000
 # Codex service tier (quality-neutral speed knob): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6.1-sol, cache
-# fetched 2026-10-03; it states no credit-rate figure; quality-neutral — same model). codex itself
+# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6.2-sol, cache
+# fetched 2026-11-18; it states no credit-rate figure; quality-neutral — same model). codex itself
 # accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.

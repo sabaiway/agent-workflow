@@ -7,6 +7,20 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-18 — AD-239: the codex bridge runs gpt-6.2-sol by default, and its suites read the default from the manifest (codex bridge 6.1.0 MINOR, kit 23.11.0 MINOR; memory, engine, agy and the judge unchanged)
+
+**`codex-cli-bridge/capability.json`** names `gpt-6.2-sol` in `posture` and as the `CODEX_MODEL` default, and its
+`CODEX_SERVICE_TIER` effect quotes the catalog for `gpt-6.2-sol` (cache fetched 2026-11-18).
+**`bin/codex-exec.sh`** and **`bin/codex-review.sh`** set `DEFAULT_CODEX_MODEL="gpt-6.2-sol"` and name it in their
+header, help and Fast-tier comment. `SKILL.md`, `references/driving-codex.md`, `references/sandbox-and-flags.md`,
+`setup/README.md`, the kit `README.md` and `references/modes/bridge-settings.md` name the new default and quote. The
+fake catalogs and default-run banners of `codex-exec.test.mjs`, `codex-review.test.mjs`, `codex-exec-jev.test.mjs`,
+`codex-review-jev.test.mjs`, `dispatch-lane.integration.test.mjs` and `recipes.test.mjs` read the manifest's
+`posture`; `codex-model-posture.test.mjs`, `posture-parity.test.mjs`, `bridge-settings-model.test.mjs` and
+`bridge-posture.test.mjs` pin `gpt-6.2-sol` where the default is their subject. The kit mirror
+`agent-workflow-kit/bridges/codex-cli-bridge/` is re-synced. Specs `bridges/bridge-model` and `bridges/bridge-settings`
+revision 3. New debt row BRIDGE-SETTINGS-S10-SKIPS-THE-CODEX-SETUP-README.
+
 ## 2026-11-14 — AD-238: the per-root line sum leaves the size check and its record, under config schema 3 (kit 23.10.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/source-size-config.mjs`** writes `SOURCE_SIZE_SCHEMA` 3 and reads schemas 1, 2 and 3;

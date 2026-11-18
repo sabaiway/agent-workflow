@@ -21,7 +21,7 @@
 #     bypasses shell functions) — the orchestrator owns the commit boundary.
 #
 # Host posture (hard rule): delegated codex work runs on the host posture — CODEX_MODEL and
-# CODEX_EFFORT from the bridge settings file, else the built-in default gpt-6.1-sol at effort high
+# CODEX_EFFORT from the bridge settings file, else the built-in default gpt-6.2-sol at effort high
 # (`/agent-workflow-kit bridge-settings` shows the models offered and sets one) — checked against the
 # installed CLI's catalog before any spend. A run on anything else is a one-off, refused unless
 # it is a probe (CODEX_PROBE=1); a nonced dispatch never runs a one-off. Economy comes from
@@ -240,7 +240,7 @@ Notes:
 
 Settings file (KEY=VALUE, parsed never sourced; env wins over file, file wins over built-in default):
   ${XDG_CONFIG_HOME:-~/.config}/agent-workflow/bridge-settings.conf
-  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6.1-sol, cache fetched 2026-10-03; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
+  CODEX_SERVICE_TIER — service tier: 'priority' (Fast — "2x speed, increased usage", the codex catalog's own words for gpt-6.2-sol, cache fetched 2026-11-18; it states no credit-rate figure); a consented SPEND knob, default off (standard tier)
   CODEX_HARD_TIMEOUT — hard wall-clock cap, integer seconds 1..86400 (built-in default 3600)
 
 Environment: CODEX_HARD_TIMEOUT (seconds, default 3600), CODEX_PROBE=1 (throwaway probe only), AW_DISPATCH_NONCE (delegation dispatch nonce — mints the exec receipt; the --nonce <n> flag is its plain-argument equivalent), AW_DELEGATION_STORE (absolute delegation-store path; its dirname is where the receipt lands).
@@ -252,7 +252,7 @@ esac
 
 # This wrapper's applied settings-file subset (see the shared reader block below).
 AW_SETTINGS_APPLIED="CODEX_SERVICE_TIER CODEX_HARD_TIMEOUT"
-DEFAULT_CODEX_MODEL="gpt-6.1-sol"
+DEFAULT_CODEX_MODEL="gpt-6.2-sol"
 DEFAULT_CODEX_EFFORT="high"
 # This wrapper's filesystem part of the permissions profile `jev` (the shared block below): the whole disk read,
 # writes to the temp dirs and the repository root the wrapper preflights and runs from (P3).
@@ -470,8 +470,8 @@ CODEX_HARD_TIMEOUT="${CODEX_HARD_TIMEOUT:-3600}"
 # Codex service tier (quality-neutral speed knob): default EMPTY ⇒ no
 # service_tier flag (standard tier) — enabling Fast is a consented per-host SPEND act, never a
 # silent default. The only server-catalog tier id on this subscription is 'priority' (catalog
-# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6.1-sol, cache
-# fetched 2026-10-03; it states no credit-rate figure; quality-neutral — same model). codex itself
+# display name "Fast": "2x speed, increased usage" in the catalog's own words for gpt-6.2-sol, cache
+# fetched 2026-11-18; it states no credit-rate figure; quality-neutral — same model). codex itself
 # accepts ANY -c service_tier string silently (probe-verified), so
 # the wrapper validates the effective value: an unsupported one warns and runs on the standard
 # tier — a typo can never silently masquerade as Fast.
@@ -513,7 +513,7 @@ CHATGPT_LOGIN_GUARD="Logged in using ChatGPT"
 # receipt this wrapper mints; scripts/release/version-sync.mjs bumps it under the one-anchor-per-file
 # rule, so a release can never leave it behind (the AD-053 drift class).
 AW_RECEIPT_BACKEND="codex"
-AW_BRIDGE_VERSION="6.0.2"  # aw-version-anchor
+AW_BRIDGE_VERSION="6.1.0"  # aw-version-anchor
 # The kill grace handed to timeout(1) as --kill-after, and recorded in the receipt as killGraceS:
 # ONE constant, so the number the ledger checks against the dispatch deadline is the number the run
 # actually applied.

@@ -27,7 +27,7 @@ const rendered = (settings) => Object.fromEntries(Object.entries(posturesByBacke
 
 describe('the posture render overlays a set model and effort — spec:bridge-settings/S9', () => {
   it('nothing set: the manifest defaults, unchanged', () => {
-    assert.deepEqual(rendered(snapshot()), { codex: 'model=gpt-6.1-sol effort=high tier=standard', agy: 'model=Gemini 3.8 Flash (High)' });
+    assert.deepEqual(rendered(snapshot()), { codex: 'model=gpt-6.2-sol effort=high tier=standard', agy: 'model=Gemini 3.8 Flash (High)' });
   });
 
   it('a file model and effort name setting', () => {
@@ -43,7 +43,7 @@ describe('the posture render overlays a set model and effort — spec:bridge-set
   });
 
   it('an effort set alone overlays the effort only', () => {
-    assert.equal(rendered(snapshot(undefined, { CODEX_EFFORT: 'low' })).codex, 'model=gpt-6.1-sol effort=low (environment) tier=standard');
+    assert.equal(rendered(snapshot(undefined, { CODEX_EFFORT: 'low' })).codex, 'model=gpt-6.2-sol effort=low (environment) tier=standard');
   });
 
   it('an explicitly empty AGY_MODEL renders as no model', () => {
@@ -57,7 +57,7 @@ describe('the posture render overlays a set model and effort — spec:bridge-set
 
   it('the recipes and status-line render composes the overlay', () => {
     assert.equal(composeConfiguredPosture({ settings: snapshot('CODEX_EFFORT=medium\n') }),
-      'codex model=gpt-6.1-sol effort=medium (setting) tier=standard · agy model=Gemini 3.8 Flash (High)');
+      'codex model=gpt-6.2-sol effort=medium (setting) tier=standard · agy model=Gemini 3.8 Flash (High)');
   });
 
   it('the render runs no catalog command', () => {

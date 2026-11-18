@@ -74,7 +74,7 @@ if it reports a missing git work tree or root `AGENTS.md`, run it from a project
   0.160.0 or newer, off a codex version and profile digest recorded as refused and, for `codex-exec`, from
   a repository outside every temp root, both carry the permissions profile `jev`, whose network reaches the run hosts its service-facts.txt
   lists; elsewhere the network stays off. They also run on the host posture — `CODEX_MODEL` / `CODEX_EFFORT` from the
-  bridge settings file, else `gpt-6.1-sol` / `high` — checked against the installed CLI's catalog,
+  bridge settings file, else `gpt-6.2-sol` / `high` — checked against the installed CLI's catalog,
   and refuse a one-off model or effort unless `CODEX_PROBE=1` (see `../SKILL.md`), enforce a hard
   timeout, capture only codex's final message, and block codex from writing git via a shim — see
   [`../references/sandbox-and-flags.md`](../references/sandbox-and-flags.md) and the knob table in

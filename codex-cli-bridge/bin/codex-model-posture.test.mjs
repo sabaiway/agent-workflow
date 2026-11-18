@@ -51,7 +51,7 @@ const entry = (slug, priority, efforts, level = 'medium', visibility = 'list') =
   slug, priority, visibility, default_reasoning_level: level, supported_reasoning_levels: efforts.map((effort) => ({ effort })),
 });
 const ALL = ['low', 'medium', 'high', 'xhigh'];
-const STANDARD = { models: [entry('gpt-6.1-sol', 1, ALL, 'low'), entry('gpt-6-astra', 2, ALL), entry('gpt-6-luna', 3, ['low', 'medium', 'high'])] };
+const STANDARD = { models: [entry(MANIFEST.posture.model, 1, ALL, 'low'), entry('gpt-6-astra', 2, ALL), entry('gpt-6-luna', 3, ['low', 'medium', 'high'])] };
 const HOST_SETTING = 'CODEX_MODEL=gpt-6-luna\nCODEX_EFFORT=medium\n';
 
 const { repos, tmp, profileSkip } = await openSuiteScopes('codex-model-posture');
@@ -138,19 +138,19 @@ const assertRefusedUnspent = (r) => {
 };
 
 describe('a fresh host runs the built-in default — spec:bridge-model/S1', () => {
-  it('codex-exec and codex-review run gpt-6.1-sol at effort high and the banner names source default', { skip: profileSkip }, () => {
+  it('codex-exec and codex-review run gpt-6.2-sol at effort high and the banner names source default', { skip: profileSkip }, () => {
     const exec = drive(sandbox({ root: repos }), FRESH_EXEC);
-    assertRan(exec, 'gpt-6.1-sol', 'high');
-    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=jev-profile session=fresh '
+    assertRan(exec, 'gpt-6.2-sol', 'high');
+    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.2-sol effort=high tier=standard sandbox=jev-profile session=fresh '
       + 'jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=3600s');
     const review = drive(sandbox(), PLAN_REVIEW);
-    assertRan(review, 'gpt-6.1-sol', 'high');
-    assert.equal(bannerOf(review.stderr), 'review posture: model=gpt-6.1-sol effort=high tier=standard jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=1800s');
+    assertRan(review, 'gpt-6.2-sol', 'high');
+    assert.equal(bannerOf(review.stderr), 'review posture: model=gpt-6.2-sol effort=high tier=standard jev=api.typesafe.ai,docs.typesafe.ai source=model:default,effort:default timeout=1800s');
   });
   it('a codex-exec fallback run keeps the same model fields, sandbox=workspace-write and jev=unreachable before source=', () => {
     const exec = drive(sandbox(), FRESH_EXEC, { CODEX_FAKE_VERSION: '0.159.0' });
-    assertRan(exec, 'gpt-6.1-sol', 'high');
-    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.1-sol effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (codex 0.159.0 below 0.160.0) source=model:default,effort:default timeout=3600s');
+    assertRan(exec, 'gpt-6.2-sol', 'high');
+    assert.equal(bannerOf(exec.stderr), 'exec posture: model=gpt-6.2-sol effort=high tier=standard sandbox=workspace-write session=fresh jev=unreachable (codex 0.159.0 below 0.160.0) source=model:default,effort:default timeout=3600s');
   });
 });
 
@@ -168,8 +168,8 @@ describe('the setting is the host posture of every codex wrapper — spec:bridge
 describe('an environment value equal to the host posture is no one-off — spec:bridge-model/S3', () => {
   const cases = [
     ['the setting restated in the env', HOST_SETTING, { CODEX_MODEL: 'gpt-6-luna', CODEX_EFFORT: 'medium' }, 'gpt-6-luna', 'medium', 'model:environment,effort:environment'],
-    ['env gpt-6.1-sol on a fresh host', undefined, { CODEX_MODEL: 'gpt-6.1-sol' }, 'gpt-6.1-sol', 'high', 'model:environment,effort:default'],
-    ['explicitly empty env keys on a fresh host', undefined, { CODEX_MODEL: '', CODEX_EFFORT: '' }, 'gpt-6.1-sol', 'high', 'model:environment,effort:environment'],
+    [`env ${MANIFEST.posture.model} on a fresh host`, undefined, { CODEX_MODEL: MANIFEST.posture.model }, MANIFEST.posture.model, 'high', 'model:environment,effort:default'],
+    ['explicitly empty env keys on a fresh host', undefined, { CODEX_MODEL: '', CODEX_EFFORT: '' }, MANIFEST.posture.model, 'high', 'model:environment,effort:environment'],
   ];
   for (const [label, settings, env, model, effort, source] of cases) {
     for (const parent of [FRESH_EXEC, PLAN_REVIEW]) {
@@ -183,9 +183,9 @@ describe('an environment value equal to the host posture is no one-off — spec:
 });
 
 const ONE_OFFS = [
-  ['env gpt-6.1-sol', { CODEX_MODEL: 'gpt-6.1-sol' }, 'gpt-6.1-sol', 'medium'],
+  [`env ${MANIFEST.posture.model}`, { CODEX_MODEL: MANIFEST.posture.model }, MANIFEST.posture.model, 'medium'],
   ['env CODEX_EFFORT=high alone', { CODEX_EFFORT: 'high' }, 'gpt-6-luna', 'high'],
-  ['an explicitly empty CODEX_MODEL=', { CODEX_MODEL: '' }, 'gpt-6.1-sol', 'medium'],
+  ['an explicitly empty CODEX_MODEL=', { CODEX_MODEL: '' }, MANIFEST.posture.model, 'medium'],
   ['an explicitly empty CODEX_EFFORT=', { CODEX_EFFORT: '' }, 'gpt-6-luna', 'high'],
 ];
 
@@ -222,7 +222,7 @@ describe('a nonced probe one-off is refused; a probe review keeps its nonce — 
     it(`${label}: a probe one-off is refused before any reservation`, () => {
       const sb = sandbox({ settings: HOST_SETTING });
       writeFileSync(join(sb.repo, 'task.md'), CONTRACT);
-      const r = drive(sb, [EXEC, args], { ...env, CODEX_PROBE: '1', CODEX_MODEL: 'gpt-6.1-sol' });
+      const r = drive(sb, [EXEC, args], { ...env, CODEX_PROBE: '1', CODEX_MODEL: MANIFEST.posture.model });
       assertRefusedUnspent(r);
       assert.match(r.stderr, /cannot carry a dispatch nonce/);
       assert.equal(existsSync(join(sb.repo, '.git', 'agent-workflow-exec-receipt-5-codex-n1.json')), false);
@@ -237,8 +237,8 @@ describe('a nonced probe one-off is refused; a probe review keeps its nonce — 
     assert.deepEqual(receipt.posture, { model: 'gpt-6-luna', effort: 'medium', tier: null });
   });
   it('a probe review one-off keeps its --nonce', () => {
-    const r = drive(sandbox({ settings: HOST_SETTING }), [REVIEW, ['plan', 'plan.md', '--nonce', 'n1']], { CODEX_PROBE: '1', CODEX_MODEL: 'gpt-6.1-sol' });
-    assertRan(r, 'gpt-6.1-sol', 'medium');
+    const r = drive(sandbox({ settings: HOST_SETTING }), [REVIEW, ['plan', 'plan.md', '--nonce', 'n1']], { CODEX_PROBE: '1', CODEX_MODEL: MANIFEST.posture.model });
+    assertRan(r, MANIFEST.posture.model, 'medium');
   });
 });
 
@@ -253,7 +253,7 @@ describe('a model or effort flag after -- is refused pre-spend — spec:bridge-m
 });
 
 describe('a model the catalog does not offer is refused with the offered list — spec:bridge-model/S8', () => {
-  const offered = 'offered: gpt-6.1-sol, gpt-6-astra, gpt-6-luna';
+  const offered = `offered: ${MANIFEST.posture.model}, gpt-6-astra, gpt-6-luna`;
   const sources = [['the setting', { settings: 'CODEX_MODEL=gpt-unknown\n' }, {}], ['the environment', {}, { CODEX_MODEL: 'gpt-unknown' }]];
   for (const [label, options, env] of sources) {
     for (const parent of [FRESH_EXEC, PLAN_REVIEW]) {
@@ -263,7 +263,7 @@ describe('a model the catalog does not offer is refused with the offered list �
         assertRefusedUnspent(r);
         assert.match(r.stderr, /CODEX_MODEL='gpt-unknown' .*not a model the installed codex offers/);
         assert.ok(r.stderr.includes(offered), r.stderr);
-        assert.match(r.stderr, remedyRe(sb, 'gpt-6.1-sol', 'high'));
+        assert.match(r.stderr, remedyRe(sb, MANIFEST.posture.model, 'high'));
       });
     }
   }
@@ -275,23 +275,23 @@ describe('a model the catalog does not offer is refused with the offered list �
     });
   }
   it('the default is restored even when another offered slug has a smaller priority number', () => {
-    const sb = sandbox({ settings: 'CODEX_MODEL=gpt-unknown\n', catalog: { models: [entry('gpt-6-luna', 0, ALL), entry('gpt-6.1-sol', 1, ALL, 'low')] } });
-    assert.match(drive(sb, FRESH_EXEC).stderr, remedyRe(sb, 'gpt-6.1-sol', 'high'));
+    const sb = sandbox({ settings: 'CODEX_MODEL=gpt-unknown\n', catalog: { models: [entry('gpt-6-luna', 0, ALL), entry(MANIFEST.posture.model, 1, ALL, 'low')] } });
+    assert.match(drive(sb, FRESH_EXEC).stderr, remedyRe(sb, MANIFEST.posture.model, 'high'));
   });
   it('the default itself is refused when not offered; the remedy is the smallest-priority entry whole', () => {
     const sb = sandbox({ catalog: { models: [entry('gpt-6-astra', 5, ALL), entry('gpt-6-luna', 2, ['low', 'medium'], 'low')] } });
     const r = drive(sb, FRESH_EXEC);
     assertRefusedUnspent(r);
-    assert.match(r.stderr, /CODEX_MODEL='gpt-6\.1-sol' \(default\)/);
+    assert.match(r.stderr, new RegExp(`CODEX_MODEL='${quote(MANIFEST.posture.model)}' \\(default\\)`));
     assert.match(r.stderr, remedyRe(sb, 'gpt-6-luna', 'low'));
   });
   it('on a mixed catalog only visibility=list entries count — a hidden slug is refused and never named', () => {
-    const mixed = { models: [entry('gpt-secret', 0, ALL, 'xhigh', 'hide'), entry('gpt-6-luna', 2, ALL), entry('gpt-6.1-sol', 3, ['low', 'medium'], 'low')] };
+    const mixed = { models: [entry('gpt-secret', 0, ALL, 'xhigh', 'hide'), entry('gpt-6-luna', 2, ALL), entry(MANIFEST.posture.model, 3, ['low', 'medium'], 'low')] };
     const sb = sandbox({ settings: 'CODEX_MODEL=gpt-secret\n', catalog: mixed });
     const r = drive(sb, FRESH_EXEC);
     assertRefusedUnspent(r);
     const afterRefusal = r.stderr.slice(r.stderr.indexOf('offered:'));
-    assert.ok(afterRefusal.includes('offered: gpt-6-luna, gpt-6.1-sol'), r.stderr);
+    assert.ok(afterRefusal.includes(`offered: gpt-6-luna, ${MANIFEST.posture.model}`), r.stderr);
     assert.doesNotMatch(afterRefusal, /gpt-secret/);
     assert.match(r.stderr, remedyRe(sb, 'gpt-6-luna', 'medium'));
   });
@@ -305,7 +305,7 @@ describe('an effort the model does not offer is refused the same way — spec:br
       assertRefusedUnspent(r);
       assert.match(r.stderr, /CODEX_EFFORT='xhigh' \(setting\) is not an effort the installed codex offers for gpt-6-luna/);
       assert.ok(r.stderr.includes('offered: low, medium, high'), r.stderr);
-      assert.match(r.stderr, remedyRe(sb, 'gpt-6.1-sol', 'high'));
+      assert.match(r.stderr, remedyRe(sb, MANIFEST.posture.model, 'high'));
     });
   }
 });
@@ -316,15 +316,15 @@ describe('an unreadable catalog is one stderr line and the run proceeds — spec
     ['a timed-out read', { fakeTimeout: true }, { CODEX_FAKE_CATALOG_SLEEP: '5' }],
     ['output that is not JSON', { catalogText: 'not json at all' }, {}],
     ['JSON without models[]', { catalog: { data: [] } }, {}],
-    ['a catalog that offers no model', { catalog: { models: [entry('gpt-6.1-sol', 1, ALL, 'low', 'hide')] } }, {}],
+    ['a catalog that offers no model', { catalog: { models: [entry(MANIFEST.posture.model, 1, ALL, 'low', 'hide')] } }, {}],
     ['an offered entry without a slug', { catalog: { models: [{ ...entry('', 0, ALL), slug: undefined }, entry('gpt-6-luna', 2, ALL)] } }, {}],
-    ['the effective entry without supported_reasoning_levels', { catalog: { models: [{ slug: 'gpt-6.1-sol', priority: 1, visibility: 'list', default_reasoning_level: 'low' }] } }, {}],
+    ['the effective entry without supported_reasoning_levels', { catalog: { models: [{ slug: MANIFEST.posture.model, priority: 1, visibility: 'list', default_reasoning_level: 'low' }] } }, {}],
   ];
   for (const [label, options, env] of unreadable) {
     for (const parent of [FRESH_EXEC, PLAN_REVIEW]) {
       it(`${label} on ${parent[0] === EXEC ? 'codex-exec' : 'codex-review'}`, () => {
         const r = drive(sandbox(options), parent, env);
-        assertRan(r, 'gpt-6.1-sol', 'high');
+        assertRan(r, MANIFEST.posture.model, 'high');
         assert.equal(r.stderr.split('\n').filter((line) => /catalog/.test(line)).length, 1, r.stderr);
         assert.match(r.stderr, /^warning: the codex model catalog is unreadable \(.+\) — the run proceeds/m);
       });
@@ -342,7 +342,7 @@ describe('an unreadable catalog is one stderr line and the run proceeds — spec
       }
     }
     const r = drive(sb, FRESH_EXEC, { PATH: `${sb.bin}:${farm}` });
-    assertRan(r, 'gpt-6.1-sol', 'high');
+    assertRan(r, MANIFEST.posture.model, 'high');
     assert.match(r.log, /^catalog /m);
     assert.match(bannerOf(r.stderr), / timeout=uncapped$/);
   });
@@ -356,7 +356,7 @@ describe('the catalog read follows the subscription guard and ignores a user con
       mkdirSync(codexHome);
       writeFileSync(join(codexHome, 'config.toml'), 'model_provider = "their-proxy"\n');
       const r = drive(sb, parent, { CODEX_HOME: codexHome, OPENAI_API_KEY: 'sk-live', FOO_API_KEY: 'foo', OPENAI_BASE_URL: 'http://proxy' });
-      assertRan(r, 'gpt-6.1-sol', 'high');
+      assertRan(r, MANIFEST.posture.model, 'high');
       assert.match(r.log, new RegExp(`^catalog argv=\\[.*\\] home=${quote(codexHome)} keys=unset,unset,unset$`, 'm'));
     });
   }
@@ -370,7 +370,7 @@ describe('a settings-file model value with a control byte or an empty one falls 
   for (const [label, settings] of values) {
     it(`${label}: each key warns without the raw byte and the run takes the built-in default`, () => {
       const r = drive(sandbox({ settings }), FRESH_EXEC);
-      assertRan(r, 'gpt-6.1-sol', 'high');
+      assertRan(r, MANIFEST.posture.model, 'high');
       assert.equal(r.stderr.includes(ESC), false, 'no raw control byte reaches stderr');
       assert.match(r.stderr, /warning: CODEX_MODEL in bridge settings file .* built-in default/);
       assert.match(r.stderr, /warning: CODEX_EFFORT in bridge settings file .* built-in default/);

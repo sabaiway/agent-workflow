@@ -4,6 +4,27 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.11.0 — codex runs the newest model, gpt-6.2-sol, by default (AD-239)
+
+**After `/agent-workflow-kit upgrade` (or `init`), a host that sets neither a codex model nor an effort runs
+`codex-exec` and `codex-review` on `gpt-6.2-sol` at effort `high`.** Before, the bridge ran `gpt-6.1-sol`, which
+codex now calls the previous generation. The codex bridge goes to 6.1.0, and your next `init` or upgrade refreshes it where you placed it.
+
+- **A model you set in the bridge settings file still wins.** A `CODEX_MODEL` in the environment that differs from
+  the host posture is a one-off, and only a probe (`CODEX_PROBE=1`, never a nonced `codex-exec` dispatch) runs one.
+  If you exported `CODEX_MODEL=gpt-6.1-sol` with no settings line, every run that is not a probe is now refused
+  before anything is spent (exit 2). Keep that model with
+  `/agent-workflow-kit bridge-settings --set CODEX_MODEL=gpt-6.1-sol --apply`, then unset `CODEX_MODEL` in your shell.
+- **If a run uses `gpt-6.2-sol` and your installed codex lists its models without it**, the run is refused before
+  anything is spent (exit 2), with the models it offers and a remedy naming one of them. Update the codex CLI to get
+  the new model, or set a model it offers: `/agent-workflow-kit bridge-settings --set CODEX_MODEL=<model> --apply`.
+  Where the catalog cannot be read, the run skips this check with one warning; the one-off rule still applies, and
+  codex itself refuses a model it does not serve.
+- **The Fast tier's description** ("2x speed, increased usage", `CODEX_SERVICE_TIER=priority`) is quoted again from
+  the codex catalog for `gpt-6.2-sol`, as read on 2026-11-18; it is still off unless you turn it on.
+- `/agent-workflow-kit bridge-settings`, the kit README, the posture line and the bridge's own texts name
+  `gpt-6.2-sol` as the codex default. Effort, the Fast tier, the catalog check and the one-off rule are unchanged.
+
 ## 23.10.0 — a line added inside a file's limits no longer stops the size check (AD-238)
 
 **After `/agent-workflow-kit upgrade`, the size check no longer sums the lines of each declared root.** Before, a

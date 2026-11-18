@@ -8,11 +8,11 @@ The reader + consent-gated **writer** for the **host-level** bridge settings fil
 
 | key | bridge | values | note |
 |---|---|---|---|
-| `CODEX_MODEL` | codex | a model the installed codex offers | the host posture's model; default `gpt-6.1-sol`. |
+| `CODEX_MODEL` | codex | a model the installed codex offers | the host posture's model; default `gpt-6.2-sol`. |
 | `CODEX_EFFORT` | codex | an effort that model offers | the host posture's reasoning effort; default `high`. |
 | `AGY_MODEL` | agy | a display string the installed agy offers | the host posture's model; default `Gemini 3.8 Flash (High)`. |
 | `JEV_MODEL` | the judge | a version its manifest offers | the judge's model; default the manifest's `posture.model`. |
-| `CODEX_SERVICE_TIER` | codex | `priority` | **SPEND KNOB** — the "Fast" tier: "2x speed, **increased usage**" in the codex catalog's own words for gpt-6.1-sol (cache fetched 2026-10-03); it states no credit-rate figure; quality-neutral (same model). Default unset ⇒ standard tier. |
+| `CODEX_SERVICE_TIER` | codex | `priority` | **SPEND KNOB** — the "Fast" tier: "2x speed, **increased usage**" in the codex catalog's own words for gpt-6.2-sol (cache fetched 2026-11-18); it states no credit-rate figure; quality-neutral (same model). Default unset ⇒ standard tier. |
 | `CODEX_HARD_TIMEOUT` | codex | integer `1..86400` | hard wall-clock cap (seconds) via `timeout(1)`. |
 | `CODEX_REVIEW_MAX_TOTAL_BYTES` | codex | integer `1..100000000` | codex-review payload size above which the diff rides a temp file (never truncated). |
 | `AGY_HARD_TIMEOUT` | agy | duration `5m`/`30m`/`90s` (unit required, nonzero) | hard wall-clock cap via `timeout(1)`. |

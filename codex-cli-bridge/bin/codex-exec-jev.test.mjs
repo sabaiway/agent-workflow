@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.mjs';
 const stripGitLocationEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
 const HERE = dirname(fileURLToPath(import.meta.url));
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 const EXEC = join(HERE, 'codex-exec.sh');
 const HOSTS = 'api.typesafe.ai,docs.typesafe.ai';
 const childEnv = (home, env = {}) => ({ ...stripGitLocationEnv(env), HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
@@ -19,7 +20,7 @@ const FAKE_CODEX = [
   'st() { if [[ -n "${!1+x}" ]]; then printf "[%s]" "${!1}"; else printf unset; fi; }', 'rec() { echo "$1 key=$(st TYPESAFE_API_KEY) openai=$(st OPENAI_API_KEY) codex=$(st CODEX_API_KEY) foo=$(st FOO_API_KEY) base=$(st OPENAI_BASE_URL) bar=$(st BAR_API_KEY)" >>"$CODEX_FAKE_LOG"; }',
   'case "${1:-}" in', '  login) rec login; echo "Logged in using ChatGPT"; exit 0 ;;',
   '  --version) rec version; echo "${CODEX_FAKE_VERSION-codex-cli 0.160.0}"; exit 0 ;;', '  debug) rec catalog; cat <<EOF',
-  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}',
+  `{"models":[{"slug":"${MANIFEST.posture.model}","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]}]}`,
   'EOF', '    exit 0 ;;', 'esac', 'rec run',
   '{ for a in "$@"; do echo "$a"; done; } >"$CODEX_FAKE_ARGV"', 'cat >"$CODEX_FAKE_STDIN"',
   'out=""; prev=""; for a in "$@"; do if [[ "$prev" == "-o" ]]; then out="$a"; fi; prev="$a"; done', 'if [[ -n "$out" ]]; then echo "${CODEX_FAKE_FINAL:-FAKE_FINAL}" >"$out"; fi',
@@ -113,7 +114,7 @@ const assertFallback = (r) => {
   assert.equal(c['sandbox_workspace_write.network_access'], 'false');
 };
 const bannerOf = (r) => r.stderr.split('\n').find((line) => line.startsWith('exec posture: ')) ?? '';
-const banner = (sandboxValue, jev, session = 'fresh') => 'exec posture: model=gpt-6.1-sol effort=high tier=standard '
+const banner = (sandboxValue, jev, session = 'fresh') => `exec posture: model=${MANIFEST.posture.model} effort=high tier=standard `
   + `sandbox=${sandboxValue} session=${session} jev=${jev} source=model:default,effort:default timeout=3600s`;
 const unreachable = (reason) => banner('workspace-write', `unreachable (${reason})`);
 const KEYS = { TYPESAFE_API_KEY: 'jev-key', OPENAI_API_KEY: 'sk-live', CODEX_API_KEY: 'ck', FOO_API_KEY: 'foo', OPENAI_BASE_URL: 'http://proxy' };

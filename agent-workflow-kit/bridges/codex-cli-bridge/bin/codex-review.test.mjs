@@ -13,6 +13,7 @@ import { makeFixtureRepo } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-review.sh');
+const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 
 // Same hermetic fake `codex` as codex-exec.test.mjs (kept inline so each bridge
 // test file is standalone — no shared helper grows the byte-identical mirror set).
@@ -22,7 +23,7 @@ const FAKE_CODEX = [
   'if [[ "${1:-}" == "login" ]]; then echo "${CODEX_FAKE_LOGIN:-Logged in using ChatGPT}"; exit 0; fi',
   'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli ${CODEX_FAKE_VERSION:-0.160.0}"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then [[ -z "${CODEX_FAKE_NO_CATALOG:-}" ]] || exit 1; cat <<EOF',
-  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}',
+  `{"models":[{"slug":"${MANIFEST.posture.model}","priority":1,"visibility":"list","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"medium"},{"effort":"high"}]},{"slug":"gpt-6-astra","priority":2,"visibility":"list","default_reasoning_level":"medium","supported_reasoning_levels":[{"effort":"medium"},{"effort":"high"}]}]}`,
   'EOF',
   'exit 0; fi',
   ': "${CODEX_FAKE_ARGV:=/dev/null}"',
@@ -612,7 +613,6 @@ describe('codex-review.sh — assemble & output edge cases', { concurrency: 2 },
 // (source-level reverse guard), (c) each declared mode is really accepted.
 // Helpers are inline — each bridge test file stays standalone (mirror byte-equality).
 
-const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
 const REVIEW_CONTRACT = MANIFEST.roles.review.contract;
 const norm = (s) => s.replace(/\s+/g, ' ').trim();
 const setEq = (got, want, msg) => assert.deepEqual([...got].sort(), [...want].sort(), msg);
@@ -1635,8 +1635,8 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default/, 'the banner states the actual run posture');
-    assert.deepEqual(receipts[0].posture, { model: 'gpt-6.1-sol', effort: 'high', tier: null }, 'banner ↔ receipt parity (standard tier = null)');
+    assert.match(r.stderr, new RegExp(String.raw`review posture: model=${MANIFEST.posture.model.replaceAll('.', '\\.')} effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default`), 'the banner states the actual run posture');
+    assert.deepEqual(receipts[0].posture, MANIFEST.posture, 'banner ↔ receipt parity (standard tier = null)');
     assert.deepEqual(Object.keys(receipts[0]), Object.keys(RECEIPT_FIXTURE), 'fixture key set + order');
   });
 
@@ -1646,7 +1646,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /review posture: model=gpt-6\.1-sol effort=high tier=priority/);
+    assert.match(r.stderr, new RegExp(String.raw`review posture: model=${MANIFEST.posture.model.replaceAll('.', '\\.')} effort=high tier=priority`));
     assert.equal(receipts[0].posture.tier, 'priority');
   });
 
@@ -1678,7 +1678,7 @@ describe('codex-review.sh — dispatch-posture labeling (D5)', { concurrency: 2 
     const receipts = readReceipts(sb.repo);
     rmSync(sb.root, { recursive: true, force: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stderr, /^review posture: model=gpt-6\.1-sol effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default timeout=1800s$/m);
+    assert.match(r.stderr, new RegExp(String.raw`^review posture: model=${MANIFEST.posture.model.replaceAll('.', '\\.')} effort=high tier=standard jev=(api\.typesafe\.ai,docs\.typesafe\.ai|unreachable \(.*\)) source=model:default,effort:default timeout=1800s$`, 'm'));
     assert.deepEqual(Object.keys(receipts[0].posture), ['model', 'effort', 'tier'], 'timeout never enters the receipt posture');
   });
 

@@ -34,6 +34,7 @@ import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const DISPATCH = join(TOOLS, 'dispatch.mjs');
 const WRAPPER = join(resolve(TOOLS, '..', '..'), 'codex-cli-bridge', 'bin', 'codex-exec.sh');
+const MANIFEST = JSON.parse(readFileSync(join(resolve(TOOLS, '..', '..'), 'codex-cli-bridge', 'capability.json'), 'utf8'));
 
 // Synchronous at module load: `skip` options are evaluated when describe() is CALLED. spawnSync
 // reports ENOENT via `.error`, it never throws.
@@ -86,7 +87,7 @@ const SLEEPING_CODEX = [
   'if [[ "${1:-}" == "login" ]]; then echo "Logged in using ChatGPT"; exit 0; fi',
   'if [[ "${1:-}" == "--version" ]]; then echo "codex-cli 0.160.0"; exit 0; fi',
   'if [[ "${1:-}" == "debug" ]]; then cat <<EOF',
-  '{"models":[{"slug":"gpt-6.1-sol","priority":1,"visibility":"list","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"}]}]}',
+  `{"models":[{"slug":"${MANIFEST.posture.model}","priority":1,"visibility":"list","default_reasoning_level":"high","supported_reasoning_levels":[{"effort":"high"}]}]}`,
   'EOF',
   'exit 0; fi',
   'cat >/dev/null',
