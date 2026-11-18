@@ -3,7 +3,6 @@ import { readFileSync, renameSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { guardedMain, main } from './source-size-check.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_WHY } from './source-size-core.mjs';
-import { schema1MovedLines } from './source-size-report.mjs';
 import { configPath, createProject, makeLines, runCli } from './source-size/cli-harness.test.mjs';
 
 const SOURCE_PATH = 'src/grown.mjs';
@@ -31,27 +30,32 @@ const MOVED_AUTHORED = {
   extensions: AUTHORED_SCHEMA1.extensions,
 };
 const WHY_LINE = `source-size: WHY — ${SOURCE_SIZE_WHY}`;
+const report = await import('./source-size-report.mjs').catch(() => ({}));
+const moveLineOf = (cwd, schema) => `source-size: ${configPath(cwd)} moved from schema 1 to schema ${schema} in this write; a kit that predates schema ${schema} stops by name until that copy is upgraded.`;
 const makeGrownProject = () => createProject({
   files: { [SOURCE_PATH]: makeLines(GROWN_LINES) },
   config: { ...AUTHORED_SCHEMA1, ...RECORDS },
 });
 
-const assertRefusedMove = (args, assertRefusal) => {
-  const cwd = makeGrownProject();
+const assertRefusedMove = (args, assertRefusal, aggregate) => {
+  assert.equal(typeof report.schemaMovedLines, 'function');
+  const records = { baseline: RECORDS.baseline, ...(aggregate ? { aggregate: RECORDS.aggregate } : {}) };
+  const schema = aggregate ? 2 : 3;
+  const cwd = createProject({ files: { [SOURCE_PATH]: makeLines(GROWN_LINES) }, config: { ...AUTHORED_SCHEMA1, ...records } });
   const first = runCli(cwd, ...args);
   const afterFirst = readFileSync(configPath(cwd));
   const written = JSON.parse(afterFirst.toString('utf8'));
   assert.deepEqual(
     afterFirst,
-    Buffer.from(`${JSON.stringify({ ...MOVED_AUTHORED, ...RECORDS }, null, 2)}\n`),
-    'step 1: the move is written with the authored half transformed and both old records preserved',
+    Buffer.from(`${JSON.stringify({ ...MOVED_AUTHORED, schema, ...records }, null, 2)}\n`),
+    'step 1: the move transforms authored keys and carries exactly the old records',
   );
   assert.deepEqual(written.baseline, RECORDS.baseline, 'step 1: the grown file keeps its old baseline');
-  assert.deepEqual(written.aggregate, RECORDS.aggregate, 'step 1: the old aggregate is not regenerated');
+  assert.deepEqual(written.aggregate, records.aggregate, 'step 1: a sum is only carried when present');
   assert.equal(Object.hasOwn(written, 'defaults'), false, 'step 1: the move drops defaults');
   assert.equal(Object.hasOwn(written, 'layout'), false, 'step 1: the refusal does not add layout');
   assert.deepEqual([first.code, first.stderr], [1, ''], 'step 2: the first run renders a refusal, exit 1');
-  const [moveLine] = schema1MovedLines(cwd);
+  const moveLine = moveLineOf(cwd, schema);
   const firstLines = first.stdout.split('\n');
   const refusedAt = firstLines.findIndex((line) => line.includes('REFUSED'));
   assert.deepEqual(firstLines.filter((line) => line === moveLine), [moveLine], 'step 2: the move line prints once');
@@ -67,42 +71,43 @@ const assertRefusedMove = (args, assertRefusal) => {
 };
 
 describe('spec:source-size/S63 schema-1 moves before a rendered refusal, with regeneration and thrown stops distinct', () => {
-  it('a minted schema-1 raise without --reason moves first, then refuses, and the second run changes no bytes', () => {
-    assertRefusedMove(['--write-baseline'], (stdout) => {
-      assert.match(stdout, /source-size: REFUSED.*RAISES 2 recorded value\(s\).*a raise takes a reason/,
-        'step 2: the missing-reason refusal follows the move');
-      assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
-        'step 2: the refusal prints the grown file delta after the move');
-      assert.ok(stdout.includes(`src: aggregate lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
-        'step 2: the refusal prints the aggregate delta after the move');
+  for (const aggregate of [true, false]) {
+    it(`a minted schema-1 raise without --reason moves onto ${aggregate ? 2 : 3}, then refuses, and the second run changes no bytes`, () => {
+      assertRefusedMove(['--write-baseline'], (stdout) => {
+        assert.match(stdout, /source-size: REFUSED.*RAISES 1 recorded value\(s\).*a raise takes a reason/,
+          'step 2: the missing-reason refusal follows the move');
+        assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
+          'step 2: the refusal prints the grown file delta after the move');
+        assert.equal(stdout.includes(`src: aggregate lines ${RECORDED_LINES} → none`), aggregate);
+        assert.doesNotMatch(stdout, /aggregate lines .*\(raise\)/);
+      }, aggregate);
     });
-  });
 
-  it('a minted schema-1 raise with the kit sentence moves first, then refuses, and the second run changes no bytes', () => {
-    assertRefusedMove(['--write-baseline', '--reason', 'initial adoption'], (stdout) => {
-      const refusal = 'source-size: REFUSED — --reason "initial adoption" is the kit\'s own sentence, true only of a record half this write creates, and this regeneration RAISES 2 value(s) in a half the config already holds. The whole old→new it would write:';
-      assert.ok(stdout.split('\n').includes(refusal), 'step 2: the kit-sentence refusal follows the move');
-      assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
-        'step 2: the kit-sentence refusal includes the baseline delta');
-      assert.ok(stdout.includes(`src: aggregate lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
-        'step 2: the kit-sentence refusal includes the aggregate delta');
-      assert.ok(stdout.includes('--reason "<why this size is accepted>"'),
-        'step 2: the kit-sentence refusal offers regeneration with the reason placeholder');
+    it(`a minted schema-1 raise with the kit sentence moves onto ${aggregate ? 2 : 3}, then refuses, and the second run changes no bytes`, () => {
+      assertRefusedMove(['--write-baseline', '--reason', 'initial adoption'], (stdout) => {
+        const refusal = 'source-size: REFUSED — --reason "initial adoption" is the kit\'s own sentence, true only of a record half this write creates, and this regeneration RAISES 1 value(s) in a half the config already holds. The whole old→new it would write:';
+        assert.ok(stdout.split('\n').includes(refusal), 'step 2: the kit-sentence refusal follows the move');
+        assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
+          'step 2: the kit-sentence refusal includes the baseline delta');
+        assert.equal(stdout.includes(`src: aggregate lines ${RECORDED_LINES} → none`), aggregate);
+        assert.ok(stdout.includes('--reason "<why this size is accepted>"'),
+          'step 2: the kit-sentence refusal offers regeneration with the reason placeholder');
+      }, aggregate);
     });
-  });
 
-  it('a minted schema-1 --layout growth refusal moves first without adding layout and repeats without a write', () => {
-    assertRefusedMove(['--write-baseline', '--layout', '--reason', GROWTH_REASON], (stdout) => {
-      assert.match(stdout, /source-size: --layout REFUSED.*record no longer holds/,
-        'step 2: the layout growth refusal follows the move');
-      assert.match(stdout, /--write-baseline --reason/,
-        'step 2: the layout growth refusal names the plain regeneration needed first');
-      assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
-        'step 2: the layout growth refusal prints the baseline growth');
-      assert.ok(stdout.includes('no record was regenerated') && !stdout.includes('nothing was written'),
-        'step 2: a refusal after the written move never says nothing was written');
+    it(`a minted schema-1 --layout growth refusal moves onto ${aggregate ? 2 : 3} without adding layout and repeats without a write`, () => {
+      assertRefusedMove(['--write-baseline', '--layout', '--reason', GROWTH_REASON], (stdout) => {
+        assert.match(stdout, /source-size: --layout REFUSED.*record no longer holds/,
+          'step 2: the layout growth refusal follows the move');
+        assert.match(stdout, /--write-baseline --reason/,
+          'step 2: the layout growth refusal names the plain regeneration needed first');
+        assert.ok(stdout.includes(`${SOURCE_PATH}: lines ${RECORDED_LINES} → ${GROWN_LINES} (raise)`),
+          'step 2: the layout growth refusal prints the baseline growth');
+        assert.ok(stdout.includes('no record was regenerated') && !stdout.includes('nothing was written'),
+          'step 2: a refusal after the written move never says nothing was written');
+      }, aggregate);
     });
-  });
+  }
 
   it('an admitted schema-1 regeneration moves and raises the records in exactly one atomic rename', () => {
     const cwd = makeGrownProject();
@@ -121,9 +126,10 @@ describe('spec:source-size/S63 schema-1 moves before a rendered refusal, with re
     const written = JSON.parse(readFileSync(configPath(cwd), 'utf8'));
     assert.deepEqual(written, {
       ...MOVED_AUTHORED,
+      schema: 3,
       baseline: { [SOURCE_PATH]: { lines: GROWN_LINES, reason: GROWTH_REASON } },
-      aggregate: { src: { lines: GROWN_LINES, reason: GROWTH_REASON } },
-    }, 'schema 2 holds the regenerated record and the reason verbatim on each raised entry');
+    }, 'schema 3 holds the per-file record and its reason, with no sum');
+    assert.ok(result.stdout.split('\n').includes(moveLineOf(cwd, 3)), result.stdout);
   });
 
   it('a minted schema-1 thrown stop on non-UTF-8 source bytes writes nothing and prints no move', () => {
@@ -137,15 +143,12 @@ describe('spec:source-size/S63 schema-1 moves before a rendered refusal, with re
     assert.ok(result.stdout.includes(SOURCE_PATH), 'the thrown stop names the unverifiable tracked file');
     assert.match(result.stdout, /in-scope but not valid UTF-8/, 'this is the source-byte stop, not a reason refusal');
     assert.deepEqual(readFileSync(configPath(cwd)), before, 'the thrown stop leaves schema-1 config bytes unchanged');
-    for (const line of schema1MovedLines(cwd)) {
-      assert.ok(!result.stdout.includes(line), 'the thrown stop prints no move line');
-    }
+    assert.doesNotMatch(result.stdout, /moved from schema/, 'the thrown stop prints no move line');
   });
 
   for (const [state, machine] of [
     ['authored', {}],
-    ['incomplete with baseline only', { baseline: RECORDS.baseline }],
-    ['incomplete with aggregate only', { aggregate: RECORDS.aggregate }],
+    ['aggregate-only authored', { aggregate: RECORDS.aggregate }],
   ]) {
     it(`a refused mint of an ${state} schema-1 config writes nothing and prints no move`, () => {
       const cwd = createProject({
@@ -157,9 +160,7 @@ describe('spec:source-size/S63 schema-1 moves before a rendered refusal, with re
       assert.deepEqual([result.code, result.stderr], [1, ''], `${state}: ${result.stdout}`);
       assert.match(result.stdout, /REFUSED.*RAISES.*a raise takes a reason/, `${state}: the mint requires a reason`);
       assert.deepEqual(readFileSync(configPath(cwd)), before, `${state}: the refused mint leaves schema-1 bytes unchanged`);
-      for (const line of schema1MovedLines(cwd)) {
-        assert.ok(!result.stdout.includes(line), `${state}: the refused mint prints no move line`);
-      }
+      assert.doesNotMatch(result.stdout, /moved from schema/, `${state}: the refused mint prints no move line`);
     });
   }
 

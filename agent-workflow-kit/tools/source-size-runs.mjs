@@ -6,8 +6,7 @@
 // What --check judges: every in-scope file against the resolved limits with their bands, layout
 // where it is recorded or the config is absent, and every RECORDED size against the ratchet — a
 // record may not grow, and one above the tree or gone warns until the regeneration lowers or removes
-// it. Each declared root carries the same exact ratchet over its summed lines, so splitting one big
-// file into six buys no headroom. An absent config is judged under the kit's values.
+// it. No per-root line sum is judged or recorded. An absent config is judged under the kit's values.
 //
 // What --write-baseline does: regenerates the machine keys from the tree, and ONLY the machine keys.
 // The authored half is copied through with its VALUES and their ORDER preserved exactly; the file
@@ -20,12 +19,12 @@
 // What --adopt does: mints the record and declares the gate — the whole adoption as ONE consented
 // line, because the alternative is a two-step ceremony whose halves can be left half-done. It
 // composes the two writers it already has (this module's mint, the fill's consented apply restricted
-// to this one id) and owns no write of its own, but for the schema-1 move of a minted config, which
-// carries both records verbatim.
+// to this one id) and owns no write of its own, but for the verbatim move of a minted schema-1 config,
+// which carries the file record, and the line sum where the file holds one.
 //
 // What --override does: once a regeneration under the current limits would raise nothing, writes or
 // removes one reasoned override of a kit limit and regenerates the machine keys under the new limits
-// in the same write. Every write here moves a schema-1 config to schema 2; --check stops on one.
+// in the same write. Every write here moves a schema-1 config off schema 1; --check stops on one.
 //
 //
 // Dependency-free, Node >= 22. No side effects on import.
@@ -39,6 +38,7 @@ import {
   SOURCE_SIZE_SCHEMA,
   applyOverride,
   assertNoStoreRoot,
+  atSchema,
   checkTargetOf,
   isRaise,
   loadSourceSizeConfig,
@@ -55,6 +55,7 @@ import { bandWarningsOf, judgeTree, standingWarningsOf, stopsOf } from './source
 import { GATES_REL, loadDeclaration } from './gates-declaration.mjs';
 import { applyFill } from './gates-init.mjs';
 import {
+  EARLIER_TEMPLATE_READMES,
   TEMPLATE_README,
   TEMPLATE_READMES,
   absentRefusalLines,
@@ -70,7 +71,7 @@ import {
   reasonRequiredLines,
   recordNoLongerHoldsLines,
   recordRecognizedLines,
-  schema1MovedLines, schema1StopBlock,
+  schema1StopBlock, schemaMovedLines,
   unmintedRefusalLines, unmintedStopBlock,
   warningLines,
   writtenLines,
@@ -83,7 +84,7 @@ export const usageFail = (message) => Object.assign(new Error(`${ERROR_PREFIX}${
 const RECORD_NOUN = 'the source-size record';
 const LAYOUT_GROWTH_LEAD = 'source-size: --layout REFUSED — it starts the layout record and raises nothing else, but the record no longer holds for this tree, so that growth takes --write-baseline --reason first; no record was regenerated.';
 
-// What an absent config is judged as: schema 2 under the kit's values, layout over "." and the store.
+// What an absent config is judged as: the current schema under the kit's values, layout over "." and the store.
 const ABSENT = Object.freeze({ _README: TEMPLATE_README, schema: SOURCE_SIZE_SCHEMA });
 
 // Every run returns the config it resolved, so the CLI states the limits that run judged, and the
@@ -92,7 +93,7 @@ export const runCheck = ({ cwd, deps = {} }) => {
   const target = checkTargetOf({ loaded: loadSourceSizeConfig(cwd, deps), absentConfig: validateSourceSizeConfig(ABSENT) });
   const { config, judged } = target;
   if (target.stop === 'schema-1') return { code: 1, block: schema1StopBlock(cwd), config };
-  if (target.stop === 'unminted') return { code: 1, block: unmintedStopBlock(cwd, { state: target.state, missing: target.missing, config }), config };
+  if (target.stop === 'unminted') return { code: 1, block: unmintedStopBlock(cwd, { config }), config };
   const verdict = judgeTree(cwd, config, deps, judged);
   const report = { cwd, config, verdict, absent: judged.absent };
   return stopsOf(verdict.findings).length > 0 ? { code: 1, block: checkStopBlock(report), config, judged, scope: verdict.scope }
@@ -102,11 +103,14 @@ export const runCheck = ({ cwd, deps = {} }) => {
 // ── the writer ────────────────────────────────────────────────────────────────────────────────────
 
 // A schema-1 config is moved by the one transform, the kit's old template `_README` replaced by the
-// new one; every write of this module goes through it, so no writer ever writes schema 1 back.
+// schema-2 one; every write of this module goes through it, so no writer ever writes schema 1 back.
 const schema2Of = (parsed) => (parsed.schema === 1 ? migrateSchema1(parsed, TEMPLATE_READMES) : parsed);
 
-// What a move says it did, read off the moved config itself.
-const movedLines = (cwd, parsed) => (parsed.schema === 1 ? schema1MovedLines(cwd) : []);
+// What a regeneration writes: the current schema, an earlier template `_README` replaced by today's.
+const currentOf = (parsed) => atSchema(schema2Of(parsed), SOURCE_SIZE_SCHEMA, { earlier: EARLIER_TEMPLATE_READMES, current: TEMPLATE_README });
+
+// What a write says of the schema it left, read off the file as loaded (null where none was) and the schema written.
+const movedLines = (cwd, from, to = SOURCE_SIZE_SCHEMA) => (from === to ? [] : schemaMovedLines(cwd, from, to));
 
 const writeRecord = (cwd, body, deps) =>
   writeDocsAiFileAtomic(cwd, SOURCE_SIZE_CONFIG_REL, body, deps, { stop: scopeFail, noun: RECORD_NOUN });
@@ -147,13 +151,13 @@ export const runWriteBaseline = ({ cwd, reason, layout = false, deps = {} }) => 
     const moved = minted && config.schema === 1 ? moveMinted(cwd, parsed, deps) : [];
     return { code: 1, lines: [...bandWarnings, ...moved, ...refused], config, judged, scope };
   }
-  const body = serialize(schema2Of(parsed), materialize(plan, reason));
-  // Whether anything was written is decided by the BYTES, not by the delta count: completing a
-  // hand-edited half record changes the file while raising nothing at all.
+  const body = serialize(currentOf(parsed), materialize(plan, reason));
+  // Whether anything was written is decided by the BYTES, not by the delta count: a schema move
+  // changes the file while raising nothing at all.
   const changed = body !== loaded.text;
   if (changed) writeRecord(cwd, body, deps);
   const written = writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed });
-  return { code: 0, lines: [...warnings, ...movedLines(cwd, parsed), ...written], config, judged, scope };
+  return { code: 0, lines: [...warnings, ...movedLines(cwd, absent ? null : parsed.schema), ...written], config, judged, scope };
 };
 
 // --override: the projection under the CURRENT limits comes first, so an override's reason never
@@ -161,9 +165,9 @@ export const runWriteBaseline = ({ cwd, reason, layout = false, deps = {} }) => 
 // under the new limits, in the same atomic write.
 export const runOverride = ({ cwd, id, value, tolerance, kitDefault, reason, deps = {} }) => {
   assertDocsAiDeployment(cwd, deps, { stop: scopeFail, rel: SOURCE_SIZE_CONFIG_REL, noun: RECORD_NOUN });
-  const { state, config, parsed, text, missingMachineKeys } = loadSourceSizeConfig(cwd, deps);
+  const { state, config, parsed, text } = loadSourceSizeConfig(cwd, deps);
   if (state === 'absent') return { code: 1, lines: absentRefusalLines(cwd) };
-  if (state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { state, missing: missingMachineKeys, config }), config };
+  if (state !== 'minted') return { code: 1, lines: unmintedRefusalLines(cwd, { config }), config };
   const judged = { absent: false, layout: config.layout !== null };
   const current = judgeForWrite(cwd, config, deps, judged);
   const scope = current.verdict.scope;
@@ -174,7 +178,7 @@ export const runOverride = ({ cwd, id, value, tolerance, kitDefault, reason, dep
   if (filled !== null && filled.tolerance === kit.tolerance && (kit.value === null || filled.value === kit.value)) {
     throw usageFail(`--override ${id} equals the kit's own numbers — pass --kit-default to return to them; the writer never writes an override equal to the kit's`);
   }
-  const next = applyOverride(schema2Of(parsed), id, filled);
+  const next = applyOverride(currentOf(parsed), id, filled);
   const nextConfig = validateSourceSizeConfig(next);
   const { plan, warnings } = judgeForWrite(cwd, nextConfig, deps, judged);
   const body = serialize(next, materialize(plan, reason));
@@ -187,7 +191,7 @@ export const runOverride = ({ cwd, id, value, tolerance, kitDefault, reason, dep
     lines: [
       ...warnings,
       ...overrideWrittenLines({ cwd, id, removed: kitDefault, reason }),
-      ...movedLines(cwd, parsed),
+      ...movedLines(cwd, parsed.schema),
       ...(plan.deltas.length === 0 ? [] : writtenLines({ cwd, deltas: plan.deltas, reason: plan.raises.length > 0 ? reason : undefined, changed: true })),
     ],
     config: nextConfig,
@@ -248,12 +252,15 @@ const recognizeRecord = ({ cwd, deps }) => {
   return { code: 0, lines: recordRecognizedLines(cwd) };
 };
 
-// A MINTED schema-1 config is moved in its own write before adoption reads it as schema 2: the
-// authored half transformed, both machine records carried verbatim, nothing regenerated — so the
-// adoption reason can never ride a raise. An authored or incomplete one is moved by the mint itself.
+// A MINTED schema-1 config is moved in its own write before adoption reads it: the
+// authored half transformed, the file record and the line sum carried verbatim, nothing regenerated —
+// so the adoption reason can never ride a raise. It writes schema 2, the last schema that holds the
+// sum, exactly where the file holds one, and the current schema where it holds none; an authored one is
+// moved by the mint itself.
 const moveMinted = (cwd, parsed, deps) => {
-  writeRecord(cwd, serialize(schema2Of(parsed), { baseline: parsed.baseline, aggregate: parsed.aggregate }), deps);
-  return movedLines(cwd, parsed);
+  const carriesSum = Object.hasOwn(parsed, 'aggregate');
+  writeRecord(cwd, serialize(carriesSum ? schema2Of(parsed) : currentOf(parsed), { baseline: parsed.baseline, ...(carriesSum ? { aggregate: parsed.aggregate } : {}) }), deps);
+  return movedLines(cwd, parsed.schema, carriesSum ? 2 : SOURCE_SIZE_SCHEMA);
 };
 
 // A stop after the move still prints the move: the write happened, and no stop may hide it.

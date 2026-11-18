@@ -7,6 +7,25 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-14 — AD-238: the per-root line sum leaves the size check and its record, under config schema 3 (kit 23.10.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/source-size-config.mjs`** writes `SOURCE_SIZE_SCHEMA` 3 and reads schemas 1, 2 and 3;
+`MACHINE_KEYS` is `baseline` alone, so the config has three states (absent, authored, minted), and `aggregate` is a
+known key of every schema (`RETIRED_SUM_KEY`), judged by nothing; `practiceFacts` loses `aggregateLines`.
+**`source-size-judge.mjs`** drops `judgeAggregate` and `rootLines`; a deployed `aggregate` is one `sum-record`
+warning, and `hasDroppedRecord` (in place of `hasStoreRecord`) adds the regeneration line for it and for the store's
+record; `directoryFindings` reads the projected record by its own key. **`source-size-report.mjs`** holds
+`SCHEMA2_TEMPLATE_README` and `EARLIER_TEMPLATE_READMES`, the schema-3 `TEMPLATE_README`, the sum's warning and
+`schemaMovedLines` (in place of `schema1MovedLines`), each move or written-at line saying that a kit that predates
+the written schema stops by name. **`source-size-runs.mjs`** writes every regeneration through `atSchema` (new in
+`tools/source-size/limits.mjs`, through the door and the core), and the verbatim schema-1 move writes schema 2 where
+the file holds `aggregate`, else schema 3. `tools/source-size/record.mjs` plans one drop delta per recorded root and
+writes no `aggregate`; `pilesOf` answers past schema 1; `reason.mjs`, `setup.mjs` and `help.mjs` lose the sum and the
+half-written state. `procedures.mjs`, `now-render.mjs`, `gates-init.mjs`, `recommendations.mjs` and the mode
+documents of now, gates, procedures and recommendations no longer state a sum or a half-written record. Specs
+`kit/source-size` revision 12, `kit/now` revision 2, `kit/install/init-project` revision 34; scenarios S4 and S6
+retire, S68 to S70 are new, in `tools/source-size-aggregate.test.mjs`.
+
 ## 2026-11-13 — AD-237: the coverage check's red output opens with its failure, through one kit helper of a checker's block (kit 23.9.0 MINOR; memory, engine and the bridges unchanged)
 
 **`agent-workflow-kit/tools/checker-block/`** (new: `place.mjs`, `tail.mjs`, the door `index.mjs` exporting

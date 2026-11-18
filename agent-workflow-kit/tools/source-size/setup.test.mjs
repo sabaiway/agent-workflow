@@ -24,7 +24,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-setup-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 // The fixtures' own git env: a hook-shaped ambient (location, index, prefix) stripped, host config pinned.
-const ENV = withGitPath(hermeticGitEnv({ ...process.env, GIT_DIR: join(TMP, 'nowhere'), GIT_WORK_TREE: TMP, GIT_INDEX_FILE: join(TMP, 'index'), git_prefix: 'x/' }, TMP));
+const { NODE_TEST_CONTEXT, ...FIXTURE_ENV } = process.env;
+const ENV = withGitPath(hermeticGitEnv({ ...FIXTURE_ENV, GIT_DIR: join(TMP, 'nowhere'), GIT_WORK_TREE: TMP, GIT_INDEX_FILE: join(TMP, 'index'), git_prefix: 'x/' }, TMP));
 const DEPS = { env: ENV };
 
 const NL = String.fromCharCode(10);
@@ -63,8 +64,8 @@ const practiceOf = (reason) => ({ loadSourceSizeConfig, judgeTree, stopsOf, abse
 describe('spec:source-size/S39 checkTargetOf states what a check judges and runCheck answers stops as block parts and passing trees as lines', () => {
   const STATES = [
     ['a schema-1 config', { files: ONE, config: SCHEMA1 }, { stop: 'schema-1' }],
-    ['an authored config', { files: ONE, config: AUTH }, { stop: 'unminted', state: 'authored', missing: ['baseline', 'aggregate'] }],
-    ['an incomplete config', { files: ONE, config: { ...AUTH, baseline: {} } }, { stop: 'unminted', state: 'incomplete', missing: ['aggregate'] }],
+    ['an authored config', { files: ONE, config: AUTH }, { stop: 'unminted', state: 'authored' }],
+    ['a minted baseline-only config', { files: ONE, config: { ...AUTH, baseline: {} } }, { stop: null, judged: { absent: false, layout: false } }],
     ['an absent config', { files: { ...ONE, ...many('src/wide', 22) } }, { stop: null, judged: { absent: true, layout: true } }],
     ['a minted config carrying layout', { files: ONE, config: MINTED({ layout: LAYOUT(1) }) }, { stop: null, judged: { absent: false, layout: true } }],
     ['a minted config without layout', { files: { ...ONE, 'src/big.mjs': lines(441) }, config: MINTED() }, { stop: null, judged: { absent: false, layout: false } }],
@@ -84,10 +85,10 @@ describe('spec:source-size/S39 checkTargetOf states what a check judges and runC
       assert.deepEqual(run.config, config);
       if (expected.stop === 'schema-1') assert.deepEqual([run.code, run.block], [1, schema1StopBlock(cwd)]);
       if (expected.stop === 'unminted') {
-        const { state, missing } = expected;
-        const reason = state === 'authored' ? 'initial adoption' : '<why this size is accepted>';
+        const { state } = expected;
+        const reason = 'initial adoption';
         assert.ok(run.block.remedies[0].endsWith(`--reason "${reason}"`), `${what}: the remedy carries ${reason}`);
-        assert.deepEqual([run.code, run.block], [1, unmintedStopBlock(cwd, { state, missing, config, reason })]);
+        assert.deepEqual([run.code, run.block], [1, unmintedStopBlock(cwd, { state, config, reason })]);
       }
       if (expected.stop !== null) return;
       const verdict = judgeTree(cwd, config, DEPS, expected.judged);
@@ -111,7 +112,7 @@ describe('spec:source-size/S40 layoutSetupOf answers one closed answer from the 
     ['the same over the root .', { files: ONE, config: MINTED({ roots: ['.'], aggregate: { '.': { lines: 1, reason: R } } }) }, record('--layout')],
     ['a schema-1 config', { files: ONE, config: SCHEMA1 }, held('schema-1')],
     ['an authored config', { files: ONE, config: AUTH }, held('unminted')],
-    ['an incomplete config', { files: ONE, config: { ...AUTH, aggregate: { src: { lines: 1, reason: R } } } }, held('unminted')],
+    ['an authored aggregate-only config', { files: ONE, config: { ...AUTH, aggregate: { src: { lines: 1, reason: R } } } }, held('unminted')],
     ['a config without layout declaring the root docs/ai/specs/x', storeRoot('docs/ai/specs/x'), held('store-root', { root: 'docs/ai/specs/x' })],
     ['a config without layout declaring the root docs/ai/specs', storeRoot('docs/ai/specs'), held('store-root', { root: 'docs/ai/specs' })],
     ['a minted config without layout whose check stops', { files: { ...ONE, 'src/big.mjs': lines(441) }, config: MINTED() }, held('stops')],
@@ -156,7 +157,7 @@ describe('spec:source-size/S40 layoutSetupOf answers one closed answer from the 
     const minted = (over) => ({ state: 'minted', config: { schema: 2, roots: ['src'], layout: null, ...over } });
     assert.deepEqual(run(minted({ layout: {} }), []).answer, { answer: 'armable' });
     assert.deepEqual(run(minted({ roots: ['docs/ai/specs/x'] }), []), { answer: { answer: 'held', reason: 'store-root', root: 'docs/ai/specs/x' }, calls: ['load'] });
-    assert.deepEqual(run({ state: 'authored', config: { schema: 2 }, missingMachineKeys: ['baseline', 'aggregate'] }, []), { answer: { answer: 'held', reason: 'unminted' }, calls: ['load'] });
+    assert.deepEqual(run({ state: 'authored', config: { schema: 2 } }, []), { answer: { answer: 'held', reason: 'unminted' }, calls: ['load'] });
     assert.equal(existsSync(root), false, 'nothing reached the disk');
   });
 
@@ -185,7 +186,6 @@ describe('spec:source-size/S42 a --layout start on a minted config raises the la
   const GROWTHS = [
     ['a file grown past its line record', { 'src/big.mjs': lines(460) }, 'src/big.mjs: lines 450 → 460 (raise)'],
     ['a file grown past its byte record', { 'src/wide.mjs': wide(1300) }, 'src/wide.mjs: maxLineBytes 1200 → 1300 (raise)'],
-    ['a root grown past its aggregate', { 'src/new.mjs': lines(1) }, 'src: aggregate lines 452 → 453 (raise)'],
   ];
   const grown = (growth, config = CONFIG) => {
     const cwd = project({ files: BASE, config });

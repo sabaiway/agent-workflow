@@ -24,7 +24,7 @@ Object.assign(process.env, GIT_ENVIRONMENT);
 
 const INITIAL_REASON = 'initial adoption';
 const PLACEHOLDER = '<why this size is accepted>';
-const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a half-written record, a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
+const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
 const NO_GATE = 'no source-size gate is declared \u2014 the gate matrix runs no size check, so no gate run stops a file beyond its limits';
 const RECORD_KEPT = 'no source-size gate is declared \u2014 the size record is kept as it is; declaring the gate adds the size check to the gate matrix';
 const ID_SQUATTER = 'a gate carries the source-size id but is not this checker \u2014 the gate matrix reads as running the size check while it runs none';
@@ -48,19 +48,19 @@ const CONFIGURATIONS = [
   { label: 'absent', config: null, reason: INITIAL_REASON, detail: null },
   { label: 'authored without machine halves', config: AUTHORED, reason: INITIAL_REASON, detail: null },
   {
-    label: 'incomplete with baseline only', config: { ...AUTHORED, baseline: {} },
-    reason: PLACEHOLDER, detail: REASON_AUTHOR_RECIPE,
+    label: 'minted with baseline only', config: { ...AUTHORED, baseline: {} },
+    reason: null, detail: REASON_AUTHOR_RECIPE,
   },
   {
-    label: 'incomplete with aggregate only', config: { ...AUTHORED, aggregate: AGGREGATE },
-    reason: PLACEHOLDER, detail: REASON_AUTHOR_RECIPE,
+    label: 'authored holding only deployed aggregate', config: { ...AUTHORED, aggregate: AGGREGATE },
+    reason: INITIAL_REASON, detail: null,
   },
   {
     label: 'authored holding layout', config: { ...AUTHORED, layout: LAYOUT },
     reason: PLACEHOLDER, detail: REASON_AUTHOR_RECIPE,
   },
   { label: 'unreadable JSON', config: '{ not JSON', reason: INITIAL_REASON, detail: null },
-  { label: 'minted schema 2', config: MINTED, reason: null, detail: REASON_AUTHOR_RECIPE },
+  ...[2, 3].map((schema) => ({ label: `minted schema ${schema}`, config: { ...AUTHORED, schema, baseline: {}, layout: LAYOUT }, reason: null, detail: REASON_AUTHOR_RECIPE })),
 ];
 
 const runGit = (cwd, arguments_) => {

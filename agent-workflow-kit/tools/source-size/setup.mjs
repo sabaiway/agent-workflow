@@ -10,12 +10,12 @@ import { SPEC_STORE_ROOT } from './layout.mjs';
 export const SETUP_ANSWERS = Object.freeze(['armable', 'record', 'held']);
 
 // checkTargetOf({ loaded, absentConfig }) → exactly one of: the schema-1 stop, the unminted stop (a
-// present config authored or incomplete), or the config to judge with the dimensions judged.
+// present config with no file record), or the config to judge with the dimensions judged.
 export const checkTargetOf = ({ loaded, absentConfig }) => {
   const absent = loaded.state === 'absent';
   const config = absent ? absentConfig : loaded.config;
   if (config.schema === 1) return { stop: 'schema-1', config };
-  if (!absent && loaded.state !== 'minted') return { stop: 'unminted', config, state: loaded.state, missing: loaded.missingMachineKeys };
+  if (!absent && loaded.state !== 'minted') return { stop: 'unminted', config, state: loaded.state };
   return { stop: null, config, judged: { absent, layout: absent || config.layout !== null } };
 };
 

@@ -13,7 +13,7 @@ The four blocks keep this order:
 1. **NOW** — every plan in flight, its derived phase, current and next step, then the tree fingerprint, clean state, review verdict lines, final run and red-proof currency. No plan and several plans are rendered states; never pick one silently.
 2. **STEPS** — every ledger row with one of `landed`, `in progress`, `pending` or `unjudged`. The rows are the steps; invent no numbering.
 3. **QUEUE** — every work-carrying row (live, parked, ambiguous) under the full line-numbered heading path it carries, with per-class counts covering every row of the bucket, terminal and record included, and names rather than ids. Only a path through `## Pending / backlog` calls its position priority; every other bucket is archive and calls it position.
-4. **CAMPAIGN** — source-size config state (`absent`, `authored`, `incomplete`, `minted`), caps, roots, recorded over-cap files and aggregate lines. An absent opt-in config is a rendered state.
+4. **CAMPAIGN** — source-size config state (`absent`, `authored`, `minted`), caps, roots and recorded over-cap files. An absent opt-in config is a rendered state.
 
 Evidence alone sets a ledger status: the row's path and verb, then the path fact, changed set and exclusion fact. The plan's prose never sets a status. A checked box or terminal marker is only a claim; when evidence contradicts it, print the claim beside the evidence-derived status. Keep anomaly and current red-proof annotations beside the same status too. Every status line names its evidence source.
 

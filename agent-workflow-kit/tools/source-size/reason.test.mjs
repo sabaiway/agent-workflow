@@ -78,34 +78,35 @@ describe('spec:source-size/S62 the kit sentence belongs only to new halves and p
     assertExit(runCli(cwd, '--write-baseline', '--reason', INITIAL_ADOPTION_REASON), 0);
     const written = readConfig(cwd);
     assert.deepEqual(written.baseline['src/big.mjs'], { lines: BIG_LINES, reason: INITIAL_ADOPTION_REASON });
-    assert.deepEqual(written.aggregate.src, { lines: BIG_LINES, reason: INITIAL_ADOPTION_REASON });
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
   });
 
   it('authored config holding layout: a raise in that present half refuses and counts only that half', () => {
     assertKitRefusal({ files: WIDE_FILES, config: AUTHORED_LAYOUT }, ['--write-baseline'], 1, [
-      'src: aggregate lines none → 1 (raise)', 'src: files 20 → 24 (raise)',
+      'src: files 20 → 24 (raise)',
     ]);
   });
 
-  it('incomplete config: a raise in its present aggregate refuses while the missing baseline also raises', () => {
-    assertKitRefusal({ files: BIG_FILES, config: { ...AUTHORED, aggregate: { src: { lines: 1, reason: RECORDED_REASON } } } }, ['--write-baseline'], 1, [
-      'src/big.mjs: lines none → 441 (raise)', 'src: aggregate lines 1 → 441 (raise)',
-    ]);
+  it('authored config holding only a deployed aggregate: the baseline raise takes the kit sentence', () => {
+    const cwd = createProject({ files: BIG_FILES, config: { ...AUTHORED, aggregate: { src: { lines: 1, reason: RECORDED_REASON } } } });
+    assertExit(runCli(cwd, '--write-baseline', '--reason', INITIAL_ADOPTION_REASON), 0);
+    assert.deepEqual(readConfig(cwd).baseline, { 'src/big.mjs': { lines: BIG_LINES, reason: INITIAL_ADOPTION_REASON } });
+    assert.equal(Object.hasOwn(readConfig(cwd), 'aggregate'), false);
   });
 
-  it('incomplete config: raises confined to its missing baseline take the kit sentence', () => {
+  it('authored config holding only a deployed aggregate: first baseline entries take the kit sentence', () => {
     const cwd = createProject({ files: BIG_FILES, config: { ...AUTHORED, aggregate: AGGREGATE } });
     assertExit(runCli(cwd, '--write-baseline', '--reason', INITIAL_ADOPTION_REASON), 0);
     const written = readConfig(cwd);
     assert.deepEqual(written.baseline['src/big.mjs'], { lines: BIG_LINES, reason: INITIAL_ADOPTION_REASON });
-    assert.deepEqual(written.aggregate, AGGREGATE);
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
   });
 
   it('minted config without layout: starting layout alone takes the kit sentence', () => {
     const cwd = createProject({ files: BIG_FILES, config: MINTED });
     assertExit(runCli(cwd, '--write-baseline', '--layout', '--reason', INITIAL_ADOPTION_REASON), 0);
     const { layout, ...rest } = readConfig(cwd);
-    assert.deepEqual(rest, MINTED);
+    assert.deepEqual(rest, { ...AUTHORED, schema: 3, baseline: BASELINE });
     assert.deepEqual(layout, { roots: { src: { files: 1, reason: INITIAL_ADOPTION_REASON } }, directories: {} });
   });
 
@@ -121,14 +122,14 @@ describe('spec:source-size/S62 the kit sentence belongs only to new halves and p
   });
 
   it('minted config with growth: plain regeneration cannot give old halves the kit sentence', () => {
-    assertKitRefusal({ files: GROWN_FILES, config: MINTED }, ['--write-baseline'], 2, [
-      'src/big.mjs: lines 441 → 450 (raise)', 'src: aggregate lines 441 → 450 (raise)',
+    assertKitRefusal({ files: GROWN_FILES, config: { ...AUTHORED, baseline: BASELINE } }, ['--write-baseline'], 1, [
+      'src/big.mjs: lines 441 → 450 (raise)',
     ]);
   });
 
   it('adopt on authored layout growth: the mint refuses and no gate is declared', () => {
     assertKitRefusal({ files: WIDE_FILES, config: AUTHORED_LAYOUT }, ['--adopt'], 1, [
-      'src: aggregate lines none → 1 (raise)', 'src: files 20 → 24 (raise)',
+      'src: files 20 → 24 (raise)',
     ]);
   });
 
@@ -162,7 +163,7 @@ describe('spec:source-size/S64 every mint printer asks the same reason rule and 
   const REASON_STATES = [
     ['absent', null, INITIAL_ADOPTION_REASON],
     ['authored without a machine half', AUTHORED, INITIAL_ADOPTION_REASON],
-    ['incomplete with baseline', { ...AUTHORED, baseline: BASELINE }, GROWTH_REASON_PLACEHOLDER],
+    ['authored holding only a deployed aggregate', { ...AUTHORED, aggregate: AGGREGATE }, INITIAL_ADOPTION_REASON],
     ['authored holding layout', AUTHORED_LAYOUT, GROWTH_REASON_PLACEHOLDER],
   ];
   for (const [state, raw, expected] of REASON_STATES) {
@@ -174,7 +175,8 @@ describe('spec:source-size/S64 every mint printer asks the same reason rule and 
     });
   }
 
-  const PRINT_STATES = REASON_STATES.filter(([state]) => state === 'authored without a machine half' || state === 'incomplete with baseline');
+  const PRINT_STATES = REASON_STATES.filter(([state]) => state !== 'absent')
+    .map(([state, config, reason]) => [state, state === 'authored holding layout' ? { ...config, schema: 3 } : config, reason]);
   for (const [state, config, reason] of PRINT_STATES) {
     it(`unminted override refusal: ${state} prints ${reason}`, () => {
       const cwd = createProject({ files: BIG_FILES, config });

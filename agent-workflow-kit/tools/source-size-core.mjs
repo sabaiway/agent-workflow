@@ -5,7 +5,7 @@
 //
 // The halves, each holding ONE rule set and each within the cap this practice declares:
 //   • source-size-refusal.mjs  — the two exit classes, and the absolute config path every refusal names
-//   • source-size-config.mjs   — the config file: its grammar, its four states, its reader
+//   • source-size-config.mjs   — the config file: its grammar, its three states, its reader
 //   • source-size-scope.mjs    — which files are judged (D-6) and how big each one is (D-7)
 //   • source-size-gate-cmd.mjs — whether a declared gate cmd IS this checker (the canonical matcher),
 //                                and which of the three tool claims it makes when it is not
@@ -64,6 +64,7 @@ export {
   SCHEMA1_REASON,
   SPEC_STORE_ROOT,
   applyOverride,
+  atSchema,
   bandOf,
   changesFor,
   isRaise,
@@ -115,7 +116,7 @@ export { CHECKER_CLAIM } from './checker-claim.mjs';
 
 // readLayoutSetup(root, deps) → the layout setup's answer for a project, the one bound form the advisor
 // and the git-hooks leaf ask: the loader, the tree judge and its stop filter, the absent config the
-// check judges (schema 2 under the kit's values) and the reason the record's first entries take.
+// check judges (the current schema under the kit's values) and the reason the record's first entries take.
 export const readLayoutSetup = (root, deps = {}) => layoutSetupOf(root, {
   loadSourceSizeConfig,
   judgeTree,

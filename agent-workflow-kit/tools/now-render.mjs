@@ -133,7 +133,7 @@ const renderCampaignBlock = (block, color) => {
   const lines = [getHeading(BLOCK_TITLE.campaign, color), `  state: ${block.state}`];
   if (block.state !== 'absent') {
     lines.push(`  caps: ${block.maxLines} lines · ${block.maxLineBytes} bytes per line`);
-    lines.push(`  roots: ${block.roots} · recorded files: ${getFigure(block.recordedFiles)} · aggregate lines: ${getFigure(block.aggregateLines)}`);
+    lines.push(`  roots: ${block.roots} · recorded files: ${getFigure(block.recordedFiles)}`);
   }
   return lines;
 };

@@ -536,9 +536,8 @@ const flowHalvesAdvice = (flow, probe) => {
 // their reason ride EVERY named-activity render, so the plan's Module ledger is cut to them while the
 // plan is being written. Composed from the project's live declaration, never from constants here.
 // Each config state speaks as itself: ABSENT renders NOTHING (a project that declares no practice must
-// not be handed invented limits); AUTHORED and INCOMPLETE render the declared caps plus the honest
-// "nothing is recorded yet" line (treating INCOMPLETE as MINTED would report a half record as the
-// whole tree's debt); MINTED renders the recorded counts too.
+// not be handed invented limits); AUTHORED renders the declared caps plus the honest "no file size is
+// recorded yet" line; MINTED renders the recorded count too.
 // A config that cannot be read renders ONE loud line carrying the reader's own message and the render
 // still completes: the exit code for a broken source-size config belongs to the practice's own checker,
 // while THIS tool's exit contract is about its own config and the engine.
@@ -554,14 +553,9 @@ const declaredPracticeAdvice = (cwd, readFile, lstat) => {
   }
   if (declaration.state === 'absent') return [];
   const facts = practiceFacts(declaration.config);
-  // The two pre-mint states share a LANE (the ratchet holds nothing, the mint step is next) but not a
-  // FACT: an incomplete file carries half the machine record, so "no size is recorded" would be a
-  // plain untruth about it — it names the missing half instead. Neither ever prints minted counts.
   // The mint step is named, not rendered: on a project path that does not survive double-quoting the
   // checker deliberately withholds a paste-ready command, and this advisor never re-decides that.
-  const unmintedRecord = declaration.state === 'incomplete'
-    ? `  recorded: PARTIAL — the machine record is half-written (missing ${declaration.missingMachineKeys.map((key) => `"${key}"`).join(', ')}), so the ratchet holds nothing yet; run \`source-size-check.mjs --check\` for the mint step.`
-    : '  recorded: NOTHING YET — the caps are declared but no size is recorded, so the ratchet holds nothing; run `source-size-check.mjs --check` for the mint step.';
+  const unmintedRecord = '  recorded: NO FILE YET — the caps are declared but no file size is recorded, so the ratchet holds no file; run `source-size-check.mjs --check` for the mint step.';
   // The five limits are the check's own lines, from the one function both renders read.
   const { config } = declaration;
   return [
@@ -571,9 +565,9 @@ const declaredPracticeAdvice = (cwd, readFile, lstat) => {
     config.layout !== null
       ? '  layout: recorded — entries per directory, depth and files per root are judged by the size check.'
       : '  layout: not recorded — `source-size-check.mjs --write-baseline --layout --reason "<text>"` starts it.',
-    ...(config.schema === 1 ? ['  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it to schema 2.'] : []),
+    ...(config.schema === 1 ? ['  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it off schema 1.'] : []),
     declaration.state === 'minted'
-      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.`
+      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.`
       : unmintedRecord,
     `  why: ${SOURCE_SIZE_WHY}`,
   ];

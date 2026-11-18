@@ -12,15 +12,17 @@ import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main } from '../source-size-check.mjs';
 import { INITIAL_ADOPTION_REASON, reasonDefect } from '../source-size-core.mjs';
+import { hermeticGitEnv } from '../git-env.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-override-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const TOOL = fileURLToPath(new URL('../source-size-check.mjs', import.meta.url));
 const NL = String.fromCharCode(10);
+const { NODE_TEST_CONTEXT, ...FIXTURE_ENV } = process.env;
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: hermeticGitEnv(FIXTURE_ENV, TMP) });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
@@ -72,13 +74,13 @@ const KIT_TAIL = [
   `${LIMIT_PREFIX}depth 5, tolerance 0% — from kit`,
   `${LIMIT_PREFIX}files-per-root none recorded, tolerance 10% — from kit`,
 ];
-const KEYS_AFTER_OVERRIDE = ['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits', 'baseline', 'aggregate'];
+const KEYS_AFTER_OVERRIDE = ['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits', 'baseline'];
 const MINT_COMMAND = (cwd) => `node "${TOOL}" --write-baseline --cwd "${cwd}" --reason "${INITIAL_ADOPTION_REASON}"`;
 const OUTGROWN_LEAD = /^source-size: --override REFUSED — the record in .* no longer holds for this tree before this change, so that drift takes --write-baseline --reason first/;
 
 const grownProject = () => {
-  const cwd = project();
-  writeFileSync(join(cwd, 'src', 'a.mjs'), lines(20));
+  const cwd = project({ config: CONFIG({ schema: 3, baseline: RECORD.baseline }) });
+  writeFileSync(join(cwd, 'src', 'big.mjs'), lines(450));
   return cwd;
 };
 
@@ -99,11 +101,11 @@ const assertUnmintedRefusal = (cwd, before, result) => {
 
 const assertOutgrownRefusal = (cwd, before, result) => {
   assert.equal(result.code, 1, out(result));
-  const warning = 'source-size: WARNING — 1 judged file(s) hold work-tree bytes that differ from the index, and the work tree\'s bytes are the ones measured: src/a.mjs';
+  const warning = 'source-size: WARNING — 1 judged file(s) hold work-tree bytes that differ from the index, and the work tree\'s bytes are the ones measured: src/big.mjs';
   assert.equal(bodyLines(result)[0], warning, result.stdout);
   assert.match(bodyLines(result)[1], OUTGROWN_LEAD, `the refusal follows the warning:${NL}${result.stdout}`);
   assert.equal(result.stdout.split(NL).filter((line) => line === warning).length, 1, result.stdout);
-  assert.ok(result.stdout.includes('src: aggregate lines 451 → 461 (raise)'), `the projected drift is listed:${NL}${result.stdout}`);
+  assert.ok(result.stdout.includes('src/big.mjs: lines 441 → 450 (raise)'), `the projected drift is listed:${NL}${result.stdout}`);
   assert.ok(result.stdout.includes(`--write-baseline --cwd "${cwd}" --reason`), `the drift's own lane is named:${NL}${result.stdout}`);
   assert.doesNotMatch(result.stdout, /--adopt/);
   assert.deepEqual(bytesOf(cwd), before, 'a refusal writes nothing');
@@ -121,7 +123,8 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
       'src/a.mjs': { lines: 10, reason: 'tighter files' },
       'src/big.mjs': { lines: 441, reason: INITIAL_ADOPTION_REASON },
     }, 'the reason lands only on the raise the new value causes: 10 lines are past the band of 8');
-    assert.deepEqual(written.aggregate, RECORD.aggregate, 'an entry the change did not raise keeps its own reason');
+    assert.equal(written.schema, 3);
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
     assert.deepEqual(Object.keys(written), KEYS_AFTER_OVERRIDE);
     assert.ok(result.stdout.includes(`source-size: override of lines-per-file written in ${configPath(cwd)} — reason: tighter files`), result.stdout);
     assert.ok(result.stdout.includes('src/a.mjs: lines none → 10 (raise)'), result.stdout);
@@ -130,12 +133,13 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
   });
 
   it('a tighten that puts no file over the new value changes no record, and re-applying it writes nothing', () => {
-    const cwd = project();
+    const cwd = project({ config: CONFIG({ schema: 3, baseline: RECORD.baseline }) });
     const result = override(cwd, ['lines-per-file', '--value', '300', '--reason', 'tighter files']);
     assert.equal(result.code, 0, out(result));
     const written = configOf(cwd);
     assert.deepEqual(written.limits, { 'lines-per-file': { value: 300, tolerance: 10, reason: 'tighter files' } });
-    assert.deepEqual({ baseline: written.baseline, aggregate: written.aggregate }, RECORD);
+    assert.deepEqual(written.baseline, RECORD.baseline);
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
     assert.doesNotMatch(result.stdout, /→/, `no record value changed, so no delta is printed:${NL}${result.stdout}`);
     const before = bytesOf(cwd);
     const again = override(cwd, ['lines-per-file', '--value', '300', '--reason', 'tighter files']);
@@ -157,7 +161,8 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
     const written = configOf(cwd);
     assert.equal(Object.hasOwn(written, 'limits'), false, `an emptied limits key is dropped:${NL}${readFileSync(configPath(cwd), 'utf8')}`);
     assert.deepEqual(written.baseline, { 'src/big.mjs': { lines: 441, reason: 'back to kit' } }, 'the raise the removal causes carries its reason');
-    assert.deepEqual(written.aggregate, RECORD.aggregate);
+    assert.equal(written.schema, 3);
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
     assert.deepEqual(limitsOf(second), [`${LIMIT_PREFIX}lines-per-file 400, tolerance 10% — from kit`, ...KIT_TAIL], second.stdout);
     assert.equal(check(cwd).code, 0);
   });
@@ -182,23 +187,23 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
     assert.deepEqual(configOf(perRoot).limits, { 'files-per-root': { tolerance: 20, reason: 'wider band' } }, 'files-per-root holds no value');
   });
 
-  it('on a schema-1 config the same write moves it to schema 2, the records carried and a differing default an override', () => {
+  it('on a schema-1 config the same write moves it to schema 3, the file record carried and a differing default an override', () => {
     const cwd = project({ config: SCHEMA1({ defaults: { maxLines: 300, maxLineBytes: 1000 }, ...RECORD }) });
     const result = override(cwd, ['depth', '--value', '7', '--reason', 'deeper']);
     assert.equal(result.code, 0, out(result));
     const written = configOf(cwd);
-    assert.equal(written.schema, 2);
+    assert.equal(written.schema, 3);
     assert.equal(Object.hasOwn(written, 'defaults'), false, 'the schema-1 key is gone');
     assert.deepEqual(written.limits, {
       'lines-per-file': { value: 300, tolerance: 10, reason: 'carried from schema 1' },
       depth: { value: 7, tolerance: 0, reason: 'deeper' },
     });
-    assert.deepEqual(Object.keys(written), ['_README', 'schema', 'limits', 'roots', 'exclude', 'extensions', 'baseline', 'aggregate']);
+    assert.deepEqual(Object.keys(written), ['_README', 'schema', 'limits', 'roots', 'exclude', 'extensions', 'baseline']);
     assert.equal(written._README, README);
-    assert.deepEqual({ baseline: written.baseline, aggregate: written.aggregate }, RECORD);
-    assert.ok(result.stdout.includes(`source-size: ${configPath(cwd)} moved from schema 1 to schema 2`), result.stdout);
+    assert.deepEqual(written.baseline, RECORD.baseline);
+    assert.ok(result.stdout.split(NL).includes(`source-size: ${configPath(cwd)} moved from schema 1 to schema 3 in this write; a kit that predates schema 3 stops by name until that copy is upgraded.`), result.stdout);
     assert.ok(result.stdout.includes(`source-size: override of depth written in ${configPath(cwd)} — reason: deeper`), result.stdout);
-    assert.equal(check(cwd).code, 0, 'the moved file is a schema-2 record the check judges green');
+    assert.equal(check(cwd).code, 0, 'the moved file is a schema-3 record the check judges green');
   });
 
   it('every line states the written file: a carried override the same write removes, and a --kit-default with none held', () => {
@@ -206,7 +211,7 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
     const result = override(moved, ['lines-per-file', '--kit-default', '--reason', 'r']);
     assert.equal(result.code, 0, out(result));
     assert.equal(Object.hasOwn(configOf(moved), 'limits'), false);
-    assert.ok(result.stdout.includes(`source-size: ${configPath(moved)} moved from schema 1 to schema 2 in this write.`), result.stdout);
+    assert.ok(result.stdout.split(NL).includes(`source-size: ${configPath(moved)} moved from schema 1 to schema 3 in this write; a kit that predates schema 3 stops by name until that copy is upgraded.`), result.stdout);
     assert.ok(result.stdout.includes(`source-size: lines-per-file follows the kit's numbers in ${configPath(moved)} — reason: r`), result.stdout);
     assert.doesNotMatch(result.stdout, /carried from schema 1/);
     const none = project();
@@ -224,13 +229,15 @@ describe('spec:source-size/S21 --override writes the override and regenerates th
   it('an unminted config renders the unminted refusal naming --write-baseline with its reason, never --adopt: exit 1, byte-unchanged', () => {
     const authored = project({ config: CONFIG() });
     assertUnmintedRefusal(authored, bytesOf(authored), override(authored, ['depth', '--value', '7', '--reason', 'deeper']));
-    const half = project({ config: CONFIG({ baseline: RECORD.baseline }) });
+    const half = project({ config: CONFIG({ aggregate: RECORD.aggregate }) });
     const before = bytesOf(half);
     const result = override(half, ['depth', '--value', '7', '--reason', 'deeper']);
     assert.equal(result.code, 1, out(result));
+    assert.match(result.stdout, /is AUTHORED but not yet MINTED/);
+    assert.doesNotMatch(result.stdout, /INCOMPLETE/);
     assert.match(result.stdout, /--write-baseline/);
     assert.doesNotMatch(result.stdout, /--adopt/);
-    assert.deepEqual(bytesOf(half), before, 'a half-minted config is refused byte-unchanged');
+    assert.deepEqual(bytesOf(half), before, 'an authored config is refused byte-unchanged');
   });
 
   it('a minted record the tree outgrew is refused before any override, so the reason never lands on drift it did not cause; a warning is no drift', () => {

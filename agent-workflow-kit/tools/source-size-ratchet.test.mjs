@@ -9,6 +9,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,40 +20,33 @@ import { configPathFor, matchesSourceSizeGate } from './source-size-core.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-ratchet-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
-// The aggregate a fixture records, counted from the fixture BODIES — never by asking the checker,
-// which would make the fixture agree with the checker's own bugs. Every fixture in this suite keeps
-// its in-scope files directly under src/ with the declared extension.
-const declaredLines = (files) => Object.entries(files)
-  .filter(([rel]) => rel.startsWith('src/') && rel.endsWith('.mjs'))
-  .reduce((sum, [, body]) => sum + (body.match(/\n/g) ?? []).length, 0);
-
-const CONFIG = (baseline, aggregateLines) => ({
+const CONFIG = (baseline) => ({
   _README: 'fixture',
-  schema: 2,
+  schema: 3,
   roots: ['src'],
   exclude: [],
   extensions: ['.mjs'],
   baseline,
-  aggregate: { src: { lines: aggregateLines, reason: 'initial adoption' } },
 });
 
 let seq = 0;
-const project = (files, baseline, { aggregateLines = declaredLines(files), suffix = '' } = {}) => {
+const project = (files, baseline, { suffix = '' } = {}) => {
   const cwd = join(TMP, `p${seq += 1}${suffix}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
   makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) writeFileSync(join(cwd, rel), body);
-  writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(CONFIG(baseline, aggregateLines), null, 2));
+  writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), JSON.stringify(CONFIG(baseline), null, 2));
   git(cwd, ['add', '-A']);
   return cwd;
 };
@@ -61,7 +55,7 @@ const check = (cwd) => main(['--check', '--cwd', cwd]);
 const lines = (n) => 'x\n'.repeat(n);
 const regenerator = (cwd) => `node "${TOOL}" --write-baseline --cwd "${cwd}"`;
 const configOf = (cwd) => JSON.parse(readFileSync(configPathFor(cwd), 'utf8'));
-const TIGHTEN = 'source-size: WARNING — a record above is lower or gone, so regenerating lowers or removes it with no reason: ';
+const TIGHTEN = 'source-size: WARNING — a record above is lower, gone or no longer judged, so regenerating lowers or removes it with no reason: ';
 // The NOTE that layout is not judged names the --reason that starts it; the size lines never do.
 const said = (result) => result.stdout.split('\n').filter((line) => !line.startsWith('source-size: NOTE — ')).join('\n');
 
@@ -261,7 +255,7 @@ describe('spec:source-size/S26 a file within its line band warns on every run an
     const minted = main(['--write-baseline', '--cwd', cwd, '--reason', 'initial adoption']);
     assert.equal(minted.code, 0, `${minted.stdout}${minted.stderr}`);
     assert.deepEqual(configOf(cwd).baseline, {}, 'a warning never raises a record');
-    assert.deepEqual(configOf(cwd).aggregate, { src: { lines: 440, reason: 'initial adoption' } });
+    assert.deepEqual([configOf(cwd).schema, Object.hasOwn(configOf(cwd), 'aggregate')], [3, false]);
   });
 
   it('441 lines stop with no record, and a record of them holds them', () => {
@@ -269,7 +263,9 @@ describe('spec:source-size/S26 a file within its line band warns on every run an
     assert.match(result.stdout, /^src\/a\.mjs: lines 441 exceeds the declared default 400 beyond its band \(up to 440\)$/m, result.stdout);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /"src\/a\.mjs": \{ "lines": 441, "reason": "<why this size is accepted>" \}/);
-    const held = check(project({ 'src/a.mjs': lines(441) }, { 'src/a.mjs': { lines: 441, reason: 'recorded' } }));
+    const recorded = project({ 'src/a.mjs': lines(441) }, { 'src/a.mjs': { lines: 441, reason: 'recorded' } });
+    writeFileSync(configPathFor(recorded), JSON.stringify({ ...AUTHORED, baseline: { 'src/a.mjs': { lines: 441, reason: 'recorded' } } }));
+    const held = check(recorded);
     assert.equal(held.code, 0, held.stdout);
     assert.doesNotMatch(held.stdout, /WARNING/);
   });

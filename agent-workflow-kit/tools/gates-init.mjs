@@ -441,8 +441,8 @@ export const flowCheckCandidate = (cwd, deps = {}) => {
 };
 
 // The conditional SOURCE-SIZE candidate — keyed on the practice's own declaration rather than on a
-// recipe: the gate is offered ONLY over a MINTED schema-2 docs/ai/source-size.json. Over an authored
-// or half-written one the checker REFUSES by design, and a declared gate that refuses is a matrix
+// recipe: the gate is offered ONLY over a MINTED docs/ai/source-size.json past schema 1. Over an authored
+// one the checker REFUSES by design, and a declared gate that refuses is a matrix
 // this preview would have reddened on the user's behalf; a minted schema-1 one is withheld naming its
 // --write-baseline move. A project that never declared the practice hears nothing here, while one
 // that authored it and stopped short hears WHY the gate is not offered yet — the mint is the step it
@@ -468,7 +468,7 @@ export const sourceSizeCandidate = (cwd, deps = {}) => {
       // The advice still follows the STATE: over an unminted record a hand-declared gate is red on
       // every run, so pointing there would hand the reader their next failure as the way out.
       const lane = state === 'minted'
-        ? `${schema1 ? 'move the record to schema 2 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then ' : ''}declare the gate by hand`
+        ? `${schema1 ? 'move the record off schema 1 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then ' : ''}declare the gate by hand`
         : `mint the record first — run source-size-check.mjs --adopt --reason "${mintReasonOf(config)}" with the working directory set to this project, then declare the gate by hand`;
       return {
         candidate: null,

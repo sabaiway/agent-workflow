@@ -133,7 +133,7 @@ const HOOK_CHECKS_UNMANAGED_HOOK = 'an UNMANAGED pre-commit hook exists \u2014 t
 const HOOK_CHECKS_WAIT = 'the layout line follows the source-size.layout record \u2014 apply that item first; this item\'s check line then arms the layout line too';
 const HOOK_CHECKS_COMMAND = "the hook runs the kit's checks by flat paths this upgrade removes — once they are gone every commit stops until this item is applied";
 const LAYOUT_RECORD_RECIPE = 'the hook is per clone and the config per branch: a branch or linked worktree with no size config is judged under the kit\'s values and stops on its piles until it takes the record (a hidden deployment\'s linked worktree carries none); one with an older config without layout is not judged on layout; one whose config is schema 1 or unminted stops every commit on that config\'s own stop until it takes the current config';
-const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a half-written record, a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
+const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
 const SOURCE_SIZE_KEPT_WHAT = 'no source-size gate is declared — the size record is kept as it is; declaring the gate adds the size check to the gate matrix';
 const LAYOUT_HELD = {
   stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 record that growth first with the reasoned --write-baseline its stop names, then re-run',
@@ -288,7 +288,7 @@ export const WHATS = Object.freeze({
   'gates-inert.coverage-domain-narrow': 'certification covers the assessable minority only — {ext} dominate(s) the tracked tree, and the changed-line domain excludes them',
   'source-size': 'no source-size gate is declared — the gate matrix runs no size check, so no gate run stops a file beyond its limits',
   'source-size.unminted': 'the source-size gate is declared over an unminted record ({state}) — the check refuses it, or if absent judges layout alone, no line',
-  'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write',
+  'source-size.schema-1': 'the source-size config is schema 1, which the check stops on — the writer moves it off schema 1 in one write',
   'source-size.layout': 'the layout record is not started — starting it records any directory already beyond the layout limits, so the commit hook can judge layout',
   'source-size.piles': '{n} recorded pile(s) have no queue row planning their cleanup — one row each goes to the end of the queue\'s Later bucket',
   'source-size.adopted-elsewhere': "the source-size gate runs a DIFFERENT copy of this checker ({n} declared) — adopted here, just not through this kit's own tool",
@@ -920,8 +920,8 @@ const probeSourceSize = ({ root, deps, add, skip, shared }) => {
     const canonical = claims.filter((c) => c.claim === CHECKER_CLAIM.CANONICAL);
     const elsewhere = claims.filter((c) => c.claim === CHECKER_CLAIM.ELSEWHERE);
     if (canonical.length > 0 || elsewhere.length > 0) {
-      // A DECLARED gate is not the same fact as a working one: the checker refuses an authored or
-      // half-written record, so a gate declared over one reds the matrix on every run, and over an
+      // A DECLARED gate is not the same fact as a working one: the checker refuses an authored
+      // record, so a gate declared over one reds the matrix on every run, and over an
       // absent one it judges layout alone and no line. The declaration alone would report that deployment
       // as adopted and say nothing about the one thing wrong with it. The split changes NOTHING here —
       // the outcome, its attention class and its immunity to every ack are the same whichever copy runs.

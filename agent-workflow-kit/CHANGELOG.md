@@ -4,6 +4,34 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.10.0 — a line added inside a file's limits no longer stops the size check (AD-238)
+
+**After `/agent-workflow-kit upgrade`, the size check no longer sums the lines of each declared root.** Before, a
+regeneration recorded each root's line sum under `aggregate`, and one line added to any file, however far within its
+limits, stopped the check and asked a reason for growth no single file shows.
+
+- **No per-root line sum is judged or recorded.** A file within its limits is no finding, however the root grows;
+  every per-file and layout record keeps its ratchet, and files per root still stops a growing root where layout is
+  recorded.
+- **An existing record keeps working.** A minted config that still holds `aggregate` gets one warning about it on
+  every check that judges it, with the paste-ready `--write-baseline` line, which needs no reason where nothing else
+  rises. That regeneration drops the sum, printing one `<root>: aggregate lines <n> → none` line per root.
+- **Every regeneration writes config schema 3**, which is schema 2 with no `aggregate`. The reader takes schemas 1,
+  2 and 3. A write that changes the file's schema prints `moved from schema <from> to schema <to> in this write`, and
+  the first write of an absent config prints `written at schema 3 in this write`; each adds that a kit that predates
+  that schema stops by name until that copy is upgraded.
+- **A clone or a vendored copy on kit 23.9.0 or earlier stops by name** on a config written at schema 3
+  (`"schema" must be 1 or 2, got 3`, exit 2) until that copy is upgraded. Before the write, the kit says so only in
+  the deployed sum's warning; after it, in the line above.
+- **A config with a file record and no sum is judged**, where it stopped before as half-written: a config is absent,
+  authored (no `baseline`) or minted (`baseline` present).
+- **The verbatim move of a minted schema-1 config** (by `--adopt`, or by a `--write-baseline` that refuses a raise)
+  writes schema 2 where the file holds `aggregate`, which it carries as it is, and schema 3 where it holds none; an
+  admitted regeneration of a schema-1 config lands on schema 3.
+- **Fixed:** a directory named `constructor` no longer stops the size check where layout is judged.
+- The green practice line, the procedures block, the `now` CAMPAIGN line, `--help` and the advisor's texts no longer
+  state a sum or a half-written record.
+
 ## 23.9.0 — a failed coverage check shows what failed and the fix first (AD-237)
 
 **After `/agent-workflow-kit upgrade`, a red `coverage-check.mjs --check` run opens with its failure, and so do a

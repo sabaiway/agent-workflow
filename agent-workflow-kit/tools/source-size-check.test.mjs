@@ -1,12 +1,8 @@
-// source-size-check.test.mjs — Phase 1 of the source-size practice: the declared-scope rule (D-6),
-// the counting rule (D-7) and the threshold judgement (D-1). Every fixture is written into a
-// per-test temp directory and staged, because scope is INDEX-visible: a loose fixture committed
-// beside this file would itself enter scope and the published tarball.
-
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,12 +15,13 @@ import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
 
 const git = (cwd, args, opts = {}) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8', ...opts });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', ...opts, env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
   return result.stdout.trim();
 };
@@ -380,11 +377,11 @@ describe('source-size — thresholds (D-1)', () => {
   });
 });
 
-describe('spec:source-size/S24 — the authoring template is schema 2 with no defaults key', () => {
+describe('spec:source-size/S24 — the authoring template is schema 3 with no defaults key', () => {
   it('the printed authoring template is INERT — its placeholders are refused until replaced', () => {
     const template = JSON.parse(authoringTemplate());
-    assert.match(template._README, /Authored keys: schema, roots, exclude, extensions, limits\b.*Machine keys: baseline, aggregate, layout\b/);
-    assert.equal(template.schema, 2, 'the template is schema 2');
+    assert.match(template._README, /Authored keys: schema, roots, exclude, extensions, limits\b.*Machine keys: baseline, layout\b/);
+    assert.equal(template.schema, 3, 'the template is schema 3');
     assert.ok(!Object.hasOwn(template, 'defaults'), 'the template carries no defaults key');
     assert.ok([...template.roots, ...template.extensions].every((value) => /^<.+>$/.test(value)), 'the placeholders are kept');
     assert.throws(() => validateSourceSizeConfig(template), /authoring placeholder/);

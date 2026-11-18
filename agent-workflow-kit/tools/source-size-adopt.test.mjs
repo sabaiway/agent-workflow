@@ -1,16 +1,8 @@
-// source-size-adopt.test.mjs — arming the practice (Plan 1 Phase 4): the gates-init CANDIDATE that
-// offers the gate, and the --adopt verb that mints the record and declares it in one consented line.
-//
-// The two are tested together because they are one contract read from two ends: the candidate exists
-// only over a MINTED config, and --adopt is what produces that state — so a fixture that proves the
-// candidate absent before adoption and present after it is the honest test of both.
-// Every fixture is a real git work tree: the scope rule reads the INDEX, so a project whose files are
-// merely on disk has no scope at all, and a green check over it would prove nothing.
-
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,9 +20,10 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = join(HERE, 'source-size-check.mjs');
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-adopt-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
@@ -48,12 +41,12 @@ const COUNCIL = { 'plan-execution': { review: 'council' } };
 let seq = 0;
 // A deployed project at the expected lineage (applyFill is stamp-gated), carrying one small tracked
 // source file so the declared scope is non-empty, plus an optional config in a chosen state.
-const project = ({ config = AUTHORED, scripts = { test: 'node --test' }, gates } = {}) => {
+const project = ({ config = AUTHORED, scripts = { test: 'node --test' }, gates, sourceLines = 1 } = {}) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'src'), { recursive: true });
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
   makeFixtureRepo((args) => git(cwd, args), cwd, ['-q', '-b', 'main']);
-  writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n');
+  writeFileSync(join(cwd, 'src', 'a.mjs'), 'export const a = 1;\n'.repeat(sourceLines));
   writeFileSync(join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', scripts }, null, 2));
   placeKitCommand(cwd);
   writeFileSync(join(cwd, 'docs', 'ai', '.workflow-version'), `${EXPECTED_WORKFLOW_VERSION}\n`);
@@ -98,17 +91,15 @@ describe('source-size — the gates-init candidate (4.1.a)', () => {
     const { note } = sourceSizeCandidate(cwd);
     assert.match(note, /--reason/, `the note must name a runnable command: ${note}`);
     // Non-vacuous: the command the note names, run as named, really does adopt this project.
-    const run = spawnSync('node', [TOOL, '--adopt', '--reason', 'initial adoption', '--cwd', cwd], { encoding: 'utf8' });
+    const run = spawnSync('node', [TOOL, '--adopt', '--reason', 'initial adoption', '--cwd', cwd], { encoding: 'utf8', env: TEST_ENV });
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
   });
 
-  it('candidate-absent-on-authored-unminted: an INCOMPLETE machine half is withheld for the same reason', () => {
-    // A file carrying one machine key without the other is a state no regenerator produces — it was
-    // hand-edited into it, and it records only part of the tree.
-    const cwd = project({ config: { ...AUTHORED, baseline: {} } });
+  it('candidate-absent-on-authored-unminted: an aggregate-only config is AUTHORED and withheld for the same reason', () => {
+    const cwd = project({ config: { ...AUTHORED, aggregate: { src: { lines: 1, reason: 'r' } } } });
     const { candidate, note } = sourceSizeCandidate(cwd);
     assert.equal(candidate, null);
-    assert.match(note, /not yet MINTED \(incomplete\)/);
+    assert.match(note, /not yet MINTED \(authored\)/);
   });
 
   it('candidate-present-with-minted-config: after --adopt the candidate exists, quoted and resolved', () => {
@@ -142,7 +133,7 @@ describe('source-size — the gates-init candidate (4.1.a)', () => {
     assert.ok(declared, 'the source-size gate really landed in the declaration');
     // The declared cmd carries no --cwd, so it must run green from the PROJECT ROOT — exactly how the
     // runner invokes it. A gate that only passes from somewhere else is not a gate.
-    const run = spawnSync('node', [TOOL, '--check'], { cwd, encoding: 'utf8' });
+    const run = spawnSync('node', [TOOL, '--check'], { cwd, encoding: 'utf8', env: TEST_ENV });
     assert.equal(run.status, 0, `the declared gate runs green in its own project: ${run.stdout}${run.stderr}`);
     assert.match(run.stdout, /source-size: PASS/);
   });
@@ -194,13 +185,15 @@ describe('spec:source-size/S37 — the gate fill withholds the gate over a minte
   it('schema1-unrenderable-path: the path withhold over a minted schema-1 config names the move before declaring the gate by hand', () => {
     const { candidate, note } = sourceSizeCandidate(project({ config: MINTED1 }), { sourceSizeTool: '/kit/we"ird/tools/source-size-check.mjs' });
     assert.equal(candidate, null);
-    assert.ok(note.endsWith('— move the record to schema 2 first — run source-size-check.mjs --write-baseline with the working directory set to this project, then declare the gate by hand'), note);
+    assert.match(note, /off schema 1/);
+    assert.ok(note.indexOf('--write-baseline') >= 0 && note.indexOf('declare the gate by hand') > note.indexOf('--write-baseline'), note);
+    assert.doesNotMatch(note, /to schema 2|--reason/);
   });
 });
 
 describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
   it('adopt-declares-only-source-size: a neighbouring offerable gate is NOT added', () => {
-    const cwd = project();
+    const cwd = project({ sourceLines: 441 });
     const result = adopt(cwd);
     assert.equal(result.code, 0, result.stdout);
     const ids = declaredGates(cwd).map((g) => g.id);
@@ -209,8 +202,8 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
     assert.ok(buildOffer(cwd).entries.length > 1, 'the offer had more to give and --adopt declined it');
     assert.match(result.stdout, /gate "source-size" declared/);
     const config = JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8'));
-    assert.ok(config.baseline !== undefined && config.aggregate !== undefined, 'and the record was minted in the same run');
-    assert.equal(config.aggregate.src.reason, 'initial adoption', 'the pinned reason lands verbatim in the entry it raised');
+    assert.deepEqual([config.schema, Object.hasOwn(config, 'aggregate')], [3, false]);
+    assert.deepEqual(config.baseline, { 'src/a.mjs': { lines: 441, reason: 'initial adoption' } });
   });
 
   it('adopt-idempotent-when-adopted: a second run converges instead of colliding', () => {
@@ -285,10 +278,11 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
   });
 
   it('the mint half keeps its OWN self-servable refusals — --adopt does not re-word them', () => {
-    const cwd = project();
-    const result = main(['--adopt', '--cwd', cwd]); // a first mint raises every value, so it needs a reason
+    const cwd = project({ sourceLines: 441 });
+    const result = main(['--adopt', '--cwd', cwd]);
     assert.equal(result.code, 1);
     assert.match(result.stdout, /RAISES \d+ recorded value\(s\)/, 'the reason-required refusal is the mint\'s, verbatim');
+    assert.doesNotMatch(result.stdout, /aggregate lines/, 'a first mint records no line sum');
     assert.equal(declaredGates(cwd).length, 0, 'and nothing was declared over a record that was never written');
   });
 
@@ -297,17 +291,18 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
   // plus any later growth would let that fixed sentence raise the ratchet, which is precisely the
   // considered-reason requirement the ratchet exists to impose.
   it('adopt-recognizes-a-minted-record: a re-run after a partial adoption never regenerates, so growth cannot ride the adoption reason', () => {
-    const cwd = project({ gates: { gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Mine', cmd: 'true' }] } });
+    const cwd = project({ sourceLines: 441, gates: { gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Mine', cmd: 'true' }] } });
     assert.equal(adopt(cwd).code, 1, 'the squatter fails the declaration half — the record is minted, the gate is not');
-    const before = recordOf(cwd).aggregate.src.lines;
+    assert.deepEqual([recordOf(cwd).schema, Object.hasOwn(recordOf(cwd), 'aggregate')], [3, false]);
+    const before = recordOf(cwd).baseline;
     // The tree grows between the partial failure and the retry, and the squatter is cleared.
-    writeFileSync(join(cwd, 'src', 'b.mjs'), 'export const b = 1;\n'.repeat(12));
+    writeFileSync(join(cwd, 'src', 'a.mjs'), 'x\n'.repeat(442));
     writeFileSync(join(cwd, 'docs', 'ai', 'gates.json'), JSON.stringify({ gates: [] }, null, 2));
     git(cwd, ['add', '-A']);
     const retry = adopt(cwd);
-    assert.equal(recordOf(cwd).aggregate.src.lines, before, 'the recorded aggregate must NOT move under the pinned adoption reason');
+    assert.deepEqual(recordOf(cwd).baseline, before, 'the per-file record must NOT move under the pinned adoption reason');
     assert.equal(retry.code, 1, 'and a record that no longer holds is a refusal, not a silently re-armed gate');
-    assert.match(retry.stdout, /exceeds the recorded budget/, 'the ratchet speaks for itself');
+    assert.match(retry.stdout, /src\/a\.mjs: lines 442 exceeds its recorded baseline 441/);
     assert.match(retry.stdout, /--reason/, 'and the refusal names the reasoned lane the raise actually needs');
     assert.deepEqual(declaredGates(cwd).map((g) => g.id), [], 'no gate was declared over a record that would red the matrix');
   });
@@ -331,9 +326,10 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
   // Refusing here would tell a reader the gate was not declared when it plainly is — and re-running
   // the advisor's one-liner on a drifted tree is exactly when that happens.
   it('adopt-idempotent-when-adopted: an already-declared gate converges even when the tree outgrew the record', () => {
-    const cwd = project();
+    const cwd = project({ sourceLines: 441 });
     assert.equal(adopt(cwd).code, 0);
-    writeFileSync(join(cwd, 'src', 'b.mjs'), 'export const b = 1;\n'.repeat(12));
+    assert.deepEqual([recordOf(cwd).schema, Object.hasOwn(recordOf(cwd), 'aggregate')], [3, false]);
+    writeFileSync(join(cwd, 'src', 'a.mjs'), 'x\n'.repeat(442));
     git(cwd, ['add', '-A']);
     const again = adopt(cwd);
     assert.equal(again.code, 0, `the gate is declared; nothing is left to adopt: ${again.stdout}`);

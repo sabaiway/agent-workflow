@@ -73,19 +73,18 @@ const offer = async (root, reads = READS) => (await loadPiles()).pileOfferOf(roo
 const heldOf = async (root) => { const { answer, reason, text } = await offer(root); return [answer, reason, text]; };
 
 describe('spec:source-size/S44 pilesOf answers the record\'s piles beyond the entries band, in its key order, with no tree walked', () => {
-  it('a minted schema-2 layout record alone holds piles, judged against the resolved value and its band', async () => {
+  it('minted schema-2 and schema-3 layout records hold piles, judged against the resolved value and its band', async () => {
     const { pilesOf } = await loadPiles();
     const of = (config) => pilesOf(loadSourceSizeConfig(project({ config, queue: null })));
     const dirs = { a: { entries: 23, reason: R }, b: { entries: 22, reason: R }, c: { depth: 6, reason: R }, d: { entries: 30, depth: 6, reason: R } };
-    assert.deepEqual(of(minted(dirs)), [{ key: 'a', entries: 23, value: 20 }, { key: 'd', entries: 30, value: 20 }], '23 is a pile, 22 within the band, a depth-only record none');
+    for (const schema of [2, 3]) assert.deepEqual(of(minted(dirs, { schema, aggregate: undefined })), [{ key: 'a', entries: 23, value: 20 }, { key: 'd', entries: 30, value: 20 }], '23 is a pile, 22 within the band, a depth-only record none');
     assert.deepEqual(of(minted({ z: { entries: 40, reason: R }, a: { entries: 40, reason: R } })).map(({ key }) => key), ['z', 'a'], 'the record\'s key order');
     const override = { 'entries-per-directory': { value: 10, tolerance: 0, reason: R } };
     assert.deepEqual(of(minted(dirs, { limits: override })).map(({ key, value }) => [key, value]), [['a', 10], ['b', 10], ['d', 10]], 'an override moves the value');
     const { layout, ...noLayout } = minted(dirs);
     const { baseline, aggregate, ...authored } = minted(dirs);
-    const { aggregate: half, ...incomplete } = minted(dirs);
     const schema1 = { schema: 1, defaults: { maxLines: 400, maxLineBytes: 1000 }, roots: ['src'], extensions: ['.mjs'], baseline: {}, aggregate: { src: { lines: 1, reason: R } } };
-    for (const [label, config] of [['no layout', noLayout], ['authored', authored], ['incomplete', incomplete], ['schema 1', schema1], ['absent', null]]) {
+    for (const [label, config] of [['no layout', noLayout], ['authored', authored], ['schema 1', schema1], ['absent', null]]) {
       assert.deepEqual(of(config), [], label);
     }
   });

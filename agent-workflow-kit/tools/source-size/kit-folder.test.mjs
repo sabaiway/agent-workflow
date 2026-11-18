@@ -17,7 +17,8 @@ const loadFacts = () => import('../plan-shape-facts.mjs');
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-kit-folder-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
-const ENV = withGitPath(hermeticGitEnv(process.env, TMP));
+const { NODE_TEST_CONTEXT, ...FIXTURE_ENV } = process.env;
+const ENV = withGitPath(hermeticGitEnv(FIXTURE_ENV, TMP));
 
 const NL = String.fromCharCode(10);
 const R = 'recorded by hand';
@@ -77,7 +78,7 @@ describe('spec:source-size/S51 every entry at or under the kit folder is taken a
       assert.equal(written.code, 0, `${root}:${NL}${showRun(written)}`);
       const record = readConfig(cwd);
       assert.deepEqual(Object.keys(record.baseline).sort(), ['scripts/agent-workflow-x/a.mjs', 'scripts/agent-workflowx.mjs'], root);
-      assert.equal(record.aggregate[root].lines, 882, root);
+      assert.equal(Object.hasOwn(record, 'aggregate'), false, root);
       assert.equal(record.layout.roots[root].files, files, root);
       assert.deepEqual(record.layout.directories, {}, `${root}: scripts holds 22 entries without the folder, and nothing in the folder is recorded`);
       const check = runCli(cwd, '--check');

@@ -16,6 +16,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +32,7 @@ const boundary = () => import('./source-size-core.mjs');
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-stops-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 // fileURLToPath, not URL.pathname: a checkout path carrying a space arrives percent-encoded from
 // pathname, and this suite already runs beside fixtures whose directories carry spaces.
@@ -87,7 +89,7 @@ const oracleJson = (value) => {
 };
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
@@ -311,10 +313,6 @@ describe('source-size — a stop renders as ONE line whatever the project put in
       ['record-obsolete', 'warning', 'rel', { dimension: 'lines', actual: 10, allowed: 400, ceiling: 440, recorded: 441 }],
       ['entry-gone', 'warning', 'rel', { recorded: { lines: 441 } }],
       ['within-band', 'warning', 'rel', { dimension: 'lines', actual: 440, allowed: 400, ceiling: 440 }],
-      ['aggregate-grew', 'stop', 'root', { actual: 10, recorded: 5 }],
-      ['aggregate-stale', 'warning', 'root', { actual: 3, recorded: 5 }],
-      ['aggregate-unrecorded', 'stop', 'root', { actual: 7 }],
-      ['aggregate-root-gone', 'warning', 'root', { recorded: 5 }],
       ['root-unrecorded', 'stop', 'root', { actual: 7 }],
       ['root-grew', 'stop', 'root', { actual: 50, recorded: 40, ceiling: 44 }],
       ['root-stale', 'warning', 'root', { actual: 3, recorded: 5 }],

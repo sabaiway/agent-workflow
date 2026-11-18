@@ -1,17 +1,18 @@
 // source-size-config.mjs — the practice's declaration: what docs/ai/source-size.json may say, which
-// of its four states it is in, and how it is read back. Nothing here touches the tree.
+// of its three states it is in, and how it is read back. Nothing here touches the tree.
 //
-//   • CONFIG STATES — ABSENT (no entry at the path) / AUTHORED (authored keys, machine keys absent) /
-//     INCOMPLETE (one machine key without the other — a hand-edited half, which routes to the mint
-//     lane) / MINTED (both machine keys). A malformed or unknown-keyed config is a loud STOP
+//   • CONFIG STATES — ABSENT (no entry at the path) / AUTHORED (no `baseline`) / MINTED (`baseline`
+//     present). A malformed or unknown-keyed config is a loud STOP
 //     (exit 2), never a guess, and the template placeholders are REFUSED until replaced, so a
 //     printed authoring template can never be pasted into an empty-green scope.
 //   • A RECORDED size is debt, not permission: every entry carries a reason, and the reason lands
 //     verbatim in the JSON, the commit message and the release CHANGELOG — so it is validated as the
 //     single line those three surfaces can carry.
-//   • SCHEMAS — 2 is the shape: the kit's limits live in its code (tools/source-size/), the config
-//     holds the scope, the record and a project's reasoned overrides. 1 is still read strictly and
-//     resolved in memory by the very transform the writer moves it with; a read writes nothing.
+//   • SCHEMAS — 3 is the shape: the kit's limits live in its code (tools/source-size/), the config
+//     holds the scope, the record and a project's reasoned overrides. 2 is read as 3, the per-root
+//     line sum it recorded (`aggregate`) judged by nothing and dropped by the next regeneration. 1 is
+//     still read strictly and resolved in memory by the very transform the writer moves it with; a
+//     read writes nothing.
 //
 // Dependency-free, Node >= 22. No side effects on import.
 
@@ -20,7 +21,8 @@ import { isAbsolute } from 'node:path';
 import { SOURCE_SIZE_CONFIG_REL, configFail, configPathFor, isLineUnsafe } from './source-size-refusal.mjs';
 import { KIT_LIMITS, SPEC_STORE_ROOT, layoutDefect, limitsDefect, migrateSchema1, resolveLimits } from './source-size/index.mjs';
 
-export const SOURCE_SIZE_SCHEMA = 2;
+export const SOURCE_SIZE_SCHEMA = 3;
+const READ_SCHEMAS = Object.freeze([1, 2, SOURCE_SIZE_SCHEMA]);
 export const SOURCE_SIZE_DEFAULTS = Object.freeze({
   maxLines: KIT_LIMITS['lines-per-file'].value,
   maxLineBytes: KIT_LIMITS['bytes-per-line'].value,
@@ -34,8 +36,11 @@ export const KIT_FOLDER_ROOT = 'scripts/agent-workflow';
 
 export const AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits']);
 const SCHEMA1_AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'defaults', 'roots', 'exclude', 'extensions']);
-export const MACHINE_KEYS = Object.freeze(['baseline', 'aggregate']);
-// The layout record is a machine key of its own, and no part of the state: MINTED means the two above.
+// The machine key that decides the state: MINTED means it is present.
+export const MACHINE_KEYS = Object.freeze(['baseline']);
+// The per-root line sum schemas 1 and 2 recorded: a known key, read and judged by nothing.
+export const RETIRED_SUM_KEY = 'aggregate';
+// The layout record is a machine key of its own, and no part of the state.
 export const LAYOUT_KEY = 'layout';
 const ENTRY_KEYS = Object.freeze(['lines', 'maxLineBytes', 'reason']);
 
@@ -93,16 +98,13 @@ export const segmentPrefixOf = (prefix, path) => prefix === WHOLE_TREE_ROOT || p
 // practiceFacts(config) → the numbers every surface that SPEAKS for the practice states: the caps,
 // how much is declared, and how much is recorded. Derived in ONE place so the plan-time render and
 // the checker's own green line can never state two different counts of the same tree.
-// `recordedFiles` / `aggregateLines` are null while that machine half is absent — "not recorded at
-// all" is a different fact from "recorded as zero", and the two states read differently to a human.
+// `recordedFiles` is null while `baseline` is absent — "not recorded at all" is a different fact
+// from "recorded as zero", and the two states read differently to a human.
 export const practiceFacts = (config) => ({
   maxLines: config.defaults.maxLines,
   maxLineBytes: config.defaults.maxLineBytes,
   roots: config.roots.length,
   recordedFiles: config.baseline === null ? null : Object.keys(config.baseline).length,
-  aggregateLines: config.aggregate === null
-    ? null
-    : Object.values(config.aggregate).reduce((sum, entry) => sum + entry.lines, 0),
 });
 
 // `requiredDimensions: 'any'` — a per-file record may pin EITHER dimension or both, because only the
@@ -161,16 +163,16 @@ const validateSchema1 = (parsed) => {
 // The keys each schema may carry. A key of the other schema is a stop named as such: a `defaults` on
 // schema 2 would be a second home for a kit value, and a `limits` on schema 1 a shape no writer made.
 const keysDefect = (parsed) => {
-  if (parsed.schema === 2 && Object.hasOwn(parsed, 'defaults')) {
+  if (parsed.schema !== 1 && Object.hasOwn(parsed, 'defaults')) {
     return '"defaults" is a schema-1 key — the kit\'s limits live in the kit\'s code, and a project states its own number as a reasoned override under "limits"';
   }
   if (parsed.schema === 1 && Object.hasOwn(parsed, 'limits')) {
-    return '"limits" is a schema-2 key — a schema-1 config states its numbers under "defaults"; --write-baseline moves it to schema 2';
+    return '"limits" is no schema-1 key — a schema-1 config states its numbers under "defaults"; --write-baseline moves it off schema 1';
   }
   if (parsed.schema === 1 && Object.hasOwn(parsed, LAYOUT_KEY)) {
-    return '"layout" is a schema-2 key — a schema-1 config records no layout; --write-baseline moves it to schema 2';
+    return '"layout" is no schema-1 key — a schema-1 config records no layout; --write-baseline moves it off schema 1';
   }
-  const known = new Set([...(parsed.schema === 1 ? SCHEMA1_AUTHORED_KEYS : [...AUTHORED_KEYS, LAYOUT_KEY]), ...MACHINE_KEYS]);
+  const known = new Set([...(parsed.schema === 1 ? SCHEMA1_AUTHORED_KEYS : [...AUTHORED_KEYS, LAYOUT_KEY]), ...MACHINE_KEYS, RETIRED_SUM_KEY]);
   const unknown = Object.keys(parsed).filter((k) => !known.has(k));
   return unknown.length === 0 ? null : `${SOURCE_SIZE_CONFIG_REL} carries unknown key(s): ${unknown.join(', ')} — known keys are ${[...known].join(', ')}`;
 };
@@ -179,8 +181,8 @@ const keysDefect = (parsed) => {
 // cannot judge — an unknown key included, because a typo'd key would otherwise disarm a rule.
 export const validateSourceSizeConfig = (parsed) => {
   if (!isPlainObject(parsed)) throw configFail(`${SOURCE_SIZE_CONFIG_REL} must contain a JSON object`);
-  if (parsed.schema !== 1 && parsed.schema !== SOURCE_SIZE_SCHEMA) {
-    throw configFail(`"schema" must be 1 or ${SOURCE_SIZE_SCHEMA}, got ${JSON.stringify(parsed.schema)}`);
+  if (!READ_SCHEMAS.includes(parsed.schema)) {
+    throw configFail(`"schema" must be one of ${READ_SCHEMAS.join(', ')}, got ${JSON.stringify(parsed.schema)}`);
   }
   const keys = keysDefect(parsed);
   if (keys) throw configFail(keys);
@@ -210,7 +212,7 @@ export const validateSourceSizeConfig = (parsed) => {
   for (const outer of roots) {
     for (const inner of roots) {
       if (outer !== inner && segmentPrefixOf(outer, inner)) {
-        throw configFail(`"roots" entries overlap: "${inner}" sits inside "${outer}" — an overlapping root double-counts its files in the aggregate`);
+        throw configFail(`"roots" entries overlap: "${inner}" sits inside "${outer}" — an overlapping root counts its files twice in the layout record`);
       }
     }
   }
@@ -262,11 +264,9 @@ export const validateSourceSizeConfig = (parsed) => {
   };
 };
 
-// loadSourceSizeConfig(cwd) → { state, path, config, parsed, text, missingMachineKeys }. The states:
-// ABSENT (no file) / AUTHORED (no machine key) / INCOMPLETE (one machine key without the other — a
-// hand-edited half) / MINTED (both). `config` is null only in the ABSENT state; every other state
-// carries a fully validated config, INCOMPLETE included: the key that IS there is judged by the same
-// rules as ever. `parsed` and `text` are the file as written — the writer copies the authored VALUES
+// loadSourceSizeConfig(cwd) → { state, path, config, parsed, text }. The states: ABSENT (no file) /
+// AUTHORED (no `baseline`) / MINTED (`baseline` present). `config` is null only in the ABSENT state;
+// every other state carries a fully validated config. `parsed` and `text` are the file as written — the writer copies the authored VALUES
 // (and their order) from `parsed`, and compares its own bytes against `text` to know whether it
 // actually changed anything.
 export const loadSourceSizeConfig = (cwd, deps = {}) => {
@@ -296,18 +296,6 @@ export const loadSourceSizeConfig = (cwd, deps = {}) => {
     throw configFail(`${path} is not valid JSON (${err.message}) — fix it by hand; a malformed config is a STOP, never a guess`);
   }
   const config = validateSourceSizeConfig(parsed);
-  const present = MACHINE_KEYS.filter((key) => Object.hasOwn(parsed, key));
-  // MINTED means the WHOLE machine half. A file carrying one machine key without the other is a
-  // state no regenerator produces — it was hand-edited into it — so it is INCOMPLETE and routes to
-  // the mint lane, which writes both. Refusing it as a config error would deadlock the only
-  // self-service lane, because the regenerator reads its config through this very function.
-  const state = present.length === MACHINE_KEYS.length ? 'minted' : present.length === 0 ? 'authored' : 'incomplete';
-  return {
-    state,
-    path,
-    config,
-    parsed,
-    text: raw,
-    missingMachineKeys: MACHINE_KEYS.filter((key) => !present.includes(key)),
-  };
+  const state = MACHINE_KEYS.every((key) => Object.hasOwn(parsed, key)) ? 'minted' : 'authored';
+  return { state, path, config, parsed, text: raw };
 };

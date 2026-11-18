@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync
 import { join } from 'node:path';
 import { configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
 import { main } from '../source-size-check.mjs';
+import { runCheck } from '../source-size-runs.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
 
 const NL = String.fromCharCode(10);
@@ -66,8 +67,8 @@ describe('spec:source-size/S27 on a present config a finding stops exactly when 
     const cwd = createProject({
       files: { ...ONE, 'src/near.mjs': makeLines(440), 'src/c.mjs': makeLines(445), ...makeMany('src/wide', 22), ...makeMany('src/wider', 23) },
       config: WITH_LAYOUT({ src: 46 }, { 'src/wider': dirRecord({ entries: 25 }), 'src/gone': dirRecord({ entries: 30 }) }, {
+        schema: 3, aggregate: undefined,
         baseline: { 'src/c.mjs': { lines: 450, reason: R }, 'src/gone.mjs': { lines: 500, reason: R } },
-        aggregate: { src: { lines: 900, reason: R } },
       }),
     });
     const first = runCli(cwd, '--check');
@@ -76,14 +77,13 @@ describe('spec:source-size/S27 on a present config a finding stops exactly when 
     for (const text of [
       'src/near.mjs: lines 440 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
       'src/c.mjs: lines 445 is under the recorded 450 — the regeneration lowers it',
-      'src: aggregate lines 886 is under the recorded budget 900 — the regeneration lowers it',
       'src: files 48 is over its recorded 46 but within its band (up to 51) — past 51 it stops',
       'src/wide: entries 22 is over the limit 20 but within its band (up to 22) — past 22 it stops',
       'src/wider: entries 23 is under the recorded 25 — the regeneration lowers it',
       'src/gone: recorded in "layout"."directories" but no directory the run judges — the regeneration removes it',
     ]) assert.ok(collectWarnings(first).includes(text), `expected the warning «${text}»:${NL}${first.stdout}`);
     assert.ok(collectWarnings(first).some((line) => line.startsWith('src/gone.mjs: recorded in "baseline" but no longer in scope')), first.stdout);
-    assert.match(first.stdout, /^source-size: PASS with \d+ warning\(s\)/m);
+    assert.match(first.stdout, /^source-size: PASS with 7 warning\(s\)/m);
     assert.equal(runCli(cwd, '--check').stdout, first.stdout, 'every warning repeats on the next run');
     const write = runCli(cwd, '--write-baseline');
     assert.equal(write.code, 0, `a warning is never a raise, so the regeneration needs no reason:${NL}${showRun(write)}`);
@@ -93,7 +93,7 @@ describe('spec:source-size/S27 on a present config a finding stops exactly when 
 describe('spec:source-size/S32 at the check the layout record ratchets, directories and depth ride their bands, and the hidden store is judged', () => {
   it('20 entries are clean, 22 warn and 23 stop; depth 5 is clean and a sixth level stops', () => {
     const files = { ...ONE, ...makeMany('src/twenty', 20), ...makeMany('src/wide', 22), ...makeMany('src/wider', 23) };
-    const cwd = createProject({ files: { ...files, 'src/a/b/c/d/e/f.txt': 'x', [`${SIXTH}/h.txt`]: 'x' }, config: WITH_LAYOUT({ src: 68 }) });
+    const cwd = createProject({ files: { ...files, 'src/a/b/c/d/e/f.txt': 'x', [`${SIXTH}/h.txt`]: 'x' }, config: WITH_LAYOUT({ src: 68 }, {}, { schema: 3, aggregate: undefined }) });
     const result = runCli(cwd, '--check');
     assert.equal(result.code, 1, showRun(result));
     assert.deepEqual(collectFindings(result), [overDepth(SIXTH), overEntries('src/wider', 23)]);
@@ -201,7 +201,9 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
     const started = runCli(cwd, '--write-baseline', '--layout', '--reason', 'layout starts');
     assert.equal(started.code, 0, showRun(started));
     const written = readConfig(cwd);
-    assert.deepEqual(Object.keys(written).slice(-3), ['baseline', 'aggregate', 'layout']);
+    assert.equal(written.schema, 3);
+    assert.equal(Object.hasOwn(written, 'aggregate'), false);
+    assert.deepEqual(Object.keys(written).slice(-2), ['baseline', 'layout']);
     assert.deepEqual(written.layout, {
       roots: { src: { files: 24, reason: 'layout starts' } },
       directories: { 'src/wider': { entries: 23, reason: 'layout starts' } },
@@ -262,12 +264,13 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
   });
 });
 
-describe('spec:source-size/S34 an absent config is judged under the kit values on layout alone, and its first write records schema 2 whole', () => {
+describe('spec:source-size/S34 an absent config is judged under the kit values on layout alone, and its first write records schema 3 whole', () => {
   it('--check judges layout over . and the store, says so once, states files-per-root none recorded, and a warning alone exits 0', () => {
     const cwd = createProject({ files: { 'src/big.mjs': makeLines(441), ...makeMany('wide', 22) }, store: { 'docs/ai/specs/index.md': 'x' } });
     const listed = listDocsAi(cwd);
     const result = runCli(cwd, '--check');
     assert.deepEqual(result.stdout.split(NL).filter((line) => line.startsWith('source-size: NOTE')), [ABSENT_NOTE(cwd), "source-size: NOTE — scripts/agent-workflow is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files"], showRun(result));
+    assert.equal(runCheck({ cwd }).config.schema, 3);
     assertHas(result, 'source-size: limit files-per-root none recorded, tolerance 10% — from kit');
     assert.equal(result.code, 0, showRun(result));
     assert.deepEqual(collectWarnings(result), ['wide: entries 22 is over the limit 20 but within its band (up to 22) — past 22 it stops']);
@@ -288,7 +291,7 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
     assert.equal(existsSync(configPath(cwd)), false);
   });
 
-  it('--write-baseline without --reason refuses its raises and leaves it absent; with one it writes _README, schema 2, baseline, aggregate and layout in one write', () => {
+  it('--write-baseline without --reason refuses its raises and leaves it absent; with one it writes _README, schema 3, baseline and layout in one write', () => {
     const cwd = createProject({ files: { 'src/big.mjs': makeLines(441), ...makeMany('wider', 23) }, store: { 'docs/ai/specs/index.md': 'x' } });
     const listed = listDocsAi(cwd);
     const refused = runCli(cwd, '--write-baseline');
@@ -299,11 +302,10 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
     const written = runCli(cwd, '--write-baseline', '--reason', 'first record');
     assert.equal(written.code, 0, showRun(written));
     const config = readConfig(cwd);
-    assert.deepEqual(Object.keys(config), ['_README', 'schema', 'baseline', 'aggregate', 'layout']);
-    assert.ok(config._README.includes('Machine keys: baseline, aggregate, layout'), config._README);
-    assert.equal(config.schema, 2);
+    assert.deepEqual(Object.keys(config), ['_README', 'schema', 'baseline', 'layout']);
+    assert.ok(config._README.includes('Machine keys: baseline, layout'), config._README);
+    assert.equal(config.schema, 3);
     assert.deepEqual(config.baseline, {});
-    assert.deepEqual(config.aggregate, { '.': { lines: 0, reason: 'first record' } });
     assert.deepEqual(config.layout, {
       roots: { '.': { files: 24, reason: 'first record' } },
       directories: { wider: { entries: 23, reason: 'first record' } },
@@ -313,19 +315,19 @@ describe('spec:source-size/S34 an absent config is judged under the kit values o
 });
 
 describe('spec:source-size/S43 files per root judges the declared roots alone, and a deployed store record warns until the regeneration drops it', () => {
-  const STORED = WITH_LAYOUT({ src: 1, 'docs/ai/specs': 1 });
+  const STORED = WITH_LAYOUT({ src: 1, 'docs/ai/specs': 1 }, {}, { schema: 3, aggregate: undefined });
   const THREE = makeMany('docs/ai/specs/kit', 3);
   it('a store recorded at one file takes its third with no stop, every --check warning on the record, present or absent, with the regeneration line and no focus line; a code root still stops', () => {
     for (const store of [THREE, {}]) {
       const cwd = createProject({ files: ONE, config: STORED, store });
       const result = runCli(cwd, '--check');
-      const tighten = `a record above is lower or gone, so regenerating lowers or removes it with no reason: node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"`;
+      const tighten = `a record above is lower, gone or no longer judged, so regenerating lowers or removes it with no reason: node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"`;
       assert.deepEqual([result.code, collectWarnings(result), /REVIEW FOCUS/.test(result.stdout)], [0, [STORE_RECORD, tighten], false], showRun(result));
     }
     const grown = runCli(createProject({ files: { ...ONE, 'src/b.txt': 'x', 'src/c.txt': 'x' }, config: STORED, store: THREE }), '--check');
     assert.deepEqual([grown.code, collectFindings(grown)], [1, ['src: files 3 exceeds its recorded 1 beyond its band (up to 2)']], showRun(grown));
     assert.ok(collectWarnings(grown).includes(STORE_RECORD), showRun(grown));
-    const unrecorded = runCli(createProject({ files: ONE, config: WITH_LAYOUT({ src: 1 }), store: THREE }), '--check');
+    const unrecorded = runCli(createProject({ files: ONE, config: WITH_LAYOUT({ src: 1 }, {}, { schema: 3, aggregate: undefined }), store: THREE }), '--check');
     assert.deepEqual([unrecorded.code, collectWarnings(unrecorded)], [0, []], showRun(unrecorded));
   });
 
@@ -383,12 +385,12 @@ describe('what a declared root counts, and what MINTED means beside the layout r
     assert.equal(result.code, 1);
   });
 
-  it('a layout record without baseline and aggregate is not minted, and baseline and aggregate without layout are', () => {
+  it('a layout record without baseline is not minted, and baseline without layout is', () => {
     const unminted = createProject({ files: ONE, config: { ...AUTH, layout: { roots: rootsOf({ src: 1 }), directories: {} } } });
     const refused = runCli(unminted, '--check');
     assert.equal(refused.code, 1, showRun(refused));
     assertHas(refused, 'is AUTHORED but not yet MINTED');
-    const minted = runCli(createProject({ files: ONE, config: MINTED() }), '--check');
+    const minted = runCli(createProject({ files: ONE, config: MINTED({ aggregate: undefined }) }), '--check');
     assert.equal(minted.code, 0, showRun(minted));
     assertHas(minted, 'records no "layout"');
   });

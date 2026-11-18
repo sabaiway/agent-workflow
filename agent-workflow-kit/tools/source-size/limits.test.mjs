@@ -20,7 +20,7 @@ const loadReport = () => import('../source-size-report.mjs');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KIT_ROOT = resolve(HERE, '..', '..');
 const FILE_NAMES = {
-  'limits.mjs': ['KIT_LIMITS', 'SCHEMA1_REASON', 'applyOverride', 'limitLines', 'limitsDefect', 'migrateSchema1', 'resolveLimits'],
+  'limits.mjs': ['KIT_LIMITS', 'SCHEMA1_REASON', 'applyOverride', 'atSchema', 'limitLines', 'limitsDefect', 'migrateSchema1', 'resolveLimits'],
   'layout.mjs': ['SPEC_STORE_ROOT', 'bandOf', 'layoutCounts', 'layoutDefect', 'walkSpecStore'],
   'record.mjs': ['changesFor', 'isRaise', 'materialize', 'ownEntry', 'planRecord', 'projectLayout', 'serialize'],
   'setup.mjs': ['SETUP_ANSWERS', 'checkTargetOf', 'layoutSetupOf'],
@@ -155,14 +155,15 @@ describe('spec:source-size/S12 the schema-1 transform moves a config to schema 2
 
   it('replaces a _README byte-equal to the schema-1 template text it is handed, and carries any other verbatim', async () => {
     const { migrateSchema1 } = await loadLimits();
-    const { SCHEMA1_TEMPLATE_README, TEMPLATE_README, TEMPLATE_READMES } = await loadReport();
+    const { SCHEMA1_TEMPLATE_README, SCHEMA2_TEMPLATE_README, TEMPLATE_READMES } = await loadReport();
     assert.equal(SCHEMA1_TEMPLATE_README, HEAD_SCHEMA1_README, 'the schema-1 text is the one the kit shipped');
     assert.deepEqual(Object.keys(TEMPLATE_READMES), ['schema1', 'schema2']);
     assert.equal(TEMPLATE_READMES.schema1, SCHEMA1_TEMPLATE_README);
-    assert.equal(TEMPLATE_READMES.schema2, TEMPLATE_README);
-    assert.notEqual(TEMPLATE_README, SCHEMA1_TEMPLATE_README);
+    assert.equal(typeof SCHEMA2_TEMPLATE_README, 'string');
+    assert.equal(TEMPLATE_READMES.schema2, SCHEMA2_TEMPLATE_README);
+    assert.notEqual(SCHEMA2_TEMPLATE_README, SCHEMA1_TEMPLATE_README);
     const readmeOf = (readme, readmes) => migrateSchema1(schema1({ ...KIT_DEFAULTS }, readme), readmes)._README;
-    assert.equal(readmeOf(SCHEMA1_TEMPLATE_README, TEMPLATE_READMES), TEMPLATE_README);
+    assert.equal(readmeOf(SCHEMA1_TEMPLATE_README, TEMPLATE_READMES), SCHEMA2_TEMPLATE_README);
     assert.equal(readmeOf(`${SCHEMA1_TEMPLATE_README} `, TEMPLATE_READMES), `${SCHEMA1_TEMPLATE_README} `);
     assert.equal(readmeOf(SCHEMA1_TEMPLATE_README.replace('JSON', 'json'), TEMPLATE_READMES), SCHEMA1_TEMPLATE_README.replace('JSON', 'json'));
     assert.equal(readmeOf('our own words', TEMPLATE_READMES), 'our own words');
@@ -278,15 +279,15 @@ describe('the limit lines state every resolved limit', () => {
   });
 });
 
-describe('spec:source-size/S14 the door exports exactly the forty names of seven files: limits.mjs, layout.mjs, record.mjs, setup.mjs, piles.mjs, help.mjs and reason.mjs, and no kit module imports past it', () => {
-  it('re-exports exactly forty names from its seven files through the door and the core, each the very export of its file, and no kit module reaches past the door', async () => {
+describe('spec:source-size/S14 the door exports exactly the forty-one names of seven files: limits.mjs, layout.mjs, record.mjs, setup.mjs, piles.mjs, help.mjs and reason.mjs, and no kit module imports past it', () => {
+  it('re-exports exactly forty-one names including atSchema from its seven files through the door and the core, each the very export of its file, and no kit module reaches past the door', async () => {
     const door = await loadDoor();
     const modules = { 'limits.mjs': await loadLimits(), 'layout.mjs': await loadLayout(), 'record.mjs': await loadRecord(), 'setup.mjs': await loadSetup() };
     modules['piles.mjs'] = await loadPiles().catch(() => ({}));
     modules['help.mjs'] = await import('./help.mjs');
     modules['reason.mjs'] = await import('./reason.mjs').catch(() => ({}));
     const core = await loadCore();
-    assert.equal(DOOR_NAMES.length, 40);
+    assert.equal(DOOR_NAMES.length, 41);
     assert.deepEqual(Object.keys(door).sort(), [...DOOR_NAMES].sort());
     for (const [file, names] of Object.entries(FILE_NAMES)) {
       assert.deepEqual(Object.keys(modules[file]).sort(), [...names].sort(), `the door exports exactly the exports of ${file}`);

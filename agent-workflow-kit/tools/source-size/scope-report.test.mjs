@@ -11,6 +11,7 @@ import { EXPECTED_WORKFLOW_VERSION } from '../velocity-profile.mjs';
 import { configPath, createProject, makeLines, readBlock, runCli, runGit } from './cli-harness.test.mjs';
 
 const REASON = 'These small fixtures keep the scope examples independently measurable.';
+const { NODE_TEST_CONTEXT, ...FIXTURE_ENV } = process.env;
 const KIT_NOTE = "source-size: NOTE — scripts/agent-workflow is the kit's own folder, so nothing in it is judged here; the kit's own repository judges its files";
 const EXCLUDE_NOTE = 'source-size: NOTE — the "exclude" entry ';
 const WARNING = 'source-size: WARNING — ';
@@ -100,7 +101,7 @@ describe('spec:source-size/S66 exclusion notes explain the paths left out of eac
   });
 
   it('notes leave a green exit and its warning count unchanged', () => {
-    const cwd = createProject({ files: { 'src/a.mjs': 'x\n', 'src/gen/a.mjs': 'x' }, config: minted() });
+    const cwd = createProject({ files: { 'src/a.mjs': 'x\n', 'src/gen/a.mjs': 'x' }, config: minted({ schema: 3, aggregate: undefined }) });
     const result = runCli(cwd, '--check');
     assertRun(result);
     assert.deepEqual(warningsOf(result), []);
@@ -193,7 +194,7 @@ describe('spec:source-size/S67 reports work-tree paths the index does not hold w
   }
 
   it('both warnings leave the check green and enter its PASS warning count', () => {
-    const result = runCli(withBothWarnings(), '--check');
+    const result = runCli(withBothWarnings(minted({ schema: 3, aggregate: undefined })), '--check');
     assertRun(result);
     assert.deepEqual(warningsOf(result), bothWarnings);
     const lines = linesOf(result);
@@ -204,7 +205,7 @@ describe('spec:source-size/S67 reports work-tree paths the index does not hold w
   });
 
   it('a stopped check prints both warnings after its notes and before the raise sentence', () => {
-    const config = minted({ aggregate: { src: { lines: 441, reason: REASON } } });
+    const config = minted({ schema: 3, aggregate: undefined });
     const result = runCli(withBothWarnings(config, 'y\n'.repeat(441)), '--check');
     assertRun(result, 1);
     const block = readBlock(result.stdout);
@@ -229,7 +230,7 @@ describe('spec:source-size/S67 reports work-tree paths the index does not hold w
   });
 
   it('an override of an outgrown record prints both warnings once before refusing and changes no config byte', () => {
-    const cwd = withBothWarnings(minted(), 'y\ny\n');
+    const cwd = withBothWarnings(minted({ schema: 3, aggregate: undefined, baseline: { 'src/a.mjs': { lines: 441, reason: REASON } } }), 'y\n'.repeat(450));
     const before = readFileSync(configPath(cwd));
     const result = runCli(cwd, '--override', 'lines-per-file', '--value', '500', '--reason', REASON);
     assertWarningsBeforeRefusal(result);
@@ -262,14 +263,14 @@ describe('spec:source-size/S67 reports work-tree paths the index does not hold w
     const gates = [{ id: 'source-size', title: 'Source size', cmd: `node "${SOURCE_SIZE_TOOL_PATH}" --check` }];
     const cwd = createProject({
       files: { 'src/a.mjs': 'x\n', 'src/gen/a.mjs': 'x', 'docs/ai/gates.json': JSON.stringify({ gates }) },
-      config: minted(), store: { 'src/new.mjs': 'x' },
+      config: minted({ schema: 3, aggregate: undefined }), store: { 'src/new.mjs': 'x' },
     });
     writeFileSync(join(cwd, 'src/a.mjs'), 'y\n');
     const log = [];
     const declaration = JSON.parse(readFileSync(join(cwd, 'docs/ai/gates.json'), 'utf8'));
     const results = runGates(declaration.gates, {
       cwd, log: (line) => log.push(line),
-      spawn: (command, directory) => spawnSync('bash', ['-c', command], { cwd: directory, encoding: 'utf8', env: hermeticGitEnv(process.env, directory) }),
+      spawn: (command, directory) => spawnSync('bash', ['-c', command], { cwd: directory, encoding: 'utf8', env: hermeticGitEnv(FIXTURE_ENV, directory) }),
     });
     assert.equal(results.every((result) => result.ok), true, log.join('\n'));
     assert.deepEqual(log.filter((line) => line.startsWith(WARNING)), bothWarnings);
@@ -306,7 +307,7 @@ describe('spec:source-size/S67 reports work-tree paths the index does not hold w
       const index = JSON.stringify(args) === JSON.stringify(['ls-files', '-s', '-z']);
       return command !== 'git' || location || index ? spawnSync(command, args, options) : { status: 128, stdout: '', stderr: 'fatal: fixture' };
     };
-    const result = guardedMain(['--check', '--cwd', cwd], { deps: { spawn } });
+    const result = guardedMain(['--check', '--cwd', cwd], { deps: { spawn, env: hermeticGitEnv(FIXTURE_ENV, cwd) } });
     assertRun(result, 2);
     const block = readBlock(result.stdout);
     assert.notEqual(block.verdict, null, result.stdout);

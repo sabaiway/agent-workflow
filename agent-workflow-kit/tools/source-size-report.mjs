@@ -18,7 +18,7 @@
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
 import { KIT_FOLDER_ROOT, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
-import { hasLoweredRecord, hasStoreRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
+import { hasDroppedRecord, hasLoweredRecord, stopsOf, warningsOf } from './source-size-judge.mjs';
 import { GROWTH_REASON_PLACEHOLDER, INITIAL_ADOPTION_REASON, helpText, isRaise, limitLines, mintReasonOf } from './source-size/index.mjs';
 
 export { GROWTH_REASON_PLACEHOLDER };
@@ -28,11 +28,13 @@ export { GROWTH_REASON_PLACEHOLDER };
 // filesystem path the writer opens.
 const namedConfig = (cwd) => escapeForLine(configPathFor(cwd));
 
-// The `_README` the kit's schema-1 template carried, frozen: the move replaces a `_README` byte-equal
-// to it with the schema-2 text and carries any other verbatim.
+// The `_README` texts the kit's schema-1 and schema-2 templates carried, frozen: a write replaces a
+// `_README` byte-equal to one of them with the text of the schema it writes and carries any other verbatim.
 export const SCHEMA1_TEMPLATE_README = 'Source-size practice: declared scope + thresholds + the recorded ratchet. Authored keys: schema, defaults, roots, exclude, extensions. Machine keys: baseline, aggregate — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
-export const TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, aggregate, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
-export const TEMPLATE_READMES = Object.freeze({ schema1: SCHEMA1_TEMPLATE_README, schema2: TEMPLATE_README });
+export const SCHEMA2_TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, aggregate, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+export const TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+export const TEMPLATE_READMES = Object.freeze({ schema1: SCHEMA1_TEMPLATE_README, schema2: SCHEMA2_TEMPLATE_README });
+export const EARLIER_TEMPLATE_READMES = Object.freeze([SCHEMA1_TEMPLATE_README, SCHEMA2_TEMPLATE_README]);
 
 // The authoring template (D-5): GENERIC, and INERT by construction — its roots/extensions carry
 // placeholders the validator refuses, so it can never be pasted into an empty-green scope.
@@ -104,7 +106,7 @@ const refusal = (lines) => [...lines, WHY_LINE];
 // absent one records nothing to summarize.
 const practiceLine = (config) => {
   const facts = practiceFacts(config);
-  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) · aggregate ${facts.aggregateLines} line(s): growth past a record takes a reasoned bump, and a record above the tree or gone warns until the regeneration lowers or removes it.`;
+  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission): growth past a record takes a reasoned bump, and a record above the tree or gone warns until the regeneration lowers or removes it.`;
 };
 
 export const absentRefusalLines = (cwd) => refusal([
@@ -114,30 +116,26 @@ export const absentRefusalLines = (cwd) => refusal([
   authoringTemplate(),
 ]);
 
-// Both not-yet-MINTED states route to the same lane — the regenerator writes the machine half — so
-// they differ only in what they say happened: AUTHORED is the state a human creates, INCOMPLETE is a
-// machine half no regenerator produces, which means the file was hand-edited into it.
-const unmintedSentence = (cwd, { state, missing }) => state === 'incomplete'
-  ? `${namedConfig(cwd)} is INCOMPLETE: it carries a machine half no regenerator produces (missing ${missing.map((key) => `"${key}"`).join(', ')}), so the ratchet holds only part of this tree.`
-  : `${namedConfig(cwd)} is AUTHORED but not yet MINTED (it records no size yet), so there is nothing for the ratchet to hold.`;
+// The one not-yet-MINTED state: no `baseline`, whatever else the file holds.
+const unmintedSentence = (cwd) => `${namedConfig(cwd)} is AUTHORED but not yet MINTED (it holds no "baseline", the per-file record), so the ratchet holds no file of this tree.`;
 const MINT_LINE = 'Mint it — the regenerator records what this tree already carries; recording a value for the first time is a raise, so it takes a reason';
 const unmintedLane = (reason) => `Run source-size-check.mjs --write-baseline --reason "${reason}" with the working directory set to this project.`;
 
-export const unmintedRefusalLines = (cwd, { state, missing, config }) => {
+export const unmintedRefusalLines = (cwd, { config }) => {
   const reason = mintReasonOf(config);
   const { command, withheld } = regenerator(cwd, reason);
   return refusal([
-    `source-size: REFUSED — ${unmintedSentence(cwd, { state, missing })}`,
+    `source-size: REFUSED — ${unmintedSentence(cwd)}`,
     `${MINT_LINE}:`,
     command === null ? `${withheld} ${unmintedLane(reason)}` : `  ${command}`,
   ]);
 };
 
-export const unmintedStopBlock = (cwd, { state, missing, config }) => {
+export const unmintedStopBlock = (cwd, { config }) => {
   const reason = mintReasonOf(config);
   const { command, withheld } = regenerator(cwd, reason);
   return {
-    failed: escapeLeadingSpace(unmintedSentence(cwd, { state, missing }).slice(0, -1)),
+    failed: escapeLeadingSpace(unmintedSentence(cwd).slice(0, -1)),
     findings: [{ place: SOURCE_SIZE_CONFIG_REL, text: MINT_LINE }],
     remedies: [command ?? unmintedLane(reason)],
     after: refusal(command === null ? [withheld] : []),
@@ -157,6 +155,8 @@ const lineSafeFinding = (finding) => ({
   ...(finding.dir === undefined ? {} : { dir: escapeForLine(finding.dir) }),
 });
 
+// Said before a write that moves the schema, in the deployed sum's warning, and after it, in the move line.
+const PREDATING_KIT_STOPS = (schema) => `a kit that predates schema ${schema} stops by name until that copy is upgraded`;
 const BAND = (f) => `over the limit ${f.allowed} but within its band (up to ${f.ceiling})`;
 const NAMED_PATHS = 3;
 const namedPaths = (paths) => `${paths.slice(0, NAMED_PATHS).map(escapeForLine).join(', ')}${paths.length > NAMED_PATHS ? ` and ${paths.length - NAMED_PATHS} more` : ''}`;
@@ -165,8 +165,6 @@ const namedPaths = (paths) => `${paths.slice(0, NAMED_PATHS).map(escapeForLine).
 const FINDING_LINE = Object.freeze({
   'over-default': (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds the declared default ${f.allowed} beyond its band (up to ${f.ceiling})`,
   grew: (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds its recorded baseline ${f.recorded} — recorded debt is not permission to grow`,
-  'aggregate-grew': (f) => `${f.root}: aggregate lines ${f.actual} exceeds the recorded budget ${f.recorded} — splitting a file buys no aggregate headroom`,
-  'aggregate-unrecorded': (f) => `${f.root}: declared root carries NO recorded aggregate budget (${f.actual} lines measured) — the record must mirror the declared roots exactly`,
   'root-unrecorded': (f) => `${f.root}: declared root carries NO recorded files count (${f.actual} files measured) — the layout record must mirror the declared roots exactly`,
   'root-grew': (f) => `${f.root}: files ${f.actual} exceeds its recorded ${f.recorded} beyond its band (up to ${f.ceiling})`,
   'dir-over': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds the limit ${f.allowed} beyond its band (up to ${f.ceiling})`,
@@ -179,8 +177,7 @@ const WARNING_LINE = Object.freeze({
   stale: (f) => `${f.rel}: ${f.dimension} ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
   'record-obsolete': (f) => `${f.rel}: ${f.dimension} ${f.actual} is within its band (up to ${f.ceiling}), so its record is obsolete — the regeneration removes it`,
   'entry-gone': (f) => `${f.rel}: recorded in "baseline" but no longer in scope — split, renamed or deleted; the regeneration removes it`,
-  'aggregate-stale': (f) => `${f.root}: aggregate lines ${f.actual} is under the recorded budget ${f.recorded} — the regeneration lowers it`,
-  'aggregate-root-gone': (f) => `${f.root}: recorded in "aggregate" but no longer a declared root — the regeneration removes it`,
+  'sum-record': (f) => `"aggregate" records a line sum for ${f.roots} root(s), which the check no longer judges or records — the regeneration removes it${f.schema === SOURCE_SIZE_SCHEMA ? '' : ` and writes schema ${SOURCE_SIZE_SCHEMA}, on which ${PREDATING_KIT_STOPS(SOURCE_SIZE_SCHEMA)}`}`,
   'root-band': (f) => `${f.root}: files ${f.actual} is over its recorded ${f.recorded} but within its band (up to ${f.ceiling}) — past ${f.ceiling} it stops`,
   'root-stale': (f) => `${f.root}: files ${f.actual} is under the recorded ${f.recorded} — the regeneration lowers it`,
   'root-gone': (f) => `${f.root}: recorded in "layout"."roots" but no longer a declared root — the regeneration removes it`,
@@ -243,7 +240,7 @@ export const checkStopBlock = ({ cwd, verdict, absent = false }) => {
 // A lowered or removed record warns with the paste-ready regeneration, which needs no reason.
 const tightenLine = (cwd) => {
   const { command, withheld } = regenerator(cwd);
-  return `${SOURCE_SIZE_WARNING_PREFIX}a record above is lower or gone, so regenerating lowers or removes it with no reason: ${command ?? `${withheld} ${WITHHELD_LANE}`}`;
+  return `${SOURCE_SIZE_WARNING_PREFIX}a record above is lower, gone or no longer judged, so regenerating lowers or removes it with no reason: ${command ?? `${withheld} ${WITHHELD_LANE}`}`;
 };
 
 // A passing check keeps its notes, warnings and green line in that order.
@@ -252,7 +249,7 @@ export const checkReportLines = ({ cwd, config, verdict, absent = false }) => {
   const warnings = warningsOf(verdict.findings);
   lines.push(...warningLines(warnings));
   const lowered = hasLoweredRecord(warnings);
-  if (lowered || hasStoreRecord(warnings)) lines.push(tightenLine(cwd));
+  if (lowered || hasDroppedRecord(warnings)) lines.push(tightenLine(cwd));
   if (lowered) lines.push(SPLIT_QUALITY_FOCUS);
   lines.push(warnings.length === 0
     ? `source-size: PASS — ${verdict.scope.files.length} in-scope file(s) within the declared caps`
@@ -289,15 +286,15 @@ export const schema1StopBlock = (cwd) => {
   const { command, withheld } = regenerator(cwd);
   return {
     failed: escapeLeadingSpace(`${namedConfig(cwd)} is schema 1, which the check no longer judges`),
-    findings: [{ place: SOURCE_SIZE_CONFIG_REL, text: '--write-baseline moves it to schema 2 in its one write (a raise riding it still takes --reason)' }],
+    findings: [{ place: SOURCE_SIZE_CONFIG_REL, text: '--write-baseline moves it off schema 1 (a raise riding it still takes --reason)' }],
     remedies: [command ?? 'Run source-size-check.mjs --write-baseline with the working directory set to this project.'],
     after: refusal(command === null ? [withheld] : []),
   };
 };
 
 // Claims only what holds of every written file.
-export const schema1MovedLines = (cwd) => [
-  `source-size: ${namedConfig(cwd)} moved from schema 1 to schema 2 in this write.`,
+export const schemaMovedLines = (cwd, from, to) => [
+  `source-size: ${namedConfig(cwd)} ${from === null ? 'written at' : `moved from schema ${from} to`} schema ${to} in this write; ${PREDATING_KIT_STOPS(to)}.`,
 ];
 
 // The record must hold before an override is written, so its reason never lands on drift it did not
@@ -370,11 +367,11 @@ export const gateRefusedLines = (rel, message) => refusal([
 ]);
 
 // `changed` is decided by comparing the serialized bytes with the file's own — never by the delta
-// count alone: completing a half-written machine record changes the file while raising nothing, and
+// count alone: a schema move or a re-serialization changes the file while raising nothing, and
 // reporting that as "unchanged" would hide a write that happened.
 export const writtenLines = ({ cwd, deltas, reason, changed }) => {
   if (!changed) return [`source-size: baseline unchanged — ${namedConfig(cwd)} already records this tree`];
-  if (deltas.length === 0) return [`source-size: baseline rewritten — no recorded value changed; ${namedConfig(cwd)} was completed or re-serialized`];
+  if (deltas.length === 0) return [`source-size: baseline rewritten — no recorded value changed; ${namedConfig(cwd)} was re-serialized`];
   return [
     `source-size: baseline regenerated — ${deltas.length} change(s) in ${namedConfig(cwd)}:`,
     ...deltaLines(deltas),

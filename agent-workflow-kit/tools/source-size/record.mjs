@@ -86,13 +86,11 @@ const layoutPlan = (recorded, projected) => {
 // then two renderings of one computation.
 export const planRecord = ({ config, verdict }) => {
   const oldBaseline = config.baseline ?? {};
-  const oldAggregate = config.aggregate ?? {};
   const files = verdict.scope.files.map((rel) => {
     const next = verdict.projected.get(rel);
     const recorded = ownEntry(oldBaseline, rel);
     return { rel, next, recorded, changes: changesFor(rel, next, recorded) };
   });
-  const roots = config.roots.map((root) => ({ root, lines: verdict.rootLines.get(root) ?? 0, recorded: ownEntry(oldAggregate, root) }));
   const layout = verdict.layout ? layoutPlan(config.layout, verdict.layout.projected) : null;
   const deltas = [
     ...files.flatMap(({ changes }) => changes),
@@ -101,29 +99,23 @@ export const planRecord = ({ config, verdict }) => {
     ...Object.entries(oldBaseline)
       .filter(([rel]) => !verdict.measured.has(rel))
       .flatMap(([rel, recorded]) => changesFor(rel, {}, recorded)),
-    ...roots
-      .filter(({ lines, recorded }) => (recorded ? recorded.lines : null) !== lines)
-      .map(({ root, lines, recorded }) => ({ target: root, dimension: 'aggregate lines', from: recorded ? recorded.lines : null, to: lines })),
-    ...Object.entries(oldAggregate)
-      .filter(([root]) => !config.roots.includes(root))
+    // A per-root line sum an earlier schema recorded is dropped whole, and the delta says so.
+    ...Object.entries(config.aggregate ?? {})
       .map(([root, recorded]) => ({ target: root, dimension: 'aggregate lines', from: recorded.lines, to: null })),
     ...(layout ? layout.deltas : []),
   ];
-  return { files, roots, layout, deltas, raises: deltas.filter(isRaise) };
+  return { files, layout, deltas, raises: deltas.filter(isRaise) };
 };
 
 const byKey = (entries) => Object.fromEntries(entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
 // The reason of an entry the regeneration did NOT raise is the one already recorded — a tighten
 // rewrites a number, never the human sentence that justified it.
-export const materialize = ({ files, roots, layout }, reason) => ({
+export const materialize = ({ files, layout }, reason) => ({
   baseline: Object.fromEntries(
     files
       .filter(({ next }) => Object.keys(next).length > 0)
       .map(({ rel, next, recorded, changes }) => [rel, { ...next, reason: changes.some(isRaise) ? reason : recorded.reason }]),
-  ),
-  aggregate: Object.fromEntries(
-    roots.map(({ root, lines, recorded }) => [root, { lines, reason: !recorded || lines > recorded.lines ? reason : recorded.reason }]),
   ),
   ...(layout === null ? {} : {
     layout: {
@@ -136,7 +128,8 @@ export const materialize = ({ files, roots, layout }, reason) => ({
 // The file is CANONICALLY serialized: the authored VALUES and the ORDER the human wrote them in are
 // preserved exactly, their formatting is not — this file is machine-maintained and the writer owns
 // half of it, so one deterministic rendering is what makes "regenerate an unchanged tree and get the
-// same bytes" true at all. The machine keys follow in their fixed order.
+// same bytes" true at all. The machine keys follow in their fixed order; `aggregate` is dropped
+// with them and written back only by the schema-1 move, which carries it.
 export const serialize = (parsed, machine) => {
   const authored = Object.fromEntries(Object.entries(parsed).filter(([key]) => !MACHINE_KEYS.includes(key)));
   return `${JSON.stringify({ ...authored, ...machine }, null, 2)}\n`;

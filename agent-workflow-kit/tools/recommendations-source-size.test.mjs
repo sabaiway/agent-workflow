@@ -278,7 +278,6 @@ describe('recommendations — the source-size item over a VENDORED copy of the c
 describe('spec:source-size/S36 — a minted schema-1 config is offered the --write-baseline move ahead of the gate arms', () => {
   const MINTED1 = { ...AUTHORED, baseline: {}, aggregate: { src: { lines: 1, reason: 'initial adoption' } } };
   const canonical = { gates: [{ id: SOURCE_SIZE_GATE_ID, title: 'Source size', cmd: `node "${TOOL}" --check` }] };
-  const WHAT = 'the source-size config is schema 1, which the check stops on — the writer moves it to schema 2 in one write';
   const vendor = (cwd) => {
     const abs = join(cwd, 'vendor', 'source-size-check.mjs');
     mkdirSync(dirname(abs), { recursive: true });
@@ -300,14 +299,17 @@ describe('spec:source-size/S36 — a minted schema-1 config is offered the --wri
     for (const [label, cwd] of cases) {
       for (const run of [1, 2]) {
         const { item, skip } = report(cwd);
-        assert.deepEqual([item?.variant, item?.severity, item?.lane, item?.what, item?.apply, skip], ['source-size.schema-1', SEVERITY_ATTENTION, 'chat', WHAT, `node ${TOOL} --write-baseline --cwd ${cwd}`, undefined], `${label}, run ${run}`);
+        assert.deepEqual([item?.variant, item?.severity, item?.lane, item?.apply, skip], ['source-size.schema-1', SEVERITY_ATTENTION, 'chat', `node ${TOOL} --write-baseline --cwd ${cwd}`, undefined], `${label}, run ${run}`);
+        assert.match(item.what, /schema 1.*check stops.*off schema 1/);
+        assert.doesNotMatch(item.what, /to schema 2/);
+        assert.match(item.detail, /the reason is yours to write, with no question to the user/);
+        assert.doesNotMatch(item.detail, /a half-written record/);
       }
     }
-    // Non-vacuity: the rendered move, run as rendered from a foreign cwd, is what converges the item.
     const cwd = cases[1][1];
     const moved = spawnSync('node', [TOOL, '--write-baseline', '--cwd', cwd], { cwd: TMP, encoding: 'utf8' });
     assert.equal(moved.status, 0, `${moved.stdout}${moved.stderr}`);
-    assert.equal(JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8')).schema, 2);
+    assert.equal(JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8')).schema, 3);
     git(cwd, ['add', '-A']);
     assert.equal(report(cwd).item, undefined, 'a canonical gate over the moved record is silent');
   });
@@ -369,15 +371,15 @@ describe('spec:source-size/S41 — the source-size.layout item renders exactly o
     }
   });
 
-  it('held-skip: a store root and a declined record whose root then grew render a stated skip carrying the setup\'s reason', () => {
+  it('held-skip: a store root and a declined record whose file then grew render a stated skip carrying the setup\'s reason', () => {
     const store = rewrite(minted(), (config) => ({ ...config, roots: ['src', 'docs/ai/specs/x'] }));
     const held = run(store);
     assert.deepEqual([held.layout, held.skip], [undefined, 'the source-size config declares the root "docs/ai/specs/x" at or inside the spec store docs/ai/specs — the layout record starts once that root is declared outside it']);
     assert.deepEqual(setup(store), { answer: 'held', reason: 'store-root', root: 'docs/ai/specs/x' });
-    const declined = minted();
+    const declined = rewrite(minted(), ({ aggregate, ...config }) => config);
     const bytes = readFileSync(configOf(declined));
     assert.ok(run(declined).layout, 'the record is offered, and declined');
-    writeFileSync(join(declined, 'src', 'b.mjs'), 'export const b = 2;\n');
+    writeFileSync(join(declined, 'src', 'a.mjs'), 'export const a = 1;\n'.repeat(441));
     const grown = run(tracked(declined));
     assert.deepEqual([grown.layout, grown.arms, grown.skip], [undefined, ['source-size'], 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits — record that growth first with the reasoned --write-baseline its stop names, then re-run']);
     assert.deepEqual(setup(declined), { answer: 'held', reason: 'stops' });

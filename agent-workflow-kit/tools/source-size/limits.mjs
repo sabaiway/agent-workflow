@@ -80,8 +80,9 @@ export const limitLines = (limits, { escape = String, recorded = false } = {}) =
   return `limit ${id} ${amount}, tolerance ${tolerance}% — ${source === 'kit' ? 'from kit' : `from override: ${escape(reason)}`}`;
 });
 
-// migrateSchema1(parsed, readmes) → the schema-2 config the writer writes, every key in its place. A
-// `_README` byte-equal to `readmes.schema1` becomes `readmes.schema2`; any other is carried verbatim.
+// migrateSchema1(parsed, readmes) → the schema-2 config, every key in its place; the writer writes it as
+// it is only where the moved file holds the line sum. A `_README` byte-equal to `readmes.schema1`
+// becomes `readmes.schema2`; any other is carried verbatim.
 export const migrateSchema1 = (parsed, readmes = {}) => {
   const overrides = Object.fromEntries(Object.entries(SCHEMA1_KEY)
     .filter(([id, key]) => parsed.defaults[key] !== KIT_LIMITS[id].value)
@@ -93,6 +94,11 @@ export const migrateSchema1 = (parsed, readmes = {}) => {
     return [[key, value]];
   }));
 };
+
+// atSchema(parsed, schema, { earlier, current }) → the config at `schema`, every key in its place: a
+// `_README` byte-equal to one of the `earlier` template texts becomes `current`, any other is carried.
+export const atSchema = (parsed, schema, { earlier = [], current } = {}) => Object.fromEntries(Object.entries(parsed)
+  .map(([key, value]) => [key, key === 'schema' ? schema : key === '_README' && earlier.includes(value) ? current : value]));
 
 // applyOverride(parsed, id, override) → the config with one id's override set from { value,
 // tolerance, reason } or, given null, removed; a `limits` left empty is dropped and a new one is

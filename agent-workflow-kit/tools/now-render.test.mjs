@@ -85,7 +85,7 @@ const makeFacts = (overrides = {}) => {
     plans: { entries: [makePlan()] },
     tree: makeTree(),
     queue: { path: 'docs/plans/queue.md', rows: queue.rows, counts: queue.counts, total: queue.total },
-    campaign: { state: 'minted', maxLines: 400, maxLineBytes: 1000, roots: 5, recordedFiles: 7, aggregateLines: 3200 },
+    campaign: { state: 'minted', maxLines: 400, maxLineBytes: 1000, roots: 5, recordedFiles: 7 },
     ...overrides,
   };
 };
@@ -130,7 +130,7 @@ describe('now render', () => {
     }
     assert.deepEqual(vm.queue, { withheld: 'queue unreadable' });
     const plain = renderNow(vm, { mode: 'plain', width: 80, color: false, ascii: false });
-    assert.match(plain, /CAMPAIGN[\s\S]*state: minted[\s\S]*caps: 400 lines · 1000 bytes per line[\s\S]*roots: 5 · recorded files: 7 · aggregate lines: 3200/);
+    assert.match(plain, /CAMPAIGN[\s\S]*state: minted[\s\S]*caps: 400 lines · 1000 bytes per line[\s\S]*roots: 5 · recorded files: 7/);
     assert.match(plain, /landed \[path fact\].*over budget 44\/40.*red-proof current/);
     assert.match(plain, /in progress: n02 · src\/progress\.mjs — in progress \[changed set\]/);
     assert.match(plain, /in progress \[changed set\]/);
@@ -138,8 +138,17 @@ describe('now render', () => {
     assert.match(plain, /unjudged \[exclusion fact\].*excluded from git here/);
     assert.equal(plain.split('\n').filter((line) => line.includes('QUEUE — WITHHELD: queue unreadable')).length, 1);
 
-    const absent = toNowViewModel(makeFacts({ campaign: { state: 'absent' } }));
-    assert.match(renderNow(absent, { mode: 'plain', width: 80, color: false, ascii: true }), /CAMPAIGN[\s\S]*state: absent/);
+    for (const state of ['absent', 'authored', 'minted']) {
+      const campaign = state === 'absent' ? { state } : { ...makeFacts().campaign, state, recordedFiles: state === 'authored' ? null : 7 };
+      const rendered = renderNow(toNowViewModel(makeFacts({ campaign })), { mode: 'plain', width: 80, color: false, ascii: true });
+      const block = rendered.slice(rendered.indexOf('CAMPAIGN'));
+      assert.ok(block.includes(`state: ${state}`));
+      assert.doesNotMatch(block, /aggregate|incomplete/i);
+      if (state !== 'absent') {
+        assert.match(block, /caps: 400 lines · 1000 bytes per line/);
+        assert.ok(block.includes(`roots: 5 · recorded files: ${state === 'authored' ? 'not recorded' : 7}`));
+      }
+    }
     const ansi = renderNow(vm, { mode: 'ansi', width: 100, color: true, ascii: false });
     assert.match(ansi, /\u001b\[1mNOW\u001b\[0m/);
     assert.match(ansi, /✓.*landed/);

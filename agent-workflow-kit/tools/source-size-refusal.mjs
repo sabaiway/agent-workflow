@@ -25,7 +25,7 @@ export const SOURCE_SIZE_CONFIG_REL = 'docs/ai/source-size.json';
 
 // Quoted VERBATIM by every surface that explains the practice: the plan-time render, the checker's
 // rendered refusals, the constraints row a grounded review payload carries. The checker's GREEN line
-// states the practice's FACTS instead — caps, recorded count, aggregate — and never this sentence.
+// states the practice's FACTS instead — caps, recorded count — and never this sentence.
 export const SOURCE_SIZE_WHY = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
 
 // Every warning the check prints is one line under this anchored prefix, so the gate runner can echo

@@ -29,11 +29,11 @@ const HELD_TEXT = {
 };
 const held = (reason, ...args) => ({ answer: 'held', reason, text: HELD_TEXT[reason](...args) });
 
-// pilesOf(loaded) → [{ key, entries, value }]: each directory of a minted schema-2 layout record whose
+// pilesOf(loaded) → [{ key, entries, value }]: each directory of a minted config's layout record whose
 // recorded entries exceed the resolved entries-per-directory value plus its band, in the record's order.
 export const pilesOf = (loaded) => {
   const config = loaded?.state === 'minted' ? loaded.config : null;
-  if (config === null || config.schema !== 2 || config.layout === null) return [];
+  if (config === null || config.schema === 1 || config.layout === null) return [];
   const { value, tolerance } = config.limits['entries-per-directory'];
   return Object.entries(config.layout.directories)
     .filter(([, record]) => Object.hasOwn(record, 'entries') && record.entries > value + bandOf(value, tolerance))

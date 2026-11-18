@@ -10,6 +10,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,7 @@ import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-config-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
@@ -44,13 +46,13 @@ let seq = 0;
 const project = (files, rawConfig) => {
   const cwd = join(TMP, `p${seq += 1}`);
   mkdirSync(join(cwd, 'docs', 'ai'), { recursive: true });
-  makeFixtureRepo((args) => { const init = spawnSync('git', args, { cwd, encoding: 'utf8' }); assert.equal(init.status, 0, init.stderr); }, cwd, ['-q', '-b', 'main']);
+  makeFixtureRepo((args) => { const init = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV }); assert.equal(init.status, 0, init.stderr); }, cwd, ['-q', '-b', 'main']);
   for (const [rel, body] of Object.entries(files)) {
     mkdirSync(join(cwd, rel, '..'), { recursive: true });
     writeFileSync(join(cwd, rel), body);
   }
   writeFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), rawConfig);
-  const add = spawnSync('git', ['add', '-A'], { cwd, encoding: 'utf8' });
+  const add = spawnSync('git', ['add', '-A'], { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(add.status, 0, add.stderr);
   return cwd;
 };
@@ -61,7 +63,7 @@ describe('source-size — the config validator refuses what it cannot judge', ()
   });
 
   it('config-schema-mismatch-refused: an unknown schema is never read on a guess', () => {
-    refuses({ schema: 3 }, /"schema" must be 1 or 2, got 3/);
+    refuses({ schema: 4 }, /"schema".*\b1\b.*\b2\b.*\b3\b.*\b4\b/);
   });
 
   it('config-empty-roots-refused: an empty scope array is a misdeclaration, never an empty green', () => {
@@ -171,7 +173,7 @@ describe('source-size — the layout record is a machine key read by its own gra
   });
 
   it('layout-on-schema-1-stops: a schema-1 config records no layout, so the key there is a stop naming the move', () => {
-    stops({ ...CONFIG({ schema: 1, defaults: { ...SOURCE_SIZE_DEFAULTS } }), layout: LAYOUT }, /"layout" is a schema-2 key — a schema-1 config records no layout; --write-baseline moves it to schema 2/);
+    stops({ ...CONFIG({ schema: 1, defaults: { ...SOURCE_SIZE_DEFAULTS } }), layout: LAYOUT }, /"layout".*--write-baseline.*off schema 1/);
   });
 
   it('store-root-with-layout-stops: where layout is judged the spec store is a root of its own, so a root at or inside it stops', () => {
@@ -220,16 +222,16 @@ describe('spec:source-size/S10 — an override outside the grammar is a config s
   });
 });
 
-describe('spec:source-size/S15 — a config of schema 2 alone is a whole declaration, and a misdeclaration stops by name', () => {
-  it('schema2-alone: the root ".", no exclusion, no extension and every limit from the kit; every other shape stops', async () => {
-    const config = validateSourceSizeConfig({ schema: 2 });
+describe('spec:source-size/S15 — a config of schema 3 alone is a whole declaration, and a misdeclaration stops by name', () => {
+  it('schema3-alone: the root ".", no exclusion, no extension and every limit from the kit; every other shape stops', async () => {
+    const config = validateSourceSizeConfig({ schema: 3 });
     const [{ KIT_LIMITS }, { WHOLE_TREE_ROOT }] = await Promise.all([loadLimits(), loadConfig()]);
     const limits = Object.fromEntries(Object.entries(KIT_LIMITS).map(([id, limit]) => [id, { ...limit, source: 'kit' }]));
-    assert.deepEqual([WHOLE_TREE_ROOT, config], ['.', { schema: 2, defaults: { ...SOURCE_SIZE_DEFAULTS }, limits, roots: ['.'], exclude: [], extensions: [], baseline: null, aggregate: null, layout: null }]);
-    for (const roots of [['.', 'src'], ['src', '.']]) stops({ schema: 2, roots }, /"roots" declares "\." beside another root/);
-    for (const key of ['roots', 'extensions']) stops({ schema: 2, [key]: [] }, new RegExp(`"${key}" must be a non-empty array`));
-    stops({ schema: 2, defaults: { ...SOURCE_SIZE_DEFAULTS } }, /"defaults" is a schema-1 key/);
-    for (const schema of [0, 3, '2', null]) stops(CONFIG({ schema }), /"schema" must be 1 or 2, got/);
+    assert.deepEqual([WHOLE_TREE_ROOT, config], ['.', { schema: 3, defaults: { ...SOURCE_SIZE_DEFAULTS }, limits, roots: ['.'], exclude: [], extensions: [], baseline: null, aggregate: null, layout: null }]);
+    for (const roots of [['.', 'src'], ['src', '.']]) stops({ schema: 3, roots }, /"roots" declares "\." beside another root/);
+    for (const key of ['roots', 'extensions']) stops({ schema: 3, [key]: [] }, new RegExp(`"${key}" must be a non-empty array`));
+    stops({ schema: 3, defaults: { ...SOURCE_SIZE_DEFAULTS } }, /"defaults" is a schema-1 key/);
+    for (const schema of [0, 4, '3', null]) stops(CONFIG({ schema }), /"schema".*\b1\b.*\b2\b.*\b3\b/);
   });
 });
 
@@ -240,7 +242,7 @@ describe('spec:source-size/S16 — a schema-1 config is read strictly and resolv
     const { SCHEMA1_REASON } = await loadLimits();
     assert.deepEqual([SCHEMA1_REASON, config.schema, config.defaults], ['carried from schema 1', 1, { maxLines: 300, maxLineBytes: 1000 }]);
     assert.deepEqual([config.limits['lines-per-file'], config.limits['bytes-per-line']], [{ value: 300, tolerance: 10, source: 'override', reason: SCHEMA1_REASON }, { value: 1000, tolerance: 0, source: 'kit' }]);
-    stops({ ...SCHEMA1(), limits: {} }, /"limits" is a schema-2 key/);
+    stops({ ...SCHEMA1(), limits: {} }, /"limits".*--write-baseline.*off schema 1/);
     for (const key of ['defaults', 'roots', 'extensions']) stops(Object.fromEntries(Object.entries(SCHEMA1()).filter(([name]) => name !== key)), new RegExp(`"${key}" must be a`));
     const text = `${JSON.stringify(SCHEMA1({ maxLines: 300, maxLineBytes: 1000 }), null, 2)}\n`;
     const cwd = project({ 'src/a.mjs': 'x\n' }, text);
@@ -260,13 +262,13 @@ describe('spec:source-size/S17 — the root "." judges every tracked path with a
     assert.equal(written.code, 0, `${written.stdout}${written.stderr}`);
     const warning = 'source-size: WARNING — 1 path(s) this run would judge are untracked and not ignored, so the index-based scope did not include them: untracked.mjs';
     assert.equal(written.stdout.split('\n').filter((line) => line === warning).length, 1, written.stdout);
-    const { baseline, aggregate } = JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8'));
-    assert.deepEqual([baseline, aggregate], [{ 'deep/x/big.mjs': { lines: 441, reason: 'initial adoption' } }, { '.': { lines: 442, reason: 'initial adoption' } }]);
+    const writtenConfig = JSON.parse(readFileSync(join(cwd, 'docs', 'ai', 'source-size.json'), 'utf8'));
+    assert.deepEqual([writtenConfig.schema, writtenConfig.baseline, Object.hasOwn(writtenConfig, 'aggregate')], [3, { 'deep/x/big.mjs': { lines: 441, reason: 'initial adoption' } }, false]);
     const check = main(['--check', '--cwd', cwd]);
     assert.deepEqual([check.code, check.stdout.includes('PASS with 1 warning(s) — 2 in-scope file(s)')], [0, true], `${check.stdout}${check.stderr}`);
     assert.equal(check.stdout.split('\n').filter((line) => line === warning).length, 1, check.stdout);
     for (const roots of [undefined, ['src']]) {
-      const cwd = project({ 'src/big.mjs': `${'y'.repeat(1001)}\n`.repeat(441) }, JSON.stringify({ schema: 2, roots, baseline: {}, aggregate: { [roots ? 'src' : '.']: { lines: 0, reason: 'r' } } }, null, 2));
+      const cwd = project({ 'src/big.mjs': `${'y'.repeat(1001)}\n`.repeat(441) }, JSON.stringify({ schema: 2, roots, baseline: {} }, null, 2));
       const result = main(['--check', '--cwd', cwd]);
       assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
       assert.ok(result.stdout.includes(`NOTE — ${join(cwd, 'docs/ai/source-size.json')} declares no extension, so no file is judged on lines or bytes`), result.stdout);

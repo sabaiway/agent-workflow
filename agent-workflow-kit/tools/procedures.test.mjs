@@ -1157,6 +1157,13 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
   });
 });
 
+const assertRecordedPractice = (lines) => {
+  const recorded = lines.filter((line) => line.startsWith('  recorded:'));
+  assert.equal(recorded.length, 1);
+  assert.match(recorded[0], /1 file\(s\) carry a recorded size \(debt, not permission\)/);
+  assert.match(recorded[0], /growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it/);
+  assert.doesNotMatch(recorded[0], /aggregate|\b\d+ (?:lines?\b|line\(s\))/);
+};
 describe('procedures CLI — the declared source-size practice (D-17 U1)', () => {
   const AUTHORED = {
     _README: 'fixture',
@@ -1170,7 +1177,6 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   const AGGREGATE = { src: { lines: 1200, reason: 'initial adoption' }, scripts: { lines: 40, reason: 'initial adoption' } };
   const MINTED = { ...AUTHORED, baseline: BASELINE, aggregate: AGGREGATE };
   const writePractice = (value) => writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), typeof value === 'string' ? value : JSON.stringify(value));
-
   it('render-declared-practice-with-config: a MINTED declaration renders caps and record on BOTH activities, never a rival layout rung', () => {
     writePractice(MINTED);
     for (const activity of ['plan-authoring', 'plan-execution']) {
@@ -1178,30 +1184,20 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       assert.equal(r.code, 0, r.stderr);
       assert.ok(r.stdout.includes(DECLARED_PRACTICE_HEADER), `${activity} renders the declared practice`);
       assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./);
-      assert.match(r.stdout, /recorded: 1 file\(s\) carry a recorded size \(debt, not permission\) · aggregate 1240 line\(s\) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it\./);
+      assertRecordedPractice(r.stdout.split('\n'));
       // The plan-time layout is the planning canon's Module ledger — the advisor states facts only.
       assert.doesNotMatch(r.stdout, /at plan time:/, 'no advisor-side copy of the layout rung');
     }
   });
 
-  it('render-authored-not-minted-line: the pre-mint state says nothing is recorded, never a zero record', () => {
-    writePractice(AUTHORED);
-    const r = run(['plan-authoring'], { codex: READY, agy: READY });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /caps: 400 lines · 1000 bytes per line, over 2 declared root\(s\)\./, 'the declared caps still bind before the mint');
-    assert.match(r.stdout, /recorded: NOTHING YET — the caps are declared but no size is recorded/);
-    assert.doesNotMatch(r.stdout, /0 file\(s\) carry a recorded size/, '"nothing recorded" must never read as "recorded as zero"');
-  });
-
-  it('render-incomplete-states-the-partial-record: a half-written record is neither "nothing" nor a minted one', () => {
-    // The machine half is baseline + aggregate together; a file carrying one was hand-edited into that
-    // PRE-mint state. Its half is not the tree's debt, and "no size is recorded" is untrue — name it.
-    writePractice({ ...AUTHORED, baseline: BASELINE });
-    const r = run(['plan-execution'], { codex: READY, agy: READY });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /recorded: PARTIAL — the machine record is half-written \(missing "aggregate"\), so the ratchet holds nothing yet/);
-    assert.doesNotMatch(r.stdout, /1 file\(s\) carry a recorded size/, 'a half record is never rendered as the whole tree’s debt');
-    assert.doesNotMatch(r.stdout, /no size is recorded/, 'a half-written record is not "nothing recorded"');
+  it('render-authored-not-minted-line: a config holding aggregate, layout or neither and no baseline renders the caps and one pre-mint line, never a zero record and no PARTIAL line', () => {
+    for (const schema of [2, 3]) for (const machine of [{ aggregate: AGGREGATE }, { layout: { roots: {}, directories: {} } }, {}]) {
+      writePractice({ ...AUTHORED, schema, defaults: undefined, ...machine });
+      const lines = JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+      assert.ok(lines.includes('  caps: 400 lines · 1000 bytes per line, over 2 declared root(s).'), 'the declared caps still bind before the mint');
+      assert.equal(lines.filter((line) => line.startsWith('  recorded:')).length, 1, lines.join('\n'));
+      assert.doesNotMatch(lines.join('\n'), /PARTIAL|\d+ file\(s\) carry a recorded size/, '"nothing recorded" must never read as "recorded as zero"');
+    }
   });
 
   it('render-silent-without-config: a project declaring no practice is handed no invented limits', () => {
@@ -1212,7 +1208,6 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.doesNotMatch(r.stdout.slice(r.stdout.indexOf('resolved recipes for')), /source-size/i, 'the advisor states nothing about a practice this project never declared');
     assert.deepEqual(JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice, []);
   });
-
   it('render-malformed-config-loud-line: an unreadable declaration is LOUD in-band and the render still completes', () => {
     for (const [label, value] of [
       ['malformed JSON', '{ not json'],
@@ -1227,16 +1222,14 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), `${label}: an unreadable declaration renders no facts`);
     }
   });
-
   it('render-dangling-symlink-loud: a BROKEN declaration link takes the loud lane, never the silent one', () => {
-    // The path HOLDS an entry, so the practice is declared — merely unreadable; silence would state "this project declares no practice" about a project that does.
     symlinkSync(join(cwd, 'nowhere.json'), join(cwd, SOURCE_SIZE_CONFIG_REL));
+    // The path HOLDS an entry, so the practice is declared — merely unreadable; silence would state "this project declares no practice" about a project that does.
     const r = run(['plan-execution'], { codex: READY, agy: READY });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /Declared source-size practice: UNREADABLE — /);
     assert.ok(!r.stdout.includes(DECLARED_PRACTICE_HEADER), 'an unreadable declaration renders no facts');
   });
-
   it('render-json-parity: the structured field IS the human block — never a second rendering of it', () => {
     for (const value of [MINTED, AUTHORED, '{ not json']) {
       writePractice(value);
@@ -1246,7 +1239,6 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       assert.ok(human.stdout.includes(structured.join('\n')), `the human render carries the same lines, contiguously:\n${human.stdout}`);
     }
   });
-
   it('render-unreadable-line-stays-one-line: a project-controlled string can never forge a second render line', () => {
     // The refusal interpolates values the PROJECT controls — a JSON key may carry any character, a newline included — and the block promises exactly ONE loud line.
     writePractice(JSON.stringify({ ...MINTED, 'evil\nDeclared source-size practice: caps 9999 lines': 1 }));
@@ -1256,7 +1248,6 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.equal(structured.length, 1, `the unreadable state renders exactly one line, got:\n${structured.join('\n')}`);
     assert.doesNotMatch(r.stdout, /^Declared source-size practice: caps 9999 lines/m, 'no forged line reaches the render');
   });
-
   it('help-and-mode-doc-document-the-declared-practice: both public contracts name the new output', () => {
     const help = run(['--help']).stdout;
     assert.match(help, /source-size/, '--help names the declared practice it now reads');
@@ -1264,13 +1255,13 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     const modeDoc = readFileSync(join(HERE, '..', 'references', 'modes', 'procedures.md'), 'utf8');
     assert.match(modeDoc, /declaredPractice/, 'the mode doc names the JSON field');
     assert.match(modeDoc, /UNREADABLE/, 'the mode doc states the in-band unreadable lane');
-    assert.match(modeDoc, /INCOMPLETE/, 'the mode doc states the four config states');
+    for (const text of [help, modeDoc]) assert.doesNotMatch(text, /aggregate|summed|PARTIAL|INCOMPLETE/i);
+    for (const state of ['ABSENT', 'AUTHORED', 'MINTED']) assert.ok(modeDoc.includes(state));
     // The story commits once, after its diff review (story-flow S13): the mode doc keeps neither the per-row commit nor the retired per-Step model beside the live canon it points at.
     assert.doesNotMatch(modeDoc, /commits per ledger row/, 'the mode doc still commits per ledger row');
     assert.match(modeDoc, /`plan-execution` commits[^.]*\bdiff review\b/, 'the mode doc does not commit the story after its diff review');
     assert.doesNotMatch(modeDoc, /per Step/, 'no retired per-Step execution model in the mode doc');
   });
-
   it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {
     // Pinned as a LITERAL: a test comparing the render against the constant would follow any rewording, and the sentence is canon (D-17) because it never varies.
     const CANONICAL = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
@@ -1281,32 +1272,41 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
 });
 
 describe('procedures CLI — the declared practice names the limits and the layout record (spec:source-size/S38)', () => {
-  const SCHEMA2 = { _README: 'fixture', schema: 2, roots: ['src', 'scripts'], exclude: [], extensions: ['.mjs'], baseline: { 'src/big.mjs': { lines: 900, reason: 'initial adoption' } }, aggregate: { src: { lines: 1200, reason: 'initial adoption' }, scripts: { lines: 40, reason: 'initial adoption' } } };
+  const MINTED = { _README: 'fixture', schema: 2, roots: ['src', 'scripts'], exclude: [], extensions: ['.mjs'], baseline: { 'src/big.mjs': { lines: 900, reason: 'initial adoption' } } };
   const LIMITS = ['  limit lines-per-file 400, tolerance 10% — from kit', '  limit bytes-per-line 1000, tolerance 0% — from kit', '  limit entries-per-directory 20, tolerance 10% — from kit', '  limit depth 5, tolerance 0% — from kit'];
   const filesPerRoot = (count) => `  limit files-per-root ${count}, tolerance 10% — from kit`;
   const LAYOUT_NOT_RECORDED = '  layout: not recorded — `source-size-check.mjs --write-baseline --layout --reason "<text>"` starts it.';
-  const blockOf = (middle) => [DECLARED_PRACTICE_HEADER, '  caps: 400 lines · 1000 bytes per line, over 2 declared root(s).', ...middle, '  recorded: 1 file(s) carry a recorded size (debt, not permission) · aggregate 1240 line(s) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.', `  why: ${SOURCE_SIZE_WHY}`];
+  const blockOf = (middle) => [DECLARED_PRACTICE_HEADER, '  caps: 400 lines · 1000 bytes per line, over 2 declared root(s).', ...middle, `  why: ${SOURCE_SIZE_WHY}`];
   const writePractice = (value) => writeFileSync(join(cwd, SOURCE_SIZE_CONFIG_REL), JSON.stringify(value));
-  const renderBlock = (activity) => JSON.parse(run([activity, '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
-  it('a minted schema-2 config without layout renders the caps, the five limits in table order and layout not recorded on every named activity; an absent config renders nothing', async () => {
+  const renderBlock = (activity) => {
+    const lines = JSON.parse(run([activity, '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+    if (lines.length) assertRecordedPractice(lines);
+    return lines.filter((line) => !line.startsWith('  recorded:'));
+  };
+  it('a minted schema-2 or schema-3 config without layout renders the caps, the five limits in table order and layout not recorded on every named activity; an absent config renders nothing', async () => {
     const { ACTIVITIES } = await import('./recipes.mjs');
-    writePractice(SCHEMA2);
-    for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED]), activity);
+    for (const schema of [2, 3]) {
+      writePractice({ ...MINTED, schema });
+      for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED]), `${schema}: ${activity}`);
+    }
     rmSync(join(cwd, SOURCE_SIZE_CONFIG_REL));
     for (const activity of Object.keys(ACTIVITIES)) assert.deepEqual(renderBlock(activity), [], `${activity}: an absent config renders nothing`);
   });
   it('a layout record renders files-per-root as each declared root\'s recorded count and layout recorded; --json IS the human block', () => {
-    writePractice({ ...SCHEMA2, layout: { roots: { scripts: { files: 2, reason: 'layout starts' }, src: { files: 30, reason: 'layout starts' } }, directories: {} } });
+    writePractice({ ...MINTED, layout: { roots: { scripts: { files: 2, reason: 'layout starts' }, src: { files: 30, reason: 'layout starts' } }, directories: {} } });
     const expected = blockOf([...LIMITS, filesPerRoot('each declared root\'s recorded count'), '  layout: recorded — entries per directory, depth and files per root are judged by the size check.']);
     assert.deepEqual(renderBlock('plan-execution'), expected);
-    assert.ok(run(['plan-execution'], { codex: READY, agy: READY }).stdout.includes(expected.join('\n')), 'the human render carries the same lines, contiguously');
+    const structured = JSON.parse(run(['plan-execution', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+    assert.ok(run(['plan-execution'], { codex: READY, agy: READY }).stdout.includes(structured.join('\n')), 'the human render carries the same lines, contiguously');
   });
   it('a minted schema-1 config names --write-baseline as the move, after the layout line and before the recorded line', () => {
-    writePractice({ ...SCHEMA2, schema: 1, defaults: { maxLines: 400, maxLineBytes: 1000 } });
-    assert.deepEqual(renderBlock('plan-authoring'), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED, '  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it to schema 2.']));
+    writePractice({ ...MINTED, schema: 1, defaults: { maxLines: 400, maxLineBytes: 1000 } });
+    const lines = JSON.parse(run(['plan-authoring', '--json'], { codex: READY, agy: READY }).stdout).declaredPractice;
+    assert.match(lines.at(-3), /schema 1:.*--write-baseline.*off schema 1/);
+    assert.doesNotMatch(lines.join('\n'), /to schema 2/);
+    assert.deepEqual(renderBlock('plan-authoring').filter((line) => !line.startsWith('  schema 1:')), blockOf([...LIMITS, filesPerRoot('none recorded'), LAYOUT_NOT_RECORDED]));
   });
 });
-
 describe('the procedures mode doc mirrors the registry (AD-124)', () => {
   it('names every activity, every slot and every value set of the live table', async () => {
     const { readFileSync } = await import('node:fs');

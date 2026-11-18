@@ -4,7 +4,6 @@ export const GROWTH_REASON_PLACEHOLDER = '<why this size is accepted>';
 const HALF_OF_DIMENSION = Object.freeze({
   lines: 'baseline',
   maxLineBytes: 'baseline',
-  'aggregate lines': 'aggregate',
   files: 'layout',
   entries: 'layout',
   depth: 'layout',

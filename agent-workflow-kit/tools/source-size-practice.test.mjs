@@ -16,6 +16,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,7 @@ import { GROWTH_REASON_PLACEHOLDER, unmintedRefusalLines } from './source-size-r
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-practice-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -33,7 +35,7 @@ const CANONICAL_WHY = 'A module you can hold whole is the unit of review, test p
 const WHY_LINE = `source-size: WHY — ${CANONICAL_WHY}`;
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
@@ -73,13 +75,12 @@ describe('source-size — the standing echo on a GREEN run (D-17 U4)', () => {
       config: {
         ...AUTHORED,
         baseline: { 'src/big.mjs': { lines: 441, reason: 'initial adoption' } },
-        aggregate: { src: { lines: 451, reason: 'initial adoption' } },
       },
     });
     const result = check(cwd);
     assert.equal(
       lastLine(result),
-      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 1 file(s) carry a recorded size (debt, not permission) · aggregate 451 line(s)${RATCHET_RULE}`,
+      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 1 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
       `${result.stdout}\n${result.stderr}`,
     );
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
@@ -99,7 +100,7 @@ describe('source-size — the standing echo on a GREEN run (D-17 U4)', () => {
   });
 });
 
-const mintedAt = (total, over = {}) => ({ ...AUTHORED, ...over, baseline: {}, aggregate: { src: { lines: total, reason: 'initial adoption' } } });
+const mintedAt = (over = {}) => ({ ...AUTHORED, ...over, baseline: {} });
 const TIGHT = { 'lines-per-file': { value: 50, tolerance: 10, reason: 'tight modules' }, 'bytes-per-line': { value: 120, tolerance: 0, reason: 'narrow lines' } };
 const KIT_LINES = [
   'source-size: limit lines-per-file 400, tolerance 10% — from kit',
@@ -120,16 +121,16 @@ const assertLimitLines = (result, code, expected) => {
 
 describe('spec:source-size/S23 — an override reaches every reader', () => {
   it('the standing line reads the CONFIG, not a constant: an overriding project states its own caps and is judged by them, band included', () => {
-    const result = check(project({ files: { 'src/ok.mjs': lines(10) }, config: mintedAt(10, { limits: TIGHT }) }));
+    const result = check(project({ files: { 'src/ok.mjs': lines(10) }, config: mintedAt({ limits: TIGHT }) }));
     assert.equal(
       lastLine(result),
-      `source-size: practice — caps 50 lines · 120 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission) · aggregate 10 line(s)${RATCHET_RULE}`,
+      `source-size: practice — caps 50 lines · 120 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
       `${result.stdout}\n${result.stderr}`,
     );
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
-    assert.deepEqual(practiceFacts(validateSourceSizeConfig(mintedAt(10, { limits: TIGHT }))), { maxLines: 50, maxLineBytes: 120, roots: 1, recordedFiles: 0, aggregateLines: 10 });
+    assert.deepEqual(practiceFacts(validateSourceSizeConfig(mintedAt({ limits: TIGHT }))), { maxLines: 50, maxLineBytes: 120, roots: 1, recordedFiles: 0 });
     const files = { 'src/big.mjs': lines(56), 'src/near.mjs': lines(55), 'src/wide.mjs': `${'x'.repeat(121)}\n` };
-    const over = check(project({ files, config: mintedAt(112, { limits: TIGHT }) }));
+    const over = check(project({ files, config: mintedAt({ limits: TIGHT }) }));
     assert.equal(over.code, 1);
     assert.match(over.stdout, /^source-size: WARNING — src\/near\.mjs: lines 55 is over the limit 50 but within its band \(up to 55\)/m);
     assert.match(over.stdout, /src\/big\.mjs: lines 56 exceeds the declared default 50 beyond its band \(up to 55\)/);
@@ -141,7 +142,7 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
   it('--check and --write-baseline under the kit limits open with the five kit lines, files-per-root none recorded or each root recorded', () => {
     const cwd = project({ files: { 'src/ok.mjs': lines(10) } });
     const stopped = check(cwd);
-    const previous = unmintedRefusalLines(cwd, { state: 'authored', missing: ['baseline', 'aggregate'] });
+    const previous = unmintedRefusalLines(cwd, { state: 'authored' });
     assert.deepEqual(stopped.stdout.split('\n'), [
       `source-size: FAIL — ${previous[0].slice('source-size: REFUSED — '.length, -1)}`,
       `docs/ai/source-size.json: ${previous[1].slice(0, -1)}`,
@@ -157,23 +158,23 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
   });
 
   it('a stop leads with its verdict, findings and remedy before limits, notes and warnings; warnings alone end in a green line that counts them', () => {
-    const near = project({ files: { 'src/near.mjs': lines(420) }, config: mintedAt(420) });
+    const near = project({ files: { 'src/near.mjs': lines(420) }, config: mintedAt() });
     const warned = check(near);
     assert.deepEqual(warned.stdout.split('\n').slice(5), [
       NO_LAYOUT(near),
       KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
       'source-size: PASS with 1 warning(s) — 1 in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled',
-      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission) · aggregate 420 line(s)${RATCHET_RULE}`,
+      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
     ], warned.stdout);
     assert.equal(warned.code, 0);
     assert.doesNotMatch(warned.stdout, /within the declared caps/, 'a run with warnings never says every file is within its limits');
 
-    const bare = project({ files: { 'src/a.txt': lines(1) }, config: { _README: 'fixture', schema: 2, roots: ['src'], exclude: [], baseline: {}, aggregate: { src: { lines: 0, reason: 'r' } } } });
+    const bare = project({ files: { 'src/a.txt': lines(1) }, config: { _README: 'fixture', schema: 2, roots: ['src'], exclude: [], baseline: {} } });
     const notes = check(bare).stdout.split('\n');
     assert.deepEqual(notes.slice(5, 7), [`source-size: NOTE — ${configPath(bare)} declares no extension, so no file is judged on lines or bytes`, NO_LAYOUT(bare)]);
 
-    const stopped = project({ files: { 'src/near.mjs': lines(420), 'src/big.mjs': lines(441) }, config: mintedAt(861) });
+    const stopped = project({ files: { 'src/near.mjs': lines(420), 'src/big.mjs': lines(441) }, config: mintedAt() });
     const failed = check(stopped);
     const said = failed.stdout.split('\n');
     assert.deepEqual(said.slice(0, 11), [
@@ -189,18 +190,18 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
   });
 
   it('--override and the check after it state the override with its reason; a usage, config, enumeration or scope error prints no limit line', () => {
-    const cwd = project({ files: { 'src/ok.mjs': lines(10) }, config: mintedAt(10) });
+    const cwd = project({ files: { 'src/ok.mjs': lines(10) }, config: mintedAt() });
     const expected = ['source-size: limit lines-per-file 50, tolerance 10% — from override: tight modules', ...KIT_LINES.slice(1)];
     assertLimitLines(main(['--override', 'lines-per-file', '--value', '50', '--reason', 'tight modules', '--cwd', cwd]), 0, expected);
     assertLimitLines(check(cwd), 0, expected);
     const nogit = join(TMP, `nogit${seq += 1}`);
     mkdirSync(join(nogit, 'docs', 'ai'), { recursive: true });
-    writeFileSync(join(nogit, 'docs', 'ai', 'source-size.json'), JSON.stringify(mintedAt(0), null, 2));
+    writeFileSync(join(nogit, 'docs', 'ai', 'source-size.json'), JSON.stringify(mintedAt(), null, 2));
     const errors = [
       ['usage', 2, main(['--override', 'lines-per-file', '--reason', 'r', '--cwd', cwd])],
-      ['config', 2, check(project({ config: mintedAt(0, { limits: { depth: { value: 0, tolerance: 0, reason: 'r' } } }) }))],
+      ['config', 2, check(project({ config: mintedAt({ limits: { depth: { value: 0, tolerance: 0, reason: 'r' } } }) }))],
       ['enumeration', 2, check(nogit)],
-      ['scope', 1, check(project({ files: { 'src/bin.mjs': Buffer.from([0x61, 0xff, 0x0a]) }, config: mintedAt(1) }))],
+      ['scope', 1, check(project({ files: { 'src/bin.mjs': Buffer.from([0x61, 0xff, 0x0a]) }, config: mintedAt() }))],
     ];
     for (const [label, code, result] of errors) {
       assert.equal(result.code, code, `${label}: ${result.stdout}${result.stderr}`);

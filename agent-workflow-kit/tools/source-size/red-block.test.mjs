@@ -9,7 +9,7 @@ import { main } from '../source-size-check.mjs';
 import { runCheck } from '../source-size-runs.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_WHY, escapeForLine, validateSourceSizeConfig } from '../source-size-core.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
-import { GROWTH_REASON_PLACEHOLDER, notJudgedLines, schema1MovedLines, statedLimitLines } from '../source-size-report.mjs';
+import { GROWTH_REASON_PLACEHOLDER, notJudgedLines, statedLimitLines } from '../source-size-report.mjs';
 import { configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
 
 const NAME = 'source-size';
@@ -48,7 +48,7 @@ const readThrown = (run) => {
 
 describe('spec:source-size/S57 check stops put verdict, findings and remedy before limits, notes and warnings', () => {
   it('a minted file stop keeps the empty root, warning and whole hand record in order', () => {
-    const config = mintConfig({ roots: ['src', 'empty'], aggregate: { src: { lines: 861, reason: 'fixture' }, empty: { lines: 0, reason: 'fixture' } } });
+    const { aggregate, ...config } = mintConfig({ roots: ['src', 'empty'] });
     const files = { ...FILES, 'src/big.mjs': `${'x'.repeat(1001)}\n${makeLines(440)}` };
     const cwd = createProject({ files, config });
     assertBlock(runCli(cwd, '--check'), ['src/big.mjs', 'src/big.mjs'], {
@@ -72,7 +72,7 @@ describe('spec:source-size/S57 check stops put verdict, findings and remedy befo
       ['$', "source-size: no paste-ready command is printed — this project's path does not survive double-quoting, so a rendered command could run somewhere other than the project it names."],
       ['\u2028', "source-size: no paste-ready command is printed — this project's path carries a character that cannot appear in a rendered line, and escaping it would change the path the shell receives."],
     ]) {
-      const config = mintConfig();
+      const { aggregate, ...config } = mintConfig();
       const cwd = createProject({ files: FILES, config }, suffix);
       assertBlock(runCli(cwd, '--check'), ['src/big.mjs'], {
         verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`, findings: [BIG], remedies: [WITHHELD],
@@ -82,7 +82,7 @@ describe('spec:source-size/S57 check stops put verdict, findings and remedy befo
   });
 
   it('a lowered record beside a stop puts REVIEW FOCUS immediately before WHY', () => {
-    const config = mintConfig({ baseline: { 'src/near.mjs': { lines: 450, reason: 'fixture' } } });
+    const { aggregate, ...config } = mintConfig({ baseline: { 'src/near.mjs': { lines: 450, reason: 'fixture' } } });
     const cwd = createProject({ files: FILES, config });
     assertBlock(runCli(cwd, '--check'), ['src/big.mjs'], {
       verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`, findings: [BIG], remedies: [regenerate(cwd)],
@@ -103,9 +103,9 @@ describe('spec:source-size/S58 finding places preserve safe paths and put every 
     ];
     for (const [target, field, place] of cases) {
       const text = field === 'rel' ? 'lines 441 exceeds the declared default 400 beyond its band (up to 440)'
-        : field === 'root' ? 'aggregate lines 441 exceeds the recorded budget 440 — splitting a file buys no aggregate headroom'
+        : field === 'root' ? 'files 441 exceeds its recorded 400 beyond its band (up to 440)'
           : 'entries 23 exceeds the limit 20 beyond its band (up to 22)';
-      const finding = { kind: field === 'rel' ? 'over-default' : field === 'root' ? 'aggregate-grew' : 'dir-over', severity: 'stop', [field]: target, dimension: field === 'dir' ? 'entries' : 'lines', actual: field === 'dir' ? 23 : 441, allowed: field === 'dir' ? 20 : 400, ceiling: field === 'dir' ? 22 : 440, recorded: 440 };
+      const finding = { kind: field === 'rel' ? 'over-default' : field === 'root' ? 'root-grew' : 'dir-over', severity: 'stop', [field]: target, dimension: field === 'dir' ? 'entries' : field === 'root' ? 'files' : 'lines', actual: field === 'dir' ? 23 : 441, allowed: field === 'dir' ? 20 : 400, ceiling: field === 'dir' ? 22 : 440, recorded: 400 };
       const verdict = { findings: [finding], scope: { files: [], emptyRoots: [], kitFolderRoots: [] }, projected: new Map([[target, { lines: 441 }]]) };
       const parts = checkStopBlock({ cwd, verdict, absent: false });
       const escaped = escapeForLine(target).replace(/^ /, '\\u0020');
@@ -147,13 +147,17 @@ describe('spec:source-size/S59 thrown stops retain their message and exit class 
     assertBlock(runCli(cwd, '--check'), [], { verdict, findings: [], remedies: [CONFIG_REMEDY], after: [] }, 2);
   });
 
-  it('a scope stop after --adopt moved schema 1 prints the move after its remedy', () => {
+  it('a scope stop after --adopt moved schema 1 prints the move after its remedy', async () => {
+    const { schemaMovedLines } = await import('../source-size-report.mjs');
+    assert.equal(typeof schemaMovedLines, 'function');
     const cwd = createProject({ files: { 'src/a.mjs': makeLines(1) }, config: makeSchema1Config() });
     runGit(cwd, ['rm', '-q', '--cached', 'src/a.mjs']);
     const result = runCli(cwd, '--adopt');
     assert.equal(JSON.parse(readFileSync(configPath(cwd), 'utf8')).schema, 2);
     const verdict = readThrown(() => runCheck({ cwd }));
-    assertBlock(result, [], { verdict, findings: [], remedies: [SCOPE_REMEDY], after: schema1MovedLines(cwd) });
+    const moved = [`source-size: ${configPath(cwd)} moved from schema 1 to schema 2 in this write; a kit that predates schema 2 stops by name until that copy is upgraded.`];
+    assert.deepEqual(schemaMovedLines(cwd, 1, 2), moved);
+    assertBlock(result, [], { verdict, findings: [], remedies: [SCOPE_REMEDY], after: moved });
   });
 });
 
@@ -199,6 +203,8 @@ describe('spec:source-size/S61 the guarded entry renders unexpected errors and a
   });
 
   it('an unexpected error after the on-disk schema-1 move keeps the stack and puts the move last', async () => {
+    const { schemaMovedLines } = await import('../source-size-report.mjs');
+    assert.equal(typeof schemaMovedLines, 'function');
     const { guardedMain } = await import('../source-size-check.mjs');
     assert.equal(typeof guardedMain, 'function');
     const cwd = createProject({ files: { 'src/a.mjs': makeLines(1) }, config: makeSchema1Config() });
@@ -209,6 +215,8 @@ describe('spec:source-size/S61 the guarded entry renders unexpected errors and a
     } };
     const result = guardedMain(['--adopt', '--cwd', cwd], { deps });
     assert.equal(JSON.parse(readFileSync(configPath(cwd), 'utf8')).schema, 2);
-    assertBlock(result, [], { verdict: 'unexpected error: after the schema-1 move', findings: [], remedies: [ERROR_REMEDY], after: [...error.stack.split('\n'), ...schema1MovedLines(cwd)] }, 2);
+    const moved = [`source-size: ${configPath(cwd)} moved from schema 1 to schema 2 in this write; a kit that predates schema 2 stops by name until that copy is upgraded.`];
+    assert.deepEqual(schemaMovedLines(cwd, 1, 2), moved);
+    assertBlock(result, [], { verdict: 'unexpected error: after the schema-1 move', findings: [], remedies: [ERROR_REMEDY], after: [...error.stack.split('\n'), ...moved] }, 2);
   });
 });

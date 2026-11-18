@@ -7,6 +7,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,12 +19,13 @@ import {
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-core-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
+const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
 
 const git = (cwd, args) => {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
 };
 
@@ -153,15 +155,15 @@ describe('source-size — the canonical matcher and the direct-run guard', () =>
   });
 
   it('direct-run-guard-resolves-symlinks: invoking the checker THROUGH a symlink still runs it', () => {
-    const cwd = project({ files: { 'src/big.mjs': lines(401) } });
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
     const linkDir = join(TMP, 'link-dir');
     mkdirSync(linkDir, { recursive: true });
     const link = join(linkDir, 'source-size-check.mjs');
     symlinkSync(TOOL, link);
-    const run = spawnSync(process.execPath, [link, '--check', '--cwd', cwd], { encoding: 'utf8' });
+    const run = spawnSync(process.execPath, [link, '--check', '--cwd', cwd], { encoding: 'utf8', env: TEST_ENV });
     // A lexical guard silently exits 0 having printed nothing — a declared gate would read that as
     // PASS while checking nothing, which is the exact false green the gate exists to prevent.
-    assert.match(`${run.stdout}${run.stderr}`, /src\/big\.mjs: lines 401/);
+    assert.match(`${run.stdout}${run.stderr}`, /src\/big\.mjs: lines 441/);
     assert.equal(run.status, 1);
   });
 });

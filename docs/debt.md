@@ -20,21 +20,13 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   review (2026-11-13).
 
 - **WITHHELD-LANE-NAMES-HAND-ENTRIES-WHERE-NONE-FOLLOW** — invariant: the withheld lane names the hand entries and
-  their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:83`, used
-  at `:233` (a stop whose stops are aggregate or layout ones prints no entry), `:246` (the tighten warning, which
-  also says "with no reason") and `:274` (the reason-required refusal). Narrow fix: only the stop block that prints
+  their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:85`, used
+  at `:230` (a stop whose stops are layout ones prints no entry), `:243` (the tighten warning, which also says "with
+  no reason") and `:271` (the reason-required refusal). Narrow fix: only the stop block that prints
   entries carries the hand clause; the other sites take the lane without it. Proof: a green check on a path that
   withholds the command, one record lowered, prints no "by hand below". Residual exposure, not live: "below" pointed
   at absent entries before revision 11; the fold extends the clause by "your reason in place of the placeholder".
   Raised by the SIZE-PRACTICE S1 spec review (2026-11-13).
-
-- **SIZE-EPIC-CLOSING-SAYS-EVERY-RUN-PRINTS-THE-EXCLUDE-LINES** — invariant: the size-practice epic's Closing says
-  what its Acceptance says about the exclude lines. Origin: the Closing of
-  `docs/ai/epics/THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE.md` says "one line per exclude entry on
-  every run that judges the tree", while its Acceptance says "Every check, regeneration and override". Narrow fix:
-  the Closing reads `one line per exclude entry on every check, regeneration and override that judges the tree`; it
-  rides the epic's next amendment, read by the lens then. Proof: a read of both sentences after that amendment.
-  Residual exposure, not live: epic prose, no shipped text. Raised by the SIZE-PRACTICE S1 spec review (2026-11-13).
 
 - **SIZE-CHECK-S61-CELL-THROWS-BEFORE-THE-MODE** — invariant: each mode of the size check is invoked with valid
   arguments and a deployed cwd, and an injected error with no exit code inside its run reaches `guardChecker`. Origin:
@@ -1436,7 +1428,42 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   next revision. Proof: a read of those three places after that session. Residual exposure, NOT live: no sibling
   story is planned, and no release shipped the section.
 
+- **SIZE-JUDGE-READS-AN-INHERITED-MEMBER-AS-A-PROJECTED-RECORD** — invariant: every lookup of a size record map keyed
+  by a project-named path or root is an own-key lookup. Origin: `directoryFindings` read `projected[dir] ?? {}`
+  (`agent-workflow-kit/tools/source-size-judge.mjs:139` before story S2), so a directory named `constructor` is projected as
+  `Object.prototype.constructor`, and the `--check` right after the `--write-baseline --layout` that recorded it stops
+  with `constructor: entries 1 exceeds the limit 20 beyond its band (up to 22)`; measured 2026-11-14 on today's code
+  and on the S2 prototype. Narrow fix, shipped: `ownEntry(projected, dir)` (`:125` after it), in story S2 of
+  THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE, row k2, red first. Proof: `writer-root-named-like-a-prototype-member`
+  (`agent-workflow-kit/tools/source-size-writer.test.mjs`) red on the prototype before the fix, green after it.
+  Residual exposure, NOT live: `rootFindings` reads `projected.roots[root]` by plain lookup (`:107-108`), but
+  `projectLayout` writes every measured root as an own key of `projected.roots`, so that lookup never reaches an
+  inherited member.
+
+- **EARLIER-KIT-NOTICE-COMES-ONLY-AFTER-MOST-SCHEMA-MOVING-WRITES** — invariant: every printed line and advisor item
+  whose write leaves the size config at a schema an earlier kit stops on says so before the write. Origin: the
+  unminted block, the schema-1 block, the green check of a schema-2 config with no sum, the absent refusals' template
+  and the advisor's `source-size.layout`, `source-size.schema-1` and mint lines name no earlier kit. Narrow fix: one
+  phrase from the report half's one constant on each of those lines where the config's schema is not the current
+  one. Proof: a cell per line reads the phrase before the write. Residual exposure, live: a teammate on an earlier
+  kit learns of the stop from the line after the write or from their own stop, which names the schema. Raised by
+  the SIZE-PRACTICE S2 spec review (2026-11-13).
+
 ## Closed
+
+- **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the
+  paste-ready regeneration. Origin: `docs/ai/specs/kit/source-size/judge.md:47-48` said "A lowered or removed record
+  warns with the same paste-ready regeneration" while a removed aggregate budget brought none. Closed in story S2 of
+  THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE (2026-11-14): the aggregate kinds are gone, and the one
+  warning of a deployed sum brings the regeneration line (`hasDroppedRecord`,
+  `agent-workflow-kit/tools/source-size-judge.mjs:55`, `source-size-report.mjs:252`), so the sentence holds. Proof:
+  S69's cells in `agent-workflow-kit/tools/source-size-aggregate.test.mjs`.
+
+- **SIZE-EPIC-CLOSING-SAYS-EVERY-RUN-PRINTS-THE-EXCLUDE-LINES** — invariant: the size-practice epic's Closing says
+  what its Acceptance says about the exclude lines. Closed in the spec session of story S2 of
+  THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE (2026-11-13): the epic's amendment made its Closing read
+  "one line per exclude entry on every check, regeneration and override that judges the tree", as its Acceptance
+  does. Proof: a read of both sentences (`docs/ai/epics/THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE.md`).
 
 - **SIZE-CHECK-COMMAND-LINE-HAS-NO-ROOM** — invariant: `source-size-check.mjs` stays one meaning, the command line,
   so its next change does not cram. Origin: `agent-workflow-kit/tools/source-size-check.mjs` at 400 of 400 lines.
@@ -1807,15 +1834,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   the kit's slot order stays green. Narrow fix: compare `JSON.stringify(configOf(dir))` with
   `JSON.stringify({ _README: CANON_README, ...RECIPES })`. Raised by the DISTRIBUTION-FILES-STAY-CURRENT S19 diff
   review (round 1).
-- **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the
-  paste-ready regeneration. Origin: `docs/ai/specs/kit/source-size/judge.md:51-52` says "A lowered or removed record
-  warns with the same paste-ready regeneration", but `aggregate-stale` and `aggregate-root-gone` are outside
-  `LOWERED_KINDS` (`agent-workflow-kit/tools/source-size-judge.mjs:37`) and `checkReportLines` adds the tighten line
-  only when `hasLoweredRecord` or `hasStoreRecord` holds (`agent-workflow-kit/tools/source-size-report.mjs:208-210`),
-  so a green check
-  whose only removed record is an aggregate budget prints no regeneration line. Narrow fix: judge.md names "a lowered
-  or removed file or layout record", as layout.md does from revision 5. Raised by the S11 spec review of
-  EVERY-PROJECT-IS-LAID-OUT-BY-MEANING (lens, round 2).
 - **REPO-SEARCH-OVERSIZED-FILE-ENDS-THE-WALK** — invariant: a file over the per-file bound is skipped and the walk goes
   on. Origin: `readRegularFile` sets `state.incomplete` for a file over `maxBytes`
   (`agent-workflow-kit/tools/repo-search.mjs:291-297`), and `walk` returns at once while `state.incomplete` is set
