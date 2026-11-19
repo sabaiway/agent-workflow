@@ -32,7 +32,8 @@ export const ADVISOR_MATRIX_DOC = 'references/modes/dispatch.md';
 export const ADVISOR_MATRIX_BEGIN = '<!-- advisor-matrix:begin -->';
 export const ADVISOR_MATRIX_END = '<!-- advisor-matrix:end -->';
 
-export const readKitDoc = (rel) => readFileSync(resolve(KIT_ROOT, rel), 'utf8');
+export const resolveKitDoc = (rel) => resolve(KIT_ROOT, rel);
+export const readKitDoc = (rel) => readFileSync(resolveKitDoc(rel), 'utf8');
 
 // Both line endings are ordinary here. Splitting on '\n' alone leaves a trailing '\r' on every line
 // of a CRLF-authored doc, and the marker match survives it (it trims) while the exact header match

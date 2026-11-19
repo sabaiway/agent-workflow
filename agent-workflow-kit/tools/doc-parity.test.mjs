@@ -369,7 +369,8 @@ describe('doc-parity CLI surface', () => {
   it('an unknown argument is a usage error (exit 2)', () => {
     const r = main(['--frobnicate']);
     assert.equal(r.code, 2);
-    assert.match(r.stderr, /unknown argument/);
+    assert.equal(r.stderr, '');
+    assert.match(r.stdout, /^doc-parity: FAIL — [^\n]*"--frobnicate"[^\n]*\nUsage:\n/u);
   });
 
   it('the default report renders every binding as ✓ and a PASS check line', () => {

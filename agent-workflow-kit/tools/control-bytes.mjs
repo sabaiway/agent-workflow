@@ -12,6 +12,8 @@
 
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { composeUsageRefusal } from '../references/scripts/shared/index.mjs';
+import { composeCheckerBlock, runCheckerTail } from './checker-block/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { probeRegularFileNoFollow, readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
 import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';
@@ -36,15 +38,25 @@ const USAGE = `usage: node control-bytes.mjs [--check] [--cwd <dir>]
   --check       the gate spelling; the plain run prints the same report and shares the exit table
   exit 0 clean · 1 a finding or a refusal · 2 usage`;
 
+const CHECKER_NAME = 'control-bytes';
+const WORK_TREE_REMEDY = 'clear the cause the finding above names, then re-run';
+const CONTROL_BYTE_REMEDY = 'rename each path whose name contains a refused byte, retarget each symlink whose target contains a refused byte, replace every refused byte in text content with an escape in source, and mark any affected binary file binary in .gitattributes, then re-run';
+const PATH_REMEDY = 'settle each path above as its finding says, then re-run';
+const UNEXPECTED_REMEDY = 'fix the cause the stack below names, then re-run';
+
 const NUL = Buffer.from([0]);
 const render = renderPathForDisplay;
 // Every DYNAMIC diagnostic (a location cause, git stderr, an fs error code, a user argument) rides
 // the same renderer as paths before it reaches a line — SAFE (never a raw byte or U+FFFD), while
 // injectivity is promised for NAMES only: a string-originated diagnostic folds invalid bytes first.
 const safe = (text) => render(Buffer.isBuffer(text) ? text : Buffer.from(String(text), 'utf8'));
-const refusalLine = (message) => `control-bytes: REFUSED — ${message}`;
-const absent = (path, tracked) => `${render(path)}: absent (${tracked ? 'tracked but missing from the work tree — stage the deletion with git rm or git add -A, or it' : 'git named it, it'} vanished before the read)`;
-const unreadable = (path, why) => `${render(path)}: unreadable (${safe(why)})`;
+const refuseWorkTree = (root, text) => ({ code: 1, lines: composeCheckerBlock({
+  name: CHECKER_NAME, root, failed: 'the work tree could not be judged',
+  findings: [{ path: '.', text }], remedies: [WORK_TREE_REMEDY],
+}) });
+const pathFinding = (path, text) => ({ path: render(path), text });
+const absent = (path, tracked) => pathFinding(path, `absent (${tracked ? 'tracked but missing from the work tree — stage the deletion with git rm or git add -A, or it' : 'git named it, it'} vanished before the read)`);
+const unreadable = (path, why) => pathFinding(path, `unreadable (${safe(why)})`);
 const hexByte = (byte) => `0x${byte.toString(16).padStart(2, '0')}`;
 const errorCode = (err) => err?.code ?? err?.message ?? String(err);
 
@@ -123,34 +135,34 @@ export const main = (argv, deps = {}) => {
   const run = deps.spawn ?? spawnSync;
   const env = deps.env ?? process.env;
   const opts = parseArgs(argv, io);
-  if (opts.error) return { code: 2, lines: [`control-bytes: usage — ${opts.error}`, USAGE] };
+  if (opts.error) return { code: 2, lines: composeUsageRefusal({ name: CHECKER_NAME, failed: opts.error, usage: USAGE }) };
   const cwd = opts.cwd ?? deps.cwd ?? process.cwd();
   const location = resolveGitLocation(cwd, { spawn: run, env, realpath: io.realpath });
-  if (location.state !== 'work-tree') return { code: 1, lines: [refusalLine(`the git location is ${location.state} — ${safe(location.cause)}`)] };
+  if (location.state !== 'work-tree') return refuseWorkTree(cwd, `the git location is ${location.state} — ${safe(location.cause)}`);
   const top = location.top;
   const git = (args, input, ok) => gitQuery(run, args, { cwd: top, env, input }, ok);
   const tracked = git(TRACKED_ARGV);
-  if (tracked.failure) return { code: 1, lines: [refusalLine(tracked.failure)] };
+  if (tracked.failure) return refuseWorkTree(top, tracked.failure);
   const entries = parseIndexEntries(tracked.stdout);
   const unmerged = entries.filter((e) => e.stage !== 0).length;
-  if (unmerged > 0) return { code: 1, lines: [refusalLine(`the git index is UNMERGED (${unmerged} conflict-stage entr(ies)) — resolve the conflict, then re-run`)] };
+  if (unmerged > 0) return refuseWorkTree(top, `the git index is UNMERGED (${unmerged} conflict-stage entr(ies)) — resolve the conflict, then re-run`);
   const others = git(UNTRACKED_ARGV);
-  if (others.failure) return { code: 1, lines: [refusalLine(others.failure)] };
+  if (others.failure) return refuseWorkTree(top, others.failure);
   const domain = [...entries.map((e) => ({ path: e.path, mode: e.mode })), ...splitZ(others.stdout).map((path) => ({ path, mode: null }))]
     .sort((a, b) => Buffer.compare(a.path, b.path));
-  if (domain.length === 0) return { code: 1, lines: [refusalLine(`the domain is EMPTY — no tracked and no untracked-not-ignored path under ${render(Buffer.from(top))}`)] };
+  if (domain.length === 0) return refuseWorkTree(top, `the domain is EMPTY — no tracked and no untracked-not-ignored path under ${render(Buffer.from(top))}`);
   const attributes = git(ATTRIBUTES_ARGV, Buffer.concat(domain.flatMap((d) => [d.path, NUL])));
-  if (attributes.failure) return { code: 1, lines: [refusalLine(attributes.failure)] };
+  if (attributes.failure) return refuseWorkTree(top, attributes.failure);
   const skipByAttribute = attributeSkips(attributes.stdout);
   // core.symlinks: exit 1 = unset = git's default (true); `false` = the host materialises a tracked
   // symlink as a regular file holding the target bytes — refusing it there would refuse forever.
   const symlinks = git(SYMLINKS_ARGV, undefined, [0, 1]);
-  if (symlinks.failure) return { code: 1, lines: [refusalLine(symlinks.failure)] };
+  if (symlinks.failure) return refuseWorkTree(top, symlinks.failure);
   const symlinksMaterialised = symlinks.stdout.toString('utf8').trim() === 'false';
   // Sparse checkouts: a tracked path whose skip-worktree bit is set (`ls-files -v`, a tag that
   // uppercases to S — core-evidence's rule) may be ABSENT by design: a counted skip, never a refusal.
   const sparse = git(SPARSE_ARGV);
-  if (sparse.failure) return { code: 1, lines: [refusalLine(sparse.failure)] };
+  if (sparse.failure) return refuseWorkTree(top, sparse.failure);
   const sparseSkip = new Set();
   for (const record of splitZ(sparse.stdout)) {
     if (record.length > 2 && String.fromCharCode(record[0]).toUpperCase() === 'S') sparseSkip.add(record.subarray(2).toString('hex'));
@@ -168,7 +180,7 @@ export const main = (argv, deps = {}) => {
       if (first === -1) first = i;
       count += 1;
     }
-    if (first !== -1) findings.push(`${render(path)} ${surface} offset ${first}: ${hexByte(bytes[first])}${count > 1 ? ` (+${count - 1} more)` : ''}`);
+    if (first !== -1) findings.push(pathFinding(path, `${surface} offset ${first}: ${hexByte(bytes[first])}${count > 1 ? ` (+${count - 1} more)` : ''}`));
   };
   // An ABSENT path: a sparse (skip-worktree) tracked one is a counted skip; every other refuses.
   const settleAbsent = (path, tracked) => {
@@ -181,7 +193,7 @@ export const main = (argv, deps = {}) => {
       if (read.bytes) judge(read.bytes, surface, path);
       return true;
     }
-    if (read.outcome === 'over-cap') refusals.push(`${render(path)}: over the read cap (${READ_CAP} bytes) — the gate read cap+1 bytes on the descriptor and stopped; ${surface === 'content' ? 'declare the path binary in .gitattributes or shrink it' : 'restore the link or shorten its target'}`);
+    if (read.outcome === 'over-cap') refusals.push(pathFinding(path, `over the read cap (${READ_CAP} bytes) — the gate read cap+1 bytes on the descriptor and stopped; ${surface === 'content' ? 'declare the path binary in .gitattributes or shrink it' : 'restore the link or shorten its target'}`));
     else if (read.outcome === 'absent') settleAbsent(path, tracked);
     else if (read.outcome === 'foreign') refusals.push(unreadable(path, `a ${read.className} where git named a ${named}`));
     else refusals.push(unreadable(path, read.code));
@@ -251,14 +263,25 @@ export const main = (argv, deps = {}) => {
     `control-bytes: work tree ${render(Buffer.from(top))}`,
     `paths judged: ${domain.length} · skipped by attribute: ${skippedByAttribute.length} · skipped by kind: ${skippedByKind} · findings: ${findings.length}`,
     ...skippedByAttribute.map((path) => `skipped by attribute: ${render(path)}`),
-    ...findings,
-    ...refusals.map(refusalLine),
   ];
-  return { code: findings.length > 0 || refusals.length > 0 ? 1 : 0, lines };
+  const classes = [];
+  const remedies = [];
+  if (findings.length) {
+    classes.push(`${findings.length} control-byte finding(s)`);
+    remedies.push(CONTROL_BYTE_REMEDY);
+  }
+  if (refusals.length) {
+    classes.push(`${refusals.length} path(s) not judged`);
+    remedies.push(PATH_REMEDY);
+  }
+  if (!classes.length) return { code: 0, lines };
+  return { code: 1, lines: composeCheckerBlock({
+    name: CHECKER_NAME, root: top, failed: classes.join('; '),
+    findings: [...findings, ...refusals], remedies, after: lines,
+  }) };
 };
 
 if (isDirectRun(import.meta.url)) {
-  const result = main(process.argv.slice(2));
-  (result.code === 2 ? process.stderr : process.stdout).write(`${result.lines.join('\n')}\n`);
-  process.exitCode = result.code;
+  runCheckerTail({ name: CHECKER_NAME, exitCode: 1, remedy: UNEXPECTED_REMEDY },
+    () => main(process.argv.slice(2)), process);
 }

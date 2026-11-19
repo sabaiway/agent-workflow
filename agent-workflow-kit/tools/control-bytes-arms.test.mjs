@@ -30,7 +30,7 @@ describe('control-bytes — the refusal arms behind injected seams', { skip: ski
     };
     const result = main(['--check'], { cwd: r.cwd, env: r.env, spawn });
     assert.equal(result.code, 1);
-    assert.match(text(result), /git ls-files -s -z threw synchronously \(bo\\u\{1\}om\)/u);
+    assert.match(text(result), /^\.: git ls-files -s -z threw synchronously \(bo\\u\{1\}om\)$/mu);
   }));
   it('an index mode naming no readable kind refuses by the mode', () => withRepo((r) => {
     const record = Buffer.from(`000000 ${'a'.repeat(40)} 0\tweird\0`);
@@ -39,7 +39,7 @@ describe('control-bytes — the refusal arms behind injected seams', { skip: ski
       : spawnSync(cmd, args, opts));
     const result = main(['--check'], { cwd: r.cwd, env: r.env, spawn });
     assert.equal(result.code, 1);
-    assert.match(text(result), /REFUSED — weird: unreadable \(index mode 000000 names no readable kind\)/u);
+    assert.match(text(result), /^weird: unreadable \(index mode 000000 names no readable kind\)$/mu);
   }));
   it('an untracked path whose lstat fails is unreadable (EACCES) or absent (ENOENT), each by name', () => withRepo((r) => {
     r.write('locked.txt', 'x\n');
@@ -52,8 +52,8 @@ describe('control-bytes — the refusal arms behind injected seams', { skip: ski
     };
     const result = main(['--check'], { cwd: r.cwd, env: r.env, io: { lstat } });
     assert.equal(result.code, 1);
-    assert.match(text(result), /REFUSED — locked\.txt: unreadable \(EACCES\)/u);
-    assert.match(text(result), /REFUSED — gone\.txt: absent \(git named it/u);
+    assert.match(text(result), /^locked\.txt: unreadable \(EACCES\)$/mu);
+    assert.match(text(result), /^gone\.txt: absent \(git named it/mu);
   }));
 });
 

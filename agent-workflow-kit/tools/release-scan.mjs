@@ -10,9 +10,12 @@
 //
 // Pure `scanText` for unit fixtures; `scanPaths`/CLI for the release tree. Dependency-free, Node >= 22.
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname, basename, resolve } from 'node:path';
+import { composeUsageRefusal } from '../references/scripts/shared/index.mjs';
+import { runCheckerTail } from './checker-block/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import { CHECKER_NAME, UNEXPECTED_REMEDY, composeScanBlock } from './release-scan/index.mjs';
 
 export const ALLOWLIST = [
   'codex-cli-bridge',
@@ -204,16 +207,25 @@ export const TARGET = Object.freeze({
 
 const GLOB_META_RE = /[*?[\]]/;
 
+const statTarget = (path) => {
+  try {
+    return statSync(path);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    return null;
+  }
+};
+
 // PURE-ish (one fs read): classify ONE caller-named target and collect the files it contributes.
 // Every zero-contribution status names its own cause, so the refusal can state the remedy rather
 // than a bare count (a count without a location is the defect class this family bans).
 export const classifyTarget = (path) => {
-  if (!existsSync(path)) {
+  const st = statTarget(path);
+  if (st === null) {
     return GLOB_META_RE.test(path)
       ? { path, status: TARGET.unmatchedGlob, files: [] }
       : { path, status: TARGET.missing, files: [] };
   }
-  const st = statSync(path);
   const name = basename(path);
   if (st.isDirectory() && EXCLUDE_DIR_NAMES.has(name)) return { path, status: TARGET.excluded, files: [] };
   if (st.isFile() && (EXCLUDE_FILE_NAMES.has(name) || !TEXT_EXT.has(extname(path)) || path.endsWith('.tgz'))) {
@@ -244,34 +256,43 @@ const findingsIn = (targets, opts) => {
 
 export const scanPaths = (paths, opts = {}) => findingsIn(paths.map((p) => classifyTarget(resolve(p))), opts);
 
-export const main = (argv) => {
+const USAGE = 'usage: release-scan.mjs [--report] <path>...';
+
+export const runScan = (argv, cwd = process.cwd()) => {
   const reportOnly = argv.includes('--report');
   const paths = argv.filter((a) => a !== '--report');
   if (paths.length === 0) {
-    console.error('usage: release-scan.mjs [--report] <path>...');
-    return 2;
+    return { code: 2, lines: composeUsageRefusal({ name: CHECKER_NAME, failed: 'no path was given to scan', usage: USAGE }) };
   }
-  const targets = paths.map((p) => classifyTarget(resolve(p)));
-  for (const target of targets) {
-    if (target.status === TARGET.unmatchedGlob) {
-      console.log(`[release-scan] skipped ${target.path} — no file matched this glob (an optional target, stated not silent).`);
-    }
+  const targets = paths.map((path) => classifyTarget(resolve(cwd, path)));
+  const skipped = targets.filter(({ status }) => status === TARGET.unmatchedGlob)
+    .map(({ path }) => `[release-scan] skipped ${path} — no file matched this glob (an optional target, stated not silent).`);
+  const misaimed = targets.filter(({ status }) => TARGET_REMEDY[status] !== undefined)
+    .map(({ path, status }) => ({ path, status, remedy: TARGET_REMEDY[status] }));
+  const findings = findingsIn(targets);
+  if (findings.length === 0 && misaimed.length === 0) {
+    return { code: 0, lines: [...skipped, '[release-scan] clean — no AI attribution or reviewer-round identity found.'] };
   }
-  const misaimed = targets.filter((target) => TARGET_REMEDY[target.status] !== undefined);
-  for (const target of misaimed) {
-    console.log(`[release-scan] target ${target.path} contributed NO file (${target.status}) — ${TARGET_REMEDY[target.status]}`);
-  }
-  const report = findingsIn(targets);
-  for (const r of report) console.log(`[${r.kind}] ${r.file}:${r.line} — ${r.detail}`);
+  if (!reportOnly) return { code: 1, lines: composeScanBlock({ cwd: resolve(cwd), misaimed, findings, after: skipped }) };
+  const lines = [
+    ...skipped,
+    ...misaimed.map(({ path, status, remedy }) => `[release-scan] target ${path} contributed NO file (${status}) — ${remedy}`),
+    ...findings.map(({ kind, file, line, detail }) => `[${kind}] ${file}:${line} — ${detail}`),
+  ];
   if (misaimed.length > 0) {
-    console.log(`\n[release-scan] ${misaimed.length} mis-aimed target(s) — this run proves nothing about them, so the clean verdict is refused.`);
+    lines.push('', `[release-scan] ${misaimed.length} mis-aimed target(s) — this run proves nothing about them, so the clean verdict is refused.`);
   }
-  if (report.length > 0) console.log(`\n[release-scan] ${report.length} finding(s).`);
-  if (report.length === 0 && misaimed.length === 0) {
-    console.log('[release-scan] clean — no AI attribution or reviewer-round identity found.');
-    return 0;
-  }
-  return reportOnly ? 0 : 1;
+  if (findings.length > 0) lines.push('', `[release-scan] ${findings.length} finding(s).`);
+  return { code: 0, lines };
 };
 
-if (isDirectRun(import.meta.url)) process.exitCode = main(process.argv.slice(2));
+export const main = (argv) => {
+  const { code, lines } = runScan(argv);
+  for (const line of lines) console.log(line);
+  return code;
+};
+
+if (isDirectRun(import.meta.url)) {
+  runCheckerTail({ name: CHECKER_NAME, exitCode: 1, remedy: UNEXPECTED_REMEDY },
+    () => runScan(process.argv.slice(2)), process);
+}

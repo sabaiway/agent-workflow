@@ -251,11 +251,13 @@ describe('main — per-target contribution accounting (a named target that scans
     const original = console.error;
     console.error = (line) => errs.push(String(line));
     try {
-      assert.equal(main([]), 2, 'no target is a usage error, never an empty clean verdict');
+      const { code, out } = runMain([]);
+      assert.equal(code, 2, 'no target is a usage error, never an empty clean verdict');
+      assert.match(out, /^release-scan: FAIL — [^\n]+\nusage: release-scan\.mjs \[--report\] <path>\.\.\.$/u);
     } finally {
       console.error = original;
     }
-    assert.match(errs.join('\n'), /usage: release-scan\.mjs/);
+    assert.deepEqual(errs, [], 'the usage block goes to standard output alone');
   });
 
   it('classifies each target form distinctly so the refusal can name its cause', () => {

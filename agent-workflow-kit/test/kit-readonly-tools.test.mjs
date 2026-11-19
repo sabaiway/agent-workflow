@@ -96,6 +96,8 @@ const ALLOWED_IMPORTS = Object.freeze({
   'tools/control-bytes.mjs': [
     "import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readSync, readlinkSync, realpathSync, statSync } from 'node:fs';",
     "import { spawnSync } from 'node:child_process';",
+    "import { composeUsageRefusal } from '../references/scripts/shared/index.mjs';",
+    "import { composeCheckerBlock, runCheckerTail } from './checker-block/index.mjs';",
     "import { isDirectRun } from './direct-run.mjs';",
     "import { probeRegularFileNoFollow, readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';",
     "import { GIT_MAX_BUFFER, parseIndexEntries, resolveGitLocation, withGitPath } from './git-env.mjs';",

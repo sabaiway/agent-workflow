@@ -19,8 +19,9 @@ any byte in 0x00–0x08, 0x0B, 0x0C, 0x0E–0x1F or 0x7F refuses; TAB, LF and CR
 bytes; bytes at or above 0x80 are not judged (UTF-8 validity and C1 controls are not this tool's
 business). A finding names the path, the surface, the byte offset and the byte in hex; the render is
 injective — bytes decode as UTF-8 where valid, a control or line-separator code point (and a valid
-U+FFFD) renders as `\u{XXXX}`, an invalid byte as `\xNN`, a backslash as `\\` — so no output line carries a raw control
-byte or U+FFFD and two names differing only in an unrenderable byte render differently.
+U+FFFD) renders as `\u{XXXX}`, an invalid byte as `\xNN`, a backslash as `\\` — so no line `main` returns carries a
+raw control byte or U+FFFD (the guard's error block keeps the error's first line and stack as they are) and two
+names differing only in an unrenderable byte render differently.
 
 **Binary by KIND, never by guess.** A path whose git attribute says `binary` or `-diff` has its
 CONTENT skipped by kind and is NAMED in the summary (one `git check-attr --stdin -z binary diff`
@@ -36,35 +37,40 @@ kind and counted — name judged, no content surface. On a host that materialise
 Run `node ${CLAUDE_SKILL_DIR}/tools/control-bytes.mjs [--check] [--cwd <dir>]` (`--cwd` anchors at
 that directory's work-tree root):
 
-1. Plain run → the human report: the work-tree root, the counts (paths judged · skipped by attribute,
-   each named · skipped by kind · findings), then every finding as one line
-   `<path> <surface> offset <n>: 0x<hex>` (`(+N more)` when that surface carries more than one) —
-   under the SAME exit table as `--check`: the plain run is never a silent 0.
-2. **`--check`** → the gate spelling: the same report (counts, the named attribute skips, the
-   finding lines), then the gate exit code. **Exit 0** clean. **Exit 1** on a finding OR on a refusal —
-   refusals never pass and never skip silently, each with its own message: an UNREADABLE path
-   (EACCES, EIO, a descriptor whose kind disagrees with the named kind — distinct from an ABSENT
-   path git named that vanished before the read; a TRACKED absent path with the skip-worktree bit is
-   a sparse checkout, skipped by kind and counted); a git command that fails, is killed by a signal or
-   is not on PATH; an UNMERGED index; an EMPTY domain; a file over the read cap (16 MiB — read as at
-   most cap+1 bytes on the descriptor, never trusting the fstat size, so a file that grows after the
-   fstat still refuses; the message names the cap and the path); a git LOCATION that is not a work
-   tree. The location is a closed table of six states shared with the fingerprint and index
-   consumers through the kit's git-location leaf, judged on the REALPATH identity of the git dir,
-   the common dir and the work-tree top under the ambient env against the discovery from cwd with
-   every variable whose upper-cased name starts with `GIT_` removed (a case-insensitive host honours
-   `git_dir` too): `work-tree` (all three agree) proceeds; `not-a-repository` (git
-   itself answers not-a-git-repository, exit 128); `error` (ENOENT, a synchronous throw, a signal, a
-   realpath that cannot resolve, any other non-zero or unparsable answer); `redirected` (any of the
-   three differs — `GIT_WORK_TREE` at a second tree with the same git dir, or `GIT_COMMON_DIR` at a
-   second repository); `no-work-tree` (the git
-   dir agrees but `--show-toplevel` fails: bare, or cwd inside `.git`); `env-only` (the ambient env
-   reaches a repository the stripped discovery does not) — each refuses by its own state name. A
-   pre-commit hook's own env (`GIT_INDEX_FILE`, `GIT_PREFIX`, `GIT_CONFIG_PARAMETERS`,
-   `GIT_EXEC_PATH`) agrees and passes: the check is agreement, never a variable ban. **Exit 2**
-   usage — every operand is validated at parse; an unknown argument is usage. Every content read is
-   descriptor-bound (open, fstat, read on the descriptor), never a path read that a symlink swap
-   could redirect.
+1. Plain run → clean: the report (the work-tree root; paths judged · skipped by attribute · skipped by
+   kind · findings; one `skipped by attribute: <path>` line per such path). Red: ONE block on standard
+   output, nothing on standard error, under the SAME exit table as `--check` (never a silent 0): the
+   verdict line `control-bytes: FAIL —` naming each class present, with counts for control-byte findings
+   and paths not judged, each finding `<path>: <surface> offset <n>: 0x<hex>` (`(+N more)` for more), each
+   path not judged `<path>: <why>`, one `control-bytes: REMEDY —` line per class, then the report; the work
+   tree not judged stands alone (step 2: no count, nothing after its remedy). A path that is no plain place
+   (escaped, holding a colon, opening with a space, with an empty, `.` or `..` segment, equal to `control-bytes`, or matching the text before `: ` on a report line) stands at `.`, the path leading its text.
+2. **`--check`** → the gate spelling: the same output, then the gate exit code. **Exit 0** clean.
+   **Exit 1** on a finding OR on a refusal — refusals never pass and never skip silently, each with its
+   own message; a failed git query, an unmerged index, an empty domain or a location that is no work
+   tree is the work tree not judged: one finding at `.` carrying the message, one remedy line, nothing
+   after. The refusals: an UNREADABLE path (EACCES, EIO, a descriptor whose kind disagrees with the
+   named kind — distinct from an ABSENT path git named that vanished before the read; a TRACKED absent
+   path with the skip-worktree bit is a sparse checkout, skipped by kind and counted); a git command
+   that fails, is killed by a signal or is not on PATH; an UNMERGED index; an EMPTY domain; a file over
+   the read cap (16 MiB — read as at most cap+1 bytes on the descriptor, never trusting the fstat size,
+   so a file that grows after the fstat still refuses; the message names the cap and the path); a git
+   LOCATION that is not a work tree. The location is a closed table of six states shared with the
+   fingerprint and index consumers through the kit's git-location leaf, judged on the REALPATH identity
+   of the git dir, the common dir and the work-tree top under the ambient env against the discovery
+   from cwd with every variable whose upper-cased name starts with `GIT_` removed (a case-insensitive
+   host honours `git_dir` too): `work-tree` (all three agree) proceeds; `not-a-repository` (git itself
+   answers not-a-git-repository, exit 128); `error` (ENOENT, a synchronous throw, a signal, a realpath
+   that cannot resolve, any other non-zero or unparsable answer); `redirected` (any of the three
+   differs — `GIT_WORK_TREE` at a second tree with the same git dir, or `GIT_COMMON_DIR` at a second
+   repository); `no-work-tree` (the git dir agrees but `--show-toplevel` fails: bare, or cwd inside
+   `.git`); `env-only` (the ambient env reaches a repository the stripped discovery does not) — each
+   refuses by its own state name. A pre-commit hook's own env (`GIT_INDEX_FILE`, `GIT_PREFIX`,
+   `GIT_CONFIG_PARAMETERS`, `GIT_EXEC_PATH`) agrees and passes: the check is agreement, never a variable
+   ban. **Exit 2** usage — every operand is validated at parse; an unknown argument is usage: the verdict
+   line names what was wrong, then the usage text. An error the tool does not answer for prints the
+   guard's block (the verdict line naming the error, the remedy line, the stack), exit 1. Every content
+   read is descriptor-bound (open, fstat, read on the descriptor), never a path a symlink swap redirects.
 3. **Declare it as a gate — never without consent (AD-021/D9).** `node
    ${CLAUDE_SKILL_DIR}/tools/checker-gates.mjs --cwd <project> --only control-bytes --apply` writes
    this one entry while the kit offers it; without `--only control-bytes --apply` the same command
@@ -79,7 +85,7 @@ that directory's work-tree root):
 **Honest bounds (stated, accepted):** the work tree is judged at the moment of the read — a byte
 written after the run is caught on the next run, which is why the gate belongs in the pre-commit
 matrix; the attribute is the only "binary" signal, so a binary file with no attribute refuses until
-the project declares it; the tool reports and never edits — the remedy is the escape in source; a
+the project declares it; the tool reports and never edits; a
 checkout PATH that is itself not valid UTF-8 is unreachable by any Node consumer (cwd is a string
 before git ever answers) and a non-UTF-8 LINKED git dir or common dir path refuses as `error` — a
 stated bound, not a case this tool judges; `O_NOFOLLOW` guards the

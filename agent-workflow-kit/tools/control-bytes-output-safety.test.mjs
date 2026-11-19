@@ -41,8 +41,8 @@ describe('control-bytes — dynamic diagnostics are escaped, never emitted raw',
       : spawnSync(cmd, args, opts));
     const result = main(['--check'], { cwd: r.cwd, env: r.env, spawn });
     assert.equal(result.code, 1);
-    assert.match(result.lines[0], /the git location is not-a-repository/u);
-    assert.match(result.lines[0], /\\u\{1\}evil/u);
+    assert.match(result.lines[1], /^\.: the git location is not-a-repository/u);
+    assert.match(result.lines[1], /\\u\{1\}evil/u);
     assertLinesSafe(result.lines);
   }));
   it('a failing git query\'s stderr carrying an escape byte is escaped in the refusal line', () => withRepo((r) => {
@@ -51,22 +51,22 @@ describe('control-bytes — dynamic diagnostics are escaped, never emitted raw',
       : spawnSync(cmd, args, opts));
     const result = main(['--check'], { cwd: r.cwd, env: r.env, spawn });
     assert.equal(result.code, 1);
-    assert.match(result.lines[0], /git ls-files -s -z exited 129/u);
-    assert.match(result.lines[0], /bo\\u\{1b\}om/u);
+    assert.match(result.lines[1], /^\.: git ls-files -s -z exited 129/u);
+    assert.match(result.lines[1], /bo\\u\{1b\}om/u);
     assertLinesSafe(result.lines);
   }));
   it('a user argument carrying a control byte is escaped in the usage line', () => withRepo((r) => {
     const result = main(['--cwd', `${r.dir}/no\x01where`], { cwd: r.cwd, env: r.env });
     assert.equal(result.code, 2);
-    assert.match(result.lines[0], /no\\u\{1\}where/u);
+    assert.match(result.lines[0], /^control-bytes: FAIL — .*no\\u\{1\}where/u);
     assertLinesSafe(result.lines);
   }));
   it('the injectable realpath reaches the location check through main: a throwing realpath is a named error refusal', () => withRepo((r) => {
     const io = { realpath: () => { throw Object.assign(new Error('loop'), { code: 'ELOOP' }); } };
     const result = main(['--check'], { cwd: r.cwd, env: r.env, io });
     assert.equal(result.code, 1);
-    assert.match(result.lines[0], /the git location is error/u);
-    assert.match(result.lines[0], /cannot be resolved \(ELOOP\)/u);
+    assert.match(result.lines[1], /^\.: the git location is error/u);
+    assert.match(result.lines[1], /cannot be resolved \(ELOOP\)/u);
   }));
   it('an fs error code carrying a control byte is escaped in the unreadable refusal', () => withRepo((r) => {
     const io = {
@@ -77,7 +77,7 @@ describe('control-bytes — dynamic diagnostics are escaped, never emitted raw',
     };
     const result = main(['--check'], { cwd: r.cwd, env: r.env, io });
     assert.equal(result.code, 1);
-    assert.match(result.lines.join('\n'), /f\.txt: unreadable \(E\\u\{2\}VIL\)/u);
+    assert.match(result.lines.join('\n'), /^f\.txt: unreadable \(E\\u\{2\}VIL\)$/mu);
     assertLinesSafe(result.lines);
   }));
 });
@@ -102,7 +102,7 @@ describe('control-bytes — a nested-repository entry swapped for a symlink is j
     const spawn = (cmd, args, opts) => capture[args.join(' ')] ?? spawnSync(cmd, args, opts);
     const result = main(['--check'], { cwd: r.cwd, env: r.env, spawn });
     assert.equal(result.code, 1, result.lines.join('\n'));
-    assert.match(result.lines.join('\n'), /racer\/ symlink-target offset \d+: 0x02/u, 'the swapped link is judged as a symlink, never skipped as a nested repository');
+    assert.match(result.lines.join('\n'), /^\.: racer\/: symlink-target offset \d+: 0x02$/mu, 'the swapped link is judged as a symlink, never skipped as a nested repository');
     assertLinesSafe(result.lines);
   }));
 });

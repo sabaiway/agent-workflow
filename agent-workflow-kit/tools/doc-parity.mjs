@@ -19,7 +19,11 @@
 // Read-only: never writes, never commits, never runs a subscription CLI, spawns nothing. Dependency-
 // free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
+import { resolve } from 'node:path';
+import { composeUsageRefusal } from '../references/scripts/shared/index.mjs';
 import { EXIT as DOCTOR_EXIT, STATUS as DOCTOR_STATUS, TRUSTED_DIRS as DOCTOR_TRUSTED_DIRS } from './autonomy-doctor.mjs';
+import { runCheckerTail } from './checker-block/index.mjs';
+import { CHECKER_NAME, formatHuman, formatCheckPass, composeDriftBlock } from './doc-parity/index.mjs';
 import {
   RECOMMENDATIONS_SECTION_HEADER,
   RECOMMENDATIONS_EMPTY_LINE,
@@ -95,9 +99,6 @@ const STATUS_DOC = 'references/modes/status.md';
 // One literal for the dispatch mode doc: the structure leaf already names it as the file it anchors
 // its table in, and a second copy here is exactly the drift this lint exists to catch.
 const DISPATCH_DOC = ADVISOR_MATRIX_DOC;
-
-// A typed usage failure (exit 2) for the CLI parser — the codebase's typed-error idiom (no classes).
-const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 
 // ── the closed binding registry ──────────────────────────────────────────────────────
 // Each binding: { constant, value (live), token (value rendered into the doc's exact phrasing),
@@ -281,30 +282,12 @@ export { ADVISOR_MATRIX_DOC, ADVISOR_MATRIX_BEGIN, ADVISOR_MATRIX_END, parseAdvi
 // relative to the kit root.
 export const checkParity = (bindings = BINDINGS, readText = defaultReadText) => bindings.map((b) => checkBinding(b, readText));
 
-// ── rendering ───────────────────────────────────────────────────────────────────────
-const structureLine = (structure) =>
-  `  ${structure.ok ? '✓' : '✗'} ${structure.constant} → ${structure.files[0].rel}${structure.ok ? '' : ` — ${structure.files[0].reason}`}`;
-
-const formatHuman = (results, structure) => {
-  const lines = ['doc-parity — code constants ⟷ references/modes/*.md contract (read-only, BUGFREE-3)'];
-  for (const r of results) {
-    for (const f of r.files) {
-      lines.push(`  ${f.ok ? '✓' : '✗'} ${r.constant} → ${f.rel}${f.ok ? '' : ` — ${f.reason}`}`);
-    }
-  }
-  lines.push(structureLine(structure));
-  const failed = results.flatMap((r) => r.files.filter((f) => !f.ok).map((f) => `${r.constant} @ ${f.rel}`));
-  // The summary verdict derives from BOTH halves. A PASS token computed from the bindings alone read
-  // as a green report while the structure check below it said FAIL — the one surface that lied.
-  const green = failed.length === 0 && structure.ok;
-  lines.push(`  check: ${green ? 'PASS' : 'FAIL'} — ${failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.join('; ')}`}, structure ${structure.ok ? 'PASS' : 'FAIL'}`);
-  return lines.join('\n');
-};
+const UNEXPECTED_REMEDY = 'fix the cause the stack below names, then re-run';
+const USAGE = 'Usage:\n  node doc-parity.mjs [--check | --json]';
 
 const HELP = `doc-parity — deterministic doc-drift lint for the agent-workflow family (BUGFREE-3 / AD-049).
 
-Usage:
-  node doc-parity.mjs [--check | --json]
+${USAGE}
 
 A CLOSED, exported registry binds each live code constant — the autonomy-doctor contract (the EXIT
 table, the status tokens, the trusted-dir allowlist), the recommendations/upgrade presentation
@@ -346,32 +329,29 @@ Read-only: never writes, never commits, spawns nothing. Exit codes: 0 pass (or p
 const KNOWN_ARGS = new Set(['--help', '-h', '--check', '--json']);
 
 export const main = (argv, ctx = {}) => {
-  const readText = ctx.readText ?? defaultReadText;
-  try {
-    if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
-    const unknown = argv.find((a) => !KNOWN_ARGS.has(a));
-    if (unknown !== undefined) throw usageFail(`unknown argument: ${unknown}`);
-    const results = checkParity(BINDINGS, readText);
-    const structure = checkMatrixStructure(readText);
-    const failed = results.filter((r) => !r.ok);
-    const green = failed.length === 0 && structure.ok;
-    if (argv.includes('--json')) {
-      return { code: argv.includes('--check') && !green ? 1 : 0, stdout: JSON.stringify({ results, structure, ok: green }, null, 2), stderr: '' };
-    }
-    if (argv.includes('--check')) {
-      const bindingReason = failed.length === 0 ? `${results.length} binding(s) consistent` : `${failed.length} drifted binding(s): ${failed.map((r) => r.constant).join(', ')} — update the contract doc(s) in the SAME edit as the code`;
-      const structureReason = structure.ok ? 'the advisor matrix structure corresponds' : `the advisor matrix structure DRIFTED — ${structure.files[0].reason}`;
-      return { code: green ? 0 : 1, stdout: `doc-parity check: ${green ? 'PASS' : 'FAIL'} — ${bindingReason}; ${structureReason}`, stderr: '' };
-    }
-    return { code: 0, stdout: formatHuman(results, structure), stderr: '' };
-  } catch (err) {
-    return { code: err.exitCode ?? 1, stdout: '', stderr: `doc-parity: ${err.message}` };
+  if (argv.includes('--help') || argv.includes('-h')) return { code: 0, stdout: HELP, stderr: '' };
+  const unknown = argv.find((argument) => !KNOWN_ARGS.has(argument));
+  if (unknown !== undefined) {
+    const lines = composeUsageRefusal({ name: CHECKER_NAME, failed: `unknown argument: ${JSON.stringify(unknown)}`, usage: USAGE });
+    return { code: 2, stdout: lines.join('\n'), stderr: '' };
   }
+  const readText = ctx.readText ?? defaultReadText;
+  const results = checkParity(BINDINGS, readText);
+  const structure = checkMatrixStructure(readText);
+  const green = results.every(({ ok }) => ok) && structure.ok;
+  const check = argv.includes('--check');
+  if (argv.includes('--json')) {
+    return { code: check && !green ? 1 : 0, stdout: JSON.stringify({ results, structure, ok: green }, null, 2), stderr: '' };
+  }
+  if (check) {
+    if (green) return { code: 0, stdout: formatCheckPass(results), stderr: '' };
+    const lines = composeDriftBlock({ results, structure, cwd: resolve(ctx.cwd ?? process.cwd()) });
+    return { code: 1, stdout: lines.join('\n'), stderr: '' };
+  }
+  return { code: 0, stdout: formatHuman(results, structure), stderr: '' };
 };
 
 if (isDirectRun(import.meta.url)) {
-  const r = main(process.argv.slice(2));
-  if (r.stdout) process.stdout.write(r.stdout.endsWith('\n') ? r.stdout : `${r.stdout}\n`);
-  if (r.stderr) process.stderr.write(r.stderr.endsWith('\n') ? r.stderr : `${r.stderr}\n`);
-  process.exitCode = r.code;
+  runCheckerTail({ name: CHECKER_NAME, exitCode: 1, remedy: UNEXPECTED_REMEDY },
+    () => main(process.argv.slice(2)), process);
 }

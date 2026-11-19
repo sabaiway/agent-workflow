@@ -1130,18 +1130,6 @@
       ]
     },
     {
-      "path": "agent-workflow-kit/tools/control-bytes.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "control-byte-in-tracked-file",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
       "path": "agent-workflow-kit/tools/dispatch.mjs",
       "arguments": [
         "check",
@@ -1162,18 +1150,6 @@
         "fixture-nonce"
       ],
       "redCase": "dispatch-deadline-passed",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
-      "path": "agent-workflow-kit/tools/doc-parity.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "redCase": "bound-token-absent",
       "missKinds": [
         "verdict",
         "place",
@@ -1369,18 +1345,6 @@
         "1"
       ],
       "redCase": "receipts-shorter-than-watermark",
-      "missKinds": [
-        "verdict",
-        "place",
-        "remedy"
-      ]
-    },
-    {
-      "path": "agent-workflow-kit/tools/release-scan.mjs",
-      "arguments": [
-        "tools"
-      ],
-      "redCase": "version-pin-without-probe",
       "missKinds": [
         "verdict",
         "place",
@@ -1592,27 +1556,6 @@
       "faultPoint": "spawn"
     },
     {
-      "path": "agent-workflow-kit/tools/control-bytes.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-kit/tools/control-bytes.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/control-bytes.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "spawn"
-    },
-    {
       "path": "agent-workflow-kit/tools/dispatch.mjs",
       "arguments": [
         "check",
@@ -1646,13 +1589,6 @@
         "fixture-nonce"
       ],
       "faultPoint": "spawn"
-    },
-    {
-      "path": "agent-workflow-kit/tools/doc-parity.mjs",
-      "arguments": [
-        "--check"
-      ],
-      "faultPoint": "read"
     },
     {
       "path": "agent-workflow-kit/tools/epic-shape-cli.mjs",
@@ -1926,27 +1862,6 @@
         "1"
       ],
       "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/release-scan.mjs",
-      "arguments": [
-        "tools"
-      ],
-      "faultPoint": "read"
-    },
-    {
-      "path": "agent-workflow-kit/tools/release-scan.mjs",
-      "arguments": [
-        "tools"
-      ],
-      "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/release-scan.mjs",
-      "arguments": [
-        "tools"
-      ],
-      "faultPoint": "list"
     },
     {
       "path": "agent-workflow-kit/tools/review-state.mjs",

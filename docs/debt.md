@@ -1459,6 +1459,52 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   kit learns of the stop from the line after the write or from their own stop, which names the schema. Raised by
   the SIZE-PRACTICE S2 spec review (2026-11-13).
 
+- **CONTROL-BYTES-SUITE-LEAVES-FIVE-STATES-UNPINNED** — invariant: every scenario of the control-byte contract
+  (docs/ai/specs/kit/control-bytes.md, S1 to S5) goes red on a regression of the rule it names. Origin: five states no
+  cell reaches, read at the spec review of story S16 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-18):
+  S1, a symlink to an existing file holding a NUL outside the judged set, where
+  `agent-workflow-kit/tools/control-bytes.test.mjs:63-82` uses a dangling link only
+  (`agent-workflow-kit/tools/control-bytes.mjs:234-255`); S2, 0x7f refused on each of the three surfaces, where no
+  cell refuses it on any surface (it stands in the predicate loop, `control-bytes.test.mjs:147-149`, and a render
+  sample, `:169`); S3, a `-diff` attributed symlink whose target string holds a control byte
+  (`control-bytes.test.mjs:178-210`); S4, a file of exactly the read cap reaching EOF, where the two injected readers
+  always return the requested bytes and never signal EOF (`control-bytes.test.mjs:108-120`, `:271-285`,
+  `agent-workflow-kit/tools/fs-read-nofollow.mjs:153-160`) and the real-file case uses cap+1 bytes
+  (`agent-workflow-kit/tools/control-bytes-red-block.test.mjs:130`); S5, a relative `--cwd` given from a subdirectory
+  (`control-bytes.test.mjs:303,312-319`). Narrow fix: one cell per state,
+  in `agent-workflow-kit/tools/control-bytes-arms.test.mjs` or a file of their own, since `control-bytes.test.mjs`
+  stands at its 400 lines. Proof: each cell red on the regression it names (a followed link, a surface that skips
+  0x7f, a target skipped by attribute, a refusal at exactly the cap, a relative operand resolved elsewhere).
+  Residual exposure, not live: the shipped code keeps all five rules; only their tests are missing.
+
+- **S16-RED-BLOCKS-LEAVE-FIVE-GAPS** — invariant: every red-block rule of the control-byte, release-scan and
+  doc-parity checks goes red on its regression, and a shared remedy line gives an action applicable to the findings
+  it addresses or points readers to the reported cause, as each finding's remedy names only actions that clear it.
+  Origin: the diff review of story S16 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE (2026-11-19): (1) the direct
+  runs hand `main` to `runCheckerTail` (`agent-workflow-kit/tools/control-bytes.mjs:285`,
+  `agent-workflow-kit/tools/doc-parity.mjs:355`), but the cells that read the guard's block wrap `main` themselves
+  (`agent-workflow-kit/tools/control-bytes-red-block.test.mjs:202-215`,
+  `agent-workflow-kit/tools/doc-parity/red-block.test.mjs:218-241`) and the census faults are caught inside `main`, so
+  a direct run that dropped the guard stays green; (2) the S8 cell reads the verdict line's classes and its counts as
+  two separate ordered sequences (`control-bytes-red-block.test.mjs:63-65`), so a count is never bound to its class:
+  a verdict line that writes each count after its class (`control-byte finding(s) 1; path(s) not judged 3`) passes;
+  (3) doc-parity's `--json` run without `--check` over a drift (exit 0, one JSON document, `ok: false`) has no cell
+  (`doc-parity/red-block.test.mjs:294` reads a clean tree only); (4) doc-parity's one remedy line
+  (`agent-workflow-kit/tools/doc-parity/index.mjs:5`), as the contract fixes it (docs/ai/specs/kit/doc-parity.md:42-43:
+  update each named doc in the same edit as the code), tells to update a doc whose finding is `unreadable (<code>)`,
+  where the fix is to restore read access: the outstanding exception to the remedy rule above; (5) the version-pin
+  finding's text (`VERSION_PIN_REMEDY`, `agent-workflow-kit/tools/release-scan.mjs:123-126`) offers first a
+  `probeHarnessVersion` pairing, which clears only a pin in a `.mjs` or `.js` file (`release-scan.mjs:147,163-164`),
+  so a pin in a `.md` or `.sh` file under `tools/` is told an action that leaves the scan red. Narrow fix: (1) one
+  spawned run each of `control-bytes` and `doc-parity` with a preload that installs a seam and returns, the seam
+  throwing inside `main` outside its catches: the block on stdout, stderr empty, exit 1; (2) one assertion per count
+  and class pair; (3) one cell; (4) a contract revision and one remedy line: restore read access to each unreadable
+  doc, update each drifted doc in the same edit as the code it binds; (5) name the probe alternative only for a
+  probe-callable file. Proof: each cell red on the regression it names. Residual exposure, not live: both direct runs
+  pass through the guard today, the shipped code keeps rules (2) and (3), an unreadable doc is a broken kit install
+  whose finding names its read error, and the version-pin finding also names the move into a test fixture or
+  changelog entry, which clears every pin.
+
 ## Closed
 
 - **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the
