@@ -877,21 +877,21 @@ describe('spec:init-project/S4 — item lanes, check and apply slots, and masks 
   });
 });
 
-describe('recommendations — skip reasons can never rebuild a prose wall (D2)', () => {
+describe('recommendations — skip reasons can never rebuild a prose wall (D2) spec:advisor-skip/S7', () => {
   const run = (probe) => buildRecommendations({ cwd: HERE, deps: { probes: [probe] } });
-
-  it('a multiline Error.message is normalized to ONE line', () => {
+  it('a folded Error.message stays on one line and says the whole reason follows', () => {
     const { skips } = run(({ skip }) => skip('gate-hook', new Error('first\nsecond\r\nthird')));
-    assert.equal(skips.length, 1);
+    assert.deepEqual(skips, [{ key: 'gate-hook', reason: 'first second third (the whole reason follows)', whole: ['first', 'second', 'third'] }]);
     assert.doesNotMatch(skips[0].reason, /[\r\n]/u);
-    assert.equal(skips[0].reason, 'first second third');
+    const report = formatRecommendations({ items: [], skips: [{ key: 'gate-hook', reason: 'already one line' }] });
+    assert.deepEqual(report.split('\n').filter((line) => line.startsWith('  ⚠ skipped item ') || line.startsWith('      |')), ['  ⚠ skipped item gate-hook — probe failed: already one line']);
   });
-
-  it('an oversized Error.message is length-capped with a stated truncation count', () => {
+  it('a cut Error.message states its truncation count and says the whole reason follows', async () => {
+    assert.deepEqual([SKIP_REASON_CAP, (await import('./advisor-skip/index.mjs')).SKIP_REASON_CAP], [200, 200]);
     const { skips } = run(({ skip }) => skip('gate-hook', new Error('e'.repeat(SKIP_REASON_CAP * 3))));
-    assert.equal(skips.length, 1);
-    assert.ok(skips[0].reason.length <= SKIP_REASON_CAP, `reason is ${skips[0].reason.length} chars (cap ${SKIP_REASON_CAP})`);
-    assert.match(skips[0].reason, /… \(\+\d+ more chars\)$/u, 'the truncation states its count');
+    assert.ok(skips[0].reason.length <= SKIP_REASON_CAP);
+    assert.match(skips[0].reason, /… \(\+\d+ more chars; the whole reason follows\)$/u);
+    assert.deepEqual(skips.map(({ whole }) => whole), [['e'.repeat(SKIP_REASON_CAP * 3)]]);
   });
 });
 

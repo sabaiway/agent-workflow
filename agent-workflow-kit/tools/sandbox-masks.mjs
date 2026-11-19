@@ -42,6 +42,7 @@ import { isNeverCommittableStat, shellQuoteArg } from './review-state.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 import { foreignMountTargets } from './mount-masks.mjs';
+import { jsonForLine } from './source-size-refusal.mjs';
 
 export const MASKS_FENCE_START = '# >>> agent-workflow sandbox-masks — managed block, fully REPLACED by the kit sandbox-masks lane; do not hand-edit inside >>>';
 export const MASKS_FENCE_END = '# <<< agent-workflow sandbox-masks <<<';
@@ -225,7 +226,7 @@ export const probeSandboxMasks = ({ cwd = process.cwd(), lstat = lstatSync, list
   const fence = findMasksFence(lines);
   const staleReal = fence.state === 'ok' ? revalidateFence(fence.body, { root, lstat: lstatOnce, readMountinfo: once }) : [];
   const leftovers = clearOnly ? [] : staleReal.filter((rel) => isLeftoverStat(lstatOnce(join(root, rel))));
-  if (leftovers.length > 0) throw fail(1, [...staleReal.filter((rel) => !leftovers.includes(rel)).map(staleRealLine), ...leftovers.map(leftoverLine)].join('\n'));
+  if (leftovers.length > 0) throw fail(1, [...formatGroup(staleRealHead, staleReal.filter((rel) => !leftovers.includes(rel))), ...formatGroup(leftoverHead, leftovers)].join('\n'));
   const applyCmd = `node ${shellQuoteArg(join(HERE, 'sandbox-masks.mjs'))} --cwd ${shellQuoteArg(root)} --apply`;
   return { root, excludeFile, gitCommonDir, content, lines, fence, masks, unrenderable, mountOnly, mountSignal, staleReal, applyCmd };
 };
@@ -281,8 +282,9 @@ export const planApply = (probe, { clear = false } = {}) => {
 
 // ── rendering ───────────────────────────────────────────────────────────────────────
 
-const staleRealLine = (rel) => `  ⚠ fenced entry became a REAL path: ${rel} — delete its line from the managed block BEFORE relying on git for this path: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns`;
-const leftoverLine = (rel) => `  ⚠ refusing: fenced entry ${rel} is an empty read-only file no arm calls a mask, so neither verdict is given — a running sandbox's mask: re-run once no other sandboxed command runs; litter a sandbox left: remove the file outside the sandbox and keep its line; a real file: delete its line`;
+const staleRealHead = (n) => `  ⚠ ${n} fenced entr(ies) became REAL path(s) — delete each one's line from the managed block BEFORE relying on git for it: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns:`;
+const leftoverHead = (n) => `  ⚠ refusing: ${n} fenced entr(ies) are empty read-only files no arm calls a mask, so neither verdict is given — a running sandbox's mask: re-run once no other sandboxed command runs; litter a sandbox left: remove the file outside the sandbox and keep its line; a real file: delete its line:`;
+const formatGroup = (sentence, paths) => paths.length === 0 ? [] : [sentence(paths.length), ...paths.map((rel) => '      ' + jsonForLine(rel))];
 
 const formatProbe = (probe) => {
   const lines = [
@@ -294,7 +296,7 @@ const formatProbe = (probe) => {
   lines.push(`  masks visible now: ${probe.masks.length === 0 ? '0 (outside the sandbox or clean)' : ''}`);
   for (const m of probe.masks) lines.push(`    · ${m}${probe.mountOnly.includes(m) ? ' (mount-only: it rides git add -A and the review fingerprint while git does not ignore it)' : ''}`);
   if (probe.mountSignal === 'absent') lines.push('  mount signal: not read on this platform — only device/FIFO/socket masks are judged');
-  lines.push(...probe.staleReal.map(staleRealLine));
+  lines.push(...formatGroup(staleRealHead, probe.staleReal));
   for (const rel of probe.unrenderable) {
     lines.push(`  ⚠ mask name carries a newline or ends with a tab and cannot be expressed as ONE exclude rule — NOT written (the mask itself stays untracked): ${JSON.stringify(rel)}`);
   }

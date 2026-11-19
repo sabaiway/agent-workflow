@@ -468,7 +468,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     writeFileSync(join(root, 'was-a-mask.txt'), 'now a real file\n');
     const r = main(['--cwd', root], { deps: { listUntracked: () => ['was-a-mask.txt'] } });
     rmSync(root, { recursive: true, force: true });
-    assert.match(r.stdout, /became a REAL path: was-a-mask\.txt/);
+    assert.ok(r.stdout.split('\n').some((line, index, lines) => line === "  ⚠ 1 fenced entr(ies) became REAL path(s) — delete each one's line from the managed block BEFORE relying on git for it: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns:" && lines[index + 1] === '      "was-a-mask.txt"'));
     assert.match(r.stdout, /silently skipped by bulk staging/, 'the watch note states the REAL danger — bulk git add skips excluded paths');
   });
 
@@ -508,7 +508,7 @@ describe('sandbox-masks — probe (read-only) + revalidation (the D5 watch)', ()
     const r = main(['--cwd', root], { deps: { listUntracked: () => [] } });
     rmSync(root, { recursive: true, force: true });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /became a REAL path: was-mask/, 'the stale-real warning renders');
+    assert.ok(r.stdout.split('\n').some((line, index, lines) => line === "  ⚠ 1 fenced entr(ies) became REAL path(s) — delete each one's line from the managed block BEFORE relying on git for it: an excluded real file is silently skipped by bulk staging (git add -A / git add .), so it stays OUT of your commits, and an explicit git add refuses it without -f; .git/info/exclude never warns:" && lines[index + 1] === '      "was-mask"'), 'the stale-real warning renders');
     assert.ok(r.stdout.includes('--apply --clear'), 'the rendered one-liner is the form planApply actually accepts here');
   });
 

@@ -7,6 +7,32 @@ versioned **independently** — see its own changelog for package-level detail:
 - `@sabaiway/agent-workflow-memory` → [agent-workflow-memory/CHANGELOG.md](agent-workflow-memory/CHANGELOG.md)
 - `@sabaiway/agent-workflow-engine` → [agent-workflow-engine/CHANGELOG.md](agent-workflow-engine/CHANGELOG.md)
 
+## 2026-11-19 — AD-240: a skipped check's report keeps its whole reason; the control-byte gate, the release scan and the doc-parity lint open their red output with the failure (kit 23.12.0 MINOR; memory, engine and the bridges unchanged)
+
+**`agent-workflow-kit/tools/advisor-skip/index.mjs`** (new) exports `SKIP_REASON_CAP`, `composeSkip` and
+`renderSkip`, importing only `isLineUnsafe` and `jsonForLine` of `source-size-refusal.mjs`. **`recommendations.mjs`**
+builds each skip with `composeSkip`, prints it with `renderSkip` and re-exports `SKIP_REASON_CAP`; its help gains the
+clause on the whole reason. **`sandbox-masks.mjs`** prints the leftover refusal and the flagless stale-real warning as
+one sentence per group with each path a `jsonForLine` string. Step 2 of `references/modes/recommendations.md` says
+the whole reason follows on `|` lines and is relayed. Suites: `tools/advisor-skip/skip.test.mjs` (new),
+`recommendations.test.mjs`, `sandbox-masks.test.mjs`, `sandbox-masks-leftover.test.mjs`,
+`sandbox-masks-mount.test.mjs`, `test/package-content.test.mjs` (414 packed) and
+`scripts/testing/package-seal.test.mjs`; `ci.yml` and `_publish-one.yml` run `tools/advisor-skip`. Specs
+`kit/advisor-skip` revision 1 (new), `kit/review-domain/sandbox-masks` revision 3. From commit `6663b6d` (the checker
+epic's S16): **`control-bytes.mjs`**, **`release-scan.mjs`** and **`doc-parity.mjs`** open every red run of their text
+output with one block on standard output through `composeCheckerBlock`, `runCheckerTail` and `composeUsageRefusal`
+(`doc-parity --json` prints its one JSON document unchanged); new `tools/release-scan/index.mjs` (`composeScanBlock`)
+and `tools/doc-parity/index.mjs` (`composeDriftBlock`), with the new exports `runScan(argv, cwd)` of
+`release-scan.mjs` and `resolveKitDoc` of `advisor-matrix.mjs`; the release
+scan takes only ENOENT as an absent target and fails, exit 1, on any other failed status;
+`tools/checker-verdict/checkers.json` loses 3 `redExceptions` and 7 `faultExceptions`; steps 1 and 2 of
+`references/modes/control-bytes.md` restated; new red-block suites `tools/release-scan/red-block.test.mjs`,
+`tools/doc-parity/red-block.test.mjs` and `tools/control-bytes-red-block.test.mjs`. Specs `kit/release-scan` and
+`kit/doc-parity` revision 1 (new), `kit/control-bytes` revision 6, `kit/checker-verdict` revision 4. New debt rows
+SANDBOX-MASKS-CONTRACT-STANDS-AT-ITS-LINE-CAP, ADVISOR-ITEM-LINES-ADMIT-LINE-UNSAFE-CHARACTERS and
+ADVISOR-SKIP-S4-PINS-NO-KEY-WITH-A-LINE-SEPARATOR; from S16, CONTROL-BYTES-SUITE-LEAVES-FIVE-STATES-UNPINNED and
+S16-RED-BLOCKS-LEAVE-FIVE-GAPS.
+
 ## 2026-11-18 — AD-239: the codex bridge runs gpt-6.2-sol by default, and its suites read the default from the manifest (codex bridge 6.1.0 MINOR, kit 23.11.0 MINOR; memory, engine, agy and the judge unchanged)
 
 **`codex-cli-bridge/capability.json`** names `gpt-6.2-sol` in `posture` and as the `CODEX_MODEL` default, and its

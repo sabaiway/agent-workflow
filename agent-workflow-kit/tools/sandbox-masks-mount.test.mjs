@@ -95,7 +95,7 @@ describe('sandbox-masks — probe, apply, needsMasksApply and the advisor agree 
     assert.deepEqual(probeSandboxMasks({ cwd: root, ...deps }).staleReal, []);
     const shown = main(['--cwd', root], { deps });
     assert.equal(shown.code, 0, shown.stderr);
-    assert.doesNotMatch(shown.stdout, /became a REAL path|--clear/);
+    assert.doesNotMatch(shown.stdout, /became (?:a )?REAL path|--clear/);
     assert.equal(masksItem(root, deps), undefined, 'no stale-real item, so no --clear one-liner');
     const before = readExclude(root);
     assert.equal(main(['--cwd', root, '--apply'], { deps }).code, 0);

@@ -54,6 +54,7 @@ import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
 import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
+import { SKIP_REASON_CAP, composeSkip, renderSkip } from './advisor-skip/index.mjs';
 import { shellQuoteArg } from './review-state.mjs';
 import { isFinalCapableDeclaration } from './run-gates.mjs';
 import { loadDeclaration, canonicalCheckerGates, coverageProducerPrecedes, isKitOwnedCheckerGate, movableEarlierForm } from './gates-declaration.mjs';
@@ -323,7 +324,7 @@ export const WHATS = Object.freeze({
 
 // ── the shape contract (D2): registry strings AND composed items stay one line under the cap ────
 export const ITEM_LINE_CAP = 140;
-export const SKIP_REASON_CAP = 200;
+export { SKIP_REASON_CAP };
 
 const oneLineOf = (text) => String(text).replace(/\s*[\r\n]+\s*/g, ' ').trim();
 // Scalar truncation-with-count — a capped value states what it dropped, never a silent cut.
@@ -1628,9 +1629,7 @@ export const buildRecommendations = ({ cwd, deps = {} } = {}) => {
   const root = resolve(cwd);
   const items = [];
   const skips = [];
-  // Skip reasons ride arbitrary Error.messages — normalized to ONE line and length-capped so a
-  // multiline or oversized message can never rebuild a prose wall (D2).
-  const skip = (key, err) => skips.push({ key, reason: truncatedTo(oneLineOf(err?.message ?? String(err)), SKIP_REASON_CAP) });
+  const skip = (key, err) => skips.push(composeSkip(key, err)); // docs/ai/specs/kit/advisor-skip.md
   // The runtime shape backstop (D2): every COMPOSED item is validated at construction — a
   // violation surfaces through the stated-skip lane, never a crash, never a rendered violation.
   // `variant` defaults to the item key; a per-site arm passes its `<key>.<variant>` entry. It is
@@ -1723,7 +1722,7 @@ export const formatRecommendations = ({ items, skips }) => {
     });
   }
   for (const s of skips) {
-    lines.push(`  ⚠ skipped item ${s.key} — probe failed: ${s.reason}`);
+    for (const line of renderSkip(s)) lines.push(line);
   }
   return lines.join('\n');
 };
@@ -1740,7 +1739,8 @@ facts or its alternative, such as the bridge-tier missing-entries line or
 the worktrees-dir ack fallback) · the harness or kit check line · the exact consent-gated apply one-liner}. --cwd is
 REQUIRED (the target project is explicit, never inferred from the shell's current directory). The
 section renders present-even-when-empty ("${RECOMMENDATIONS_EMPTY_LINE}"); a probe failure is a
-stated skipped-item line. Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
+stated skipped-item line, its whole reason below it whenever that line lost anything.
+Apply lines are cwd-independent (absolute tool paths, a pinned --cwd;
 the doctor item pins via a cd prefix; the ONE exception is the set-autonomy item — a
 conversational skill invocation labeled "run IN the target project") and preserve each writer's
 own consent semantics. The consented velocity-profile --bridge-tier seeds used bridges' code-mode

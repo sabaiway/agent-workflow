@@ -3,6 +3,29 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **SANDBOX-MASKS-CONTRACT-STANDS-AT-ITS-LINE-CAP** — invariant: the masks contract has room under its docs cap for
+  its next revision. Origin: `docs/ai/specs/kit/review-domain/sandbox-masks.md` stands at 150 lines of its
+  `maxLines: 150` after revision 3. Narrow fix: before a revision adds a line, split the contract by meaning (the
+  leftover refusal and its renders into a child contract, the parent naming it). Proof: `docs-size` green with the
+  revision's lines in. Residual exposure, not live: revision 3 fits, and the docs cap refuses any growth, so no clause
+  is lost unseen. Raised by the A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT S1 spec review (2026-11-19).
+
+- **ADVISOR-ITEM-LINES-ADMIT-LINE-UNSAFE-CHARACTERS** — invariant: an advisor item's what, apply and detail lines hold
+  no character the kit's line rule (`isLineUnsafe`) refuses. Origin: `agent-workflow-kit/tools/recommendations.mjs:1651-1654`,
+  the item shape backstop, refuses only CR and LF, so a U+2028 or a control character in a composed line renders.
+  Narrow fix: the backstop tests each line with `isLineUnsafe` in place of the CR/LF pattern. Proof: a cell that adds
+  an item whose what holds U+2028 reads the stated skip. Residual exposure, not live: item texts are registry strings
+  and the kit's quoted paths, and no known project root holds such a character; the skip lines are governed by spec
+  `kit/advisor-skip`. Raised by the A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT S1 plan re-read (2026-11-19).
+
+- **ADVISOR-SKIP-S4-PINS-NO-KEY-WITH-A-LINE-SEPARATOR** — invariant: the report's line guarantees are pinned for a
+  skip key that holds a line-unsafe character other than LF before a report line's text. Origin:
+  `agent-workflow-kit/tools/advisor-skip/skip.test.mjs:26`, the S4 key holds LF and ESC only. Narrow fix: S4 gains a
+  key holding U+2028 followed by the report's header text, read for one header in the text report and the original key
+  in `--json`. Proof: the cell turns red when the key bypasses the line rule. Residual exposure, not live: the key
+  goes through the same rule as the reason, which S4 pins with U+2028 (`skip.test.mjs:49`). Raised by the
+  A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT S1 plan re-read (2026-11-19).
+
 - **BRIDGE-SETTINGS-S10-SKIPS-THE-CODEX-SETUP-README** — invariant: every shipped bridge text that names a codex
   default is read by the S10 scan of spec `bridges/bridge-settings`. Origin:
   `agent-workflow-kit/tools/bridge-settings-model.test.mjs:280`: `NAMING` lists the codex `SKILL.md` and both

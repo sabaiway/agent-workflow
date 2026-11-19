@@ -4,6 +4,35 @@ Semantically versioned ([semver](https://semver.org)), newest first. The `versio
 is the current release. `upgrade` mode reads a project's `docs/ai/.workflow-version` and applies
 every `migrations/<version>-<slug>.md` newer than it, in semver order.
 
+## 23.12.0 — a skipped check keeps its whole reason in the upgrade report; three checkers open red output with the failure (AD-240)
+
+**After `npx @sabaiway/agent-workflow-kit@latest init` and then `/agent-workflow-kit upgrade` in a new session, a
+skipped check in the Recommendations report keeps its whole reason.** Before,
+the advisor folded every skip reason into one line and cut it at 200 characters, in the text report and in `--json`,
+so a remedy past the cut never reached you: the masks check's refusal of empty read-only files a sandbox left kept
+only the first remedy of the first path.
+
+- **The skip line stays one line.** When it loses anything, several lines folded into one or a cut, it ends with
+  `(the whole reason follows)` or `… (+N more chars; the whole reason follows)`, and the whole reason follows under
+  it, one `      | <line>` per line; `--json` carries the same lines as `whole`, an array of strings, beside `reason`.
+  A reason of one line that fits within the cap after escaping carries no `whole`, and one that holds no control
+  character, line or paragraph separator, or lone surrogate prints exactly as before. Every such character kept shows
+  as its JSON escape, so no line of a reason can pass for a line of the report.
+- **The masks check states each remedy once.** Its refusal of fenced entries that are empty read-only files, and its
+  warning about fenced entries that became real paths, print one sentence per group with each path under it as a
+  quoted JSON string, so the remedy for litter a sandbox left (remove the file outside the sandbox and keep its line)
+  always reaches the report, with the exact path.
+- The upgrade's Recommendations step tells the agent to relay every `|` line.
+- **The release scan now fails, with exit 1 and its error block on standard output, on a target it cannot read (a
+  status that fails with anything but ENOENT), where it used to report that target as missing or skip it as an
+  unmatched glob.**
+- **The control-byte gate, the release scan and the doc-parity lint open every red run of their text output with one
+  block on standard output**: the verdict line naming each class, each finding at its place, then its remedy lines
+  (one per class; the lint's one remedy line covers both its classes); nothing goes to standard error, and a usage mistake exits 2 with the usage. A green run prints what it printed before, and
+  `doc-parity --json` prints its one JSON document unchanged.
+- Nothing to apply by hand: what changes is what the reports say. `init` still shows no skipped check; verdicts and
+  exit codes are unchanged but for the release scan's unreadable target.
+
 ## 23.11.0 — codex runs the newest model, gpt-6.2-sol, by default (AD-239)
 
 **After `/agent-workflow-kit upgrade` (or `init`), a host that sets neither a codex model nor an effort runs
