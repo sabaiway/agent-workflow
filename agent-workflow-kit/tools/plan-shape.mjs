@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
+import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 import { parseRobustTag } from './robustness-literals.mjs';
 import { unique } from './claim-relation.mjs';
 import { checkStoryOwnership, PIN_FILE, PIN_VERBS } from './plan-shape-ownership.mjs';
@@ -265,6 +266,20 @@ const getCurrentLines = (rows, facts, verbs) => unique(rows
   .flatMap((row) => getConcretePaths(row, facts)))
   .reduce((sum, path) => sum + (getPathFact(facts, path)?.lines ?? 0), 0);
 
+const getContractRefusal = (row, path, observed, rows, facts) => {
+  if (row.verb !== 'create' || path !== row.path || observed !== 'regular' || !path.startsWith(SPEC_SCHEMA.storePrefix) || !path.endsWith('.md') || hasPathDefect(path)) return '';
+  const contract = getPathFact(facts, path)?.contract;
+  if (!contract || contract.refused) return ': the spec reader refuses it';
+  if (facts.otherPlanCreates?.includes(path)) return ': another plan in flight creates it';
+  if (contract.kind === 'spec') return contract.status === 'draft' ? null : `: a ${contract.status} spec`;
+  const creates = (target) => rows.some((candidate) => candidate.valid && candidate.verb === 'create' && candidate.path === target);
+  if (contract.kind === 'index') return !contract.children?.length ? ': an index that lists no child' : contract.children.every(creates) ? null : ': an index listing a child the plan does not create';
+  const rootPath = posix.join(posix.dirname(path), SPEC_SCHEMA.navigatorFile);
+  const root = getPathFact(facts, rootPath)?.contract;
+  const listed = creates(rootPath) && root?.kind === 'spec' && root.status === 'draft' && !root.refused && root.parts?.includes(path) === true;
+  return contract.kind !== 'part' ? `: a ${contract.kind} document` : listed ? null : ': a part its draft root does not list, or of another root';
+};
+
 const checkAuthoring = (parsed, facts) => {
   const findings = [];
   const bullets = getVerificationBullets(parsed.document);
@@ -282,7 +297,8 @@ const checkAuthoring = (parsed, facts) => {
     if (paths.length === 0 && isSweep(row.path)) findings.push(makeFinding(row.line, 'kind', `${row.id} sweep resolves to no regular path`, row.id));
     for (const path of paths) {
       const observed = getPathFact(facts, path)?.kind ?? 'unknown';
-      if (observed !== expectedKind) findings.push(makeFinding(row.line, 'kind', `${row.id} expects ${expectedKind}, observed ${observed} at ${path}`, row.id));
+      const cause = observed === expectedKind ? null : getContractRefusal(row, path, observed, parsed.rows, facts);
+      if (cause !== null) findings.push(makeFinding(row.line, 'kind', `${row.id} expects ${expectedKind}, observed ${observed} at ${path}${cause}`, row.id));
     }
     const anchorCandidates = row.anchorPath ? getAnchorCandidates(row, parsed.rows.slice(0, index), facts) : null;
     if (anchorCandidates && anchorCandidates.length !== 1) {

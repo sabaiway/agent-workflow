@@ -66,6 +66,61 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.match(conflicted.findings.find((finding) => finding.rowId === 'P3').message, /owned by both SW and P3/);
   });
 
+  describe('create rows on existing documents', () => {
+    const draftPath = 'docs/ai/specs/example.md';
+    const siblingPath = 'docs/ai/specs/another.md';
+    const rootPath = 'docs/ai/specs/feature/index.md';
+    const partPath = 'docs/ai/specs/feature/details.md';
+    const indexPath = 'docs/ai/specs/index.md';
+    const regular = { kind: 'regular', lines: 10, contained: true, inScope: false };
+    const document = (kind, fields = {}) => ({
+      ...regular, contract: { kind, status: null, children: [], parts: [], refused: false, ...fields },
+    });
+    const draft = document('spec', { status: 'draft' });
+    const root = document('spec', { status: 'draft', parts: [partPath] });
+    const part = document('part');
+    const children = [draftPath, siblingPath];
+    const index = document('index', { children });
+
+    for (const { name, path, cases, supportingFacts = {} } of [
+      { name: 'spec:plan-review-loop/S36 accepts the same plan draft and keeps kind for other existing create paths', path: draftPath, cases: [
+        { state: 'refused draft', fact: document('spec', { status: 'draft', refused: true }) },
+        { state: 'live spec', fact: document('spec', { status: 'live' }), cause: /a live spec/ },
+        { state: 'retired spec', fact: document('spec', { status: 'retired' }) },
+        { state: 'foreign node', fact: { ...regular, kind: 'other' } },
+        { state: 'draft created by another plan', fact: draft, otherPlanCreates: [draftPath], cause: /another plan in flight creates it/ },
+        { state: 'existing path outside the store', target: 'docs/guide.md', fact: regular },
+        { state: 'draft created by this plan', fact: draft, accepts: true },
+      ] },
+      { name: 'accepts a listed part of a draft root this plan creates', path: partPath, supportingFacts: { [rootPath]: root }, cases: [
+        { state: 'part unlisted by its root', fact: part, creates: [rootPath],
+          pathFacts: { [rootPath]: document('spec', { status: 'draft', parts: ['docs/ai/specs/feature/other.md'] }) } },
+        { state: 'root omitted from the plan', fact: part },
+        { state: 'listed part of a draft root created here', fact: part, creates: [rootPath], accepts: true },
+      ] },
+      { name: 'accepts a navigator listing children all created by this plan', path: indexPath,
+        supportingFacts: { [draftPath]: draft, [siblingPath]: draft }, cases: [
+          { state: 'empty index', fact: document('index') },
+          { state: 'one listed child omitted from the plan', fact: index, creates: [draftPath] },
+          { state: 'all listed children created here', fact: index, creates: children, accepts: true },
+        ] },
+    ]) {
+      it(name, async () => {
+        const { checkPlan } = await loadRules();
+        const base = factsFor();
+        for (const { state, fact, target = path, creates = [], pathFacts = {}, otherPlanCreates = [], accepts = false, cause } of cases) {
+          const rows = [target, ...creates].map((path, index) => `R${index + 1} | create | ${path} | add document | n/a | docs/readme.md:1`);
+          const facts = factsFor({ pathFacts: { ...base.pathFacts, ...supportingFacts, ...pathFacts, [target]: fact }, otherPlanCreates });
+          const ledger = [...rows, 'total: 0 → 0 lines'].join('\n');
+          const { findings } = checkPlan(planWith({ ledger }), facts);
+          const kind = findings.find(({ code, rowId }) => code === 'kind' && rowId === 'R1');
+          assert.equal(Boolean(kind), !accepts, `${state}: expected ${accepts ? 'no kind finding' : 'a kind finding'} on R1`);
+          if (cause) assert.match(kind.message, cause, `${state}: the kind finding names its cause`);
+        }
+      });
+    }
+  });
+
   it('S1 requires the title prefix and ordered skeleton, admitting phases only before Cleanup (spec:plan-review-loop/S1)', async () => {
     const { checkPlan, PLAN_HEADINGS, PLAN_TITLE_PREFIX } = await loadRules();
     assert.deepEqual(PLAN_HEADINGS, [

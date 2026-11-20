@@ -214,10 +214,75 @@ describe('spec-check --all — the cross-document invariants', () => {
     assert.deepEqual(rulesOf(r2, 'overlap').sort(), [p, pq, q, r].sort(), JSON.stringify(r2.findings));
   });
 
+  // spec:spec-check/S12
+  describe('plans in flight under --all', () => {
+    const draftPath = `${STORE}draft.md`;
+    const loginPath = `${STORE}login.md`;
+    const planStem = 'docs/plans/draft';
+    const draftStore = (module) => ({
+      ...FLAT_STORE,
+      [`${STORE}index.md`]: ROOT_DOC(['- [draft](./draft.md)', '- [login](./login.md)']),
+      [draftPath]: specDoc('draft', { module: `- ${module}`, scenario: '- S1 ok :: unbound' })
+        .replace('status: live', 'status: draft'),
+    });
+    const inFlight = (created, ...rows) => ({
+      plans: [{
+        identity: `${planStem}.md`,
+        accepted: true,
+        rows: [{ verb: 'create', path: draftPath }, { verb: 'create', path: created }, ...rows],
+      }],
+    });
+
+    it('accepts a covered draft and never reads a revision home', () => {
+      const module = 'src/draft.mjs';
+      const homePath = `${planStem}.specs/login.md`;
+      const revision = FLAT_STORE[loginPath].replace('revision: 1', 'revision: 2');
+      const r = run({ ...draftStore(module), [homePath]: revision }, inFlight(module, { verb: 'modify', path: loginPath }));
+      assert.equal(r.deps.reads.includes(homePath), false, `--all must never read ${homePath}`);
+      assert.equal(r.exit, 0, `the plan covers the draft and its absent Module: ${JSON.stringify(r.findings)}`);
+    });
+
+    it('refuses a pending directory that overlaps an existing Module', () => {
+      const module = 'src/shared/draft/';
+      const extra = inFlight(`${module}index.mjs`);
+      const files = { ...draftStore(module), ...groundOf('shared') };
+      const apart = run(files, extra);
+      assert.equal(apart.exit, 0, `a covered pending directory apart from the existing Module is accepted: ${JSON.stringify(apart.findings)}`);
+
+      const r = run({ ...files, [loginPath]: specDoc('login', { module: '- src/shared/' }) }, extra);
+      assert.deepEqual(rulesOf(r, 'overlap').sort(), [draftPath, loginPath], JSON.stringify(r.findings));
+      assert.equal(r.findings.length, 2, JSON.stringify(r.findings));
+      assert.equal(r.exit, 1);
+    });
+
+    it('refuses a pending path under an in-root alias that overlaps a real Module', () => {
+      const module = 'src/alias/draft.mjs';
+      const extra = inFlight(module);
+      const files = {
+        ...draftStore(module),
+        [loginPath]: specDoc('login', { module: '- src/real/' }),
+        ...groundOf('alias', 'real'),
+      };
+      const apart = run(files, extra);
+      assert.equal(apart.exit, 0, `a covered pending path apart from the real Module is accepted: ${JSON.stringify(apart.findings)}`);
+
+      const r = run(files, extra, { escapes: { 'src/alias': `${ROOT}/src/real` } });
+      assert.deepEqual(rulesOf(r, 'overlap').sort(), [draftPath, loginPath], JSON.stringify(r.findings));
+      assert.equal(r.findings.length, 2, JSON.stringify(r.findings));
+      assert.equal(r.exit, 1);
+    });
+  });
+
   it('a clean, fully listed store ACCEPTS with exit 0', () => {
     const r = run(FLAT_STORE);
     assert.deepEqual(r.findings, [], JSON.stringify(r.findings));
     assert.equal(r.exit, 0);
+  });
+
+  it('a removed child of a removed index needs no listing in the session lane', () => {
+    const ops = [op('remove', `${STORE}archive/old/index.md`), op('remove', `${STORE}archive/index.md`)];
+    const r = checkSpecs({ root: ROOT, ops }, repoOf(FLAT_STORE));
+    assert.deepEqual(r.findings, [], JSON.stringify(r.findings));
   });
 
   it('the all-only matrix fires ONLY under --all — the same store is clean in the session lane', () => {

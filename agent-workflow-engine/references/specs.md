@@ -147,6 +147,18 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
   at the spec review the same way (a `modify` row). Approval confirms the plan
   and every cited draft or revision atomically; the rows then land them. A contract is never
   "confirmed" before it is visible.
+- **A revision waits in its plan's home; code the plan creates is pending ground.** A proposed
+  revision of a live contract, and a new part of a live root, are written at
+  `docs/plans/<plan stem>.specs/` plus the document's path under the store (`docs/ai/specs/billing/index.md`
+  waits at `docs/plans/<plan stem>.specs/billing/index.md`), never in the store (a navigator carries
+  no contract and is edited in the store); the landing rows bind its scenarios there and copy it
+  into the store, and Cleanup deletes the home. A draft, or a revision in the home, may claim an
+  absent Module file covered by a `create` row of its one plan, or an absent Module directory
+  covered by a `create` row for a file strictly inside it: the spec gate accepts such a path only
+  as pending ground, and a live contract of the store always names ground that exists. The spec
+  gate of a spec-and-plan session, before the first review and after every fold, is
+  `node <kit>/tools/spec-check-cli.mjs --plan docs/plans/<stem>.md` (the home judged in place of its
+  targets), then `node <kit>/tools/spec-check-cli.mjs --all` unless `docs/ai/specs` is proven absent.
 - **Test-as-spec binding is per scenario.** Every scenario names the test that pins it; a NEW
   scenario on a live spec is individually `unbound` until its test lands within the same plan — the
   spec's status never regresses for an extension. The binding is literal and language-agnostic: the
@@ -160,8 +172,9 @@ refuse case per rule and an accept case per kind; a refuse fixture yields exactl
   roots). The reader judges the lexical half; realpath and symlink escapes are the structural
   checker's duty (`spec-check`, a later slice), together with marker existence and uniqueness, link
   resolution and the global invariants (slug uniqueness, module-root overlap, tree acyclicity) that
-  only a full-tree sweep can prove. The store ROOT is never an op target and needs no `root` verb: it
-  is the navigator, judged as the listing parent of its declared child.
+  only a full-tree sweep can prove. The store ROOT is never an op target of `--op` or `--ops-file`
+  and needs no `root` verb: it is the navigator, judged as the listing parent of its declared child,
+  and under `--plan` also by the plan's own `modify` row on it.
 
 ## Precedence — feature spec and page spec
 
@@ -216,6 +229,10 @@ The navigator walk is O(all docs) per pre-commit; the spec store joins it. The b
 release gate: 1500 ms for both hook runs over a valid 1000-spec, 30-per-folder tree (the median of
 three trials), measured by the repo's scale probe before every release of the checker — exceeding it
 is fixed inside the walk (cheaper per-file work, early exits), never queued. The structural checker
-is O(changed) by construction: it takes explicit spec paths, and `--all` is the explicit full sweep;
-a git-derived "changed" lane is refused, because hidden mode ignores `docs/ai/**` and git would see
-no spec at all.
+takes explicit spec paths: `--op` and `--ops-file` the paths they name, `--all` the whole store, and
+`--plan` its plan's contract rows with a complete census of the store for overlap; a git-derived
+"changed" lane is refused, because hidden mode ignores `docs/ai/**` and git would see no spec at all.
+Every lane also reads the plans in flight under `docs/plans` and judges each as
+`node <kit>/tools/plan-shape-cli.mjs --check --in-flight` does, reading only the facts its structural
+rules request; with no plan in flight, that read lists `docs/plans` when it exists, reads its
+candidate Markdown files and loads no plan fact.

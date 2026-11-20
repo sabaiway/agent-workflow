@@ -3,6 +3,82 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **PLAN-AUTHORING-HAS-NO-CHECK-FOR-CODE-IN-ANOTHER-WORK-TREE** — invariant: before a plan's approval no registered
+  work tree other than the main tree and the tree the check runs in holds a change to a path the plan claims.
+  Origin: `agent-workflow-kit/tools/plan-shape-cli.mjs:33-41` (`runExplicit`) judges its own tree only, and spec
+  `kit/spec-layer/spec-check` (revision 3) puts proving that no code exists before its plan, and a revision home in
+  another work tree, out of scope. Narrow fix: the check the epic's rethink consult converged on, in the authoring
+  arm of `plan-shape-cli --check <plan>` only: per registered tree T other than M and the current tree, against
+  merge-base(T HEAD, M HEAD), a claimed path is a hit when T's index or working file differs from that base and from
+  M's index, identity proven per tree under the kit's git environment. Proof: a cell with a second work tree holding
+  a claimed file reads a hit naming that tree. Residual exposure, not live: the maintainer refused detection as the
+  answer (2026-11-19); the epic A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN removes the reason and the means to
+  write code before the approval, and the check returns only as a named safety net he reviews. Raised by that
+  epic's rethink consult (2026-11-19).
+
+- **PLAN-SHAPE-FACTS-WALK-ENTERS-A-NESTED-LINKED-TREE** — invariant: plan-shape's listings list only the
+  repository's own files, never those of a work tree or repository nested under it. Origin:
+  `agent-workflow-kit/tools/plan-shape-facts.mjs:57-65` (`walkRegularFiles`, the listing every fact read on demand
+  takes) skips only the `NEVER_WALKED` names, so a linked work tree checked out under the repository joins the
+  anchor fallback's candidates, the pin search and a sweep expansion whose listing reaches it. Narrow fix: the
+  listing skips a directory below the root that holds a `.git` entry. Proof: a cell with a nested directory holding
+  a `.git` file reads no anchor candidate, pin or sweep path from it. Residual exposure,
+  not live: a nested tree's copy of a file only adds candidates, so an anchor that resolves by suffix refuses as
+  ambiguous and an exact path still resolves to the repository's own file. Raised by the
+  A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN rethink consult (2026-11-19).
+
+- **CONTRACT-LINE-CITATIONS-MOVED-BY-THE-SPEC-GATE-STORY** — invariant: a contract's `file:line` citation names the
+  line it describes. Origin: story S1 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN moved the lines of
+  `plan-shape-facts.mjs`, `plan-shape-cli.mjs` and `spec-check.mjs`, which other contracts cite by line:
+  `docs/ai/specs/kit/tier/checker-gates/index.md:122` (`plan-shape-facts.mjs:71-90`),
+  `docs/ai/specs/kit/tier/checker-gates/checker-gates-read.md:66-69` and `:95` (`plan-shape-cli.mjs:80-82`,
+  `plan-shape-facts.mjs:71-90`, `spec-check.mjs:378-379`, `plan-shape-facts.mjs:31`) and
+  `docs/ai/specs/kit/checker-verdict/index.md:53` (`plan-shape-cli.mjs:67-68`); and the claim of
+  `checker-gates-read.md:66-67` and `checker-gates/index.md:122` that a malformed `docs/ai/source-size.json` makes
+  the checker exit 2 at run, which since the facts are read on demand holds only where a rule reads the
+  declaration. Narrow fix: each citation is re-pointed at its line, or replaced by the function name, and the claim
+  narrowed to the runs whose rules read the declaration, in its contract's next revision. Proof: a read of each
+  cited line and claim against the code. Residual exposure, not live: the citations are prose pointers no check
+  reads, and a run that reads the declaration still exits 2 on it. Raised by the story's spec review (2026-11-20).
+
+- **SPECS-SCALE-PROBE-RUNS-WITH-NO-PLAN-IN-FLIGHT** — invariant: the D-scale budget is measured as the gate runs,
+  plans in flight included. Origin: `scripts/testing/specs-scale-probe.mjs:115-127` times `spec-check --all` over a
+  generated tree with no `docs/plans`, while spec-check revision 3 makes every lane read the plans in flight and,
+  with a plan in flight, judge it as `plan-shape-cli --check --in-flight` does, reading the facts its structural
+  rules request on demand (`agent-workflow-kit/tools/plan-shape-facts.mjs:310-319`, `judgePlan`). Narrow fix: the
+  probe adds a trial with one plan in flight in its tree and judges that median against the same budget. Proof: the
+  probe's line names the trial with a plan in flight and exits 0 within 1500 ms. Residual exposure, not live: a
+  plan's structural reads are bounded by its own rows, and `agent-workflow-engine/references/specs.md` (Scale)
+  states that cost. Raised by the story's spec review (2026-11-20).
+
+- **NOW-PLAN-FACTS-READS-EVERY-FACT** — invariant: `now` reads only the plan facts its view shows. Origin:
+  `agent-workflow-kit/tools/now-plan-facts.mjs:114` calls `buildFacts(cwd, { paths: ledgerPaths })`, which
+  materializes every field, the whole-root listing, the size declaration, the shipped list and the epic store
+  included (`agent-workflow-kit/tools/plan-shape-facts.mjs:371-380`), while the view reads only `pathFacts` and
+  `expansions`. Narrow fix: `now` takes the facts read on demand that `judgePlan` uses and reads only the fields it
+  shows. Proof: a cell with an unreadable directory no ledger path reaches gathers the plans' facts with no
+  refusal. Residual exposure, not live: `now` is read-only advice, its refusal names its cause, and spec
+  `kit/plan-review-loop` (revision 14) keeps `buildFacts`' output and refusals for this reader as before. Raised by
+  the story's spec-review amendment (2026-11-20).
+
+- **EXACT-ANCHOR-SKIPS-A-REGULAR-FILE-NAMED-LIKE-A-NEVER-WALKED-DIRECTORY** — invariant: an anchor's exact path wins
+  when it is a regular file reached through plain directories none of which is `NEVER_WALKED` (spec
+  `kit/plan-review-loop`, shape part, anchor resolution). Origin: `agent-workflow-kit/tools/plan-shape-facts.mjs:83`
+  refuses a `NEVER_WALKED` name on every segment, the leaf included, so `.git:1` in a linked work tree holding a
+  `.git` file and a `submodule/.git` file gets two candidates and refuses `anchor`. Narrow fix: the leaf of the exact
+  probe may carry that name when it is a regular file; a listing start keeps refusing it. Proof: a facts cell with
+  both `.git` files resolves `.git` to one candidate. Residual exposure, not live: no plan anchors on `.git`, and the
+  state ends loud (exit 1). Raised in the S1 diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN (2026-11-20).
+
+- **DEBT-ROW-ORIGINS-NAME-THEIR-REVIEWER** — invariant: a tracked record says in which review a finding was raised
+  (the story, the session, the date), never which review member raised it (AGENTS.md, Attribution). Origin: the
+  origin sentences of open and closed rows of this file, among them lines 171, 269, 600, 690 and 722; the release scan reads neither
+  this file (`docs/ai/gates.json:23`) nor this form in markdown prose (`agent-workflow-kit/tools/release-scan.mjs:44-50`).
+  Narrow fix: one pass over the file, each line read (a bridge named as a product stays), in the same pass as the
+  open rows below `## Closed`. Proof: no origin sentence of the file names a review member. Residual exposure, not
+  live: the file ships in no package; whether the scan gains this form or reads this file is the row's open question.
+  Raised in the S1 diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN (2026-11-20).
+
 - **SANDBOX-MASKS-CONTRACT-STANDS-AT-ITS-LINE-CAP** — invariant: the masks contract has room under its docs cap for
   its next revision. Origin: `docs/ai/specs/kit/review-domain/sandbox-masks.md` stands at 150 lines of its
   `maxLines: 150` after revision 3. Narrow fix: before a revision adds a line, split the contract by meaning (the

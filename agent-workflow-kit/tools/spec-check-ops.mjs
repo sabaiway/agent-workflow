@@ -18,12 +18,15 @@
 // source of the prefix, the navigator filename or the slug pattern. Pure strings in, ops out — the
 // filesystem belongs to spec-check.mjs. Dependency-free, Node >= 22.
 
+import { sep } from 'node:path';
 import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 
 const STORE = SPEC_SCHEMA.storePrefix;
 const NAV = SPEC_SCHEMA.navigatorFile;
 const SUFFIX = '.md';
 const SEPARATOR = ':';
+const HOME_SUFFIX = '.specs';
+const PLAN_OP_VERBS = Object.freeze({ create: 'add', modify: 'modify', delete: 'remove' });
 
 export const SPEC_OPS_GRAMMAR = Object.freeze({
   verbs: Object.freeze(['add', 'modify', 'remove', 'rename']),
@@ -43,7 +46,7 @@ const VERBS = SPEC_OPS_GRAMMAR.verbs;
 // The ONE target judgement, ordered from the most literal defect to the most structural. The store
 // PREFIX is asked before the dot segments on purpose: `./docs/ai/specs/x.md` is not a store path
 // that needs normalizing, it is a path outside the store, and saying so is the honest refusal.
-const targetDefect = (target) => {
+const targetDefect = (target, allowStoreRoot = false) => {
   if (target.includes('\\')) return { code: 'op-target', reason: 'a backslash is not a path separator here' };
   if (DRIVE_RE.test(target)) return { code: 'op-target', reason: 'a drive letter is not a repo-relative path' };
   if (target.startsWith('/')) return { code: 'op-target', reason: 'an absolute path is not repo-relative' };
@@ -54,7 +57,7 @@ const targetDefect = (target) => {
     return { code: 'op-target', reason: 'a dot segment is never resolved away — write the path as it is' };
   }
   if (!target.endsWith(SUFFIX)) return { code: 'op-target', reason: `a spec document is a ${SUFFIX} file` };
-  if (target === SPEC_OPS_GRAMMAR.storeRoot) {
+  if (target === SPEC_OPS_GRAMMAR.storeRoot && !allowStoreRoot) {
     return { code: 'op-root', reason: 'the store root is the navigator, never an op target' };
   }
   const segments = target.slice(STORE.length).split('/');
@@ -94,7 +97,7 @@ const roleConflict = (roles) => SHAPES[[...roles].sort().join(',')] ?? 'two role
 // parseSpecOps(specs) -> { ops, errors }. Every op is judged, so one call names EVERY defect; any
 // error at all empties `ops` — a partially-understood change set would attest a post-state nobody
 // declared.
-export const parseSpecOps = (specs) => {
+const parseOps = (specs, fromPlan) => {
   const errors = [];
   const ops = [];
   const seen = new Set();
@@ -130,7 +133,7 @@ export const parseSpecOps = (specs) => {
       errors.push({ code: 'op-grammar', message: `"${spec}" — rename takes <old>${SEPARATOR}<new>: exactly one separator "${SEPARATOR}"` });
       continue;
     }
-    const defect = sides.map(targetDefect).find(Boolean);
+    const defect = sides.map((side) => targetDefect(side, fromPlan && verb === 'modify')).find(Boolean);
     if (defect) {
       errors.push({ code: defect.code, message: `"${spec}" — ${defect.reason}` });
       continue;
@@ -148,10 +151,30 @@ export const parseSpecOps = (specs) => {
       ops.push({ verb, target: payload });
     }
   }
-  if (errors.length === 0 && ops.length === 0) {
+  if (!fromPlan && errors.length === 0 && ops.length === 0) {
     errors.push({ code: 'op-empty', message: 'no op to judge — name at least one --op or --ops-file entry, or run --all' });
   }
   return { ops: errors.length > 0 ? [] : ops, errors };
+};
+
+export const parseSpecOps = (specs) => parseOps(specs, false);
+
+const reachesStore = (path, isSweep, expand) => {
+  const segments = path.split('/');
+  const lead = segments.slice(0, segments.findIndex(isSweep)).join('/');
+  if (`${lead}/`.startsWith(STORE)) return true;
+  return (lead === '' || STORE.startsWith(`${lead}/`)) && expand(path).some((match) => match.startsWith(STORE));
+};
+
+export const parsePlanSpecOps = (rows, isSweep, expand) => {
+  const sweep = rows.find(({ path }) => isSweep(path) && reachesStore(path, isSweep, expand));
+  if (sweep) {
+    const message = `${sweep.id} ${sweep.path}: --plan judges one store document per row; name each store document in its own row`;
+    return { ops: [], errors: [{ code: 'op-sweep', message }] };
+  }
+  return parseOps(rows
+    .filter(({ path }) => path.startsWith(STORE) && path.endsWith(SUFFIX))
+    .map(({ verb, path }) => `${PLAN_OP_VERBS[verb]}=${path}`), true);
 };
 
 // buildClosure(ops) -> [{ path, roles }] sorted: every op path PLUS the document that lists it.
@@ -178,4 +201,50 @@ export const buildClosure = (ops) => {
   return [...entries]
     .map(([path, roles]) => ({ path, roles }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+};
+
+export const parsePendingModulePath = (claimed) => {
+  const kind = claimed.endsWith('/') ? 'dir' : 'file';
+  const path = kind === 'dir' ? claimed.slice(0, -1) : claimed;
+  const valid = path.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+  return valid ? { path, kind } : null;
+};
+
+const pendingModulePlan = ({ identity, rows }) => ({
+  identity,
+  creates: rows.filter(({ verb }) => verb === 'create').map(({ path }) => path),
+});
+
+export const selectPendingModulePlans = (plans = [], { path, status, home }) => {
+  const revision = home?.paths.includes(path);
+  if (!revision && status !== 'draft') return { plan: null, refusedPlans: [] };
+  const documentVerb = revision ? 'modify' : 'create';
+  const candidates = plans.filter(({ identity, rows }) => (!revision || identity === home.plan) &&
+    rows.some((row) => row.verb === documentVerb && row.path === path));
+  const accepted = candidates.filter(({ accepted }) => accepted === true);
+  return {
+    plan: accepted.length === 1 ? pendingModulePlan(accepted[0]) : null,
+    refusedPlans: candidates.filter(({ accepted }) => accepted === false).map(pendingModulePlan),
+  };
+};
+
+const isStrictDescendant = (path, directory) => path !== directory &&
+  path.startsWith(directory.endsWith(sep) ? directory : `${directory}${sep}`);
+
+export const hasPendingModuleCover = (canonicalPath, kind, canonicalCreates) => {
+  const cover = canonicalCreates.filter((path) => kind === 'dir' ? isStrictDescendant(path, canonicalPath) : path === canonicalPath);
+  return cover.length > 0 && !cover.some((file) => canonicalCreates.some((path) => isStrictDescendant(file, path)));
+};
+
+export const getRevisionHomePath = (plan, storePath) => {
+  const home = `${plan.slice(0, -SUFFIX.length)}${HOME_SUFFIX}`;
+  if (storePath === undefined) return home;
+  return targetDefect(storePath, true) === null ? `${home}/${storePath.slice(STORE.length)}` : null;
+};
+
+export const getRevisionStorePath = (home, homePath) => {
+  const prefix = `${home}/`;
+  if (!homePath.startsWith(prefix)) return null;
+  const target = `${STORE}${homePath.slice(prefix.length)}`;
+  return targetDefect(target, true) === null ? target : null;
 };

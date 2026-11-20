@@ -1,29 +1,8 @@
-// spec-check.mjs — the structural checker of the feature-spec layer (spec layer 2b), ADVISORY.
-//
-// It answers ONE question per document: given what the session says it changed, does the store on
-// disk say the same thing? The change source is EXPLICIT (parsed ops, never git), and "well-formed"
-// has no second definition here — every per-document verdict is RELAYED from the ONE reader
-// (references/scripts/spec-schema/index.mjs) and its 2a `structure` extraction. This module adds only what
-// text alone cannot decide: does the post-state on disk match the declared op, is the document
-// listed by its parent, does its scenario marker really occur once in the file it names, and — under
-// --all — the five invariants that span documents.
-//
-// Two lanes:
-//   session   the closure of the declared ops (targets + their listing parents), judged per document.
-//   --all     every document under the store, plus: unlisted child (DISTINCT from orphan),
-//             acyclicity, store-wide slug uniqueness, module overlap. An ABSENT store root refuses.
-//
-// FAIL-CLOSED before every read. Containment is judged lexically AND by realpath over each
-// path-bearing field, and the parents of a leaf are judged BEFORE the leaf is opened. The LEAF read
-// itself is descriptor-bound and no-follow (the CLI half passes fs-read-nofollow.mjs in), so a
-// pathname swapped after the probe cannot change the bytes judged. A mid-run PARENT swap is a
-// STATED non-goal: this is an advisory checker, not a custody mechanism.
-//
-// No IO of its own: { read, probe, realpath, list } are injected. Dependency-free, Node >= 22.
+// spec-check.mjs — see docs/ai/specs/kit/spec-layer/spec-check.md.
 
-import { dirname as pathDirname, isAbsolute, relative, sep } from 'node:path';
+import { dirname as pathDirname, isAbsolute, join, relative, sep } from 'node:path';
 import { SPEC_SCHEMA, readSpecDocument, classifyPath } from '../references/scripts/spec-schema/index.mjs';
-import { SPEC_OPS_GRAMMAR, buildClosure, listingParentOf, slugOf } from './spec-check-ops.mjs';
+import { SPEC_OPS_GRAMMAR, buildClosure, listingParentOf, slugOf, parsePendingModulePath, selectPendingModulePlans, hasPendingModuleCover } from './spec-check-ops.mjs';
 
 const STORE = SPEC_OPS_GRAMMAR.storePrefix;
 const NAV = SPEC_OPS_GRAMMAR.navigator;
@@ -39,7 +18,7 @@ const missing = () => {
   throw new Error('spec-check: an IO dependency was not injected — this module owns no filesystem of its own');
 };
 
-const dirOf = (rel) => rel.slice(0, rel.lastIndexOf('/'));
+const dirOf = (rel) => rel.slice(0, Math.max(rel.lastIndexOf('/'), 0));
 const leafOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
 const bare = (rel) => (rel.endsWith('/') ? rel.slice(0, -1) : rel);
 const lineCount = (text) => text.replace(/\n$/, '').split('\n').length;
@@ -156,15 +135,25 @@ const judgeEdges = (doc, ctx) => {
   }
 };
 
+const canonicalGround = (path, ctx, ancestor = false, state = ctx.io.probe(ctx.at(path))) => {
+  const { io, at, rootReal } = ctx;
+  const absent = state === 'absent' && path !== '';
+  const real = absent ? canonicalGround(dirOf(path), ctx, true) : io.realpath(at(path));
+  if (real === null || !contained(rootReal, real)) return null;
+  if (absent) return join(real, leafOf(path));
+  const kind = state === 'symlink' ? io.probe(real) : state;
+  return kind === 'dir' || (!ancestor && kind === 'file') ? real : null;
+};
+
 // The per-document judgement, identical in both lanes: the relayed reader rules, the kind's own
 // line cap, the listed edges, the D4 scenario bindings and the containment of every path it names.
-const judgeDocument = (doc, ctx) => {
+const judgeDocument = (doc, ctx, groundOnly = false) => {
   const { io, at, rootReal, add } = ctx;
   const { path, verdict } = doc;
   if (verdict === null) return;
-  for (const error of verdict.errors) add('reader', path, `${error.rule}: ${error.message}`, { readerRule: error.rule });
+  for (const error of verdict.errors) if (!groundOnly || verdict.structure === null || error.rule.startsWith('module-')) add('reader', path, `${error.rule}: ${error.message}`, { readerRule: error.rule });
   const cap = SPEC_SCHEMA.maxLines[verdict.kind];
-  if (cap !== undefined && doc.lines > cap) {
+  if (!groundOnly && cap !== undefined && doc.lines > cap) {
     add('threshold', path, `${doc.lines} lines over the ${verdict.kind} cap of ${cap} — promote it to <slug>/index.md + parts`);
   }
   const structure = verdict.structure;
@@ -176,21 +165,28 @@ const judgeDocument = (doc, ctx) => {
     const wantDir = claimed.endsWith('/');
     const target = bare(claimed);
     const real = io.realpath(at(target));
-    if (real === null) {
-      add('module', path, `the module path ${claimed} names ground that is not there`);
-      continue;
-    }
-    if (!contained(rootReal, real)) {
+    if (real !== null && !contained(rootReal, real)) {
       add('contained', path, `the module path ${claimed} resolves outside the root (${real})`);
       continue;
     }
-    const state = io.probe(at(target));
+    const state = real !== null || ctx.plans?.length ? io.probe(at(target)) : null;
+    if (real === null || (state === 'absent' && ctx.plans?.length)) {
+      const canonical = state === 'absent' && parsePendingModulePath(claimed) && canonicalGround(target, ctx, false, state);
+      const { plan, refusedPlans } = selectPendingModulePlans(ctx.plans, { path, status: verdict.status, home: ctx.home });
+      const covers = ({ creates }) => canonical && hasPendingModuleCover(canonical, wantDir ? 'dir' : 'file', creates
+        .filter((path) => classifyPath(path) === 'file' && parsePendingModulePath(path)).map((path) => canonicalGround(path, ctx)).filter(Boolean));
+      if (plan && covers(plan)) doc.ground.push(canonical);
+      else add('module', path, [`the module path ${claimed} names ground that is not there`,
+        ...refusedPlans.filter(covers).map(({ identity }) => `structurally refused plan: ${identity}`)].join('; '));
+      continue;
+    }
     if (state !== (wantDir ? 'dir' : 'file')) {
       add('module', path, `the module path ${claimed} is "${state}", not the ${wantDir ? 'directory' : 'file'} it declares`);
       continue;
     }
     doc.ground.push(real);
   }
+  if (groundOnly) return;
   judgeEdges(doc, ctx);
   for (const scenario of structure.scenarios) {
     if (scenario.binding === null) continue;
@@ -226,19 +222,22 @@ const judgeDocument = (doc, ctx) => {
 // The listing judgement — a SESSION-lane rule: the document the ops touched must be listed by its
 // parent exactly once after an add/modify/rename-to, and not at all after a remove/rename-from.
 // Under --all the reachability invariants below own this ground instead, so it never doubles up.
-const judgeListing = (doc, docs, add) => {
+const judgeListing = (doc, docs, add, home) => {
   const declared = doc.roles.map((role) => DECLARED_STATE[role]).find(Boolean);
   if (!declared) return;
   const parent = listingParentOf(doc.path);
   if (parent === null) return;
   const holder = docs.get(parent);
+  const revised = home?.paths.includes(parent) && holder?.verdict?.kind === 'spec' && dirOf(parent) === dirOf(doc.path);
+  if (doc.roles.includes('present') && !revised) return;
   const link = expectedLink(doc.path, parent);
+  if (declared === 'absent' && holder?.roles.includes('remove') && holder.state === 'absent') return;
   if (!holder || holder.state !== 'file' || holder.verdict === null) {
     add('listed', doc.path, `its listing parent ${parent} cannot be read, so nothing states whether ${link} is listed`);
     return;
   }
   const found = linkTargetsOf(holder).filter((target) => target === link).length;
-  if (declared === 'file' && found !== 1) add('listed', doc.path, `${parent} lists ${link} ${found} time(s) — a present document is listed exactly once`);
+  if (declared === 'file' && found !== 1) add(revised && found === 0 ? 'unlisted-child' : 'listed', doc.path, `${parent} lists ${link} ${found} time(s) — a present document is listed exactly once`);
   if (declared === 'absent' && found !== 0) add('listed', doc.path, `${parent} still lists ${link} — a removed document is listed by nobody`);
 };
 
@@ -327,6 +326,9 @@ const judgeStore = (docs, ctx) => {
   for (const [slug, paths] of bySlug) {
     if (paths.length > 1) for (const rel of paths) add('slug-unique', rel, `the slug "${slug}" is claimed by ${paths.length} documents (${paths.join(', ')}) — a slug is store-wide`);
   }
+};
+
+const judgeOverlap = (docs, add, targets) => {
   // PROVEN canonical ground only (judgeDocument) — a path that never resolved is not compared as if
   // it had. Nesting is asked with the platform's own path model — `dirname` walked upward, never a
   // hand-rolled separator rule — and it is asked ONCE PER PATH rather than once per pair: the store
@@ -346,7 +348,7 @@ const judgeStore = (docs, ctx) => {
   // Any separator those paths might themselves contain makes the key non-injective, and the pair
   // that collides would be dropped in silence.
   const note = (one, other, claimed) => {
-    if (one === other) return;
+    if (one === other || (targets && !targets.has(one) && !targets.has(other))) return;
     const [a, b] = [one, other].sort();
     const key = JSON.stringify([a, b]);
     if (!pairs.has(key)) pairs.set(key, { a, b, claimed });
@@ -367,14 +369,14 @@ const judgeStore = (docs, ctx) => {
 // checkSpecs({ root, ops, all }, deps) -> { verdict, exit, findings, documents, lines }.
 // Exit 0 ACCEPT · 1 one or more findings · 2 a refusal about the RUN itself (an unresolvable root,
 // an absent store root under --all) — the CLI prints the lines and returns the code.
-export const checkSpecs = ({ root, ops = [], all = false } = {}, deps = {}) => {
+export const checkSpecs = ({ root, ops = [], all = false, plans, home } = {}, deps = {}) => {
   const io = { read: missing, probe: missing, realpath: missing, list: missing, ...deps };
   const at = (rel) => (rel === '' ? root : `${root}/${rel}`);
   const rootReal = io.realpath(root);
   if (rootReal === null) return refusal(`--root "${root}" does not resolve to a directory — nothing can be judged against it`);
   const findings = [];
   const add = (rule, path, message, extra = {}) => findings.push({ rule, path, message, ...extra });
-  const ctx = { io, at, rootReal, add };
+  const ctx = { io, at, rootReal, add, plans, home: all ? undefined : home };
   if (all && io.probe(at(STORE_ROOT)) !== 'file') {
     return refusal(`the store root ${STORE_ROOT} is not a regular file — an --all run over no store would report an empty clean store, so it refuses instead`);
   }
@@ -383,9 +385,16 @@ export const checkSpecs = ({ root, ops = [], all = false } = {}, deps = {}) => {
   // the empty-closure usage error would throw away the only thing the run learned, so the usage
   // refusal is the SESSION lane's alone.
   if (closure.length === 0 && findings.length === 0) return refusal('no document to judge — the op closure is empty');
-  const docs = readClosure(closure, ctx);
-  for (const doc of docs.values()) judgeDocument(doc, ctx);
+  const targets = new Set(closure.map(({ path }) => path));
+  const removed = new Set(ctx.home ? ops.filter(({ verb }) => verb === 'remove').map(({ target }) => at(target)) : []);
+  const storePaths = ctx.home ? [...new Set([...walkStore(ctx), ...ctx.home.paths])] : [];
+  const entries = closure.concat(storePaths.filter((path) => !targets.has(path)).map((path) => ({ path, roles: ['present'] })));
+  if (removed.size > 0) ctx.io = { ...io, probe: (path, state = io.probe(path)) => removed.has(path) && state === 'file' ? 'absent' : state };
+  const docs = readClosure(entries, ctx);
+  for (const doc of docs.values()) judgeDocument(doc, ctx, !targets.has(doc.path));
   if (all) judgeStore(docs, ctx);
-  else for (const doc of docs.values()) judgeListing(doc, docs, add);
+  else for (const doc of docs.values()) judgeListing(doc, docs, add, ctx.home);
+  if (all || (ctx.home && !findings.some(({ rule }) => rule === 'census') &&
+    entries.every(({ path, roles }) => roles.includes('remove') || docs.get(path)?.verdict?.structure))) judgeOverlap(docs, add, all ? undefined : targets);
   return verdictOf(findings, closure.length, all ? 'the whole store' : `${ops.length} op(s)`);
 };

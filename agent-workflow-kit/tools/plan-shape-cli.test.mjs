@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { renameSync, rmSync, symlinkSync } from 'node:fs';
 import { ledgerOf, makeTree, planWith, write } from './plan-shape-harness.test.mjs';
+import { FRONT, indexDoc, specDoc, STORE } from './spec-check-harness.test.mjs';
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), 'plan-shape-cli.mjs');
 const LINK_REFUSALS = ['EPERM', 'EACCES', 'ENOTSUP'];
@@ -19,7 +20,18 @@ const run = (root, args) => {
   delete env.NODE_TEST_CONTEXT;
   return spawnSync(process.execPath, [CLI, ...args], { cwd: root, env, encoding: 'utf8' });
 };
+const buildEpic = (ownedPath) => ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
+  'maxLines: 60', 'state: open', '---', '# Epic: Ownership', '## Intent', 'Keep ownership visible.',
+  '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
+  '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
+  `- S1 | Boundary | depends-on: none | owns: ${ownedPath} | shared: none | state: planned`, '## Queue', 'Row ALPHA in Now'].join('\n');
 const planOf = (row, total) => planWith({ ledger: ledgerOf(row, total) });
+const checkExit = (root, operand, status) => {
+  const result = run(root, ['--check', operand]);
+  assert.ifError(result.error);
+  assert.equal(result.status, status, result.stderr || result.stdout);
+  return result.stderr;
+};
 
 describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
   it('judges story collisions in both arms and in-flight, and refuses every plan over a refused store', async (t) => {
@@ -27,12 +39,7 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     const root = makeRepo();
     const outside = makeRepo();
     t.after(() => [root, outside].forEach((path) => rmSync(path, { recursive: true, force: true })));
-    const epic = ['---', 'type: epic', 'lastUpdated: 2026-09-10', 'scope: permanent', 'staleAfter: 90d', 'owner: none',
-      'maxLines: 60', 'state: open', '---', '# Epic: Ownership', '## Intent', 'Keep ownership visible.',
-      '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
-      '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
-      '- S1 | Boundary | depends-on: none | owns: docs/x.md | shared: none | state: planned', '## Queue', 'Row ALPHA in Now'].join('\n');
-    write(root, 'docs/ai/epics/ALPHA.md', epic);
+    write(root, 'docs/ai/epics/ALPHA.md', buildEpic('docs/x.md'));
     write(root, 'docs/x.md', 'Owned document.\n');
     const ledger = ledgerOf('R1 | modify | docs/x.md | update the document | n/a | docs/x.md:1');
     write(root, 'docs/plans/collide.md', planWith({ ledger }));
@@ -126,16 +133,37 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     const explicit = run(root, ['--check', 'docs/plans/glob.md']);
     assert.equal(explicit.status, 1, 'a plan-level facts failure is a listed finding on the explicit arm too');
     assert.match(explicit.stdout, /glob\.md:1: facts: unsupported glob/);
+  });
+
+  it('S12 ambiguous pins exit 2 only for a plan whose rules read them, on both arms', (t) => {
+    const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    write(root, 'docs/plans/good.md', planWith());
     write(root, 'package.json', '{"files":["docs/"]}\n');
     write(root, 'test/package-content.test.mjs', 'one\n');
     write(root, 'other/package-content.test.mjs', 'two\n');
-    const twoPins = run(root, ['--check', 'docs/plans/good.md']);
-    assert.equal(twoPins.status, 2, 'a repository-level facts refusal keeps its usage class on the explicit arm');
-    assert.match(twoPins.stderr, /several package-content\.test\.mjs files: other\/package-content\.test\.mjs, test\/package-content\.test\.mjs/);
-    assert.equal(run(root, ['--check', '--in-flight']).status, 2, 'and on the in-flight arm');
+    const ambiguity = /several package-content\.test\.mjs files: other\/package-content\.test\.mjs, test\/package-content\.test\.mjs/;
+    for (const operand of ['docs/plans/good.md', '--in-flight']) checkExit(root, operand, 0);
+    write(root, 'docs/plans/shipped.md', planOf('R1 | create | docs/new.md | create it | n/a | docs/readme.md:1'));
+    assert.match(checkExit(root, 'docs/plans/shipped.md', 2), ambiguity);
+    checkExit(root, '--in-flight', 0);
+    write(root, 'docs/plans/pins.md', planOf(`R1 | create | docs/first.md | create it | n/a | docs/readme.md:1
+R2 | modify | test/package-content.test.mjs | pin the first document | n/a | docs/readme.md:1
+R3 | create | docs/second.md | create it | n/a | docs/readme.md:1
+R4 | modify | test/package-content.test.mjs | pin the second document | n/a | docs/readme.md:1`));
+    assert.match(checkExit(root, '--in-flight', 2), ambiguity);
+  });
+
+  it('S12 a malformed size declaration exits 2 only where a rule reads it, on both arms', (t) => {
+    const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    write(root, 'docs/plans/good.md', planWith());
     write(root, 'docs/ai/source-size.json', '{');
-    assert.equal(run(root, ['--check', '--in-flight']).status, 2, 'a malformed practice is a usage refusal before any plan is judged');
-    assert.equal(run(root, ['--check', 'docs/plans/good.md']).status, 2);
+    checkExit(root, '--in-flight', 0);
+    assert.match(checkExit(root, 'docs/plans/good.md', 2), /source-size/);
+    write(root, 'docs/ai/epics/ALPHA.md', buildEpic('docs/readme.md'));
+    write(root, 'docs/plans/mine.md', planWith({ goal: '- Spec: docs/ai/specs/example.md\nStory: S1 of ALPHA' }));
+    assert.match(checkExit(root, '--in-flight', 2), /source-size/);
   });
 
   it('prints every refusal and reserves exit 2 for usage, an unreadable plan or an unreadable plans directory', async () => {
@@ -171,5 +199,66 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     assert.equal(inFlight.status, 1);
     assert.match(inFlight.stdout, /fence\.md.*block-model/);
     assert.match(inFlight.stdout, /judged plans: 1/);
+  });
+
+  it('S38 accepts its own draft, part and navigator in both plan spellings and keeps kind for a competing create (spec:plan-review-loop/S38)', (t) => {
+    const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const slug = 'billing';
+    const group = `${STORE}commerce`;
+    const draft = `${group}/${slug}/index.md`;
+    const partName = 'rates';
+    const part = `${group}/${slug}/${partName}.md`;
+    const navigator = `${group}/index.md`;
+    write(root, draft, specDoc(slug, {
+      scenario: '- S1 ok :: unbound',
+      parts: [`- [${partName}](./${partName}.md)`],
+    }).replace('status: live', 'status: draft'));
+    write(root, part, `${FRONT('part', 150)}\n# Part: ${partName}\n\nRates.\n`);
+    write(root, navigator, indexDoc('Commerce', [`- [${slug}](./${slug}/index.md)`]));
+    const rows = [draft, part, navigator].map((path, index) =>
+      `R${index + 1} | create | ${path} | write the contract document | n/a | docs/readme.md:1`);
+    const planPath = 'docs/plans/billing.md';
+    write(root, planPath, planOf(rows.join('\n')));
+
+    const ownChecks = [planPath, `./${planPath}`].map((operand) => {
+      const result = run(root, ['--check', operand]);
+      assert.ifError(result.error);
+      return result;
+    });
+    write(root, 'docs/plans/competing.md', planOf(rows[0]));
+    const conflict = run(root, ['--check', planPath]);
+    assert.ifError(conflict.error);
+    assert.equal(conflict.status, 1, conflict.stderr || conflict.stdout);
+    assert.match(conflict.stdout, /^docs\/plans\/billing\.md:\d+: R1: kind:/m);
+    assert.deepEqual(ownChecks.map((result) => result.status), [0, 0],
+      ownChecks.map((result) => result.stderr || result.stdout).join('\n'));
+  });
+
+  it('S38 counts plain in-flight plans and skips, and refuses a symlinked plans directory as usage', (t) => {
+    const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    write(root, 'docs/plans/good.md', planWith());
+    write(root, 'docs/plans/notes.md', '# Notes\n\nNot a plan.\n');
+    const args = ['--check', '--in-flight'];
+    const plain = run(root, args);
+    assert.ifError(plain.error);
+    assert.equal(plain.status, 0, plain.stderr || plain.stdout);
+    assert.match(plain.stdout, /^plan-shape: judged plans: 1$/m);
+    assert.match(plain.stdout, /^plan-shape: skipped by shape: 1$/m);
+
+    const plans = join(root, 'docs/plans');
+    const target = join(root, 'saved-plans');
+    renameSync(plans, target);
+    try {
+      symlinkSync(target, plans, 'dir');
+    } catch (error) {
+      if (!LINK_REFUSALS.includes(error.code)) throw error;
+      t.diagnostic(`sandbox refused symlinkSync: ${error.code}: ${plans}`);
+      return;
+    }
+    const linked = run(root, args);
+    assert.ifError(linked.error);
+    assert.equal(linked.status, 2, `symlinked docs/plans must be a usage error\n${linked.stderr || linked.stdout}`);
   });
 });

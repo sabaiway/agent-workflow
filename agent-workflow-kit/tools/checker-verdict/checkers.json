@@ -1715,14 +1715,6 @@
       "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
       "arguments": [
         "--check",
-        "docs/plans/fixture.md"
-      ],
-      "faultPoint": "list"
-    },
-    {
-      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
-      "arguments": [
-        "--check",
         "--in-flight"
       ],
       "faultPoint": "read"
@@ -1758,14 +1750,6 @@
         "docs/plans/fixture.md"
       ],
       "faultPoint": "stat"
-    },
-    {
-      "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
-      "arguments": [
-        "--verify",
-        "docs/plans/fixture.md"
-      ],
-      "faultPoint": "list"
     },
     {
       "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
@@ -2011,6 +1995,14 @@
         "docs/plans/spec-ops.list"
       ],
       "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/spec-check-cli.mjs",
+      "arguments": [
+        "--ops-file",
+        "docs/plans/spec-ops.list"
+      ],
+      "faultPoint": "list"
     },
     {
       "path": "agent-workflow-kit/tools/spec-coverage-cli.mjs",

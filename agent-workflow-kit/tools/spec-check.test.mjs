@@ -260,6 +260,54 @@ describe('spec-check — the session lane: post-state, probe, thresholds, bindin
     it(`module — ${name}`, () => assert.deepEqual(rulesOf(run(files, [op('modify', `${STORE}login.md`)], {}, { states }), 'module'), refuses ? [`${STORE}login.md`] : []));
   }
 
+  // spec:spec-check/S8
+  const pendingSpec = `${STORE}login.md`;
+  const moduleDir = 'src/pending';
+  const moduleFile = `${moduleDir}/nested/main.mjs`;
+  const create = (path) => ({ verb: 'create', path });
+  const plan = (rows, accepted = true) => ({ identity: 'docs/plans/login.md', accepted, rows });
+  const draftRows = [create(pendingSpec), create(moduleFile)];
+  const draftPlan = plan(draftRows);
+  const revisionPlan = plan([{ verb: 'modify', path: pendingSpec }, create(moduleFile)]);
+  const revision = { status: 'live', plans: [revisionPlan], home: { plan: revisionPlan.identity, paths: [pendingSpec] } };
+  const directory = { claimed: `${moduleDir}/` };
+  const alias = { ...directory, options: { states: { 'src-alias': 'dir' }, escapes: { 'src-alias': `${ROOT}/src` } } };
+  const PENDING_MODULES = [
+    ['one plan covers a draft file, but a live spec refuses', {}, { status: 'live' }],
+    ['a plan that creates the draft but misses the Module file refuses', {}, { plans: [plan([create(pendingSpec), create('src/elsewhere.mjs')])] }],
+    ['a second plan creating the same draft makes it refuse', {}, { plans: [draftPlan, { ...draftPlan, identity: 'docs/plans/other.md', rows: [create(pendingSpec)] }] }],
+    ['a home revision accepts only under a modify row', revision, { plans: [draftPlan] }],
+    ['a live revision outside its plan home refuses', revision, { home: undefined }],
+    ['a create row on a proper ancestor of the covering file refuses', directory, { plans: [plan([...draftRows, create(`${moduleDir}/nested`)])] }],
+    ['a strict descendant covers a directory, but including the directory itself refuses', directory, { plans: [plan([...draftRows, create(moduleDir)])] }],
+    ['including the directory itself through an in-root alias refuses', alias, { plans: [plan([...draftRows, create('src-alias/pending')])] }],
+    ...[['a dot', 'src/.'], ['an empty', 'src/']].map(([segment, ancestor]) => [
+      `a path with ${segment} segment refuses`,
+      { options: { states: { [ancestor]: 'dir' }, escapes: { [ancestor]: `${ROOT}/src` } } },
+      { claimed: moduleFile.replace(/^src/, ancestor) },
+    ]),
+    ['an unreadable nearest ancestor refuses', {}, { options: { states: { src: 'unreadable' } } }],
+    ['a non-directory nearest ancestor refuses', {}, { options: { states: { src: 'file' } } }],
+    ['a nearest ancestor that escapes the root refuses', {}, { options: { escapes: { src: '/elsewhere/src' } } }],
+    ['a file row at the same path does not cover a directory', directory, { plans: [plan([create(pendingSpec), create(moduleDir)])] }],
+    ['a directory Module whose ground is a file refuses', directory, { options: { states: { [moduleDir]: 'file' } } }],
+    ['a file Module whose ground is a directory refuses', {}, { options: { states: { [moduleFile]: 'dir' } } }],
+    ['a root-level file beside a file its name extends is covered at the root', { claimed: 'LICENSE-THIRD-PARTY', plans: [plan([create(pendingSpec), create('LICENSE-THIRD-PARTY')])], options: { states: { LICENSE: 'file' } } }, { status: 'live' }],
+    ['a refused plan provides no cover and is named', {}, { plans: [plan(draftRows, false)] }, draftPlan.identity],
+  ];
+  const judgePending = ({ claimed = moduleFile, status = 'draft', plans = [draftPlan], home, options }) => {
+    const doc = specDoc('login', { module: `- ${claimed}` }).replace('status: live', `status: ${status}`);
+    return run({ ...FLAT_STORE, [pendingSpec]: doc }, [op('modify', pendingSpec)], { plans, home }, options);
+  };
+  for (const [name, covered, change, refusedPlan] of PENDING_MODULES) {
+    it(`pending module — ${name}`, () => {
+      assert.deepEqual(rulesOf(judgePending(covered), 'module'), [], `the plan covers the absent Module path ${covered.claimed ?? moduleFile}`);
+      const findings = judgePending({ ...covered, ...change }).findings.filter(({ rule }) => rule === 'module');
+      assert.deepEqual(findings.map(({ path }) => path), [pendingSpec], 'the changed fact brings back the module finding');
+      if (refusedPlan) assert.ok(findings[0].message.includes(refusedPlan), 'the module finding names the refused plan');
+    });
+  }
+
   it('threshold — a document over its kind cap REFUSES, at the cap it passes', () => {
     const filler = (n) => Array.from({ length: n }, (_, i) => `Line ${i + 1}.`).join('\n\n');
     const long = specDoc('login').replace('A contract.', filler(80));

@@ -104,7 +104,12 @@ the only phases are session boundaries in a multi-session plan, and Cleanup.
 **A contract change is a row, present at the spec review.** A NEW feature's draft spec is a `create` row
 (`docs/ai/specs/<slug>.md`) and a proposed REVISION of a governed contract is a `modify` row — both
 written WITH the plan, so approval confirms the plan and every cited draft or revision atomically; the
-landing row moves the spec `draft -> live`, a removal row `live -> retired`.
+landing row moves the spec `draft -> live`, a removal row `live -> retired`. A revision of a live
+contract, and a new part of a live root, are written in the plan's revision home
+`docs/plans/<plan stem>.specs/` at their paths under `docs/ai/specs/` (`docs/ai/specs/billing/index.md`
+waits at `docs/plans/<plan stem>.specs/billing/index.md`), never in the store; the spec gate is
+`node <kit>/tools/spec-check-cli.mjs --plan docs/plans/<stem>.md`, then
+`node <kit>/tools/spec-check-cli.mjs --all` unless `docs/ai/specs` is proven absent.
 
 A `create` row's responsibility names the **exported surface** the module must provide — the names
 other rows import. That surface does not exist in the checkout yet, so it cannot be derived from it;
@@ -174,7 +179,8 @@ plan file, and plan paths inside committed docs, are forbidden.
 
 **Every plan ends with `## Phase: Cleanup`.** Cleanup runs `node <kit>/tools/plan-shape-cli.mjs --verify <plan>`
 FIRST, before anything is migrated or deleted, then migrates outputs to the durable docs, updates
-`docs/plans/queue.md` for a series, deletes the plan file, and verifies that `grep -rn "<slug>" . --exclude-dir=.git`
+`docs/plans/queue.md` for a series, deletes the plan file and its revision home
+`docs/plans/<plan stem>.specs/`, and verifies that `grep -rn "<slug>" . --exclude-dir=.git`
 is empty (review receipts under the git dir carry the plan path, so the plain grep never clears a reviewed plan)
 and the docs cap-validator is green. An aborted plan still runs Cleanup — partial outputs land in
 `known_issues.md`.
