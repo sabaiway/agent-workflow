@@ -4,13 +4,13 @@
 import { readFileSync, mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tokenizeMarkdown, fail, findProjectRoot, composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
+import { tokenizeMarkdown, fail, findProjectRoot, composeRedBlock, composeUsageRefusal, guardChecker, HISTORY, ISSUES_RESOLVED, KNOWN_ISSUES, PACKAGE_JSON } from '../shared/index.mjs';
 import { fsIo, writeWhole } from './whole-write.mjs';
 import { trimmedLines, sectionsToAppend } from './rotation-conservation.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
 const CHECKER_NAME = 'archive-issues';
-const PACKAGE_REL = 'package.json';
+const PACKAGE_REL = PACKAGE_JSON;
 const GUARD = Object.freeze({ name: CHECKER_NAME, exitCode: 1, remedy: 'fix the cause the stack below names, then re-run' });
 const shown = (text) => text.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
 const composeFailure = (failed, findings, remedy) => ({
@@ -31,9 +31,9 @@ export const readProjectName = (root) => {
     return basename(root);
   }
 };
-const KNOWN_REL = 'docs/ai/known_issues.md';
-const HISTORY_REL = 'docs/ai/history';
-const RESOLVED_REL = 'docs/ai/history/issues-resolved.md';
+const KNOWN_REL = KNOWN_ISSUES;
+const HISTORY_REL = HISTORY;
+const RESOLVED_REL = ISSUES_RESOLVED;
 
 const DEFAULT_CUTOFF_DAYS = 14;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;

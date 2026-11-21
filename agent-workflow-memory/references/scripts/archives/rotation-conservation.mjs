@@ -2,8 +2,9 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { CHANGELOG_CARRY } from '../shared/index.mjs';
 
-export const CARRY_REL = 'docs/ai/history/changelog.carry';
+export const CARRY_REL = CHANGELOG_CARRY;
 
 export const readCarry = (root) => {
   try {

@@ -5,6 +5,7 @@ import { constants, lstatSync, readFileSync, readdirSync, unlinkSync } from 'nod
 import { join, posix } from 'node:path';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { LOCAL_HOOK, SCRIPTS } from '../references/scripts/shared/index.mjs';
 
 const KIT = posix.dirname(KIT_COMMAND_PATH);
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
@@ -66,10 +67,10 @@ const grepLines = (cwd, deps) => {
   if (isAnswered(result, 128) || isAnswered(result, 0) && String(result.stdout ?? '').trim() === 'false') return ['this project is outside a git work tree; check other files naming an old path by hand'];
   return [`the git work tree could not be confirmed (${result.error ? describeError(result.error) : result.signal ?? result.status ?? 'no result'}); check other files naming an old path by hand`];
 };
-const suiteLines = (cwd, classified, removed, deps) => (deps.readdir ?? readdirSync)(join(cwd, 'scripts'))
+const suiteLines = (cwd, classified, removed, deps) => (deps.readdir ?? readdirSync)(join(cwd, SCRIPTS))
   .filter((name) => name.endsWith('.test.mjs') && !removed.includes(name))
-  .filter((name) => (!FLAT_NAMES.includes(name) || classified.get(name) === 'foreign') && isRegular(cwd, `scripts/${name}`, deps))
-  .sort().map((name) => `scripts/${name}: a suite of your own; add node --test scripts/${name} to scripts/pre-commit.local to keep it on every commit`);
+  .filter((name) => (!FLAT_NAMES.includes(name) || classified.get(name) === 'foreign') && isRegular(cwd, `${SCRIPTS}/${name}`, deps))
+  .sort().map((name) => `${SCRIPTS}/${name}: a suite of your own; add node --test ${SCRIPTS}/${name} to ${LOCAL_HOOK} to keep it on every commit`);
 
 export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps = {} }) => {
   const removed = [], lines = [], classified = new Map();
@@ -78,7 +79,7 @@ export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps =
   const bundle = join(skillRoot, 'references/scripts');
   const byName = new Map(readFamily(bundle).filter((entry) => entry.role === 'deployed').map((entry) => [posix.basename(entry.path), entry.path]));
   for (const name of FLAT_NAMES) {
-    const path = `scripts/${name}`, target = join(cwd, path);
+    const path = `${SCRIPTS}/${name}`, target = join(cwd, path);
     try {
       const stat = readStat(target, deps);
       if (!stat) continue;
@@ -108,7 +109,7 @@ export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps =
   }
   if (removed.length) {
     try { lines.push(...suiteLines(cwd, classified, removed, deps)); }
-    catch (error) { lines.push(`scripts/: remaining suites could not be listed (${describeError(error)})`); }
+    catch (error) { lines.push(`${SCRIPTS}/: remaining suites could not be listed (${describeError(error)})`); }
     lines.push(...grepLines(cwd, deps));
   }
   return { removed, lines: lines.map((line) => line.replace(/[\r\n]+/g, ' ')) };

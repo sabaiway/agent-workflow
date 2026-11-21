@@ -18,7 +18,7 @@ const ARCHIVERS = ['archive-changelog.mjs', 'archive-issues.mjs', 'archive-decis
 // The two archivers' load closure as module paths, deployed into a fixture's kit folder like a consumer.
 const ARCHIVER_CLOSURE = ['archives/archive-changelog.mjs', 'archives/archive-issues.mjs', 'archives/archive-caps.mjs',
   'archives/whole-write.mjs', 'archives/rotation-conservation.mjs',
-  'shared/index.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs'];
+  'shared/index.mjs', 'shared/locations.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs'];
 const FIXED_DATE = '2026-09-02';
 const FM = '---\ntype: history\nlastUpdated: 2026-07-28\nmaxLines: 700\n---\n';
 const INTRO = `${FM}\n# Doc\n\n`;

@@ -4,17 +4,17 @@
 import { readFileSync, mkdirSync, readdirSync, existsSync, realpathSync } from 'node:fs';
 import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tokenizeMarkdown, findParagraphBreak, fail, findProjectRoot,
-  composeRedBlock, composeUsageRefusal, guardChecker } from '../shared/index.mjs';
+import { tokenizeMarkdown, findParagraphBreak, fail, findProjectRoot, composeRedBlock, composeUsageRefusal, guardChecker,
+  CHANGELOG, CHANGELOG_LEGACY, CONDENSED_INDEX, HISTORY, PACKAGE_JSON, RECENT } from '../shared/index.mjs';
 import { CAP_TABLE, capFor, countLines, shardingWarning } from './archive-caps.mjs';
 import { fsIo, writeWhole } from './whole-write.mjs';
 import { CARRY_REL, readCarry, renderCarry, unionEntries } from './rotation-conservation.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
 const CHECKER_NAME = 'archive-changelog';
-const PACKAGE_REL = 'package.json';
+const PACKAGE_REL = PACKAGE_JSON;
 const GUARD = Object.freeze({ name: CHECKER_NAME, exitCode: 1, remedy: 'fix the cause the stack below names, then re-run' });
-const INDEX_REL = 'docs/ai/history/condensed-index.md';
+const INDEX_REL = CONDENSED_INDEX;
 const shown = (text) => text.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
 const composeFailure = (failed, findings, remedy, after = []) => ({
   exitCode: 1,
@@ -35,10 +35,10 @@ export const readProjectName = (root) => {
     return basename(root);
   }
 };
-const CHANGELOG_REL = 'docs/ai/changelog.md';
-const HISTORY_REL = 'docs/ai/history';
-const RECENT_REL = 'docs/ai/history/recent.md';
-const LEGACY_REL = 'docs/ai/changelog-archive.md';
+const CHANGELOG_REL = CHANGELOG;
+const HISTORY_REL = HISTORY;
+const RECENT_REL = RECENT;
+const LEGACY_REL = CHANGELOG_LEGACY;
 
 const DEFAULT_HOT_DAYS = 3;
 const DEFAULT_WARM_DAYS = 30;

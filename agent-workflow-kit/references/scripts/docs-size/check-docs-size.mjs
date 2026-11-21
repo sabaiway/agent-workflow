@@ -30,17 +30,17 @@ import { dirname, resolve, relative, join, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { readSpecDocument, SPECS_COLLAPSE } from '../spec-schema/index.mjs';
-import { findProjectRoot } from '../shared/index.mjs';
+import { ADR_LOG, ADR_STORE, AGENTS_FILE, AGENTS_SKILLS, CLAUDE_FILE, DOCS_TREE, INDEX, PACKAGE_JSON, findProjectRoot } from '../shared/index.mjs';
 
 const ROOT = findProjectRoot(import.meta.url);
-const DOCS_DIR = resolve(ROOT, 'docs/ai');
-const INDEX_PATH = resolve(DOCS_DIR, 'index.md');
+const DOCS_DIR = resolve(ROOT, DOCS_TREE);
+const INDEX_PATH = resolve(ROOT, INDEX);
 
 // The module ROOT constants are the CLI DEFAULT (this deployment's own root); `--root=<dir>` and the
 // exported `regenerateIndex(root, today)` target an arbitrary root (the ADR-rotation hook, hermetic tests).
 const pathsFor = (root) => {
   const base = resolve(root);
-  return { root: base, docsDir: resolve(base, 'docs/ai'), indexPath: resolve(base, 'docs/ai/index.md') };
+  return { root: base, docsDir: resolve(base, DOCS_TREE), indexPath: resolve(base, INDEX) };
 };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -95,7 +95,7 @@ export const discoverMeta = async (root = ROOT, { strict = false, deps = {} } = 
   // fallback, under strict too.
   let manifest = null;
   try {
-    manifest = await read(resolve(root, 'package.json'), 'utf8');
+    manifest = await read(resolve(root, PACKAGE_JSON), 'utf8');
   } catch (err) {
     rethrowUnlessAbsent(err, strict);
   }
@@ -109,8 +109,8 @@ export const discoverMeta = async (root = ROOT, { strict = false, deps = {} } = 
   }
   const agentsFiles = await walkForName(root, 'AGENTS.md', [], 0, strict, deps);
   const claudeFiles = await walkForName(root, 'CLAUDE.md', [], 0, strict, deps);
-  const rootAgents = resolve(root, 'AGENTS.md');
-  const rootClaude = resolve(root, 'CLAUDE.md');
+  const rootAgents = resolve(root, AGENTS_FILE);
+  const rootClaude = resolve(root, CLAUDE_FILE);
   // A subdir typically holds AGENTS.md plus a CLAUDE.md symlink to it — list each
   // dir once (prefer AGENTS.md, drop its sibling CLAUDE.md alias).
   const agentsDirs = new Set(agentsFiles.map((file) => dirname(resolve(file))));
@@ -126,12 +126,12 @@ export const discoverMeta = async (root = ROOT, { strict = false, deps = {} } = 
     .map((rel) => `[\`${rel}\`](../../${rel})`);
   let onDemandLinks = [];
   try {
-    const skillDirs = await readDir(resolve(root, '.agents/skills'), { withFileTypes: true });
+    const skillDirs = await readDir(resolve(root, AGENTS_SKILLS), { withFileTypes: true });
     onDemandLinks = skillDirs
       .filter((dirent) => dirent.isDirectory() && /-(patterns|commands)$/.test(dirent.name))
       .map((dirent) => dirent.name)
       .sort()
-      .map((name) => `[\`${name}\`](../../.agents/skills/${name}/SKILL.md)`);
+      .map((name) => `[\`${name}\`](../../${AGENTS_SKILLS}/${name}/SKILL.md)`);
   } catch (err) {
     // No .agents/skills — omit the section (under strict, only a real absence may omit it).
     rethrowUnlessAbsent(err, strict);
@@ -348,10 +348,10 @@ maxLines: __CAP__
 ## Files
 
 `;
-
+const stripDocsTreePrefix = (path) => path.startsWith(`${DOCS_TREE}/`) ? path.slice(DOCS_TREE.length + 1) : path;
 const formatIndexRow = (row) => {
   const fm = row.frontmatter ?? {};
-  const name = row.path.replace(/^docs\/ai\//, '');
+  const name = stripDocsTreePrefix(row.path);
   const link = `[\`${name}\`](./${name})`;
   return `| ${link} | ${fm.type ?? '—'} | ${row.lineCount}/${fm.maxLines ?? '—'} | ${fm.lastUpdated ?? '—'} | ${fm.staleAfter ?? '—'} |`;
 };
@@ -362,9 +362,9 @@ const formatIndexRow = (row) => {
 // index RENDERING is collapsed). Membership is by PROOF: a genuine ADR record / the adr navigator,
 // or a spec-store file the shared reader accepts. Anything else under either dir (a stray README.md,
 // a malformed spec) renders as its OWN visible row — never silently hidden by the collapse.
-const ADR_DIR_PREFIX = 'docs/ai/adr/';
+const ADR_DIR_PREFIX = `${ADR_STORE}/`;
 const ADR_RECORD_RE = /\/AD-(\d{3,})-[^/]*\.md$/;
-const ADR_NAV_PATH = 'docs/ai/adr/log.md';
+const ADR_NAV_PATH = ADR_LOG;
 
 const formatAdrCollapseRow = (adrRows) => {
   const recs = adrRows
@@ -381,7 +381,7 @@ const formatAdrCollapseRow = (adrRows) => {
 // The live counts make the row change when a spec is added or removed, so --check-index sees it.
 const formatSpecsCollapseRow = (specRows) => {
   const count = (kind) => specRows.filter((r) => r.spec.kind === kind).length;
-  const link = `[\`${SPECS_COLLAPSE.label}\`](./${SPECS_COLLAPSE.navPath.replace(/^docs\/ai\//, '')})`;
+  const link = `[\`${SPECS_COLLAPSE.label}\`](./${stripDocsTreePrefix(SPECS_COLLAPSE.navPath)})`;
   return `| ${link} | ${SPECS_COLLAPSE.type} | ${count('spec')} specs | ${count('part')} parts · ${count('index')} indexes | — |`;
 };
 
@@ -403,7 +403,7 @@ export const buildIndex = (rows, todayStr, meta = {}) => {
   const singles = [];
   const grouped = COLLAPSE_GROUPS.map(() => []);
   for (const r of rows) {
-    if (r.path === 'docs/ai/index.md') continue;
+    if (r.path === INDEX) continue;
     const group = COLLAPSE_GROUPS.findIndex((g) => g.isMember(r));
     (group === -1 ? singles : grouped[group]).push(r);
   }

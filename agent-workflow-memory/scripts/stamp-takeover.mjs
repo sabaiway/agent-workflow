@@ -20,10 +20,13 @@ import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, basename, join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { DOCS_TREE, MEMORY_STAMP, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 
 // The shared agent-workflow deployment-lineage head. Bumped only when a project-migration
 // changes the deployed docs/ai structure — NOT on a packaging-only release.
 export const LINEAGE_HEAD = '5.0.0';
+const MEMORY_STAMP_RELATIVE = MEMORY_STAMP.slice(`${DOCS_TREE}/`.length);
+const WORKFLOW_STAMP_RELATIVE = WORKFLOW_STAMP.slice(`${DOCS_TREE}/`.length);
 
 const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)$/;
 
@@ -60,7 +63,7 @@ export const decideTakeover = (state, head = LINEAGE_HEAD) => {
   const workflow = normalize(state?.workflowVersion);
 
   // Validate every PRESENT stamp before any state branch: unparseable or future → STOP.
-  for (const [name, value] of [['.memory-version', memory], ['.workflow-version', workflow]]) {
+  for (const [name, value] of [[MEMORY_STAMP_RELATIVE, memory], [WORKFLOW_STAMP_RELATIVE, workflow]]) {
     if (value == null) continue;
     if (!parseSemver(value)) {
       return {
@@ -152,8 +155,8 @@ export const writeStampAtomic = async (filePath, value) => {
 // says so) atomically write .memory-version. Idempotent: a second run sees .memory-version
 // and writes nothing. Returns the decision for the caller to report.
 export const applyTakeover = async (docsAiDir, { head = LINEAGE_HEAD } = {}) => {
-  const memoryPath = join(docsAiDir, '.memory-version');
-  const workflowPath = join(docsAiDir, '.workflow-version');
+  const memoryPath = join(docsAiDir, MEMORY_STAMP_RELATIVE);
+  const workflowPath = join(docsAiDir, WORKFLOW_STAMP_RELATIVE);
   const decision = decideTakeover(
     { memoryVersion: await readStamp(memoryPath), workflowVersion: await readStamp(workflowPath) },
     head,

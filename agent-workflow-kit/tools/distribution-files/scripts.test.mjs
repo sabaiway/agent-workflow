@@ -243,7 +243,7 @@ describe('spec:distribution-files/S19 write order through a recording writer', (
   const tree = (K, bodies = Object.fromEntries(K.order.slice(0, -1).map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]]))) => ({ bodies, priors: priorsWith(...K.order), due: K.order.filter((n) => n in bodies) });
   it("one plain run's refreshes, replacements and placements: the installer, then each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
     const K = await kitLayout(), { bodies, priors, due } = tree(K);
-    assert.deepEqual(K.order.slice(0, 7).map((n) => SRC.get(n)), [SRC.get(K.installer), 'archives/rotation-conservation.mjs', 'archives/whole-write.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
+    assert.deepEqual(K.order.slice(0, 7).map((n) => SRC.get(n)), [SRC.get(K.installer), 'archives/whole-write.mjs', 'shared/locations.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
     assert.deepEqual(K.order.slice(7).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
     const order = withTree(bodies, (dir) => { const { order: written, deps } = recorder(dir); run(dir, { would: K.would, deps: { ...deps, priors } }); return written; }, { family: K.order });
     assert.deepEqual(order, due);
@@ -251,8 +251,8 @@ describe('spec:distribution-files/S19 write order through a recording writer', (
   it('a write refused partway leaves every later file unwritten', async () => {
     const K = await kitLayout(), { bodies, priors, due } = tree(K);
     withTree(bodies, (dir) => {
-      const [before, { order, deps }] = [snapshot(dir), recorder(dir, { refuseAt: 2 })], now = (run(dir, { would: K.would, deps: { ...deps, priors } }), snapshot(dir));
-      assert.deepEqual([order, due.slice(1).filter((n) => now[join('scripts', n)] !== before[join('scripts', n)])], [due.slice(0, 2), []]);
+      const [before, { order, deps }] = [snapshot(dir), recorder(dir, { refuseAt: 3 })], now = (run(dir, { would: K.would, deps: { ...deps, priors } }), snapshot(dir));
+      assert.deepEqual([order, due.slice(2).filter((n) => now[join('scripts', n)] !== before[join('scripts', n)]), SRC.get(due[2])], [due.slice(0, 3), [], 'shared/locations.mjs']);
     }, { family: K.order });
   });
 });

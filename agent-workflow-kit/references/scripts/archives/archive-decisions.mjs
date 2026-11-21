@@ -92,20 +92,20 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fsIo, writeWhole } from './whole-write.mjs';
 import { tmpdir } from 'node:os';
-import { tokenizeMarkdown, findProjectRoot } from '../shared/index.mjs';
+import { tokenizeMarkdown, findProjectRoot, ADR_LOG, ADR_STORE, DECISIONS, DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY, DOCS_TREE } from '../shared/index.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = findProjectRoot(import.meta.url);
 // The command this rotator prints for itself is the stable kit command (spec kit-command).
 const SELF = 'node scripts/agent-workflow/run.mjs archive-decisions';
 
-export const HOT_REL = 'docs/ai/decisions.md';
+export const HOT_REL = DECISIONS;
 // The retired monolith tiers — still READ during migration (their entries explode into records) and
 // still DETECTED by the legacy guard; never written by the new scheme.
-export const WARM_REL = 'docs/ai/history/decisions-archive.md';
-export const COLD_REL = 'docs/ai/history/decisions-archive-early.md';
-export const ADR_DIR_REL = 'docs/ai/adr';
-export const NAV_REL = 'docs/ai/adr/log.md';
+export const WARM_REL = DECISIONS_ARCHIVE;
+export const COLD_REL = DECISIONS_ARCHIVE_EARLY;
+export const ADR_DIR_REL = ADR_STORE;
+export const NAV_REL = ADR_LOG;
 
 // A per-record cap (generous vs the largest real ADR ~74 lines; a body over it is a genuine smell) and
 // the navigator's FLOOR: the navigator stamps 200 while it fits and its own line count past it, since
@@ -318,7 +318,7 @@ export const verifyConservation = (oldItems, newItems) => {
 // Match contract (line-scoped; fenced lines never count): a textual occurrence of the
 // source-file-plus-fragment form. The lookbehind rejects a longer filename
 // (`other-decisions.md#…` is a different file, never a match); a bare `#ad-NNN` has no file part.
-const DOCS_AI_REL = 'docs/ai';
+const DOCS_AI_REL = DOCS_TREE;
 const HOT_LINK_RE = /(?<![\w.-])decisions\.md#(ad-(\d{3,})[\w-]*)/g;
 const MONOLITH_LINK_RE = /(?<![\w.-])(?:\.\.?\/)*(?:history\/)?decisions-archive(?:-early)?\.md#(ad-(\d{3,})[\w-]*)/g;
 // The right boundary mirrors the lookbehind: `…md.bak` / `…md/child` are DIFFERENT targets, never

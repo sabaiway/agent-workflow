@@ -43,7 +43,7 @@ const matchOf = (cmd) => {
 // Every known name whose target's file name stands whole in the cmd and not as the end of its deployed path, one per occurrence.
 const namedChecks = (cmd) => [...cmd.matchAll(CHECK_FILE)].flatMap((found) => {
   const name = NAME_BY_FILE.get(found[1]);
-  return cmd.slice(0, found.index).endsWith(`agent-workflow/${posix.dirname(KIT_COMMANDS[name])}/`) ? [] : [name];
+  return cmd.slice(0, found.index).endsWith(`${posix.basename(KIT_FOLDER)}/${posix.dirname(KIT_COMMANDS[name])}/`) ? [] : [name];
 });
 
 export const repointsOf = (gate) => namedChecks(gate.cmd).map((name) => ({ id: gate.id, repoint: `${COMMAND} ${name}` }));

@@ -1,0 +1,101 @@
+// locations.mjs — docs/ai/specs/memory/locations.md
+
+export const DOCS = 'docs';
+export const SCRIPTS = 'scripts';
+export const CLAUDE_DIR = '.claude';
+export const GIT_DIR = '.git';
+export const PACKAGE_JSON = 'package.json';
+export const AGENTS_FILE = 'AGENTS.md';
+export const CLAUDE_FILE = 'CLAUDE.md';
+export const MCP_FILE = '.mcp.json';
+export const GITIGNORE = '.gitignore';
+export const GITATTRIBUTES = '.gitattributes';
+export const DOT_AGENTS = '.agents';
+export const NPM_LOCK = 'package-lock.json';
+export const PNPM_LOCK = 'pnpm-lock.yaml';
+export const YARN_LOCK = 'yarn.lock';
+export const BUN_LOCKB = 'bun.lockb';
+export const BUN_LOCK = 'bun.lock';
+export const PNPM_WORKSPACE = 'pnpm-workspace.yaml';
+export const PNPM_WORKSPACE_YML = 'pnpm-workspace.yml';
+export const LERNA_JSON = 'lerna.json';
+export const NODE_MODULES = 'node_modules';
+export const CODEX_LAST_SESSION = '.codex-last-session';
+export const VSCODE_DIR = '.vscode';
+export const CURSOR_DIR = '.cursor';
+export const CURSORRULES = '.cursorrules';
+export const CODEIUM_DIR = '.codeium';
+export const WINDSURF_DIR = '.windsurf';
+export const WINDSURFRULES = '.windsurfrules';
+export const GEMINI_FILE = 'GEMINI.md';
+export const ANTIGRAVITY_FILE = '.antigravity.md';
+export const GITHUB_DIR = '.github';
+export const AIDER_CONF = '.aider.conf.yml';
+export const AIDER_CHAT_HISTORY = '.aider.chat.history.md';
+export const AIDER_INPUT_HISTORY = '.aider.input.history';
+export const CONTINUE_DIR = '.continue';
+
+export const DOCS_TREE = `${DOCS}/ai`;
+export const PLANS = `${DOCS}/plans`;
+export const QUEUE = `${PLANS}/queue.md`;
+
+export const KIT_FOLDER = `${SCRIPTS}/agent-workflow`;
+export const LOCAL_HOOK = `${SCRIPTS}/pre-commit.local`;
+export const SYNC_MIRRORS = `${SCRIPTS}/sync-mirrors.mjs`;
+export const KIT_COMMAND = `${KIT_FOLDER}/run.mjs`;
+
+export const AGENTS_SKILLS = `${DOT_AGENTS}/skills`;
+export const VSCODE_SETTINGS = `${VSCODE_DIR}/settings.json`;
+export const CURSOR_RULES = `${CURSOR_DIR}/rules`;
+
+export const SETTINGS = `${CLAUDE_DIR}/settings.json`;
+export const SETTINGS_LOCAL = `${CLAUDE_DIR}/settings.local.json`;
+export const AGENTS_DIR = `${CLAUDE_DIR}/agents`;
+export const HOOKS_DIR = `${CLAUDE_DIR}/hooks`;
+export const SKILLS_DIR = `${CLAUDE_DIR}/skills`;
+export const GATE_HOOK = `${HOOKS_DIR}/agent-workflow-gates.mjs`;
+export const STOP_HOOK = `${HOOKS_DIR}/state-block-guard.mjs`;
+
+export const GIT_CONFIG = `${GIT_DIR}/config`;
+export const GIT_HOOKS = `${GIT_DIR}/hooks`;
+export const GIT_EXCLUDE = `${GIT_DIR}/info/exclude`;
+export const PRE_COMMIT = `${GIT_HOOKS}/pre-commit`;
+
+export const INDEX = `${DOCS_TREE}/index.md`;
+export const HANDOVER = `${DOCS_TREE}/handover.md`;
+export const AGENT_RULES = `${DOCS_TREE}/agent_rules.md`;
+export const CHANGELOG = `${DOCS_TREE}/changelog.md`;
+export const CHANGELOG_LEGACY = `${DOCS_TREE}/changelog-archive.md`;
+export const KNOWN_ISSUES = `${DOCS_TREE}/known_issues.md`;
+export const DECISIONS = `${DOCS_TREE}/decisions.md`;
+export const HISTORY = `${DOCS_TREE}/history`;
+export const ADR_STORE = `${DOCS_TREE}/adr`;
+export const SPEC_STORE = `${DOCS_TREE}/specs`;
+export const EPIC_STORE = `${DOCS_TREE}/epics`;
+export const RULES = `${DOCS_TREE}/rules`;
+export const WORKFLOW_STAMP = `${DOCS_TREE}/.workflow-version`;
+export const MEMORY_STAMP = `${DOCS_TREE}/.memory-version`;
+export const GATES = `${DOCS_TREE}/gates.json`;
+export const LANES = `${DOCS_TREE}/lanes.json`;
+export const ORCHESTRATION = `${DOCS_TREE}/orchestration.json`;
+export const AUTONOMY = `${DOCS_TREE}/autonomy.json`;
+export const VEHICLES = `${DOCS_TREE}/vehicles.json`;
+export const WORKTREES = `${DOCS_TREE}/worktrees.json`;
+export const SOURCE_SIZE = `${DOCS_TREE}/source-size.json`;
+export const SPEC_COVERAGE = `${DOCS_TREE}/spec-coverage.json`;
+export const COVERAGE_DECLARED = `${DOCS_TREE}/coverage-declared.json`;
+export const PROFILE_DECLINES = `${DOCS_TREE}/profile-declines.json`;
+export const ACKS = `${DOCS_TREE}/acks.json`;
+
+export const RECENT = `${HISTORY}/recent.md`;
+export const CONDENSED_INDEX = `${HISTORY}/condensed-index.md`;
+export const ISSUES_RESOLVED = `${HISTORY}/issues-resolved.md`;
+export const CHANGELOG_CARRY = `${HISTORY}/changelog.carry`;
+export const DECISIONS_ARCHIVE = `${HISTORY}/decisions-archive.md`;
+export const DECISIONS_ARCHIVE_EARLY = `${HISTORY}/decisions-archive-early.md`;
+export const ADR_LOG = `${ADR_STORE}/log.md`;
+export const SPEC_STORE_INDEX = `${SPEC_STORE}/index.md`;
+export const EPIC_STORE_SEED = `${EPIC_STORE}/.gitkeep`;
+export const RULES_LOCAL = `${RULES}/local`;
+export const RULES_EFFECTIVE = `${RULES}/effective`;
+export const RULES_RECORD = `${RULES_EFFECTIVE}/sources.json`;

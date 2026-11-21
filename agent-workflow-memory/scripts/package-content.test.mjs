@@ -222,6 +222,9 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     //      ships its generated copy) — story S8 of KIT-SCRIPTS.
     // 58 = 57 + references/scripts/shared/verdict-block.mjs (the composer of a checker's red block, deployed) — story S3 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE.
     // 60 = 58 + references/scripts/archives/whole-write.mjs (the whole-file write, deployed) and references/scripts/archives/rotation-conservation.mjs (the changelog carry and the issues skip, deployed) — story S1 of ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE.
-    assert.equal(packed.length, 60, `tarball file count drifted (${packed.length} ≠ 60)`);
+    // 61 = 60 + references/scripts/shared/locations.mjs (the definition of the project locations, deployed) — story S1 of EVERY-LOCATION-IS-NAMED-ONCE.
+    assert.equal(packed.length, 61, `tarball file count drifted (${packed.length} ≠ 61)`);
+    assert.ok(packed.includes('references/scripts/shared/locations.mjs'));
+    assert.ok(!packed.includes('references/scripts/shared/locations.test.mjs'));
   });
 });

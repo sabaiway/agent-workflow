@@ -35,6 +35,7 @@ import { dirname, join, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { DOCS, DOCS_TREE, GATES } from '../shared/index.mjs';
 import { planKitCommandGates, repointsOf } from './kit-command-gates.mjs';
 
 export const MIGRATE_GATES_STOP = 'MIGRATE_GATES_STOP';
@@ -42,7 +43,7 @@ const stop = (message) =>
   Object.assign(new Error(`[agent-workflow] ${message}`), { name: 'MigrateGatesStop', code: MIGRATE_GATES_STOP, exitCode: 1 });
 const usageFail = (message) => Object.assign(new Error(`[agent-workflow] ${message}`), { exitCode: 2 });
 
-export const GATES_REL = join('docs', 'ai', 'gates.json');
+export const GATES_REL = join(...GATES.split('/'));
 
 // The documented canonical forms — ONE plain invocation, quoted or bare path, `--check` at END
 // (the run-gates strict-matcher shape; a masked/compound form is a CUSTOMIZED entry).
@@ -642,8 +643,8 @@ export const formatPreview = (analysis, applyHint) => {
 // "no declaration" (a preview no-op); any OTHER lstat failure (EACCES, EIO) fails CLOSED —
 // an unverifiable parent is never treated as safe. lstatFn is the injectable test seam.
 const checkRealParents = (cwd, lstatFn) => {
-  for (const rel of ['docs', join('docs', 'ai')]) {
-    const p = join(cwd, rel);
+  for (const rel of [DOCS, DOCS_TREE]) {
+    const p = join(cwd, ...rel.split('/'));
     let st;
     try {
       st = lstatFn(p);

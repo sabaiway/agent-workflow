@@ -7,6 +7,7 @@ import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY, PACKAGE_JSON, PRE_COMMIT, SCRIPTS } from '../references/scripts/shared/index.mjs';
 import { askGit, FLAT_NAMES, retireFlat } from './flat-scripts.mjs';
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
@@ -23,8 +24,8 @@ const isManaged = (hook) => hook.split('\n').some((line) => line.replace(/\r$/, 
 const USAGE = 'Usage: kit-folder.mjs --project <target> [--dry-run] [--enforcement]\n';
 const DEPLOYED = readFamily(join(SKILL_ROOT, 'references/scripts')).filter((entry) => entry.role === 'deployed');
 export const NODE_EVIDENCE_PROBES = Object.freeze([
-  'package.json',
-  ...FLAT_NAMES.filter((name) => !name.endsWith('.test.mjs') && name !== '_expect-shim.mjs').map((name) => `scripts/${name}`),
+  PACKAGE_JSON,
+  ...FLAT_NAMES.filter((name) => !name.endsWith('.test.mjs') && name !== '_expect-shim.mjs').map((name) => `${SCRIPTS}/${name}`),
   ...DEPLOYED.map((entry) => entry.path).sort().map((path) => `${KIT}/${path}`),
 ]);
 const isAnswered = (result, status) => !result.error && !result.signal && result.status === status;
@@ -66,10 +67,8 @@ const probeEvidence = (cwd, deps) => {
   }
   return `no Node evidence; skipped: ${NODE_EVIDENCE_PROBES.join(', ')}${wrong.length ? `; not evidence: ${wrong.join('; ')}` : ''}`;
 };
-const pendingLines = (cwd, deps) => ['decisions-archive.md', 'decisions-archive-early.md'].flatMap((name) => {
-  const path = `docs/ai/history/${name}`;
-  return readStat(join(cwd, path), deps) ? [`${path}: pending ADR move; no Node evidence, so the store was left as it stands`] : [];
-});
+const pendingLines = (cwd, deps) => [DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY].flatMap((path) => (
+  readStat(join(cwd, path), deps) ? [`${path}: pending ADR move; no Node evidence, so the store was left as it stands`] : []));
 const readImports = (path, body, paths) => [...String(body).matchAll(IMPORT)]
   .map(([, imported]) => posix.join(posix.dirname(path), imported)).filter((dependency) => paths.has(dependency));
 const orderFiles = (files) => {
@@ -96,7 +95,7 @@ const survey = (cwd, skillRoot, enforcement, deps) => {
   });
   const isSpec = (file) => ['spec-schema', 'docs-size', 'test-reporter'].includes(file.module) || file.path === 'run.mjs';
   const family = files.filter((file) => !isSpec(file));
-  const flatInstaller = readStat(join(cwd, 'scripts', posix.basename(INSTALLER)), deps);
+  const flatInstaller = readStat(join(cwd, SCRIPTS, posix.basename(INSTALLER)), deps);
   const accepted = enforcement || family.some((file) => file.present && !file.seed) || flatInstaller?.isFile() === true;
   const spec = new Set(files.filter(isSpec).map((file) => file.path));
   const byPath = new Map(files.map((file) => [file.path, file]));
@@ -176,7 +175,7 @@ const hookLines = (cwd, dryRun, placed, deps) => {
   if (!isAnswered(hooks, 0) || !String(hooks.stdout ?? '').trim()) {
     return [`the hooks dir could not be confirmed (${describeOutcome(hooks)})`];
   }
-  const path = resolve(cwd, String(hooks.stdout).trim(), 'pre-commit');
+  const path = resolve(cwd, String(hooks.stdout).trim(), posix.basename(PRE_COMMIT));
   const body = (() => {
     try {
       const stat = readStat(path, deps);
@@ -192,7 +191,7 @@ const hookLines = (cwd, dryRun, placed, deps) => {
 };
 const commitLines = (cwd, removed, changed, deps) => {
   if (!changed || !isAnswered(askGit(cwd, ['check-ignore', '-q', KIT], deps), 1)) return [];
-  return [`commit ${KIT}/${removed.length ? `, the removed files ${removed.map((name) => `scripts/${name}`).join(', ')}` : ''} and, as this upgrade changed it, package.json as one change; merge it into every branch still committed or installed on`];
+  return [`commit ${KIT}/${removed.length ? `, the removed files ${removed.map((name) => `${SCRIPTS}/${name}`).join(', ')}` : ''} and, as this upgrade changed it, package.json as one change; merge it into every branch still committed or installed on`];
 };
 
 export const runKitFolder = ({ cwd, skillRoot = SKILL_ROOT, dryRun = false, enforcement = false, deps = {} }) => {

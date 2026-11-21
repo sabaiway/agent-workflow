@@ -3,6 +3,31 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **ADR-ROTATOR-SCHEME-IS-READ-FROM-ITS-COMMENTS** — invariant: the ADR layout detector tells a current
+  decisions rotator from an earlier one by a fact the rotator's code carries and a suite pins, never by comment
+  text. Origin: `agent-workflow-kit/tools/family-registry.mjs:405` reads the deployed rotator's text for
+  `ADR_LAYOUT_PATHS.storeMarker` (`'docs/ai/adr'`, `:361`); since story S1 of EVERY-LOCATION-IS-NAMED-ONCE the
+  rotator's code takes the store's location from the definition, so the literal stands only in its comments
+  (`agent-workflow-memory/references/scripts/archives/archive-decisions.mjs:9`, `:14`, `:30`, `:40`, `:735`, and the
+  kit mirror), and no test checks how the detector classifies the shipped rotator body. Narrow fix: story 3 of that
+  epic, which moves the kit's readers onto the definition, gives the detector a marker the rotator's code carries,
+  with the earlier bodies still read as old. Proof: a cell reads `new` for the current rotator and `old` for an
+  earlier body. Residual exposure, not live: the five comments are unchanged, so the current rotator still reads
+  `new`; an edit that removes the marker from all five would flip it, held by that edit's diff review until story 3.
+  Raised by the plan of EVERY-LOCATION-IS-NAMED-ONCE S1 (2026-11-21).
+
+- **CANON-CLEANUP-GREP-CAN-NEVER-BE-EMPTY** — invariant: a plan's Cleanup check proves the plan and its scratch files
+  left the tree and passes while the kept session records name them. Origin:
+  `agent-workflow-engine/references/planning.md:183` asks `grep -rn "<slug>" . --exclude-dir=.git` to be empty,
+  yet the changelog and the handover under `docs/ai`, records the canon keeps, name a plan's scratch files (the
+  changelog entry of 2026-11-20 on EVERY-LOCATION-IS-NAMED-ONCE S1's spec session names its revision home), so the
+  grep never empties; plans state their own check instead (story S1 of that epic: `find docs/plans`, then `git grep`
+  over the tracked and the staged tree). Narrow fix: the canon's sentence names that check, the session records
+  keeping their references, pinned by the engine's planning text suite. Proof: the suite's cell reads the new
+  sentence. Residual exposure, not live: a plan that states its own check passes it; a plan copying the canon's
+  grep stops at its Cleanup, after its commit, with nothing shipped false. Raised by the plan of
+  EVERY-LOCATION-IS-NAMED-ONCE S1 (2026-11-21).
+
 - **PLAN-AUTHORING-HAS-NO-CHECK-FOR-CODE-IN-ANOTHER-WORK-TREE** — invariant: before a plan's approval no registered
   work tree other than the main tree and the tree the check runs in holds a change to a path the plan claims.
   Origin: `agent-workflow-kit/tools/plan-shape-cli.mjs:33-41` (`runExplicit`) judges its own tree only, and spec
