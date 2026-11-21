@@ -68,13 +68,22 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
 
 - **SPECS-SCALE-PROBE-RUNS-WITH-NO-PLAN-IN-FLIGHT** — invariant: the D-scale budget is measured as the gate runs,
   plans in flight included. Origin: `scripts/testing/specs-scale-probe.mjs:115-127` times `spec-check --all` over a
-  generated tree with no `docs/plans`, while spec-check revision 3 makes every lane read the plans in flight and,
-  with a plan in flight, judge it as `plan-shape-cli --check --in-flight` does, reading the facts its structural
-  rules request on demand (`agent-workflow-kit/tools/plan-shape-facts.mjs:310-319`, `judgePlan`). Narrow fix: the
-  probe adds a trial with one plan in flight in its tree and judges that median against the same budget. Proof: the
-  probe's line names the trial with a plan in flight and exits 0 within 1500 ms. Residual exposure, not live: a
+  generated tree with no `docs/plans` and no draft, while from spec-check revision 4 a run that reads the plans in
+  flight (the plan lane, or pending ground at a draft's admissible absent Module) judges each as
+  `plan-shape-cli --check --in-flight` does, reading the facts its structural rules request on demand
+  (`agent-workflow-kit/tools/plan-shape-facts.mjs:311`, `judgePlan`). Narrow fix: the probe adds a trial whose tree
+  holds one plan in flight and a draft with a pending Module that plan creates, and judges that median against the
+  same budget. Proof: the probe's line names that trial and exits 0 within 1500 ms. Residual exposure, not live: a
   plan's structural reads are bounded by its own rows, and `agent-workflow-engine/references/specs.md` (Scale)
   states that cost. Raised by the story's spec review (2026-11-20).
+
+- **SPEC-CHECK-STORE-FIXTURE-ROOT-SPELLED-TWICE** — invariant: the store-ok fixture root is defined once, in the
+  spec-check harness. Origin: `agent-workflow-kit/tools/spec-check-plans.test.mjs:40` (`STORE_FIXTURE`) repeats
+  `join(FIXTURES, 'store-ok')` of `agent-workflow-kit/tools/spec-check-cli.test.mjs:25` (also `:28`, `:219`,
+  `:229`). Narrow fix: `spec-check-harness.test.mjs` exports the root
+  and both suites import it. Proof: one definition, both suites green. Residual exposure, not live: both copies name
+  the same tracked fixture, so a move of it turns both suites red at once. Raised by the story S2 diff review of
+  EVERY-LOCATION-IS-NAMED-ONCE (2026-11-21).
 
 - **NOW-PLAN-FACTS-READS-EVERY-FACT** — invariant: `now` reads only the plan facts its view shows. Origin:
   `agent-workflow-kit/tools/now-plan-facts.mjs:114` calls `buildFacts(cwd, { paths: ledgerPaths })`, which

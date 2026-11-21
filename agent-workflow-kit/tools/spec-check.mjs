@@ -14,9 +14,7 @@ const STORE_DIR = STORE.slice(0, -1);
 // as a regular file, so a state that has changed underneath since is a fact to state, never a
 // document to drop quietly from a store the run would otherwise call clean.
 const DECLARED_STATE = Object.freeze({ add: 'file', modify: 'file', 'rename-to': 'file', remove: 'absent', 'rename-from': 'absent', present: 'file' });
-const missing = () => {
-  throw new Error('spec-check: an IO dependency was not injected — this module owns no filesystem of its own');
-};
+const missing = () => { throw new Error('spec-check: an IO dependency was not injected — this module owns no filesystem of its own'); };
 
 const dirOf = (rel) => rel.slice(0, Math.max(rel.lastIndexOf('/'), 0));
 const leafOf = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
@@ -169,10 +167,10 @@ const judgeDocument = (doc, ctx, groundOnly = false) => {
       add('contained', path, `the module path ${claimed} resolves outside the root (${real})`);
       continue;
     }
-    const state = real !== null || ctx.plans?.length ? io.probe(at(target)) : null;
-    if (real === null || (state === 'absent' && ctx.plans?.length)) {
+    const state = io.probe(at(target));
+    if (real === null || state === 'absent') {
       const canonical = state === 'absent' && parsePendingModulePath(claimed) && canonicalGround(target, ctx, false, state);
-      const { plan, refusedPlans } = selectPendingModulePlans(ctx.plans, { path, status: verdict.status, home: ctx.home });
+      const { plan, refusedPlans } = selectPendingModulePlans(canonical ? ctx.plans : [], { path, status: verdict.status, home: ctx.home });
       const covers = ({ creates }) => canonical && hasPendingModuleCover(canonical, wantDir ? 'dir' : 'file', creates
         .filter((path) => classifyPath(path) === 'file' && parsePendingModulePath(path)).map((path) => canonicalGround(path, ctx)).filter(Boolean));
       if (plan && covers(plan)) doc.ground.push(canonical);
@@ -366,7 +364,7 @@ const judgeOverlap = (docs, add, targets) => {
   }
 };
 
-// checkSpecs({ root, ops, all }, deps) -> { verdict, exit, findings, documents, lines }.
+// checkSpecs({ root, ops, all, plans, home }, deps) -> { verdict, exit, findings, documents, lines }.
 // Exit 0 ACCEPT · 1 one or more findings · 2 a refusal about the RUN itself (an unresolvable root,
 // an absent store root under --all) — the CLI prints the lines and returns the code.
 export const checkSpecs = ({ root, ops = [], all = false, plans, home } = {}, deps = {}) => {
@@ -376,7 +374,9 @@ export const checkSpecs = ({ root, ops = [], all = false, plans, home } = {}, de
   if (rootReal === null) return refusal(`--root "${root}" does not resolve to a directory — nothing can be judged against it`);
   const findings = [];
   const add = (rule, path, message, extra = {}) => findings.push({ rule, path, message, ...extra });
-  const ctx = { io, at, rootReal, add, plans, home: all ? undefined : home };
+  const planCache = {};
+  const filterPlans = (predicate) => (planCache.plans ??= plans()).filter(predicate);
+  const ctx = { io, at, rootReal, add, plans: typeof plans === 'function' ? { filter: filterPlans } : plans, home: all ? undefined : home };
   if (all && io.probe(at(STORE_ROOT)) !== 'file') {
     return refusal(`the store root ${STORE_ROOT} is not a regular file — an --all run over no store would report an empty clean store, so it refuses instead`);
   }

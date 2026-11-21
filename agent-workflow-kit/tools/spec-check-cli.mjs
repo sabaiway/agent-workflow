@@ -247,8 +247,9 @@ const checkArgs = (opts, workingDir, read, usage) => {
   }
   const root = resolve(workingDir, opts.root ?? '.');
   if (probe(root) !== 'dir') return usage(`--root "${opts.root ?? workingDir}" is not a directory`);
-  const { plans } = readPlansInFlight(root);
-  const plan = planLane ? plans.find(({ identity }) => identity === opts.plan) : undefined;
+  const readPlans = () => readPlansInFlight(root).plans;
+  const plans = planLane ? readPlans() : undefined;
+  const plan = plans?.find(({ identity }) => identity === opts.plan);
   if (planLane && !plan) return usage(`${opts.plan} is not an in-flight plan`);
   if (plan && !plan.accepted) return usage(plan.result.findings
     .map(({ line, code, message }) => `${plan.identity}:${line}: ${code} — ${message}`).join('\nspec-check: '));
@@ -270,7 +271,7 @@ const checkArgs = (opts, workingDir, read, usage) => {
     ops = parsed.ops;
   }
   if (plan) return checkPlan(root, plan.identity, ops, plans);
-  return showVerdict(checkSpecs({ root, ops, all: Boolean(opts.all), plans }, storeIO));
+  return showVerdict(checkSpecs({ root, ops, all: Boolean(opts.all), plans: readPlans }, storeIO));
 };
 
 const checkPlan = (root, plan, ops, plans) => {

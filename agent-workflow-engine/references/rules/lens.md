@@ -1,6 +1,6 @@
 ---
 type: rules
-lastUpdated: 2026-10-28
+lastUpdated: 2026-11-21
 scope: permanent
 staleAfter: never
 owner: engine
@@ -21,6 +21,7 @@ The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it an
 - **State table BEFORE the guard — enumerate by PROOF, never by exclusion.** The subtraction rule above fires on a repeat finding, which is a LATE signal: by then the review has paid for each miss. The EARLY signal is structural — a decision whose input has **several independent state dimensions** (is it tracked? do the bytes still match the source? does the neighbouring file exist?). Write the table first, admit the write with **ONE conjunction of proven facts**, and funnel every other cell into a single refusal; the table is then the table-driven test. An exclusion list (`if (bad1) return; if (bad2) return;`) fails **OPEN** on the first state nobody enumerated — and "unreadable" is a state, distinct from "absent". A reviewer cannot save you here: it judges the patch in front of it and can only name the NEXT missing state, one round at a time.
 - **Fold minimally — prose has no checker.** A spec under the spec review, like the ephemeral plan beside it, is prose with no executable checker; fold **minimally, in ONE place** and run a **self-consistency** read across the spec before every re-review — a fold that drifts several prose spots is what turns a 2-round review into churn.
 - **Heavy review at the diff.** The spec review settles the contract and reads the plan's ledger in the same rounds (≤2 rounds, stop at the pre-existing→fold-induced crossover); the plan has no rounds of its own and is checked by its shape gate, that reading and the approval; the exhaustive review runs against the staged diff of real compiling code + the full suite, where a regression fails a gate immediately. **Backend divergence** (one backend grounded-ships while another keeps revising mechanics) IS that crossover — resolve at altitude, don't exhaust the strictest backend; route an all-mechanics/CI or prose-only artifact to a **thin plan + diff-review**.
+- **One definition per setting and location.** A setting or a location lives once, in its one definition or config, and every reader takes it from there; a check reads a location only where a rule needs it. Every review applies this to the contracts, the plan's ledger and the staged diff alike: a hard-coded or duplicated setting or location is a finding.
 - **Convergence bar.** A review loop is CLEAN only when one round returns **0 blockers + 0 majors** from EVERY backend the recipe names (nits + a ship verdict is the stop). Folding ≠ convergence — re-review after folding.
 - **Per-round emission.** Every review round emits **{round N · finding-origin tally · per-backend verdict}** so the crossover is a computed, visible signal, not a remembered rule.
 - **Recipe fidelity.** Council runs every backend the recipe names, **every round**; silently dropping a ready backend for quota/convenience is a forbidden downgrade — an unavailable backend is a LOUD, stated degrade, never a quiet drop.

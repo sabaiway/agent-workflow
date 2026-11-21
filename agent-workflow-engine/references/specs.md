@@ -232,7 +232,9 @@ is fixed inside the walk (cheaper per-file work, early exits), never queued. The
 takes explicit spec paths: `--op` and `--ops-file` the paths they name, `--all` the whole store, and
 `--plan` its plan's contract rows with a complete census of the store for overlap; a git-derived
 "changed" lane is refused, because hidden mode ignores `docs/ai/**` and git would see no spec at all.
-Every lane also reads the plans in flight under `docs/plans` and judges each as
+Only two demands read the plans in flight under `docs/plans`, at most once per run: the `--plan`
+lane before it judges, and pending ground at the first Module path it could admit; a run with
+neither never lists `docs/plans` to find the plans in flight. A run that reads them judges each as
 `node <kit>/tools/plan-shape-cli.mjs --check --in-flight` does, reading only the facts its structural
 rules request; with no plan in flight, that read lists `docs/plans` when it exists, reads its
 candidate Markdown files and loads no plan fact.

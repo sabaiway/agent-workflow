@@ -83,10 +83,16 @@ const DISCIPLINE_TOKENS = [
   // the adoption state (AD-123) — a zero governing-spec citation names the state it relies on
   'adoption state',
   'never a licence',
+  'one definition or config',
+  'hard-coded or duplicated',
 ];
 
 const REVIEW_LEADS = ['- **Finding scope', '- **Spec-first.**', '- **Fold minimally', '- **Heavy review'];
 const PLAN_REVIEW_RE = /plan[- ]review|reviews? (a|the) plan/i;
+const ONE_DEFINITION_LINE = "- **One definition per setting and location.** A setting or a location lives once, in its one definition or config, and every reader takes it from there; a check reads a location only where a rule needs it. Every review applies this to the contracts, the plan's ledger and the staged diff alike: a hard-coded or duplicated setting or location is a finding.";
+const HEAVY_REVIEW_LEAD = '- **Heavy review at the diff.**';
+const CONVERGENCE_LEAD = '- **Convergence bar.**';
+const SINGLE_OCCURRENCE = 1;
 
 describe('the lens rules theme references/rules/lens.md — canon presence', () => {
   it('carries frontmatter with maxLines, the title, then PRECEDENCE_LINE as the first non-blank line after the title', () => {
@@ -109,6 +115,15 @@ describe('the lens rules theme references/rules/lens.md — canon presence', () 
     for (const token of DISCIPLINE_TOKENS) {
       assert.ok(lower.includes(token), `missing discipline token "${token}" in the lens theme`);
     }
+  });
+
+  it('spec:project-rules/S40 carries the one-definition bullet once between Heavy review at the diff and Convergence bar', () => {
+    const { body } = partsOf(readTheme());
+    const occurrences = body.filter((line) => line === ONE_DEFINITION_LINE);
+    assert.equal(occurrences.length, SINGLE_OCCURRENCE, 'the exact one-definition bullet occurs once');
+    const index = body.indexOf(ONE_DEFINITION_LINE);
+    assert.ok(body[index - 1]?.startsWith(HEAVY_REVIEW_LEAD), 'the previous non-blank line is the Heavy review at the diff bullet');
+    assert.ok(body[index + 1]?.startsWith(CONVERGENCE_LEAD), 'the next non-blank line is the Convergence bar bullet');
   });
 
   it("spec:story-flow/S4 the four review bullets name the spec review, the heavy-review bullet has it read the plan's ledger in the same rounds, and no bullet gives the plan a review of its own", () => {
