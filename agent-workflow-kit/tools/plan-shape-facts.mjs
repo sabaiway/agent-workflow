@@ -19,6 +19,10 @@ const NEGATED_CLASS = /\[[!^]/;
 const UNSUPPORTED_GLOB = /[()\\\u0000-\u001f]/;
 const STORE_REFUSED = 'refused';
 const FINDING_SEPARATOR = '; ';
+const READ_OK = 'ok';
+const READ_ABSENT = 'absent';
+const MISSING_FILE_CODE = 'ENOENT';
+const PLAN_TITLE_LEVEL = 1;
 const { storePrefix } = SPEC_SCHEMA;
 
 const usageError = (message, scope = 'repository') => Object.assign(new Error(message), { exitCode: 2, scope });
@@ -292,18 +296,32 @@ const readRepositoryPath = (path, action, read, allowAbsent = false) => {
   }
 };
 
-const readFlightPlan = (repo, root, name) => {
-  const identity = `${PLANS_REL}/${name}`;
-  const { outcome, className, code, content: text } = readOnce(repo, readRegularFileNoFollow, join(root, identity));
-  const cause = className ?? code ?? (outcome === 'absent' ? 'ENOENT' : outcome);
-  if (outcome !== 'ok') throw usageError(`${identity} must be a readable regular plan file (${cause})`);
+const formatPlanReadError = (path, { outcome, className, code }, absentCause = outcome) =>
+  `${path} must be a readable regular plan file (${className ?? code ?? (outcome === READ_ABSENT ? absentCause : outcome)})`;
+
+const parsePlanDocument = (identity, text, requiresPlanTitle = false) => {
   try {
     const { document: { headings: [first] }, rows } = parseLedger(text);
-    if (first?.level !== 1 || !first.text.startsWith(PLAN_TITLE_PREFIX)) return null;
+    if (requiresPlanTitle && (first?.level !== PLAN_TITLE_LEVEL || !first.text.startsWith(PLAN_TITLE_PREFIX))) return null;
     return { identity, text, rows: rows.filter((row) => row.valid) };
   } catch {
     return { identity, text, rows: [] };
   }
+};
+
+export const readPlanDocument = (cwd, operand) => {
+  const path = resolve(cwd, operand);
+  const result = readRegularFileNoFollow(path);
+  if (result.outcome !== READ_OK) throw new Error(formatPlanReadError(path, result));
+  const identity = toPosix(relative(cwd, path));
+  return parsePlanDocument(identity, result.content);
+};
+
+const readFlightPlan = (repo, root, name) => {
+  const identity = `${PLANS_REL}/${name}`;
+  const result = readOnce(repo, readRegularFileNoFollow, join(root, identity));
+  if (result.outcome !== READ_OK) throw usageError(formatPlanReadError(identity, result, MISSING_FILE_CODE));
+  return parsePlanDocument(identity, result.content, true);
 };
 
 // A facts failure scoped to the plan's own paths is that plan's listed finding, so the other plans

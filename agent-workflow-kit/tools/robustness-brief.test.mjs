@@ -226,7 +226,8 @@ describe('robustness brief — rendering and exit contract', () => {
     write(root, 'docs/readme.md', 'anchor\n');
     write(root, 'plans/uncovered.md', planOf(row('R1', controlPath, 'ordinary row')));
     write(root, 'plans/tagged.md', planOf(row('R1', controlPath, 'robust:durable-write')));
-    write(root, 'plans/unknown.md', planOf(row('Rbad', 'src/bad.mjs', 'robust:no-such-class')));
+    const unknownRow = row('Rbad', 'src/bad.mjs', 'robust:no-such-class');
+    write(root, 'plans/unknown.md', planOf(unknownRow));
     const readRowFile = () => ({ outcome: 'ok', bytes: Buffer.from('EEXIST') });
     const uncovered = run(root, ['--plan', 'plans/uncovered.md', '--coverage'], { readRowFile });
     assert.equal(uncovered.code, 1);
@@ -245,6 +246,23 @@ describe('robustness brief — rendering and exit contract', () => {
     assert.equal(unknown.code, 2);
     assert.match(unknown.lines.join('\n'), /Rbad.*unknown class no-such-class/u);
 
+    write(root, 'plans/unknown-document.md', planOf(
+      row('Rdoc', 'docs/guide.md', 'robust:no-such-class'),
+      row('Rclean', 'src/clean.mjs', 'robust:durable-write'),
+    ));
+    const unknownDocument = run(root, ['--plan', 'plans/unknown-document.md', '--coverage'], { readRowFile });
+    assert.equal(unknownDocument.code, 0, unknownDocument.lines.join('\n'));
+    assert.doesNotMatch(unknownDocument.lines.join('\n'), /\brobust-class\b/u);
+    for (const [plan, rowId] of [['plans/unknown.md', 'Rbad'], ['plans/unknown-document.md', 'Rdoc']]) {
+      const plain = run(root, ['--plan', plan]);
+      assert.equal(plain.code, 1, `${plan}: ${plain.lines.join('\n')}`);
+      assert.match(plain.lines.join('\n'), new RegExp(`\\b${rowId}\\b`, 'u'));
+    }
+    write(root, 'plans/unknown-and-move.md', planOf(unknownRow, row('Rmove', 'src/move.mjs', 'move it', 'move')));
+    const malformed = run(root, ['--plan', 'plans/unknown-and-move.md', '--coverage'], { readRowFile });
+    assert.equal(malformed.code, 1, malformed.lines.join('\n'));
+    assert.match(malformed.lines.join('\n'), /\bRmove: row-grammar\b/u);
+
     write(root, 'src/real.mjs', 'EEXIST\n');
     write(root, 'src/sweep-over.mjs', 'x'.repeat(1024 * 1024 + 1));
     write(root, 'plans/sweep.md', planOf(row('Rsweep', 'src/sweep-*.mjs', 'ordinary row (2 files)')));
@@ -256,7 +274,9 @@ describe('robustness brief — rendering and exit contract', () => {
     assert.equal(madeFifo.status, 0, madeFifo.stderr);
     assert.equal(expandSweepPaths(root, ['src/*'])['src/*'].includes('src/never-open'), false);
     write(root, 'plans/real.md', planOf(row('Rreal', 'src/real.mjs', 'ordinary row')));
-    const runCli = () => spawnSync(process.execPath, [tool, '--plan', 'plans/real.md', '--coverage'], { cwd: root, encoding: 'utf8' });
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    const runCli = () => spawnSync(process.execPath, [tool, '--plan', 'plans/real.md', '--coverage'], { cwd: root, encoding: 'utf8', env });
     const cliUncovered = runCli();
     assert.equal(cliUncovered.status, 1);
     assert.match(cliUncovered.stdout, /^Rreal:durable-write:EEXIST$/mu);

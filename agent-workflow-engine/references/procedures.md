@@ -99,9 +99,9 @@ staged diff, so no row commits before the diff review.
    the executor vehicle in the background, and verify
    every returned slice by running its suites yourself before step 3. Otherwise implement directly.
    Before a row's dispatch, and before `flow-writer adoption` on an armed flow, run
-   `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, re-run
-   `plan-shape --check`, and only then generate the brief. The dispatch brief — Delegated or
-   Subagent — carries the generated robustness-literals block for every tagged row.
+   `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, run
+   `node <kit>/tools/plan-structure/cli.mjs <plan>`, and only then generate the brief. The dispatch
+   brief — Delegated or Subagent — carries the generated robustness-literals block for every tagged row.
    When a row is carried as tasks, the `task` activity carries each prompt and each run (its section
    below): the orchestrator writes the prompt, whatever `task.author` resolves to, the `task.execute`
    carrier runs it, and the read after the hand-out and the row's tests accept it; the row's fold and
@@ -125,7 +125,10 @@ staged diff, so no row commits before the diff review.
    one not accepted or not ship-class goes to the maintainer. The brief lists every test path shown by
    `git diff --cached --name-only <recorded tree>` (the tree the tests session recorded), and every test
    a fold added or changed, each with its text before and after, its scenario line and its red run; a
-   re-check's brief lists the red run of each test its move adds or changes.
+   re-check's brief lists the red run of each test its move adds or changes. Before each diff-review
+   or re-check brief is sent, `node <kit>/tools/plan-structure/cli.mjs <plan>` exits 0 and the brief
+   lists every amendment entry it prints; when that list changes after a brief was sent, the brief is
+   refreshed and the members read the change before their verdicts are relied on.
    **The re-check** — when the staged tree moves after a member's last ship-class verdict (a fold of
    the last round, a tracked record edited, a version bumped), every member, the lens included, reads
    only the move with the decided register, one fresh grounded code-mode run per bridge; a re-check

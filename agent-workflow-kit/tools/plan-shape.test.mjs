@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { codes, planWith } from './plan-shape-harness.test.mjs';
+import { codes, DEFAULT_ROW, ledgerOf, planWith } from './plan-shape-harness.test.mjs';
 import { expandClaim } from './claim-relation.mjs';
 
 const PIN_PATH = 'test/package-content.test.mjs';
@@ -284,17 +284,98 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.ok(codes(noBudget).includes('source-budget'));
   });
 
-  it('S4/S29 validates the one robust tag grammar and listed classes, leaving an untagged row unjudged (spec:robustness-literals/S4, spec:plan-review-loop/S29)', async () => {
-    const { checkPlan } = await loadRules();
-    const judge = (responsibility) => checkPlan(planWith({
-      ledger: `R1 | modify | docs/readme.md | ${responsibility} | n/a | docs/readme.md:1\ntotal: 0 → 0 lines`,
-    }), factsFor({ robustClasses: ['a'] }));
-    for (const responsibility of [
-      'prove robust:no-such-class', 'prove robust:', 'prove robust:a,', 'prove robust:a,a',
-      'prove robust:Not-A-Slug', 'prove robust:a and robust:b',
-    ]) assert.ok(codes(judge(responsibility)).includes('robust-class'), responsibility);
-    assert.equal(codes(judge('prove robust:a')).includes('robust-class'), false);
-    assert.equal(codes(judge('ordinary untagged row')).includes('robust-class'), false);
-    assert.ok(codes(judge(`${'x'.repeat(190)} robust:a`)).includes('row-bytes'), 'the tag counts toward 200 bytes');
+  it('spec:plan-structure/S6 judges amendment budgets, pins, sweeps, caps, entry grammar and story ownership', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
+    const row = (id, verb, path, budget, responsibility = 'update') => `${id} | ${verb} | ${path} | ${responsibility} | ${budget} | src/a.mjs:1`;
+    const buildPlan = (approved, entries = [], total, goal) => planWith({
+      goal, ledger: ledgerOf([...approved, ...(entries.length ? ['amendments:', ...entries] : [])].join('\n'), total),
+    });
+    const files = ['src/a.mjs', 'src/b.mjs'];
+    const sweepPath = 'src/*.mjs';
+    const sweep = row('R1', 'modify', sweepPath, 100, 'update (2 files)');
+    const regularFile = { kind: 'regular', lines: 120 };
+    const pathFacts = Object.fromEntries(files.map((path) => [path, regularFile]));
+    const facts = factsFor({ pathFacts, repoFiles: files, expansions: { [sweepPath]: files } });
+    const amendment = row('A1', 'modify', files[0], 150);
+    const literalPlan = buildPlan([row('R1', 'modify', files[0], 100)], [amendment], 'total: 120 → 150 lines');
+    const verifySweep = verifyPlan(buildPlan([sweep], [amendment], 'total: 240 → 250 lines'), facts);
+    const pin = row('P1', 'modify', PIN_PATH, 100);
+    const shipped = files.map((path, index) => row(`C${index + 1}`, 'create', path, 100));
+    const pinFacts = factsFor({ pathFacts: Object.fromEntries(files.map((path) => [path, { shipped: true, pinTest: PIN_PATH }])) });
+    const pinAmendment = checkPlanStructure(buildPlan([shipped[0], pin], [row('A1', 'modify', PIN_PATH, 150)]), pinFacts);
+    const equalPin = checkPlanStructure(buildPlan([...shipped, pin], [row('A1', 'modify', PIN_PATH, 100)]), pinFacts);
+    const create = row('A1', 'create', 'src/c.mjs', 150);
+    const createFacts = factsFor({ pathFacts: { [files[0]]: regularFile, 'src/c.mjs': regularFile }, expansions: { [sweepPath]: [files[0], 'src/c.mjs'] } });
+    const createEntry = checkPlanStructure(buildPlan([sweep], [create]), createFacts);
+    const createRow = checkPlanStructure(buildPlan([sweep, create]), createFacts);
+    const wrongCount = checkPlan(buildPlan([sweep.replace('(2 files)', '(3 files)')], [], 'total: 240 → 240 lines'), facts);
+    const approved = Array.from({ length: 25 }, (_, index) => row(`R${index}`, 'modify', `docs/approved-${index}.md`, 'n/a'));
+    const entries = Array.from({ length: 80 }, (_, index) => row(`A${index}`, 'modify', `docs/entry-${index}.md`, 'n/a'));
+    const longEntry = checkPlanStructure(buildPlan([DEFAULT_ROW], [row('A1', 'modify', files[0], 150, 'x'.repeat(201))]), facts);
+    const shortEntry = checkPlanStructure(buildPlan([DEFAULT_ROW], ['A1 | modify | src/a.mjs | update | 150']), facts);
+    const stories = [['ALPHA', 'docs/owned.md'], ['BETA', 'docs/readme.md']].map(([epic, path]) => ({
+      path: `docs/ai/epics/${epic}.md`, id: 'S1', line: 20, state: 'planned',
+      claims: [{ field: 'owns', path, ground: expandClaim(path) }], reachable: new Set(),
+    }));
+    const storyPlan = buildPlan([DEFAULT_ROW], [row('A1', 'modify', 'docs/owned.md', 'n/a')], undefined,
+      '- Spec: docs/ai/specs/example.md\nStory: S1 of BETA');
+    const storyEntry = checkPlanStructure(storyPlan, factsFor({ stories, landedEpics: [], storeRefusal: null }));
+    const relevantCodes = (result, ...relevant) => codes(result).filter((code) => code === 'ledger-line' || relevant.includes(code));
+    assert.deepEqual({
+      literalStructure: relevantCodes(checkPlanStructure(literalPlan, facts), 'duplicate-path'),
+      literalBudget: relevantCodes(verifyPlan(literalPlan, facts), 'post-budget'),
+      sweepBudget: relevantCodes(verifySweep, 'duplicate-path', 'post-budget'),
+      pinAmendment: relevantCodes(pinAmendment, 'pin-unbound', 'duplicate-path'),
+      equalPin: relevantCodes(equalPin, 'pin-unbound', 'duplicate-path'),
+      createEntry: relevantCodes(createEntry, 'duplicate-path'),
+      createRow: relevantCodes(createRow, 'duplicate-path'),
+      wrongCount: relevantCodes(wrongCount, 'sweep-count'),
+      amendmentCheck: relevantCodes(checkPlan(literalPlan, facts), 'amendment-check'),
+      crlfAmendmentCheck: relevantCodes(checkPlan(literalPlan.replaceAll('\n', '\r\n'), facts), 'amendment-check'),
+      rowCap: relevantCodes(checkPlanStructure(buildPlan(approved, entries.slice(0, 1)), facts), 'row-cap'),
+      lineCaps: relevantCodes(checkPlanStructure(buildPlan(approved, entries), facts), 'section-cap', 'line-cap'),
+      longEntry: relevantCodes(longEntry, 'row-bytes'),
+      shortEntry: relevantCodes(shortEntry, 'row-grammar'),
+      storyEntry: relevantCodes(storyEntry, 'story-owns'),
+    }, {
+      literalStructure: [], literalBudget: [], sweepBudget: ['post-budget'], pinAmendment: [],
+      equalPin: ['duplicate-path'], createEntry: ['duplicate-path'], createRow: ['duplicate-path'],
+      wrongCount: ['sweep-count'], amendmentCheck: ['amendment-check'], crlfAmendmentCheck: ['amendment-check'], rowCap: [], lineCaps: [],
+      longEntry: ['row-bytes'], shortEntry: ['row-grammar'], storyEntry: ['story-owns'],
+    });
+    const budgetFinding = verifySweep.findings.find(({ code }) => code === 'post-budget');
+    assert.deepEqual(files.filter((path) => budgetFinding.message.includes(path)), ['src/b.mjs']);
+    for (const [result, code] of [[equalPin, 'duplicate-path'], [createEntry, 'duplicate-path'], [longEntry, 'row-bytes'],
+      [shortEntry, 'row-grammar'], [storyEntry, 'story-owns']]) {
+      assert.equal(result.findings.find((finding) => finding.code === code).rowId, 'A1', code);
+    }
+  });
+
+  it('S4/S29 judges robust tags in all three judges and reads the class list only for tagged plans (spec:robustness-literals/S4, spec:plan-review-loop/S29)', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
+    const buildPlan = (responsibility) => planWith({ ledger: ledgerOf(DEFAULT_ROW.replace('keep the document current', responsibility)) });
+    const facts = factsFor({ robustClasses: ['a'] });
+    const untagged = buildPlan('ordinary untagged row');
+    const unreadList = new Error('read robustClasses on an untagged plan');
+    const untaggedFacts = Object.defineProperty(factsFor(), 'robustClasses', { enumerable: true, get() { throw unreadList; } });
+    const tags = ['robust:no-such-class', 'robust:', 'robust:a,', 'robust:a,a', 'robust:Not-A-Slug', 'robust:a and robust:b'];
+    const atByteCap = 'x'.repeat(180);
+    const judges = { checkPlan, verifyPlan, checkPlanStructure };
+    const verdicts = Object.entries(judges).map(([name, judge]) => {
+      const verdict = {
+        name, missedRefusals: tags.filter((tag) => !codes(judge(buildPlan(`prove ${tag}`), facts)).includes('robust-class')),
+        listedClass: codes(judge(buildPlan('prove robust:a'), facts)), untaggedRow: codes(judge(untagged, facts)),
+        rowBytes: [atByteCap, `${atByteCap} robust:a`].map((text) => codes(judge(buildPlan(text), facts))),
+      };
+      try {
+        return { ...verdict, unreadList: codes(judge(untagged, untaggedFacts)) };
+      } catch (error) {
+        assert.equal(error, unreadList);
+        return { ...verdict, unreadList: error.message };
+      }
+    });
+    assert.deepEqual(verdicts, Object.keys(judges).map((name) => ({
+      name, missedRefusals: [], listedClass: [], rowBytes: [[], ['row-bytes']], untaggedRow: [], unreadList: [],
+    })));
   });
 });

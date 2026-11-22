@@ -2,7 +2,7 @@
 
 import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
-import { readShippedRobustnessLiterals, parseRobustTag } from './robustness-literals.mjs';
+import { classIds, readShippedRobustnessLiterals, parseRobustTag } from './robustness-literals.mjs';
 import { checkPlanStructure, formatFindings, isSweep } from './plan-shape.mjs';
 import { expandSweepPaths } from './plan-shape-facts.mjs';
 import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
@@ -13,6 +13,7 @@ const PLAN_READ_CAP = 1_048_576;
 const ROW_ID = /^[A-Za-z0-9._-]+$/u;
 const SEARCHABLE_KINDS = new Set(['env', 'flag', 'ref', 'syscall', 'errno', 'argv']);
 const SHIPPED_LIST_PATH = 'agent-workflow-kit/references/robustness-literals.json';
+export const ROBUST_CLASS_CODE = 'robust-class';
 const USAGE = 'Usage: node robustness-brief.mjs --plan <plan> [--row <id>] [--coverage]';
 const usage = (message) => Object.assign(new Error(message), { usage: true });
 const isInside = (root, path) => path === root || path.startsWith(`${root}${sep}`);
@@ -123,19 +124,19 @@ export const renderCoverage = (rows, displayPath) => [
       : `| ${row.id} | ${renderCell(row.path)} | ${row.tagged.join(',') || '—'} | ${row.present.join(',') || '—'} | ${row.uncovered.join(',') || '—'} |`),
 ];
 
+const renderStructuralRefusal = (shape, displayPath) => ({
+  code: 1,
+  lines: formatFindings(shape, escapeForDisplay(displayPath)).split('\n').map(escapeForDisplay),
+});
+
 export const renderBrief = (planText, list, { row, displayPath }) => {
-  const shape = checkPlanStructure(planText, {});
-  if (shape.findings.length > 0) return { code: 1, lines: formatFindings(shape, escapeForDisplay(displayPath)).split('\n').map(escapeForDisplay) };
+  const shape = checkPlanStructure(planText, { robustClasses: classIds(list) });
+  if (shape.findings.length > 0) return renderStructuralRefusal(shape, displayPath);
   const classes = new Map(list.classes.map((entry) => [entry.id, entry]));
   const rows = shape.parsed.rows.filter((entry) => entry.valid).map((entry) => ({
     ...entry,
     robust: parseRobustTag(entry.responsibility),
   }));
-  const refused = rows.find((entry) => entry.robust.refusal || entry.robust.classes.some((classId) => !classes.has(classId)));
-  if (refused) {
-    const reason = refused.robust.refusal ?? `unknown class ${refused.robust.classes.find((classId) => !classes.has(classId))}`;
-    return { code: 1, lines: [`robustness-brief: ${refused.id}: robust-class — ${reason}`] };
-  }
   const selected = row === null ? rows.filter((entry) => entry.robust.classes.length > 0) : rows.filter((entry) => entry.id === row);
   if (row !== null && selected.length === 0) return { code: 1, lines: [`robustness-brief: ${row}: row is absent`] };
   if (row !== null && selected[0].robust.classes.length === 0) return { code: 1, lines: [`robustness-brief: ${row}: row is untagged`] };
@@ -181,8 +182,10 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
       throw usage(`malformed-utf8 --plan ${parsed.plan}`);
     }
     const list = (deps.readList ?? readShippedRobustnessLiterals)();
-    const brief = renderBrief(planText, list, { row: parsed.row, displayPath: parsed.plan });
-    if (!parsed.coverage || checkPlanStructure(planText, {}).findings.length > 0) return brief;
+    if (!parsed.coverage) return renderBrief(planText, list, { row: parsed.row, displayPath: parsed.plan });
+    const shape = checkPlanStructure(planText, { robustClasses: classIds(list) });
+    const findings = shape.findings.filter(({ code }) => code !== ROBUST_CLASS_CODE);
+    if (findings.length > 0) return renderStructuralRefusal({ ...shape, findings }, parsed.plan);
     const sweepPaths = checkPlanStructure(planText, {}).parsed.rows
       .filter((entry) => entry.valid && isSweep(entry.path) && !isCoverageDocument(entry.path))
       .map((entry) => entry.path);
@@ -193,7 +196,7 @@ export const main = (argv = process.argv.slice(2), deps = {}) => {
     });
     if (coverage.refusal) {
       const { id, path, outcome, reason } = coverage.refusal;
-      throw usage(reason === undefined ? `${id}: ${escapeForDisplay(path)} — ${outcome}` : `${id}: robust-class — ${reason}`);
+      throw usage(reason === undefined ? `${id}: ${escapeForDisplay(path)} — ${outcome}` : `${id}: ${ROBUST_CLASS_CODE} — ${reason}`);
     }
     const lines = [...renderCoverage(coverage.rows, parsed.plan), ...coverage.evidence.map(({ id, classId, literal }) => `${id}:${classId}:${literal}`)];
     return { code: coverage.evidence.length > 0 ? 1 : 0, lines };

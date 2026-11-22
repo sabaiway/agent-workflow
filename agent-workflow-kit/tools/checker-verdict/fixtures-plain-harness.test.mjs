@@ -180,6 +180,12 @@ export const PLAIN_FIXTURES = Object.freeze([
     build: buildStructuralPlan,
   },
   {
+    path: 'agent-workflow-kit/tools/plan-structure/cli.mjs',
+    commandArguments: [PLAN_PATH],
+    redCase: STRUCTURAL_RED_CASE,
+    build: buildStructuralPlan,
+  },
+  {
     path: 'agent-workflow-kit/tools/spec-check-cli.mjs',
     commandArguments: ['--all'],
     redCase: SPEC_RED_CASE,

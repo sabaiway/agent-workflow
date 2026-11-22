@@ -403,7 +403,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'tools/checker-block/index.mjs', 'tools/checker-block/place.mjs',
       'tools/checker-block/tail.mjs', 'tools/coverage-check/index.mjs',
       'tools/coverage-check/block.mjs', 'tools/coverage-check/help.mjs',
-      'tools/release-scan/index.mjs', 'tools/doc-parity/index.mjs', 'tools/advisor-skip/index.mjs',
+      'tools/release-scan/index.mjs', 'tools/doc-parity/index.mjs', 'tools/advisor-skip/index.mjs', 'tools/plan-structure/index.mjs', 'tools/plan-structure/cli.mjs',
       'tools/commit-guard.mjs',
       // the source-size practice: the pure read core (the ONE import point for the read surfaces)
       // and the CLI + writer half, plus the four leaves the core re-exports and the checker's own
@@ -942,8 +942,8 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 394 = 393 + bridges/typesafe-jev-bridge/bin/jev-ask-harness.test.mjs - story S18 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE; 396 = 394 + bridges/codex-cli-bridge/bin/{codex-fixtures-harness.test.mjs,codex-fixtures.test.mjs} - story S19 of JEV-JUDGE-BRIDGE-AND-GATE-LOG-TRIAGE
     // 403 = 402 + tools/source-size/help.mjs (the command line help) - story S5 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE
     // 405 = 403 + tools/source-size/reason.mjs and tools/source-size-runs.mjs - story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE
-    // 411 = 405 + tools/checker-block/{index,place,tail}.mjs and tools/coverage-check/{index,block,help}.mjs - story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE; 413 = 411 + tools/release-scan/index.mjs and tools/doc-parity/index.mjs - story S16 of it; 414 = 413 + tools/advisor-skip/index.mjs (the skip record and its render) - story S1 of A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT; 415 = 414 + references/scripts/shared/locations.mjs (the definition of the project locations) - story S1 of EVERY-LOCATION-IS-NAMED-ONCE
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path)), packed.includes('references/scripts/shared/locations.mjs'), packed.includes('references/scripts/shared/locations.test.mjs')], [415, [], true, false], `tarball file count drifted (${packed.length}\u2260 415), or a retired leaf ships, or the locations payload differs`);
+    // 411 = 405 + tools/checker-block/{index,place,tail}.mjs and tools/coverage-check/{index,block,help}.mjs - story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE; 413 = 411 + tools/release-scan/index.mjs and tools/doc-parity/index.mjs - story S16 of it; 414 = 413 + tools/advisor-skip/index.mjs (the skip record and its render) - story S1 of A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT; 415 = 414 + references/scripts/shared/locations.mjs (the definition of the project locations) - story S1 of EVERY-LOCATION-IS-NAMED-ONCE; 417 = 415 + tools/plan-structure/{index,cli}.mjs (the one-plan structure command and its door) - story S2 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path)), packed.includes('references/scripts/shared/locations.mjs'), packed.includes('references/scripts/shared/locations.test.mjs')], [417, [], true, false], `tarball file count drifted (${packed.length}\u2260 417), or a retired leaf ships, or the locations payload differs`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

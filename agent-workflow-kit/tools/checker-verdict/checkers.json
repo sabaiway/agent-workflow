@@ -543,6 +543,32 @@
       ]
     },
     {
+      "path": "agent-workflow-kit/tools/plan-structure/cli.mjs",
+      "commandLines": [
+        {
+          "name": "plan-structure",
+          "arguments": [
+            "docs/plans/fixture.md"
+          ],
+          "redCases": [
+            {
+              "name": "plan-sections-absent",
+              "places": [
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1",
+                "docs/plans/fixture.md:1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "path": "agent-workflow-kit/tools/procedures.mjs",
       "word": "advisor"
     },
@@ -1291,6 +1317,18 @@
       ]
     },
     {
+      "path": "agent-workflow-kit/tools/plan-structure/cli.mjs",
+      "arguments": [
+        "docs/plans/fixture.md"
+      ],
+      "redCase": "plan-sections-absent",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
       "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",
       "arguments": [
         "--check"
@@ -1774,6 +1812,20 @@
         "--in-flight"
       ],
       "faultPoint": "list"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-structure/cli.mjs",
+      "arguments": [
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-structure/cli.mjs",
+      "arguments": [
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "stat"
     },
     {
       "path": "agent-workflow-kit/tools/project-rules/rules-cli.mjs",

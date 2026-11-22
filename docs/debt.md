@@ -1638,6 +1638,36 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   whose finding names its read error, and the version-pin finding also names the move into a test fixture or
   changelog entry, which clears every pin.
 
+- **POST-BUDGET-NAMES-THE-APPROVED-ROW-FOR-AN-AMENDED-BUDGET** — invariant: a `post-budget` finding names the row
+  whose budget it judges. Origin: `agent-workflow-kit/tools/plan-shape.mjs:352` cites the approved row's id beside
+  `relation.budgets.get(path)`, the entry's budget, so a 151-line file under approved R1 at 100 and entry A1 at 150
+  reads `above R1 budget 150`. Narrow fix: the relation keeps the admitting entry beside each budget it admits and
+  the finding names that entry's id and line. Proof: a plan-structure S6 cell asserts the id and the line. Residual
+  exposure, not live: the path, the line count and the budget figure in the message are right, only the cited row is
+  the approved one, and the diff review's brief lists the entry beside it. Raised in the diff review of
+  A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
+
+- **PROCEDURES-CANON-S9-PINS-WORDS-NOT-THE-RULE** — invariant: the plan-structure S9 cell refuses a canon text that
+  drops one of its rules: step 5 runs the structure command, which exits 0, before each diff-review and re-check
+  brief; the brief lists every entry it prints; an entry takes no new approval. Origin:
+  `agent-workflow-engine/test/procedures-canon.test.mjs:191` checks only that step 5 names the command and the word
+  `amendment`, and `:195` matches `approval|yes` in either polarity. Narrow fix: the cell asserts each of the three
+  clauses. Proof: the cell red on a step 5 that runs the command after the brief and on a paragraph that says an
+  entry takes a new approval. Residual exposure, not live: the shipped texts state all three clauses today
+  (`agent-workflow-engine/references/procedures.md:128-131`, `agent-workflow-engine/references/planning.md:133-146`);
+  only a later edit could drop one unseen, held by that edit's diff review. Raised in the diff review of
+  A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
+
+- **STRUCTURE-COMMAND-PRINTS-NO-PIN-SKIP-FOR-A-CREATE-ENTRY** — invariant: when the structure command cannot judge
+  `package-pin` for a `create` entry, it prints the SKIP line `--check` prints for the same row. Origin:
+  `agent-workflow-kit/tools/plan-shape.mjs:332` returns `skips: []` in the `entriesOnly` branch, while `:337-338`
+  map `pinSkip` for the approved `create` rows; `agent-workflow-kit/tools/plan-structure/cli.mjs:46` prints skips.
+  Narrow fix: plan-structure's command bullet names the skip (a contract change) and the branch maps the entries'
+  `pinSkip` as `:337-338` do, budget amendments excluded. Proof: an S7 cell with a `create` entry in a shipped
+  package that has no `package-content.test.mjs`. Residual exposure, not live: a `create` entry whose pin is
+  resolved is judged; an unresolved one passes silently, and the diff review reads every listed entry. Raised in the
+  diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
+
 ## Closed
 
 - **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the

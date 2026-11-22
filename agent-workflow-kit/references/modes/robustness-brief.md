@@ -11,14 +11,15 @@ no-process spawn error) that nobody had written into the brief. The list is data
 renders it, so a retro extends the list instead of a reviewer re-finding a member.
 
 **What it reads.** The plan file named by `--plan`, opened as a regular file no-follow through the
-kit's capped descriptor read (1 MiB — a plan is capped at 100 lines) with its realpath required
+kit's capped descriptor read (1 MiB — a plan's approved part is capped at 100 lines) with its realpath required
 under the realpath of the cwd (the project root the advisor renders the command from; no git is
 asked): an absolute path outside, a `..` traversal out of it, a symlink leading out, a non-regular file and
 an over-cap plan each refuse **exit 2** by name — the generator PRINTS row text, so unlike
 plan-shape-cli's unbounded no-follow read it is bounded. The plan is judged on every rule of plan-shape's structural half (headings, section caps,
 row grammar, ids, bytes, lexical containment, sweep form, duplicate paths, the total line, the
-acceptance and governing-spec presence rules) over EMPTY facts (`{}` — never undefined); the
-facts-bound half — realpath containment and sweep expansion — stays `plan-shape --check`'s. A plan
+acceptance and governing-spec presence rules and the robust-tag rule, which is structural) over facts
+holding only the list's class ids (`{ robustClasses }`); the facts-bound half — realpath containment
+and sweep expansion — stays `plan-shape --check`'s. A plan
 that fails the structural half is refused, never half-rendered. And the kit's own list through its
 reader leaf (a list that fails the closed schema is refused by name; the tag grammar is that leaf's
 `parseRobustTag`, ONE home). Nothing else: no git, no project config, no network.
@@ -46,9 +47,9 @@ Run `node ${CLAUDE_SKILL_DIR}/tools/robustness-brief.mjs --plan <plan> [--row <i
 4. Where it belongs (procedures.md `plan-execution` step 2): the dispatch brief — delegated or
    subagent — carries the generated block for every tagged row; the procedures advisor renders the
    populated command in the plan-execution render. Tag a row by writing `robust:<class>` in its
-   responsibility sentence; `plan-shape --check` refuses a class id the list does not carry
-   (`robust-class`) and leaves an untagged row unjudged.
-5. **`--coverage`** judges every valid `create`/`modify` row except `.md`/`.txt` documents and the shipped list itself. A class is PRESENT when the row file's bytes carry a bounded member token of kind env/flag/ref/syscall/errno/argv; `state` is never searched, `uncovered = present − tagged`, delete and absent rows are listed, and sweep rows union every path expanded by `plan-shape-facts`' one glob compiler. Reads use the same 1 MiB capped no-follow primitive. The table exits `0` when covered, `1` with each `row:class:literal` when uncovered, and `2` on a named row-read refusal. Bootstrap: for rows up to the row that lands this mode, apply the rule by hand; thereafter run coverage before every dispatch and before `flow-writer adoption`.
+   responsibility sentence; plan-shape's structural rules refuse, in every arm, a tag the grammar
+   refuses or a class id the list does not carry (`robust-class`) and leave an untagged row unjudged.
+5. **`--coverage`** judges every valid `create`/`modify` row except `.md`/`.txt` documents and the shipped list itself. A class is PRESENT when the row file's bytes carry a bounded member token of kind env/flag/ref/syscall/errno/argv; `state` is never searched, `uncovered = present − tagged`, delete and absent rows are listed, and sweep rows union every path expanded by `plan-shape-facts`' one glob compiler. Reads use the same 1 MiB capped no-follow primitive. The table exits `0` when covered, `1` with each `row:class:literal` when uncovered, and `2` on a named row-read refusal or a tag refusal on a row it judges (naming row and class); a structural `robust-class` finding is left to it, so a tag on a document row it skips is not judged here, and any other structural finding still exits `1`. Bootstrap: for rows up to the row that lands this mode, apply the rule by hand; thereafter run coverage before every dispatch and before `flow-writer adoption`.
 
 **Honest bounds (stated, accepted):** the tag is the author's claim — the tool cannot know that an
 untagged row touches git, the reviewer still can; the list names classes and carries only MEASURED

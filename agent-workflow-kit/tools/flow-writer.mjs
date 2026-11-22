@@ -73,11 +73,11 @@ import { loadConfig } from './orchestration-config.mjs';
 import { computePlanAdoptionCoverage, plansInFlight, quoteReportName } from './review-state.mjs';
 import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
-import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
+import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { expandSweepPaths } from './plan-shape-facts.mjs';
 import { checkPlanStructure, isSweep } from './plan-shape.mjs';
 import { escapeForDisplay } from './repo-lex.mjs';
-import { computeRowCoverage, isCoverageDocument } from './robustness-brief.mjs';
+import { computeRowCoverage, isCoverageDocument, ROBUST_CLASS_CODE } from './robustness-brief.mjs';
 import { decideFoldScope, findDebtRow, normalize } from './fold-scope.mjs';
 import { capIssue, walkIssue, escalationIssue, findingQuoted, validateWalk } from './flow-round-gates.mjs';
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
@@ -1032,9 +1032,9 @@ const buildInternalAttestation = ({ planId, lenses, degraded, model, effort, tie
     throw refuse(`internal-attestation refuses (#68): ${uncovered.map((p) => `plan ${quoteReportName(p.plan)} — ${p.reason}`).join('; ')} — an uncovered in-flight plan is a refusal, never a relaxation`);
   }
   const checkedWalk = walk === undefined ? undefined : (() => {
-    const shape = checkPlanStructure(adopted.planText, {});
     const list = readShippedRobustnessLiterals();
-    if (shape.findings.length > 0) throw usageFail('--walk cannot measure an adopted plan that fails structural validation');
+    const shape = checkPlanStructure(adopted.planText, { robustClasses: classIds(list) });
+    if (shape.findings.some(({ code }) => code !== ROBUST_CLASS_CODE)) throw usageFail('--walk cannot measure an adopted plan that fails structural validation');
     const patterns = shape.parsed.rows.filter((row) => row.valid && isSweep(row.path) && !isCoverageDocument(row.path)).map((row) => row.path);
     const expansions = patterns.length === 0 ? {} : expandSweepPaths(root, patterns);
     const measured = computeRowCoverage(adopted.planText, list, { expandRowPath: (path) => expansions[path] ?? [],

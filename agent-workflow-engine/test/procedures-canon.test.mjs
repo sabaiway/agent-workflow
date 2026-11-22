@@ -180,12 +180,19 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.deepEqual([...execution.matchAll(/^(\d+)\. /gmu)].map((match) => Number(match[1])), [1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
-  it('plan-execution pins coverage-to-brief order', () => {
+  it('spec:plan-structure/S9 plan-execution pins coverage-to-brief order and review amendments, and planning caps the approved part and defines amendments', () => {
     const execution = sectionOf(procedures, 'plan-execution');
     const step2 = stepOf(execution, 2).replace(/\s+/g, ' ');
-    const positions = ['--coverage', 'tags', 'plan-shape --check', 'generated robustness-literals block'].map((token) => step2.indexOf(token));
-    assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `coverage order: ${positions.join(' < ')}`);
+    const structureCommand = 'plan-structure/cli.mjs';
+    const positions = ['--coverage', 'tags', `${structureCommand} <plan>`, 'generated robustness-literals block'].map((token) => step2.indexOf(token));
+    assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `coverage, tags, structure command, block order: ${positions.join(' < ')}`);
     assert.ok(step2.indexOf('Otherwise implement directly.') < step2.indexOf('The dispatch brief'), 'direct implementation precedes the dispatch brief');
+    assert.doesNotMatch(step2, /plan-shape --check/);
+    const step5 = stepOf(execution, 5); assert.ok(step5.includes(structureCommand), 'step 5 names the structure command'); assert.match(step5, /\bamendment\b/);
+    const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
+    const shape = sectionOf(planning, 'Shape').replace(/\s+/g, ' '); assert.match(shape, /A plan's approved part is capped at \*\*100 lines and at most 25 ledger rows\*\*/); assert.doesNotMatch(shape, /The whole file is capped at/);
+    const amendmentParagraphs = sectionOf(planning.slice(planning.lastIndexOf('\n## Module ledger\n')), 'Module ledger').split(/\n\s*\n/).filter((paragraph) => paragraph.includes('`amendments:`'));
+    assert.equal(amendmentParagraphs.length, 1, 'Module ledger has exactly one `amendments:` paragraph'); assert.ok(amendmentParagraphs[0].includes(structureCommand)); assert.match(amendmentParagraphs[0].replace(/\s+/g, ' '), /\bspec review\b/); assert.match(amendmentParagraphs[0], /\b(?:approval|yes)\b/i);
   });
 
   // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not

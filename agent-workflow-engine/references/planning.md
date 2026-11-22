@@ -57,9 +57,9 @@ short spec (the Module list), the split, the diff review, the release, Cleanup.
 
 ## Shape
 
-The whole file is capped at **100 lines and at most 25 ledger rows**. While it is drafted and before
-the maintainer's approval, run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`. The headings are
-LITERAL, copied bare: tooling extracts sections by exact match.
+A plan's approved part is capped at **100 lines and at most 25 ledger rows**. While it is drafted
+and before the maintainer's approval, run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`. The
+headings are LITERAL, copied bare: tooling extracts sections by exact match.
 
 ```
 # Plan: <title>
@@ -71,7 +71,7 @@ LITERAL, copied bare: tooling extracts sections by exact match.
 ```
 
 A project-declared `## Phase: <name>` may ride between Verification and Cleanup; it is bounded by
-the whole-file line cap and may not reuse the Cleanup name.
+the approved part's line cap and may not reuse the Cleanup name.
 
 A plan that does not fit is not under-described. Either the TASK is too big — split it along
 independently verifiable boundaries, never by document size — or it is a SWEEP (below).
@@ -129,6 +129,21 @@ time.
 whose path is a glob, whose responsibility states the invariant every site must satisfy, and whose
 count is asserted. Splitting a sweep into per-file rows or into several plans costs more prose than
 the sweep, and breaks the intermediate states.
+
+**A ledger-only miss found after the approval is an amendment entry.** A standalone line exactly
+`amendments:` below the approved rows opens the entries; the total line stays last, its after figure
+covering them. Before its code, the code session writes there a reader the sweep missed, a missed
+file, a budget too small within its cap or growth past it, each leaving every approved contract
+unchanged; an entry takes no new approval and the diff review's brief lists it. The 25 rows, the
+60-line ledger and the 100-line plan measure the approved part only. An entry repeats no path save as
+a budget amendment: the path of exactly one approved row (a `modify` sweep's expansion included), that
+row's verb and a larger integer budget. A missed reader's existing test is rewritten to the value the
+approved contract states and shown red first; a missed reader that needs a new test returns to a
+tests-only session. Growth within the size practice's tolerance band is a warning; past the band,
+`--write-baseline --reason` records it. A path no claim of the story covers takes the epic row's
+claim first; a path another story owns, a change of an approved contract, a new Module and a new file
+under an approved sweep's glob return to the spec review. Mid-flow,
+`node <kit>/tools/plan-structure/cli.mjs <plan>` judges the plan's structure and prints every entry.
 
 ## Verification
 

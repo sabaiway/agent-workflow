@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
-import { relative, resolve, sep } from 'node:path';
 import { isDirectRun } from './direct-run.mjs';
-import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
-import { judgePlan, readPlansInFlight } from './plan-shape-facts.mjs';
-import { checkPlan, formatFindings, parseLedger, verifyPlan } from './plan-shape.mjs';
+import { judgePlan, readPlanDocument, readPlansInFlight } from './plan-shape-facts.mjs';
+import { checkPlan, formatFindings, verifyPlan } from './plan-shape.mjs';
 
 const USAGE = `Usage:
   node plan-shape-cli.mjs --check <plan>
@@ -12,30 +10,12 @@ const USAGE = `Usage:
   node plan-shape-cli.mjs --check --in-flight
   node plan-shape-cli.mjs --verify --in-flight`;
 
-const readPlan = (path) => {
-  const result = readRegularFileNoFollow(path);
-  if (result.outcome !== 'ok') throw new Error(`${path} must be a readable regular plan file (${result.className ?? result.code ?? result.outcome})`);
-  return result.content;
-};
-
-const getRows = (text) => {
-  try {
-    return parseLedger(text).rows.filter((row) => row.valid);
-  } catch {
-    return [];
-  }
-};
-
-const getPlanIdentity = (cwd, path) => relative(cwd, path).split(sep).join('/');
-
 const writeLine = (write, line) => write(`${line}\n`);
 
 const runExplicit = (cwd, arm, operand, write) => {
-  const path = resolve(cwd, operand);
-  const text = readPlan(path);
-  const identity = getPlanIdentity(cwd, path);
-  const options = arm === '--check' ? { rules: checkPlan, plan: identity } : { rules: verifyPlan };
-  const { result } = judgePlan(cwd, { identity, text, rows: getRows(text) }, options);
+  const document = readPlanDocument(cwd, operand);
+  const options = arm === '--check' ? { rules: checkPlan, plan: document.identity } : { rules: verifyPlan };
+  const { result } = judgePlan(cwd, document, options);
   writeLine(write, formatFindings(result, operand));
   return result.findings.length === 0 ? 0 : 1;
 };
