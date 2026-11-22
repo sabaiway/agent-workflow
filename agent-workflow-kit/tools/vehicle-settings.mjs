@@ -1,7 +1,8 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { VEHICLES } from '../references/scripts/shared/index.mjs';
 
-export const VEHICLES_REL = 'docs/ai/vehicles.json';
+export const VEHICLES_REL = VEHICLES;
 export const EXECUTOR_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high', fallback: 'sonnet' });
 export const REVIEW_LENS_DEFAULTS = Object.freeze({ model: 'opus', effort: 'high' });
 

@@ -25,6 +25,7 @@ import {
 import { join, resolve, relative, isAbsolute, basename } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
+import { AGENTS_FILE, DOCS_TREE } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, FOOTPRINT_STOP, stop,
@@ -223,7 +224,7 @@ const presentOnDisk = (pattern, fsx, dir) => {
 //   untracked AND ignored             → HIDDEN   (run the reconcile)
 //   untracked AND not ignored         → AMBIGUOUS (fresh-uncommitted vs broken-hidden → the agent ASKs)
 export const inferVisibility = (deps, dir, fsx = fsOf(deps)) => {
-  const anchors = ['/AGENTS.md', '/docs/ai/'];
+  const anchors = [`/${AGENTS_FILE}`, `/${DOCS_TREE}/`];
   // VISIBLE keys on tracked-ness (git state), not disk presence — a committed-but-deleted AGENTS.md is
   // still visible. Check BOTH anchors before falling through to the ignored/ambiguous test.
   for (const a of anchors) {

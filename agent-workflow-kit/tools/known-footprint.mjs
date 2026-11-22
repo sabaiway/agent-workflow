@@ -8,8 +8,8 @@
 //                     Copilot, Aider, Continue, …) that would otherwise leak into a commit. Only the
 //                     ones PRESENT on disk become candidates (no pre-emptive hiding of absent paths).
 //
-// Source of truth is here, not an on-disk manifest (the AD-008 `KNOWN_BACKENDS` pattern): a foreign
-// tool's footprint has no file in the kit tarball to read, so the per-tool facts must live in-tool.
+// The per-tool footprint facts live here (the AD-008 `KNOWN_BACKENDS` pattern). The project paths
+// that the patterns are built from come from the shared index and node-evidence.mjs.
 // The drift-guard test (known-footprint.test.mjs) keeps the registry honest — a frozen snapshot +
 // count sentinel + intrinsic invariants (anchoring, uniqueness, disjointness, no subsumption) — and
 // references/contracts.md carries the human-readable mirror table, kept in sync by review.
@@ -19,7 +19,9 @@
 // node-evidence.mjs's, the kit's one door to the script family (which reads its manifest on import).
 
 import { readdirSync, statSync } from 'node:fs';
+import { AGENTS_DIR, AGENTS_FILE, AIDER_CHAT_HISTORY, AIDER_CONF, AIDER_INPUT_HISTORY, ANTIGRAVITY_FILE, CLAUDE_FILE, CODEIUM_DIR, CONTINUE_DIR, CURSORRULES, CURSOR_RULES, DOCS_TREE, GEMINI_FILE, GITHUB_DIR, HOOKS_DIR, MCP_FILE, PLANS, SETTINGS, SETTINGS_LOCAL, SKILLS_DIR, WINDSURFRULES, WINDSURF_DIR } from '../references/scripts/shared/index.mjs';
 import { KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 
 // A typed STOP — a deliberate refusal we surface (never a silent skip, never a fail-open). Shared by
 // the writer tool (hide-footprint.mjs imports it) so both speak one error vocabulary. The codebase's
@@ -47,14 +49,14 @@ export const stop = (message, fields = {}) =>
 // `scripts/<name>` is listed, because the upgrade's scripts op removes the kit's old flat files in the
 // run that places the kit folder (distribution-files, part flat-move: the window it leaves is stated there).
 export const KIT_OWN_PATHS = [
-  '/AGENTS.md',
-  '/CLAUDE.md',
-  '/docs/ai/',
+  `/${AGENTS_FILE}`,
+  `/${CLAUDE_FILE}`,
+  `/${DOCS_TREE}/`,
   `/${KIT_SCRIPTS_DIR}/`,
-  '/docs/plans/',
-  '/.claude/settings.local.json',
-  '/.claude/settings.json',
-  '/.mcp.json',
+  `/${PLANS}/`,
+  `/${SETTINGS_LOCAL}`,
+  `/${SETTINGS}`,
+  `/${MCP_FILE}`,
 ];
 
 // Every OTHER tool's footprint. `falsePositiveRisk` flags a name generic/ambiguous enough that a
@@ -62,21 +64,21 @@ export const KIT_OWN_PATHS = [
 // `glob:true` marks the ONE reviewed wildcard (`/.github/copilot-*`) — it is expanded against the
 // filesystem (expandGlob) to concrete present files before any git probe; never fed to ls-files.
 export const KNOWN_FOOTPRINT = [
-  { pattern: '/.claude/skills/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'local-dev skills; absorbs the AD-013 one-off' },
-  { pattern: '/.claude/agents/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project subagent definitions (incl. the kit-placed cheap-lane vehicles)' },
-  { pattern: '/.claude/hooks/', owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project hooks (incl. the kit-placed gate-approval hook)' },
-  { pattern: '/.cursor/rules/', owner: 'Cursor', type: 'dir', falsePositiveRisk: false, note: 'project rule files' },
-  { pattern: '/.cursorrules', owner: 'Cursor (legacy)', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
-  { pattern: '/.codeium/', owner: 'Codeium/Windsurf', type: 'dir', falsePositiveRisk: false, note: 'home-scoped launchers live under ~/, out of scope' },
-  { pattern: '/.windsurf/', owner: 'Windsurf (Devin)', type: 'dir', falsePositiveRisk: false, note: 'project config dir' },
-  { pattern: '/.windsurfrules', owner: 'Windsurf', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
-  { pattern: '/GEMINI.md', owner: 'Gemini/Antigravity', type: 'file', falsePositiveRisk: true, note: 'context file; generic name' },
-  { pattern: '/.antigravity.md', owner: 'Antigravity', type: 'file', falsePositiveRisk: true, note: 'context file' },
-  { pattern: '/.github/copilot-*', owner: 'GitHub Copilot', type: 'file', falsePositiveRisk: true, glob: true, note: 'covers copilot-instructions.md; the one reviewed glob' },
-  { pattern: '/.aider.conf.yml', owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'config' },
-  { pattern: '/.aider.chat.history.md', owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'chat history' },
-  { pattern: '/.aider.input.history', owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'input history' },
-  { pattern: '/.continue/', owner: 'Continue', type: 'dir', falsePositiveRisk: false, note: 'project config dir' },
+  { pattern: `/${SKILLS_DIR}/`, owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'local-dev skills; absorbs the AD-013 one-off' },
+  { pattern: `/${AGENTS_DIR}/`, owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project subagent definitions (incl. the kit-placed cheap-lane vehicles)' },
+  { pattern: `/${HOOKS_DIR}/`, owner: 'Claude Code', type: 'dir', falsePositiveRisk: false, note: 'project hooks (incl. the kit-placed gate-approval hook)' },
+  { pattern: `/${CURSOR_RULES}/`, owner: 'Cursor', type: 'dir', falsePositiveRisk: false, note: 'project rule files' },
+  { pattern: `/${CURSORRULES}`, owner: 'Cursor (legacy)', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
+  { pattern: `/${CODEIUM_DIR}/`, owner: 'Codeium/Windsurf', type: 'dir', falsePositiveRisk: false, note: 'home-scoped launchers live under ~/, out of scope' },
+  { pattern: `/${WINDSURF_DIR}/`, owner: 'Windsurf (Devin)', type: 'dir', falsePositiveRisk: false, note: 'project config dir' },
+  { pattern: `/${WINDSURFRULES}`, owner: 'Windsurf', type: 'file', falsePositiveRisk: true, note: 'legacy single-file rules' },
+  { pattern: `/${GEMINI_FILE}`, owner: 'Gemini/Antigravity', type: 'file', falsePositiveRisk: true, note: 'context file; generic name' },
+  { pattern: `/${ANTIGRAVITY_FILE}`, owner: 'Antigravity', type: 'file', falsePositiveRisk: true, note: 'context file' },
+  { pattern: `/${GITHUB_DIR}/copilot-*`, owner: 'GitHub Copilot', type: 'file', falsePositiveRisk: true, glob: true, note: 'covers copilot-instructions.md; the one reviewed glob' },
+  { pattern: `/${AIDER_CONF}`, owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'config' },
+  { pattern: `/${AIDER_CHAT_HISTORY}`, owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'chat history' },
+  { pattern: `/${AIDER_INPUT_HISTORY}`, owner: 'Aider', type: 'file', falsePositiveRisk: false, note: 'input history' },
+  { pattern: `/${CONTINUE_DIR}/`, owner: 'Continue', type: 'dir', falsePositiveRisk: false, note: 'project config dir' },
 ];
 
 // ── pure pattern helpers ────────────────────────────────────────────────────────
@@ -107,7 +109,7 @@ export const patternToProbe = (pattern) => {
 // Turn a basename glob (`copilot-*`) into an anchored regex. Only a single-level `*` is supported
 // (no `**`, no `/`): split on `*`, regex-escape each literal segment, then join with `.*`.
 const basenameGlobToRegExp = (glob) => {
-  const parts = glob.split('*').map((seg) => seg.replace(/[.+?^${}()|[\]\\]/g, '\\$&'));
+  const parts = glob.split('*').map(escapeRegExp);
   return new RegExp(`^${parts.join('.*')}$`);
 };
 

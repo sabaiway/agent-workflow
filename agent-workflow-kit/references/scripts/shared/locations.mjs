@@ -34,6 +34,7 @@ export const AIDER_CONF = '.aider.conf.yml';
 export const AIDER_CHAT_HISTORY = '.aider.chat.history.md';
 export const AIDER_INPUT_HISTORY = '.aider.input.history';
 export const CONTINUE_DIR = '.continue';
+export const BINDING_GYP = 'binding.gyp';
 
 export const DOCS_TREE = `${DOCS}/ai`;
 export const PLANS = `${DOCS}/plans`;

@@ -2,6 +2,7 @@
 import { writeFileSync, realpathSync, constants as fsConstants } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep, posix } from 'node:path';
 import { createHash } from 'node:crypto';
+import { PLANS } from '../references/scripts/shared/index.mjs';
 import { readFileBytesNoFollow } from './fs-read-nofollow.mjs';
 import { parseLedger, isSweep, PLAN_HEADINGS } from './plan-shape.mjs';
 import { expandSweepPaths } from './plan-shape-facts.mjs';
@@ -13,6 +14,7 @@ import { claimedPaths } from './task-thread.mjs';
 import { newestCheckpoint, verifyCheckpoint } from './checkpoint.mjs';
 import { withRepository, readGit } from './checkpoint-core.mjs';
 import { isDirectRun } from './direct-run.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 
 export const BRIEF_BINDING_INFO_STRING = 'aw-task-binding';
 const ACCEPT = 0;
@@ -37,7 +39,7 @@ const TITLE_RE = /^# Task: (\S.*)$/;
 const HEADING_RE = /^#{1,2} /;
 const STORY_PREFIX = 'Story:';
 const HEADINGS = ['## Slice', '## Reads', '## Acceptance', '## Negative cases', '## Budget'];
-const SLICE_FIELDS = [/^Plan: (docs\/plans\/[^/]+\.md)$/, /^Row: (\S+)$/, /^Grouping: (.*)$/, /^Files:$/];
+const SLICE_FIELDS = [new RegExp(`^Plan: (${escapeRegExp(PLANS)}\\/[^/]+\\.md)$`), /^Row: (\S+)$/, /^Grouping: (.*)$/, /^Files:$/];
 const PAIR_RE = /^- (\S(?:.*\S)?) :: (\S(?:.*\S)?)$/;
 const BULLET_RE = /^- (\S.*)$/;
 const INTEGER_RE = /^[1-9]\d*$/;

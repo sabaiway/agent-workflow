@@ -5,7 +5,7 @@ import { lstatSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { readFamily } from '../references/scripts/family.mjs';
 import { KIT_COMMANDS } from '../references/scripts/run.mjs';
-import { KIT_FOLDER_ROOT } from './source-size-config.mjs';
+import { KIT_FOLDER, PACKAGE_JSON, SCRIPTS } from '../references/scripts/shared/index.mjs';
 
 export const NODE_EVIDENCE = Object.freeze({
   PACKAGE_JSON: 'package-json',
@@ -14,9 +14,9 @@ export const NODE_EVIDENCE = Object.freeze({
   UNREADABLE: 'unreadable',
 });
 
-export const PACKAGE_JSON_REL = 'package.json';
-export const SCRIPTS_DIR = 'scripts';
-export const KIT_SCRIPTS_DIR = KIT_FOLDER_ROOT;
+export const PACKAGE_JSON_REL = PACKAGE_JSON;
+export const SCRIPTS_DIR = SCRIPTS;
+export const KIT_SCRIPTS_DIR = KIT_FOLDER;
 
 export const INSTALLER_REL = posix.join(KIT_SCRIPTS_DIR, KIT_COMMANDS['install-git-hooks']);
 

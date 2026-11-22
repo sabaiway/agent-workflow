@@ -1,6 +1,8 @@
 // The theme registry: pure data and pure derivation. Every surface that names a theme or its files
 // reads this list, never a second copy. Contract: docs/ai/specs/kit/project-rules/themes.md.
 
+import { RULES, RULES_EFFECTIVE, RULES_LOCAL, RULES_RECORD } from '../../references/scripts/shared/index.mjs';
+
 const START = '**Start of every session**';
 const BEFORE = '**Before any code change**';
 
@@ -17,11 +19,11 @@ export const THEMES = Object.freeze([
 // The line that opens every theme template's body and the kit block's body; a suite pins every copy.
 export const PRECEDENCE_LINE = "The kit block of AGENTS.md is the kit's and is rewritten on every upgrade; it and docs/ai/rules/effective/ govern over any copy of kit text elsewhere in this project's files; text of your own goes outside the block, and a change to a kit rule goes in its theme's file under docs/ai/rules/local/.";
 
-export const RECORD_PATH = 'docs/ai/rules/effective/sources.json';
+export const RECORD_PATH = RULES_RECORD;
 
 export const themePaths = (name) => Object.freeze({
-  kit: `docs/ai/rules/${name}.md`,
-  local: `docs/ai/rules/local/${name}.md`,
-  effective: `docs/ai/rules/effective/${name}.md`,
+  kit: `${RULES}/${name}.md`,
+  local: `${RULES_LOCAL}/${name}.md`,
+  effective: `${RULES_EFFECTIVE}/${name}.md`,
   record: RECORD_PATH,
 });

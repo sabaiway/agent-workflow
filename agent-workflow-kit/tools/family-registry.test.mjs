@@ -55,6 +55,7 @@ import { toViewModel } from './view-model.mjs'; import { render } from './render
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '../..'); // agent-workflow-kit/tools → repo root
+const SHIPPED_ROTATOR = join(__dirname, '../references/scripts/archives/archive-decisions.mjs');
 
 // Build classifyMember deps that present the marker, with an injectable validate/readVersion. The
 // marker probe is STAT-FIRST (existsSync swallows EACCES), so presence is modeled via the injected
@@ -394,6 +395,19 @@ describe('surveyAdrLayout — the old-unrotated arm', () => {
     assert.equal(r.adrLayout, 'none', 'a tree whose own --check names --write-navigator is never nagged twice');
   });
 
+  it('shipped rotator without line comments, HOT and no store → none', () => {
+    const body = readFileSync(SHIPPED_ROTATOR, 'utf8').split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
+    assert.ok(!body.includes('docs/ai/adr'));
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: body })).adrLayout, 'none');
+  });
+  for (const version of ['8.1.3', '8.5.0']) it(`published ${version} rotator pins the current answer with HOT and no store → none`, () => {
+    const body = readFileSync(join(__dirname, `../test/fixtures/script-priors/${version}/archive-decisions.mjs.txt`), 'utf8');
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: body })).adrLayout, 'none');
+  });
+  it('pre-store rotator with the declaration in a line comment, HOT and no store → old-unrotated', () => {
+    const body = `${OLD_ROTATOR}// export const ADR_DIR_REL = 'docs/ai/adr';\n`;
+    assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [ROTATOR]: body })).adrLayout, 'old-unrotated');
+  });
   it('rotator absent → none (upgrade seed-if-missing owns it; a No-Node project too)', () => {
     const r = surveyProject(dir, treeDeps({ [HOT]: '' }));
     assert.equal(r.adrLayout, 'none', 'no deployed rotator means no evidence of scheme, and nothing actionable');
@@ -411,7 +425,7 @@ describe('surveyAdrLayout — the old-unrotated arm', () => {
 
   it('a store beside a NEW rotator is migrated; beside an OLD one it is still actionable', () => {
     assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: NEW_ROTATOR })).adrLayout, 'migrated');
-    // `upgrade` preserves an existing rotator, so an old-scheme one beside a store writes a monolith
+    // Until `upgrade` replaces an old-scheme rotator with the bundled one, it writes a monolith
     // again on its next rotation: a store on disk is not proof the crossing finished.
     assert.equal(surveyProject(dir, treeDeps({ [HOT]: '', [STORE]: null, [ROTATOR]: OLD_ROTATOR })).adrLayout, 'old-unrotated');
   });
@@ -472,7 +486,8 @@ describe('surveyAdrLayoutStrict — an error may never become an absence', () =>
     assert.equal(ADR_LAYOUT_PATHS.hot, ROTATOR_HOT_REL);
     assert.equal(ADR_LAYOUT_PATHS.store, ROTATOR_ADR_DIR_REL);
     assert.deepEqual(ADR_LAYOUT_PATHS.monoliths, [ROTATOR_WARM_REL, ROTATOR_COLD_REL]);
-    assert.ok(ADR_LAYOUT_PATHS.storeMarker.length > 0 && ROTATOR_ADR_DIR_REL.includes(ADR_LAYOUT_PATHS.storeMarker));
+    const rotatorLines = readFileSync(SHIPPED_ROTATOR, 'utf8').split('\n');
+    assert.deepEqual(rotatorLines.filter((line) => line.includes(ADR_LAYOUT_PATHS.storeMarker)), [rotatorLines.find((line) => line.startsWith('export const ADR_DIR_REL'))]);
   });
 });
 

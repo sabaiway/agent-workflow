@@ -25,7 +25,7 @@ const GLOB_BYTE = /[*?[{]/;
 const SWEEP = Object.freeze({ verb: 'modify', count: /\(([1-9]\d*) files\)/, countCode: 'sweep-count' });
 const AMENDMENT_CHECK = Object.freeze({ code: 'amendment-check', message: `remove ${AMENDMENT_LINE} before approval` });
 const TOTAL_LINE = /^total:\s+(~?\d+)\s+→\s+(~?\d+)\s+lines(?:\s+.+)?$/;
-const SPEC_LINE = /docs\/ai\/specs\/|(?:^|\W)(?:not adopted|adopting|nothing spec-covered touched)(?:\W|$)/;
+const SPEC_LINE = /(?:^|\W)(?:not adopted|adopting|nothing spec-covered touched)(?:\W|$)/;
 const TEST_PATH = /(?:^|\/)\S+\.test\.[^/]+$/;
 const EXTENSION_PHASE = /^## Phase: (?!Cleanup\s*$)\S(?:.*\S)?$/;
 const BULLET = /^-\s+\S/;
@@ -242,7 +242,7 @@ const checkLedgerStructure = (parsed, facts, relation) => {
   }
   const bullets = getVerificationBullets(parsed.document);
   if (bullets.length === 0) findings.push(makeFinding(getHeading(parsed.document, PLAN_HEADINGS[2]) ? getFindingLine(parsed.document, getHeading(parsed.document, PLAN_HEADINGS[2]).index) : 1, 'acceptance', 'Verification must carry at least one top-level - bullet'));
-  if (!getSectionLines(parsed.document, PLAN_HEADINGS[0]).some((line) => SPEC_LINE.test(line))) {
+  if (!getSectionLines(parsed.document, PLAN_HEADINGS[0]).some((line) => line.includes(SPEC_SCHEMA.storePrefix) || SPEC_LINE.test(line))) {
     findings.push(makeFinding(getHeading(parsed.document, PLAN_HEADINGS[0]) ? getFindingLine(parsed.document, getHeading(parsed.document, PLAN_HEADINGS[0]).index) : 1, 'governing-spec', 'Goal and boundary must name a governing spec path or the adopted state'));
   }
   return findings;

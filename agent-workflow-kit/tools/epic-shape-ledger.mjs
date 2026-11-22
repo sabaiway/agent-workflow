@@ -1,8 +1,9 @@
 import { posix } from 'node:path';
-import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
+import { EPIC_STORE, QUEUE, tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { parseHeader, checkEpic } from './epic-shape.mjs';
 import { auditQueue } from './queue-audit.mjs';
 import { hasPathOverlap, findReachable, listStories, unique } from './claim-relation.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 
 const FIRST_LINE = 1;
 const ERROR = 'error';
@@ -15,10 +16,9 @@ const OWN = 'owns';
 const FRONT_DELIMITER = '---';
 const CR_END = /\r$/;
 const MARKDOWN_SUFFIX = '.md';
-export const STORE_PATH = /^(?:(.*)\/)?docs\/ai\/epics\/([^/]+)\.md$/;
-export const QUEUE_PATH = 'docs/plans/queue.md';
+export const STORE_PATH = new RegExp(`^(?:(.*)/)?${escapeRegExp(EPIC_STORE)}/([^/]+)\\.md$`);
+export const QUEUE_PATH = QUEUE;
 const TOKEN_EDGE = '[\\p{L}\\p{N}_-]';
-const REGEX_BYTES = /[.*+?^${}()|[\]\\]/g;
 const PARSE_REFUSALS = Object.freeze([1, 2]);
 const makeFinding = (path, line, code, message, severity = ERROR) => ({ path, line, code, message: `${path}: ${message}`, severity });
 const finishJudgement = (findings, data = {}) => ({ ...data, ok: !findings.some((finding) => finding.severity === ERROR), findings });
@@ -120,7 +120,7 @@ export const sweepSiblings = (entries, root) => {
 };
 
 const carriesToken = (title, id) => {
-  const escaped = id.replace(REGEX_BYTES, '\\$&');
+  const escaped = escapeRegExp(id);
   return new RegExp(`(?<!${TOKEN_EDGE})${escaped}(?!${TOKEN_EDGE})`, 'u').test(title);
 };
 const describeQueue = (queue) => [queue?.outcome, queue?.reason].filter((part) => part !== undefined).join(': ')

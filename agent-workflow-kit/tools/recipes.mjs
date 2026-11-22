@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { GIT_DIR } from '../references/scripts/shared/index.mjs';
 import { settingsSnapshot, DEFAULT_BUNDLE_ROOT } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import {
@@ -383,7 +384,7 @@ const formatAutonomySegment = (a) => {
 const projectTopOf = (cwd) => {
   let dir = resolve(cwd);
   for (;;) {
-    if (existsSync(join(dir, '.git'))) return dir;
+    if (existsSync(join(dir, GIT_DIR))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return resolve(cwd);
     dir = parent;

@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, r
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { CLAUDE_DIR, PACKAGE_JSON, SETTINGS, SETTINGS_LOCAL, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 // The --autonomy render reads the per-project autonomy policy through the read-only autonomy core
 // (AD-044). This file is the family's one .claude/settings.json writer, so the policy render lives here;
 // it never imports the policy fs-writer (autonomy-write.mjs) — the render owns the settings file, not
@@ -33,10 +34,9 @@ import { resolveDeclaredDir, dirCovers, isResolvableDeclaredEntry } from './decl
 // Deployment-lineage head this velocity build targets; bump together with agent-workflow-memory
 // LINEAGE_HEAD when the deployed docs/ai structure changes.
 export const EXPECTED_WORKFLOW_VERSION = '5.0.0';
-export const SETTINGS_FILE = '.claude/settings.json';
-export const SETTINGS_LOCAL_FILE = '.claude/settings.local.json';
-export const CLAUDE_DIR = '.claude';
-export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
+export const SETTINGS_FILE = SETTINGS;
+export const SETTINGS_LOCAL_FILE = SETTINGS_LOCAL;
+export { CLAUDE_DIR, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 export const SAFE_DEFAULT_MODES = Object.freeze(['default', 'acceptEdits', 'plan']);
 export const UNSAFE_BYPASS_MODE = 'bypassPermissions';
 export const ACCEPT_EDITS_MODE = 'acceptEdits';
@@ -285,7 +285,6 @@ const WHITESPACE_PATTERN = /\s+/u;
 const GIT_COMMAND = 'git';
 const NPM_COMMAND = 'npm';
 const NPM_RUN_COMMAND = 'npm run';
-const PACKAGE_FILE = 'package.json';
 const SETTINGS_JSON_INDENT = 2;
 const EXIT_USAGE = 2;
 const EXIT_PRECONDITION = 1;
@@ -522,7 +521,7 @@ const readStamp = (absPath, deps = {}) => {
 
 const readPackageJson = (cwd, deps = {}) => {
   const fs = fsDeps(deps);
-  const absPath = join(cwd, PACKAGE_FILE);
+  const absPath = join(cwd, PACKAGE_JSON);
   if (!fs.exists(absPath)) return null;
   // package.json feeds ONLY the read-only gate advisory — a malformed one degrades to "no
   // candidates"; it must NEVER block the settings write.

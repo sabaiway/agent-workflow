@@ -34,6 +34,7 @@
 import { lstatSync, writeFileSync, renameSync, linkSync, rmSync, mkdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { DOCS, DOCS_TREE } from '../references/scripts/shared/index.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 
 export const ATOMIC_WRITE_STOP = 'ATOMIC_WRITE_STOP';
@@ -61,7 +62,7 @@ export const assertDocsAiDeployment = (cwd, deps = {}, opts = {}) => {
   const stop = opts.stop ?? defaultStop;
   const noun = opts.noun ?? 'a file';
   const rel = opts.rel ?? 'under docs/ai';
-  const docsAi = join(cwd, 'docs', 'ai');
+  const docsAi = join(cwd, DOCS_TREE);
   // Parent-chain preflight (AD-052, Issue-011 residual 3): refuse a symlinked cwd ROOT or a
   // symlinked `docs` PARENT before any read — the walk the write path already enforces
   // (writeContainedFileAtomic), aligned onto the gate every consumer runs first. The walk covers
@@ -71,7 +72,7 @@ export const assertDocsAiDeployment = (cwd, deps = {}, opts = {}) => {
   // "no deployment" STOP below. The walk throws a plain Error; re-throw as the CALLER's typed
   // stop so every consumer's `.code` contract holds.
   try {
-    assertContainedRealPath(cwd, join(cwd, 'docs'), { lstat });
+    assertContainedRealPath(cwd, join(cwd, DOCS), { lstat });
   } catch (err) {
     throw stop(String(err?.message ?? err).replace(/^\[agent-workflow-kit\] /, ''));
   }

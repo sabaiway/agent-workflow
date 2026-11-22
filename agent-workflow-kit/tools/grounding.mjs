@@ -30,6 +30,7 @@ import { readFileSync, writeFileSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve, join, relative, isAbsolute, dirname, basename, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { AGENTS_FILE, GIT_DIR } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { fail } from './orchestration-config.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
@@ -349,7 +350,7 @@ export const main = (argv, ctx = {}) => {
         throw fail(1, `${label} '${path}' is unreadable (${(err && err.code) || err}) — STOP`);
       }
     };
-    const constraintsText = constraints ? readOrStop('AGENTS.md', 'root AGENTS.md') : null;
+    const constraintsText = constraints ? readOrStop(AGENTS_FILE, 'root AGENTS.md') : null;
     const autonomyText = autonomy ? resolveAutonomyFacts({ cwd }) : null;
     // --plan is CONFINED to the git work tree: the bridge tier auto-allows this tool
     // with an args wildcard, so an unattended invocation could otherwise point --plan at ANY
@@ -392,7 +393,7 @@ export const main = (argv, ctx = {}) => {
       });
       // The linked-worktree `.git` is a FILE inside the tree yet outside both answers above —
       // repository metadata all the same.
-      gitDirsReal.push(join(topReal, '.git'));
+      gitDirsReal.push(join(topReal, GIT_DIR));
       return { tempRoots, topReal, gitDirsReal };
     };
     const surface = extra.some((v) => v.startsWith('@')) ? extraReadSurface() : null;

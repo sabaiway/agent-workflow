@@ -10,10 +10,11 @@
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { join } from 'node:path';
+import { SPEC_STORE } from '../../references/scripts/shared/index.mjs';
 
 // The spec store: one more judged root, at a fixed path, walked from disk because a deployment may
 // hide it from git.
-export const SPEC_STORE_ROOT = 'docs/ai/specs';
+export const SPEC_STORE_ROOT = SPEC_STORE;
 
 // bandOf(value, tolerance) → ceil(value × tolerance / 100), in integers so no float rounds it.
 export const bandOf = (value, tolerance) => Math.floor((value * tolerance + 99) / 100);

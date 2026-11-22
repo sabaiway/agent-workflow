@@ -1,4 +1,5 @@
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
+import { AGENTS_DIR, GATE_HOOK, GIT_CONFIG, GIT_HOOKS, HOOKS_DIR, MCP_FILE, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL, SKILLS_DIR, STOP_HOOK } from '../references/scripts/shared/index.mjs';
 import { dirCovers } from './declared-paths.mjs';
 import { claudeDirOf, quoteArg, skillTargets } from './jev-facts.mjs';
 import { targetsFor } from './jev-connect.mjs';
@@ -70,14 +71,14 @@ export const laneOf = (variant) => {
   return VARIANT_LANES[variant];
 };
 
-const SETTINGS_PATH = join('.claude', 'settings.json');
+const SETTINGS_PATH = join(SETTINGS);
 const PROTECTED_FILES = [
   SETTINGS_PATH,
-  join('.claude', 'settings.local.json'),
-  '.mcp.json',
-  join('.git', 'config'),
+  join(SETTINGS_LOCAL),
+  MCP_FILE,
+  join(GIT_CONFIG),
 ];
-const PROTECTED_DIRS = ['agents', 'hooks', 'skills'].map((name) => join('.claude', name));
+const PROTECTED_DIRS = [AGENTS_DIR, HOOKS_DIR, SKILLS_DIR].map((dir) => join(dir));
 
 export const isProtectedPath = (abs, { root, home, hooksDir }) => {
   const project = resolve(root);
@@ -92,11 +93,11 @@ export const isProtectedPath = (abs, { root, home, hooksDir }) => {
 };
 
 const SETTINGS_WRITES = [SETTINGS_PATH];
-const LOCAL_SETTINGS_WRITES = [join('.claude', 'settings.local.json')];
-const GATE_HOOK_FILE = [join('.claude', 'hooks', 'agent-workflow-gates.mjs')];
-const STOP_HOOK_FILE = [join('.claude', 'hooks', 'state-block-guard.mjs')];
-const MCP_WRITES = ['.mcp.json', ...SETTINGS_WRITES];
-const AGENT_WRITES = [join('.claude', 'agents')];
+const LOCAL_SETTINGS_WRITES = [join(SETTINGS_LOCAL)];
+const GATE_HOOK_FILE = [join(GATE_HOOK)];
+const STOP_HOOK_FILE = [join(STOP_HOOK)];
+const MCP_WRITES = [MCP_FILE, ...SETTINGS_WRITES];
+const AGENT_WRITES = [join(AGENTS_DIR)];
 
 const getSkillPaths = ({ env, home, platform }) => {
   const claudeDir = claudeDirOf(env, home, platform).dir;
@@ -111,7 +112,7 @@ const getStartupPaths = ({ env, home, platform }) => targetsFor({
   platform,
 }).filter(({ path }) => path !== null).map(({ path }) => path);
 
-const preCommitOf = (facts) => join(facts.hooksDir ?? join(facts.root, '.git', 'hooks'), 'pre-commit');
+const preCommitOf = (facts) => join(facts.hooksDir ?? join(facts.root, GIT_HOOKS), posix.basename(PRE_COMMIT));
 const getEnforcementPaths = (facts) => [...readDeployedScripts().map(({ deployed }) => join(facts.root, deployed)), preCommitOf(facts)];
 const getGuardPaths = (facts) => [preCommitOf(facts), join(facts.root, INSTALLER_REL)];
 

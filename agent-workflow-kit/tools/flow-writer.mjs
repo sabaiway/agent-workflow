@@ -50,6 +50,7 @@ import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { join, dirname, resolve, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
+import { PLANS } from '../references/scripts/shared/index.mjs';
 import {
   FLOW_SCHEMA_VERSION, CHAIN_KIND, canonicalFlowDigest, flowTreeIdentity,
   SAFE_NONCE_RE, findingManifestBasename, decodeFindingManifest,
@@ -83,7 +84,6 @@ import { capIssue, walkIssue, escalationIssue, findingQuoted, validateWalk } fro
 const usageFail = (message) => Object.assign(new Error(message), { exitCode: 2 });
 const refuse = (message) => Object.assign(new Error(message), { exitCode: 1 });
 
-const PLANS_DIR = 'docs/plans';
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const PLAN_READ_CAP = 1_048_576;
 const WALK_READ_CAP = 65_536;
@@ -391,7 +391,7 @@ const decodeUtf8 = (bytes, label, stop = refuse) => {
   }
 };
 const readBoundPlan = (root, plan, adoption) => {
-  const path = join(root, PLANS_DIR, plan);
+  const path = join(root, PLANS, plan);
   const read = readFileBytesNoFollowCapped(path, PLAN_READ_CAP);
   if (read.outcome !== 'ok') throw refuse(`the adopted plan ${plan} is not a readable regular file (${read.className ?? read.code ?? read.outcome})`);
   if (sha256(read.bytes) !== adoption.planDigest) throw refuse(`the adopted plan ${plan} no longer matches its adoption record`);
@@ -1087,9 +1087,9 @@ const writePlanId = ({ planPath, planId, cwd, ctx }) => {
   // lexicalRepoRelative NORMALIZES interior dot segments — a "docs/plans/../…" spelling would pass
   // a raw prefix check while resolving outside the plans dir, so segments are refused explicitly.
   if (planPath.split('/').some((s) => s === '..' || s === '.' || s === '')) {
-    throw refuse(`the plan path must be a plain forward-slash path without "." or ".." segments (got "${planPath}") — write-plan-id is bounded to ${PLANS_DIR}/ lexically`);
+    throw refuse(`the plan path must be a plain forward-slash path without "." or ".." segments (got "${planPath}") — write-plan-id is bounded to ${PLANS}/ lexically`);
   }
-  if (!planPath.startsWith(`${PLANS_DIR}/`)) throw refuse(`the plan path must live under ${PLANS_DIR}/ (got "${planPath}") — write-plan-id is bounded to the plans dir`);
+  if (!planPath.startsWith(`${PLANS}/`)) throw refuse(`the plan path must live under ${PLANS}/ (got "${planPath}") — write-plan-id is bounded to the plans dir`);
   const full = join(cwd, planPath);
   const lstat = ctx.lstatSync ?? lstatSync;
   const st = lstatNoFollow(full, lstat);
@@ -1112,7 +1112,7 @@ const writePlanId = ({ planPath, planId, cwd, ctx }) => {
     throw refuse(`${planPath} already carries planId "${existing}" — a DIFFERENT id refuses: chain identity never silently changes (#58)`);
   }
   const next = composePlanIdFrontmatter(text, planId);
-  writeContainedFileAtomic(join(cwd, PLANS_DIR), full, next, ctx, { stop: refuse, label: planPath });
+  writeContainedFileAtomic(join(cwd, PLANS), full, next, ctx, { stop: refuse, label: planPath });
   return { noop: false, message: `wrote planId "${planId}" into ${planPath} (contained-atomic); the adoption mint reads exactly this frontmatter line` };
 };
 
@@ -1154,7 +1154,7 @@ Every arm computes its tree context (owner, base, fingerprint; cycle/round from 
 and appends through the lock-serialized store append — an illegal transition surfaces the store's
 own refusal verbatim; the writer adds NO second validator. Chain arms refuse a foreign worktree's
 chain (#57). maintainer-override prints its FULL bound set and requires --checkpoint-approved
-(#38). write-plan-id is bounded to an existing regular file under ${PLANS_DIR}/ (same-id
+(#38). write-plan-id is bounded to an existing regular file under ${PLANS}/ (same-id
 idempotent, different-id refuses, contained-atomic; #58).
 
 The round lifecycle (Plan 4 Phase 3): ONE record per round, revised in place — round-open mints

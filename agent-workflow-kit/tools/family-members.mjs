@@ -1,4 +1,4 @@
-// family-members.mjs — the pure DATA LEAF: the one authoritative table of agent-workflow family members.
+// family-members.mjs — the one authoritative table of agent-workflow family members.
 //
 // Extracted from family-registry.mjs so the two consumers that only need the static table — the npx
 // installer (bin/install.mjs, which derives its init-refresh cascade from it) and family-registry
@@ -6,9 +6,11 @@
 // (detect-backends, the manifest validator, hide-footprint, engine-source, recipes, the renderers …).
 // install.mjs runs on the npx cold-start hot path, so the leaner import matters; single-source-of-truth
 // + the drift-guard (family-registry.test.mjs pins FAMILY_MEMBERS to the 6 in-repo capability.json)
-// are preserved — the table just lives in a dependency-free leaf now.
+// are preserved.
 //
-// Pure data, no imports, no side effects, Node >= 22.
+// Pure data with stamps from the shared index, no side effects, Node >= 22.
+
+import { MEMORY_STAMP, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 
 // ── the unified registry ───────────────────────────────────────────────────────
 // One entry per family member. `installed` is the detect.installed spec (env + home-relative default
@@ -24,7 +26,7 @@ export const FAMILY_MEMBERS = [
     name: 'agent-workflow-kit',
     kind: 'composition-root',
     installed: { env: 'AGENT_WORKFLOW_KIT_DIR', default: '~/.claude/skills/agent-workflow-kit', file: 'SKILL.md' },
-    deployed: { file: 'docs/ai/.workflow-version' },
+    deployed: { file: WORKFLOW_STAMP },
     npm: '@sabaiway/agent-workflow-kit',
     wrapperCmds: [],
   },
@@ -32,7 +34,7 @@ export const FAMILY_MEMBERS = [
     name: 'agent-workflow-memory',
     kind: 'memory-substrate',
     installed: { env: 'AGENT_WORKFLOW_MEMORY_DIR', default: '~/.claude/skills/agent-workflow-memory', file: 'SKILL.md' },
-    deployed: { file: 'docs/ai/.memory-version' },
+    deployed: { file: MEMORY_STAMP },
     npm: '@sabaiway/agent-workflow-memory',
     wrapperCmds: [],
   },

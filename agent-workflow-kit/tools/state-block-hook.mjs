@@ -23,6 +23,7 @@
 
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { STOP_HOOK } from '../references/scripts/shared/index.mjs';
 import {
   CLAUDE_DIR,
   EXPECTED_WORKFLOW_VERSION,
@@ -56,7 +57,7 @@ import { fileLine } from './distribution-files/index.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const STATE_BLOCK_HOOK_RUNTIME = 'state-block-guard.mjs';
-export const STATE_BLOCK_HOOK_FILE_REL = `${HOOKS_DIR}/${STATE_BLOCK_HOOK_RUNTIME}`;
+export const STATE_BLOCK_HOOK_FILE_REL = STOP_HOOK;
 const BUNDLED_STATE_BLOCK_HOOK_PATH = resolve(HERE, '..', 'references', 'hooks', STATE_BLOCK_HOOK_RUNTIME);
 // NO `--require-block` in the offered command. That flag turns on the absent-block report, and this
 // kit does not mandate the three-part closing block — offering it to every project would hand them a

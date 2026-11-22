@@ -3,18 +3,58 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
-- **ADR-ROTATOR-SCHEME-IS-READ-FROM-ITS-COMMENTS** — invariant: the ADR layout detector tells a current
-  decisions rotator from an earlier one by a fact the rotator's code carries and a suite pins, never by comment
-  text. Origin: `agent-workflow-kit/tools/family-registry.mjs:405` reads the deployed rotator's text for
-  `ADR_LAYOUT_PATHS.storeMarker` (`'docs/ai/adr'`, `:361`); since story S1 of EVERY-LOCATION-IS-NAMED-ONCE the
-  rotator's code takes the store's location from the definition, so the literal stands only in its comments
-  (`agent-workflow-memory/references/scripts/archives/archive-decisions.mjs:9`, `:14`, `:30`, `:40`, `:735`, and the
-  kit mirror), and no test checks how the detector classifies the shipped rotator body. Narrow fix: story 3 of that
-  epic, which moves the kit's readers onto the definition, gives the detector a marker the rotator's code carries,
-  with the earlier bodies still read as old. Proof: a cell reads `new` for the current rotator and `old` for an
-  earlier body. Residual exposure, not live: the five comments are unchanged, so the current rotator still reads
-  `new`; an edit that removes the marker from all five would flip it, held by that edit's diff review until story 3.
-  Raised by the plan of EVERY-LOCATION-IS-NAMED-ONCE S1 (2026-11-21).
+- **PLAN-GATE-SWEEP-ROW-CANNOT-HOLD-EACH-RECORD** — invariant: a plan row over several files holds each file to its
+  own size ceiling, so files of different recorded sizes can share one row. Origin:
+  `agent-workflow-kit/tools/plan-shape.mjs:296-297` holds the row's one budget against every path's ceiling (its
+  record, else the cap) at authoring, and a raise bullet naming the row's path (`:59-60`) lifts that `budget-cap`
+  check for every file of the row at once. A sweep row is then either as small as its smallest file's ceiling or one
+  budget for files of different sizes, so each recorded file of a sweep takes its own row.
+  EVERY-LOCATION-IS-NAMED-ONCE was amended six times from this one cause (story 3: 25 rows, 15 of them one recorded
+  file each), and its epic called the incident recorded as debt while no row existed. Narrow fix: none in a review;
+  its design goes to the council and Fable before the spec session of that epic's story 4, which sizes about
+  twenty-two rows. Proof: on a plan with no amendment, one sweep row with a raise bullet for its recorded 800-line
+  file accepts that file within its own budget and refuses a second file of the row that grows past its own
+  ceiling. Residual exposure, not live: whatever a plan's budget says, the size check
+  (`agent-workflow-kit/tools/source-size-check.mjs --check`) stops a file beyond its band unless a record holds it.
+  Raised by Fable's design consult in the spec review of that epic's story 3 (2026-11-22).
+
+- **REGEX-ESCAPER-COPIES-OUTSIDE-THE-LEXICAL-HELPER** — invariant: a regular expression built from a value escapes
+  it through the one escaping function of the kit's lexical helpers (`agent-workflow-kit/tools/repo-lex.mjs:25`,
+  `escapeRegExp`). Origin: story 3 of EVERY-LOCATION-IS-NAMED-ONCE moved only the copies in files its rows hold
+  (epic-shape-ledger, worktrees, known-footprint); local copies stand in `agent-workflow-kit/tools/git-hooks.mjs:67`,
+  `agent-workflow-kit/tools/checker-claim.mjs:56` and `:66-67` with their twins
+  `references/scripts/gates/migrate-gates.mjs:236` and `:246-247` in both script trees, the placed hook
+  `agent-workflow-kit/references/hooks/state-block-guard.mjs:198` and `scripts/release/version-sync.mjs:366`.
+  `agent-workflow-kit/tools/plan-shape-facts.mjs:144-148` compiles scope globs and keeps `*`, `**` and braces as
+  glob syntax, a partial set by design, and stays. Narrow fix: each copy gives way to `escapeRegExp` with the next
+  change of its file, a shipped script or placed hook only where its own import graph allows the import. Proof:
+  the file's suites stay green; `agent-workflow-kit/tools/repo-lex.test.mjs` pins the function. Residual exposure,
+  not live: every copy escapes the same metacharacters for `new RegExp`, where a slash needs no escape. Raised in the
+  spec review of that story, round 1, by the lens and Fable (2026-11-22).
+
+- **LOCATIONS-AND-FAMILY-SCENARIO-WALK-AROUNDS** — invariant: each scenario of the locations and script-family
+  contracts is held by a cell for the forms that walk around it, not by the review alone. Origin, none changed by
+  story 3 of EVERY-LOCATION-IS-NAMED-ONCE: locations S1's syntax limit (a dynamic import inside a template text);
+  locations S2 has no positive cell for a colon past the first segment, nor for the lowercase drive form
+  `c:relative`; script-family S4 (a namespace import, a computed specifier), S5 (an extra symbolic link in the
+  mirror), S11 (a computed specifier; a kit tool importing the memory canon's index passes but cannot load from the
+  packed kit); jev-guide S7 (an extra `node:crypto` edge through the shared module); the comment at
+  `agent-workflow-kit/test/read-graph-purity.test.mjs:30-32` still says mcp-registration keeps its own settings-path
+  literals, which it now takes from the shared index (`agent-workflow-kit/tools/mcp-registration.mjs:41`). Narrow
+  fix: a cell per form with the next change of its suite; the jev-guide point and the comment with story 6 of that
+  epic. Proof: each new cell red on a body that walks around its scenario. Residual exposure, not live: no shipped
+  file takes any of these forms today, and each diff review reads the importers. Raised in the spec review of that
+  story, round 1, by codex and the lens, the drive form in round 2 by codex (2026-11-22).
+
+- **HIDE-FOOTPRINT-GITIGNORE-FALLBACK-SPELLS-A-ROOT-PATH** — invariant: every fixed path the hide tool resolves
+  against the project root takes the definition's name. Origin: `agent-workflow-kit/tools/hide-footprint.mjs:200`
+  hands `git ls-files` the fallback `'.gitignore'`, a path relative to the root, while the definition holds
+  `GITIGNORE` (`agent-workflow-memory/references/scripts/shared/locations.mjs:11`); the plan of story 3 of
+  EVERY-LOCATION-IS-NAMED-ONCE moves only the file's two visibility anchors (`:227`). Narrow fix: the fallback takes
+  `GITIGNORE` through the shared index; the basename comparison at `:197` stays. Proof: the hide tool's existing
+  suites stay green. Residual exposure, not live: the fallback is reached only when the source resolves to the
+  project root itself, and its value equals the definition's. Raised by codex's re-read of the last round of that
+  story's spec review (2026-11-22).
 
 - **CANON-CLEANUP-GREP-CAN-NEVER-BE-EMPTY** — invariant: a plan's Cleanup check proves the plan and its scratch files
   left the tree and passes while the kept session records name them. Origin:
@@ -1669,6 +1709,19 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
 
 ## Closed
+
+- **ADR-ROTATOR-SCHEME-IS-READ-FROM-ITS-COMMENTS** — invariant: the ADR layout detector tells a current
+  decisions rotator from an earlier one by a fact the rotator's code carries and a suite pins, never by comment
+  text. Origin: `agent-workflow-kit/tools/family-registry.mjs` read the deployed rotator's text for `'docs/ai/adr'`,
+  which since story S1 of EVERY-LOCATION-IS-NAMED-ONCE stood only in the rotator's comments. Closed in story S3 of
+  that epic (2026-11-22): `ADR_LAYOUT_PATHS.storeMarker` is `'export const ADR_DIR_REL'` (`:362`) and the probe
+  reads the scheme as new only for a line that starts with it (`:407`); the rotator declares it on one line
+  (`agent-workflow-memory/references/scripts/archives/archive-decisions.mjs:107`), and no project code is loaded.
+  Proof: `agent-workflow-kit/tools/family-registry.test.mjs:398-409` (the shipped body without its line comments and
+  the published 8.1.3 and 8.5.0 bodies need no migration; a pre-store body naming the declaration in a line comment
+  reads old) and its drift guard (`:490`, the marker on exactly the declaration line). Residual, stated: a line that
+  starts with the declaration inside a block comment, a string or a template text is read as one; no shipped body
+  has one, and shipped scripts are never edited by hand.
 
 - **SOURCE-SIZE-JUDGE-TIGHTEN-CLAUSE-OVERREACHES** — invariant: the judge part states which warnings bring the
   paste-ready regeneration. Origin: `docs/ai/specs/kit/source-size/judge.md:47-48` said "A lowered or removed record

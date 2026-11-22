@@ -32,6 +32,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { DOCS_TREE } from '../references/scripts/shared/index.mjs';
 import {
   CONFIG_REL,
   fail,
@@ -53,7 +54,6 @@ import { readAuthoritativeVersion } from './manifest/validate.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
 
 const KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const GATES_REL = 'docs/ai/gates.json';
 
 // The honest boundary of the bookkeeping floors — printed on EVERY floor evaluation and
 // doc-parity-bound into the set-flow mode doc, so the admission can never be reworded away.
@@ -261,7 +261,7 @@ const bookkeepingFloorFailures = ({ key, rel, excluded, top, gates, lstat, runGi
     failures.push(`flow.${key} "${rel}": must be a plain forward-slash path without "." or ".." segments (#37)`);
     return { failures, notes };
   }
-  if (rel === 'docs/ai' || rel.startsWith('docs/ai/')) {
+  if (rel === DOCS_TREE || rel.startsWith(`${DOCS_TREE}/`)) {
     failures.push(`flow.${key} "${rel}": a bookkeeping path never lives under docs/ai/ (#37)`);
   }
   for (const gate of gates) {

@@ -6,17 +6,17 @@
 // Contract: docs/ai/specs/kit/transition/.
 
 import { join, resolve } from 'node:path';
-import { tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
+import { AGENTS_FILE, AGENT_RULES, RULES_EFFECTIVE, tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
 import { writeContainedFileAtomic } from '../atomic-write.mjs';
 import { isDirectRun } from '../direct-run.mjs';
 import { probeRegularFileNoFollow, readRegularFileNoFollow } from '../fs-read-nofollow.mjs';
 import { findKitBlock, SKIP_PREFIX } from '../inject-methodology.mjs';
+import { themePaths } from '../project-rules/index.mjs';
+import { escapeRegExp } from '../repo-lex.mjs';
 
 const LF = '\n';
 const BOM = '﻿';
-const AGENTS_REL = 'AGENTS.md';
-const RULES_REL = 'docs/ai/agent_rules.md';
-const LENS_REL = 'docs/ai/rules/lens.md';
+const LENS_REL = themePaths('lens').kit;
 const USAGE = 'usage: transition/index.mjs --cwd <project>';
 const UPGRADE_AGAIN = 'run the upgrade again: its step 3 writes the kit block or names its malformed lines';
 const ENGINE_REFRESH = 'run npx @sabaiway/agent-workflow-engine@latest init, then run the upgrade again';
@@ -25,7 +25,8 @@ const ENGINE_REFRESH = 'run npx @sabaiway/agent-workflow-engine@latest init, the
 // theme and the line-cap footer in AGENTS.md; the title words of three sections in the rules file.
 const POINTERS = ['methodology', 'orchestration', 'autonomy'];
 const MARKER_RE = new RegExp(`^<!-- workflow:(${POINTERS.join('|')}):(start|end) -->$`, 'u');
-const THEME_ROW_RE = /^\| \[`docs\/ai\/rules\/effective\/([^`/\s]+)\.md`\]\(\.\/docs\/ai\/rules\/effective\/\1\.md\) \|/u;
+const EFFECTIVE_RULES_PATTERN = escapeRegExp(RULES_EFFECTIVE);
+const THEME_ROW_RE = new RegExp(`^\\| \\[\`${EFFECTIVE_RULES_PATTERN}\\/([^\`/\\s]+)\\.md\`\\]\\(\\.\\/${EFFECTIVE_RULES_PATTERN}\\/\\1\\.md\\) \\|`, 'u');
 const FOOTER = '**Rule:** This file stays CONCISE (≤100 lines). Details go to `docs/ai/`. Never bloat this file.';
 const TITLES = ['Communication (user-facing messages)', 'Story sessions', 'Planning, review & process-fidelity'];
 const HEADING_RE = /^ {0,3}#{1,6}[ \t]+(.*)$/u;
@@ -178,14 +179,14 @@ export const main = async (argv, deps = {}) => {
   }
   const cwd = resolve(argv[1]);
   try {
-    const agentsFile = readProjectFile(cwd, AGENTS_REL, deps);
-    const rulesFile = readProjectFile(cwd, RULES_REL, deps);
+    const agentsFile = readProjectFile(cwd, AGENTS_FILE, deps);
+    const rulesFile = readProjectFile(cwd, AGENT_RULES, deps);
     const agents = agentsFile && parse(agentsFile);
     const rules = rulesFile && parse(rulesFile);
     const block = firstStep(agents, cwd, deps);
     const judged = [
-      { rel: AGENTS_REL, doc: agents, spans: keepParseable(agents, agentsSpans(agents, block)) },
-      { rel: RULES_REL, doc: rules, spans: rules === null ? [] : keepParseable(rules, rulesSpans(rules)) },
+      { rel: AGENTS_FILE, doc: agents, spans: keepParseable(agents, agentsSpans(agents, block)) },
+      { rel: AGENT_RULES, doc: rules, spans: rules === null ? [] : keepParseable(rules, rulesSpans(rules)) },
     ];
     const written = [];
     for (const { rel, doc, spans } of judged) {

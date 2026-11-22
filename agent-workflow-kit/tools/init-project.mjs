@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
+import { AGENTS_DIR, DOCS_TREE, GIT_CONFIG, GIT_DIR, GIT_HOOKS, HOOKS_DIR, MCP_FILE, SETTINGS as SETTINGS_LOCATION, SETTINGS_LOCAL, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 import { checkApply } from './apply-danger-check.mjs';
 import { resolveGitHooksPath } from './commit-guard.mjs';
 import { dirCovers } from './declared-paths.mjs';
@@ -19,8 +20,8 @@ const INSIDE_LINE = 'you are inside an agent; run this in your own terminal';
 const APPLY_PROMPT = 'apply? y/N: ';
 const RUN_NONE = 'y applies every preview above (a sudo install asks once more on its own line); run none of their commands yourself';
 const RESTART_LINE = 'restart the agent from this folder: init changed its configuration';
-const SETTINGS = ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.git/config'];
-const FILE_DIRS = ['.claude/agents', '.claude/hooks'];
+const SETTINGS = [SETTINGS_LOCATION, SETTINGS_LOCAL, MCP_FILE, GIT_CONFIG];
+const FILE_DIRS = [AGENTS_DIR, HOOKS_DIR];
 // The record key whose state is the sorted *.json names of its directory, so a created file is a change.
 const JSON_NAMES = '*.json';
 const DANGLING = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
@@ -42,12 +43,12 @@ export const findProject = ({ cwd, lstat = lstatSync }) => {
   const candidates = [];
   const visit = (root) => {
     const io = { lstat };
-    if (readStat(join(root, 'docs/ai'), io)?.isDirectory()) {
-      const shape = readStat(join(root, 'docs/ai/.workflow-version'), io) ? 'stamped' : 'pre-versioned';
+    if (readStat(join(root, DOCS_TREE), io)?.isDirectory()) {
+      const shape = readStat(join(root, WORKFLOW_STAMP), io) ? 'stamped' : 'pre-versioned';
       candidates.push({ root, shape });
     }
     const parent = dirname(root);
-    if (!readStat(join(root, '.git'), io) && parent !== root) visit(parent);
+    if (!readStat(join(root, GIT_DIR), io) && parent !== root) visit(parent);
   };
   visit(resolve(cwd));
   return { candidates };
@@ -57,8 +58,8 @@ const readEntries = (dir, io) => readStat(dir, io)?.isDirectory() ? io.readdir(d
 const collectPaths = ({ root, home, hooksDir }, io) => {
   const paths = [join(home, '.claude/settings.json')];
   if (root === null) return paths;
-  const docs = join(root, 'docs/ai');
-  paths.push(...SETTINGS.map((path) => join(root, path)), join(docs, '.workflow-version'), join(docs, JSON_NAMES));
+  const docs = join(root, DOCS_TREE);
+  paths.push(...SETTINGS.map((path) => join(root, path)), join(root, WORKFLOW_STAMP), join(docs, JSON_NAMES));
   for (const dir of [...FILE_DIRS.map((path) => join(root, path)), hooksDir]) {
     paths.push(dir, ...readEntries(dir, io).map((name) => join(dir, name)));
   }
@@ -139,7 +140,7 @@ const findMasks = (paths, facts, io, print) => {
   const masks = new Set();
   const root = facts.root ?? facts.cwd;
   for (const path of new Set(paths)) {
-    if (!isProtectedPath(path, { root, home: facts.home, hooksDir: join(root, '.git/hooks') })) continue;
+    if (!isProtectedPath(path, { root, home: facts.home, hooksDir: join(root, GIT_HOOKS) })) continue;
     const stat = readStat(path, io);
     if (!stat?.isFile() || stat.size !== 0 || (stat.mode & 0o222) !== 0) continue;
     masks.add(path);
@@ -241,7 +242,7 @@ const previewQueue = async (context, queue) => {
 
 const isConfiguration = (path, root) => root !== null && (
   SETTINGS.slice(0, 3).some((rel) => path === join(root, rel))
-  || ['.claude/agents', '.claude/hooks'].some((rel) => path === join(root, rel) || path.startsWith(join(root, rel) + sep))
+  || FILE_DIRS.some((rel) => path === join(root, rel) || path.startsWith(join(root, rel) + sep))
 );
 
 // The record is the state the first preview reads: taken before any preview, compared before each apply.
@@ -333,7 +334,7 @@ const gateStamp = (candidate, context) => {
   if (candidate.root === null) return null;
   const stamp = (() => {
     try {
-      return String(context.io.readFile(join(candidate.root, 'docs/ai/.workflow-version'), 'utf8')).trim();
+      return String(context.io.readFile(join(candidate.root, WORKFLOW_STAMP), 'utf8')).trim();
     } catch {
       return null;
     }
@@ -369,7 +370,7 @@ export const runInitProject = async (deps) => {
   }
   const root = gateStamp(candidate, context);
   // The hooks dir git itself reports (a linked worktree's or core.hooksPath), as the advisor reads it.
-  const hooksDir = root === null ? null : (deps.gitHooksPath ?? resolveGitHooksPath)(root) ?? join(root, '.git/hooks');
+  const hooksDir = root === null ? null : (deps.gitHooksPath ?? resolveGitHooksPath)(root) ?? join(root, GIT_HOOKS);
   context.facts = { toolsDir: deps.toolsDir, root, env: deps.env, home: deps.home, platform: deps.platform, tuple: undefined, hooksDir };
   context.recommend ??= (root, facts) => buildRecommendations({ cwd: root ?? deps.cwd,
     deps: { ...io, env: deps.env, getenv: deps.env, home: deps.home, platform: deps.platform,

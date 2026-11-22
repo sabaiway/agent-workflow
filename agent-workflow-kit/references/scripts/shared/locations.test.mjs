@@ -9,7 +9,7 @@ const PINNED_NAMES = `
   DOCS SCRIPTS CLAUDE_DIR GIT_DIR PACKAGE_JSON AGENTS_FILE CLAUDE_FILE MCP_FILE GITIGNORE GITATTRIBUTES DOT_AGENTS NPM_LOCK
   PNPM_LOCK YARN_LOCK BUN_LOCKB BUN_LOCK PNPM_WORKSPACE PNPM_WORKSPACE_YML LERNA_JSON NODE_MODULES CODEX_LAST_SESSION
   VSCODE_DIR CURSOR_DIR CURSORRULES CODEIUM_DIR WINDSURF_DIR WINDSURFRULES GEMINI_FILE ANTIGRAVITY_FILE GITHUB_DIR
-  AIDER_CONF AIDER_CHAT_HISTORY AIDER_INPUT_HISTORY CONTINUE_DIR
+  AIDER_CONF AIDER_CHAT_HISTORY AIDER_INPUT_HISTORY CONTINUE_DIR BINDING_GYP
   DOCS_TREE PLANS QUEUE
   KIT_FOLDER LOCAL_HOOK SYNC_MIRRORS KIT_COMMAND
   AGENTS_SKILLS VSCODE_SETTINGS CURSOR_RULES
@@ -21,7 +21,7 @@ const PINNED_NAMES = `
   RECENT CONDENSED_INDEX ISSUES_RESOLVED CHANGELOG_CARRY DECISIONS_ARCHIVE DECISIONS_ARCHIVE_EARLY
   ADR_LOG SPEC_STORE_INDEX EPIC_STORE_SEED RULES_LOCAL RULES_EFFECTIVE RULES_RECORD
 `.trim().split(/\s+/);
-const PINNED_NAME_COUNT = 92;
+const PINNED_NAME_COUNT = 93;
 
 const findLoadProblem = (source) => {
   const code = source.replace(/('(?:\\[\s\S]|[^'\\])*'|"(?:\\[\s\S]|[^"\\])*")|\/\/[^\r\n\u2028\u2029]*|\/\*[\s\S]*?\*\//gu,
@@ -74,7 +74,7 @@ describe('spec:locations/S1 the definition over the canon: the module\'s own exp
     assert.equal(findLoadProblem(acceptedSource), null, acceptedSource);
   });
 
-  it('the pin has 92 unique names and the names judge reports a stray default and a missing DOCS', () => {
+  it('the pin has 93 unique names and the names judge reports a stray default and a missing DOCS', () => {
     assert.equal(PINNED_NAMES.length, PINNED_NAME_COUNT);
     assert.equal(new Set(PINNED_NAMES).size, PINNED_NAME_COUNT);
     assert.deepEqual(findNameProblems(PINNED_NAMES), []);

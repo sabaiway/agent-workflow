@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { QUEUE } from '../references/scripts/shared/index.mjs';
 import { buildSummaryState, isTreeClean } from './core-evidence.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { resolveGitLocation } from './git-env.mjs';
@@ -8,7 +9,6 @@ import { loadSourceSizeConfig, practiceFacts } from './source-size-config.mjs';
 import { gatherPlanFacts, readSummaryFacts } from './now-plan-facts.mjs';
 import { isWithheld } from './now-status.mjs';
 
-const QUEUE_REL = 'docs/plans/queue.md';
 const BLOCKS = Object.freeze(['plans', 'tree', 'queue', 'campaign']);
 
 const attempt = (label, read) => {
@@ -20,10 +20,10 @@ const attempt = (label, read) => {
 };
 
 const readQueueFacts = (cwd, deps) => {
-  const read = readRegularFileNoFollow(join(cwd, QUEUE_REL), deps.io ?? {});
-  if (read.outcome !== 'ok') throw new Error(`${QUEUE_REL} is not a readable regular file (${read.className ?? read.code ?? read.outcome})`);
-  const { rows, counts, total } = auditQueue(read.content, { label: QUEUE_REL });
-  return { path: QUEUE_REL, rows, counts, total };
+  const read = readRegularFileNoFollow(join(cwd, QUEUE), deps.io ?? {});
+  if (read.outcome !== 'ok') throw new Error(`${QUEUE} is not a readable regular file (${read.className ?? read.code ?? read.outcome})`);
+  const { rows, counts, total } = auditQueue(read.content, { label: QUEUE });
+  return { path: QUEUE, rows, counts, total };
 };
 
 // The practice is opt-in: an absent declaration is a rendered STATE, only an unreadable one is withheld.

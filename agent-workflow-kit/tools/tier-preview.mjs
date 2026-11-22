@@ -6,6 +6,7 @@
 // never asks; every read and write goes through deps.
 import { linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { EPIC_STORE, EPIC_STORE_SEED, ORCHESTRATION, PLANS, PROFILE_DECLINES, QUEUE } from '../references/scripts/shared/index.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { safeLine } from './carriers.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -28,14 +29,8 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 const MODE_FLAGS = new Set([APPLY_FLAG, DECLINE_FLAG]);
 const SLOTS_ID = 'epic-task-slots';
 const STORE_ID = 'epic-store-seeded';
-const STORE_DIR = 'docs/ai/epics';
-const STORE_SEED = 'docs/ai/epics/.gitkeep';
 const QUEUE_ID = 'named-queue-row-seed';
-const PLANS_DIR = 'docs/plans';
-const QUEUE_SEED = 'docs/plans/queue.md';
 const MISSING_CODE = 'ENOENT';
-const CONFIG_WRITTEN = 'docs/ai/orchestration.json';
-const DECLINES_REL = 'docs/ai/profile-declines.json';
 const SCHEMA = 1;
 const INDENT = '  ';
 const WORDS = Object.freeze({
@@ -160,11 +155,11 @@ const missingAt = (root, rel, deps) => {
 };
 
 const writeQueueSeed = (root, deps, bytes, made) => {
-  const plansMissing = missingAt(root, PLANS_DIR, deps);
+  const plansMissing = missingAt(root, PLANS, deps);
   try {
-    return { seeded: writeProjectFileCreateOnly(root, QUEUE_SEED, bytes, deps, { noun: 'the queue seed' }) };
+    return { seeded: writeProjectFileCreateOnly(root, QUEUE, bytes, deps, { noun: 'the queue seed' }) };
   } catch (error) {
-    if (plansMissing && directoryAt(root, PLANS_DIR, deps)) made.push(`${PLANS_DIR} created`);
+    if (plansMissing && directoryAt(root, PLANS, deps)) made.push(`${PLANS} created`);
     return { refusal: refuse('write-failed', [...made, causeOf(error)].join('; ')) };
   }
 };
@@ -181,21 +176,21 @@ const runApply = (root, deps, judged, slots, config) => {
     } catch (error) {
       return { refusal: refuse('write-failed', causeOf(error)) };
     }
-    made.push(`${CONFIG_WRITTEN} written`);
+    made.push(`${ORCHESTRATION} written`);
     byId.set(SLOTS_ID, { ...byId.get(SLOTS_ID), word: WORDS.applied });
   }
   if (byId.get(STORE_ID)?.word === GAP_STATES.offered) {
     let seeded;
     try {
-      seeded = writeProjectFileCreateOnly(root, STORE_SEED, '', deps, { noun: 'the epic store seed' });
+      seeded = writeProjectFileCreateOnly(root, EPIC_STORE_SEED, '', deps, { noun: 'the epic store seed' });
     } catch (error) {
-      if (directoryAt(root, STORE_DIR, deps)) made.push(`${STORE_DIR} created`);
+      if (directoryAt(root, EPIC_STORE, deps)) made.push(`${EPIC_STORE} created`);
       return { refusal: refuse('write-failed', [...made, causeOf(error)].join('; ')) };
     }
     byId.set(STORE_ID, { ...byId.get(STORE_ID), word: seeded.created ? WORDS.applied : GAP_STATES.present });
-    if (seeded.created) made.push(`${STORE_SEED} created`);
+    if (seeded.created) made.push(`${EPIC_STORE_SEED} created`);
     if (seeded.tmpLeftBehind) {
-      extra.push(OUTCOME_LINES.tmpLeft(STORE_SEED, seeded.tmpLeftBehind));
+      extra.push(OUTCOME_LINES.tmpLeft(EPIC_STORE_SEED, seeded.tmpLeftBehind));
       made.push(`${seeded.tmpLeftBehind} left behind`);
     }
   }
@@ -203,7 +198,7 @@ const runApply = (root, deps, judged, slots, config) => {
     const written = writeQueueSeed(root, deps, seed.bytes, made);
     if (written.refusal) return written;
     byId.set(QUEUE_ID, { ...byId.get(QUEUE_ID), word: written.seeded.created ? WORDS.applied : GAP_STATES.present });
-    if (written.seeded.tmpLeftBehind) extra.push(OUTCOME_LINES.tmpLeft(QUEUE_SEED, written.seeded.tmpLeftBehind));
+    if (written.seeded.tmpLeftBehind) extra.push(OUTCOME_LINES.tmpLeft(QUEUE, written.seeded.tmpLeftBehind));
   }
   return { judged: judged.map((item) => byId.get(item.entry.id)), extra };
 };
@@ -219,7 +214,7 @@ const runDecline = (root, deps, judged, profile, declined) => {
   const merged = { ...(declined ?? {}) };
   for (const { entry } of offered) merged[entry.id] = profile.lineage;
   try {
-    writeDocsAiFileAtomic(root, DECLINES_REL, serializeDeclines(merged), deps, { noun: 'the decline record' });
+    writeDocsAiFileAtomic(root, PROFILE_DECLINES, serializeDeclines(merged), deps, { noun: 'the decline record' });
   } catch (error) {
     return { refusal: refuse('write-failed', causeOf(error)) };
   }

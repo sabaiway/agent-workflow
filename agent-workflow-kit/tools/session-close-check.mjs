@@ -4,6 +4,7 @@
 // docs/ai/specs/kit/tier/session-rules/ (part session-close-check). Not a gate: a session close is
 // not a commit boundary. main(argv, deps) returns, never exits, never asks; every read goes through deps.
 import { resolve } from 'node:path';
+import { HANDOVER } from '../references/scripts/shared/index.mjs';
 import { safeLine } from './carriers.mjs';
 import { isDeployed } from './checker-gates-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -19,7 +20,6 @@ const EXIT_CANNOT_JUDGE = 2;
 const CHECK_FLAG = '--check';
 const CWD_FLAG = '--cwd';
 const HELP_FLAG = '--help';
-const HANDOVER_REL = 'docs/ai/handover.md';
 const SECTION_HEADING = '## For the user';
 const SECTION_BOUNDARY = '## ';
 const LABELS = Object.freeze(['**What was done, and for what:**', '**What is next, and why:**']);
@@ -126,7 +126,7 @@ const judgeHandover = (content) => {
 const runCheck = (options, deps) => {
   const root = resolve(options.cwd);
   if (!isDeployed(root, deps)) return cannotJudge(STATES.noDeployment);
-  const read = readRegularFileNoFollow(resolve(root, HANDOVER_REL), deps);
+  const read = readRegularFileNoFollow(resolve(root, HANDOVER), deps);
   if (read.outcome === 'absent') return result(EXIT_REFUSAL, '', OUTCOME_LINES.state(STATES.handoverAbsent));
   if (read.outcome === 'foreign') {
     return cannotJudge(read.className === SYMLINK_CLASS ? STATES.handoverSymlink : STATES.handoverNotRegular);

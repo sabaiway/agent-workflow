@@ -5,10 +5,11 @@
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { ACKS } from '../references/scripts/shared/index.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 
-export const ACKS_FILE = 'docs/ai/acks.json';
+export const ACKS_FILE = ACKS;
 export const ACKS_LANE_KEY = 'sandboxLaneAck';
 export const ACKS_WORKTREES_DIR_KEY = 'worktreesDirAck';
 export const ACKS_COVERAGE_DOMAIN_KEY = 'coverageDomainAck';

@@ -22,6 +22,8 @@ export const lexicalRepoRelative = (rel) => {
 export const RESERVED_DIR = '.agent-workflow';
 export const NEVER_WALKED = Object.freeze(['.git', 'node_modules', RESERVED_DIR]);
 
+export const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\/]/gu, '\\$&');
+
 // POSIX single-quote for pasteable command rendering (display only — never an execution boundary).
 export const shellQuoteArg = (s) => (/^[A-Za-z0-9_/.\-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 

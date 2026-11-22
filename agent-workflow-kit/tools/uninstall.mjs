@@ -25,6 +25,7 @@
 import { existsSync, statSync, lstatSync, readlinkSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve, dirname, basename, isAbsolute } from 'node:path';
 import os from 'node:os';
+import { AGENTS_FILE, CLAUDE_FILE, DOCS_TREE, GIT_EXCLUDE, PLANS, PRE_COMMIT, SETTINGS, SETTINGS_LOCAL } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { surveyFamily, surveyProject, FAMILY_MEMBERS, classifyMember, OK } from './family-registry.mjs';
 import { assertContainedRealPath, removeTreeManaged, unlinkManaged, MANAGED_LINK_CONFLICT } from './fs-safe.mjs';
@@ -63,7 +64,7 @@ const DEFAULT_BINDIR_REL = '.local/bin';
 // the name (never remove an unmarked / user-authored hook).
 const HOOK_MARKER_SUFFIX = ':install-git-hooks.mjs';
 // User-authored / kit-deployed-but-now-owned-by-the-user surfaces — REPORTED, never deleted.
-const REPORT_PATHS = ['docs/ai', 'AGENTS.md', 'CLAUDE.md', 'docs/plans'];
+const REPORT_PATHS = [DOCS_TREE, AGENTS_FILE, CLAUDE_FILE, PLANS];
 
 // ── injectable fs ────────────────────────────────────────────────────────────────
 const fsOf = (deps = {}) => ({
@@ -182,7 +183,7 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
 
     if (project.hiddenFence) {
       // Display the git-path-resolved exclude file (worktree/submodule-safe), guarded → conventional path.
-      const fencePath = (() => { try { return excludePath(deps, dir); } catch { return join(dir, '.git/info/exclude'); } })();
+      const fencePath = (() => { try { return excludePath(deps, dir); } catch { return join(dir, GIT_EXCLUDE); } })();
       items.push({ surface: 'fence', path: fencePath, class: MANAGED_MARKER, reason: 'hidden-mode managed block (removed via the existing unhide path; only the fenced lines)' });
     }
 
@@ -200,7 +201,7 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
         return false;
       }
     };
-    const hookPath = join(dir, '.git/hooks/pre-commit');
+    const hookPath = join(dir, PRE_COMMIT);
     // `reachable` answers for the PARENT CHAIN only (by design — walking the leaf dropped surfaces
     // from the plan). The leaf therefore needs its own no-follow classification before any read: a
     // symlinked hook would expose an out-of-tree file, and a FIFO would block planning outright.
@@ -258,7 +259,7 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
     }
     // A settings file the tool will not read is REPORTED rather than dropped: the seams it may hold
     // are exactly what a teardown owes the maintainer, and silence about them is the worse answer.
-    const settingsPath = join(dir, '.claude/settings.json');
+    const settingsPath = join(dir, SETTINGS);
     const settingsStat = claudeDirForeign || !reachable(settingsPath) ? null : lstatNoFollow(settingsPath, fs.lstat);
     const settingsUnread = !claudeDirForeign && reachable(settingsPath) && settingsStat !== null
       && (settingsStat.isSymbolicLink() || !settingsStat.isFile());
@@ -288,7 +289,7 @@ export const buildPlan = ({ family, project = null, projectDir = null, member = 
     // byte-identical to the current bundle — never create the wired-but-missing state this tool
     // itself would warn about; while any entry is present, all surfaces are reported as one bundle
     // (edit settings first, re-run to remove the file).
-    const localSettingsPath = join(dir, '.claude/settings.local.json');
+    const localSettingsPath = join(dir, SETTINGS_LOCAL);
     // Same leaf discipline as the hook: classified no-follow before any read, so a symlinked local
     // settings file is not followed out of the tree and a non-regular one is never opened.
     const localStat = !claudeDirForeign && reachable(localSettingsPath) ? lstatNoFollow(localSettingsPath, fs.lstat) : null;
@@ -699,7 +700,7 @@ const gateHookWiredNow = (projectDir, fs) => {
       return true;
     }
   };
-  return probe(join(projectDir, '.claude/settings.json')) || probe(join(projectDir, '.claude/settings.local.json'));
+  return probe(join(projectDir, SETTINGS)) || probe(join(projectDir, SETTINGS_LOCAL));
 };
 
 // ── report ───────────────────────────────────────────────────────────────────

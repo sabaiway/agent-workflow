@@ -4,7 +4,7 @@
 import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fail } from '../references/scripts/shared/index.mjs';
+import { fail, GATES } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
 import { GIT_MAX_BUFFER, resolveGitLocation, stripGitLocationEnv, withGitPath } from './git-env.mjs';
@@ -13,7 +13,6 @@ import { judgeAnchors, parseRecord, ratchetLine, REFUSALS, renderExcerpts, rende
 
 const RECORD_MAX_BYTES = 1024 * 1024;
 export const EXCERPTS_FRAMING_RESERVE_BYTES = 4096;
-const GATES_REL = 'docs/ai/gates.json';
 const QUEUE_GATE_TOKEN = 'queue-audit-cli.mjs';
 const MODE_FLAGS = Object.freeze(['--check', '--rows']);
 const FATAL_PARSE_REFUSALS = Object.freeze(REFUSALS.slice(0, 4));
@@ -217,13 +216,13 @@ const inspectGit = ({ cwd, env, spawn, head, headLine, anchors }) => {
 };
 
 const readRatchet = (cwd, rows) => {
-  const path = join(cwd, GATES_REL);
+  const path = join(cwd, GATES);
   const parsed = (() => {
     try { return { value: JSON.parse(readFileSync(path, 'utf8')), error: null }; }
     catch (err) { return { value: null, error: err }; }
   })();
-  if (parsed.error?.code === 'ENOENT') return `ratchet: ${GATES_REL} is absent`;
-  if (parsed.error) return `ratchet: ${GATES_REL} cannot be read (${parsed.error.message})`;
+  if (parsed.error?.code === 'ENOENT') return `ratchet: ${GATES} is absent`;
+  if (parsed.error) return `ratchet: ${GATES} cannot be read (${parsed.error.message})`;
   const gate = Array.isArray(parsed.value?.gates)
     ? parsed.value.gates.find((entry) => typeof entry?.cmd === 'string' && entry.cmd.includes(QUEUE_GATE_TOKEN))
     : null;

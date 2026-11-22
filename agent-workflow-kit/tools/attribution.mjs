@@ -4,6 +4,7 @@
 // harness adds no Co-Authored-By trailer, PR text or session link. Preview by default; --apply writes.
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { AGENTS_FILE } from '../references/scripts/shared/index.mjs';
 import { CLAUDE_DIR, EXPECTED_WORKFLOW_VERSION, SETTINGS_FILE, preflightVelocityProfile } from './velocity-profile.mjs';
 import { formatJson } from './gate-hook.mjs';
 import { isDirectRun } from './direct-run.mjs';
@@ -31,7 +32,7 @@ const usageError = (message) => Object.assign(new Error(message), { exitCode: EX
 export const readAttributionChoice = (root, deps = {}) => {
   let text;
   try {
-    text = String((deps.readFile ?? readFileSync)(join(root, 'AGENTS.md'), 'utf8'));
+    text = String((deps.readFile ?? readFileSync)(join(root, AGENTS_FILE), 'utf8'));
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;

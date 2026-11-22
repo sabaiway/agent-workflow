@@ -20,6 +20,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { ORCHESTRATION } from '../references/scripts/shared/index.mjs';
 import { ACTIVITIES, SLOT_RECIPES } from './recipes.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 import { validateRoster } from './review-roster.mjs';
@@ -35,7 +36,7 @@ export { CANON_README, KNOWN_PRIOR_README, normalizeCanonical, refreshIfCanonica
 
 // The hand-editable / agent-writable, per-project config (strict JSON). cwd-relative — the error prefix
 // uses this rel path so a user sees a path they can open, never an absolute temp/host path.
-export const CONFIG_REL = 'docs/ai/orchestration.json';
+export const CONFIG_REL = ORCHESTRATION;
 
 // A tagged failure: a plain Error carrying the intended process exit code (2 usage / 1 config). Avoids
 // a class (project rule) while letting a CLI main() map a throw to the right code in one place. Shared

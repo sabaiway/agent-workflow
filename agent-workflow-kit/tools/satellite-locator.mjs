@@ -14,9 +14,10 @@
 // second body here would be exactly the duplication that pin exists to prevent. `fs` is the shape
 // worktrees.mjs builds: { lstat, readdir, realpath, readFileNoFollow }.
 //
-// Node built-ins plus two pure leaves. No side effects on import; no CLI. Dependency-free, Node >= 22.
+// Node built-ins, shared locations and two pure leaves. No side effects on import; no CLI. Dependency-free, Node >= 22.
 
 import { join } from 'node:path';
+import { DOCS } from '../references/scripts/shared/index.mjs';
 import { PLANS_REL } from './plan-files.mjs';
 import { stop, handoffBasename, parseProvisionRecord, displayValue } from './worktrees-record.mjs';
 
@@ -100,7 +101,7 @@ export const classifyNodeNoFollow = (path, fs) => {
 // ANY stat failure (not just readdir) renders honestly — list must never crash on a bad node.
 export const scanPlansDir = ({ wtRoot, fs }) => {
   if (classifyNodeNoFollow(wtRoot, fs).kind !== 'plain-directory') return { state: 'unreadable' };
-  const docs = classifyNodeNoFollow(join(wtRoot, 'docs'), fs);
+  const docs = classifyNodeNoFollow(join(wtRoot, DOCS), fs);
   if (docs.kind === 'absent') return { state: 'absent' };
   if (docs.kind !== 'plain-directory') return { state: 'unreadable' };
   const plans = classifyNodeNoFollow(join(wtRoot, PLANS_REL), fs);

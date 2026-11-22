@@ -7,14 +7,14 @@
 
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import { tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
+import { QUEUE, tokenizeMarkdown } from '../../references/scripts/shared/index.mjs';
 import { auditQueue, canonicalHeading, checkQueue } from '../queue-audit.mjs';
 import { parseArgv } from '../queue-audit-cli.mjs';
 import { bandOf } from './layout.mjs';
 
 export const PILE_ANSWERS = Object.freeze(['none', 'held', 'write']);
 export const PILE_HELD = Object.freeze(['key', 'queue', 'bucket', 'check', 'refused']);
-export const PILE_QUEUE_REL = 'docs/plans/queue.md';
+export const PILE_QUEUE_REL = QUEUE;
 export const PILE_QUEUE_MAX_BYTES = 8388608;
 
 const QUEUE_CLI = 'queue-audit-cli.mjs';

@@ -87,6 +87,7 @@ import { render } from './renderers.mjs';
 import { ADOPTION, readDeclineAck, surveySpecAdoption } from './spec-adoption.mjs';
 import { KIT_COMMANDS } from '../references/scripts/run.mjs';
 import { KIT_SCRIPTS_DIR } from './node-evidence.mjs';
+import { ADR_STORE, DECISIONS, DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY, DOCS_TREE, GIT_EXCLUDE } from '../references/scripts/shared/index.mjs';
 
 // ── manifestState values — re-export the EXACT public subset family-registry exported before B1 ─────
 // (the 7 state constants + DISPLAY_NAMES) so every existing importer (uninstall.mjs, the test suites)
@@ -104,7 +105,7 @@ export {
 
 // ── the unified registry ───────────────────────────────────────────────────────
 // FAMILY_MEMBERS (+ isGlobalSkill) is the one authoritative member table. It moved to the
-// dependency-free DATA LEAF family-members.mjs so the npx installer can derive its init-refresh cascade
+// data module family-members.mjs (shared index only) so the npx installer can derive its init-refresh cascade
 // from the table WITHOUT importing this whole status/presenter graph (a leaner npx cold-start path).
 // Re-exported here so every existing importer (uninstall.mjs, the test suites) stays green, and the
 // drift-guard (family-registry.test.mjs) still pins the table to the 5 in-repo capability.json.
@@ -334,7 +335,7 @@ const hasHiddenFence = (projectDir, deps = {}) => {
     try {
       return excludePath(deps, projectDir);
     } catch {
-      return join(projectDir, '.git', 'info', 'exclude');
+      return join(projectDir, GIT_EXCLUDE);
     }
   })();
   try {
@@ -347,18 +348,18 @@ const hasHiddenFence = (projectDir, deps = {}) => {
 // The retired 3-tier ADR monoliths (AD-051): their presence is the old-layout signal the status
 // view reports; the upgrade's run of the kit's rotator moves it. Stable relative paths (a status
 // probe never imports the rotator).
-// The ADR-layout probe's paths. LOCAL literals, not an import: this module backs the read-only
-// `status` view and importing the rotator would drag child_process + crypto into a status read. A
-// drift guard in family-registry.test.mjs pins each literal to the rotator's exported constant.
+// The ADR-layout probe shares its paths with the rotator through the shared index. The read-only
+// `status` view reads the deployed rotator as text. A drift guard in family-registry.test.mjs
+// checks the paths against the rotator's exports and the scheme marker against its declaration.
 export const ADR_LAYOUT_PATHS = Object.freeze({
-  hot: 'docs/ai/decisions.md',
-  monoliths: Object.freeze(['docs/ai/history/decisions-archive.md', 'docs/ai/history/decisions-archive-early.md']),
-  store: 'docs/ai/adr',
-  // The DEPLOYED rotator is the discriminator: the new-scheme file names the store path, the
-  // pre-migration one does not. Never "has decisions.md, lacks adr/" — that shape false-positives a
+  hot: DECISIONS,
+  monoliths: Object.freeze([DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY]),
+  store: ADR_STORE,
+  // The DEPLOYED rotator identifies the new scheme by a line starting with the ADR_DIR_REL export.
+  // Never "has decisions.md, lacks adr/" — that shape false-positives a
   // tree whose NEW rotator already reds its own gate, and every No-Node project.
   rotator: posix.join(KIT_SCRIPTS_DIR, KIT_COMMANDS['archive-decisions']),
-  storeMarker: 'docs/ai/adr',
+  storeMarker: 'export const ADR_DIR_REL',
 });
 const ENOENT = 'ENOENT';
 
@@ -396,13 +397,14 @@ export const surveyAdrLayoutStrict = (dir, deps = {}) => {
 
   if (ADR_LAYOUT_PATHS.monoliths.some((rel) => isA(rel, PATH_FILE))) return 'old';
 
-  // Rotator provenance is resolved BEFORE any verdict, because it also disambiguates a tree that
-  // HAS a store: an old-scheme rotator beside a store is not finished — `upgrade` preserves that
-  // script and it will write a monolith again the next time it rotates.
+  // Without a monolith, the rotator's scheme decides the answer for an existing store too: an
+  // old-scheme rotator beside a store is not finished — until `upgrade` replaces it with the
+  // bundled rotator, it will write a monolith again the next time it rotates.
   const rotatorScheme = (() => {
     if (!isA(ADR_LAYOUT_PATHS.rotator, PATH_FILE)) return null;
     try {
-      return String(read(join(dir, ADR_LAYOUT_PATHS.rotator), 'utf8')).includes(ADR_LAYOUT_PATHS.storeMarker) ? 'new' : 'old';
+      const rotatorSource = String(read(join(dir, ADR_LAYOUT_PATHS.rotator), 'utf8'));
+      return rotatorSource.split('\n').some((line) => line.startsWith(ADR_LAYOUT_PATHS.storeMarker)) ? 'new' : 'old';
     } catch (err) {
       if (absent(err)) return null;
       throw err;
@@ -465,7 +467,7 @@ export const surveyProject = (projectDir, deps = {}) => {
     .map((m) => ({ name: m.name, file: m.deployed.file, version: readStamp(join(dir, m.deployed.file), deps) }));
   const docsAiPresent = (() => {
     try {
-      return exists(join(dir, 'docs', 'ai'));
+      return exists(join(dir, DOCS_TREE));
     } catch {
       return false;
     }

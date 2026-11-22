@@ -1,5 +1,6 @@
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { PACKAGE_JSON, SOURCE_SIZE } from '../references/scripts/shared/index.mjs';
 import { readSpecDocument, SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 import { lstatNoFollowRead, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
@@ -13,8 +14,6 @@ import { PIN_FILE } from './plan-shape-ownership.mjs';
 import { NEVER_WALKED } from './repo-lex.mjs';
 export { isSweep };
 
-const SOURCE_SIZE_REL = 'docs/ai/source-size.json';
-const PACKAGE_FILE = 'package.json';
 const NEGATED_CLASS = /\[[!^]/;
 const UNSUPPORTED_GLOB = /[()\\\u0000-\u001f]/;
 const STORE_REFUSED = 'refused';
@@ -111,13 +110,13 @@ const readJsonNoFollow = (repo, path, label) => {
 };
 
 const loadPractice = (root, repo) => {
-  const parsed = readJsonNoFollow(repo, join(root, SOURCE_SIZE_REL), SOURCE_SIZE_REL);
+  const parsed = readJsonNoFollow(repo, join(root, SOURCE_SIZE), SOURCE_SIZE);
   if (parsed === null) return { capDeclared: false, cap: null, config: null };
   try {
     const config = validateSourceSizeConfig(parsed);
     return { capDeclared: true, cap: config.defaults.maxLines, config };
   } catch (error) {
-    throw usageError(`${SOURCE_SIZE_REL} is malformed (${error.message})`);
+    throw usageError(`${SOURCE_SIZE} is malformed (${error.message})`);
   }
 };
 
@@ -205,7 +204,7 @@ const findPackage = (path, repo) => {
   const start = resolve(root, dirname(path));
   const visit = (directory) => {
     if (!isInside(root, directory)) return null;
-    const packagePath = join(directory, PACKAGE_FILE);
+    const packagePath = join(directory, PACKAGE_JSON);
     if (inspectPath(repo, packagePath)) {
       const relRoot = toPosix(relative(root, directory)) || '.';
       const json = remember(repo.packageCache, relRoot, () => readJsonNoFollow(repo, packagePath, toPosix(relative(root, packagePath))));

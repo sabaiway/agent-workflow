@@ -6,15 +6,14 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENTS_DIR, CLAUDE_DIR } from '../references/scripts/shared/index.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 import { deriveLensTemplate } from './review-roster-resolve.mjs';
 import { EXECUTOR_DEFAULTS, VEHICLES_REL, readVehicles, resolveExecutor, resolveReviewLens } from './vehicle-settings.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-export const AGENTS_DIR = '.claude/agents';
-export const CLAUDE_DIR = '.claude';
-export const WORKFLOW_STAMP = 'docs/ai/.workflow-version';
+export { AGENTS_DIR, CLAUDE_DIR, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 export const EXPECTED_WORKFLOW_VERSION = '5.0.0';
 export const BUNDLED_AGENTS_DIR = resolve(HERE, '..', 'references', 'agents');
 

@@ -61,6 +61,7 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PACKAGE_JSON, PNPM_LOCK, WORKFLOW_STAMP, YARN_LOCK } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { discoverGateCandidates, EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
 import { GATES_REL, validateDeclaration } from './run-gates.mjs';
@@ -85,7 +86,7 @@ const TEMPLATE_PATH = join(KIT_ROOT, 'references', 'templates', 'gates.json');
 const REVIEW_STATE_TOOL = join(KIT_ROOT, 'tools', 'review-state.mjs');
 const COVERAGE_CHECK_TOOL = join(KIT_ROOT, 'tools', 'coverage-check.mjs');
 const FLOW_CHECK_TOOL = join(KIT_ROOT, 'tools', 'flow-check.mjs');
-const STAMP_REL = join('docs', 'ai', '.workflow-version');
+const STAMP_REL = join(WORKFLOW_STAMP);
 
 const EXIT_OK = 0;
 const EXIT_PRECONDITION = 1;
@@ -246,7 +247,7 @@ export const detectPackageManager = (cwd, deps = {}) => {
   const exists = deps.exists ?? existsSync;
   const fromField = (() => {
     try {
-      const pkg = JSON.parse(String(read(join(cwd, 'package.json'), 'utf8')));
+      const pkg = JSON.parse(String(read(join(cwd, PACKAGE_JSON), 'utf8')));
       const pm = typeof pkg.packageManager === 'string' ? pkg.packageManager.split('@')[0] : null;
       return pm === 'pnpm' || pm === 'yarn' || pm === 'npm' ? pm : null;
     } catch {
@@ -254,8 +255,8 @@ export const detectPackageManager = (cwd, deps = {}) => {
     }
   })();
   if (fromField) return fromField;
-  if (exists(join(cwd, 'pnpm-lock.yaml'))) return 'pnpm';
-  if (exists(join(cwd, 'yarn.lock'))) return 'yarn';
+  if (exists(join(cwd, PNPM_LOCK))) return 'pnpm';
+  if (exists(join(cwd, YARN_LOCK))) return 'yarn';
   return 'npm';
 };
 
@@ -267,7 +268,7 @@ const deriveScripts = (cwd, deps = {}) => {
   const read = deps.readFile ?? readFileSync;
   const pkg = (() => {
     try {
-      return JSON.parse(String(read(join(cwd, 'package.json'), 'utf8')));
+      return JSON.parse(String(read(join(cwd, PACKAGE_JSON), 'utf8')));
     } catch {
       return null; // no/unreadable package.json → no script candidates (an honest empty offer)
     }

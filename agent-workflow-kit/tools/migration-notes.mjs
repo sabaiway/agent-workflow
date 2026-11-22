@@ -1,11 +1,11 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
 
 const NOTES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
-const STAMP_PATH = 'docs/ai/.workflow-version';
 const VERSION_PATTERN = /^[0-9]+[.][0-9]+[.][0-9]+$/u;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const CONTROL_PATTERN = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
@@ -193,7 +193,7 @@ export const main = (argv, deps = {}) => {
     readFileSync: deps.readFileSync ?? readFileSync,
     readdirSync: deps.readdirSync ?? readdirSync,
   };
-  const stamp = readStamp(resolve(argv[1], STAMP_PATH), fs);
+  const stamp = readStamp(resolve(argv[1], WORKFLOW_STAMP), fs);
   if (stamp.refusal) {
     return stamp.refusal;
   }

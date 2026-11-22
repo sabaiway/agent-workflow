@@ -7,11 +7,12 @@
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { SPEC_COVERAGE, SPEC_STORE } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { claimsOf, formatFindings, judgeCoverage, settleAfter } from './spec-coverage.mjs';
 
-export const SCOPE_PATH = join('docs', 'ai', 'spec-coverage.json');
-export const STORE_ROOT = join('docs', 'ai', 'specs');
+export const SCOPE_PATH = join(SPEC_COVERAGE);
+export const STORE_ROOT = join(SPEC_STORE);
 const REASON_MAX_BYTES = 300;
 
 const HELP = `spec-coverage — every shipped tool is governed by a contract, or the debt names it.

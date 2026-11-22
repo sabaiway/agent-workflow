@@ -1,13 +1,15 @@
 // plan-files.mjs — the in-flight-plan file convention (FLOW-READ-GRAPH-PURITY, flow Plan 4
-// Phase 2). A LEAF: Node built-ins only, read-only fs (one injectable readdir), no CLI, no side
+// Phase 2). A LEAF: Node built-ins and shared locations, read-only fs (one injectable readdir), no CLI, no side
 // effects on import — extracted so the procedures read surface lists plans without importing
 // review-state (whose graph reaches the flow-store write API). review-state re-exports everything
 // here except readPlanEntries, so every existing consumer keeps its import site. Dependency-free, Node >= 22.
 
 import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
+import { PLANS, QUEUE } from '../references/scripts/shared/index.mjs';
 
-export const PLANS_REL = 'docs/plans';
+export const PLANS_REL = PLANS;
+const QUEUE_NAME = posix.basename(QUEUE);
 
 // The plans directory's entries as plan-shape-cli and the tier guide read them: absent is an empty
 // list, any other read error is thrown with its code.
@@ -23,7 +25,7 @@ export const readPlanEntries = (cwd) => {
 // Scratch by the naming convention: EXECUTE-/FEEDBACK-/TASK- prefixes, or a name carrying PROMPT/prompt/
 // handoff. queue.md is the series index, never a plan.
 export const isScratchPlanName = (name) =>
-  name === 'queue.md' ||
+  name === QUEUE_NAME ||
   name.startsWith('EXECUTE-') ||
   name.startsWith('FEEDBACK-') ||
   name.startsWith('TASK-') ||

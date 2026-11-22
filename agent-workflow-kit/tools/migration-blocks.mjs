@@ -2,6 +2,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { AGENTS_FILE } from '../references/scripts/shared/index.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { isDirectRun } from './direct-run.mjs';
 
@@ -154,7 +155,7 @@ const runBlocks = (options, deps) => {
   const template = readTemplate(deps.templatePath ?? TEMPLATE_PATH, deps);
   if (template.error) return template.error;
   const root = resolve(options.cwd);
-  const destination = resolve(root, 'AGENTS.md');
+  const destination = resolve(root, AGENTS_FILE);
   const document = readDocument(destination, deps);
   if (document.error) return document.error;
   const plan = planBlocks({ ...options, text: document.text, spans: template.spans });

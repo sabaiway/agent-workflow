@@ -21,6 +21,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QUEUE } from '../references/scripts/shared/index.mjs';
 import { detectBackends, wrapperCmdFor, wrapperContractFor } from './detect-backends.mjs';
 import { surveyVehicle as surveyReviewVehicle } from './cheap-agents-read.mjs';
 import { isReadyMember, skippedLine } from './review-roster-resolve.mjs';
@@ -426,7 +427,7 @@ export const FOLD_SCOPE_TOOL = join(dirname(fileURLToPath(import.meta.url)), 'fo
 const foldScopeAdvice = (activity, config, plans) => {
   if (activity !== 'plan-execution') return [];
   const declared = config?.flow?.debtQueue ?? null;
-  const queue = declared ?? `${PLANS_REL}/queue.md`;
+  const queue = declared ?? QUEUE;
   const plan = plans.length === 1 ? `${PLANS_REL}/${plans[0]}` : '<plan-file>';
   return [
     'Finding scope (procedures.md plan-execution step 5) — the rule is the section above; this is the checker it names:',

@@ -1,6 +1,7 @@
 // spec:tier-guide — docs/ai/specs/kit/tier/tier-guide/index.md and its part guide-stages.md
 import { lstatSync } from 'node:fs';
 import { posix, resolve } from 'node:path';
+import { DOCS_TREE } from '../references/scripts/shared/index.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { resolveGitLocation } from './git-env.mjs';
 import { EPICS_REL, readEpicStore } from './epic-store.mjs';
@@ -24,7 +25,7 @@ const CR_END = /\r$/;
 const SPAN = /\{\{([\s\S]*?)\}\}/g;
 const PLAN_STEM = /^[A-Za-z0-9_-]+$/;
 const PLAN_TITLE = /^# Plan: (.+)$/;
-const DOCS_AI = 'docs/ai/';
+const DOCS_AI = `${DOCS_TREE}/`;
 const PROMPT_PREFIX = `${PLANS_REL}/EXECUTE-PROMPT-`;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const HEADER_CODES = new Set(['sibling-header', 'sibling-read']);

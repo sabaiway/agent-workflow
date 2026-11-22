@@ -1,6 +1,8 @@
+import { PLANS } from '../references/scripts/shared/index.mjs';
 import { hasPathOverlap } from './claim-relation.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 
-const TASK_BRIEF = /^docs\/plans\/TASK-[^/]+-T[1-9][0-9]*\.md$/u;
+const TASK_BRIEF = new RegExp(`^${escapeRegExp(PLANS)}\\/TASK-[^/]+-T[1-9][0-9]*\\.md$`, 'u');
 const INVALID_SEGMENTS = Object.freeze(['', '.', '..', '.git']);
 const HEAD_BASELINE = Object.freeze({ kind: 'head', treeOid: null });
 

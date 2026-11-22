@@ -1,8 +1,9 @@
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { EPIC_STORE } from '../references/scripts/shared/index.mjs';
 import { describeNonRegular, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 
-export const EPICS_REL = 'docs/ai/epics';
+export const EPICS_REL = EPIC_STORE;
 const MARKDOWN_SUFFIX = '.md';
 const ABSENT_CODE = 'ENOENT';
 const REGULAR_FILE = 'regular file';

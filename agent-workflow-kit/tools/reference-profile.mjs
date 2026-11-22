@@ -4,11 +4,11 @@
 // No CLI (refuseDirectRun); every read goes through injected deps; nothing here writes.
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PROFILE_DECLINES } from '../references/scripts/shared/index.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 
 const PROFILE_PATH = fileURLToPath(new URL('../references/reference-profile.json', import.meta.url));
-const DECLINES_REL = 'docs/ai/profile-declines.json';
 const PROFILE_KEYS = ['items', 'lineage', 'name', 'schema'];
 const ITEM_KEYS = ['has', 'id', 'story'];
 const RECORD_KEYS = ['declined', 'schema'];
@@ -53,7 +53,7 @@ export const readShippedProfile = (deps = {}) => {
 };
 
 export const readDeclines = (root, deps = {}) => {
-  const read = readRegularFileNoFollow(join(root, DECLINES_REL), deps);
+  const read = readRegularFileNoFollow(join(root, PROFILE_DECLINES), deps);
   if (read.outcome === ABSENT) return { absent: true };
   if (read.outcome !== OK) {
     return { refusal: read.className === SYMLINK_CLASS ? 'declines-symlink' : 'declines-unreadable' };

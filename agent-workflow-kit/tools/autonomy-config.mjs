@@ -20,11 +20,12 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { AUTONOMY } from '../references/scripts/shared/index.mjs';
 import { POLICY_ACTIVITIES as ACTIVITIES } from './recipes.mjs';
 
 // The hand-editable / agent-writable, per-project policy (strict JSON). cwd-relative — the error prefix
 // uses this rel path so a user sees a path they can open, never an absolute temp/host path.
-export const AUTONOMY_REL = 'docs/ai/autonomy.json';
+export const AUTONOMY_REL = AUTONOMY;
 
 // A tagged failure: a plain Error carrying the intended process exit code (2 usage / 1 config). Avoids
 // a class (project rule) while letting a CLI main() map a throw to the right code in one place. Shared

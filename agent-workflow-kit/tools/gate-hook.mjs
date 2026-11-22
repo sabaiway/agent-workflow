@@ -40,6 +40,7 @@
 import { constants as fsConstants, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GATE_HOOK, HOOKS_DIR, LANES } from '../references/scripts/shared/index.mjs';
 import {
   CLAUDE_DIR,
   EXPECTED_WORKFLOW_VERSION,
@@ -62,13 +63,13 @@ export const GATE_HOOK_TOOL = fileURLToPath(import.meta.url);
 const q = shellQuoteArg;
 
 export const BUNDLED_HOOK_PATH = resolve(HERE, '..', 'references', 'hooks', 'gate-approve.mjs');
-export const HOOKS_DIR = '.claude/hooks';
-export const HOOK_FILE_REL = `${HOOKS_DIR}/agent-workflow-gates.mjs`;
+export { HOOKS_DIR } from '../references/scripts/shared/index.mjs';
+export const HOOK_FILE_REL = GATE_HOOK;
 export const PRE_TOOL_USE_EVENT = 'PreToolUse';
 export const HOOK_MATCHER = 'Bash';
-// The literal settings fragment (the plan/test fixture): $CLAUDE_PROJECT_DIR is resolved by
+// The settings fragment (the plan/test fixture): $CLAUDE_PROJECT_DIR is resolved by
 // Claude Code when it runs the hook command, so the entry survives project relocation.
-export const HOOK_COMMAND = 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/agent-workflow-gates.mjs"';
+export const HOOK_COMMAND = `node "$CLAUDE_PROJECT_DIR/${HOOK_FILE_REL}"`;
 export const HOOK_TIMEOUT_SECONDS = 30;
 
 export const GATE_HOOK_STAMP = 'GATE_HOOK_STAMP';
@@ -78,7 +79,7 @@ export const GATE_HOOK_MALFORMED = 'GATE_HOOK_MALFORMED';
 export const GATE_HOOK_DIVERGED = 'GATE_HOOK_DIVERGED';
 export const GATE_HOOK_BUNDLE = 'GATE_HOOK_BUNDLE';
 // --read-lane (AD-055 Part II): the opt-in read-only compound lane toggle + its currency guard.
-export const LANES_REL = 'docs/ai/lanes.json';
+export const LANES_REL = LANES;
 export const READ_LANE_KEY = 'readLane';
 export const GATE_HOOK_STALE = 'GATE_HOOK_STALE'; // the placed hook is absent/stale — the lane cannot fire
 export const GATE_HOOK_LANE = 'GATE_HOOK_LANE'; // a lanes.json write refusal (deployment/malformed)

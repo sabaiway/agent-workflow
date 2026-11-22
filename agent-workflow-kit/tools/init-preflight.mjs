@@ -1,5 +1,6 @@
 import { closeSync, constants, lstatSync, openSync } from 'node:fs';
 import { join } from 'node:path';
+import { GIT_CONFIG, MCP_FILE, SETTINGS, SETTINGS_LOCAL } from '../references/scripts/shared/index.mjs';
 
 export const AGENT_SESSION_MARKERS = Object.freeze([
   'CLAUDECODE',
@@ -78,10 +79,10 @@ export const preflightInit = ({ root = null, home, env = process.env, io = {} })
   const paths = [join(home, '.claude/settings.json')];
   if (root !== null) {
     paths.push(
-      join(root, '.claude/settings.json'),
-      join(root, '.claude/settings.local.json'),
-      join(root, '.mcp.json'),
-      join(root, '.git/config'),
+      join(root, SETTINGS),
+      join(root, SETTINGS_LOCAL),
+      join(root, MCP_FILE),
+      join(root, GIT_CONFIG),
     );
   }
   for (const path of paths) {

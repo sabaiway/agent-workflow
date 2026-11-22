@@ -9,6 +9,7 @@
 import { readFileSync, lstatSync, realpathSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GATES } from '../references/scripts/shared/index.mjs';
 import { CHECKER_CLAIM, checkerClaimTool, classifyCheckerClaim } from './checker-claim.mjs';
 import { fail, loadConfig, CONFIG_REL } from './orchestration-config.mjs';
 import { readsAsCoverageProducer, retiredProducerFormOf } from './coverage-producer.mjs';
@@ -16,7 +17,7 @@ import { matchesSourceSizeGate } from './source-size-core.mjs';
 
 // The per-project declaration (strict JSON, hand-editable). cwd-relative — errors show a path the
 // user can open (the orchestration-config CONFIG_REL idiom).
-export const GATES_REL = 'docs/ai/gates.json';
+export const GATES_REL = GATES;
 
 // Parity: run-gates.mjs EXIT.malformed — its exit-code table stays the CLI authority (pinned by
 // run-gates.test.mjs); this module throws the same tagged shape so the CLI surfaces it unchanged.

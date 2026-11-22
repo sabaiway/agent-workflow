@@ -1,5 +1,7 @@
-import { tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
+import { posix } from 'node:path';
+import { PLANS, QUEUE as QUEUE_LOCATION, tokenizeMarkdown } from '../references/scripts/shared/index.mjs';
 import { bulletBlocks, getLineCount, unique } from './plan-shape.mjs';
+import { escapeRegExp } from './repo-lex.mjs';
 
 export const EPIC_SECTIONS = Object.freeze([
   '## Intent', '## Value', '## Non-goals', '## Acceptance', '## Specs', '## Stories ledger', '## Queue',
@@ -29,8 +31,8 @@ const STATE_FIELD = /^state: (planned|in-flight|landed (\d{4}-\d{2}-\d{2}))$/;
 const HEADER_FIELD = /^([A-Za-z][A-Za-z0-9]*):([ \t]*)(.*?)[ \t]*\r?$/;
 const QUEUE_LINE = /^Row (\S+) in (\S(?:.*\S)?)$/;
 const RESULT_LINE = /^Result line: (\d{4}-\d{2}-\d{2})$/;
-const PLAN_PATH = /docs\/plans\/([^\s`()[\]{}<>|,:;"']+\.md)(?=$|[\s`()[\]{}<>|,:;"'.!?])/g;
-const QUEUE_NAME = 'queue.md';
+const PLAN_PATH = new RegExp(`${escapeRegExp(PLANS)}/([^\\s\`()[\\]{}<>|,:;"']+\\.md)(?=$|[\\s\`()[\\]{}<>|,:;"'.!?])`, 'g');
+const QUEUE_NAME = posix.basename(QUEUE_LOCATION);
 const FENCE_LINE = /^\s*(?:`{3,}[^`]*|~{3,}.*)$/;
 const BACKTICK_RUN = /`+/g;
 const CITATION = /[^\s`()[\]{}<>|:;,"'!?]+[./][^\s`()[\]{}<>|:;,"'!?]+:\d+(?![\dA-Za-z_])/;

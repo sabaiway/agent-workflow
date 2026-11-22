@@ -23,6 +23,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { SPEC_STORE_INDEX } from '../references/scripts/shared/index.mjs';
 import { lstatNoFollow, writeContainedFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
 import { readDeployedScripts } from './node-evidence.mjs';
 import { SCRIPT_PRIORS, classifyDeployedScript } from './script-priors.mjs';
@@ -30,7 +31,6 @@ import { bundledImportsOf, composeFailure, composeOutcome, dependenciesFirst, no
 import { fileLine, hookLine } from './distribution-files/index.mjs';
 
 const OP = 'specs';
-const STORE_ROOT_REL = 'docs/ai/specs/index.md';
 const STORE_ROOT_TEMPLATE = ['references', 'templates', 'specs', 'index.md'];
 const DATE_PLACEHOLDER = '{{DATE}}';
 
@@ -87,9 +87,9 @@ const surveyScript = (cwd, f, deps, read, lstat) => {
 };
 
 const surveyStoreRoot = (cwd, lstat) => {
-  const probe = probeSeedTarget(join(cwd, STORE_ROOT_REL), lstat);
-  if (probe.wrongKind) return { rel: STORE_ROOT_REL, state: 'wrong-kind', wrongKind: probe.wrongKind };
-  return { rel: STORE_ROOT_REL, state: probe.present ? 'present' : 'absent' };
+  const probe = probeSeedTarget(join(cwd, SPEC_STORE_INDEX), lstat);
+  if (probe.wrongKind) return { rel: SPEC_STORE_INDEX, state: 'wrong-kind', wrongKind: probe.wrongKind };
+  return { rel: SPEC_STORE_INDEX, state: probe.present ? 'present' : 'absent' };
 };
 
 // ── the lines (composed from what HAPPENED: each file's state and the fate of its write) ─────────
@@ -107,7 +107,7 @@ const STORE_LINES = {
 };
 const composeLines = ({ files, store, fates, dryRun }) => [
   ...files.map((f) => (f.state === 'current' ? `${f.rel}: ${CURRENT}` : fileLine(f, fates.get(f.rel), dryRun))),
-  `${STORE_ROOT_REL}: ${STORE_LINES[store.state === 'present' ? 'present' : fates.get(STORE_ROOT_REL) ?? (dryRun ? 'would' : 'stopped')]}`,
+  `${SPEC_STORE_INDEX}: ${STORE_LINES[store.state === 'present' ? 'present' : fates.get(SPEC_STORE_INDEX) ?? (dryRun ? 'would' : 'stopped')]}`,
 ];
 
 // A per-file loop can stop partway; the run says which files already landed — never "nothing happened".
@@ -128,7 +128,7 @@ const writeAll = ({ cwd, due, storeBody, deps, read }) => {
   const fates = new Map();
   const notes = [];
   for (const f of due) {
-    const isStore = f.rel === STORE_ROOT_REL;
+    const isStore = f.rel === SPEC_STORE_INDEX;
     let result;
     try {
       result = isStore ? writeProjectFileCreateOnly(cwd, f.rel, storeBody, deps, { noun: 'the spec store root' })
@@ -182,7 +182,7 @@ export const ensureSpecs = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     try {
       storeBody = renderStoreRoot(kitRoot, read, deps.today ?? todayIso());
     } catch (err) {
-      return composeFailure(OP, 'template-unreadable', `${STORE_ROOT_REL}: ${causeOf(err)}`, ...composeLines({ files, store, fates: new Map(), dryRun }));
+      return composeFailure(OP, 'template-unreadable', `${SPEC_STORE_INDEX}: ${causeOf(err)}`, ...composeLines({ files, store, fates: new Map(), dryRun }));
     }
   }
   const { fates, notes, failure } = writeAll({ cwd, due, storeBody, deps, read });

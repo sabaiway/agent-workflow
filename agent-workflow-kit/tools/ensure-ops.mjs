@@ -38,6 +38,7 @@ import { VEHICLES_REL } from './vehicle-settings.mjs';
 import { ENSURE_TOKENS, FAILURE_CAUSES } from './ensure-vocabulary.mjs';
 import { readDeployedScripts, NODE_EVIDENCE, describeNodeProbes, probeNodeEvidence } from './node-evidence.mjs';
 import { classifyDeployedScript } from './script-priors.mjs';
+import { INDEX } from '../references/scripts/shared/index.mjs';
 import { parseFrontmatter } from '../references/scripts/docs-size/index.mjs';
 
 // The closed vocabulary lives in its own PURE leaf so the read-only doc-parity lint can bind the
@@ -230,7 +231,6 @@ export const nodeEvidenceRefusal = (op, cwd, lstat) => {
 // the ensure framework is synchronous, and a second index implementation here would be the drift
 // the one-generator rule exists to prevent. Under a hook module that is not the bundled one, the
 // project's own checker judges the navigator and a write it rejects is put back (spec docs-navigator).
-const INDEX_REL = 'docs/ai/index.md';
 // The docs checker is the docs-size module's one deployed entry: bundled, it is the generator; deployed,
 // the kept probe. A flat scripts/check-docs-size.mjs is no deployed checker (story S4 reads it).
 const readChecker = () => readDeployedScripts().find(({ module }) => module === 'docs-size');
@@ -313,7 +313,7 @@ const judgeKept = ({ cwd, spawn, read, lstat, deps }) => {
   const result = spawn(process.execPath, [pathIn(cwd, readChecker().deployed), '--check-index'], { cwd, encoding: 'utf8', timeout: deps.keptProbeTimeoutMs ?? KEPT_PROBE_TIMEOUT_MS, killSignal: 'SIGKILL' });
   if (result.error) return { error: `${causeOf(result.error)}${result.signal ? `, killed on signal ${result.signal}` : ''}` };
   if (result.status !== 0) return { accepted: false, said: describeExitWithOutput(result), half: 'its index check' };
-  const text = lstatNoFollow(join(cwd, INDEX_REL), lstat)?.isFile() ? String(read(join(cwd, INDEX_REL), 'utf8')) : null;
+  const text = lstatNoFollow(join(cwd, INDEX), lstat)?.isFile() ? String(read(join(cwd, INDEX), 'utf8')) : null;
   const cap = text === null ? undefined : readStampedCap(text);
   if (cap !== undefined && countLines(text) <= Number(cap)) return { accepted: true };
   const why = text === null ? 'no navigator file stands' : cap === undefined ? 'the navigator stamps no maxLines' : `${countLines(text)} lines against the maxLines ${cap} it stamps`;
@@ -322,7 +322,7 @@ const judgeKept = ({ cwd, spawn, read, lstat, deps }) => {
 
 const removeIndexIfPresent = (cwd, deps) => {
   try {
-    (deps.unlink ?? unlinkSync)(join(cwd, INDEX_REL));
+    (deps.unlink ?? unlinkSync)(join(cwd, INDEX));
   } catch (err) {
     if (err?.code !== 'ENOENT') throw err;
   }
@@ -330,7 +330,7 @@ const removeIndexIfPresent = (cwd, deps) => {
 
 const putBackIndex = (cwd, found, deps) => {
   try {
-    if (found !== null) writeDocsAiFileAtomic(cwd, INDEX_REL, found, deps, { noun: 'the navigator' });
+    if (found !== null) writeDocsAiFileAtomic(cwd, INDEX, found, deps, { noun: 'the navigator' });
     else removeIndexIfPresent(cwd, deps);
   } catch (err) {
     return causeOf(err);
@@ -340,28 +340,28 @@ const putBackIndex = (cwd, found, deps) => {
 
 const ensureKeptIndex = ({ cwd, drive, spawn, read, lstat, deps }) => {
   const judge = () => judgeKept({ cwd, spawn, read, lstat, deps });
-  const reportUnanswered = (verdict, after) => loud('index', 'index-probe-failed', `${INDEX_REL}: ${describeKeptJudge()} could not be launched or did not answer in time (${verdict.error}) — ${after}`);
+  const reportUnanswered = (verdict, after) => loud('index', 'index-probe-failed', `${INDEX}: ${describeKeptJudge()} could not be launched or did not answer in time (${verdict.error}) — ${after}`);
   const first = judge();
   if (first.error) return reportUnanswered(first, 'nothing was written');
-  if (first.accepted) return ok('index', 'already-current', `${INDEX_REL}: ${describeKeptFits()} — nothing written`);
-  const found = lstatNoFollow(join(cwd, INDEX_REL), lstat) === null ? null : read(join(cwd, INDEX_REL));
+  if (first.accepted) return ok('index', 'already-current', `${INDEX}: ${describeKeptFits()} — nothing written`);
+  const found = lstatNoFollow(join(cwd, INDEX), lstat) === null ? null : read(join(cwd, INDEX));
   const restored = found === null ? 'the navigator was put back: found absent, it was removed again' : 'the navigator was put back byte for byte';
   const restoreThen = (failure, compose) => {
     const refused = putBackIndex(cwd, found, deps);
-    return refused === null ? compose() : loud('index', 'write-refused', `${INDEX_REL}: putting the navigator back failed (${refused})${failure ? ` after ${failure}` : ''} — a navigator ${describeKeptJudge()} rejects may stand; re-read it before re-running`);
+    return refused === null ? compose() : loud('index', 'write-refused', `${INDEX}: putting the navigator back failed (${refused})${failure ? ` after ${failure}` : ''} — a navigator ${describeKeptJudge()} rejects may stand; re-read it before re-running`);
   };
   const run = drive('--ensure-index');
   const refusal = String(run.stderr ?? '').match(ENSURE_INDEX_REFUSAL);
   if (run.error || run.status !== 0 || !String(run.stdout ?? '').match(ENSURE_INDEX_OUTCOME)) {
     const cause = run.error ? 'generator-unlaunchable' : run.status === 2 && refusal ? (refusal[1] === 'write-refused' ? 'write-refused' : 'index-probe-failed') : 'generator-failed';
     const what = run.error ? `the bundled generator could not be started (${causeOf(run.error)})` : describeExitWithOutput(run, 'the bundled generator');
-    return restoreThen(what, () => loud('index', cause, `${INDEX_REL}: ${what} — ${restored}`));
+    return restoreThen(what, () => loud('index', cause, `${INDEX}: ${what} — ${restored}`));
   }
   let second;
-  try { second = judge(); } catch (err) { return restoreThen(`the navigator could not be read back (${causeOf(err)})`, () => loud('index', 'unexpected-error', `${INDEX_REL}: the navigator could not be read back after the bundled write (${causeOf(err)}) — ${restored}`)); }
+  try { second = judge(); } catch (err) { return restoreThen(`the navigator could not be read back (${causeOf(err)})`, () => loud('index', 'unexpected-error', `${INDEX}: the navigator could not be read back after the bundled write (${causeOf(err)}) — ${restored}`)); }
   if (second.error) return restoreThen(`${describeKeptJudge()} could not answer (${second.error})`, () => reportUnanswered(second, restored));
-  if (second.accepted) return ok('index', 'regenerated', `${INDEX_REL}: written by the bundled generator — ${describeKeptFits()}`);
-  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX_REL}: ${describeKeptJudge()} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${KEPT_ROUTE}`));
+  if (second.accepted) return ok('index', 'regenerated', `${INDEX}: written by the bundled generator — ${describeKeptFits()}`);
+  return restoreThen(null, () => ok('index', 'customized-preserved', `${INDEX}: ${describeKeptJudge()} rejected the bundled render on ${second.half} (${second.said}), and the navigator as found did not pass it either (${first.half}) — ${restored}. The route: ${KEPT_ROUTE}`));
 };
 
 const buildKeptDryRunNote = (hook) =>
@@ -374,11 +374,11 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const generator = pathIn(kitRoot, readChecker().bundled);
   const drive = (mode) => spawn(process.execPath, [generator, mode, `--root=${cwd}`], { encoding: 'utf8' });
   const unlaunchable = (result) =>
-    loud('index', 'generator-unlaunchable', `${INDEX_REL}: the bundled generator could not be started, so nothing was probed or written — reinstall the kit. ${causeOf(result.error)}`);
+    loud('index', 'generator-unlaunchable', `${INDEX}: the bundled generator could not be started, so nothing was probed or written — reinstall the kit. ${causeOf(result.error)}`);
 
-  const probe = probeSeedTarget(join(cwd, INDEX_REL), lstat);
+  const probe = probeSeedTarget(join(cwd, INDEX), lstat);
   if (probe.wrongKind) {
-    return loud('index', 'wrong-node-kind', `${INDEX_REL}: exists but is ${probe.wrongKind} — the navigator is a generated file and this is not one; nothing was read or written, resolve it by hand and re-run`);
+    return loud('index', 'wrong-node-kind', `${INDEX}: exists but is ${probe.wrongKind} — the navigator is a generated file and this is not one; nothing was read or written, resolve it by hand and re-run`);
   }
   const hook = surveyHook(cwd, kitRoot, read, lstat);
   const wrong = hook.find((entry) => entry.state === 'wrong-kind');
@@ -392,9 +392,9 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     const check = drive('--check-index');
     if (check.error) return unlaunchable(check);
     const out = bothStreams(check);
-    if (check.status === 0 && PROBE_FRESH.test(out)) return ok('index', 'already-current', `${INDEX_REL}: in sync with the source frontmatter — nothing would be written`, ...dryNote);
-    if (check.status === 1 && PROBE_STALE.test(out)) return ok('index', 'would-regenerate', `${INDEX_REL}: missing or stale — would be written from the source frontmatter`, ...dryNote);
-    return loud('index', 'index-probe-failed', `${INDEX_REL}: the freshness probe answered neither fresh nor stale (exited ${describeExit(check)}), so nothing was written. ${out}`, ...dryNote);
+    if (check.status === 0 && PROBE_FRESH.test(out)) return ok('index', 'already-current', `${INDEX}: in sync with the source frontmatter — nothing would be written`, ...dryNote);
+    if (check.status === 1 && PROBE_STALE.test(out)) return ok('index', 'would-regenerate', `${INDEX}: missing or stale — would be written from the source frontmatter`, ...dryNote);
+    return loud('index', 'index-probe-failed', `${INDEX}: the freshness probe answered neither fresh nor stale (exited ${describeExit(check)}), so nothing was written. ${out}`, ...dryNote);
   }
 
   const run = drive('--ensure-index');
@@ -405,12 +405,12 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
     // The generator's OWN closed refusals: a write it would not publish, and a probe that could not
     // answer. Each keeps its identity here rather than collapsing into "the generator failed".
     const cause = refusal[1] === 'write-refused' ? 'write-refused' : 'index-probe-failed';
-    return loud('index', cause, `${INDEX_REL}: ${bothStreams(run)}`);
+    return loud('index', cause, `${INDEX}: ${bothStreams(run)}`);
   }
   if (run.status !== 0 || !outcome) {
-    return loud('index', 'generator-failed', `${INDEX_REL}: the generator exited ${describeExit(run)} without a recognized outcome line — ${MAY_HAVE_WRITTEN}. ${bothStreams(run)}`);
+    return loud('index', 'generator-failed', `${INDEX}: the generator exited ${describeExit(run)} without a recognized outcome line — ${MAY_HAVE_WRITTEN}. ${bothStreams(run)}`);
   }
-  if (outcome[1] === 'already-current') return ok('index', 'already-current', `${INDEX_REL}: in sync with the source frontmatter — nothing written`);
+  if (outcome[1] === 'already-current') return ok('index', 'already-current', `${INDEX}: in sync with the source frontmatter — nothing written`);
 
   // A claimed regeneration is not a verified one: re-probe, so `regenerated` names a state this run
   // PROVED rather than a line the generator printed. The verdict is read from the probe's own two
@@ -419,12 +419,12 @@ export const ensureIndex = ({ cwd, kitRoot, dryRun = false, deps = {} }) => {
   const verify = drive('--check-index');
   const verdict = verify.error ? '' : bothStreams(verify);
   if (!verify.error && verify.status === 0 && PROBE_FRESH.test(verdict)) {
-    return ok('index', 'regenerated', `${INDEX_REL}: written from the source frontmatter — the navigator is in sync again`);
+    return ok('index', 'regenerated', `${INDEX}: written from the source frontmatter — the navigator is in sync again`);
   }
   if (!verify.error && verify.status === 1 && PROBE_STALE.test(verdict)) {
-    return loud('index', 'index-stale-after-write', `${INDEX_REL}: the generator reported a regeneration, but the re-probe still reads the navigator as missing or stale — ${MAY_HAVE_WRITTEN}. ${verdict}`);
+    return loud('index', 'index-stale-after-write', `${INDEX}: the generator reported a regeneration, but the re-probe still reads the navigator as missing or stale — ${MAY_HAVE_WRITTEN}. ${verdict}`);
   }
-  return loud('index', 'index-probe-failed', `${INDEX_REL}: the generator reported a regeneration, but the verifying probe answered neither fresh nor stale — ${MAY_HAVE_WRITTEN}. ${verify.error ? causeOf(verify.error) : verdict}`);
+  return loud('index', 'index-probe-failed', `${INDEX}: the generator reported a regeneration, but the verifying probe answered neither fresh nor stale — ${MAY_HAVE_WRITTEN}. ${verify.error ? causeOf(verify.error) : verdict}`);
 };
 
 // The ops this module owns, by name. The CLI composes the full ENSURE_OPS table from these plus

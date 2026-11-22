@@ -34,6 +34,7 @@ import { readFileSync, readdirSync, lstatSync, existsSync, statSync } from 'node
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DOCS_TREE, GATES, LANES } from '../references/scripts/shared/index.mjs';
 import {
   preflightVelocityProfile,
   planVelocityProfile,
@@ -982,7 +983,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
     const read = deps.readFile ?? readFileSync;
     const gatesRaw = (() => {
       try {
-        return String(read(join(root, 'docs', 'ai', 'gates.json'), 'utf8'));
+        return String(read(join(root, GATES), 'utf8'));
       } catch {
         return null;
       }
@@ -1010,7 +1011,7 @@ const probeCommitGuard = ({ root, deps, add, skip }) => {
 const HOOK_CHECK_NAMES = { rules: 'project-rules check', layout: 'layout check', both: 'project-rules and layout checks' };
 const probeHookChecks = ({ root, deps, add, skip, shared }) => {
   try {
-    if (!(deps.exists ?? existsSync)(join(root, 'docs', 'ai'))) return;
+    if (!(deps.exists ?? existsSync)(join(root, DOCS_TREE))) return;
     const unsafe = unsafeToolsPath(HERE);
     if (unsafe !== null) throw new Error(unsafe);
     const hook = readHookState(root, deps);
@@ -1046,7 +1047,7 @@ const readEnforcementNode = (path, lstat) => {
 // a throw names the skip.
 const enforcementOffer = (root, deps) => {
   const lstat = deps.lstat ?? lstatSync;
-  const docsAi = join(root, 'docs', 'ai');
+  const docsAi = join(root, DOCS_TREE);
   const docsAiNode = readEnforcementNode(docsAi, lstat);
   if (docsAiNode === null) return false;
   if (!docsAiNode.isDirectory()) throw new Error(`${docsAi} is not a plain directory`);
@@ -1295,7 +1296,7 @@ export const recipeFingerprint = ({ hosts, dirs, home }) => {
 
 // The opt-in read-lane toggle file (AD-055 Part II) — the SAME kit-owned docs/ai/lanes.json the
 // placed hook reads live. The read-lane item offers to enable it once the hook is wired.
-export const LANES_FILE = 'docs/ai/lanes.json';
+export const LANES_FILE = LANES;
 export const READ_LANE_KEY = 'readLane';
 
 // The state-block-guard wiring the advisor looks for is the writer leaf's own rule (any Stop entry of

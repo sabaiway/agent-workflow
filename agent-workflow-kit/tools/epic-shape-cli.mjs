@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { constants, openSync, closeSync, fstatSync, writeSync, ftruncateSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { fail } from '../references/scripts/shared/index.mjs';
+import { EPIC_STORE, fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { readEpicEntries } from './epic-store.mjs';
@@ -21,7 +21,7 @@ const VERB_ARITY = 2;
 const FIRST_LINE = 1;
 const PREFIX = 'epic-shape:';
 const INFO = 'info';
-const STORE_TO_PROJECT = '../../..';
+const STORE_TO_PROJECT = EPIC_STORE.split('/').map(() => '..').join('/');
 const LANDED_BYTES = Buffer.from('landed');
 const HELP = `Usage:
   node epic-shape-cli.mjs --check <epic>

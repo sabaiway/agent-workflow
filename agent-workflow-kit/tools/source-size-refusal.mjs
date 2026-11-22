@@ -20,8 +20,9 @@
 // Dependency-free, Node >= 22. No side effects on import.
 
 import { resolve } from 'node:path';
+import { SOURCE_SIZE } from '../references/scripts/shared/index.mjs';
 
-export const SOURCE_SIZE_CONFIG_REL = 'docs/ai/source-size.json';
+export const SOURCE_SIZE_CONFIG_REL = SOURCE_SIZE;
 
 // Quoted VERBATIM by every surface that explains the practice: the plan-time render, the checker's
 // rendered refusals, the constraints row a grounded review payload carries. The checker's GREEN line
@@ -32,7 +33,7 @@ export const SOURCE_SIZE_WHY = 'A module you can hold whole is the unit of revie
 // a green check's warnings and nothing else of its output.
 export const SOURCE_SIZE_WARNING_PREFIX = 'source-size: WARNING — ';
 
-export const configPathFor = (cwd) => resolve(cwd, 'docs', 'ai', 'source-size.json');
+export const configPathFor = (cwd) => resolve(cwd, SOURCE_SIZE);
 
 export const SOURCE_SIZE_STOP = 'SOURCE_SIZE_STOP';
 

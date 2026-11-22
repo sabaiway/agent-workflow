@@ -12,11 +12,12 @@ import {
   symlinkSync, realpathSync, unlinkSync, openSync, fstatSync, readSync, writeSync, fchmodSync,
   closeSync, constants as fsC,
 } from 'node:fs';
-import { join, dirname, basename, resolve, relative, isAbsolute, sep } from 'node:path';
+import { join, dirname, basename, posix, resolve, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
+import { BINDING_GYP, BUN_LOCK, BUN_LOCKB, CODEX_LAST_SESSION, DOCS_TREE, GATES, LERNA_JSON, NODE_MODULES, NPM_LOCK, PACKAGE_JSON, PNPM_LOCK, PNPM_WORKSPACE, PNPM_WORKSPACE_YML, QUEUE, SETTINGS_LOCAL, SYNC_MIRRORS, VSCODE_DIR, VSCODE_SETTINGS, WORKTREES, YARN_LOCK } from '../references/scripts/shared/index.mjs';
 import { MCP_JSON_REL, SERVER_NAME, SETTINGS_REL, withoutRegistration } from './mcp-registration.mjs';
 import {
   KIT_OWN_PATHS, KNOWN_FOOTPRINT, expandGlob, normalizeSlashes, isDirPattern, isGlobPattern,
@@ -24,7 +25,7 @@ import {
 } from './known-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { isScratchPlanName, plansInFlight, PLANS_REL } from './plan-files.mjs';
-import { shellQuoteArg } from './repo-lex.mjs';
+import { escapeRegExp, shellQuoteArg } from './repo-lex.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
@@ -58,14 +59,14 @@ const errorText = (error) => String(error?.message ?? error).replace(/^\[agent-w
 const composeFailure = (primary, secondaryName, secondary) =>
   stop(`${errorText(primary)}; ${secondaryName} failed: ${errorText(secondary)}`);
 
-export const CONFIG_REL = 'docs/ai/worktrees.json';
+export const CONFIG_REL = WORKTREES;
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const WORKTREES_TOOL_ABS = fileURLToPath(import.meta.url);
 const WORKTREES_TOOL_DIR = dirname(WORKTREES_TOOL_ABS);
 
 // Stores/sidecars a fresh worktree must NOT inherit (session state stays with its session).
 const EXCLUDED_BASENAMES = new Set([
-  '.codex-last-session',
+  CODEX_LAST_SESSION,
   'agent-workflow-review-receipts.jsonl',
   'agent-workflow-core-evidence.jsonl',
 ]);
@@ -73,12 +74,12 @@ const EXCLUDED_BASENAMES = new Set([
 const SEEDED_SEPARATELY = new Set([`/${PLANS_REL}/`]);
 // Never copied AND never owned — unlike SEEDED_SEPARATELY, whose members cleanup may still remove.
 // A satellite's own `.mcp.json` must stay FOREIGN or an ordinary cleanup deletes what we never placed.
-const NEVER_PROVISIONED = new Set(['/.mcp.json']);
+const NEVER_PROVISIONED = new Set([`/${MCP_JSON_REL}`]);
 // Copied files whose absolute main-root pins are rebased onto the worktree root.
-const REBASE_TARGETS = Object.freeze(['docs/ai/gates.json', '.claude/settings.json', '.claude/settings.local.json']);
+const REBASE_TARGETS = Object.freeze([GATES, SETTINGS_REL, SETTINGS_LOCAL]);
 const TRACKED_PIN_DECLARATION =
   'tracked declaration is not worktree-portable — this worktree\'s council/final checks route through the MAIN runner via --cwd';
-const TRANSFER_EXCLUSIONS = Object.freeze([':!docs/ai', ':!docs/plans']);
+const TRANSFER_EXCLUSIONS = Object.freeze([`:!${DOCS_TREE}`, `:!${PLANS_REL}`]);
 const PREPARE_LOCK_BASENAME = 'aw-prepare-lock';
 
 const USAGE = [
@@ -487,8 +488,8 @@ export const loadWorktreesConfig = (root, deps = {}) => {
   // the ancestor chain is verified even when the leaf is absent — a symlinked docs/ or docs/ai
   // must never read as plain absence
   let dir = root;
-  for (const seg of ['docs', 'ai']) {
-    dir = join(dir, seg);
+  for (const segment of DOCS_TREE.split('/')) {
+    dir = join(dir, segment);
     let st;
     try {
       st = fs.lstat(dir);
@@ -890,8 +891,6 @@ export const copyTreeIfMissing = ({ srcAbs, dstAbs, wtRoot, rel, deps = {} }) =>
 
 // ── absolute-pin rebase (pure; slash-normalized both ways) ─────────────────────────────
 
-const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 export const rebaseAbsolutePins = (text, mainRoot, wtRoot) => {
   const mainFwd = normalizeSlashes(mainRoot);
   const wtFwd = normalizeSlashes(wtRoot);
@@ -902,9 +901,9 @@ export const rebaseAbsolutePins = (text, mainRoot, wtRoot) => {
   const mainBack2 = mainBack.replace(/\\/g, '\\\\');
   const wtBack2 = wtBack.replace(/\\/g, '\\\\');
   const boundary = '(?=[/\\\\"\'\\s]|$)';
-  const fwdRe = () => new RegExp(escapeRe(mainFwd) + boundary, 'g');
-  const backRe = () => new RegExp(escapeRe(mainBack) + boundary, 'g');
-  const back2Re = () => new RegExp(escapeRe(mainBack2) + boundary, 'g');
+  const fwdRe = () => new RegExp(escapeRegExp(mainFwd) + boundary, 'g');
+  const backRe = () => new RegExp(escapeRegExp(mainBack) + boundary, 'g');
+  const back2Re = () => new RegExp(escapeRegExp(mainBack2) + boundary, 'g');
   // function replacements — a worktree path carrying $&/$$/$' must land byte-literal
   const rebased = text.replace(back2Re(), () => wtBack2).replace(fwdRe(), () => wtFwd).replace(backRe(), () => wtBack);
   const changes = [];
@@ -1256,7 +1255,7 @@ const assertPlansChainCleanOnResume = ({ git, root, wtRoot, slug, branch, rels, 
 
 // The orientation facts a fresh satellite session cannot derive from its own checkout. They are
 // CONSTANTS so the doc-parity registry can pin the mode doc to the exact strings the tool emits.
-export const QUEUE_BASENAME = 'queue.md';
+export const QUEUE_BASENAME = posix.basename(QUEUE);
 // QUEUE_SHARED_RULE travels with the composer that emits it (worktrees-record.mjs) and is
 // re-exported above; LANDING_FROM_MAIN stays where its only user is.
 export const LANDING_FROM_MAIN = 'landing runs FROM MAIN, never from this worktree';
@@ -1409,7 +1408,7 @@ const landingCommand = ({ root, slug }) =>
   `${composeOwnToolPrefix(root)} land ${shellQuoteArg(slug)} --prepare`;
 
 const orientationFields = ({ root, slug }) => ({
-  sharedQueue: join(root, PLANS_REL, QUEUE_BASENAME),
+  sharedQueue: join(root, QUEUE),
   landing: composeLandingValue({ rule: LANDING_FROM_MAIN, command: landingCommand({ root, slug }) }),
 });
 
@@ -1449,7 +1448,7 @@ const assertIncludeNeverCopiesTheQueue = ({ rootReal, incReal, inc, fs, contract
   // `contract` marks the WALK-TIME (point-of-use) call: its failures are include-identity
   // refusals and carry the door contract; the pre-mutation preflight call keeps the plain form.
   const withContract = (message) => stop(contract ? `${message}\n${INCLUDE_IDENTITY_RULE}` : message);
-  const queueLexical = join(rootReal, PLANS_REL, QUEUE_BASENAME);
+  const queueLexical = join(rootReal, QUEUE);
   const queuePaths = [queueLexical];
   try {
     queuePaths.push(fs.realpath(queueLexical));
@@ -1575,7 +1574,7 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report, journal = NO_JOURNAL 
 // redirect an include at the shared series index between the check and the copy.
 const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, report, copied, journal = NO_JOURNAL }) => {
   const recorded = [];
-  const queuePath = join(rootReal, PLANS_REL, QUEUE_BASENAME);
+  const queuePath = join(rootReal, QUEUE);
   for (const { rel, real, identity } of includeSources) {
     // Defence in depth: re-assert the queue-copy prohibition on the canonical path at the POINT OF
     // USE, so it holds where the copy happens and not only where the path was first checked.
@@ -1618,11 +1617,11 @@ const provisionIncludes = ({ rootReal, wtRoot, includeSources, resume, git, fs, 
 };
 
 const LOCKFILE_MANAGERS = Object.freeze([
-  ['package-lock.json', 'npm'],
-  ['pnpm-lock.yaml', 'pnpm'],
-  ['yarn.lock', 'yarn'],
-  ['bun.lockb', 'bun'],
-  ['bun.lock', 'bun'],
+  [NPM_LOCK, 'npm'],
+  [PNPM_LOCK, 'pnpm'],
+  [YARN_LOCK, 'yarn'],
+  [BUN_LOCKB, 'bun'],
+  [BUN_LOCK, 'bun'],
 ]);
 const NEUTRAL_INSTALL_ADVICE =
   'install command not printed — package manager is ambiguous or unknown; install dependencies in the worktree by hand';
@@ -1630,7 +1629,7 @@ const NEUTRAL_INSTALL_ADVICE =
 // Advice evidence = the WORKTREE'S OWN LIVE checkout (manifest AND lockfiles): the printed
 // command runs in the satellite, so what main's working tree happens to hold must not steer it.
 const resolveInstallAdvice = ({ wtRoot, fs }) => {
-  const pkg = readFileNoFollow(fs, join(wtRoot, 'package.json'));
+  const pkg = readFileNoFollow(fs, join(wtRoot, PACKAGE_JSON));
   let manager = null;
   let inspectLocks = false;
   if (pkg.absent) {
@@ -1681,7 +1680,7 @@ const resolveInstallAdvice = ({ wtRoot, fs }) => {
 export const DEPENDENCY_FIELDS = Object.freeze(['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']);
 // Workspace declarations this tool cannot read. Their presence makes the dependency inventory
 // unknowable from package.json alone, so it is never proof.
-export const EXTERNAL_WORKSPACE_MANIFESTS = Object.freeze(['pnpm-workspace.yaml', 'pnpm-workspace.yml', 'lerna.json']);
+export const EXTERNAL_WORKSPACE_MANIFESTS = Object.freeze([PNPM_WORKSPACE, PNPM_WORKSPACE_YML, LERNA_JSON]);
 
 const readPackageJson = (fs, path) => {
   const file = readFileNoFollow(fs, path);
@@ -1732,7 +1731,7 @@ const installHookVerdict = (pkg) => {
 };
 // A native-addon manifest triggers an implicit `node-gyp rebuild` on install even with an empty
 // scripts block, so its presence — root or member — is a mandatory install, never proof of none.
-const declaresNativeBuild = (fs, dir) => lstatNoFollow(fs.lstat, join(dir, 'binding.gyp')) !== null;
+const declaresNativeBuild = (fs, dir) => lstatNoFollow(fs.lstat, join(dir, BINDING_GYP)) !== null;
 
 // PROVABLY dependency-free, or nothing — read from the WORKTREE'S OWN LIVE CHECKOUT, never from
 // MAIN's mutable working tree: the evidence is what an install run in THIS worktree would actually
@@ -1748,7 +1747,7 @@ const declaresNativeBuild = (fs, dir) => lstatNoFollow(fs.lstat, join(dir, 'bind
 // manifest — leaves the posture UNKNOWN, and unknown keeps the existing install advice: a false
 // "nothing to install" is worse than a redundant hint.
 const declaresNoDependencies = ({ wtRoot, fs }) => {
-  const pkg = readPackageJson(fs, join(wtRoot, 'package.json'));
+  const pkg = readPackageJson(fs, join(wtRoot, PACKAGE_JSON));
   if (pkg === null || dependencyFieldsVerdict(pkg) !== 'none' || installHookVerdict(pkg) !== 'none') return false;
   if (Object.hasOwn(pkg, 'workspaces')) return false;
   if (declaresNativeBuild(fs, wtRoot)) return false;
@@ -1830,10 +1829,10 @@ const decodeTargetStrictly = (buffer) => {
 const nodeModulesLinkOwnership = ({ fs, git, nmPath, wtRoot, mainRoot }) => {
   const read = readLinkTarget(fs, nmPath);
   if (read.error !== undefined) return { verdict: 'unreadable', error: read.error };
-  if (Buffer.compare(read.target, Buffer.from(join(mainRoot, NODE_MODULES_REL))) !== 0) {
+  if (Buffer.compare(read.target, Buffer.from(join(mainRoot, NODE_MODULES))) !== 0) {
     return { verdict: 'foreign', target: read.target };
   }
-  const lane = probeOwnedLane({ git, wtRoot, rel: NODE_MODULES_REL });
+  const lane = probeOwnedLane({ git, wtRoot, rel: NODE_MODULES });
   if (lane.lane === 'ignored') return { verdict: 'ours', target: read.target };
   if (lane.lane === 'tracked') return { verdict: 'tracked', target: read.target };
   // The target WAS read here — only the lane is unsettled — so this must not borrow the wording of a
@@ -1854,7 +1853,7 @@ const INSTALL_RUNNABLE_DESCRIPTION = 'this checkout installs its own dependencie
 // IS a command in the ordinary case, so rendering it as prose would offer an instruction nothing
 // attributes and no command parser can see.
 const resolveInstall = ({ wtRoot, mainRoot, dependencyFree, fs, git }) => {
-  const nmPath = join(wtRoot, 'node_modules');
+  const nmPath = join(wtRoot, NODE_MODULES);
   const nm = lstatNoFollow(fs.lstat, nmPath);
   const removal = `rm ${shellQuoteArg(nmPath)}`;
   if (nm !== null && nm.isSymbolicLink()) {
@@ -1922,10 +1921,10 @@ const composeSatellitePromptFor = ({ root, wtRoot, slug, branch, record, plan, i
 const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyFree, git, fs, report, journal = NO_JOURNAL }) => {
   // The lane places ONLY a symlink, so the kind gate admits only a symlink at this path: a
   // directory (a real install) is the user's, never provision's to prove or advise on.
-  const journalLink = (outcome) => journal.record({ rel: NODE_MODULES_REL, surface: 'node-modules-link', outcome, kind: 'symlink' });
+  const journalLink = (outcome) => journal.record({ rel: NODE_MODULES, surface: 'node-modules-link', outcome, kind: 'symlink' });
   const install = resolveInstallAdvice({ wtRoot, fs });
   if (installFlag) {
-    const dst = join(wtRoot, NODE_MODULES_REL);
+    const dst = join(wtRoot, NODE_MODULES);
     const existing = lstatNoFollow(fs.lstat, dst);
     if (existing !== null && existing.isSymbolicLink()) {
       // The unlink-first advice belongs to OUR link and to no other: for a link this tool never
@@ -1952,7 +1951,7 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
   // LIVE STATE WINS the whole default lane: a node already at the worktree — a directory, or a
   // symlink an earlier provision left, even dangling — is what the record states; reporting
   // MAIN's state (`absent`) beside an existing node would contradict record.install.
-  const dst = join(wtRoot, NODE_MODULES_REL);
+  const dst = join(wtRoot, NODE_MODULES);
   if (lstatNoFollow(fs.lstat, dst) !== null) {
     journalLink('kept');
     report.push('  node_modules: already present in the worktree');
@@ -1966,7 +1965,7 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
     report.push(`  node_modules: ${NO_DEPENDENCIES_POSTURE}`);
     return NODE_MODULES_NONE;
   }
-  const mainNm = join(root, 'node_modules');
+  const mainNm = join(root, NODE_MODULES);
   const node = classifyNodeNoFollow(mainNm, fs);
   if (node.kind === 'absent') {
     report.push(`  node_modules: main has none — after your own install there, re-run --resume, or: ${install.instruction}`);
@@ -1984,7 +1983,7 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
   // A directory-form ignore pattern (node_modules/) never covers a SYMLINK of that name — the
   // link would surface as an untracked leftover; the placed-paths-stay-ignored rule applies.
   // Deliberately slashless: this probes the SYMLINK form.
-  if (!checkIgnored(git, 'node_modules', wtRoot)) {
+  if (!checkIgnored(git, NODE_MODULES, wtRoot)) {
     report.push(`  node_modules: a symlink would not be ignored here (only the directory form is) — not symlinked; ${install.instruction}`);
     return 'not-ignored';
   }
@@ -2012,42 +2011,41 @@ const provisionNodeModules = ({ root, rootReal, wtRoot, installFlag, dependencyF
 };
 
 const provisionVscode = ({ root, wtRoot, slug, git, fs, report, journal = NO_JOURNAL }) => {
-  const relPath = '.vscode/settings.json';
   // An EXISTING satellite destination is journaled FIRST, before every source-side and gate-side
   // early return: the doors decide only what this run WRITES, while the journal decides what gets
   // PROVEN. Membership must not depend on MAIN's current state — a file an earlier run placed
   // would otherwise skip here (MAIN lost its .vscode dir, MAIN's copy became tracked, or the
   // ignore rule was lost) and ride a successful resume out as a land-blocking leftover.
-  const present = lstatNoFollow(fs.lstat, join(wtRoot, relPath)) !== null;
-  if (present) journal.record({ rel: relPath, surface: 'vscode-settings', outcome: 'kept' });
-  const vscodeDir = lstatNoFollow(fs.lstat, join(root, '.vscode'));
+  const present = lstatNoFollow(fs.lstat, join(wtRoot, VSCODE_SETTINGS)) !== null;
+  if (present) journal.record({ rel: VSCODE_SETTINGS, surface: 'vscode-settings', outcome: 'kept' });
+  const vscodeDir = lstatNoFollow(fs.lstat, join(root, VSCODE_DIR));
   if (vscodeDir === null || !vscodeDir.isDirectory()) {
     report.push('  .vscode: main has no .vscode/ dir — window title not written');
     return 'absent';
   }
-  const tracked = git(['ls-files', '--', relPath], root);
+  const tracked = git(['ls-files', '--', VSCODE_SETTINGS], root);
   if (tracked.status !== 0) {
-    throw stop(`git ls-files failed for ${relPath}: ${(tracked.stderr || tracked.stdout).trim()}`);
+    throw stop(`git ls-files failed for ${VSCODE_SETTINGS}: ${(tracked.stderr || tracked.stdout).trim()}`);
   }
   if (tracked.stdout.trim() !== '') {
-    report.push(`  .vscode: ${relPath} is tracked — left byte-unchanged (set the window title by hand if wanted)`);
+    report.push(`  .vscode: ${VSCODE_SETTINGS} is tracked — left byte-unchanged (set the window title by hand if wanted)`);
     return 'skipped-tracked';
   }
-  if (!checkIgnored(git, relPath, wtRoot)) {
-    report.push(`  .vscode: ${relPath} is not ignored in the worktree — skipped (it would become a land leftover)`);
+  if (!checkIgnored(git, VSCODE_SETTINGS, wtRoot)) {
+    report.push(`  .vscode: ${VSCODE_SETTINGS} is not ignored in the worktree — skipped (it would become a land leftover)`);
     return 'skipped-not-ignored';
   }
   if (present) {
     report.push('  .vscode: kept (already present)');
     return 'kept';
   }
-  const src = readFileNoFollow(fs, join(root, relPath));
+  const src = readFileNoFollow(fs, join(root, VSCODE_SETTINGS));
   if (src.unsafe) {
-    report.push(`  .vscode: main's ${relPath} is not a regular file — skipped`);
+    report.push(`  .vscode: main's ${VSCODE_SETTINGS} is not a regular file — skipped`);
     return 'skipped-unsafe';
   }
   if (src.error) {
-    report.push(`  .vscode: main's ${relPath} is unreadable (${src.error}) — skipped`);
+    report.push(`  .vscode: main's ${VSCODE_SETTINGS} is unreadable (${src.error}) — skipped`);
     return 'skipped-unreadable';
   }
   const base = (() => {
@@ -2059,15 +2057,15 @@ const provisionVscode = ({ root, wtRoot, slug, git, fs, report, journal = NO_JOU
     }
   })();
   if (base === null || typeof base !== 'object' || Array.isArray(base)) {
-    report.push(`  .vscode: main's ${relPath} is not a JSON object — skipped`);
+    report.push(`  .vscode: main's ${VSCODE_SETTINGS} is not a JSON object — skipped`);
     return 'skipped-unparsable';
   }
   const body = `${JSON.stringify({ ...base, 'window.title': slug }, null, 2)}\n`;
-  guardDst(fs, wtRoot, join(wtRoot, '.vscode'));
-  fs.mkdir(join(wtRoot, '.vscode'));
-  writeContainedFileAtomic(wtRoot, join(wtRoot, relPath), body, fs, { stop: (m) => stop(m) });
-  journal.record({ rel: relPath, surface: 'vscode-settings', outcome: 'written' });
-  report.push(`  .vscode: ${relPath} written (window.title = ${slug})`);
+  guardDst(fs, wtRoot, join(wtRoot, VSCODE_DIR));
+  fs.mkdir(join(wtRoot, VSCODE_DIR));
+  writeContainedFileAtomic(wtRoot, join(wtRoot, VSCODE_SETTINGS), body, fs, { stop: (m) => stop(m) });
+  journal.record({ rel: VSCODE_SETTINGS, surface: 'vscode-settings', outcome: 'written' });
+  report.push(`  .vscode: ${VSCODE_SETTINGS} written (window.title = ${slug})`);
   return 'written';
 };
 
@@ -2110,7 +2108,7 @@ const rebasePins = ({ root, wtRoot, git, fs, report, journal = NO_JOURNAL }) => 
       report.push(`  ${target}: carries main-root pins but is user-modified — left untouched; rebase it by hand if wanted`);
     }
   }
-  const gates = readFileNoFollow(fs, join(wtRoot, 'docs/ai/gates.json'));
+  const gates = readFileNoFollow(fs, join(wtRoot, GATES));
   if (!gates.absent) {
     const capable = (() => {
       if (!gates.bytes) return null;
@@ -2651,7 +2649,7 @@ const assertSatelliteReady = ({ slug, mainHead, satelliteHead, worktree, git }) 
   if (divergence === 'behind') throw stop(driftRecipe({ slug, satelliteHead, mainHead }));
 
   const docsAi = nulFields(gitRead(
-    git, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', 'docs/ai'], worktree,
+    git, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--', DOCS_TREE], worktree,
     'git status failed for docs/ai',
   ).stdout).map((entry) => entry.length > 3 ? entry.slice(3) : entry);
   if (docsAi.length > 0) {
@@ -2661,7 +2659,7 @@ const assertSatelliteReady = ({ slug, mainHead, satelliteHead, worktree, git }) 
   }
 
   const stagedExcluded = nulFields(gitRead(
-    git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], worktree,
+    git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', DOCS_TREE, PLANS_REL], worktree,
     'git diff failed for excluded paths',
   ).stdout);
   if (stagedExcluded.length > 0) {
@@ -2754,7 +2752,7 @@ const applyTransfer = ({ root, commonDir, slug, patch, mainHead, git, fs }) => {
 };
 
 const runSyncAdapter = ({ root, mainHead, transferPaths, git, fs, deps, report }) => {
-  const adapter = join(root, 'scripts/sync-mirrors.mjs');
+  const adapter = join(root, SYNC_MIRRORS);
   const node = classifyNodeNoFollow(adapter, fs);
   if (node.kind === 'absent') {
     report.push('sync adapter: absent — skipped');
@@ -2882,7 +2880,7 @@ export const runLand = ({ argvSlug, flags, cwd, git, deps, log }) => {
     const transferPaths = assertSatelliteReady({ slug, mainHead, satelliteHead, worktree: entry.path, git });
     runSatelliteReview({ worktree: entry.path, deps });
 
-    const gates = classifyNodeNoFollow(join(root, 'docs/ai/gates.json'), fs);
+    const gates = classifyNodeNoFollow(join(root, GATES), fs);
     if (gates.kind === 'absent') throw stop('docs/ai/gates.json is absent — land cannot attest the prepared main tree');
     if (gates.kind !== 'regular-file') throw stop('docs/ai/gates.json is not a regular non-symlink file — land fails closed');
 
@@ -3016,7 +3014,7 @@ const provisionKnownRoots = (identity) => {
     ...identity.record.includes.map(safeRecordedPath).filter((rel) => !isNeverProvisionedRel(rel)),
     PLANS_REL,
   ];
-  if (identity.record.vscode === 'written') roots.push('.vscode/settings.json');
+  if (identity.record.vscode === 'written') roots.push(VSCODE_SETTINGS);
   return [...new Set(roots)];
 };
 
@@ -3035,7 +3033,7 @@ const provisionKnownDirectoryRoots = ({ root, identity, fs }) => {
 
 const rootCoveringPath = (path, roots) => roots.find((root) => {
   if (root.includes('*')) {
-    const expression = new RegExp(`^${root.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
+    const expression = new RegExp(`^${root.split('*').map(escapeRegExp).join('[^/]*')}$`);
     return expression.test(path);
   }
   return path === root || path.startsWith(`${root}/`);
@@ -3054,7 +3052,7 @@ const foreignIgnoredPaths = ({ root, git, identity, fs, exemptNodeModules = fals
       const path = normalized.replace(/\/$/, '');
       // The ONE ownership exemption (AD-069): the gate has already proven this exact node an
       // ignored-lane matching symlink; it is neither re-probed nor reported here.
-      if (exemptNodeModules && path === NODE_MODULES_REL) continue;
+      if (exemptNodeModules && path === NODE_MODULES) continue;
       const kind = classifyNodeNoFollow(join(root, path), fs).kind;
       const rootType = kind === 'plain-directory' || kind === 'symlink-to-directory'
         ? 'directory'
@@ -3084,14 +3082,12 @@ const foreignIgnoredPaths = ({ root, git, identity, fs, exemptNodeModules = fals
 // command. The single exempt state — the ignored-lane matching link — is re-proven immediately
 // before the irreversible worktree remove.
 
-const NODE_MODULES_REL = 'node_modules';
-
 const nodeModulesInspectStop = (nmPath, detail) => stop(
   `cleanup stopped: cannot inspect ${nmPath} (${detail})\n${CLEANUP_OWNERSHIP_RULE}`,
 );
 
 const nodeModulesSnapshot = ({ wtRoot, mainRoot, git, fs }) => {
-  const nmPath = join(wtRoot, NODE_MODULES_REL);
+  const nmPath = join(wtRoot, NODE_MODULES);
   const node = (() => {
     try {
       return { stat: fs.lstat(nmPath) };
@@ -3100,7 +3096,7 @@ const nodeModulesSnapshot = ({ wtRoot, mainRoot, git, fs }) => {
     }
   })();
   if (node.error) throw nodeModulesInspectStop(nmPath, node.error);
-  const trackedProbe = git(['ls-files', '--cached', '-z', '--', NODE_MODULES_REL], wtRoot);
+  const trackedProbe = git(['ls-files', '--cached', '-z', '--', NODE_MODULES], wtRoot);
   if (trackedProbe.status !== 0) {
     throw nodeModulesInspectStop(nmPath, `git ls-files failed: ${(trackedProbe.stderr || trackedProbe.stdout).trim()}`);
   }
@@ -3109,7 +3105,7 @@ const nodeModulesSnapshot = ({ wtRoot, mainRoot, git, fs }) => {
     return { klass: 'absent', kind: 'absent', lane: tracked ? 'tracked' : null, nmPath };
   }
   const lane = tracked ? 'tracked' : (() => {
-    const probe = git(['check-ignore', '--', NODE_MODULES_REL], wtRoot);
+    const probe = git(['check-ignore', '--', NODE_MODULES], wtRoot);
     if (probe.status === 0) return 'ignored';
     if (probe.status === 1) return 'untracked';
     throw nodeModulesInspectStop(nmPath, `git check-ignore failed: ${(probe.stderr || probe.stdout).trim()}`);
@@ -3129,7 +3125,7 @@ const nodeModulesSnapshot = ({ wtRoot, mainRoot, git, fs }) => {
   // Raw BYTES against MAIN's node_modules path — never decoded, never resolved: a relative or
   // re-encoded form that merely RESOLVES to main stays foreign, and the target's kind is
   // irrelevant (unlink touches only the link).
-  const matches = Buffer.compare(target.bytes, Buffer.from(join(mainRoot, NODE_MODULES_REL))) === 0;
+  const matches = Buffer.compare(target.bytes, Buffer.from(join(mainRoot, NODE_MODULES))) === 0;
   return { klass: matches ? 'ephemeral' : 'foreign', kind: 'symlink', lane, nmPath };
 };
 
@@ -3224,11 +3220,11 @@ export const runCleanup = ({ argvSlug, flags, cwd, git, deps, log }) => {
         'git diff failed for landed verification',
       );
       const excludedStagedPaths = nulFields(gitRead(
-        git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], entry.path,
+        git, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--', DOCS_TREE, PLANS_REL], entry.path,
         'git diff failed for excluded tracked paths',
       ).stdout);
       const excludedUnstagedPaths = nulFields(gitRead(
-        git, ['diff', '--name-only', '--no-renames', '-z', '--', 'docs/ai', 'docs/plans'], entry.path,
+        git, ['diff', '--name-only', '--no-renames', '-z', '--', DOCS_TREE, PLANS_REL], entry.path,
         'git diff failed for excluded tracked paths',
       ).stdout);
       const mismatches = new Set([...unstagedPaths, ...excludedStagedPaths, ...excludedUnstagedPaths]);

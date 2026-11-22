@@ -8,6 +8,7 @@
 // Contract: docs/ai/specs/kit/install/entry-pointers.md.
 
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { AGENT_RULES, CLAUDE_FILE, HANDOVER } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { normalizeCanonical } from './orchestration-config.mjs';
 import { PRECEDENCE_LINE, THEMES, themePaths } from './project-rules/index.mjs';
@@ -18,7 +19,7 @@ import {
 export const BLOCK_START = '<!-- workflow:kit:start -->';
 export const BLOCK_END = '<!-- workflow:kit:end -->';
 export const READ_LINE = 'Read `docs/ai/index.md` after this file; read `docs/ai/agent_rules.md` before any code change.';
-export const MEMORY_IMPORTS = Object.freeze(['docs/ai/handover.md', 'docs/ai/agent_rules.md']);
+export const MEMORY_IMPORTS = Object.freeze([HANDOVER, AGENT_RULES]);
 export const FALLBACK_LINE = 'Claude Code loads the content of the `@` files above at a start in the project root with no dialog, and at a start in a subfolder once its one-time per-repository approval was answered Yes in an interactive session; if their content is not in your context, read each `@` path above from disk before anything else.';
 export const SKIP_PREFIX = 'Kit text not supplied by the installed engine:';
 export const BLOCK_ROUTE = "text of your own goes outside the two workflow:kit comment lines; a change to a kit rule goes in its theme's file under docs/ai/rules/local/";
@@ -205,7 +206,7 @@ export const runCli = async (argv, deps = {}) => {
   }
   const target = resolve(argv[1]);
   const checkClaudeLink = async (own) => {
-    const state = { hop: join(dirname(own), 'CLAUDE.md'), links: 0, checkingEntry: true };
+    const state = { hop: join(dirname(own), CLAUDE_FILE), links: 0, checkingEntry: true };
     while (state.hop !== own) {
       state.checkingEntry = true;
       try {

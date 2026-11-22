@@ -9,7 +9,8 @@
 // Pure (dependency-injectable validator + fs), dependency-free, Node >= 22.
 
 import { statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, posix, resolve } from 'node:path';
+import { AGENTS_FILE, DOCS_TREE, MEMORY_STAMP, RULES, WORKFLOW_STAMP } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { validateManifest, VALID } from './manifest/validate.mjs';
 
@@ -86,10 +87,10 @@ export const handoffPlan = (delegate) =>
   delegate
     ? {
         mode: 'delegate',
-        memoryWrites: ['docs/ai/', 'AGENTS.md', 'docs/ai/.memory-version'],
+        memoryWrites: [`${DOCS_TREE}/`, AGENTS_FILE, MEMORY_STAMP],
         // The kit block and the rules themes run AFTER the substrate deploy, over memory's seed.
-        kitWrites: ['AGENTS.md kit block', 'docs/ai/rules/ theme files', 'docs/ai/.workflow-version'],
-        stampsPresent: ['.memory-version', '.workflow-version'],
+        kitWrites: [`${AGENTS_FILE} kit block`, `${RULES}/ theme files`, WORKFLOW_STAMP],
+        stampsPresent: [posix.basename(MEMORY_STAMP), posix.basename(WORKFLOW_STAMP)],
         memoryRaisesCommitGate: false,
         commitGate: 'kit-only-after-injection',
       }
@@ -98,8 +99,8 @@ export const handoffPlan = (delegate) =>
         memoryWrites: [],
         // Fallback ships the kit's OWN AGENTS.md; the kit block is written into it exactly as on the
         // delegate path, so both paths end with the same block.
-        kitWrites: ['docs/ai/', 'AGENTS.md', 'AGENTS.md kit block', 'docs/ai/rules/ theme files', 'docs/ai/.workflow-version'],
-        stampsPresent: ['.workflow-version'],
+        kitWrites: [`${DOCS_TREE}/`, AGENTS_FILE, `${AGENTS_FILE} kit block`, `${RULES}/ theme files`, WORKFLOW_STAMP],
+        stampsPresent: [posix.basename(WORKFLOW_STAMP)],
         memoryRaisesCommitGate: false,
         commitGate: 'kit-only-after-injection',
       };

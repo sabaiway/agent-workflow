@@ -5,8 +5,8 @@
 //
 // Split out for the reason bridge-settings-read.mjs was (bridges 2.3.0, D6): a read-only consumer
 // that imports the writer pulls in the atomic-write core, which read-graph-purity.test.mjs forbids.
-// That is also why the two settings-path literals are NOT imported from velocity-profile.mjs (a
-// write module) — the equality is pinned by a test instead.
+// The two settings paths come from the shared index. A test pins their equality with the paths
+// velocity-profile.mjs uses.
 //
 // It reads through fs-read-nofollow.mjs rather than velocity's readSettingsFile because that reader
 // follows a symlink: a symlinked `.mcp.json` whose TARGET is a perfect registration would report
@@ -38,15 +38,16 @@
 
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLAUDE_DIR, MCP_FILE, SETTINGS } from '../references/scripts/shared/index.mjs';
 import { describeNonRegular, lstatNoFollowRead, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 import { SERVER_NAME, TOOLS } from './mcp-server.mjs';
 
 export { SERVER_NAME };
 
-export const MCP_JSON_REL = '.mcp.json';
-export const CLAUDE_DIR_REL = '.claude';
-export const SETTINGS_REL = '.claude/settings.json';
+export const MCP_JSON_REL = MCP_FILE;
+export const CLAUDE_DIR_REL = CLAUDE_DIR;
+export const SETTINGS_REL = SETTINGS;
 export const SERVERS_KEY = 'mcpServers';
 export const ENABLED_KEY = 'enabledMcpjsonServers';
 // OUT OF SCOPE, deliberately and by name: `disabledMcpjsonServers`. A server listed there is rejected

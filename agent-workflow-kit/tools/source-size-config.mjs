@@ -18,6 +18,7 @@
 
 import { readFileSync, lstatSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
+import { KIT_FOLDER } from '../references/scripts/shared/index.mjs';
 import { SOURCE_SIZE_CONFIG_REL, configFail, configPathFor, isLineUnsafe } from './source-size-refusal.mjs';
 import { KIT_LIMITS, SPEC_STORE_ROOT, layoutDefect, limitsDefect, migrateSchema1, resolveLimits } from './source-size/index.mjs';
 
@@ -32,7 +33,7 @@ export { INITIAL_ADOPTION_REASON } from './source-size/index.mjs';
 // The root an absent `roots` declares: every tracked path. Admitted only as the sole root.
 export const WHOLE_TREE_ROOT = '.';
 // The kit's own folder: taken away from every judgment by this fixed path, with no config key.
-export const KIT_FOLDER_ROOT = 'scripts/agent-workflow';
+export const KIT_FOLDER_ROOT = KIT_FOLDER;
 
 export const AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'roots', 'exclude', 'extensions', 'limits']);
 const SCHEMA1_AUTHORED_KEYS = Object.freeze(['_README', 'schema', 'defaults', 'roots', 'exclude', 'extensions']);
