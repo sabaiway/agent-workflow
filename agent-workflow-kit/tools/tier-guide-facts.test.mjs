@@ -44,9 +44,11 @@ const runPrompt = (path) => ['run', null, naming(path, '## Run')];
 const STAGE_ROW = ['run', `git --literal-pathspecs add -- ${MODULE}`, /stage/];
 const LANDING = [['run', node('plan-shape-cli.mjs', '--verify', PLAN), /verify/], ['write', null, /state: landed 2026-09-22/]];
 const S2_ACTIONS = [PLAN_CHECK, copy(PROMPT), fill('M1')];
+const PLAN_SHAPE = new RegExp(`^${naming(`plan by hand at ${PLAN_STAND_IN}.`, 'not adopted', 'no total line', '- bullet under Verification').source}`
+  + String.raw`(?=.*five fields[^.;]*id, verb, path, responsibility, (?:and )?anchor)(?=.*delete row[^.;]*(?:dash|—)[^.;]*anchor)(?!.*\bbudgets?\b)`, 'iu');
 const STORY_STAGES = [
   ['S1', 'S1', [['run', node('epic-shape-cli.mjs', '--review-brief', EPIC), /review brief/],
-    ['write', null, new RegExp(`plan by hand at ${PLAN_STAND_IN}\\. .*not adopted.*budget n/a.*total: 0 → 0 lines when every row is a create or modify.*- bullet under Verification\\.$`)]]],
+    ['write', null, PLAN_SHAPE]]],
   ['S2', 'S2', S2_ACTIONS],
   ['S3', 'S3', [carry(PROMPT), runPrompt(PROMPT), STAGE_ROW, copy(SECOND_PROMPT), fill('M2')]],
   ['S4', 'S4', [carry(PROMPT), runPrompt(PROMPT), STAGE_ROW, ...LANDING]],

@@ -74,7 +74,6 @@ const writeBrief = (ws, brief, files) => put(ws, brief, [
   `Plan: ${PLAN}`, 'Row: t1', 'Grouping: test', 'Files:',
   ...files.map((path) => `- ${path} :: test`), '', '## Reads', `- ${BASE}`, '',
   '## Acceptance', '- node --test fixture.test.mjs :: green', '', '## Negative cases', '- none', '',
-  '## Budget', ...files.map((path) => `- ${path} :: 100`), '',
 ].join('\n'));
 const makeRepo = () => {
   const cwd = mkdtempSync(join(TMP, 'repo-'));

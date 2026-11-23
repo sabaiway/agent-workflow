@@ -3,14 +3,16 @@ import { spawnSync } from 'node:child_process';
 import { rmSync, symlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { DEFAULT_ROW, ledgerOf, makeTree, planWith, write, writeJson } from '../plan-shape-harness.test.mjs';
+import { DEFAULT_ROW as APPROVED_ROW, ledgerOf, LEGACY_ROW, makeTree, planWith, write, writeJson } from '../plan-shape-harness.test.mjs';
 
 const CLI = join(import.meta.dirname, 'cli.mjs');
 const PLAN = 'docs/plans/x.md';
 const LINK_REFUSALS = ['EPERM', 'EACCES', 'ENOTSUP'];
-const BAD_ROW = 'R2 | move | docs/wrong.md | wrong verb | n/a | docs/readme.md:1';
+const BAD_ROW = 'R2 | move | docs/wrong.md | wrong verb | docs/readme.md:1';
 const FIRST_ENTRY = 'A2 | modify | docs/first.md | update the file | n/a | docs/readme.md:1';
-const SECOND_ENTRY = 'A1 | modify | docs/second.md | update the file | n/a | docs/readme.md:1';
+const SECOND_ENTRY = 'A1 | modify | docs/second.md | update the file | docs/readme.md:1';
+const NEW_ENTRY = 'A2 | modify | docs/first.md | update the file | docs/readme.md:1';
+const amendedPlan = (approved, ...entries) => planWith({ ledger: [...approved, 'amendments:', ...entries].join('\n') });
 
 const makeRepo = (t) => {
   const root = makeTree('plan-structure-cli');
@@ -18,7 +20,7 @@ const makeRepo = (t) => {
   write(root, 'docs/readme.md', 'text\n');
   return root;
 };
-const planOf = (approved, ...entries) => planWith({ ledger: ledgerOf([...approved, 'amendments:', ...entries].join('\n')) });
+const planOf = (approved, ...entries) => planWith({ ledger: [...approved, 'amendments:', ...entries, 'total: 0 → 0 lines'].join('\n') });
 const run = (root, argv) => {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
@@ -42,80 +44,91 @@ const assertFinding = (lines, rowId, code) => {
 };
 
 describe('spec:plan-structure/S7 structure command', () => {
-  it('prints the verdict and findings before amendment lines in ledger order', (t) => {
+  it('prints the verdict and findings before amendment id, verb and path lines in ledger order', (t) => {
     const root = makeRepo(t);
-    const first = 'plan-structure: amendment — A2 | modify | docs/first.md | n/a';
-    const second = 'plan-structure: amendment — A1 | modify | docs/second.md | n/a';
-    write(root, PLAN, planOf([DEFAULT_ROW], FIRST_ENTRY));
+    const first = 'plan-structure: amendment — A2 | modify | docs/first.md';
+    const second = 'plan-structure: amendment — A1 | modify | docs/second.md';
+    write(root, PLAN, planOf([LEGACY_ROW], FIRST_ENTRY));
+    assert.ok(!getLines(run(root, [PLAN]).stdout).some((line) => line.startsWith(first + ' | ')));
+    write(root, PLAN, amendedPlan([APPROVED_ROW], NEW_ENTRY));
     const accepted = run(root, [PLAN]);
     assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
-    assert.deepEqual(getLines(accepted.stdout), [`plan-shape: ACCEPT — ${PLAN}`, first]);
-    write(root, PLAN, planOf([DEFAULT_ROW], FIRST_ENTRY, SECOND_ENTRY).replaceAll('\n', '\r\n'));
+    assert.deepEqual(getLines(accepted.stdout), ['plan-shape: ACCEPT — ' + PLAN, first]);
+    write(root, PLAN, amendedPlan([APPROVED_ROW], NEW_ENTRY, SECOND_ENTRY).replaceAll('\n', '\r\n'));
     const crlf = run(root, [PLAN]);
-    assert.deepEqual([crlf.status, getLines(crlf.stdout)], [0, [`plan-shape: ACCEPT — ${PLAN}`, first, second]], crlf.stdout);
-    write(root, PLAN, planOf([DEFAULT_ROW, BAD_ROW], FIRST_ENTRY, SECOND_ENTRY));
+    assert.deepEqual([crlf.status, getLines(crlf.stdout)], [0, ['plan-shape: ACCEPT — ' + PLAN, first, second]], crlf.stdout);
+    write(root, PLAN, amendedPlan([APPROVED_ROW, BAD_ROW], NEW_ENTRY, SECOND_ENTRY));
     const refused = run(root, [PLAN]);
     assert.equal(refused.status, 1, refused.stderr || refused.stdout);
     const lines = getLines(refused.stdout);
-    assert.equal(lines[0], `plan-shape: REFUSE — ${PLAN}`);
+    assert.equal(lines[0], 'plan-shape: REFUSE — ' + PLAN);
     assertFinding(lines.slice(1, -2), 'R2', 'row-grammar');
     assert.deepEqual(lines.slice(-2), [first, second]);
   });
 
-  it('judges entry budgets, test precedence and the package pin against the ledger', async (t) => {
+  it('judges test precedence and the package pin against the ledger without judging entry budgets', async (t) => {
     const { main } = await import('./cli.mjs');
     const root = makeRepo(t);
-    const entry = 'A1 | create | src/change.mjs | add the module | 100 | docs/readme.md:1';
-    const testRow = 'R2 | create | test/change.test.mjs | exercise the module | n/a | docs/readme.md:1';
+    const oldEntry = 'A1 | create | src/change.mjs | add the module | 100 | docs/readme.md:1';
+    const oldTest = 'R2 | create | test/change.test.mjs | exercise the module | n/a | docs/readme.md:1';
     const pinPath = 'test/package-content.test.mjs';
-    const pinRow = `R3 | modify | ${pinPath} | pin the module | n/a | docs/readme.md:1`;
+    const pinRow = 'R3 | modify | ' + pinPath + ' | pin the module | docs/readme.md:1';
+    write(root, PLAN, planOf([LEGACY_ROW, oldTest], oldEntry));
+    const withoutDeclaration = invoke(main, root, [PLAN]);
+    writeJson(root, 'docs/ai/source-size.json', { schema: 2, roots: ['src'], extensions: ['.mjs'] });
+    write(root, PLAN, planOf([LEGACY_ROW, oldTest], oldEntry.replace(' | 100 | ', ' | n/a | ')));
+    const inScope = invoke(main, root, [PLAN]);
+    assert.doesNotMatch(withoutDeclaration.stdout + inScope.stdout, /: (cap-declaration|source-budget|budget-cap): /);
+
+    const entry = 'A1 | create | src/change.mjs | add the module | docs/readme.md:1';
+    const testRow = 'R2 | create | test/change.test.mjs | exercise the module | docs/readme.md:1';
     const check = (approved, ...entries) => {
-      write(root, PLAN, planOf([DEFAULT_ROW, ...approved], ...entries));
+      write(root, PLAN, amendedPlan([APPROVED_ROW, ...approved], ...entries));
       return invoke(main, root, [PLAN]);
     };
     const refuse = (result, code) => {
       assert.equal(result.status, 1, result.stderr || result.stdout);
       assertFinding(getLines(result.stdout), 'A1', code);
     };
-
-    refuse(check([testRow], entry), 'cap-declaration');
-    writeJson(root, 'docs/ai/source-size.json', { schema: 2, roots: ['src'], extensions: ['.mjs'] });
-    refuse(check([testRow], entry.replace(' | 100 | ', ' | n/a | ')), 'source-budget');
     refuse(check([], entry, testRow), 'red-first');
     writeJson(root, 'package.json', { files: ['src/'] });
     write(root, pinPath, 'pin\n');
     refuse(check([testRow], entry), 'package-pin');
     const accepted = check([testRow, pinRow], entry);
     assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.deepEqual(getLines(accepted.stdout), ['plan-shape: ACCEPT — ' + PLAN, 'plan-structure: amendment — A1 | create | src/change.mjs']);
   });
 
-  it('escapes the entry path and the plan operand before printing', async (t) => {
+  it('escapes the entry path and the plan operand before printing the three entry fields', async (t) => {
     const { main } = await import('./cli.mjs');
     const root = makeRepo(t);
-    write(root, PLAN, planOf([DEFAULT_ROW], FIRST_ENTRY.replace('first', 'control\u0001')));
+    const path = 'docs/control\u0001.md';
+    const entry = 'plan-structure: amendment — A2 | modify | docs/control\\u0001.md';
+    write(root, PLAN, planOf([LEGACY_ROW], FIRST_ENTRY.replace('docs/first.md', path)));
+    const legacy = invoke(main, root, [PLAN]);
+    assert.ok(!getLines(legacy.stdout).some((line) => line.startsWith(entry + ' | ')), legacy.stdout);
+    write(root, PLAN, amendedPlan([APPROVED_ROW], NEW_ENTRY.replace('docs/first.md', path)));
     const ordinary = invoke(main, root, [PLAN]);
-    const entry = 'plan-structure: amendment — A2 | modify | docs/control\\u0001.md | n/a';
-    assert.ok(getLines(ordinary.stdout).includes(entry), ordinary.stdout);
+    assert.equal(ordinary.status, 0, ordinary.stderr || ordinary.stdout);
+    assert.deepEqual(getLines(ordinary.stdout), ['plan-shape: ACCEPT — ' + PLAN, entry]);
     assert.doesNotMatch(ordinary.stdout.replaceAll('\n', ''), /\p{Cc}/u);
     const operand = 'docs/plans/line\nbreak.md';
-    try { write(root, operand, planOf([DEFAULT_ROW], FIRST_ENTRY)); }
+    try { write(root, operand, amendedPlan([APPROVED_ROW], NEW_ENTRY.replace('docs/first.md', path))); }
     catch (error) {
       if (![...LINK_REFUSALS, 'EINVAL'].includes(error.code)) throw error;
-      t.diagnostic(`filesystem refused the LF plan name: ${error.code}`);
+      t.diagnostic('filesystem refused the LF plan name: ' + error.code);
       return;
     }
     const result = run(root, [operand]);
-    assert.equal(result.status, 0, result.stderr);
-    const lines = getLines(result.stdout);
-    assert.equal(lines[0], 'plan-shape: ACCEPT — docs/plans/line\\u000abreak.md', result.stderr);
-    assert.ok(lines.every((line) => /^(plan-shape|plan-structure):/.test(line)), result.stdout);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(getLines(result.stdout), ['plan-shape: ACCEPT — docs/plans/line\\u000abreak.md', entry]);
   });
 
   it('reports an unsupported entry glob as a plan facts finding', async (t) => {
     const { main } = await import('./cli.mjs');
     const root = makeRepo(t);
     const path = 'docs/[a.md';
-    write(root, PLAN, planOf([DEFAULT_ROW], `A1 | modify | ${path} | update (1 files) | n/a | docs/readme.md:1`));
+    write(root, PLAN, amendedPlan([APPROVED_ROW], `A1 | modify | ${path} | update (1 files) | docs/readme.md:1`));
     const result = invoke(main, root, [PLAN]);
     assert.equal(result.status, 1, result.stderr || result.stdout);
     const [verdict, finding] = getLines(result.stdout);
@@ -126,7 +139,7 @@ describe('spec:plan-structure/S7 structure command', () => {
   it('prints no amendment line for a plan with an entry that the block model refuses', async (t) => {
     const { main } = await import('./cli.mjs');
     const root = makeRepo(t);
-    write(root, PLAN, `${planOf([DEFAULT_ROW], FIRST_ENTRY)}\n\`\`\`\nnever closed\n`);
+    write(root, PLAN, `${amendedPlan([APPROVED_ROW], NEW_ENTRY)}\n\`\`\`\nnever closed\n`);
     const result = invoke(main, root, [PLAN]);
     assert.equal(result.status, 1, result.stderr || result.stdout);
     const [verdict, ...rest] = getLines(result.stdout);
@@ -139,7 +152,7 @@ describe('spec:plan-structure/S7 structure command', () => {
     const { main } = await import('./cli.mjs');
     const root = makeRepo(t);
     const other = 'docs/plans/broken.md';
-    write(root, PLAN, planOf([DEFAULT_ROW], FIRST_ENTRY));
+    write(root, PLAN, amendedPlan([APPROVED_ROW], NEW_ENTRY));
     const before = invoke(main, root, [PLAN]);
     assert.equal(before.status, 0, before.stderr || before.stdout);
     write(root, other, planWith({ ledger: ledgerOf(BAD_ROW) }));
@@ -176,10 +189,28 @@ describe('spec:plan-structure/S7 structure command', () => {
   });
 });
 
+it('spec:plan-structure/S11 refuses the retired size field and total line in findings form', (t) => {
+  const root = makeRepo(t);
+  for (const [ledger, code, fix] of [
+    [LEGACY_ROW, 'retired-size-field', /drop.*(?:fifth|size) field/i],
+    [APPROVED_ROW + '\ntotal: 0 → 0 lines', 'retired-total-line', /\bdrop\b.*\b(?:it|line|total)\b/i],
+  ]) {
+    write(root, PLAN, planWith({ ledger }));
+    const result = run(root, [PLAN]);
+    const [verdict, finding, ...rest] = getLines(result.stdout);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.equal(verdict, 'plan-shape: REFUSE — ' + PLAN);
+    assert.ok(finding?.startsWith(PLAN + ':'), result.stdout);
+    assert.match(finding.slice(PLAN.length), new RegExp('^:\\d+: (?:R1: )?' + code + ': \\S'), result.stdout);
+    assert.match(finding, fix);
+    assert.deepEqual(rest, []);
+  }
+});
+
 it('spec:plan-structure/S8 shares read errors and identity and displays the original operands', async (t) => {
   const { main: checkPlan } = await import('../plan-shape-cli.mjs');
   const root = makeRepo(t);
-  const refusedPlan = planWith({ ledger: ledgerOf(`${DEFAULT_ROW}\n${BAD_ROW}`) });
+  const refusedPlan = planWith({ ledger: ledgerOf(`${APPROVED_ROW}\n${BAD_ROW}`) });
   const plans = [[`./${PLAN}`, PLAN, planWith(), 0], ['notes/x.md', 'notes/x.md', refusedPlan, 1]];
   const assertVerdict = (result, operand, status) => {
     assert.equal(result.status, status, result.stderr || result.stdout);

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { codes, DEFAULT_ROW, ledgerOf, planWith } from './plan-shape-harness.test.mjs';
+import { codes, DEFAULT_ROW, ledgerOf, LEGACY_ROW, planWith } from './plan-shape-harness.test.mjs';
 import { expandClaim } from './claim-relation.mjs';
 
 const PIN_PATH = 'test/package-content.test.mjs';
@@ -9,10 +9,8 @@ const loadRules = async () => rules;
 
 const factsFor = (overrides = {}) => {
   const facts = {
-    capDeclared: true,
-    cap: 400,
     pathFacts: {
-      'docs/readme.md': { kind: 'regular', lines: 10, recordedLines: null, inScope: false, shipped: false, pinTest: null, contained: true },
+      'docs/readme.md': { kind: 'regular', inScope: false, shipped: false, pinTest: null, contained: true },
     },
     expansions: {},
     repoFiles: ['docs/readme.md'],
@@ -37,12 +35,12 @@ describe('plan-shape rules — structural and authoring state', () => {
 
   it('spec:plan-review-loop/S34 binds every repeated modify pin to an untaken shipped row above it', async () => {
     const { checkPlanStructure } = await loadRules();
-    const pin = (id, verb = 'modify') => `${id} | ${verb} | ${PIN_PATH} | update the pin | n/a | docs/readme.md:1`;
-    const remove = (id, path) => `${id} | delete | ${path} | remove it | \u2014 | \u2014`;
+    const pin = (id, verb = 'modify') => `${id} | ${verb} | ${PIN_PATH} | update the pin | docs/readme.md:1`;
+    const remove = (id, path) => `${id} | delete | ${path} | remove it | \u2014`;
     const first = remove('D1', 'src/a.mjs');
     const second = remove('D2', 'src/b.mjs');
     const facts = factsFor({ pathFacts: Object.fromEntries(['src/a.mjs', 'src/b.mjs'].map((path) => [path, { shipped: true, pinTest: PIN_PATH }])) });
-    const judge = (rows, input = facts) => checkPlanStructure(planWith({ ledger: [...rows, 'total: 0 \u2192 0 lines'].join('\n') }), input);
+    const judge = (rows, input = facts) => checkPlanStructure(planWith({ ledger: rows.join('\n') }), input);
     assert.deepEqual(codes(judge([pin('P1')])), []);
     const two = [first, second, pin('P1'), pin('P2')];
     assert.deepEqual(codes(judge(two)), []);
@@ -53,13 +51,8 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.deepEqual(codes(judge([pin('P1'), pin('P2')], {})), []);
     assert.deepEqual(codes(judge([pin('P1'), pin('P2')])), ['pin-unbound', 'pin-unbound']);
     assert.deepEqual(codes(judge(two, factsFor({ pathFacts: {} }))), ['pin-unbound', 'pin-unbound']);
-    const countedFacts = factsFor({ pathFacts: { ...facts.pathFacts, [PIN_PATH]: { kind: 'regular', lines: 798, inScope: true } } });
-    const counted = planWith({ ledger: [first, second, pin('P1').replace('n/a', '798'), pin('P2').replace('n/a', '798'),
-      'total: 798 \u2192 798 lines'].join('\n') });
-    assert.deepEqual([rules.checkPlan(counted, countedFacts), rules.verifyPlan(counted, countedFacts)]
-      .map((result) => codes(result).filter((code) => ['before-total', 'after-total'].includes(code))), [[], []]);
-    const creates = [first, second].map((row) => row.replace('delete', 'create').replace('\u2014 | \u2014', 'n/a | docs/readme.md:1'));
-    const sweep = 'SW | modify | test/*.test.mjs | update (2 files) | n/a | docs/readme.md:1';
+    const creates = [first, second].map((row) => row.replace('delete', 'create').replace('\u2014', 'docs/readme.md:1'));
+    const sweep = 'SW | modify | test/*.test.mjs | update (2 files) | docs/readme.md:1';
     assert.ok(codes(judge([...creates, sweep, pin('P1')], { ...facts, expansions: { 'test/*.test.mjs': [PIN_PATH, 'test/other.test.mjs'] } })).includes('duplicate-path'));
     const conflicted = judge([...creates, pin('P1'), sweep, pin('P3')],
       { ...facts, expansions: { 'test/*.test.mjs': [PIN_PATH, 'test/other.test.mjs'] } });
@@ -72,7 +65,7 @@ describe('plan-shape rules — structural and authoring state', () => {
     const rootPath = 'docs/ai/specs/feature/index.md';
     const partPath = 'docs/ai/specs/feature/details.md';
     const indexPath = 'docs/ai/specs/index.md';
-    const regular = { kind: 'regular', lines: 10, contained: true, inScope: false };
+    const regular = { kind: 'regular', contained: true, inScope: false };
     const document = (kind, fields = {}) => ({
       ...regular, contract: { kind, status: null, children: [], parts: [], refused: false, ...fields },
     });
@@ -109,9 +102,9 @@ describe('plan-shape rules — structural and authoring state', () => {
         const { checkPlan } = await loadRules();
         const base = factsFor();
         for (const { state, fact, target = path, creates = [], pathFacts = {}, otherPlanCreates = [], accepts = false, cause } of cases) {
-          const rows = [target, ...creates].map((path, index) => `R${index + 1} | create | ${path} | add document | n/a | docs/readme.md:1`);
+          const rows = [target, ...creates].map((path, index) => `R${index + 1} | create | ${path} | add document | docs/readme.md:1`);
           const facts = factsFor({ pathFacts: { ...base.pathFacts, ...supportingFacts, ...pathFacts, [target]: fact }, otherPlanCreates });
-          const ledger = [...rows, 'total: 0 → 0 lines'].join('\n');
+          const ledger = rows.join('\n');
           const { findings } = checkPlan(planWith({ ledger }), facts);
           const kind = findings.find(({ code, rowId }) => code === 'kind' && rowId === 'R1');
           assert.equal(Boolean(kind), !accepts, `${state}: expected ${accepts ? 'no kind finding' : 'a kind finding'} on R1`);
@@ -139,75 +132,63 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.ok(codes(checkPlan(swapped, factsFor())).includes('headings'));
   });
 
-  it('verifyPlan bounds a sweep by its asserted count and a path by its budget', async () => {
+  it('verifyPlan bounds a sweep by its asserted count without judging path budgets', async () => {
     const { verifyPlan } = await loadRules();
     const files = ['src/a.mjs', 'src/b.mjs'];
-    const pathFacts = Object.fromEntries(files.map((path) => [path, { kind: 'regular', lines: 10, recordedLines: null, inScope: true, shipped: false, pinTest: null, contained: true }]));
+    const pathFacts = Object.fromEntries(files.map((path) => [path, { kind: 'regular', lines: 10, inScope: true, contained: true }]));
     const facts = factsFor({ pathFacts, expansions: { 'src/*.mjs': files }, repoFiles: files });
-    const result = verifyPlan(planWith({ ledger: 'R1 | modify | src/*.mjs | update (3 files) | 5 | src/a.mjs:1\ntotal: 20 → 20 lines' }), facts);
-    assert.ok(codes(result).includes('sweep-count'));
-    assert.ok(codes(result).includes('post-budget'));
-    assert.ok(!codes(result).includes('after-total'));
+    const legacy = verifyPlan(planWith({ ledger: 'R1 | modify | src/*.mjs | update (3 files) | 5 | src/a.mjs:1\ntotal: 20 → 5 lines' }), facts);
+    assert.deepEqual(codes(legacy).filter((code) => ['post-budget', 'after-total'].includes(code)), []);
+    const ledger = 'R1 | modify | src/*.mjs | update (3 files) | src/a.mjs:1';
+    assert.deepEqual(codes(verifyPlan(planWith({ ledger }), facts)), ['sweep-count']);
   });
 
   it('S2 enforces the line, row, section and counted-row byte caps (spec:plan-review-loop/S2)', async () => {
     const { checkPlan } = await loadRules();
-    const tooManyLines = `${planWith()}${'padding\n'.repeat(90)}`;
-    const rows = Array.from({ length: 26 }, (_, index) => `R${index} | modify | docs/file-${index}.md | edit | n/a | docs/readme.md:1`).join('\n');
-    const longResponsibility = 'x'.repeat(201);
-    assert.ok(codes(checkPlan(tooManyLines, factsFor())).includes('line-cap'));
-    assert.ok(codes(checkPlan(planWith({ goal: Array.from({ length: 10 }, () => '- boundary').join('\n') }), factsFor())).includes('section-cap'));
-    assert.ok(codes(checkPlan(planWith({ ledger: `${rows}\ntotal: 0 → 0 lines` }), factsFor())).includes('row-cap'));
-    assert.ok(codes(checkPlan(planWith({ ledger: `R1 | modify | docs/readme.md | ${longResponsibility} | n/a | docs/readme.md:1\ntotal: 10 → 10 lines` }), factsFor())).includes('row-bytes'));
-    const tail = (bullets) => planWith().replace('- Continue.\n', `- Continue.\n${'- More.\n'.repeat(bullets)}`);
-    assert.deepEqual(checkPlan(tail(5), factsFor()).findings, [], 'Cleanup and Next steps at exactly ten lines, newline-terminated');
-    assert.ok(codes(checkPlan(tail(6), factsFor())).includes('section-cap'));
+    const path = 'docs/' + 'p'.repeat(200) + '.md';
+    const facts = factsFor({ pathFacts: { [path]: { kind: 'regular', contained: true } }, repoFiles: [path] });
+    const atByteCap = '\u00e9'.repeat(93);
+    const plan = (responsibility) => planWith({ ledger: ['  R1 ', ' modify ', path, ' ' + responsibility + ' ', path + ':1'].join(' | ') });
+    assert.deepEqual(codes(checkPlan(plan(atByteCap), facts)), []);
+    assert.deepEqual(codes(checkPlan(plan(atByteCap + 'x'), facts)), ['row-bytes']);
+    const rows = Array.from({ length: 26 }, (_, index) => ['R' + index, 'modify', 'docs/file-' + index + '.md', 'edit', path + ':1'].join(' | '));
+    assert.ok(codes(checkPlan(plan(atByteCap) + 'padding\n'.repeat(90), facts)).includes('line-cap'));
+    assert.ok(codes(checkPlan(planWith({ ledger: rows.join('\n') }), facts)).includes('row-cap'));
+    const tail = (bullets) => plan(atByteCap).replace('- Continue.\n', '- Continue.\n' + '- More.\n'.repeat(bullets));
+    assert.deepEqual(checkPlan(tail(5), facts).findings, [], 'Cleanup and Next steps at exactly ten lines, newline-terminated');
+    assert.ok(codes(checkPlan(tail(6), facts)).includes('section-cap'));
+    assert.ok(codes(checkPlan(planWith({ ledger: rows[0], goal: Array.from({ length: 10 }, () => '- boundary').join('\n') }), facts)).includes('section-cap'));
   });
 
   it('S3 rejects malformed fields, verbs, delete dashes and duplicate ids (spec:plan-review-loop/S3)', async () => {
     const { checkPlan } = await loadRules();
-    const malformed = [
-      'R1 | move | docs/readme.md | move it | n/a | docs/readme.md:1',
-      'R1 | delete | docs/readme.md | remove it | n/a | docs/readme.md:1',
-      'R1 | modify | docs/readme.md | edit it | — | —',
-      'R1 | modify | docs/readme.md | edit it | n/a | docs/readme.md:1',
-      'total: 20 → 10 lines',
-    ].join('\n');
-    const result = checkPlan(planWith({ ledger: malformed }), factsFor());
-    assert.ok(codes(result).includes('row-grammar'));
-    assert.ok(codes(result).includes('duplicate-id'));
-    const guide = { kind: 'regular', lines: 5, recordedLines: null, inScope: false, shipped: false, pinTest: null, contained: true };
-    const fiveFieldsAbove = 'R1 | modify | docs/readme.md | a forgotten anchor | n/a\nR2 | modify | docs/guide.md | edit | n/a | readme.md:1\ntotal: 0 → 0 lines';
-    const facts = factsFor({ pathFacts: { ...factsFor().pathFacts, 'docs/guide.md': guide }, repoFiles: ['docs/readme.md', 'docs/guide.md'] });
-    assert.deepEqual(codes(checkPlan(planWith({ ledger: fiveFieldsAbove }), facts)), ['row-grammar']);
-  });
-
-  it('S4 requires a final total whose before figure is the current counted sum (spec:plan-review-loop/S4)', async () => {
-    const { checkPlan } = await loadRules();
-    const wrong = planWith({ ledger: 'R1 | modify | docs/readme.md | edit | n/a | docs/readme.md:1\ntotal: 9 → 10 lines\nmore' });
-    const reason = planWith({ ledger: 'R1 | modify | docs/readme.md | edit | n/a | docs/readme.md:1\ntotal: ~0 → ~12 lines (growth buys the parser)' });
-    assert.ok(codes(checkPlan(wrong, factsFor())).includes('total'));
-    assert.ok(codes(checkPlan(wrong, factsFor())).includes('before-total'));
-    assert.deepEqual(checkPlan(reason, factsFor()).findings, []);
+    const regular = { kind: 'regular', contained: true };
+    const facts = factsFor({ pathFacts: { 'docs/readme.md': regular, 'docs/guide.md': regular }, repoFiles: ['docs/readme.md', 'docs/guide.md'] });
+    const valid = 'R1 | modify | docs/readme.md | edit it | docs/readme.md:1';
+    const judge = (...rows) => codes(checkPlan(planWith({ ledger: rows.join('\n') }), facts));
+    assert.deepEqual(judge(valid), []);
+    for (const malformed of [valid.slice(0, valid.lastIndexOf(' | ')), valid.replace('modify', 'move'),
+      valid.replace('modify', 'delete'), valid.replace('docs/readme.md:1', '—')]) {
+      assert.deepEqual(judge(malformed), ['row-grammar'], malformed);
+    }
+    assert.deepEqual(judge(valid, 'R1 | modify | docs/guide.md | edit it | readme.md:1'), ['duplicate-id']);
   });
 
   it('S5 resolves an anchor by exact path, then prior component-aligned suffix candidates (spec:plan-review-loop/S5)', async () => {
     const { checkPlan } = await loadRules();
     const ledger = [
-      'R1 | modify | docs/readme.md | edit | n/a | docs/readme.md:1',
-      'R2 | modify | docs/guide.md | edit | n/a | readme.md:99',
-      'total: 0 → 0 lines',
+      'R1 | modify | docs/readme.md | edit | docs/readme.md:1',
+      'R2 | modify | docs/guide.md | edit | readme.md:99',
     ].join('\n');
-    const document = { kind: 'regular', lines: 5, inScope: false, contained: true, shipped: false, pinTest: null };
-    const pathFacts = { 'docs/readme.md': { ...document, lines: 10 }, 'docs/guide.md': document, 'other/item.md': document };
+    const document = { kind: 'regular', inScope: false, contained: true, shipped: false, pinTest: null };
+    const pathFacts = { 'docs/readme.md': document, 'docs/guide.md': document, 'other/item.md': document };
     const facts = factsFor({ pathFacts, repoFiles: ['docs/readme.md', 'docs/guide.md'] });
     assert.deepEqual(checkPlan(planWith({ ledger }), facts).findings, []);
     const missing = planWith({ ledger: ledger.replace('readme.md:99', 'missing.md:99') });
     assert.ok(codes(checkPlan(missing, facts)).includes('anchor'));
     const noPrior = [
-      'R1 | modify | docs/guide.md | edit | n/a | docs/guide.md:1',
-      'R2 | modify | other/item.md | edit | n/a | readme.md:99',
-      'total: 0 → 0 lines',
+      'R1 | modify | docs/guide.md | edit | docs/guide.md:1',
+      'R2 | modify | other/item.md | edit | readme.md:99',
     ].join('\n');
     const ambiguous = factsFor({ pathFacts, repoFiles: ['docs/readme.md', 'docs/guide.md', 'other/readme.md'] });
     assert.ok(codes(checkPlan(planWith({ ledger: noPrior }), ambiguous)).includes('anchor'));
@@ -216,138 +197,171 @@ describe('plan-shape rules — structural and authoring state', () => {
 
   it('S6 requires a preceding test row for an in-scope source create (spec:plan-review-loop/S6)', async () => {
     const { checkPlan } = await loadRules();
-    const source = { kind: 'absent', lines: 0, recordedLines: null, inScope: true, shipped: false, pinTest: null, contained: true };
+    const source = { kind: 'absent', inScope: true, shipped: false, pinTest: null, contained: true };
     const test = { ...source };
-    const withoutTest = 'R2 | create | src/new.mjs | export run | 100 | src/existing.mjs:1\ntotal: 0 → 100 lines';
-    const withTest = 'R1 | create | src/new.test.mjs | test run | 100 | src/existing.mjs:1\nR2 | create | src/new.mjs | export run | 100 | src/existing.mjs:1\ntotal: 0 → 200 lines';
-    const facts = factsFor({ pathFacts: { 'src/new.mjs': source, 'src/new.test.mjs': test, 'src/existing.mjs': { ...source, kind: 'regular', lines: 1 } }, repoFiles: ['src/existing.mjs'] });
+    const withoutTest = 'R2 | create | src/new.mjs | export run | src/existing.mjs:1';
+    const withTest = 'R1 | create | src/new.test.mjs | test run | src/existing.mjs:1\nR2 | create | src/new.mjs | export run | src/existing.mjs:1';
+    const facts = factsFor({ pathFacts: { 'src/new.mjs': source, 'src/new.test.mjs': test, 'src/existing.mjs': { ...source, kind: 'regular' } }, repoFiles: ['src/existing.mjs'] });
     assert.ok(codes(checkPlan(planWith({ ledger: withoutTest }), facts)).includes('red-first'));
     assert.deepEqual(checkPlan(planWith({ ledger: withTest }), facts).findings, []);
-  });
-
-  it('S7 bounds in-scope budgets unless Verification declares the reasoned baseline raise (spec:plan-review-loop/S7)', async () => {
-    const { checkPlan } = await loadRules();
-    const row = 'R1 | modify | src/large.mjs | edit | 401 | src/large.mjs:1\ntotal: 300 → 401 lines';
-    const pathFacts = { 'src/large.mjs': { kind: 'regular', lines: 300, recordedLines: 350, inScope: true, shipped: true, pinTest: 'test/package-content.test.mjs', contained: true } };
-    const facts = factsFor({ cap: 400, pathFacts, repoFiles: ['src/large.mjs'] });
-    assert.ok(codes(checkPlan(planWith({ ledger: row }), facts)).includes('budget-cap'));
-    const created = { kind: 'absent', lines: 0, recordedLines: null, inScope: true, shipped: false, pinTest: null, contained: true };
-    const createLedger = 'R0 | create | src/new.test.mjs | test it | 401 | src/large.mjs:1\ntotal: 0 → 401 lines';
-    assert.ok(codes(checkPlan(planWith({ ledger: createLedger }), { ...facts, pathFacts: { ...pathFacts, 'src/new.test.mjs': created } })).includes('budget-cap'));
-    const verification = '- `source-size-check.mjs --write-baseline --reason "growth"` names src/large.mjs and exits 0';
-    assert.deepEqual(checkPlan(planWith({ ledger: row, verification }), facts).findings, []);
   });
 
   it('S8 restricts sweeps and requires acceptance bullets plus a governing-spec line (spec:plan-review-loop/S8)', async () => {
     const { checkPlan } = await loadRules();
     const files = ['docs/a.md', 'docs/b.md'];
-    const pathFacts = Object.fromEntries(files.map((path) => [path, { kind: 'regular', lines: 1, inScope: false, shipped: false, pinTest: null, contained: true }]));
+    const pathFacts = Object.fromEntries(files.map((path) => [path, { kind: 'regular', inScope: false, shipped: false, pinTest: null, contained: true }]));
     const facts = factsFor({ pathFacts, expansions: { 'docs/*.md': files }, repoFiles: files });
-    const badSweep = 'R1 | create | docs/*.md | update all sites | n/a | docs/a.md:1\ntotal: 2 → 2 lines';
+    const badSweep = 'R1 | create | docs/*.md | update all sites | docs/a.md:1';
     assert.ok(codes(checkPlan(planWith({ ledger: badSweep, goal: 'No contract.', verification: 'plain prose' }), facts)).includes('sweep'));
     assert.ok(codes(checkPlan(planWith({ ledger: badSweep, goal: 'No contract.', verification: 'plain prose' }), facts)).includes('acceptance'));
     assert.ok(codes(checkPlan(planWith({ ledger: badSweep, goal: 'No contract.', verification: 'plain prose' }), facts)).includes('governing-spec'));
   });
 
-  it('S9 rejects uncontained and multiply-owned paths, wrong kinds and invalid cap states (spec:plan-review-loop/S9)', async () => {
+  it('S9 rejects uncontained and multiply-owned paths and wrong kinds without judging budgets (spec:plan-review-loop/S9)', async () => {
     const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
-    const ledger = [
-      'R1 | modify | src/*.mjs | update (1 files) | 10 | src/a.mjs:1',
-      'R2 | modify | src/a.mjs | update | 10 | src/a.mjs:1',
-      'R3 | create | ../escape.mjs | export run | 10 | src/a.mjs:1',
-      'total: 2 → 20 lines',
-    ].join('\n');
-    const regular = { kind: 'absent', lines: 0, recordedLines: null, inScope: true, shipped: false, pinTest: null, contained: true };
+    const source = { kind: 'absent', lines: 0, recordedLines: null, inScope: true, contained: true };
+    const document = { kind: 'regular', lines: 20, inScope: false, contained: true };
     const facts = factsFor({
       capDeclared: false,
-      pathFacts: { 'src/a.mjs': regular, '../escape.mjs': { ...regular, kind: 'absent', contained: false } },
+      pathFacts: { 'src/a.mjs': source, 'src/b.mjs': { ...source, kind: 'regular' }, 'docs/readme.md': document },
       expansions: { 'src/*.mjs': ['src/a.mjs'] },
-      repoFiles: ['src/a.mjs'],
+      repoFiles: ['src/a.mjs', 'docs/readme.md'],
     });
+    const oldLedger = [
+      'R1 | modify | src/a.mjs | edit | n/a | src/a.mjs:1',
+      'R2 | modify | docs/readme.md | edit | 500 | docs/readme.md:1',
+      'R3 | modify | src/b.mjs | edit | 500 | src/a.mjs:1',
+      'total: 0 → 0 lines',
+    ].join('\n');
+    const sizeCodes = ['cap-declaration', 'source-budget', 'budget-cap', 'before-total'];
+    assert.deepEqual([false, true].map((capDeclared) => codes(checkPlan(planWith({ ledger: oldLedger }),
+      { ...facts, capDeclared, pathFacts: { ...facts.pathFacts, 'src/a.mjs': { ...source, kind: 'regular' } } }))
+      .filter((code) => sizeCodes.includes(code))), [[], []]);
+
+    const ledger = [
+      'R1 | modify | src/*.mjs | update (1 files) | src/a.mjs:1',
+      'R2 | modify | src/a.mjs | update | src/a.mjs:1',
+      'R3 | create | ../escape.mjs | export run | src/a.mjs:1',
+    ].join('\n');
     const result = checkPlan(planWith({ ledger }), facts);
-    assert.ok(codes(result).includes('containment'));
-    assert.ok(codes(result).includes('duplicate-path'));
-    assert.ok(codes(result).includes('kind'));
-    assert.ok(codes(result).includes('cap-declaration'));
-    const badAnchor = checkPlan(planWith({ ledger: 'R4 | modify | src/a.mjs | update | 10 | ../outside.mjs:1\ntotal: 0 → 10 lines' }), facts);
-    assert.ok(codes(badAnchor).includes('containment'));
+    for (const code of ['containment', 'duplicate-path', 'kind']) assert.ok(codes(result).includes(code), code);
     const spellings = ['/src/a.mjs', 'src//a.mjs', './src/a.mjs', 'src/./a.mjs', 'src/a.mjs/', '.', '..', '../escape.mjs', 'src\\a.mjs'];
     for (const judge of [checkPlan, verifyPlan, checkPlanStructure]) {
       for (const path of [...spellings, 'src/a.mjs', 'src/*.mjs']) {
         for (const [rowPath, anchor] of [[path, 'src/a.mjs'], ['src/a.mjs', path]]) {
-          const text = planWith({ ledger: `R4 | modify | ${rowPath} | update (1 files) | n/a | ${anchor}:1\ntotal: 0 \u2192 0 lines` });
-          assert.equal(codes(judge(text, facts)).includes('containment'), spellings.includes(path), `${judge.name}: ${rowPath} | ${anchor}`);
+          const ledger = ['R4', 'modify', rowPath, 'update (1 files)', anchor + ':1'].join(' | ');
+          assert.equal(codes(judge(planWith({ ledger }), facts)).includes('containment'), spellings.includes(path), judge.name + ': ' + ledger);
         }
       }
     }
-    const noBudget = checkPlan(planWith({ ledger: 'R4 | modify | src/a.mjs | update | n/a | src/a.mjs:1\ntotal: 0 → 0 lines' }), { ...facts, capDeclared: true });
-    assert.ok(codes(noBudget).includes('source-budget'));
+    const valid = ['R1 | modify | src/a.mjs | edit | src/a.mjs:1', 'R2 | modify | docs/readme.md | edit | docs/readme.md:1', 'R3 | modify | src/b.mjs | edit | src/a.mjs:1'];
+    const regularFacts = { ...facts, pathFacts: { ...facts.pathFacts, 'src/a.mjs': { ...source, kind: 'regular', lines: 600 } } };
+    assert.deepEqual(codes(checkPlan(planWith({ ledger: valid.join('\n') }), regularFacts)), []);
   });
 
-  it('spec:plan-structure/S6 judges amendment budgets, pins, sweeps, caps, entry grammar and story ownership', async () => {
+  it('spec:plan-review-loop/S40 refuses retired ledger syntax by name in every judge', async () => {
     const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
-    const row = (id, verb, path, budget, responsibility = 'update') => `${id} | ${verb} | ${path} | ${responsibility} | ${budget} | src/a.mjs:1`;
-    const buildPlan = (approved, entries = [], total, goal) => planWith({
-      goal, ledger: ledgerOf([...approved, ...(entries.length ? ['amendments:', ...entries] : [])].join('\n'), total),
+    const row = 'R1 | modify | docs/readme.md | update | docs/readme.md:1';
+    for (const judge of [checkPlan, verifyPlan, checkPlanStructure]) {
+      const inspect = (ledger, facts = factsFor()) => judge(planWith({ ledger }), facts);
+      for (const [ledger, code, fix] of [
+        [LEGACY_ROW, 'retired-size-field', /drop.*(?:fifth|size) field/i],
+        [row + '\ntotal: 0 → 0 lines', 'retired-total-line', /\bdrop\b.*\b(?:it|line|total)\b/i],
+        [row + '\n  total: a | b | c | d | e | f', 'retired-total-line', /\bdrop\b.*\b(?:it|line|total)\b/i],
+      ]) {
+        const { findings } = inspect(ledger);
+        assert.deepEqual(findings.map((finding) => finding.code), [code], judge.name + ': ' + ledger);
+        assert.match(findings[0].message, fix);
+      }
+      const deletion = 'R1 | delete | docs/readme.md | remove the document | —';
+      const kind = judge === verifyPlan ? 'absent' : 'regular';
+      assert.deepEqual(codes(inspect(deletion, factsFor({ pathFacts: { 'docs/readme.md': { kind, contained: true } } }))), []);
+    }
+  });
+
+  it('spec:plan-structure/S6 judges amendment kinds, sweeps, caps, entry grammar and story ownership', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure } = await loadRules();
+    const row = (id, verb, path, responsibility = 'update') =>
+      [id, verb, path, responsibility, verb === 'delete' ? '—' : 'src/a.mjs:1'].join(' | ');
+    const buildPlan = (approved, entries = [], goal) => planWith({
+      goal, ledger: [...approved, ...(entries.length ? ['amendments:', ...entries] : [])].join('\n'),
     });
     const files = ['src/a.mjs', 'src/b.mjs'];
     const sweepPath = 'src/*.mjs';
-    const sweep = row('R1', 'modify', sweepPath, 100, 'update (2 files)');
-    const regularFile = { kind: 'regular', lines: 120 };
-    const pathFacts = Object.fromEntries(files.map((path) => [path, regularFile]));
+    const sweep = row('R1', 'modify', sweepPath, 'update (2 files)');
+    const regular = { kind: 'regular', contained: true };
+    const pathFacts = Object.fromEntries(files.map((path) => [path, regular]));
     const facts = factsFor({ pathFacts, repoFiles: files, expansions: { [sweepPath]: files } });
-    const amendment = row('A1', 'modify', files[0], 150);
-    const literalPlan = buildPlan([row('R1', 'modify', files[0], 100)], [amendment], 'total: 120 → 150 lines');
-    const verifySweep = verifyPlan(buildPlan([sweep], [amendment], 'total: 240 → 250 lines'), facts);
-    const pin = row('P1', 'modify', PIN_PATH, 100);
-    const shipped = files.map((path, index) => row(`C${index + 1}`, 'create', path, 100));
-    const pinFacts = factsFor({ pathFacts: Object.fromEntries(files.map((path) => [path, { shipped: true, pinTest: PIN_PATH }])) });
-    const pinAmendment = checkPlanStructure(buildPlan([shipped[0], pin], [row('A1', 'modify', PIN_PATH, 150)]), pinFacts);
-    const equalPin = checkPlanStructure(buildPlan([...shipped, pin], [row('A1', 'modify', PIN_PATH, 100)]), pinFacts);
-    const create = row('A1', 'create', 'src/c.mjs', 150);
-    const createFacts = factsFor({ pathFacts: { [files[0]]: regularFile, 'src/c.mjs': regularFile }, expansions: { [sweepPath]: [files[0], 'src/c.mjs'] } });
-    const createEntry = checkPlanStructure(buildPlan([sweep], [create]), createFacts);
-    const createRow = checkPlanStructure(buildPlan([sweep, create]), createFacts);
-    const wrongCount = checkPlan(buildPlan([sweep.replace('(2 files)', '(3 files)')], [], 'total: 240 → 240 lines'), facts);
-    const approved = Array.from({ length: 25 }, (_, index) => row(`R${index}`, 'modify', `docs/approved-${index}.md`, 'n/a'));
-    const entries = Array.from({ length: 80 }, (_, index) => row(`A${index}`, 'modify', `docs/entry-${index}.md`, 'n/a'));
-    const longEntry = checkPlanStructure(buildPlan([DEFAULT_ROW], [row('A1', 'modify', files[0], 150, 'x'.repeat(201))]), facts);
-    const shortEntry = checkPlanStructure(buildPlan([DEFAULT_ROW], ['A1 | modify | src/a.mjs | update | 150']), facts);
+    const create = row('A1', 'create', files[1]);
+    const amended = buildPlan([sweep], [create]);
+    const crlf = amended.replaceAll('\n', '\r\n');
+    const crlfAmendmentCheck = checkPlan(crlf, facts).findings.filter(({ code }) => code === 'amendment-check');
+    const separatorLine = crlf.split('\r\n').indexOf('amendments:') + 1;
+    assert.deepEqual(crlfAmendmentCheck.map(({ code, line }) => ({ code, line })), [{ code: 'amendment-check', line: separatorLine }]);
+    assert.ok(codes(checkPlan(amended, facts)).includes('amendment-check'));
+    const approved = Array.from({ length: 25 }, (_, index) => row('R' + index, 'modify', 'docs/approved-' + index + '.md'));
+    const entries = Array.from({ length: 80 }, (_, index) => row('A' + index, 'modify', 'docs/entry-' + index + '.md'));
+    for (const selected of [entries.slice(0, 1), entries]) {
+      assert.deepEqual(codes(checkPlanStructure(buildPlan(approved, selected), facts)), []);
+    }
+    const beforeCreate = {
+      ...facts, expansions: { [sweepPath]: [files[0]] }, pathFacts: { ...pathFacts, [files[1]]: { kind: 'absent', contained: true } },
+    };
+    for (const plan of [amended, buildPlan([sweep, create])]) {
+      assert.deepEqual(codes(checkPlanStructure(plan, beforeCreate)), []);
+      assert.deepEqual(checkPlanStructure(plan, facts).findings.map(({ code, rowId }) => [code, rowId]), [['duplicate-path', 'A1']]);
+    }
+    const wrongCount = buildPlan([sweep.replace('(2 files)', '(3 files)')]);
+    assert.deepEqual(codes(checkPlan(wrongCount, facts)), ['sweep-count']);
+
     const stories = [['ALPHA', 'docs/owned.md'], ['BETA', 'docs/readme.md']].map(([epic, path]) => ({
-      path: `docs/ai/epics/${epic}.md`, id: 'S1', line: 20, state: 'planned',
+      path: 'docs/ai/epics/' + epic + '.md', id: 'S1', line: 20, state: 'planned',
       claims: [{ field: 'owns', path, ground: expandClaim(path) }], reachable: new Set(),
     }));
-    const storyPlan = buildPlan([DEFAULT_ROW], [row('A1', 'modify', 'docs/owned.md', 'n/a')], undefined,
-      '- Spec: docs/ai/specs/example.md\nStory: S1 of BETA');
-    const storyEntry = checkPlanStructure(storyPlan, factsFor({ stories, landedEpics: [], storeRefusal: null }));
-    const relevantCodes = (result, ...relevant) => codes(result).filter((code) => code === 'ledger-line' || relevant.includes(code));
-    assert.deepEqual({
-      literalStructure: relevantCodes(checkPlanStructure(literalPlan, facts), 'duplicate-path'),
-      literalBudget: relevantCodes(verifyPlan(literalPlan, facts), 'post-budget'),
-      sweepBudget: relevantCodes(verifySweep, 'duplicate-path', 'post-budget'),
-      pinAmendment: relevantCodes(pinAmendment, 'pin-unbound', 'duplicate-path'),
-      equalPin: relevantCodes(equalPin, 'pin-unbound', 'duplicate-path'),
-      createEntry: relevantCodes(createEntry, 'duplicate-path'),
-      createRow: relevantCodes(createRow, 'duplicate-path'),
-      wrongCount: relevantCodes(wrongCount, 'sweep-count'),
-      amendmentCheck: relevantCodes(checkPlan(literalPlan, facts), 'amendment-check'),
-      crlfAmendmentCheck: relevantCodes(checkPlan(literalPlan.replaceAll('\n', '\r\n'), facts), 'amendment-check'),
-      rowCap: relevantCodes(checkPlanStructure(buildPlan(approved, entries.slice(0, 1)), facts), 'row-cap'),
-      lineCaps: relevantCodes(checkPlanStructure(buildPlan(approved, entries), facts), 'section-cap', 'line-cap'),
-      longEntry: relevantCodes(longEntry, 'row-bytes'),
-      shortEntry: relevantCodes(shortEntry, 'row-grammar'),
-      storyEntry: relevantCodes(storyEntry, 'story-owns'),
-    }, {
-      literalStructure: [], literalBudget: [], sweepBudget: ['post-budget'], pinAmendment: [],
-      equalPin: ['duplicate-path'], createEntry: ['duplicate-path'], createRow: ['duplicate-path'],
-      wrongCount: ['sweep-count'], amendmentCheck: ['amendment-check'], crlfAmendmentCheck: ['amendment-check'], rowCap: [], lineCaps: [],
-      longEntry: ['row-bytes'], shortEntry: ['row-grammar'], storyEntry: ['story-owns'],
-    });
-    const budgetFinding = verifySweep.findings.find(({ code }) => code === 'post-budget');
-    assert.deepEqual(files.filter((path) => budgetFinding.message.includes(path)), ['src/b.mjs']);
-    for (const [result, code] of [[equalPin, 'duplicate-path'], [createEntry, 'duplicate-path'], [longEntry, 'row-bytes'],
-      [shortEntry, 'row-grammar'], [storyEntry, 'story-owns']]) {
-      assert.equal(result.findings.find((finding) => finding.code === code).rowId, 'A1', code);
+    const goal = '- Spec: docs/ai/specs/example.md\nStory: S1 of BETA';
+    const storyFacts = factsFor({ stories, landedEpics: [], storeRefusal: null });
+    const approvedRow = row('R1', 'modify', 'docs/readme.md');
+    const details = (result) => result.findings.map(({ code, rowId }) => [code, rowId]);
+    assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], [row('A1', 'modify', files[0], 'x'.repeat(201))]), facts)), [['row-bytes', 'A1']]);
+    assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], ['A1 | modify | src/a.mjs | update']), facts)), [['row-grammar', 'A1']]);
+    assert.deepEqual(details(checkPlanStructure(buildPlan([approvedRow], [row('A1', 'modify', 'docs/owned.md')], goal), storyFacts)), [['story-owns', 'A1']]);
+    for (const verb of ['create', 'modify', 'delete']) {
+      const plan = buildPlan([row('R1', 'modify', files[0])], [row('A1', verb, files[1])]);
+      for (const kind of ['regular', 'absent']) {
+        const observed = { ...facts, pathFacts: { ...pathFacts, [files[1]]: { ...regular, kind } } };
+        assert.deepEqual(details(verifyPlan(plan, observed)), kind === (verb === 'delete' ? 'absent' : 'regular') ? [] : [['post-kind', 'A1']]);
+      }
+    }
+  });
+
+  it('spec:plan-structure/S10 refuses every repeated amendment path, including package pins', async () => {
+    const { checkPlanStructure } = await loadRules();
+    const path = 'src/a.mjs';
+    const sweepPath = 'src/*.mjs';
+    const facts = factsFor({ expansions: { [sweepPath]: [path, 'src/b.mjs'], 'test/*.test.mjs': [PIN_PATH] } });
+    const row = (id, verb, target, responsibility = 'update') =>
+      [id, verb, target, responsibility, verb === 'delete' ? '—' : 'docs/readme.md:1'].join(' | ');
+    const approved = row('R1', 'modify', 'docs/readme.md');
+    const plan = (rows, entries) => planWith({ ledger: [...rows, 'amendments:', ...entries].join('\n') });
+    const legacy = planWith({ ledger: ledgerOf([
+      'R1 | modify | src/a.mjs | update | 100 | docs/readme.md:1',
+      'amendments:',
+      'A1 | modify | src/a.mjs | update | 150 | docs/readme.md:1',
+    ].join('\n')) });
+    assert.notDeepEqual(codes(checkPlanStructure(legacy, facts)), [], 'a higher size field cannot authorize a path amendment');
+    for (const verb of ['create', 'modify', 'delete']) {
+      assert.deepEqual(codes(checkPlanStructure(plan([approved], [row('A1', verb, 'docs/missed.md')]), facts)), []);
+      for (const [rows, preceding, target] of [
+        [[row('R1', 'modify', path)], [], path],
+        [[row('R1', 'modify', sweepPath, 'update (2 files)')], [], path],
+        [[approved], [row('A1', 'modify', path)], path],
+        [[row('R1', 'modify', PIN_PATH)], [], PIN_PATH],
+        [[row('R1', 'modify', 'test/*.test.mjs', 'update (1 files)')], [], PIN_PATH],
+        [[approved], [row('A1', 'modify', PIN_PATH)], PIN_PATH],
+      ]) {
+        const result = checkPlanStructure(plan(rows, [...preceding, row('A2', verb, target)]), facts);
+        assert.deepEqual(result.findings.map(({ code, rowId }) => [code, rowId]), [['duplicate-path', 'A2']], target + ' ' + verb);
+      }
     }
   });
 

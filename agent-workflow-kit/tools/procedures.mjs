@@ -533,9 +533,7 @@ const flowHalvesAdvice = (flow, probe) => {
 };
 
 // ── the declared source-size practice (D-17 U1) ────────────────────────────────────
-// A practice the agent meets only when a gate refuses is a practice learned too late: the caps and
-// their reason ride EVERY named-activity render, so the plan's Module ledger is cut to them while the
-// plan is being written. Composed from the project's live declaration, never from constants here.
+// The caps and their reason come from the live declaration for every named activity.
 // Each config state speaks as itself: ABSENT renders NOTHING (a project that declares no practice must
 // not be handed invented limits); AUTHORED renders the declared caps plus the honest "no file size is
 // recorded yet" line; MINTED renders the recorded count too.
@@ -543,7 +541,7 @@ const flowHalvesAdvice = (flow, probe) => {
 // still completes: the exit code for a broken source-size config belongs to the practice's own checker,
 // while THIS tool's exit contract is about its own config and the engine.
 
-export const DECLARED_PRACTICE_HEADER = `Declared source-size practice (${SOURCE_SIZE_CONFIG_REL}) — known BEFORE the code is written:`;
+export const DECLARED_PRACTICE_HEADER = `Declared source-size practice (${SOURCE_SIZE_CONFIG_REL}):`;
 
 const declaredPracticeAdvice = (cwd, readFile, lstat) => {
   let declaration;
@@ -716,7 +714,7 @@ both. A per-run
 Read-only: never writes, never commits, never runs a subscription CLI.
 
 Also prints the project's DECLARED source-size practice (${SOURCE_SIZE_CONFIG_REL}) when it declares
-one — the caps, what is recorded, why the practice exists, and the plan-time rung — as the
+one — the caps, what is recorded, and why the practice exists — as the
 declaredPractice block (--json: the same lines under "declaredPractice"). A project with no such
 file renders nothing; a file that cannot be read renders ONE loud UNREADABLE line and still exits 0
 (the practice's own checker owns the exit code for its config).

@@ -18,12 +18,11 @@ const loadPlanFacts = () => import('./now-plan-facts.mjs').catch(() => ({}));
 const PLAN = planWith({
   title: '# Plan: alpha',
   ledger: [
-    'n01 | create | src/landed.mjs | Add the reader | 40 | src/base.mjs:1',
-    'n02 | modify | src/staged.mjs | Rewrite the staged reader | 40 | src/base.mjs:1',
-    'n03 | modify | src/unstaged.mjs | Rewrite the unstaged reader | 40 | src/base.mjs:1',
-    'n04 | modify | docs/excluded.md | Refresh the excluded document | n/a | src/base.mjs:1',
-    'n05 | create | src/absent.mjs | Add the absent reader | 40 | src/base.mjs:1',
-    'total: 5 to 9 lines',
+    'n01 | create | src/landed.mjs | Add the reader | src/base.mjs:1',
+    'n02 | modify | src/staged.mjs | Rewrite the staged reader | src/base.mjs:1',
+    'n03 | modify | src/unstaged.mjs | Rewrite the unstaged reader | src/base.mjs:1',
+    'n04 | modify | docs/excluded.md | Refresh the excluded document | src/base.mjs:1',
+    'n05 | create | src/absent.mjs | Add the absent reader | src/base.mjs:1',
   ].join('\n'),
 });
 const BROKEN_PLAN = '# Plan: broken\n\n## Goal and boundary\n\nThe ledger and the verification are missing.\n';
@@ -173,7 +172,7 @@ describe('now facts - the four blocks over a real repository', { skip: skipWitho
       assert.deepEqual(evidence.map((fact) => fact.staged), [false, true, false, false, false]);
       assert.deepEqual(evidence.map((fact) => fact.unstaged), [false, false, true, false, false]);
       assert.deepEqual(evidence.map((fact) => fact.excluded), [false, false, false, true, false]);
-      assert.deepEqual(facts.pathFacts['src/landed.mjs'].lines, 2);
+      assert.equal(Object.hasOwn(facts.pathFacts['src/landed.mjs'], 'lines'), false);
       assert.deepEqual(Object.keys(facts).sort(), ['changed', 'excluded', 'pathFacts', 'plans']);
     });
   });
@@ -181,7 +180,7 @@ describe('now facts - the four blocks over a real repository', { skip: skipWitho
   it('lists both sides of a staged rename, so a delete row on the old path and a sweep over it read in progress', async () => {
     const { gatherPlanFacts } = await loadPlanFacts();
     assert.equal(typeof gatherPlanFacts, 'function');
-    const renamePlan = planWith({ title: '# Plan: rename', ledger: ['n01 | delete | src/staged.mjs | Retire the staged reader | \u2014 | \u2014', 'n02 | modify | src/** | Sweep the sources (3 files) | n/a | src/base.mjs:1', 'total: 0 to 0 lines'].join('\n') });
+    const renamePlan = planWith({ title: '# Plan: rename', ledger: ['n01 | delete | src/staged.mjs | Retire the staged reader | \u2014', 'n02 | modify | src/** | Sweep the sources (3 files) | src/base.mjs:1'].join('\n') });
     withRepos({ repo: makeNowRepo('now-rename', { ...filesWithout('docs/plans/alpha.md'), 'docs/plans/rename.md': renamePlan }) }, ({ repo }) => {
       repo.write('moved/staged.mjs', 'staged\n');
       rmSync(join(repo.dir, 'src/staged.mjs'));
@@ -195,7 +194,7 @@ describe('now facts - the four blocks over a real repository', { skip: skipWitho
   it('reads a row path spelled with a dot-slash or a doubled slash against the same git facts as its canonical form', async () => {
     const { gatherPlanFacts } = await loadPlanFacts();
     assert.equal(typeof gatherPlanFacts, 'function');
-    const spelledPlan = planWith({ title: '# Plan: spelled', ledger: ['n01 | modify | ./src/staged.mjs | Rewrite the staged reader | 40 | src/base.mjs:1', 'n02 | modify | src//unstaged.mjs | Rewrite the unstaged reader | 40 | src/base.mjs:1', 'n03 | modify | ./docs/excluded.md | Refresh the excluded document | n/a | src/base.mjs:1', 'n04 | create | ./src/new.mjs | Add the new reader | 40 | src/base.mjs:1', 'n05 | modify | ./src/** | Sweep the sources (4 files) | n/a | src/base.mjs:1', 'total: 0 to 0 lines'].join('\n') });
+    const spelledPlan = planWith({ title: '# Plan: spelled', ledger: ['n01 | modify | ./src/staged.mjs | Rewrite the staged reader | src/base.mjs:1', 'n02 | modify | src//unstaged.mjs | Rewrite the unstaged reader | src/base.mjs:1', 'n03 | modify | ./docs/excluded.md | Refresh the excluded document | src/base.mjs:1', 'n04 | create | ./src/new.mjs | Add the new reader | src/base.mjs:1', 'n05 | modify | ./src/** | Sweep the sources (4 files) | src/base.mjs:1'].join('\n') });
     withRepos({ repo: makeMutatedRepo('now-spelled') }, ({ repo }) => {
       repo.write('docs/plans/spelled.md', spelledPlan);
       rmSync(join(repo.dir, 'docs/plans/alpha.md'));
@@ -212,10 +211,10 @@ describe('now facts - the four blocks over a real repository', { skip: skipWitho
     });
   });
 
-  it('keeps a ledger line that is not six fields as a pathless row and never withholds the plans half for it', async () => {
+  it('keeps a ledger line that is not five fields as a pathless row and never withholds the plans half for it', async () => {
     const { gatherPlanFacts } = await loadPlanFacts();
     assert.equal(typeof gatherPlanFacts, 'function');
-    const midEditPlan = planWith({ title: '# Plan: mid-edit', ledger: ['n01 | modify | src/staged.mjs | Rewrite the staged reader | 40 | src/base.mjs:1', 'n02 | modify | src/unstaged.mjs | Rewrite the unstaged reader | 40', 'total: 0 to 0 lines'].join('\n') });
+    const midEditPlan = planWith({ title: '# Plan: mid-edit', ledger: ['n01 | modify | src/staged.mjs | Rewrite the staged reader | src/base.mjs:1', 'n02 | modify | src/unstaged.mjs | Rewrite the unstaged reader'].join('\n') });
     withRepos({ repo: makeMutatedRepo('now-mid-edit') }, ({ repo }) => {
       repo.write('docs/plans/mid-edit.md', midEditPlan);
       rmSync(join(repo.dir, 'docs/plans/alpha.md'));
@@ -310,10 +309,9 @@ describe('now facts - the four blocks over a real repository', { skip: skipWitho
     const sweepPlan = planWith({
       title: '# Plan: sweep',
       ledger: [
-        'n06 | modify | src/** | Sweep the sources (3 files) | n/a | src/base.mjs:1',
-        'n07 | modify | gen/** | Sweep the generated files (1 files) | n/a | src/base.mjs:1',
-        'n08 | modify | nowhere/** | Sweep nothing (0 files) | n/a | src/base.mjs:1',
-        'total: 0 to 0 lines',
+        'n06 | modify | src/** | Sweep the sources (3 files) | src/base.mjs:1',
+        'n07 | modify | gen/** | Sweep the generated files (1 files) | src/base.mjs:1',
+        'n08 | modify | nowhere/** | Sweep nothing (0 files) | src/base.mjs:1',
       ].join('\n'),
     });
     const sweepFiles = { ...filesWithout('docs/plans/alpha.md'), 'docs/plans/sweep.md': sweepPlan };

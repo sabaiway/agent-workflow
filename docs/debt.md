@@ -3,21 +3,6 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
-- **PLAN-GATE-SWEEP-ROW-CANNOT-HOLD-EACH-RECORD** — invariant: a plan row over several files holds each file to its
-  own size ceiling, so files of different recorded sizes can share one row. Origin:
-  `agent-workflow-kit/tools/plan-shape.mjs:296-297` holds the row's one budget against every path's ceiling (its
-  record, else the cap) at authoring, and a raise bullet naming the row's path (`:59-60`) lifts that `budget-cap`
-  check for every file of the row at once. A sweep row is then either as small as its smallest file's ceiling or one
-  budget for files of different sizes, so each recorded file of a sweep takes its own row.
-  EVERY-LOCATION-IS-NAMED-ONCE was amended six times from this one cause (story 3: 25 rows, 15 of them one recorded
-  file each), and its epic called the incident recorded as debt while no row existed. Narrow fix: none in a review;
-  its design goes to the council and Fable before the spec session of that epic's story 4, which sizes about
-  twenty-two rows. Proof: on a plan with no amendment, one sweep row with a raise bullet for its recorded 800-line
-  file accepts that file within its own budget and refuses a second file of the row that grows past its own
-  ceiling. Residual exposure, not live: whatever a plan's budget says, the size check
-  (`agent-workflow-kit/tools/source-size-check.mjs --check`) stops a file beyond its band unless a record holds it.
-  Raised by Fable's design consult in the spec review of that epic's story 3 (2026-11-22).
-
 - **REGEX-ESCAPER-COPIES-OUTSIDE-THE-LEXICAL-HELPER** — invariant: a regular expression built from a value escapes
   it through the one escaping function of the kit's lexical helpers (`agent-workflow-kit/tools/repo-lex.mjs:25`,
   `escapeRegExp`). Origin: story 3 of EVERY-LOCATION-IS-NAMED-ONCE moved only the copies in files its rows hold
@@ -1678,37 +1663,62 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   whose finding names its read error, and the version-pin finding also names the move into a test fixture or
   changelog entry, which clears every pin.
 
-- **POST-BUDGET-NAMES-THE-APPROVED-ROW-FOR-AN-AMENDED-BUDGET** — invariant: a `post-budget` finding names the row
-  whose budget it judges. Origin: `agent-workflow-kit/tools/plan-shape.mjs:352` cites the approved row's id beside
-  `relation.budgets.get(path)`, the entry's budget, so a 151-line file under approved R1 at 100 and entry A1 at 150
-  reads `above R1 budget 150`. Narrow fix: the relation keeps the admitting entry beside each budget it admits and
-  the finding names that entry's id and line. Proof: a plan-structure S6 cell asserts the id and the line. Residual
-  exposure, not live: the path, the line count and the budget figure in the message are right, only the cited row is
-  the approved one, and the diff review's brief lists the entry beside it. Raised in the diff review of
-  A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
-
 - **PROCEDURES-CANON-S9-PINS-WORDS-NOT-THE-RULE** — invariant: the plan-structure S9 cell refuses a canon text that
   drops one of its rules: step 5 runs the structure command, which exits 0, before each diff-review and re-check
   brief; the brief lists every entry it prints; an entry takes no new approval. Origin:
-  `agent-workflow-engine/test/procedures-canon.test.mjs:191` checks only that step 5 names the command and the word
-  `amendment`, and `:195` matches `approval|yes` in either polarity. Narrow fix: the cell asserts each of the three
-  clauses. Proof: the cell red on a step 5 that runs the command after the brief and on a paragraph that says an
-  entry takes a new approval. Residual exposure, not live: the shipped texts state all three clauses today
-  (`agent-workflow-engine/references/procedures.md:128-131`, `agent-workflow-engine/references/planning.md:133-146`);
+  `agent-workflow-engine/test/procedures-canon.test.mjs:192` can match the command's `exits 0` in a later sentence
+  that places the command after the brief was sent; `:193` also matches `never lists every amendment entry it
+  prints`; `:201` accepts `no new approval` even when another sentence requires approval for an entry. Narrow fix:
+  the cell asserts each clause in its required position and polarity. Proof: three independent mutations make S9
+  fail: run the command after sending the brief, omit one printed entry from the brief, or require new approval for
+  an entry. Residual exposure, not live: the shipped texts state all three clauses today
+  (`agent-workflow-engine/references/procedures.md:129-131`, `agent-workflow-engine/references/planning.md:131-141`);
   only a later edit could drop one unseen, held by that edit's diff review. Raised in the diff review of
   A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
 
 - **STRUCTURE-COMMAND-PRINTS-NO-PIN-SKIP-FOR-A-CREATE-ENTRY** — invariant: when the structure command cannot judge
   `package-pin` for a `create` entry, it prints the SKIP line `--check` prints for the same row. Origin:
-  `agent-workflow-kit/tools/plan-shape.mjs:332` returns `skips: []` in the `entriesOnly` branch, while `:337-338`
-  map `pinSkip` for the approved `create` rows; `agent-workflow-kit/tools/plan-structure/cli.mjs:46` prints skips.
-  Narrow fix: plan-structure's command bullet names the skip (a contract change) and the branch maps the entries'
-  `pinSkip` as `:337-338` do, budget amendments excluded. Proof: an S7 cell with a `create` entry in a shipped
+  `agent-workflow-kit/tools/plan-shape.mjs:295` returns `skips: []` in the `entriesOnly` branch, while the ordinary
+  authoring return at `:296-297` reports `pinSkip` for every `create` row whose path fact carries one;
+  `agent-workflow-kit/tools/plan-structure/cli.mjs:46` prints skips. Narrow fix: plan-structure's command bullet
+  names the skip (a contract change) and the `entriesOnly` branch maps the entries' `pinSkip` as `:296-297` do.
+  Proof: an S7 cell with a `create` entry in a shipped
   package that has no `package-content.test.mjs`. Residual exposure, not live: a `create` entry whose pin is
   resolved is judged; an unresolved one passes silently, and the diff review reads every listed entry. Raised in the
   diff review of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21).
 
+- **PLAN-CHECK-READS-THE-SOURCE-SCOPE-FOR-EVERY-ROW** — invariant: a plan check reads the size config only where a
+  rule needs it: the red-first rule on a `create` row of a non-test path, and the story-scope rule. Origin:
+  `agent-workflow-kit/tools/plan-shape.mjs:260` reads `pathFact?.inScope` before `row.verb === 'create'`, so
+  `--check <plan>` loads `docs/ai/source-size.json` for every row, and
+  `agent-workflow-kit/tools/plan-shape-cli.test.mjs:219` pins exit 2 for a storyless plan of one `modify` row on a
+  malformed config. Narrow fix: the verb and the test path are tested before the fact, and the S12 cell expects exit 0
+  for that plan and exit 2 for a plan with a `create` row on a source path. Proof: the S12 cell red on today's order.
+  Residual exposure, not live: a malformed size config already stops
+  `agent-workflow-kit/tools/source-size-check.mjs --check` and the gates, so the plan check's exit 2 stands beside a
+  refusal that holds anyway. Raised by the lens in the diff review of S1 of A-PLAN-CARRIES-NO-LINE-COUNTS, round 1
+  (2026-11-23).
+
 ## Closed
+
+- **PLAN-GATE-SWEEP-ROW-CANNOT-HOLD-EACH-RECORD** — invariant: a plan row over several files holds each file to its
+  own size ceiling, so files of different recorded sizes can share one row. Origin: `plan-shape.mjs` held a row's one
+  budget against every path's ceiling and a raise bullet naming the row's path lifted `budget-cap` for every file of
+  the row at once, so each recorded file of a sweep took its own row (EVERY-LOCATION-IS-NAMED-ONCE story 3: 25 rows,
+  15 of them one recorded file each). Raised by Fable's design consult in the spec review of that epic's story 3
+  (2026-11-22). Closed by subtraction in S1 of A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-23): a row carries no size
+  field and no plan rule reads a line count, a record or the cap (`agent-workflow-kit/tools/plan-shape.mjs`), so a
+  sweep row holds files of any size and a file's size is judged by the size check at the diff. Proof: plan-review-loop
+  S9 (`agent-workflow-kit/tools/plan-shape.test.mjs:220`) and S40 (`:262`).
+
+- **POST-BUDGET-NAMES-THE-APPROVED-ROW-FOR-AN-AMENDED-BUDGET** — invariant: a `post-budget` finding names the row
+  whose budget it judges. Origin: `plan-shape.mjs` cited the approved row's id beside the entry's budget, so a
+  151-line file under approved R1 at 100 and entry A1 at 150 read `above R1 budget 150`. Raised in the diff review of
+  A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN S2, round 1 (2026-11-21). Closed by subtraction in S1 of
+  A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-23): `--verify` judges kinds and counts, so no `post-budget` finding exists,
+  and an amendment entry on a path another row owns refuses `duplicate-path`, so no entry carries a budget. Proof:
+  plan-review-loop S11 (`agent-workflow-kit/tools/plan-shape-cli.test.mjs`) and plan-structure S10
+  (`agent-workflow-kit/tools/plan-shape.test.mjs:337`).
 
 - **ADR-ROTATOR-SCHEME-IS-READ-FROM-ITS-COMMENTS** — invariant: the ADR layout detector tells a current
   decisions rotator from an earlier one by a fact the rotator's code carries and a suite pins, never by comment
@@ -2188,7 +2198,10 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   keeps no record for a size inside the tolerance band (`source-size-ratchet.test.mjs:286,290`), so a plan for an
   in-band file (426 of 400 + 10%) must carry a raise bullet that records nothing. Narrow fix: the budget-cap check takes
   the band's ceiling (cap × (1 + tolerance)) for an unrecorded file. Residual exposure, live but inert: the bullet is
-  worded as a no-op and the check passes.
+  worded as a no-op and the check passes. Closed by subtraction in S1 of A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-23):
+  the `budget-cap` check and the raise-bullet reader are gone from `agent-workflow-kit/tools/plan-shape.mjs`, so no
+  plan is asked a raise and a record is the size practice's alone. Proof: plan-review-loop S9
+  (`agent-workflow-kit/tools/plan-shape.test.mjs:220`).
 - **MEMORY-RERUN-LINE-HAS-NO-DEFAULT-HOME-CELL** — invariant: memory's re-run line over its default home is the bare
   command. Origin: the lens, round 1 of the KIT-SCRIPTS S8 code review (2026-10-30): the recovery-command case loops
   only `--dir` and `env` (`agent-workflow-memory/bin/install.test.mjs:305`), so a `fromDefault` of constant `false` at

@@ -25,7 +25,7 @@ const buildEpic = (ownedPath) => ['---', 'type: epic', 'lastUpdated: 2026-09-10'
   '## Value', 'Keep work separate.', '## Non-goals', 'No implementation choices.', '## Acceptance', 'Result line: 2026-09-10',
   '## Specs', 'docs/ai/specs/kit/example.md', '## Stories ledger',
   `- S1 | Boundary | depends-on: none | owns: ${ownedPath} | shared: none | state: planned`, '## Queue', 'Row ALPHA in Now'].join('\n');
-const planOf = (row, total) => planWith({ ledger: ledgerOf(row, total) });
+const planOf = (row) => planWith({ ledger: row });
 const checkExit = (root, operand, status) => {
   const result = run(root, ['--check', operand]);
   assert.ifError(result.error);
@@ -41,7 +41,7 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     t.after(() => [root, outside].forEach((path) => rmSync(path, { recursive: true, force: true })));
     write(root, 'docs/ai/epics/ALPHA.md', buildEpic('docs/x.md'));
     write(root, 'docs/x.md', 'Owned document.\n');
-    const ledger = ledgerOf('R1 | modify | docs/x.md | update the document | n/a | docs/x.md:1');
+    const ledger = ledgerOf('R1 | modify | docs/x.md | update the document | docs/x.md:1');
     write(root, 'docs/plans/collide.md', planWith({ ledger }));
     for (const args of [['--check', 'docs/plans/collide.md'], ['--verify', 'docs/plans/collide.md'], ['--check', '--in-flight']]) {
       const result = run(root, args);
@@ -65,23 +65,24 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     }
   });
 
-  it('S10/S11 runs authoring state only on --check and post-state only on --verify (spec:plan-review-loop/S10, spec:plan-review-loop/S11)', async () => {
+  it('S10/S11 runs authoring state only on --check and post-state without line counts on --verify (spec:plan-review-loop/S10, spec:plan-review-loop/S11)', async (t) => {
     const { main } = await loadCli();
     assert.equal(typeof main, 'function');
     const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
     write(root, 'docs/plans/modify.md', planWith());
     write(root, 'docs/new.md', 'landed\n');
-    write(root, 'docs/plans/create.md', planOf('R1 | create | docs/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/create.md', planOf('R1 | create | docs/new.md | create it | docs/readme.md:1'));
     write(root, 'package.json', '{"files":["docs/"]}\n');
     write(root, 'test/package-content.test.mjs', 'pin\n');
-    write(root, 'docs/plans/pin.md', planOf('R1 | create | docs/shipped.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/pin.md', planOf('R1 | create | docs/shipped.md | create it | docs/readme.md:1'));
     write(root, 'private/package.json', '{"private":true}\n');
-    write(root, 'docs/plans/private.md', planOf('R1 | create | private/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/private.md', planOf('R1 | create | private/new.md | create it | docs/readme.md:1'));
     write(root, 'unknown/package.json', '{"files":["+(src)/**"]}\n');
-    write(root, 'docs/plans/unknown.md', planOf('R1 | create | unknown/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/unknown.md', planOf('R1 | create | unknown/new.md | create it | docs/readme.md:1'));
     write(root, 'nopin/package.json', '{"files":["new.md"]}\n');
-    write(root, 'docs/plans/nopin.md', planOf('R1 | create | nopin/new.md | create it | n/a | docs/readme.md:1'));
-    write(root, 'docs/plans/delete.md', planOf('R1 | delete | docs/gone.md | delete it | — | —'));
+    write(root, 'docs/plans/nopin.md', planOf('R1 | create | nopin/new.md | create it | docs/readme.md:1'));
+    write(root, 'docs/plans/delete.md', planOf('R1 | delete | docs/gone.md | delete it | —'));
     const checked = run(root, ['--check', 'docs/plans/modify.md']);
     const refusedBefore = run(root, ['--check', 'docs/plans/create.md']);
     const verifiedAfter = run(root, ['--verify', 'docs/plans/create.md']);
@@ -102,8 +103,28 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     assert.match(unknownSkip.stdout, /package pin skipped — shipping state is unknown/);
     assert.match(noPinSkip.stdout, /package pin skipped — no package-content\.test\.mjs/);
     assert.equal(deletedAfter.status, 0, deletedAfter.stderr || deletedAfter.stdout);
-    write(root, 'docs/plans/after.md', planOf('R1 | create | docs/new.md | create it | 10 | docs/readme.md:1'));
-    assert.match(run(root, ['--verify', 'docs/plans/after.md']).stdout, /after-total/);
+    const after = 'docs/plans/after.md';
+    write(root, 'docs/new.md', 'landed\n'.repeat(500));
+    write(root, after, planOf('R1 | create | docs/new.md | create it | 10 | docs/readme.md:1'));
+    const legacy = run(root, ['--verify', after]);
+    assert.doesNotMatch(legacy.stdout, /: (post-budget|after-total): /);
+    write(root, after, planWith({ ledger: 'R1 | create | docs/new.md | create it | missing-anchor.md:1' }));
+    const accepted = run(root, ['--verify', after]);
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.match(accepted.stdout, /^plan-shape: ACCEPT/m);
+
+    write(root, after, planWith({ ledger: [
+      'R1 | create | docs/missing.md | add the document | missing-anchor.md:1',
+      'R2 | modify | docs/*.md | update (3 files) | missing-anchor.md:1',
+    ].join('\n') }));
+    const postState = run(root, ['--verify', after]);
+    assert.equal(postState.status, 1, postState.stderr || postState.stdout);
+    assert.deepEqual(Array.from(postState.stdout.matchAll(/: R\d: ([a-z-]+): /g), (match) => match[1]), ['post-kind', 'sweep-count']);
+    assert.doesNotMatch(postState.stdout, /: (anchor|package-pin|red-first|post-budget|after-total): /);
+    write(root, after, planWith({ ledger: 'R1 | move | docs/new.md | move it | docs/readme.md:1' }));
+    const structural = run(root, ['--verify', after]);
+    assert.equal(structural.status, 1, structural.stderr || structural.stdout);
+    assert.match(structural.stdout, /: R1: row-grammar: /);
   });
 
   it('S12 judges titled plans structurally, counts skipped shapes, and refuses any judged defect (spec:plan-review-loop/S12)', async () => {
@@ -116,13 +137,13 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     assert.match(accepted.stdout, /skipped by shape: 1/);
     assert.match(accepted.stdout, /judged plans: 1/);
     assert.equal(run(root, ['--verify', '--in-flight']).status, 0);
-    write(root, 'docs/plans/landed.md', planOf('R1 | create | docs/readme.md | executed, awaiting its commit | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/landed.md', planOf('R1 | create | docs/readme.md | executed, awaiting its commit | docs/readme.md:1'));
     assert.equal(run(root, ['--check', 'docs/plans/landed.md']).status, 1, 'the authoring arm refuses a create on an existing path');
     const structuralOnly = run(root, ['--check', '--in-flight']);
     assert.equal(structuralOnly.status, 0, structuralOnly.stderr || structuralOnly.stdout);
     assert.match(structuralOnly.stdout, /judged plans: 2/);
-    write(root, 'docs/plans/bad.md', planOf('R1 | move | docs/readme.md | wrong verb | n/a | docs/readme.md:1'));
-    write(root, 'docs/plans/glob.md', planOf('R1 | modify | docs/[a.md | update (1 files) | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/bad.md', planOf('R1 | move | docs/readme.md | wrong verb | docs/readme.md:1'));
+    write(root, 'docs/plans/glob.md', planOf('R1 | modify | docs/[a.md | update (1 files) | docs/readme.md:1'));
     const refused = run(root, ['--check', '--in-flight']);
     assert.equal(refused.status, 1);
     assert.match(refused.stdout, /bad\.md/);
@@ -135,6 +156,41 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     assert.match(explicit.stdout, /glob\.md:1: facts: unsupported glob/);
   });
 
+  it('spec:plan-review-loop/S41 refuses retired ledger syntax on both arms and excludes its creates in flight', async (t) => {
+    const { buildFacts, readPlansInFlight } = await import('./plan-shape-facts.mjs');
+    const root = makeRepo();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const plans = [
+      { identity: 'docs/plans/size.md', path: STORE + 'size.md', code: 'retired-size-field', fix: /drop.*(?:fifth|size) field/i },
+      { identity: 'docs/plans/total.md', path: STORE + 'total.md', code: 'retired-total-line', fix: /\bdrop\b.*\b(?:it|line|total)\b/i },
+    ];
+    for (const { identity, path, code } of plans) {
+      const row = 'R1 | create | ' + path + ' | add a document';
+      const ledger = code === 'retired-size-field'
+        ? row + ' | n/a | docs/readme.md:1'
+        : row + ' | docs/readme.md:1\ntotal: 0 → 0 lines';
+      write(root, identity, planWith({ ledger }));
+    }
+    for (const arm of ['--check', '--verify']) {
+      const inFlight = run(root, [arm, '--in-flight']);
+      for (const { identity, code, fix } of plans) {
+        for (const result of [run(root, [arm, identity]), inFlight]) {
+          assert.ifError(result.error);
+          assert.equal(result.status, 1, result.stderr || result.stdout);
+          const finding = result.stdout.split('\n').find((line) => line.startsWith(identity + ':') && line.includes(': ' + code + ': '));
+          assert.ok(finding, result.stdout);
+          assert.match(finding, fix);
+        }
+      }
+    }
+    const { plans: judged } = readPlansInFlight(root);
+    assert.deepEqual(judged.map(({ identity, accepted }) => [identity, accepted]), plans.map(({ identity }) => [identity, false]));
+    const current = 'docs/plans/current.md';
+    const validPath = STORE + 'valid.md';
+    write(root, 'docs/plans/valid.md', planWith({ ledger: 'R1 | create | ' + validPath + ' | add a document | docs/readme.md:1' }));
+    assert.deepEqual(buildFacts(root, { plan: current }).otherPlanCreates, [validPath]);
+  });
+
   it('S12 ambiguous pins exit 2 only for a plan whose rules read them, on both arms', (t) => {
     const root = makeRepo();
     t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -144,13 +200,13 @@ describe('plan-shape CLI — arms, in-flight scope and exit contract', () => {
     write(root, 'other/package-content.test.mjs', 'two\n');
     const ambiguity = /several package-content\.test\.mjs files: other\/package-content\.test\.mjs, test\/package-content\.test\.mjs/;
     for (const operand of ['docs/plans/good.md', '--in-flight']) checkExit(root, operand, 0);
-    write(root, 'docs/plans/shipped.md', planOf('R1 | create | docs/new.md | create it | n/a | docs/readme.md:1'));
+    write(root, 'docs/plans/shipped.md', planOf('R1 | create | docs/new.md | create it | docs/readme.md:1'));
     assert.match(checkExit(root, 'docs/plans/shipped.md', 2), ambiguity);
     checkExit(root, '--in-flight', 0);
-    write(root, 'docs/plans/pins.md', planOf(`R1 | create | docs/first.md | create it | n/a | docs/readme.md:1
-R2 | modify | test/package-content.test.mjs | pin the first document | n/a | docs/readme.md:1
-R3 | create | docs/second.md | create it | n/a | docs/readme.md:1
-R4 | modify | test/package-content.test.mjs | pin the second document | n/a | docs/readme.md:1`));
+    write(root, 'docs/plans/pins.md', planOf(`R1 | create | docs/first.md | create it | docs/readme.md:1
+R2 | modify | test/package-content.test.mjs | pin the first document | docs/readme.md:1
+R3 | create | docs/second.md | create it | docs/readme.md:1
+R4 | modify | test/package-content.test.mjs | pin the second document | docs/readme.md:1`));
     assert.match(checkExit(root, '--in-flight', 2), ambiguity);
   });
 
@@ -217,7 +273,7 @@ R4 | modify | test/package-content.test.mjs | pin the second document | n/a | do
     write(root, part, `${FRONT('part', 150)}\n# Part: ${partName}\n\nRates.\n`);
     write(root, navigator, indexDoc('Commerce', [`- [${slug}](./${slug}/index.md)`]));
     const rows = [draft, part, navigator].map((path, index) =>
-      `R${index + 1} | create | ${path} | write the contract document | n/a | docs/readme.md:1`);
+      `R${index + 1} | create | ${path} | write the contract document | docs/readme.md:1`);
     const planPath = 'docs/plans/billing.md';
     write(root, planPath, planOf(rows.join('\n')));
 

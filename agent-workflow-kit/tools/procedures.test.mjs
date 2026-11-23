@@ -1188,6 +1188,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
       // The plan-time layout is the planning canon's Module ledger — the advisor states facts only.
       assert.doesNotMatch(r.stdout, /at plan time:/, 'no advisor-side copy of the layout rung');
     }
+    assert.doesNotMatch(DECLARED_PRACTICE_HEADER, /known BEFORE the code is written/);
   });
 
   it('render-authored-not-minted-line: a config holding aggregate, layout or neither and no baseline renders the caps and one pre-mint line, never a zero record and no PARTIAL line', () => {
@@ -1261,6 +1262,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
     assert.doesNotMatch(modeDoc, /commits per ledger row/, 'the mode doc still commits per ledger row');
     assert.match(modeDoc, /`plan-execution` commits[^.]*\bdiff review\b/, 'the mode doc does not commit the story after its diff review');
     assert.doesNotMatch(modeDoc, /per Step/, 'no retired per-Step execution model in the mode doc');
+    assert.doesNotMatch(help, /plan-time rung/);
   });
   it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {
     // Pinned as a LITERAL: a test comparing the render against the constant would follow any rewording, and the sentence is canon (D-17) because it never varies.

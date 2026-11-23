@@ -5,7 +5,7 @@ import { readSpecDocument, SPEC_SCHEMA } from '../references/scripts/spec-schema
 import { lstatNoFollowRead, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { KIT_FOLDER_ROOT, segmentPrefixOf, validateSourceSizeConfig } from './source-size-config.mjs';
-import { checkPlanStructure, getLineCount, isSweep, parseLedger, PLAN_TITLE_PREFIX, resolveAnchorCandidates, unique } from './plan-shape.mjs';
+import { checkPlanStructure, isSweep, parseLedger, PLAN_TITLE_PREFIX, resolveAnchorCandidates, unique } from './plan-shape.mjs';
 import { plansInFlight, PLANS_REL } from './plan-files.mjs';
 import { listStories } from './claim-relation.mjs';
 import { EPICS_REL, readEpicStore } from './epic-store.mjs';
@@ -109,12 +109,11 @@ const readJsonNoFollow = (repo, path, label) => {
   }
 };
 
-const loadPractice = (root, repo) => {
+const loadSourceScope = (root, repo) => {
   const parsed = readJsonNoFollow(repo, join(root, SOURCE_SIZE), SOURCE_SIZE);
-  if (parsed === null) return { capDeclared: false, cap: null, config: null };
+  if (parsed === null) return null;
   try {
-    const config = validateSourceSizeConfig(parsed);
-    return { capDeclared: true, cap: config.defaults.maxLines, config };
+    return validateSourceSizeConfig(parsed);
   } catch (error) {
     throw usageError(`${SOURCE_SIZE} is malformed (${error.message})`);
   }
@@ -235,7 +234,7 @@ const describeContract = (path, text) => {
   return { kind, status, children: resolveTargets(structure?.children), parts: resolveTargets(structure?.parts), refused: errors.length > 0 };
 };
 
-const getPathFacts = (repo, path, practice, withContract) => {
+const getPathFacts = (repo, path, sourceScope, withContract) => {
   const safe = isLexicallySafe(path);
   const absolute = () => resolve(getRepoRoot(repo), path);
   const stat = () => safe ? inspectPath(repo, absolute(), planError) : null;
@@ -248,9 +247,7 @@ const getPathFacts = (repo, path, practice, withContract) => {
   const owner = () => !isSweep(path) && facts.contained ? readOnce(repo, findPackage, path, repo) : null;
   const facts = {
     get kind() { return read() ? 'regular' : stat() ? 'other' : 'absent'; },
-    get lines() { return getLineCount(read()?.content ?? ''); },
-    get recordedLines() { return practice().config?.baseline?.[path]?.lines ?? null; },
-    get inScope() { return isInScope(path, practice().config); },
+    get inScope() { return isInScope(path, sourceScope()); },
     get shipped() {
       const pkg = owner();
       return pkg ? getShipped(pkg.json, toPosix(relative(join(getRepoRoot(repo), pkg.root), absolute()))) : 'unknown';
@@ -353,11 +350,11 @@ export const readPlansInFlight = (root, { robustnessDeps, repo = openRepo(root, 
   readOnce(repo, readFlight, getRepoRoot(repo, true), repo);
 
 const getFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { robustnessDeps }), plan } = {}) => {
-  const practice = () => readOnce(repo, loadPractice, getRepoRoot(repo), repo);
+  const sourceScope = () => readOnce(repo, loadSourceScope, getRepoRoot(repo), repo);
   const storyFacts = () => readOnce(repo, readStoryFacts, getRepoRoot(repo), repo);
   const pathFacts = Object.create(null);
   const addPath = (path) => {
-    pathFacts[path] ??= getPathFacts(repo, path, practice, plan !== undefined);
+    pathFacts[path] ??= getPathFacts(repo, path, sourceScope, plan !== undefined);
   };
   const expansions = getExpansions(paths.filter(isSweep), (pattern) => listFiles(repo, sweepStart(pattern)), addPath);
   paths.forEach(addPath);
@@ -367,8 +364,6 @@ const getFacts = (root, { paths = [], robustnessDeps, repo = openRepo(root, { ro
     return above.length ? above : resolveAnchorCandidates([], suffix, listFiles(repo));
   };
   const facts = {
-    get capDeclared() { return practice().capDeclared; },
-    get cap() { return practice().cap; },
     get robustClasses() { return readOnce(repo, loadRobustClasses, repo.robustnessDeps); },
     get pathFacts() { return pathFacts; },
     get expansions() { return expansions; },

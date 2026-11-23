@@ -50,7 +50,6 @@ const STATES = [
   ['plan-unreadable', 'plansInFlight', PLAN, /UTF-8/, null, ['E3']],
   ['plan-unparseable', 'parseLedger', PLAN, /fence/, planCheck, ['E3']],
   ['plan-two-stories', 'readStoryLine', PLAN, /names its story with one line/, planCheck, ['E3']],
-  ['plan-no-row', 'parseLedger', PLAN, /valid row/, planCheck, ['E3']],
   ['prompt-unreadable', 'readRegularFileNoFollow', PROMPT, /EACCES/, null, ['E3'], SKIP_UNREADABLE],
   ['prompt-non-regular', 'readRegularFileNoFollow', PROMPT, /symlink/, null, ['E3']],
   ['prompt-shared-name', ANY, SHARED_PROMPT, /(?=.*docs\/plans\/greet\.md)(?=.*docs\/plans\/greet-x\.md)/, null, ['E3']],
@@ -74,13 +73,54 @@ describe('spec:tier-guide/S3 every rendered state names its reader, file and cau
     if (next === ANY) assert.match(item.next?.text ?? '', /remove/, 'remove the prompts after the gap, then copy and fill the first');
     else assert.equal(item.next?.command ?? null, next);
     if (typeof next === 'string') assert.equal(item.next.kind, 'run');
-    if (cell === 'plan-no-row') assert.match(item.next.text, /ledger row/, 'add a ledger row, then the plan check');
     if (stages !== ANY) assert.deepEqual(envelope.entries.map((entry) => entry.stage), stages);
     else assert.ok(!commandsOf(envelope).some((command) => /^git (commit|diff) /.test(command)), 'no diff or commit line');
     assert.deepEqual(storiesOf(envelope), [], 'no story stage renders beside the state');
     for (const entry of envelope.entries.filter(({ stage }) => stage === 'E2')) assert.deepEqual(entry.actions.map(({ command }) => command), [check]);
     if (cell === 'plan-two-stories') assert.deepEqual(envelope.entries[0].actions, [], 'no leftover for a plan whose story is unread');
     if (cell === 'leftover-shared-name') assert.deepEqual(envelope.entries[0].actions, [], 'no leftover removes a prompt another plan derives');
+  });
+
+  const assertPlanState = (envelope, file, addRow = false) => {
+    const states = envelope.states.filter((state) => state.reader === 'parseLedger');
+    assert.deepEqual(states.map((state) => state.file), [file]);
+    const [{ cause, next }] = states;
+    assert.match(cause, /^\S[^\n]*$/u);
+    assert.deepEqual([next?.kind, next?.command], ['run', node('plan-shape-cli.mjs', '--check', file)]);
+    assert.equal(/add a ledger row/i.test(next.text), addRow, next.text);
+    assert.deepEqual(storiesOf(envelope), []);
+  };
+
+  it('renders only the epic check on refusal and distinguishes an empty ledger from a missing Verification heading', () => {
+    const refused = runCell('E2');
+    assert.deepEqual(refused.states, []);
+    assert.deepEqual(refused.entries.map(({ stage, actions }) => [stage, actions.map(({ command }) => command)]), [['E2', [check]]]);
+    assertPlanState(runCell('empty-ledger'), PLAN, true);
+    assertPlanState(runCell('missing-verification'), PLAN);
+  });
+
+  for (const cell of ['mixed-ledger', 'ledger-with-total']) it(`${cell} renders the plan check alone`, () => {
+    const envelope = runCell(cell);
+    assert.deepEqual(envelope.states.map(({ reader, file }) => [reader, file]), [['parseLedger', PLAN]]);
+    assertPlanState(envelope, PLAN);
+  });
+
+  it('suppresses the whole leftover of an epic when one of its two plans fails the prerequisite', () => {
+    const envelope = runCell('leftover-one-failing-plan');
+    assert.deepEqual(envelope.entries.map(({ path, stage, actions }) => [path, stage, actions]), [[EPIC, 'E4', []]]);
+    assertPlanState(envelope, OTHER_PLAN);
+  });
+
+  for (const differing of [true, false]) it(`with two epics and ${differing ? 'a differing' : 'an equal'} index, keeps only allowed leftover actions`, () => {
+    const envelope = runCell(differing ? 'leftover-two-epics-differing-index' : 'leftover-two-epics-equal-index');
+    assert.deepEqual(envelope.entries.map(({ id, stage }) => [id, stage]).sort(), [['OTHER', 'E4'], ['WALK-EPIC', 'E4']]);
+    assert.deepEqual(envelope.entries.find(({ id }) => id === 'OTHER').actions, []);
+    const soundActions = envelope.entries.find(({ path }) => path === EPIC).actions;
+    assert.deepEqual(soundActions.map(({ kind, command }) => [kind, command]), differing ? [] : [['write', null]]);
+    for (const { text } of soundActions) {
+      for (const part of ['remove', PLAN, PROMPT]) assert.ok(text.includes(part), text);
+    }
+    assertPlanState(envelope, OTHER_PLAN);
   });
 });
 

@@ -249,7 +249,7 @@ const makePlanTree = () => {
   const put = (path, text) => write(root, path, text);
   const check = (...args) => run(['--root', root, ...args]);
   const plan = (...rows) => put(PLAN, planWith({ ledger: ledgerOf(rows.map(([verb, path], index) =>
-    `T${index + 1} | ${verb} | ${path} | update the fixture | ${verb === 'delete' ? '— | —' : `n/a | ${path}:1`}`).join('\n')) }));
+    `T${index + 1} | ${verb} | ${path} | update the fixture | ${verb === 'delete' ? '—' : `${path}:1`}`).join('\n')) }));
   return { at, put, check, plan, get: (path) => readFileSync(at(path), 'utf8'), judge: (...extra) => check('--plan', PLAN, ...extra) };
 };
 const expectVerdict = (result, code = 0, cause, path) => {
@@ -332,7 +332,7 @@ it('judges store rows from the exact --plan operand and names usage errors', asy
   }
   const valid = get(PLAN);
   for (const [body, cause] of [[valid.replace('# Plan:', '# Notes:'), /in.flight/i], [valid + '\n~~~\n', /block-model|fence/],
-    [valid.replace('## Module ledger', '## Notes'), /ledger|headings/i], [valid.replace(' | modify | ', ' | typo | '), /row-grammar|six valid fields/], ...['docs/ai/specs/kit/**/*.{md,txt}', 'docs/**/*.md'].map((sweep) => [valid.replace(/T1 \| modify \| .*/, `T1 | modify | ${sweep} | update the fixture (2 files) | n/a | ${STORE_ROOT}:1`), /op-sweep — T1/])]) {
+    [valid.replace('## Module ledger', '## Notes'), /ledger|headings/i], [valid.replace(' | modify | ', ' | typo | '), /row-grammar|six valid fields/], ...['docs/ai/specs/kit/**/*.{md,txt}', 'docs/**/*.md'].map((sweep) => [valid.replace(/T1 \| modify \| .*/, `T1 | modify | ${sweep} | update the fixture (2 files) | ${STORE_ROOT}:1`), /op-sweep — T1/])]) {
     put(PLAN, body);
     expectVerdict(await judge(), 2, cause, PLAN);
   }
@@ -342,7 +342,7 @@ it('judges store rows from the exact --plan operand and names usage errors', asy
   for (const args of [['--all'], ['--op', `modify=${LOGIN}`], ['--ops-file', opsFile('plan-ops.list', `modify=${LOGIN}\n`)]]) {
     expectVerdict(await judge(...args), 2, /exclusive|combin|together/i, args[0]);
   }
-  put(PLAN, planWith({ ledger: ledgerOf('T1 | create | src/extra.mjs | add the fixture | n/a | src/extra.mjs:1\nT2 | modify | **/package.json | bump the fixture (1 files) | n/a | src/extra.mjs:1') }));
+  put(PLAN, planWith({ ledger: ledgerOf('T1 | create | src/extra.mjs | add the fixture | src/extra.mjs:1\nT2 | modify | **/package.json | bump the fixture (1 files) | src/extra.mjs:1') }));
   expectVerdict(await judge(), 0, /the plan names no store document/);
   expectVerdict(await check('--all'));
   rmSync(at(STORE_ROOT));

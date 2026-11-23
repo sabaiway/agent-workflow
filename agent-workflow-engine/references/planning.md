@@ -20,7 +20,7 @@ council), so a council round costs two bridge runs.
   Check: the spec gate, then one review that reads them and the plan's ledger in the same rounds, at
   most two, by the `plan-authoring.review` members. Cost: session 1; at most two rounds of bridge runs,
   plus the fold asks and the last-round re-reads.
-- **Plan** — Result: the ledger, with files, budgets, order and the Verification commands. Maker: the
+- **Plan** — Result: the ledger, with files, order and the Verification commands. Maker: the
   orchestrator, drafting beside the spec after the readers sweep, before the review's first round, and
   folding it with the spec. Check: the plan-shape gate, the spec review's reading of its ledger and the
   maintainer's approval of the plan with its contracts; no rounds or sessions of its own. Cost: session
@@ -89,12 +89,15 @@ independently verifiable boundaries, never by document size — or it is a SWEEP
 
 ## Module ledger
 
-One row per path, six fields. A row is capped at **200 UTF-8 bytes counted without its path and
-anchor**: id, verb, responsibility and budget after trimming, including their three ` | ` separators.
+One row per path, five fields. A row is capped at **200 UTF-8 bytes** counted over id, verb and
+responsibility after trimming, including their two ` | ` separators.
 
 ```
-<check-id> | create|modify|delete | <path> | <responsibility, one sentence> | <max lines | n/a> | <anchor>
+<check-id> | <verb> | <path> | <responsibility> | <anchor>
 ```
+
+The verb is `create`, `modify` or `delete`. Write the responsibility in one sentence. A `delete`
+row carries `—` in its anchor alone.
 
 **The rows ARE the steps.** They execute top to bottom in the tests and code sessions and none of them
 commits; a row may only anchor on a path above it or on existing code. The story's staged diff is
@@ -115,15 +118,10 @@ A `create` row's responsibility names the **exported surface** the module must p
 other rows import. That surface does not exist in the checkout yet, so it cannot be derived from it;
 this is the one interface contract a plan owes its executor.
 
-Budgets come from the project's declared source-size cap. No declared cap → `n/a`, never an invented
-number. On `modify` the budget is the file's TOTAL size after the change, not a delta. A `delete` row
-carries `—` for budget and anchor.
-
-**Total, not per-file.** The ledger ends with one line:
-`total: <before> → <after> lines`. Five files under a 400 cap can each be legal while the change
-doubles the codebase — the per-file budget cannot see that. Growth is allowed only with a stated
-reason on that line; a refactor that claims to reduce anything and grows is refused here, at plan
-time.
+Dropping the size field and the total line from a held plan in the old form that no armed flow has
+adopted changes no contract and takes no new approval. A plan that an armed flow already adopted
+in the old form is carried to its Cleanup with the kit and engine pair in use at its adoption.
+Adoption binds the plan bytes. The current kit's walk and plan check refuse the old form by name.
 
 **A SWEEP is one row.** A wide mechanical change — one edit repeated across N files — is a single row
 whose path is a glob, whose responsibility states the invariant every site must satisfy, and whose
@@ -131,16 +129,13 @@ count is asserted. Splitting a sweep into per-file rows or into several plans co
 the sweep, and breaks the intermediate states.
 
 **A ledger-only miss found after the approval is an amendment entry.** A standalone line exactly
-`amendments:` below the approved rows opens the entries; the total line stays last, its after figure
-covering them. Before its code, the code session writes there a reader the sweep missed, a missed
-file, a budget too small within its cap or growth past it, each leaving every approved contract
-unchanged; an entry takes no new approval and the diff review's brief lists it. The 25 rows, the
-60-line ledger and the 100-line plan measure the approved part only. An entry repeats no path save as
-a budget amendment: the path of exactly one approved row (a `modify` sweep's expansion included), that
-row's verb and a larger integer budget. A missed reader's existing test is rewritten to the value the
-approved contract states and shown red first; a missed reader that needs a new test returns to a
-tests-only session. Growth within the size practice's tolerance band is a warning; past the band,
-`--write-baseline --reason` records it. A path no claim of the story covers takes the epic row's
+`amendments:` below the approved rows opens the entries, which run to the ledger's end. Before its
+code, the code session writes there a reader the sweep missed or a missed file, leaving every
+approved contract unchanged. An entry takes no new approval and the diff review's brief lists it.
+The 25 rows, the 60-line ledger and the 100-line plan measure the approved part only. An entry
+repeats no path, including a path in an approved sweep's expansion. A missed reader's existing test
+is rewritten to the value the approved contract states and shown red first. A missed reader that
+needs a new test returns to a tests-only session. A path no claim of the story covers takes the epic row's
 claim first; a path another story owns, a change of an approved contract, a new Module and a new file
 under an approved sweep's glob return to the spec review. Mid-flow,
 `node <kit>/tools/plan-structure/cli.mjs <plan>` judges the plan's structure and prints every entry.
@@ -148,9 +143,10 @@ under an approved sweep's glob return to the spec review. Mid-flow,
 ## Verification
 
 Exact existing commands plus the acceptance check for the goal. The ledger is validated by ONE
-command: `node <kit>/tools/plan-shape-cli.mjs --verify <plan>` — existence and budget for
-create/modify, absence for delete, the count for a sweep, and the total line. Per-row assertions in
-prose are the repetition this section exists to avoid.
+command: `node <kit>/tools/plan-shape-cli.mjs --verify <plan>`. It checks for a regular file on
+`create` and `modify` rows, absence on `delete` rows, and the count for a sweep. Run it before the
+final gates of the story's last session and again first at Cleanup. Per-row assertions in prose are
+the repetition this section exists to avoid.
 
 **The acceptance criteria ARE the `- ` bullets.** Every top-level `- ` bullet in this section is one
 acceptance criterion, and they are the whole list — nothing outside a bullet is one. That makes the
@@ -295,6 +291,6 @@ The executing session sees the plan file and the repository, never the authoring
 
 Review runs on the spec with the plan's ledger, on the staged diff and on the epic by the lens: the spec
 review reads the plan's Goal and boundary, ledger and Verification in the same rounds as the contracts,
-the plan-shape gate and the maintainer's approval settle boundaries, budgets and the total, and the diff
-review runs against real code where a gate fails immediately. An all-mechanics artifact — a sweep, CI wiring, prose-only edits —
-takes a thin plan plus a diff review.
+the plan-shape gate and the maintainer's approval settle boundaries, and the diff review runs against
+real code where a gate fails immediately. An all-mechanics artifact — a sweep, CI wiring, prose-only
+edits — takes a thin plan plus a diff review.

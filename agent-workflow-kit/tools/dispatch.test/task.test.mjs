@@ -60,7 +60,7 @@ const snapshot = (ws) => {
     return sh(ws.cwd, ['write-tree'], env);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 };
-const writeBrief = (ws, brief = BRIEF_A, files = FILES, { budget = true } = {}) => {
+const writeBrief = (ws, brief = BRIEF_A, files = FILES, { budget = false } = {}) => {
   mkdirSync(join(ws.cwd, 'docs', 'plans'), { recursive: true });
   const lines = [
     '# Task: fixture task', 'Story: S1 of FIXTURE-EPIC', '', '## Slice',
@@ -132,11 +132,11 @@ describe('dispatch open --task — spec:task-thread/S2', () => {
     refusesWithoutWrite(ws, () => open(ws, 'no-checkpoint', ['--task', BRIEF_A]), /\btask-base\b/u);
   });
 
-  it('refuses a brief without Budget as shape and leaves the store unchanged', () => {
+  it('refuses a brief with Budget as shape and leaves the store unchanged', () => {
     const ws = makeRepo();
-    writeBrief(ws, BRIEF_A, FILES, { budget: false });
+    writeBrief(ws, BRIEF_A, FILES, { budget: true });
     const oid = snapshot(ws);
-    refusesWithoutWrite(ws, () => open(ws, 'no-budget', ['--checkpoint', oid, '--task', BRIEF_A]), /\bshape\b/u);
+    refusesWithoutWrite(ws, () => open(ws, 'foreign-budget', ['--checkpoint', oid, '--task', BRIEF_A]), /\bshape: .*## Budget.*foreign/u);
   });
 
   it('refuses a brief outside the TASK name form as task-brief without writing', () => {

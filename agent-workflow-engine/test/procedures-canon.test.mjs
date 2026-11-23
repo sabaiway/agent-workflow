@@ -184,29 +184,34 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     const execution = sectionOf(procedures, 'plan-execution');
     const step2 = stepOf(execution, 2).replace(/\s+/g, ' ');
     const structureCommand = 'plan-structure/cli.mjs';
-    const positions = ['--coverage', 'tags', `${structureCommand} <plan>`, 'generated robustness-literals block'].map((token) => step2.indexOf(token));
+    const positions = ['--coverage', 'fix the tags', `${structureCommand} <plan>`, 'generated robustness-literals block'].map((token) => step2.indexOf(token));
     assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), `coverage, tags, structure command, block order: ${positions.join(' < ')}`);
     assert.ok(step2.indexOf('Otherwise implement directly.') < step2.indexOf('The dispatch brief'), 'direct implementation precedes the dispatch brief');
     assert.doesNotMatch(step2, /plan-shape --check/);
-    const step5 = stepOf(execution, 5); assert.ok(step5.includes(structureCommand), 'step 5 names the structure command'); assert.match(step5, /\bamendment\b/);
+    const step5 = stepOf(execution, 5).replace(/\s+/g, ' ');
+    assert.match(step5, /before each diff-review or re-check brief\b.*?`node <kit>\/tools\/plan-structure\/cli\.mjs <plan>` exits 0/i);
+    assert.match(step5, /\blists every amendment entry it prints\b/);
     const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
     const shape = sectionOf(planning, 'Shape').replace(/\s+/g, ' '); assert.match(shape, /A plan's approved part is capped at \*\*100 lines and at most 25 ledger rows\*\*/); assert.doesNotMatch(shape, /The whole file is capped at/);
     const amendmentParagraphs = sectionOf(planning.slice(planning.lastIndexOf('\n## Module ledger\n')), 'Module ledger').split(/\n\s*\n/).filter((paragraph) => paragraph.includes('`amendments:`'));
-    assert.equal(amendmentParagraphs.length, 1, 'Module ledger has exactly one `amendments:` paragraph'); assert.ok(amendmentParagraphs[0].includes(structureCommand)); assert.match(amendmentParagraphs[0].replace(/\s+/g, ' '), /\bspec review\b/); assert.match(amendmentParagraphs[0], /\b(?:approval|yes)\b/i);
+    assert.equal(amendmentParagraphs.length, 1, 'Module ledger has exactly one `amendments:` paragraph');
+    const amendment = amendmentParagraphs[0].replace(/\s+/g, ' ');
+    assert.ok(amendment.includes(`${structureCommand} <plan>`));
+    assert.match(amendment, /\breturn\w* to the spec review\b/i);
+    assert.match(amendment, /\bno new (?:approval|yes)\b/i);
+    assert.doesNotMatch(amendment, /\b(?:budgets?|(?:size|tolerance) bands?|rais(?:e[sd]?|ing))\b|--write-baseline/i);
   });
 
-  // D-17 U2 — the upfront-knowledge rung: the layout is decided while the plan is drafted, not
-  // discovered when a gate refuses a written file. The rung itself (path, responsibility, budget from
-  // the declared cap or `n/a`) is the planning.md Module ledger; the Draft step points at it.
-  it('canon-authoring-carries-decomposition-rung: the Module ledger decides layout + budget before any file exists (plan-authoring only)', () => {
+  it('spec:story-flow/S22 Draft decides layout before implementation code and judges size at the diff', () => {
     const section = sectionOf(procedures, 'plan-authoring');
     const draft = stepOf(section, 2).replace(/\s+/g, ' ');
     assert.match(draft, /\*Module ledger\*/, 'the Draft step points at the ledger');
-    assert.match(draft, /before any file exists/, 'the layout is a plan-time decision');
-    assert.match(draft, /a size gate is only the backstop/, 'the cap is the backstop, never the teacher');
     assert.match(stepOf(section, 3).replace(/\s+/g, ' '), /\*What gets cut\*/, 'the Self-review step applies the subtraction rubric');
-    // The layout is a PLAN-time decision: plan-execution must not grow a rival copy of the rung.
-    assert.ok(!/Module ledger/.test(sectionOf(procedures, 'plan-execution')), 'the rung lives in plan-authoring only');
+    assert.doesNotMatch(sectionOf(procedures, 'plan-execution'), /Module ledger/, 'the layout rule lives in plan-authoring');
+    assert.match(draft, /\*Module ledger\*[^.]*\b(?:decides|determines|sets|settles)\b[^.]*\blayout\b[^.]*\bbefore any implementation code is written\b/i);
+    assert.match(draft, /\b(?:judg\w*[^.]*\bsize|size\b[^.]*\bjudg\w*)\b[^.]*\bat the diff\b/i);
+    assert.match(draft, /\bnever in a plan\b/i);
+    assert.doesNotMatch(draft, /\b(?:budgets?|backstops?)\b/i);
   });
 
   it('plan-authoring step 3 opens with the readers sweep before its existing checks', () => {

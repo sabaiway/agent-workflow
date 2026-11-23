@@ -93,17 +93,28 @@ describe('planning.md — the plan shape', () => {
     ]);
   });
 
-  it('makes the ledger decide layout before any file exists, and bounds the row itself', () => {
-    assert.match(flat, /check-id/, 'a row carries the id its one validator checks');
-    assert.match(flat, /create\|modify\|delete/, 'a deletion row is expressible');
-    assert.match(flat, /200 UTF-8 bytes counted without its path and anchor/, 'names the counted fields instead of charging path length');
-    assert.match(flat, /never an invented number/, 'a project without a declared cap gets no hallucinated limit');
-  });
-
-  it('budgets the TOTAL, not only each file — the growth loophole', () => {
-    assert.match(flat, /total: <before> → <after> lines/);
-    assert.match(flat, /the per-file budget cannot see that/, 'states WHY a per-file cap is not enough');
-    assert.match(flat, /Growth is allowed only with a stated reason/);
+  it('states the five-field ledger, transition, verification timing and Plan step (spec:story-flow/S21)', () => {
+    const ledger = sectionText('Module ledger');
+    const verification = sectionText('Verification');
+    const cleanup = sectionText("Cleanup, and the plan's own life");
+    const planStep = planning.match(/^- \*\*Plan\*\* .*(?:\n {2}.*)*/mu)?.[0] ?? '';
+    assert.match(ledger, /<check-id> \| <verb> \| <path> \| <responsibility> \| <anchor>(?! *\|)/u);
+    assert.match(ledger, /\bdelete\b[^.]*?(?:—[^.]*\banchor\b|\banchor\b[^.]*—)/u);
+    assert.match(ledger, /\b200\b[^.]*\bbytes\b[^.]*\bid\b[^.]*\bverb\b[^.]*\bresponsibility\b/u);
+    assert.doesNotMatch(ledger, /\bbudgets?\b|\btotal:|\*\*Total\b/iu);
+    for (const section of [verification, sectionText('The plan must read cold')]) assert.doesNotMatch(section, /\bbudgets?\b|\btotal\b/iu);
+    const transition = /\b(?:drop(?:ping)?|remov(?:e|ing))\b[^.]*\bsize field\b[^.]*\btotal line\b/giu;
+    assert.equal([...flat.matchAll(transition)].length, 1);
+    assert.match(ledger, /\bno armed flow\b[^.]*\badopted\b[^.]*\bno contract\b[^.]*\bno new approval\b/iu);
+    const carried = ledger.match(/\ban armed flow\b[^.]*\badopt(?:ed|ion)\b[^.]*\bCleanup\b[^.]*\bkit and engine\b[^.]*\badoption\b/giu);
+    assert.ok(carried?.some((sentence) => /\bold form\b/iu.test(sentence)), ledger);
+    const verify = /`node <kit>\/tools\/plan-shape-cli\.mjs --verify <plan>`/u;
+    assert.match(verification, verify);
+    assert.match(verification, /\bbefore the final gates\b[^.]*\b(?:last|final) session\b/iu);
+    assert.match(cleanup, verify);
+    assert.match(cleanup, /--verify <plan>`\s+FIRST\b/iu);
+    assert.match(planStep, /\bfiles\b[^.]*\border\b[^.]*\bVerification\s+commands\b/u);
+    assert.doesNotMatch(planStep, /\bbudgets?\b/iu);
   });
 
   it('gives a wide mechanical change one legal row instead of a split', () => {

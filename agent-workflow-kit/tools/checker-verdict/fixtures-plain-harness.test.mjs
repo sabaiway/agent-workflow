@@ -29,7 +29,6 @@ const createPlanText = (row) => joinLines([
   '- Spec: docs/ai/specs/example.md',
   '## Module ledger',
   row,
-  'total: 0 \u2192 0 lines',
   '## Verification',
   '- `node --test` exits 0',
   '## Phase: Cleanup',
@@ -57,7 +56,7 @@ const buildStructuralPlan = (project) => writeFiles(project, {
 });
 
 const buildUnlandedPlan = (project) => writeFiles(project, {
-  [PLAN_PATH]: createPlanText(`R1 | create | docs/new.md | create the document | n/a | ${ANCHOR_PATH}:1`),
+  [PLAN_PATH]: createPlanText(`R1 | create | docs/new.md | create the document | ${ANCHOR_PATH}:1`),
   [ANCHOR_PATH]: ANCHOR_TEXT,
 });
 
@@ -130,7 +129,7 @@ const buildUnmatchedClaim = (project) => writeFiles(project, {
 });
 
 const buildUncoveredRobustness = (project) => writeFiles(project, {
-  [PLAN_PATH]: createPlanText(`R1 | modify | ${TOOL_PATH} | preserve the result | 1 | ${ANCHOR_PATH}:1`),
+  [PLAN_PATH]: createPlanText(`R1 | modify | ${TOOL_PATH} | preserve the result | ${ANCHOR_PATH}:1`),
   [ANCHOR_PATH]: ANCHOR_TEXT,
   [TOOL_PATH]: joinLines(['export const outcome = "EEXIST";']),
 });

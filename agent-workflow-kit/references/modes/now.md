@@ -15,7 +15,7 @@ The four blocks keep this order:
 3. **QUEUE** — every work-carrying row (live, parked, ambiguous) under the full line-numbered heading path it carries, with per-class counts covering every row of the bucket, terminal and record included, and names rather than ids. Only a path through `## Pending / backlog` calls its position priority; every other bucket is archive and calls it position.
 4. **CAMPAIGN** — source-size config state (`absent`, `authored`, `minted`), caps, roots and recorded over-cap files. An absent opt-in config is a rendered state.
 
-Evidence alone sets a ledger status: the row's path and verb, then the path fact, changed set and exclusion fact. The plan's prose never sets a status. A checked box or terminal marker is only a claim; when evidence contradicts it, print the claim beside the evidence-derived status. Keep anomaly and current red-proof annotations beside the same status too. Every status line names its evidence source.
+Evidence alone sets a ledger status: the row's path and verb, then the path fact, changed set and exclusion fact. The plan's prose never sets a status. A checked box or terminal marker is only a claim; when evidence contradicts it, print the claim beside the evidence-derived status. Keep current red-proof annotations beside the same status too. Every status line names its evidence source.
 
 A block that cannot be derived is `WITHHELD` and prints its cause on one line. NOW has two halves, plans and tree, each independently a value or `WITHHELD`; NOW itself is `WITHHELD` only when both are. Render every other block normally.
 

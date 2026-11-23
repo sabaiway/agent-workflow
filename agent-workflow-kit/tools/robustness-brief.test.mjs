@@ -19,9 +19,9 @@ const write = (root, rel, body) => {
   return path;
 };
 const row = (id, path, responsibility, verb = 'modify') => verb === 'delete'
-  ? `${id} | delete | ${path} | ${responsibility} | — | —`
-  : `${id} | ${verb} | ${path} | ${responsibility} | n/a | docs/readme.md:1`;
-const planOf = (...rows) => planWith({ ledger: `${rows.join('\n')}\ntotal: 0 → 0 lines` });
+  ? `${id} | delete | ${path} | ${responsibility} | —`
+  : `${id} | ${verb} | ${path} | ${responsibility} | docs/readme.md:1`;
+const planOf = (...rows) => planWith({ ledger: rows.join('\n') });
 const run = (root, argv, deps = {}) => main(argv, { cwd: root, readList: () => LIST, ...deps });
 
 describe('robustness brief — rendering and exit contract', () => {
@@ -258,11 +258,6 @@ describe('robustness brief — rendering and exit contract', () => {
       assert.equal(plain.code, 1, `${plan}: ${plain.lines.join('\n')}`);
       assert.match(plain.lines.join('\n'), new RegExp(`\\b${rowId}\\b`, 'u'));
     }
-    write(root, 'plans/unknown-and-move.md', planOf(unknownRow, row('Rmove', 'src/move.mjs', 'move it', 'move')));
-    const malformed = run(root, ['--plan', 'plans/unknown-and-move.md', '--coverage'], { readRowFile });
-    assert.equal(malformed.code, 1, malformed.lines.join('\n'));
-    assert.match(malformed.lines.join('\n'), /\bRmove: row-grammar\b/u);
-
     write(root, 'src/real.mjs', 'EEXIST\n');
     write(root, 'src/sweep-over.mjs', 'x'.repeat(1024 * 1024 + 1));
     write(root, 'plans/sweep.md', planOf(row('Rsweep', 'src/sweep-*.mjs', 'ordinary row (2 files)')));
@@ -285,5 +280,26 @@ describe('robustness brief — rendering and exit contract', () => {
     const cliCovered = runCli();
     assert.equal(cliCovered.status, 0);
     assert.equal(cliCovered.stderr, '');
+
+    const malformedPath = 'plans/malformed.md';
+    write(root, malformedPath, planWith({ ledger: [
+      'Rbad | modify | src/bad.mjs | robust:no-such-class | docs/readme.md:1',
+      'Rmove | move | src/move.mjs | move it | docs/readme.md:1',
+      'Rold | modify | src/old.mjs | change it | n/a | docs/readme.md:1',
+      'total: 0 → 0 lines',
+    ].join('\n') }));
+    const cleanPath = 'plans/no-total.md';
+    write(root, cleanPath, planWith({ ledger: 'Rclean | modify | src/clean.mjs | robust:durable-write | docs/readme.md:1' }));
+    for (const flags of [[], ['--coverage']]) {
+      const malformed = run(root, ['--plan', malformedPath, ...flags], { readRowFile });
+      const output = malformed.lines.join('\n');
+      assert.equal(malformed.code, 1, output);
+      assert.match(output, /\bRmove: row-grammar\b/u);
+      assert.match(output, /\bretired-size-field: [^\n]*\bdrop\b/iu);
+      assert.match(output, /\bretired-total-line: [^\n]*\bdrop\b/iu);
+      assert.doesNotMatch(output, /: total: /u);
+      const clean = run(root, ['--plan', cleanPath, ...flags], { readRowFile });
+      assert.equal(clean.code, 0, clean.lines.join('\n'));
+    }
   });
 });

@@ -25,8 +25,9 @@ policy; malformed → STOP loudly, never guess; `/agent-workflow-kit set-autonom
 Slots: author, fold, review
 
 1. **Research** — the exact files, contracts and constraints touched.
-2. **Draft** — [`planning.md`](planning.md)'s *Module ledger* decides layout and budget before any
-   file exists; a size gate is only the backstop. Name governing specs in *Goal and boundary*
+2. **Draft** — [`planning.md`](planning.md)'s *Module ledger* decides layout before any implementation
+   code is written by naming the module, its exports and the tests beside it. Size is judged at the
+   diff, never in a plan. Name governing specs in *Goal and boundary*
    ([`specs.md`](specs.md)); new/revised contracts are `create` / `modify` rows. The resolved
    `author` carrier drafts — Solo: the orchestrator writes it; Subagent: the orchestrator writes a
    BRIEF (goal, governing specs, ledger constraints, files), the subagent drafts the plan and any
@@ -154,7 +155,8 @@ staged diff, so no row commits before the diff review.
    text; a repeat finding in one subarea routes to SUBTRACTION, not a fourth patch.
    When the repeat finding named by bar 2 is a second case against the same check bullet, the fold
    proposes the REPLACEMENT invariant — the closing clause — never an added case, and its consult asks for it.
-6. **Gates** — the project's verification gate to green.
+6. **Gates** — run the ledger check in *Verification* before the story's final gates, then run the
+   project's verification gate to green.
 7. **Commit boundary** — the orchestrator makes the single commit of the reviewed staged diff once the
    review closes (a release that ships several stories carries their diffs in its one commit); every
    other carrier never commits; the commit-approval policy lives in the project's own rules.

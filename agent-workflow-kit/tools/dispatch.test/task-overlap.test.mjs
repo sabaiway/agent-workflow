@@ -73,7 +73,7 @@ const writeBrief = (ws, brief, files) => {
     'Plan: docs/plans/fixture.md', 'Row: t1', 'Grouping: test', 'Files:',
     ...files.map((path) => `- ${path} :: test`), '',
     '## Reads', '- base.txt', '', '## Acceptance', '- node --test fixture.test.mjs :: green', '',
-    '## Negative cases', '- none', '', '## Budget', ...files.map((path) => `- ${path} :: 100`), '',
+    '## Negative cases', '- none', '',
   ].join('\n'));
 };
 const makeScenario = (filesA = ['src/a.mjs'], filesB = ['src/a.mjs']) => {

@@ -9,7 +9,7 @@ import { checkEpic } from './epic-shape.mjs';
 import { QUEUE_PATH, checkClaims, judgeClose, sweepSiblings } from './epic-shape-ledger.mjs';
 import { PLANS_REL, isScratchPlanName, plansInFlight, readPlanEntries } from './plan-files.mjs';
 import { readStoryLine } from './plan-shape-ownership.mjs';
-import { PLAN_HEADINGS, isSweep, parseLedger } from './plan-shape.mjs';
+import { PLAN_HEADINGS, RETIRED_FORM_CODES, checkPlanStructure, isSweep, parseLedger, unique } from './plan-shape.mjs';
 import { expandSweepPaths } from './plan-shape-facts.mjs';
 import { withRepository } from './checkpoint-core.mjs';
 import { escapeForDisplay, isRenderableLine, shellQuoteArg } from './repo-lex.mjs';
@@ -110,7 +110,19 @@ const readStore = (cwd) => {
     states: [...states, ...siblingStates.map((finding) => ({ finding }))] };
 };
 
-const planShape = (row, epicId) => `The shape: the title # Plan: and a name; the five headings; under Goal and boundary the line Story: ${row.id} of ${epicId} and a governing spec path under docs/ai/specs or the words not adopted; one ledger row per file in six fields (id, verb, path, responsibility, budget, anchor) — a create or modify row an anchor that resolves to one place and, with no declared source-size cap, the budget n/a, a delete row a dash (—) in budget and anchor; the total line last, its before figure the current lines of every deleted file and of every modify row with a numeric budget, so total: 0 → 0 lines when every row is a create or modify with the budget n/a; at least one - bullet under Verification.`;
+const planShape = (row, epicId) => `The shape: the title # Plan: and a name; the five headings; under Goal and boundary the line Story: ${row.id} of ${epicId} and a governing spec path under docs/ai/specs or the words not adopted; one ledger row per file in five fields (id, verb, path, responsibility, anchor) and no total line; a create or modify row an anchor that resolves to one place, a delete row a dash (—) in its anchor; at least one - bullet under Verification.`;
+
+const checkPlanPrerequisite = (text, parsed, rows, tools, path) => {
+  const retiredCodes = new Set(Object.values(RETIRED_FORM_CODES));
+  const retired = unique(checkPlanStructure(text, {}).findings.map(({ code }) => code).filter((code) => retiredCodes.has(code)));
+  if (rows.length > 0 && retired.length === 0) return null;
+  if (retired.length > 0) return state(READERS.ledger, path, `the Module ledger carries the old form: ${retired.join(', ')}`, tools.planCheck(path));
+  const ledger = parsed.document.headings.find(({ text }) => text === PLAN_HEADINGS[1]);
+  const verification = parsed.document.headings.find(({ text }) => text === PLAN_HEADINGS[2]);
+  const empty = ledger && verification && ledger.index < verification.index && parsed.entries.every(({ raw }) => !raw.trim());
+  const next = empty ? tools.planCheck(path, `add a ledger row to ${path}, then check the plan`) : tools.planCheck(path);
+  return state(READERS.ledger, path, 'the plan has no valid row in its Module ledger', next);
+};
 
 // The Story line is read under Goal and boundary alone, as plan-shape reads it.
 const storyOf = ({ document }) => {
@@ -132,7 +144,7 @@ const readPlan = (cwd, tools, path) => {
     const rows = parsed.rows.filter((row) => row.valid);
     const ledger = rows.filter((row) => !row.path.startsWith(DOCS_AI)).map((row) => ({ ...row, prompt: `${PROMPT_PREFIX}${stem}-${row.id}${MARKDOWN}` }));
     const title = linesOf(read.text).map((line) => PLAN_TITLE.exec(line)?.[1]).find(Boolean) ?? null;
-    return { path, story, hasRow: rows.length > 0, ledger, title, failure: null };
+    return { path, story, prerequisite: checkPlanPrerequisite(read.text, parsed, rows, tools, path), ledger, title, failure: null };
   } catch (error) {
     return refused(READERS.ledger, error.message);
   }
@@ -171,8 +183,8 @@ const judgeStory = (context, epicPath, epicId, row) => {
     return stateOf('S1', [tools.review(epicPath), action('write', `author the plan by hand at ${standIn}. ${planShape(row, epicId)}`)]);
   }
   const [plan] = own;
+  if (plan.prerequisite) return { state: plan.prerequisite };
   if (plan.shared) return {};
-  if (!plan.hasRow) return { state: state(READERS.ledger, plan.path, 'the plan has no valid row in its Module ledger', tools.planCheck(plan.path, `add a ledger row to ${plan.path}, then check the plan`)) };
   const prompts = plan.ledger.map((ledgerRow) => ({ row: ledgerRow, ...readText(cwd, ledgerRow.prompt) }));
   const refused = prompts.find((prompt) => prompt.text === undefined && !prompt.absent);
   if (refused) return { state: state(READERS.prompt, refused.row.prompt, refused.cause) };
@@ -223,7 +235,7 @@ const readIndex = (context, held) => {
 };
 
 const leftoverActions = (context, plans) => {
-  if (!context.index.ok || plans.some((plan) => plan.shared)) return [];
+  if (!context.index.ok || plans.some((plan) => plan.shared || plan.prerequisite)) return [];
   const removals = plans.map((plan) => {
     const prompts = plan.ledger.map((row) => row.prompt).filter((prompt) => isPresent(context.cwd, prompt));
     return action('write', `remove the plan ${plan.path} and its prompts (${prompts.length ? prompts.join(', ') : 'none on disk'}): the Cleanup of a landed story`);
@@ -252,12 +264,13 @@ const judgeEntry = (context, judged) => {
   if (!judged.accepted) return { entry: base, states: [] };
   const accepted = { ...base, residual: findSpans(path, judged.entry.text) };
   const leftover = judged.leftover.length ? leftoverActions(context, judged.leftover) : null;
-  if (epic.fields.state === LANDED) return { entry: { ...accepted, stage: 'E5', actions: leftover ?? [] }, states: [] };
+  const states = judged.leftover.map((plan) => plan.prerequisite).filter(Boolean);
+  if (epic.fields.state === LANDED) return { entry: { ...accepted, stage: 'E5', actions: leftover ?? [] }, states };
   const landed = new Set(epic.rows.filter((row) => row.state === LANDED).map((row) => row.id));
   const inHand = epic.rows.filter((row) => row.state !== LANDED && row.dependsOn.every((dependency) => landed.has(dependency)));
-  if (inHand.length === 0) return { entry: { ...accepted, stage: 'E4', actions: leftover ?? (context.index === null ? closeActions(context, judged) : []) }, states: [] };
+  if (inHand.length === 0) return { entry: { ...accepted, stage: 'E4', actions: leftover ?? (context.index === null ? closeActions(context, judged) : []) }, states };
   const held = { ...accepted, stage: 'E3', fact: tools.epicCheck(path, 'fact'), actions: leftover ?? [] };
-  if (context.index !== null) return { entry: held, states: [] };
+  if (context.index !== null) return { entry: held, states };
   const stories = inHand.map((row) => judgeStory(context, path, id, row));
   return { entry: { ...held, stories: stories.filter((story) => story.story).map((story) => story.story) },
     states: stories.filter((story) => story.state).map((story) => story.state) };

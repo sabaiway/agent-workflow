@@ -19,7 +19,7 @@ export const PLAN = 'docs/plans/greet.md';
 export const MODULE = 'src/greet.mjs';
 export const CONFIG = 'docs/ai/orchestration.json';
 export const QUEUE = 'docs/plans/queue.md';
-export const MODULE_ROW = 'M1 | modify | src/greet.mjs | Greet the reader by name | n/a | src/greet.mjs:1';
+export const MODULE_ROW = 'M1 | modify | src/greet.mjs | Greet the reader by name | src/greet.mjs:1';
 // The row's prompt at its canonical name, docs/plans/EXECUTE-PROMPT-<plan stem>-<row id>.md (tier-guide, guide-stages).
 export const PROMPT = 'docs/plans/EXECUTE-PROMPT-greet-M1.md';
 // The plan's one Verification bullet: the walk's plan governs no spec, so it is the prompt's scenario line.
@@ -45,7 +45,7 @@ export const snapshotTree = (root, relative = '') => Object.fromEntries(
 export const renderPlan = ({ story = 'Story: S1 of WALK-EPIC', row = MODULE_ROW, next = '- None.' } = {}) => renderLines([
   '# Plan: Greet the reader', '', '## Goal and boundary', story,
   'Outcome: greet the reader by name. Governing spec: not adopted. Non-goals: unrelated files.', '',
-  '## Module ledger', row, 'total: 0 → 0 lines', '', '## Verification',
+  '## Module ledger', row, '', '## Verification',
   `- ${VERIFICATION}`, '', '## Phase: Cleanup',
   '- Preserve the results and remove the temporary plan.', '', '## Next steps', next,
 ]);

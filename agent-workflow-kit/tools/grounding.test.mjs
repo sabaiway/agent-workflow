@@ -35,8 +35,7 @@ const PLAN_MD = [
   '',
   '## Module ledger',
   '',
-  'c1 | create | src/a.mjs | exports a() | 200 | src/b.mjs:b',
-  'total: 10 → 12 lines',
+  'c1 | create | src/a.mjs | exports a() | src/b.mjs:b',
   '',
   '## Verification',
   '',
@@ -101,7 +100,7 @@ describe('grounding --plan — the canon heading policy', () => {
     assert.match(r.stdout, /^## Goal and boundary\n/m);
     assert.match(r.stdout, /Non-goals: X, Y\./, 'the non-goals ride inside Goal and boundary');
     assert.match(r.stdout, /^## Module ledger\n/m);
-    assert.match(r.stdout, /total: 10 → 12 lines/, 'the ledger total line rides inside the ledger');
+    assert.match(r.stdout, /^c1 \| create \| src\/a\.mjs \| exports a\(\) \| src\/b\.mjs:b$/m, 'the ledger row rides inside the ledger');
     assert.match(r.stdout, /^## Verification\n/m);
     assert.match(r.stdout, /gates green/);
     assert.doesNotMatch(r.stdout, /## Phase: Cleanup/, 'Cleanup is procedure, not decision-bearing — not extracted');

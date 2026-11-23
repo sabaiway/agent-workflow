@@ -70,7 +70,7 @@ const writeBrief = (ws, brief, files) => {
     `Plan: ${PLAN}`, 'Row: t1', 'Grouping: test', 'Files:',
     ...files.map((path) => `- ${path} :: test`), '',
     '## Reads', '- base.txt', '', '## Acceptance', '- node --test fixture.test.mjs :: green', '',
-    '## Negative cases', '- none', '', '## Budget', ...files.map((path) => `- ${path} :: 100`), '',
+    '## Negative cases', '- none', '',
   ].join('\n'));
 };
 const snapshot = (ws) => {

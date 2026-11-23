@@ -58,25 +58,24 @@ const READ_BYTES = '# Synthetic contract\n';
 const CHANGED_READ = '# Revised contract\n';
 const FILES = [[TEST, 'test'], [MODULE, 'impl']];
 const TAGS = ['test', 'impl', 'pin'];
-const SECTIONS = ['title', 'slice', 'reads', 'acceptance', 'negative', 'budget'];
+const SECTIONS = ['title', 'slice', 'reads', 'acceptance', 'negative'];
 const INFO = 'aw-task-binding';
 const BINDING_RE = /^`{3,}[ \t]*aw-task-binding[ \t]*\r?\n([\s\S]*?)^`{3,}[ \t]*(?:\r?\n|$)/gm;
 const EXPORTS = ['main', 'parseBrief', 'stampBrief', 'checkBrief'];
 const PREFIX = 'refs/agent-workflow/checkpoints/';
 const LEDGER = [
-  `M1 | modify | ${MODULE} | Revise the widget | ${BUDGET} | ${ANCHOR}:1`,
-  `T1 | modify | ${TEST} | Cover the widget | ${BUDGET} | ${TEST}:1`,
-  `T2 | modify | ${NESTED_TEST} | Cover nested cases | ${BUDGET} | ${NESTED_TEST}:1`,
-  `P1 | modify | ${PIN} | Pin package contents | ${BUDGET} | ${PIN}:1`,
-  `W1 | modify | ${SWEEP} | Revise sweep members | ${BUDGET} | ${ANCHOR}:1`,
+  `M1 | modify | ${MODULE} | Revise the widget | ${ANCHOR}:1`,
+  `T1 | modify | ${TEST} | Cover the widget | ${TEST}:1`,
+  `T2 | modify | ${NESTED_TEST} | Cover nested cases | ${NESTED_TEST}:1`,
+  `P1 | modify | ${PIN} | Pin package contents | ${PIN}:1`,
+  `W1 | modify | ${SWEEP} | Revise sweep members | ${ANCHOR}:1`,
 ];
 const SHAPE_CELLS = [
   ['missing Reads section', { omit: 'reads' }],
   ['doubled Reads section', { duplicate: 'reads' }],
-  ['Acceptance before Reads', { order: ['title', 'slice', 'acceptance', 'reads', 'negative', 'budget'] }],
+  ['Acceptance before Reads', { order: ['title', 'slice', 'acceptance', 'reads', 'negative'] }],
   ['Files line without separator', { fileLines: [`- ${TEST} test`, `- ${MODULE} :: impl`] }],
   ['empty Files list', { files: [], grouping: 'test, impl' }],
-  ['Budget paths differ from Files', { budget: [`- ${OTHER} :: ${BUDGET}`] }],
   ['empty Negative cases section', { negative: [] }],
   ['empty Acceptance section', { acceptance: [] }],
 ];
@@ -96,7 +95,7 @@ const USAGE_CELLS = [[], ['unknown'], ['stamp'], ['check'], ['stamp', BRIEF, 'ex
 const renderPlan = (story = STORY) => [
   '# Plan: Synthetic widget revision', '## Goal and boundary', story,
   'Outcome: revise the widget. Governing spec: not adopted. Non-goals: unrelated files.',
-  '## Module ledger', ...LEDGER, 'total: 6 → 600 lines',
+  '## Module ledger', ...LEDGER,
   '## Verification', `- node --check ${MODULE} exits 0.`, '## Phase: Cleanup',
   '- Preserve the results and remove the temporary plan.', '## Next steps', '- None.',
 ].join('\n\n') + '\n';
@@ -111,7 +110,6 @@ const renderBrief = (overrides = {}) => {
     reads: ['## Reads', ...data.reads.map((path) => `- ${path}`)],
     acceptance: ['## Acceptance', ...data.acceptance.map((line) => `- ${line}`)],
     negative: ['## Negative cases', ...data.negative.map((line) => `- ${line}`)],
-    budget: ['## Budget', ...(data.budget ?? data.files.map(([path]) => `- ${path} :: ${BUDGET}`))],
   };
   return (data.order ?? SECTIONS).filter((key) => key !== data.omit)
     .flatMap((key) => Array.from({ length: data.duplicate === key ? 2 : 1 }, () => sections[key].join('\n'))).join('\n\n') + '\n';
@@ -242,6 +240,19 @@ describe('brief grammar — spec:checkpoint/S7', () => {
   });
   for (const [name, overrides] of SHAPE_CELLS) it(`refuses shape: ${name}`, () => {
     const ws = makeRepo({ brief: renderBrief(overrides) }); refuse(ws, 'check', 'shape');
+  });
+  it('parses the four-heading brief without budgets', () => {
+    const parsed = loaded.parseBrief(renderBrief({ omit: 'budget' }));
+    assert.equal(parsed.ok, true, parsed.reason);
+    assert.deepEqual(parsed.body.match(/^## .+$/gmu), ['## Slice', '## Reads', '## Acceptance', '## Negative cases']);
+    assert.equal(Object.hasOwn(parsed, 'budgets'), false);
+  });
+  it('refuses an old-form ledger row as row before judging the grouping', () => {
+    const ws = makeRepo({ brief: renderBrief({ files: [[OTHER_TEST, 'test'], [MODULE, 'impl']], grouping: 'impl, test' }) });
+    const oldRow = `M1 | modify | ${MODULE} | Revise the widget | ${BUDGET} | ${ANCHOR}:1`;
+    assert.match(refuse(ws, 'check', 'grouping').stderr, /^grouping: \S/u);
+    put(ws, PLAN, renderPlan().replace(/^M1 \|.*$/mu, () => oldRow));
+    for (const verb of ['stamp', 'check']) assert.match(refuse(ws, verb, 'row').stderr, /^row: \S/u);
   });
 });
 

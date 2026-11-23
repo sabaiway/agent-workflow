@@ -24,7 +24,7 @@ const factsFor = (stories = [{ owns: SOURCE }], extra = {}) => ({
   stories: listStories([makeEpic(stories)]), landedEpics: [], storeRefusal: null, pathFacts: {}, ...extra,
 });
 const makeRow = (path = SOURCE, verb = 'modify', id = 'R1') =>
-  `${id} | ${verb} | ${path} | Keep the boundary | ${verb === 'delete' ? '\u2014 | \u2014' : '100 | docs/readme.md:1'}`;
+  `${id} | ${verb} | ${path} | Keep the boundary | ${verb === 'delete' ? '\u2014' : 'docs/readme.md:1'}`;
 const loadRules = async () => {
   const rules = await import('./plan-shape-ownership.mjs').catch((error) => {
     assert.equal(error.code, 'ERR_MODULE_NOT_FOUND');
@@ -111,7 +111,7 @@ it('spec:plan-shape-ownership/S6 requires own cover only for paths in the declar
 });
 
 it('spec:plan-shape-ownership/S7 keeps collisions without a practice and admits out-of-extension ground', async () => {
-  const noPractice = { capDeclared: false, pathFacts: { [SOURCE]: { inScope: false } } };
+  const noPractice = { pathFacts: { [SOURCE]: { inScope: false } } };
   assert.deepEqual(codes(await judge(factsFor([{}], noPractice))), []);
   assert.deepEqual(codes(await judge(factsFor([{}, { owns: SOURCE }], noPractice))), ['story-owns']);
   assert.deepEqual(codes(await judge(factsFor([{}], { capDeclared: true, pathFacts: { 'data.json': { inScope: false } } }), STORY, makeRow('data.json'))), []);

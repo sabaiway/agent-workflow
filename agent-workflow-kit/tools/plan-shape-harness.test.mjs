@@ -14,13 +14,13 @@ export const write = (root, path, content = '') => {
   writeFileSync(join(root, path), content);
 };
 export const writeJson = (root, path, value) => write(root, path, `${JSON.stringify(value, null, 2)}\n`);
-
-export const DEFAULT_ROW = 'R1 | modify | docs/readme.md | keep the document current | n/a | docs/readme.md:1';
-export const ledgerOf = (row, total = 'total: 0 → 0 lines') => `${row}\n${total}`;
+export const DEFAULT_ROW = 'R1 | modify | docs/readme.md | keep the document current | docs/readme.md:1';
+export const LEGACY_ROW = 'R1 | modify | docs/readme.md | keep the document current | n/a | docs/readme.md:1';
+export const ledgerOf = (rows) => rows;
 export const planWith = ({
   title = '# Plan: example',
   goal = '- Spec: docs/ai/specs/example.md',
-  ledger = ledgerOf(DEFAULT_ROW),
+  ledger = DEFAULT_ROW,
   verification = '- `node --test` exits 0',
   phases = '',
 } = {}) => `${title}

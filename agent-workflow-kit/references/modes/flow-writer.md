@@ -28,7 +28,15 @@ Run **`node ${CLAUDE_SKILL_DIR}/tools/flow-writer.mjs <arm> …`** — the arm s
 
 `round-open` mints the round record BEFORE any backend runs — per `--backend` a fresh nonce + receipts watermark; stdout prints one `dispatch backend=<b> nonce=<n> watermark=<w>` line per dispatch (pass the nonce as `--nonce <n>` on the wrapper invocation — the plain-argument lane onto the `AW_REVIEW_NONCE` seam; hand the pair to `receipt-deadline`).
 
-Every round after the first requires an authoritative walk-carrying attestation at the preceding round's `{planId, cycle, stepId, round}` and the CURRENT tree's `{base, fingerprint}` when the adopted plan has a judgeable ledger row; `--justification` may lift that absence as an echoed input, and the ABSENCE of the attestation is its durable trail. At `cap reached` or `crossover`, every blocking item from the latest head's landed receipts must be covered by equal item digest: uncovered items print verbatim, enumeration failure is an advisory plus the existing disposition floor, and a lost manifest is covered only by `custody-lost`; this cap refusal is never lifted by `--justification`.
+An adopted plan owes a walk when its structural judgment finds a valid row or `retired-size-field`.
+For such a plan every round after the first requires an authoritative walk-carrying attestation at
+the preceding round's `{planId, cycle, stepId, round}` and the CURRENT tree's `{base, fingerprint}`.
+The missing-walk refusal names `retired-size-field` when present. `--walk` names the blocking
+structural codes when it refuses the plan. `--justification` may lift a missing walk as an echoed
+input, and the absence of the attestation is its durable trail. At `cap reached` or `crossover`, every
+blocking item from the latest head's landed receipts must be covered by equal item digest: uncovered
+items print verbatim, enumeration failure is an advisory plus the existing disposition floor, and a
+lost manifest is covered only by `custody-lost`; this cap refusal is never lifted by `--justification`.
 
 Both lock-free and locked `round-open` checks run cap → walk → completeness floor. Boundary invocations need `--step`; `--new-cycle` opens the next cycle; a fingerprint move opens a new round.
 
@@ -40,7 +48,7 @@ For `round-land`, exactly one fresh code-artifact non-probe line of the dispatch
 
 Operand shapes: a positional operand may follow a literal `--` and a value flag accepts `--flag=<value>` — the lanes a leading-dash id or value rides; the checker's printed recoveries compose exactly these shapes. Every arm computes its **tree context** (owner, base, fingerprint; cycle/round from the chain walk) — you never hand-supply tree identity. Chain arms **refuse a foreign worktree's chain** (#57): move a chain only from the worktree that adopted it.
 
-**Round-machinery caps (enforced at the arms; the store owns transition legality):** HARD_MAX **3 rounds per {cycle, step}** and **1 post-freeze unfreeze per cycle**. The walk obligation holds when the adopted plan's ledger parses with at least one valid row; a plan with no judgeable row owes no walk. Both lock-free and locked round-open checks run cap → walk → completeness floor. The justification predicate is `overCap || walkRefusalFired`: a non-empty justification lifts only a design-cap or missing-walk refusal and is echoed; an in-cap invocation with its walk satisfied refuses it as usage. The blocking-item cap is independent and never lifted. A `custody-lost` entry is recordable whenever the carrier loss is real. One-way door: records carrying `walk`, the queued proof trio, `escalated`, or `custody-lost` require kit >= 11 to read; pre-rung records remain valid.
+**Round-machinery caps (enforced at the arms; the store owns transition legality):** HARD_MAX **3 rounds per {cycle, step}** and **1 post-freeze unfreeze per cycle**. The justification predicate is `overCap || walkRefusalFired`: a non-empty justification lifts only a design-cap or missing-walk refusal and is echoed; an in-cap invocation with its walk satisfied refuses it as usage. The blocking-item cap is independent and never lifted. A `custody-lost` entry is recordable whenever the carrier loss is real. One-way door: records carrying `walk`, the queued proof trio, `escalated`, or `custody-lost` require kit >= 11 to read; pre-rung records remain valid.
 
 **Exit codes:** `0` success (incl. the `write-plan-id` idempotent no-op); `2` usage; `1` refusal (a store STOP verbatim, a derivation failure, or the missing checkpoint flag).
 

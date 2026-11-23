@@ -38,11 +38,10 @@ const FENCE_RE = /^(`{3,})(.*)$/;
 const TITLE_RE = /^# Task: (\S.*)$/;
 const HEADING_RE = /^#{1,2} /;
 const STORY_PREFIX = 'Story:';
-const HEADINGS = ['## Slice', '## Reads', '## Acceptance', '## Negative cases', '## Budget'];
+const HEADINGS = ['## Slice', '## Reads', '## Acceptance', '## Negative cases'];
 const SLICE_FIELDS = [new RegExp(`^Plan: (${escapeRegExp(PLANS)}\\/[^/]+\\.md)$`), /^Row: (\S+)$/, /^Grouping: (.*)$/, /^Files:$/];
 const PAIR_RE = /^- (\S(?:.*\S)?) :: (\S(?:.*\S)?)$/;
 const BULLET_RE = /^- (\S.*)$/;
-const INTEGER_RE = /^[1-9]\d*$/;
 const TEST_RE = /(?:^|\/)[^/]+\.test(?:\.mjs$|\/[^/].*$)/;
 const EXTENSION_RE = /\.[^/.]+$/;
 const TEST_SUFFIX = '.test.mjs';
@@ -137,22 +136,16 @@ export const parseBrief = (text) => {
     checkMembers(found, HEADINGS, 'heading');
     if (HEADINGS.some((text, index) => found[index] !== text)) reject(NAMES.shape, `headings out of order: ${found.join(', ')}`);
     const sections = HEADINGS.map((heading, index) => lines.slice(headings[index + ONE].index + ONE, headings[index + BASIC_ARGS]?.index ?? lines.length));
-    const [slice, reads, acceptance, negative, budget] = sections;
+    const [slice, reads, acceptance, negative] = sections;
     const [[planPath], [rowId], [grouping]] = SLICE_FIELDS.map((pattern, index) => checkSliceField(pattern, slice[index], index));
     const files = slice.slice(SLICE_FIELDS.length).map((line) => {
       const [path, tag] = matchLine(PAIR_RE, line, 'a Files: line is not "- <path> :: <tag>"');
       return { path, tag };
     });
-    const budgets = budget.map((line) => {
-      const [path, count] = matchLine(PAIR_RE, line, 'a ## Budget line is not "- <path> :: <lines>"');
-      if (!INTEGER_RE.test(count) || !Number.isSafeInteger(Number(count))) reject(NAMES.shape, `a ## Budget count is not a positive integer: ${line}`);
-      return { path, maxLines: Number(count) };
-    });
     if (files.length === START) reject(NAMES.shape, 'Files: lists no path');
-    checkMembers(budgets.map(({ path }) => path), [...new Set(files.map(({ path }) => path))], '## Budget path');
     if (acceptance.length === START) reject(NAMES.shape, '## Acceptance lists no line');
     if (negative.length === START) reject(NAMES.shape, '## Negative cases lists no line');
-    return { ok: true, title, storyLines, planPath, rowId, grouping, files, budgets,
+    return { ok: true, title, storyLines, planPath, rowId, grouping, files,
       reads: reads.map((line) => matchLine(BULLET_RE, line, 'a ## Reads line is not a bullet')[START]),
       acceptance: acceptance.map((line) => matchLine(PAIR_RE, line, 'an ## Acceptance line is not "- <command> :: <outcome>"')),
       negative: negative.map((line) => matchLine(BULLET_RE, line, 'a ## Negative cases line is not a bullet')[START]),
@@ -179,12 +172,11 @@ const checkGrouping = (brief, row) => {
   const expected = TAGS.filter((tag) => brief.files.some((file) => file.tag === tag)).join(GROUP_SEPARATOR);
   if (brief.grouping !== expected) reject(NAMES.grouping, `Grouping: ${brief.grouping} differs from the Files tags ${expected}`);
   const pins = brief.files.filter(({ tag }) => tag === PIN);
-  if (row && posix.basename(row.path) === PIN_FILE) {
+  if (posix.basename(row.path) === PIN_FILE) {
     if (pins.length !== ONE || pins[START].path !== row.path) reject(NAMES.grouping, `a pin row tags only its own path ${row.path} pin`);
   } else if (pins.length !== START) reject(NAMES.grouping, `the pin tag belongs to a ${PIN_FILE} row only`);
 };
 const checkRow = (context, brief, row) => {
-  if (!row?.valid) reject(NAMES.row, brief.rowId);
   const files = brief.files.map((file) => {
     const path = posix.normalize(file.path);
     if (path !== file.path || path === CURRENT || path.startsWith(PARENT) || posix.isAbsolute(path)) reject(NAMES.row, file.path);
@@ -212,6 +204,7 @@ const readGrammar = (context, briefPath) => {
   const plan = readInside(context, brief.planPath);
   const ledger = parseLedger(plan.bytes.toString(UTF8));
   const row = ledger.rows.find(({ id }) => id === brief.rowId);
+  if (!row?.valid) reject(NAMES.row, brief.rowId);
   checkGrouping(brief, row);
   checkRow(context, brief, row);
   const goal = ledger.document.headings.find(({ text }) => text === PLAN_HEADINGS[START]);

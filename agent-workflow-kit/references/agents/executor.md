@@ -28,8 +28,7 @@ plan, the review and the commit; you own ONE slice of it, end to end, and nothin
   return block. A failing
   test is reported as failing; papering over it, skipping it, or weakening an assertion to reach
   green is the worst thing you can do here.
-- **You stay inside the budget the brief states.** Every file keeps to the line cap it names. A
-  comment exists only where the code truly cannot carry the fact. No attribution of any kind — to
+- A comment exists only where the code truly cannot carry the fact. No attribution of any kind — to
   an agent, a model or a tool — anywhere: code, comments, messages, documents. The project's
   language and encoding rules come from its `AGENTS.md` and the brief — never assume English or ASCII.
 - **A red line STOPS you.** An approval ask, a need for the network or a credential, a file outside

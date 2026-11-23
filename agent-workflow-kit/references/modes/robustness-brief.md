@@ -16,7 +16,7 @@ under the realpath of the cwd (the project root the advisor renders the command 
 asked): an absolute path outside, a `..` traversal out of it, a symlink leading out, a non-regular file and
 an over-cap plan each refuse **exit 2** by name — the generator PRINTS row text, so unlike
 plan-shape-cli's unbounded no-follow read it is bounded. The plan is judged on every rule of plan-shape's structural half (headings, section caps,
-row grammar, ids, bytes, lexical containment, sweep form, duplicate paths, the total line, the
+row grammar with the old form refused by name, ids, bytes, lexical containment, sweep form, duplicate paths, amendments, the
 acceptance and governing-spec presence rules and the robust-tag rule, which is structural) over facts
 holding only the list's class ids (`{ robustClasses }`); the facts-bound half — realpath containment
 and sweep expansion — stays `plan-shape --check`'s. A plan

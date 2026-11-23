@@ -9,13 +9,12 @@ const makeRow = (overrides = {}) => {
     verb: 'create',
     path: 'src/new.mjs',
     responsibility: 'Build the reader.',
-    budgetLines: 40,
     ...overrides,
   };
-  return { ...row, raw: overrides.raw ?? `${row.id} | ${row.verb} | ${row.path} | ${row.responsibility} | 40 | src/anchor.mjs:1` };
+  return { ...row, raw: overrides.raw ?? `${row.id} | ${row.verb} | ${row.path} | ${row.responsibility} | ${row.verb === 'delete' ? '—' : 'src/anchor.mjs:1'}` };
 };
 const makeEvidence = (overrides = {}) => ({
-  pathFact: { kind: 'absent', lines: 0 },
+  pathFact: { kind: 'absent' },
   staged: false,
   unstaged: false,
   untracked: false,
@@ -31,10 +30,9 @@ const makePlan = () => parseLedger([
   '',
   '## Module ledger',
   '',
-  'n01 | create | src/a.mjs | Add A | 40 | src/base.mjs:1',
-  'n02 | modify | src/b.mjs | Change B | 40 | src/base.mjs:1',
-  'n03 | delete | src/c.mjs | Remove C | — | —',
-  'total: 3 → 3 lines',
+  'n01 | create | src/a.mjs | Add A | src/base.mjs:1',
+  'n02 | modify | src/b.mjs | Change B | src/base.mjs:1',
+  'n03 | delete | src/c.mjs | Remove C | —',
   '',
   '## Verification',
   '',
@@ -56,26 +54,30 @@ const makePlan = () => parseLedger([
 ].join('\n'));
 
 describe('now status rules', () => {
-  // spec:now/S1
-  it('holds status to path, verb and evidence while a contradicted checked claim stays an annotation', async () => {
+  it('holds status to path, verb and evidence while a contradicted checked claim stays an annotation (spec:now/S1)', async () => {
     const { NOW_STATUS, NOW_ANNOTATION, judgeRow } = await loadStatus();
     assert.equal(typeof judgeRow, 'function');
     assert.deepEqual(Object.values(NOW_STATUS), ['landed', 'in progress', 'pending', 'unjudged']);
-    assert.deepEqual(Object.values(NOW_ANNOTATION), ['claim', 'anomaly', 'red-proof']);
+    const path = 'src/new.mjs';
+    const makeStatusRow = (verb, responsibility) => ({ id: 'n01', verb, path, responsibility,
+      raw: `n01 | ${verb} | ${path} | ${responsibility} | src/anchor.mjs:1` });
+    const regular = { kind: 'regular' };
+    const absent = { kind: 'absent' };
     const cases = [
-      [makeRow(), makeEvidence({ pathFact: { kind: 'regular', lines: 20 } }), 'landed'],
-      [makeRow({ verb: 'modify' }), makeEvidence({ pathFact: { kind: 'regular', lines: 20 }, staged: true }), 'in progress'],
-      [makeRow(), makeEvidence(), 'pending'],
-      [makeRow({ verb: 'modify' }), makeEvidence({ pathFact: { kind: 'regular', lines: 20 } }), 'unjudged'],
+      ['create', makeEvidence({ pathFact: regular }), 'landed'],
+      ['modify', makeEvidence({ pathFact: regular, staged: true }), 'in progress'],
+      ['create', makeEvidence({ pathFact: absent }), 'pending'],
+      ['modify', makeEvidence({ pathFact: regular }), 'unjudged'],
     ];
-    for (const [row, evidence, expected] of cases) {
-      const edited = makeRow({ id: row.id, verb: row.verb, path: row.path, budgetLines: row.budgetLines, responsibility: 'Rewrite every responsibility word.' });
-      assert.deepEqual([judgeRow(row, evidence).status, judgeRow(edited, evidence).status], [expected, expected]);
+    for (const [verb, evidence, expected] of cases) {
+      const rows = ['Build the reader.', 'Rewrite every responsibility word.'].map((responsibility) => makeStatusRow(verb, responsibility));
+      assert.deepEqual(rows.map((row) => judgeRow(row, evidence).status), [expected, expected]);
     }
-    const claimed = judgeRow(makeRow({ responsibility: '[x] Declared complete.' }), makeEvidence());
+    const claimed = judgeRow(makeStatusRow('create', '[x] Declared complete.'), makeEvidence({ pathFact: absent }));
     assert.equal(claimed.status, 'pending');
     assert.equal(claimed.evidenceSource, 'path fact');
     assert.deepEqual(claimed.annotations, [{ kind: 'claim', text: 'claimed done' }]);
+    assert.deepEqual(Object.values(NOW_ANNOTATION), ['claim', 'red-proof']);
   });
 
   // spec:now/S2
@@ -86,7 +88,7 @@ describe('now status rules', () => {
     const row = makeRow({ verb: 'modify', responsibility, path: 'src/parser.mjs' });
     assert.equal(readProseClaim(row.raw), null);
     assert.equal(readProseClaim(makeRow({ responsibility: 'DONE 2026-01-01 — complete.' }).raw), 'done');
-    const judged = judgeRow(row, makeEvidence({ pathFact: { kind: 'regular', lines: 20 }, unstaged: true }));
+    const judged = judgeRow(row, makeEvidence({ pathFact: { kind: 'regular' }, unstaged: true }));
     assert.equal(judged.status, 'in progress');
     assert.deepEqual(judged.annotations, []);
   });
@@ -104,13 +106,13 @@ describe('now status rules', () => {
       ['delete', 'absent', 'landed'],
     ];
     for (const [verb, kind, expected] of cells) {
-      const judged = judgeRow(makeRow({ verb }), makeEvidence({ pathFact: { kind, lines: 20 } }));
+      const judged = judgeRow(makeRow({ verb }), makeEvidence({ pathFact: { kind } }));
       assert.equal(judged.status, expected, `${verb}/${kind}`);
     }
-    const both = judgeRow(makeRow({ verb: 'modify' }), makeEvidence({ pathFact: { kind: 'regular', lines: 20 }, staged: true, unstaged: true }));
+    const both = judgeRow(makeRow({ verb: 'modify' }), makeEvidence({ pathFact: { kind: 'regular' }, staged: true, unstaged: true }));
     assert.equal(both.status, 'in progress');
     assert.equal(both.detail, 'staged, unstaged');
-    const editedTest = judgeRow(makeRow({ verb: 'create', path: 'src/new.test.mjs' }), makeEvidence({ pathFact: { kind: 'regular', lines: 20 }, unstaged: true }));
+    const editedTest = judgeRow(makeRow({ verb: 'create', path: 'src/new.test.mjs' }), makeEvidence({ pathFact: { kind: 'regular' }, unstaged: true }));
     assert.equal(editedTest.status, 'in progress');
     assert.equal(editedTest.evidenceSource, 'changed set');
     const sweep = judgeRow(makeRow({ verb: 'modify', path: 'src/**' }), makeEvidence({ pathFact: { kind: 'sweep', members: 3 } }));
@@ -131,7 +133,7 @@ describe('now status rules', () => {
       [false, 'no base-motion reader'],
     ];
     for (const [excluded, detail] of cases) {
-      const judged = judgeRow(row, makeEvidence({ pathFact: { kind: 'regular', lines: 20 }, excluded }));
+      const judged = judgeRow(row, makeEvidence({ pathFact: { kind: 'regular' }, excluded }));
       assert.equal(judged.status, 'unjudged');
       assert.notEqual(judged.status, 'landed');
       assert.equal(judged.detail, detail);

@@ -13,6 +13,7 @@ import { computeTreeFingerprint, resolveBase, RECEIPTS_BASENAME, EVIDENCE_BASENA
 import { runFlowCheck } from './flow-check.mjs';
 import { planWith } from './plan-shape-harness.test.mjs';
 import { readShippedRobustnessLiterals } from './robustness-literals.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const WRITER_TOOL = fileURLToPath(new URL('./flow-writer.mjs', import.meta.url));
@@ -21,7 +22,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-flow-writer-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8', env });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -848,7 +851,7 @@ describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
       const root = makeRepo();
       mkdirSync(join(root, 'src'), { recursive: true });
       writeFileSync(join(root, 'src', 'walk.mjs'), 'ENOENT\n');
-      const rel = adopt(root, 'plan-a', planWith({ ledger: 'R1 | modify | src/walk.mjs | robust:spawn-outcome | n/a | src/walk.mjs:1\ntotal: 0 → 0 lines' }));
+      const rel = adopt(root, 'plan-a', planWith({ ledger: 'R1 | modify | src/walk.mjs | robust:spawn-outcome | src/walk.mjs:1' }));
       openAndLandRound(root);
       return { root, rel, plan: readFileSync(join(root, rel)) };
     };
@@ -882,7 +885,7 @@ describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
     const invalid = makeRepo();
     mkdirSync(join(invalid, 'src'), { recursive: true });
     writeFileSync(join(invalid, 'src', 'walk.mjs'), 'ENOENT\n');
-    adopt(invalid, 'plan-a', planWith({ ledger: 'R1 | modify | src/walk.mjs | robust:no-such-class | n/a | src/walk.mjs:1\ntotal: 0 → 0 lines' }));
+    adopt(invalid, 'plan-a', planWith({ ledger: 'R1 | modify | src/walk.mjs | robust:no-such-class | src/walk.mjs:1' }));
     openAndLandRound(invalid);
     writeFileSync(join(invalid, '.git', 'aw-walk.json'), '{}');
     const badTag = run(invalid, ['internal-attestation', 'plan-a', '--lens', 'correctness', '--model', 'm', '--authority', 'a', '--walk', 'aw-walk.json']);
@@ -890,14 +893,14 @@ describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
     const controlled = makeRepo();
     const controlPath = 'src/control\u0001.mjs';
     mkdirSync(join(controlled, controlPath), { recursive: true });
-    adopt(controlled, 'plan-a', planWith({ ledger: `R1 | modify | ${controlPath} | robust:spawn-outcome | n/a | src/control.mjs:1\ntotal: 0 → 0 lines` }));
+    adopt(controlled, 'plan-a', planWith({ ledger: `R1 | modify | ${controlPath} | robust:spawn-outcome | src/control.mjs:1` }));
     openAndLandRound(controlled);
     writeFileSync(join(controlled, '.git', 'aw-walk.json'), '{}');
     const controlRefusal = run(controlled, ['internal-attestation', 'plan-a', '--lens', 'correctness', '--model', 'm', '--authority', 'a', '--walk', 'aw-walk.json']);
     assert.match(controlRefusal.stderr, /src\/control\\u0001\.mjs.*non-regular directory/u);
     assert.doesNotMatch(controlRefusal.stderr, /\u0001/u);
     const documents = makeRepo();
-    adopt(documents, 'plan-a', planWith({ ledger: 'R1 | modify | docs/[a*.md | update (1 files) | n/a | docs/readme.md:1\ntotal: 0 → 0 lines' }));
+    adopt(documents, 'plan-a', planWith({ ledger: 'R1 | modify | docs/[a*.md | update (1 files) | docs/readme.md:1' }));
     openAndLandRound(documents);
     writeFileSync(join(documents, '.git', 'aw-walk.json'), JSON.stringify({ listVersion: readShippedRobustnessLiterals().version, rows: [] }));
     const ignoredDocument = run(documents, ['internal-attestation', 'plan-a', '--lens', 'correctness', '--model', 'm', '--authority', 'a', '--walk', 'aw-walk.json']);
@@ -909,6 +912,77 @@ describe('flow-writer — round-open (the pre-dispatch half, #41)', () => {
     const racedOpen = main(['round-open', 'plan-a', '--backend', 'codex', '--justification', 'walk raced'], { cwd: raced.root, env: {}, now, storeDeps });
     assert.equal(racedOpen.code, 2);
     assert.match(racedOpen.stderr, /rides only an over-cap mint or a missing-walk lift/);
+  });
+
+  it('spec:plan-review-loop/S42 retired size fields require a walk lift, valid rows require a walk, and adoption binds the original bytes', () => {
+    const sourcePath = 'src/walk.mjs';
+    const rowPrefix = `R1 | modify | ${sourcePath} | robust:spawn-outcome`;
+    const fiveFieldRow = `${rowPrefix} | ${sourcePath}:1`;
+    const sixFieldRow = `${rowPrefix} | n/a | ${sourcePath}:1`;
+    const setup = (ledger) => {
+      const root = makeRepo();
+      mkdirSync(join(root, 'src'), { recursive: true });
+      writeFileSync(join(root, sourcePath), 'ENOENT\n');
+      const path = join(root, adopt(root, 'plan-a', planWith({ ledger })));
+      return { root, path, head: openAndLandRound(root) };
+    };
+    const openNextRound = ['round-open', 'plan-a', '--backend', 'codex'];
+    const justification = ['--justification', 'the adopted ledger still carries a size field'];
+    const retired = setup(sixFieldRow);
+    const adoptedBytes = readFileSync(retired.path, 'utf8');
+    writeFileSync(retired.path, adoptedBytes.replace(sixFieldRow, fiveFieldRow));
+    for (const flags of [[], justification]) {
+      const edited = run(retired.root, [...openNextRound, ...flags]);
+      assert.equal(edited.code, 1, edited.stderr);
+      assert.match(edited.stderr, /cannot resolve the adopted plan "plan-a\.md" for round-open.*adoption record binds its bytes/);
+    }
+    writeFileSync(retired.path, adoptedBytes);
+    const missingRetired = run(retired.root, openNextRound);
+    const lifted = run(retired.root, [...openNextRound, ...justification]);
+    assert.equal(lifted.code, 0, lifted.stderr);
+    assert.equal(lastRound(retired.root).round, 2);
+    const walkFile = 'aw-walk.json';
+    writeFileSync(join(retired.root, '.git', walkFile), JSON.stringify({
+      listVersion: readShippedRobustnessLiterals().version,
+      rows: [{ id: 'R1', class: 'spawn-outcome', checked: 'reviewed' }],
+    }));
+    const attestation = run(retired.root, ['internal-attestation', 'plan-a', '--lens', 'correctness', '--model', 'm', '--authority', 'a', '--walk', walkFile]);
+
+    const ordinary = setup(fiveFieldRow);
+    const missingOrdinary = run(ordinary.root, openNextRound);
+    const walkRefusal = ({ base, fingerprint }, retiredSuffix = '') => 'flow-writer: round-open round 2 requires an authoritative walk for round 1 '
+      + `at {planId=plan-a, cycle=1, stepId=step-1, round=1, base=${base}, fingerprint=${fingerprint}}; `
+      + `recovery: internal-attestation plan-a --walk <file> at the current tree, or --justification <text>${retiredSuffix}; `
+      + 'the over-cap mint requires an explicit non-empty --justification <text> (Decision 8 — recorded and self-servable, never a wait-for-maintainer)';
+
+    const invalid = setup(fiveFieldRow.replace(' | modify | ', ' | unknown | '));
+    const noWalk = run(invalid.root, openNextRound);
+    assert.equal(noWalk.code, 0, noWalk.stderr);
+    assert.equal(lastRound(invalid.root).round, 2);
+    assert.deepEqual({
+      attestationCode: attestation.code,
+      attestationNamesRetiredSizeField: /\bretired-size-field\b/.test(attestation.stderr),
+      retiredRoundCode: missingRetired.code,
+      retiredRoundRefusal: missingRetired.stderr,
+      ordinaryRoundCode: missingOrdinary.code,
+      ordinaryRoundRefusal: missingOrdinary.stderr,
+    }, {
+      attestationCode: 2,
+      attestationNamesRetiredSizeField: true,
+      retiredRoundCode: 1,
+      retiredRoundRefusal: walkRefusal(retired.head, '; adopted plan: retired-size-field — the walk option above is unavailable for these adopted bytes, '
+        + 'and editing them invalidates the adoption digest. Retry round-open with --justification <text>'),
+      ordinaryRoundCode: 1,
+      ordinaryRoundRefusal: walkRefusal(ordinary.head),
+    });
+  });
+
+  it('round-open refuses an adopted plan the block model refuses with its named structural refusal', () => {
+    const root = makeRepo();
+    adopt(root, 'plan-a', `${planWith({ ledger: 'R1 | modify | src/walk.mjs | update it | src/walk.mjs:1' })}\n\`\`\`\nnever closed\n`);
+    const opened = run(root, ['round-open', 'plan-a', '--backend', 'codex', '--step', 'step-1']);
+    assert.equal(opened.code, 1, opened.stderr);
+    assert.match(opened.stderr, /round-open cannot judge the adopted plan: block-model: /);
   });
 
   it('a foreign worktree chain refuses round-open by name (#57); boundary without --step and in-step --step mismatch refuse as usage', () => {

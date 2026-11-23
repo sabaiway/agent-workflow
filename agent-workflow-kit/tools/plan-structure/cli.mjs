@@ -2,7 +2,7 @@
 
 import { isDirectRun } from '../direct-run.mjs';
 import { judgePlan, readPlanDocument } from '../plan-shape-facts.mjs';
-import { checkPlanEntries, formatFindings, getConcretePaths, isSweep, makeFinding, parseLedger } from '../plan-shape.mjs';
+import { checkPlanEntries, formatFindings, isSweep, makeFinding, parseLedger } from '../plan-shape.mjs';
 import { escapeForDisplay } from '../repo-lex.mjs';
 import { relateAmendments } from './index.mjs';
 
@@ -46,8 +46,8 @@ const formatVerdict = (result, operand) => formatFindings({
   skips: result.skips.map(escapeForDisplay),
 }, escapeForDisplay(operand));
 
-const formatAmendment = ({ id, verb, path, budget }) => {
-  const fields = [id, verb, path, budget].map((field) => escapeForDisplay(field ?? EMPTY_FIELD));
+const formatAmendment = ({ id, verb, path }) => {
+  const fields = [id, verb, path].map((field) => escapeForDisplay(field ?? EMPTY_FIELD));
   return `${AMENDMENT_PREFIX}${fields.join(FIELD_SEPARATOR)}`;
 };
 
@@ -70,7 +70,7 @@ export const main = (argv = process.argv.slice(2), io = {}) => {
   writeLine(stdout, formatVerdict(result, operand));
   const parsed = parseLedgerForDisplay(text);
   if (parsed) {
-    const { entries } = relateAmendments({ parsed, facts: {}, makeFinding, isSweep, getConcretePaths });
+    const { entries } = relateAmendments({ parsed, makeFinding, isSweep });
     for (const entry of entries) writeLine(stdout, formatAmendment(entry));
   }
   return accepted ? EXIT_ACCEPT : EXIT_REFUSE;

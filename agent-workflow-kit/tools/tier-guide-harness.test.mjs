@@ -20,11 +20,11 @@ export const DOTTED_EPIC = 'WALK..EPIC';
 export const PLAN_STAND_IN = 'docs/plans/WALK-EPIC-S1.md';
 export const OTHER_PLAN = 'docs/plans/other.md';
 export const UNRENDERABLE_PLAN = `docs/plans/greet${LINE_SEPARATOR}note.md`;
-export const SECOND_ROW = 'M2 | create | src/farewell.mjs | Bid the reader farewell | n/a | src/greet.mjs:1';
+export const SECOND_ROW = 'M2 | create | src/farewell.mjs | Bid the reader farewell | src/greet.mjs:1';
 // A contract row: a LEDGER ROW lies outside docs/ai/, so no prompt is ever owed for it.
-export const DOCS_ROW = 'D1 | modify | docs/ai/specs/greet.md | State the greeting | n/a | docs/ai/specs/greet.md:1';
+export const DOCS_ROW = 'D1 | modify | docs/ai/specs/greet.md | State the greeting | docs/ai/specs/greet.md:1';
 // A sweep row: its stage line names the paths the glob expands to on disk, never a git add of the glob.
-export const SWEEP_ROW = 'M1 | modify | src/*.mjs | Greet the reader by name | n/a | src/greet.mjs:1';
+export const SWEEP_ROW = 'M1 | modify | src/*.mjs | Greet the reader by name | src/greet.mjs:1';
 // The canonical prompt name, docs/plans/EXECUTE-PROMPT-<plan stem>-<row id>.md: plan greet row x-M1 and plan
 // greet-x row M1 derive the same one.
 export const promptPath = (plan, id) => `docs/plans/EXECUTE-PROMPT-${posix.basename(plan, '.md')}-${id}.md`;
@@ -96,12 +96,32 @@ const sharedName = (c, epicOf = (text) => text) => {
   c.writeEpic(epicOf(addSecondStory(renderEpic(), 'none')));
   c.writePlan({ row: MODULE_ROW.replace('M1 |', 'x-M1 |') });
   c.write('docs/plans/greet-x.md', c.planText({ story: 'Story: S2 of WALK-EPIC',
-    row: 'M1 | create | src/twice.mjs | Greet twice | n/a | src/greet.mjs:1' }));
+    row: 'M1 | create | src/twice.mjs | Greet twice | src/greet.mjs:1' }));
 };
 const leftover = (text, after = () => {}) => (c) => {
   c.writeEpic(text);
   c.writePlan();
   after(c);
+};
+
+const FIVE_FIELD_ROW = `M1 | modify | ${MODULE} | Greet the reader by name | ${MODULE}:1`;
+const OLD_FORM_ROW = 'M2 | create | src/farewell.mjs | Bid the reader farewell | n/a | src/greet.mjs:1';
+const TOTAL_LINE = 'total: 0 → 0 lines';
+const renderFiveFieldPlan = (row, story) => renderPlan({ row: 'LEDGER_ROWS', story })
+  .replace(`${TOTAL_LINE}${LF}`, '').replace('LEDGER_ROWS', () => row);
+const newFormStory = (row, { prompt = false, verification = true } = {}) => (c) => {
+  c.writeEpic();
+  const text = renderFiveFieldPlan(row);
+  c.write(c.plan, verification ? text : text.replace(`## Verification${LF}`, ''));
+  if (prompt) c.writePrompt('M1', { ROW_LINE: FIVE_FIELD_ROW });
+};
+const failingLeftover = (sameEpic, staged) => (c) => {
+  c.writeEpic(sameEpic ? landStory(landStory(addSecondStory(renderEpic()))) : landStory(renderEpic()));
+  if (!sameEpic) c.write('docs/ai/epics/OTHER.md', landStory(renderEpic({ EPIC_ID: 'OTHER', OWNED_PATHS: 'src/other.mjs' })));
+  c.write(c.plan, renderFiveFieldPlan(FIVE_FIELD_ROW));
+  c.writePrompt('M1', { ROW_LINE: FIVE_FIELD_ROW });
+  c.write(OTHER_PLAN, renderFiveFieldPlan(OLD_FORM_ROW, sameEpic ? 'Story: S2 of WALK-EPIC' : 'Story: S1 of OTHER'));
+  if (staged) c.stage();
 };
 
 const BUILDERS = {
@@ -187,6 +207,13 @@ const BUILDERS = {
     c.writeEpic();
     c.writePlan({ row: MODULE_ROW.slice(0, MODULE_ROW.lastIndexOf(' | ')) });
   },
+  'empty-ledger': newFormStory(''),
+  'missing-verification': newFormStory(FIVE_FIELD_ROW, { verification: false }),
+  'mixed-ledger': newFormStory([FIVE_FIELD_ROW, OLD_FORM_ROW].join(LF), { prompt: true }),
+  'ledger-with-total': newFormStory([FIVE_FIELD_ROW, TOTAL_LINE].join(LF)),
+  'leftover-one-failing-plan': failingLeftover(true, false),
+  'leftover-two-epics-differing-index': failingLeftover(false, true),
+  'leftover-two-epics-equal-index': failingLeftover(false, false),
   'prompt-unreadable': onStory('S2', (c) => {
     c.writePrompt('M1');
     chmodSync(join(c.repo.dir, promptPath(c.plan, 'M1')), 0o000);

@@ -13,11 +13,10 @@ const makePlanText = () => [
   '',
   '## Module ledger',
   '',
-  'n01 | create | src/landed.mjs | Add landed | 40 | src/base.mjs:1',
-  'n02 | modify | src/progress.mjs | Edit progress | 40 | src/base.mjs:1',
-  'n03 | create | src/pending.mjs | [x] Claimed complete | 40 | src/base.mjs:1',
-  'n04 | modify | docs/ai/state.md | Edit excluded state | n/a | docs/ai/base.md:1',
-  'total: 10 → 14 lines',
+  'n01 | create | src/landed.mjs | Add landed | src/base.mjs:1',
+  'n02 | modify | src/progress.mjs | Edit progress | src/base.mjs:1',
+  'n03 | create | src/pending.mjs | [x] Claimed complete | src/base.mjs:1',
+  'n04 | modify | docs/ai/state.md | Edit excluded state | docs/ai/base.md:1',
   '',
   '## Verification',
   '',
@@ -35,10 +34,10 @@ const makePlanText = () => [
 const makePlan = () => {
   const parsed = parseLedger(makePlanText());
   const evidence = [
-    { path: 'src/landed.mjs', pathFact: { kind: 'regular', lines: 44 }, staged: false, unstaged: false, untracked: false, excluded: false },
-    { path: 'src/progress.mjs', pathFact: { kind: 'regular', lines: 20 }, staged: false, unstaged: true, untracked: false, excluded: false },
-    { path: 'src/pending.mjs', pathFact: { kind: 'absent', lines: 0 }, staged: false, unstaged: false, untracked: false, excluded: false },
-    { path: 'docs/ai/state.md', pathFact: { kind: 'regular', lines: 20 }, staged: false, unstaged: false, untracked: false, excluded: true },
+    { path: 'src/landed.mjs', pathFact: { kind: 'regular' }, staged: false, unstaged: false, untracked: false, excluded: false },
+    { path: 'src/progress.mjs', pathFact: { kind: 'regular' }, staged: false, unstaged: true, untracked: false, excluded: false },
+    { path: 'src/pending.mjs', pathFact: { kind: 'absent' }, staged: false, unstaged: false, untracked: false, excluded: false },
+    { path: 'docs/ai/state.md', pathFact: { kind: 'regular' }, staged: false, unstaged: false, untracked: false, excluded: true },
   ];
   return {
     path: 'docs/plans/render-fixture.md',
@@ -131,12 +130,13 @@ describe('now render', () => {
     assert.deepEqual(vm.queue, { withheld: 'queue unreadable' });
     const plain = renderNow(vm, { mode: 'plain', width: 80, color: false, ascii: false });
     assert.match(plain, /CAMPAIGN[\s\S]*state: minted[\s\S]*caps: 400 lines · 1000 bytes per line[\s\S]*roots: 5 · recorded files: 7/);
-    assert.match(plain, /landed \[path fact\].*over budget 44\/40.*red-proof current/);
+    assert.match(plain, /landed \[path fact\].*red-proof current/);
     assert.match(plain, /in progress: n02 · src\/progress\.mjs — in progress \[changed set\]/);
     assert.match(plain, /in progress \[changed set\]/);
     assert.match(plain, /pending \[path fact\].*claimed done/);
     assert.match(plain, /unjudged \[exclusion fact\].*excluded from git here/);
     assert.equal(plain.split('\n').filter((line) => line.includes('QUEUE — WITHHELD: queue unreadable')).length, 1);
+    assert.doesNotMatch(plain, /over budget/);
 
     for (const state of ['absent', 'authored', 'minted']) {
       const campaign = state === 'absent' ? { state } : { ...makeFacts().campaign, state, recordedFiles: state === 'authored' ? null : 7 };
@@ -174,7 +174,7 @@ describe('now render', () => {
     const vm = toNowViewModel(makeFacts({ tree: { withheld: 'the review receipts store is malformed or unreadable (1 malformed line)' } }));
     assert.equal(vm.now.plans[0].phase.name, 'ledger');
     assert.deepEqual(vm.now.tree, { withheld: 'the review receipts store is malformed or unreadable (1 malformed line)' });
-    assert.deepEqual(vm.steps.entries[0].rows[0].annotations.map(({ kind }) => kind), ['anomaly']);
+    assert.deepEqual(vm.steps.entries[0].rows[0].annotations, []);
     const plain = renderNow(vm, { mode: 'plain', width: 80, color: false, ascii: true });
     assert.match(plain, /NOW\n {2}plan: docs\/plans\/render-fixture\.md\n {4}phase: ledger[\s\S]*\n {2}tree \u2014 WITHHELD: the review receipts store/);
     assert.doesNotMatch(plain, /NOW \u2014 WITHHELD|red-proof/);

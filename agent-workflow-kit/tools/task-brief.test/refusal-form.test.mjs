@@ -34,15 +34,13 @@ const STORY = 'Story: S23 of SYNTHETIC-WIDGETS';
 const TITLE = '# Task: Revise the widget';
 const MODULE = 'src/widget.mjs';
 const TEST = 'src/widget.test.mjs';
-const OTHER = 'src/other.mjs';
 const READ = 'docs/ai/contract.md';
 const BAD_READ = 'docs/ai/missing.md';
 const INITIAL = 'export const value = 1;' + LF;
 const CHANGED = 'export const value = 2;' + LF;
 const FILES = [[TEST, 'test'], [MODULE, 'impl']];
 const BUDGET_LINES = FILES.map(([path]) => `- ${path} :: ${BUDGET}`);
-const SECTIONS = ['title', 'slice', 'reads', 'acceptance', 'negative', 'budget'];
-const SHAPE_COUNT = 14;
+const SECTIONS = ['title', 'slice', 'reads', 'acceptance', 'negative'];
 const TREE_FAILURE = 'fatal: injected tree failure';
 const STEM_DETAIL = 'expected a readable regular plan directly under docs/plans';
 const CONTRACT = {
@@ -59,8 +57,8 @@ const renderPlan = () => [
   '# Plan: Synthetic widget revision', '## Goal and boundary', STORY,
   'Outcome: revise the widget. Governing spec: not adopted. Non-goals: unrelated files.',
   '## Module ledger',
-  `M1 | modify | ${MODULE} | Revise the widget | ${BUDGET} | ${MODULE}:1`,
-  'total: 1 → 100 lines', '## Verification', `- node --check ${MODULE} exits 0.`,
+  `M1 | modify | ${MODULE} | Revise the widget | ${MODULE}:1`,
+  '## Verification', `- node --check ${MODULE} exits 0.`,
   '## Phase: Cleanup', '- Remove the temporary plan.', '## Next steps', '- None.',
 ].join(LF + LF) + LF;
 
@@ -77,7 +75,6 @@ const renderBrief = (overrides = {}) => {
     reads: ['## Reads', ...data.reads],
     acceptance: ['## Acceptance', ...data.acceptance],
     negative: ['## Negative cases', ...data.negative],
-    budget: ['## Budget', ...(data.budget ?? BUDGET_LINES)],
   };
   return SECTIONS.filter((key) => key !== data.omit)
     .map((key) => sections[key].join(LF)).join(LF + LF) + LF;
@@ -205,11 +202,8 @@ const SHAPE_CELLS = [
   ['absent Grouping', () => renderBrief().replace('Grouping: test, impl' + LF, ''), ['Grouping', 'absent']],
   ['Reads line grammar', () => renderBrief({ reads: ['not a bullet'] }), ['not a bullet', '## Reads line']],
   ['Negative cases line grammar', () => renderBrief({ negative: ['not a bullet'] }), ['not a bullet', '## Negative cases line']],
-  ['empty Files', () => renderBrief({ files: [], budget: [] }), ['Files:']],
-  ['repeated Budget path', () => renderBrief({ budget: [...BUDGET_LINES, BUDGET_LINES[0]] }), [TEST, 'repeated']],
-  ['absent Budget path', () => renderBrief({ budget: [BUDGET_LINES[0]] }), [MODULE, 'absent']],
-  ['foreign Budget path', () => renderBrief({ budget: [...BUDGET_LINES, `- ${OTHER} :: ${BUDGET}`] }), [OTHER, 'foreign']],
-  ['Budget count', () => renderBrief({ budget: [BUDGET_LINES[0], `- ${MODULE} :: many`] }), [`- ${MODULE} :: many`, 'positive integer']],
+  ['empty Files', () => renderBrief({ files: [] }), ['Files:']],
+  ['Budget as a foreign fifth heading', () => renderBrief({ omit: 'budget' }) + ['## Budget', ...BUDGET_LINES, ''].join(LF), ['## Budget', 'foreign']],
   ['empty Acceptance', () => renderBrief({ acceptance: [] }), ['## Acceptance']],
   ['empty Negative cases', () => renderBrief({ negative: [] }), ['## Negative cases']],
 ];
@@ -225,8 +219,8 @@ it('identifies each malformed brief with a distinct shape detail', async (t) => 
     });
   }
   await t.test('every stderr line differs', () => {
-    assert.equal(lines.length, SHAPE_COUNT);
-    assert.equal(new Set(lines).size, SHAPE_COUNT);
+    assert.equal(lines.length, SHAPE_CELLS.length);
+    assert.equal(new Set(lines).size, SHAPE_CELLS.length);
   });
 });
 

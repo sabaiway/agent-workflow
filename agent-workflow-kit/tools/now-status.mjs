@@ -11,7 +11,6 @@ export const NOW_STATUS = Object.freeze({
 
 export const NOW_ANNOTATION = Object.freeze({
   CLAIM: 'claim',
-  ANOMALY: 'anomaly',
   RED_PROOF: 'red-proof',
 });
 
@@ -61,13 +60,10 @@ const getAnnotations = (row, evidence, status) => {
   const claim = readProseClaim(row.raw) && status !== NOW_STATUS.LANDED
     ? [{ kind: NOW_ANNOTATION.CLAIM, text: 'claimed done' }]
     : [];
-  const overBudget = row.budgetLines && evidence.pathFact?.kind === 'regular' && evidence.pathFact.lines > row.budgetLines
-    ? [{ kind: NOW_ANNOTATION.ANOMALY, text: `over budget ${evidence.pathFact.lines}/${row.budgetLines}` }]
-    : [];
   const redProof = evidence.redProof
     ? [{ kind: NOW_ANNOTATION.RED_PROOF, text: evidence.redProof.currency ?? String(evidence.redProof) }]
     : [];
-  return [...claim, ...overBudget, ...redProof];
+  return [...claim, ...redProof];
 };
 
 // A set has no single post-state, so a sweep row is reduced only under modify: the verb refuses it before any evidence arm.

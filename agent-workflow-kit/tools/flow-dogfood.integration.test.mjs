@@ -288,7 +288,7 @@ const flowDecisionRefusals = (fx, consumer) => JSON.parse(inFixtureModule(fx, 'f
 
 const DEBT_CLAIM = 'every queued finding binds its row and proof';
 const DEBT_BLOCK = `- **DOGFOOD-DEBT — queued.**\n  - invariant: ${DEBT_CLAIM}\n  - origin: app.txt:1\n  - narrow fix: bind this finding\n  - proof: app.txt#red case\n  - residual exposure: general callers remain - not live\n`;
-const armRung = (tag, { plan = planWith({ ledger: 'R0 | delete | gone.mjs | cleanup | — | —\ntotal: 0 → 0 lines' }), debt = '# Debt queue\n', backends = ['codex', 'agy'], files = {} } = {}) => {
+const armRung = (tag, { plan = planWith({ ledger: 'R0 | delete | gone.mjs | cleanup | —' }), debt = '# Debt queue\n', backends = ['codex', 'agy'], files = {} } = {}) => {
   const fx = makeFixture(tag);
   expectOk(fx, SET_FLOW, ['--preset', 'council', '--write']);
   writeFileSync(join(fx.root, PLAN_REL), plan);
@@ -316,7 +316,7 @@ const attestWalk = (fx, rows, name = 'aw-walk.json') => {
 
 describe('flow dogfood — first-pass quality rungs (real CLIs)', { skip: !gitOk }, () => {
   it('walks coverage from the common dir, never the worktree root, and pins the off-by-one gate (spec:plan-review-loop/S30)', () => {
-    const ledger = 'R1 | modify | src/location.mjs | robust:git-location | n/a | src/location.mjs:1\nR2 | modify | src/read.mjs | untagged | n/a | src/read.mjs:1\ntotal: 0 → 0 lines';
+    const ledger = 'R1 | modify | src/location.mjs | robust:git-location | src/location.mjs:1\nR2 | modify | src/read.mjs | untagged | src/read.mjs:1';
     const fx = armRung('aw-dogfood-walk', { plan: planWith({ ledger }), files: { 'src/location.mjs': 'GIT_DIR\n', 'src/read.mjs': '--no-textconv\n' } });
     landWith(fx);
     const common = join(fx.root, '.git');

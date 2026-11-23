@@ -76,7 +76,7 @@ import { writeContainedFileAtomic, lstatNoFollow } from './atomic-write.mjs';
 import { readFileBytesNoFollowCapped } from './fs-read-nofollow.mjs';
 import { classIds, readShippedRobustnessLiterals } from './robustness-literals.mjs';
 import { expandSweepPaths } from './plan-shape-facts.mjs';
-import { checkPlanStructure, isSweep } from './plan-shape.mjs';
+import { RETIRED_FORM_CODES, checkPlanStructure, isSweep, unique } from './plan-shape.mjs';
 import { escapeForDisplay } from './repo-lex.mjs';
 import { computeRowCoverage, isCoverageDocument, ROBUST_CLASS_CODE } from './robustness-brief.mjs';
 import { decideFoldScope, findDebtRow, normalize } from './fold-scope.mjs';
@@ -686,7 +686,6 @@ const terminalMoveIssue = ({ flowRecords, chain, cycle, stepId, tree, cwd }) => 
 // receipts-file byte-length watermark, a fresh nonce}; receipt/manifest digests stay null until
 // round-land. A boundary invocation opens the step (opensFrom = the chain's prior terminal); an
 // in-step invocation opens the NEXT round (a fingerprint move never rides a revision).
-const walkObligation = (planText) => checkPlanStructure(planText, {}).parsed.rows.some((row) => row.valid);
 const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd, env, timestamp }) => {
   // The backend list is judged BEFORE any store read — a usage-shaped input never surfaces as a
   // state-dependent refusal.
@@ -701,7 +700,18 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
   const { chain, state, commitEpoch } = chainContext(records, planId, tree.owner);
   const root = gitLine(['rev-parse', '--show-toplevel'], cwd) ?? cwd;
   const adopted = resolveAdoptedPlan({ root, records, planId, owner: tree.owner, arm: 'round-open' });
-  const walkRequired = walkObligation(adopted.planText);
+  const { parsed, findings } = checkPlanStructure(adopted.planText, {});
+  if (parsed === null) {
+    const [finding] = findings;
+    throw refuse(`round-open cannot judge the adopted plan: ${finding.code}: ${escapeForDisplay(finding.message)}`);
+  }
+  const retiredSizeField = findings.find(({ code }) => code === RETIRED_FORM_CODES.sizeField);
+  const walkRequired = retiredSizeField !== undefined || parsed.rows.some(({ valid }) => valid);
+  const getMissingWalk = (records) => {
+    if (!walkRequired) return null;
+    const issue = walkIssue({ records, planId, cycle: target.cycle, stepId: target.stepId, round: target.round, base: tree.base, fingerprint: tree.fingerprint });
+    return issue && retiredSizeField ? `${issue}; adopted plan: ${retiredSizeField.code} — the walk option above is unavailable for these adopted bytes, and editing them invalidates the adoption digest. Retry round-open with --justification <text>` : issue;
+  };
   const inStep = state.mode === 'in-step' && !state.parked && !state.completed;
   if (newCycle && inStep) throw usageFail('--new-cycle opens at a step boundary only — an open step continues through its own rounds');
   // The in-step guard re-runs on the LOCKED snapshot too (M6) — this closure is the preflight.
@@ -714,7 +724,7 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
     const lockedReadManifest = (backend, nonce) => readManifestDecoded({ receiptsPath: lockedReceipts.path, backend, nonce });
     const lockedCap = capIssue({ heads: stepRoundHeads(lockedChain, target.cycle, target.stepId), receipts: lockedReceiptMap, readManifest: lockedReadManifest });
     if (lockedCap.issue != null) throw refuse([...lockedCap.advisories, lockedCap.issue].join('\n'));
-    const lockedMissingWalk = walkRequired ? walkIssue({ records: flowRecords, planId, cycle: target.cycle, stepId: target.stepId, round: target.round, base: tree.base, fingerprint: tree.fingerprint }) : null;
+    const lockedMissingWalk = getMissingWalk(flowRecords);
     if (lockedMissingWalk != null && recordedJustification == null) throw refuse(lockedMissingWalk);
     if (lockedMissingWalk == null && missingWalk != null && !roundOverCap && !valveOverCap) {
       gateCapJustification({ justification, overCap: false, refusal: null });
@@ -751,7 +761,7 @@ const buildRoundOpen = ({ planId, stepId, backends, newCycle, justification, cwd
   const readManifest = (backend, nonce) => readManifestDecoded({ receiptsPath, backend, nonce });
   const cap = capIssue({ heads: stepRoundHeads(chain, target.cycle, target.stepId), receipts: receiptMap, readManifest });
   if (cap.issue != null) throw refuse([...cap.advisories, cap.issue].join('\n'));
-  const missingWalk = walkRequired ? walkIssue({ records, planId, cycle: target.cycle, stepId: target.stepId, round: target.round, base: tree.base, fingerprint: tree.fingerprint }) : null;
+  const missingWalk = getMissingWalk(records);
   const recordedJustification = gateCapJustification({
     justification,
     overCap: roundOverCap || valveOverCap || missingWalk != null,
@@ -1034,7 +1044,8 @@ const buildInternalAttestation = ({ planId, lenses, degraded, model, effort, tie
   const checkedWalk = walk === undefined ? undefined : (() => {
     const list = readShippedRobustnessLiterals();
     const shape = checkPlanStructure(adopted.planText, { robustClasses: classIds(list) });
-    if (shape.findings.some(({ code }) => code !== ROBUST_CLASS_CODE)) throw usageFail('--walk cannot measure an adopted plan that fails structural validation');
+    const blockers = unique(shape.findings.map(({ code }) => code).filter((code) => code !== ROBUST_CLASS_CODE));
+    if (blockers.length > 0) throw usageFail(`--walk cannot measure an adopted plan that fails structural validation: ${blockers.join(', ')}`);
     const patterns = shape.parsed.rows.filter((row) => row.valid && isSweep(row.path) && !isCoverageDocument(row.path)).map((row) => row.path);
     const expansions = patterns.length === 0 ? {} : expandSweepPaths(root, patterns);
     const measured = computeRowCoverage(adopted.planText, list, { expandRowPath: (path) => expansions[path] ?? [],
