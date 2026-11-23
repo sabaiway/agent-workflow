@@ -16,7 +16,7 @@ export const PLAN_HEADINGS = Object.freeze([
 export const RETIRED_FORM_CODES = Object.freeze({ sizeField: 'retired-size-field', totalLine: 'retired-total-line' });
 
 const MAX_PLAN_LINES = 100;
-const MAX_LEDGER_ROWS = 25;
+const MAX_LEDGER_ROWS = 45;
 const MAX_ROW_BYTES = 200;
 const SECTION_CAPS = new Map([[PLAN_HEADINGS[0], 10], [PLAN_HEADINGS[1], 60], [PLAN_HEADINGS[2], 20]]);
 const CLEANUP_NEXT_CAP = 10;

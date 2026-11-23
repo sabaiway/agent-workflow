@@ -192,7 +192,7 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(step5, /before each diff-review or re-check brief\b.*?`node <kit>\/tools\/plan-structure\/cli\.mjs <plan>` exits 0/i);
     assert.match(step5, /\blists every amendment entry it prints\b/);
     const planning = readFileSync(join(ROOT, 'references', 'planning.md'), 'utf8');
-    const shape = sectionOf(planning, 'Shape').replace(/\s+/g, ' '); assert.match(shape, /A plan's approved part is capped at \*\*100 lines and at most 25 ledger rows\*\*/); assert.doesNotMatch(shape, /The whole file is capped at/);
+    const shape = sectionOf(planning, 'Shape').replace(/\s+/g, ' '); assert.match(shape, /A plan's approved part is capped at \*\*100 lines and at most 45 ledger rows\*\*/); assert.doesNotMatch(shape, /The whole file is capped at/);
     const amendmentParagraphs = sectionOf(planning.slice(planning.lastIndexOf('\n## Module ledger\n')), 'Module ledger').split(/\n\s*\n/).filter((paragraph) => paragraph.includes('`amendments:`'));
     assert.equal(amendmentParagraphs.length, 1, 'Module ledger has exactly one `amendments:` paragraph');
     const amendment = amendmentParagraphs[0].replace(/\s+/g, ' ');

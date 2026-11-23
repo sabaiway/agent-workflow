@@ -57,7 +57,7 @@ short spec (the Module list), the split, the diff review, the release, Cleanup.
 
 ## Shape
 
-A plan's approved part is capped at **100 lines and at most 25 ledger rows**. While it is drafted
+A plan's approved part is capped at **100 lines and at most 45 ledger rows**. While it is drafted
 and before the maintainer's approval, run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`. The
 headings are LITERAL, copied bare: tooling extracts sections by exact match.
 
@@ -132,7 +132,7 @@ the sweep, and breaks the intermediate states.
 `amendments:` below the approved rows opens the entries, which run to the ledger's end. Before its
 code, the code session writes there a reader the sweep missed or a missed file, leaving every
 approved contract unchanged. An entry takes no new approval and the diff review's brief lists it.
-The 25 rows, the 60-line ledger and the 100-line plan measure the approved part only. An entry
+The 45 rows, the 60-line ledger and the 100-line plan measure the approved part only. An entry
 repeats no path, including a path in an approved sweep's expansion. A missed reader's existing test
 is rewritten to the value the approved contract states and shown red first. A missed reader that
 needs a new test returns to a tests-only session. A path no claim of the story covers takes the epic row's

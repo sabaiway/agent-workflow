@@ -61,7 +61,7 @@ describe('planning.md — the plan shape', () => {
   });
 
   it('caps the plan by lines and ledger rows, names the authoring checker, and budgets its three sections (spec:plan-review-loop/S13)', () => {
-    assert.match(flat, /capped at \*\*100 lines and at most 25 ledger rows\*\*/);
+    assert.match(flat, /capped at \*\*100 lines and at most 45 ledger rows\*\*/);
     assert.match(flat, /plan-shape-cli\.mjs --check <plan>/);
     assert.doesNotMatch(flat, /8000 bytes/, 'the retired whole-file byte cap must not return');
     for (const [heading, budget] of [['Goal and boundary', 10], ['Module ledger', 60], ['Verification', 20]]) {

@@ -151,7 +151,7 @@ describe('plan-shape rules — structural and authoring state', () => {
     const plan = (responsibility) => planWith({ ledger: ['  R1 ', ' modify ', path, ' ' + responsibility + ' ', path + ':1'].join(' | ') });
     assert.deepEqual(codes(checkPlan(plan(atByteCap), facts)), []);
     assert.deepEqual(codes(checkPlan(plan(atByteCap + 'x'), facts)), ['row-bytes']);
-    const rows = Array.from({ length: 26 }, (_, index) => ['R' + index, 'modify', 'docs/file-' + index + '.md', 'edit', path + ':1'].join(' | '));
+    const rows = Array.from({ length: 46 }, (_, index) => ['R' + index, 'modify', 'docs/file-' + index + '.md', 'edit', path + ':1'].join(' | '));
     assert.ok(codes(checkPlan(plan(atByteCap) + 'padding\n'.repeat(90), facts)).includes('line-cap'));
     assert.ok(codes(checkPlan(planWith({ ledger: rows.join('\n') }), facts)).includes('row-cap'));
     const tail = (bullets) => plan(atByteCap).replace('- Continue.\n', '- Continue.\n' + '- More.\n'.repeat(bullets));
@@ -299,7 +299,7 @@ describe('plan-shape rules — structural and authoring state', () => {
     const separatorLine = crlf.split('\r\n').indexOf('amendments:') + 1;
     assert.deepEqual(crlfAmendmentCheck.map(({ code, line }) => ({ code, line })), [{ code: 'amendment-check', line: separatorLine }]);
     assert.ok(codes(checkPlan(amended, facts)).includes('amendment-check'));
-    const approved = Array.from({ length: 25 }, (_, index) => row('R' + index, 'modify', 'docs/approved-' + index + '.md'));
+    const approved = Array.from({ length: 45 }, (_, index) => row('R' + index, 'modify', 'docs/approved-' + index + '.md'));
     const entries = Array.from({ length: 80 }, (_, index) => row('A' + index, 'modify', 'docs/entry-' + index + '.md'));
     for (const selected of [entries.slice(0, 1), entries]) {
       assert.deepEqual(codes(checkPlanStructure(buildPlan(approved, selected), facts)), []);
