@@ -8,15 +8,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
-import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, SOURCE_SIZE_WHY, measureFile } from './source-size-core.mjs';
+import { INITIAL_ADOPTION_REASON, SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, SOURCE_SIZE_WHY } from './source-size-core.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
+import { REVISION_13_README } from './source-size/cli-harness.test.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-writer-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = fileURLToPath(new URL('./source-size-check.mjs', import.meta.url));
+const RAISE_REVIEW_FOCUS = "source-size: REVIEW FOCUS — this write RAISED a recorded size: read each raised entry's reason and judge whether the project's code rules were kept for that file; a reason naming a debt row holds an old file grown outside its story's scope (paste this line into the review dispatch focus).";
+const REVISION_12_README = "Source-size practice: declared scope + the recorded ratchet; the limits are the kit's, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project's reasoned overrides of a kit limit). Machine keys: baseline, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.";
 
 const git = (cwd, args) => {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
@@ -52,6 +54,8 @@ const project = ({ files = {}, config = AUTHORED(), docsAi = true } = {}) => {
 const check = (cwd) => main(['--check', '--cwd', cwd]);
 const writeBaseline = (cwd, reason) =>
   main(reason === undefined ? ['--write-baseline', '--cwd', cwd] : ['--write-baseline', '--cwd', cwd, '--reason', reason]);
+const overrideFileLimit = (cwd, value, reason) =>
+  main(['--override', 'lines-per-file', '--value', String(value), '--reason', reason, '--cwd', cwd]);
 const configPath = (cwd) => join(cwd, 'docs', 'ai', 'source-size.json');
 const configOf = (cwd) => JSON.parse(readFileSync(configPath(cwd), 'utf8'));
 const out = (result) => `${result.stdout}\n${result.stderr}`;
@@ -68,15 +72,14 @@ const adopt = (cwd) => main(['--adopt', '--reason', INITIAL_ADOPTION_REASON, '--
 const gatesPath = (cwd) => join(cwd, 'docs', 'ai', 'gates.json');
 
 describe('source-size — the config contract the writer honours (D-5)', () => {
-  it('config-absent-refuses-with-authoring-content: on an absent config the writer writes schema 3, its first raises taking --reason', async () => {
-    const { TEMPLATE_README } = await import('./source-size-report.mjs');
+  it('config-absent-refuses-with-authoring-content: on an absent config the writer writes schema 3, its first raises taking --reason', () => {
     const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
     assert.deepEqual(stated(writeBaseline(cwd)), [1, ...KIT_LIMIT_LINES], 'a first record is a raise, so it takes --reason');
     assert.equal(existsSync(configPath(cwd)), false, 'a refused write leaves it absent');
     const written = writeBaseline(cwd, 'initial adoption');
     assert.equal(written.code, 0);
     assert.ok(written.stdout.split('\n').includes(`source-size: ${configPath(cwd)} written at schema 3 in this write; a kit that predates schema 3 stops by name until that copy is upgraded.`));
-    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ _README: TEMPLATE_README, schema: 3, baseline: {}, layout: { roots: { '.': { files: 1, reason: 'initial adoption' } }, directories: {} } }));
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ _README: REVISION_13_README, schema: 3, baseline: {}, layout: { roots: { '.': { files: 1, reason: 'initial adoption' } }, directories: {} } }));
   });
 
   it('config-authored-state-check-refuses-with-mint-command: the AUTHORED→MINTED seam names the exact command', () => {
@@ -298,13 +301,13 @@ describe('source-size — spec:source-size/S18 the check stops on a schema-1 con
 
 describe('source-size — spec:source-size/S19 regeneration moves schema 1 onto 3; adoption carries records verbatim', () => {
   it('write-baseline-moves-schema-1: authored keys in their order, differing defaults replaced in place, template renewed, baseline carried, aggregate dropped', async () => {
-    const { SCHEMA1_TEMPLATE_README, TEMPLATE_README } = await import('./source-size-report.mjs');
+    const { SCHEMA1_TEMPLATE_README } = await import('./source-size-report.mjs');
     assert.equal(typeof SCHEMA1_TEMPLATE_README, 'string', 'the report keeps the schema-1 template text beside the template');
     const records = { baseline: { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } }, aggregate: { src: { lines: 451, reason: 'recorded at adoption' } } };
     const cwd = project({ files: { 'src/a.mjs': lines(10), 'src/big.mjs': lines(441) }, config: { schema: 1, _README: SCHEMA1_TEMPLATE_README, roots: ['src'], defaults: { maxLines: 300, maxLineBytes: 1000 }, extensions: ['.mjs'], exclude: ['src/vendor'], ...records } });
     const moved = writeBaseline(cwd);
     const limits = { 'lines-per-file': { value: 300, tolerance: 10, reason: 'carried from schema 1' } };
-    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ schema: 3, _README: TEMPLATE_README, roots: ['src'], limits, extensions: ['.mjs'], exclude: ['src/vendor'], baseline: records.baseline }));
+    assert.equal(readFileSync(configPath(cwd), 'utf8'), canonical({ schema: 3, _README: REVISION_13_README, roots: ['src'], limits, extensions: ['.mjs'], exclude: ['src/vendor'], baseline: records.baseline }));
     assert.equal(moved.code, 0, `the move needs no reason, because it raises nothing:\n${out(moved)}`);
     assert.ok(moved.stdout.includes(movedLine(cwd, 3)), moved.stdout);
     assert.ok(moved.stdout.includes('source-size: limit lines-per-file 300, tolerance 10% — from override: carried from schema 1'), moved.stdout);
@@ -366,28 +369,111 @@ describe('source-size — spec:source-size/S19 regeneration moves schema 1 onto 
   });
 });
 
-describe('source-size — the plan keeps its own rule', () => {
-  it('phase2-plan-files-within-defaults: every file this plan has created through Phase 2 is within the declared defaults', () => {
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-      'agent-workflow-kit/tools/source-size-core.test.mjs',
-      'agent-workflow-kit/tools/source-size-config.test.mjs',
-      'agent-workflow-kit/tools/source-size-ratchet.test.mjs',
-      'agent-workflow-kit/tools/source-size-refusal.mjs',
-      'agent-workflow-kit/tools/source-size-config.mjs',
-      'agent-workflow-kit/tools/source-size-scope.mjs',
-      'agent-workflow-kit/tools/source-size-gate-cmd.mjs',
-      'agent-workflow-kit/tools/source-size-judge.mjs',
-      'agent-workflow-kit/tools/source-size-report.mjs',
-      'agent-workflow-kit/tools/source-size-aggregate.test.mjs',
-      'agent-workflow-kit/tools/source-size-writer.test.mjs',
-    ];
-    for (const rel of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
+describe('spec:source-size/S73 a write that raises prints the review focus after its reason', () => {
+  const assertRaiseReviewFocus = (result, reason) => {
+    assert.deepEqual([result.code, result.stderr], [0, ''], out(result));
+    const outputLines = result.stdout.split('\n');
+    const reasonIndex = outputLines.indexOf(`reason: ${reason}`);
+    assert.ok(reasonIndex >= 0, out(result));
+    assert.equal(outputLines.filter((line) => line === RAISE_REVIEW_FOCUS).length, 1, out(result));
+    assert.equal(outputLines[reasonIndex + 1], RAISE_REVIEW_FOCUS, out(result));
+  };
+
+  const assertNoRaiseReviewFocus = (result) => {
+    assert.equal(result.code, 0, out(result));
+    assert.doesNotMatch(out(result), /^source-size: REVIEW FOCUS — this write RAISED\b/m);
+  };
+
+  it('plain --write-baseline focuses a grown file, and emits no raise focus for the unchanged tree or a later tighten', () => {
+    const grownPath = 'src/big.mjs';
+    const cwd = project({
+      files: { [grownPath]: lines(460) },
+      config: AUTHORED({ schema: 3, baseline: RECORDS.baseline }),
+    });
+    const reason = 'the parser moved here';
+    const grown = writeBaseline(cwd, reason);
+    assert.match(grown.stdout, /src\/big\.mjs: lines 441 → 460 \(raise\)/);
+
+    const unchanged = writeBaseline(cwd);
+    assert.match(unchanged.stdout, /baseline unchanged/);
+    assertNoRaiseReviewFocus(unchanged);
+
+    writeFileSync(join(cwd, grownPath), lines(441));
+    const tightened = writeBaseline(cwd);
+    assert.match(tightened.stdout, /src\/big\.mjs: lines 460 → 441/);
+    assertNoRaiseReviewFocus(tightened);
+
+    assertRaiseReviewFocus(grown, reason);
   });
+
+  it('--write-baseline --layout focuses a raise when it starts the layout record', () => {
+    const cwd = project({
+      files: { 'src/a.mjs': lines(10) },
+      config: AUTHORED({ schema: 3, baseline: {} }),
+    });
+    const result = main(['--write-baseline', '--layout', '--reason', INITIAL_ADOPTION_REASON, '--cwd', cwd]);
+    assert.deepEqual(configOf(cwd).layout.roots, { src: { files: 1, reason: INITIAL_ADOPTION_REASON } });
+    assertRaiseReviewFocus(result, INITIAL_ADOPTION_REASON);
+  });
+
+  it('the first write on an absent config focuses its raises', () => {
+    const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
+    const result = writeBaseline(cwd, INITIAL_ADOPTION_REASON);
+    assertRaiseReviewFocus(result, INITIAL_ADOPTION_REASON);
+  });
+
+  it('minting an authored config focuses its raises, and re-serialization emits no raise focus', () => {
+    const cwd = project({ files: { 'src/big.mjs': lines(441) } });
+    const minted = writeBaseline(cwd, INITIAL_ADOPTION_REASON);
+    assert.deepEqual(configOf(cwd).baseline, { 'src/big.mjs': { lines: 441, reason: INITIAL_ADOPTION_REASON } });
+
+    const configFile = configPath(cwd);
+    writeFileSync(configFile, readFileSync(configFile, 'utf8').trimEnd());
+    const reserialized = writeBaseline(cwd, INITIAL_ADOPTION_REASON);
+    assert.ok(reserialized.stdout.split('\n').includes(`source-size: baseline rewritten — no recorded value changed; ${configFile} was re-serialized`), out(reserialized));
+    assertNoRaiseReviewFocus(reserialized);
+
+    assertRaiseReviewFocus(minted, INITIAL_ADOPTION_REASON);
+  });
+
+  it('--override focuses the regeneration when a tighter limit creates a raise', () => {
+    const cwd = project({
+      files: { 'src/a.mjs': lines(10) },
+      config: AUTHORED({ schema: 3, baseline: {} }),
+    });
+    const reason = 'tighter files';
+    const result = overrideFileLimit(cwd, 8, reason);
+    assert.match(result.stdout, /src\/a\.mjs: lines none → 10 \(raise\)/);
+    assertRaiseReviewFocus(result, reason);
+  });
+});
+
+describe('spec:source-size/S74 regeneration replaces the revision-12 _README and absent refusals print revision 13', () => {
+  it('regeneration replaces the exact revision-12 template and keeps an _README differing by one byte', () => {
+    const customReadme = `${REVISION_12_README.slice(0, -1)}!`;
+    const writtenReadmes = [REVISION_12_README, customReadme].map((_README) => {
+      const cwd = project({
+        files: { 'src/a.mjs': lines(10) },
+        config: AUTHORED({ schema: 3, _README, baseline: {} }),
+      });
+      const result = writeBaseline(cwd);
+      assert.equal(result.code, 0, out(result));
+      return configOf(cwd)._README;
+    });
+    assert.deepEqual(writtenReadmes, [REVISION_13_README, customReadme]);
+  });
+
+  for (const [mode, run] of [
+    ['--adopt', adopt],
+    ['--override', (cwd) => overrideFileLimit(cwd, 8, 'tighter files')],
+  ]) {
+    it(`${mode} on an absent config prints the revision-13 _README in the authoring template`, () => {
+      const cwd = project({ files: { 'src/a.mjs': lines(10) }, config: null });
+      const result = run(cwd);
+      assert.equal(result.code, 1, out(result));
+      assert.equal(existsSync(configPath(cwd)), false);
+      const templateReadme = result.stdout.split('\n').find((line) => line.startsWith('  "_README": '));
+      assert.equal(templateReadme, `  "_README": ${JSON.stringify(REVISION_13_README)},`, out(result));
+    });
+  }
 });

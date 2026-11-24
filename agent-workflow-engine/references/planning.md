@@ -70,11 +70,14 @@ headings are LITERAL, copied bare: tooling extracts sections by exact match.
 ## Next steps
 ```
 
-A project-declared `## Phase: <name>` may ride between Verification and Cleanup; it is bounded by
-the approved part's line cap and may not reuse the Cleanup name.
+A project-declared `## Phase: <name>` may ride between Verification and Cleanup; its lines count
+toward the approved part's lines and it may not reuse the Cleanup name.
 
-A plan that does not fit is not under-described. Either the TASK is too big — split it along
-independently verifiable boundaries, never by document size — or it is a SWEEP (below).
+When a plan exceeds a count, ask whether every part is needed, whether the work belongs in one plan
+and whether the plan is logical and optimal. If so, write one unfenced, unindented reason line
+starting with `One plan: ` in Goal and boundary. The checker leaves the reason line out of the counts
+and lifts each count past its signal. Otherwise, cut what is not needed or split by task along
+independently verifiable boundaries, never to fit the count. The 200-byte cap on a row takes no reason.
 
 - **Goal and boundary** (10 lines) — the observable outcome, what behaviour is preserved, explicit
   non-goals, and the GOVERNING spec(s) ([`specs.md`](specs.md)): zero, one or many — one per touched
@@ -86,6 +89,11 @@ independently verifiable boundaries, never by document size — or it is a SWEEP
 - **Module ledger** (60 lines) — the single list of paths, and the plan's execution order.
 - **Verification** (20 lines) — the acceptance check, plus one command that validates the whole ledger.
 - **Phase: Cleanup** and **Next steps** (human-actionable only) share the 10 reserved lines.
+
+When a size limit fires at the diff, ask whether the project's code rules were kept. Fix a broken
+rule along its own seam. When the rules were kept and the size is justified, record the exception with
+its reason. Never split or compress code for the number. If an old file grew during unrelated work
+and its rules were broken, write a debt row and record the raise with a reason naming that row.
 
 ## Module ledger
 

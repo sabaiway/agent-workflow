@@ -30,10 +30,10 @@ entries of each directory and its depth below its root, over every tracked entry
 root outside the kit's own folder ${KIT_FOLDER_ROOT} plus the spec store docs/ai/specs walked from
 disk, and the files of each declared root.
 
-A recorded entry is DEBT: a finding stops exactly when the regeneration would raise it, and a record
-above the tree or gone warns until the regeneration lowers or removes it. No line sum over a root is
-judged or recorded: an "aggregate" an earlier schema recorded warns on every check of a minted config and is dropped,
-with no reason, by the next regeneration.
+A recorded entry is an exception with its reason: a finding stops exactly when the regeneration
+would raise it, and a record above the tree or gone warns until the regeneration lowers or removes
+it. No line sum over a root is judged or recorded: an "aggregate" an earlier schema recorded warns
+on every check of a minted config and is dropped, with no reason, by the next regeneration.
 
 --write-baseline regenerates the machine keys (baseline, and layout where it is judged) from the
 tree and writes schema ${SOURCE_SIZE_SCHEMA}, on an absent config too. --layout starts the layout record on a

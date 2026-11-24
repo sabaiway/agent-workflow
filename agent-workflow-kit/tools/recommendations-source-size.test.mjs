@@ -381,7 +381,14 @@ describe('spec:source-size/S41 — the source-size.layout item renders exactly o
     assert.ok(run(declined).layout, 'the record is offered, and declined');
     writeFileSync(join(declined, 'src', 'a.mjs'), 'export const a = 1;\n'.repeat(441));
     const grown = run(tracked(declined));
-    assert.deepEqual([grown.layout, grown.arms, grown.skip], [undefined, ['source-size'], 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits — record that growth first with the reasoned --write-baseline its stop names, then re-run']);
+    assert.deepEqual([grown.layout, grown.arms], [undefined, ['source-size']]);
+    const opening = 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits';
+    assert.ok(grown.skip?.startsWith(opening), grown.skip);
+    assert.doesNotMatch(grown.skip, /--write-baseline|its stop names/);
+    const remedy = grown.skip.slice(opening.length);
+    assert.match(remedy, /\bstop\b/);
+    assert.match(remedy, /\bfirst\b/);
+    assert.match(remedy, /then re-run$/);
     assert.deepEqual(setup(declined), { answer: 'held', reason: 'stops' });
     assert.deepEqual(readFileSync(configOf(declined)), bytes, 'a declined record writes nothing');
   });

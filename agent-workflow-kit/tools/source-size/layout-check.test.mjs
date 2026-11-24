@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
+import { RECORDED_EXCEPTION_ENDING, configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
 import { main } from '../source-size-check.mjs';
 import { runCheck } from '../source-size-runs.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
@@ -50,12 +50,13 @@ describe('spec:source-size/S27 on a present config a finding stops exactly when 
       }),
     });
     const check = runCli(cwd, '--check');
-    assert.equal(check.code, 1, showRun(check));
-    assert.deepEqual(collectFindings(check), [
+    const findings = collectFindings(check);
+    assert.deepEqual([check.code, findings], [1, [
       unrecordedRoot('lib', 1),
       'src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)',
-      'src/wider: entries 24 exceeds its recorded 23 — recorded debt is not permission to grow',
-    ]);
+      `src/wider: entries 24 exceeds its recorded 23 — ${RECORDED_EXCEPTION_ENDING}`,
+    ]]);
+    assert.doesNotMatch(findings.join(NL), /debt/);
     const before = readBytes(cwd);
     const write = runCli(cwd, '--write-baseline');
     assert.equal(write.code, 1, showRun(write));
@@ -107,12 +108,13 @@ describe('spec:source-size/S32 at the check the layout record ratchets, director
       config: WITH_LAYOUT({ src: 20 }, { 'src/wider': dirRecord({ entries: 23 }), [SIXTH]: dirRecord({ depth: 6 }) }),
     });
     const result = runCli(cwd, '--check');
-    assert.equal(result.code, 1, showRun(result));
-    assert.deepEqual(collectFindings(result), [
-      'src/a/b/c/d/e/g: depth 7 exceeds its recorded 6 — recorded debt is not permission to grow',
-      'src/wider: entries 24 exceeds its recorded 23 — recorded debt is not permission to grow',
+    const findings = collectFindings(result);
+    assert.deepEqual([result.code, findings], [1, [
+      `${SIXTH}: depth 7 exceeds its recorded 6 — ${RECORDED_EXCEPTION_ENDING}`,
+      `src/wider: entries 24 exceeds its recorded 23 — ${RECORDED_EXCEPTION_ENDING}`,
       'src: files 26 exceeds its recorded 20 beyond its band (up to 22)',
-    ]);
+    ]]);
+    assert.doesNotMatch(findings.join(NL), /debt/);
   });
 
   it('a record the tree lowered or no longer needs, and one whose directory or root is gone, each warn, exit 0', () => {
@@ -213,6 +215,21 @@ describe('spec:source-size/S33 layout is judged where the config is absent or re
     const lowered = runCli(cwd, '--write-baseline');
     assert.equal(lowered.code, 0, `a lower needs no reason:${NL}${showRun(lowered)}`);
     assert.deepEqual(readConfig(cwd).layout, { roots: { src: { files: 23, reason: 'layout starts' } }, directories: {} });
+  });
+
+  it('a withheld --write-baseline --layout names --layout in its manual lane, and a growth the plain regeneration takes first keeps the plain lane', () => {
+    const lane = (mode) => `Run the regenerator yourself with the working directory set to this project (source-size-check.mjs ${mode}, plus --reason "<text>" for any raise).`;
+    for (const suffix of ['dq$unsafe', `${String.fromCharCode(0x2028)}dir`]) {
+      const starting = createProject({ files: WIDER, config: MINTED() }, suffix);
+      const refused = runCli(starting, '--write-baseline', '--layout');
+      assert.equal(refused.code, 1, showRun(refused));
+      assertHas(refused, lane('--write-baseline --layout'));
+      const grown = createProject({ files: { ...WIDER, 'src/big.mjs': makeLines(441) }, config: MINTED() }, suffix);
+      const first = runCli(grown, '--write-baseline', '--layout');
+      assert.equal(first.code, 1, showRun(first));
+      assertHas(first, lane('--write-baseline'));
+      assert.doesNotMatch(first.stdout, /source-size-check\.mjs --write-baseline --layout/);
+    }
   });
 
   it('--layout on --check, --adopt or --override is a usage error, exit 2, writing nothing', () => {

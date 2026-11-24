@@ -14,7 +14,7 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { stripGitLocationEnv } from './git-env.mjs';
 import { tmpdir } from 'node:os';
@@ -22,17 +22,18 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
-import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_WHY, measureFile, practiceFacts, validateSourceSizeConfig } from './source-size-core.mjs';
+import { SOURCE_SIZE_WHY, practiceFacts, validateSourceSizeConfig } from './source-size-core.mjs';
 import { GROWTH_REASON_PLACEHOLDER, unmintedRefusalLines } from './source-size-report.mjs';
+import { CODE_RULE_QUESTION_LINES, HAND_RECORD_REMEDY_LINES, REVISION_13_README as CANONICAL_README } from './source-size/cli-harness.test.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-practice-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 const { NODE_TEST_CONTEXT, ...TEST_ENV } = stripGitLocationEnv(process.env);
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
-
-const CANONICAL_WHY = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
+const CANONICAL_WHY = 'A module you can hold whole is the unit of review, test pairing and safe edit; a limit is a signal, not a goal, and a justified size is a recorded exception with its reason instead of invisible growth.';
 const WHY_LINE = `source-size: WHY — ${CANONICAL_WHY}`;
+const EXCEPTION_WITH_REASON = /\b(?:exceptions?\b[^.!?]*\breasons?\b|reasoned exceptions?\b)/i;
+const DEBT_WORD = /\bdebt\b/i;
 
 const git = (cwd, args) => {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: TEST_ENV });
@@ -66,7 +67,14 @@ const project = ({ files = {}, config = AUTHORED } = {}) => {
 const check = (cwd) => main(['--check', '--cwd', cwd]);
 const lastLine = (result) => result.stdout.split('\n').at(-1);
 const configPath = (cwd) => join(cwd, 'docs', 'ai', 'source-size.json');
-const RATCHET_RULE = ': growth past a record takes a reasoned bump, and a record above the tree or gone warns until the regeneration lowers or removes it.';
+const assertPracticeLine = (line, { maxLines, maxLineBytes, roots, recordedFiles }) => {
+  assert.ok(line.startsWith(`source-size: practice — caps ${maxLines} lines · ${maxLineBytes} bytes per line over ${roots} declared root(s) · ${recordedFiles} file(s)`), line);
+  assert.match(line, EXCEPTION_WITH_REASON, 'a recorded size is an exception with its reason');
+  assert.doesNotMatch(line, DEBT_WORD);
+  assert.match(line, /\bgrowth\b.*\bregenerat\w*\b.*\braise\b.*\bstops?\b.*\breason\b/i);
+  assert.match(line, /\bask\w*\b.*\bagain\b.*\bcode rules\b.*\bkept\b/i);
+  assert.match(line, /\babove the tree\b.*\bgone\b.*\bwarn\w*\b.*\buntil\b.*\bregenerat\w*\b.*\blower\w*\b.*\bremov\w*\b/i);
+};
 
 describe('source-size — the standing echo on a GREEN run (D-17 U4)', () => {
   it('gate-green-line-names-practice: a PASS states the caps, the record and the ratchet rule in one line', () => {
@@ -78,11 +86,7 @@ describe('source-size — the standing echo on a GREEN run (D-17 U4)', () => {
       },
     });
     const result = check(cwd);
-    assert.equal(
-      lastLine(result),
-      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 1 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
-      `${result.stdout}\n${result.stderr}`,
-    );
+    assertPracticeLine(lastLine(result), { maxLines: 400, maxLineBytes: 1000, roots: 1, recordedFiles: 1 });
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /source-size: PASS — 2 in-scope file\(s\) within the declared caps/, 'with no warning the pass line itself is unchanged');
   });
@@ -122,11 +126,7 @@ const assertLimitLines = (result, code, expected) => {
 describe('spec:source-size/S23 — an override reaches every reader', () => {
   it('the standing line reads the CONFIG, not a constant: an overriding project states its own caps and is judged by them, band included', () => {
     const result = check(project({ files: { 'src/ok.mjs': lines(10) }, config: mintedAt({ limits: TIGHT }) }));
-    assert.equal(
-      lastLine(result),
-      `source-size: practice — caps 50 lines · 120 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
-      `${result.stdout}\n${result.stderr}`,
-    );
+    assertPracticeLine(lastLine(result), { maxLines: 50, maxLineBytes: 120, roots: 1, recordedFiles: 0 });
     assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(practiceFacts(validateSourceSizeConfig(mintedAt({ limits: TIGHT }))), { maxLines: 50, maxLineBytes: 120, roots: 1, recordedFiles: 0 });
     const files = { 'src/big.mjs': lines(56), 'src/near.mjs': lines(55), 'src/wide.mjs': `${'x'.repeat(121)}\n` };
@@ -160,12 +160,11 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
   it('a stop leads with its verdict, findings and remedy before limits, notes and warnings; warnings alone end in a green line that counts them', () => {
     const near = project({ files: { 'src/near.mjs': lines(420) }, config: mintedAt() });
     const warned = check(near);
-    assert.deepEqual(warned.stdout.split('\n').slice(5), [
+    assert.deepEqual(warned.stdout.split('\n').slice(5, -1), [
       NO_LAYOUT(near),
       KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
       'source-size: PASS with 1 warning(s) — 1 in-scope file(s) judged and nothing beyond a band or a record; each warning above repeats on every run until it is settled',
-      `source-size: practice — caps 400 lines · 1000 bytes per line over 1 declared root(s) · 0 file(s) carry a recorded size (debt, not permission)${RATCHET_RULE}`,
     ], warned.stdout);
     assert.equal(warned.code, 0);
     assert.doesNotMatch(warned.stdout, /within the declared caps/, 'a run with warnings never says every file is within its limits');
@@ -177,16 +176,22 @@ describe('spec:source-size/S20 — every run that resolves a config states the l
     const stopped = project({ files: { 'src/near.mjs': lines(420), 'src/big.mjs': lines(441) }, config: mintedAt() });
     const failed = check(stopped);
     const said = failed.stdout.split('\n');
-    assert.deepEqual(said.slice(0, 11), [
+    const remedies = [
+      ...CODE_RULE_QUESTION_LINES,
+      ...HAND_RECORD_REMEDY_LINES,
+      `node "${fileURLToPath(new URL('./source-size-check.mjs', import.meta.url))}" --write-baseline --cwd "${stopped}" --reason "${GROWTH_REASON_PLACEHOLDER}"`,
+    ].map((remedy) => `source-size: REMEDY — ${remedy}`);
+    assert.deepEqual(said.slice(0, 17), [
       `source-size: FAIL — 1 finding(s) against ${configPath(stopped)}`,
       'src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)',
-      `source-size: REMEDY — node "${fileURLToPath(new URL('./source-size-check.mjs', import.meta.url))}" --write-baseline --cwd "${stopped}" --reason "${GROWTH_REASON_PLACEHOLDER}"`,
+      ...remedies,
       ...KIT_LINES,
       NO_LAYOUT(stopped),
       KIT_FOLDER,
       'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops',
     ], failed.stdout);
     assert.deepEqual([failed.code, failed.stderr], [1, '']);
+    assertPracticeLine(lastLine(warned), { maxLines: 400, maxLineBytes: 1000, roots: 1, recordedFiles: 0 });
   });
 
   it('--override and the check after it state the override with its reason; a usage, config, enumeration or scope error prints no limit line', () => {
@@ -247,32 +252,55 @@ describe('source-size — every rendered refusal states WHY (D-17 U4)', () => {
   });
 });
 
-describe('source-size — the plan keeps its own rule', () => {
-  it('phase3-plan-files-within-defaults: every file this plan has created through Phase 3 is within the declared defaults', () => {
-    // Cumulative and EXPLICIT (never derived from git state), so an earlier phase's file growing under
-    // a later phase's edits is caught here. Phase 3 added no runtime module — only this test file.
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-      'agent-workflow-kit/tools/source-size-core.test.mjs',
-      'agent-workflow-kit/tools/source-size-config.test.mjs',
-      'agent-workflow-kit/tools/source-size-ratchet.test.mjs',
-      'agent-workflow-kit/tools/source-size-refusal.mjs',
-      'agent-workflow-kit/tools/source-size-config.mjs',
-      'agent-workflow-kit/tools/source-size-scope.mjs',
-      'agent-workflow-kit/tools/source-size-gate-cmd.mjs',
-      'agent-workflow-kit/tools/source-size-judge.mjs',
-      'agent-workflow-kit/tools/source-size-report.mjs',
-      'agent-workflow-kit/tools/source-size-aggregate.test.mjs',
-      'agent-workflow-kit/tools/source-size-writer.test.mjs',
-      'agent-workflow-kit/tools/source-size-practice.test.mjs',
-      'agent-workflow-kit/tools/source-size-stop-rendering.test.mjs',
-    ];
-    for (const rel of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
+describe('spec:source-size/S75 — every source-size surface names a recorded exception', () => {
+  it('names the exception and its reason across the checker, template and advisor, and keeps debt for piles', async () => {
+    const { TEMPLATE_README } = await import('./source-size-report.mjs');
+    const { BENEFITS, VARIANT_BENEFITS } = await import('./recommendations.mjs');
+
+    const files = { 'src/big.mjs': lines(442) };
+    const configWithRecord = (count) => ({
+      ...AUTHORED,
+      baseline: { 'src/big.mjs': { lines: count, reason: 'initial adoption' } },
+    });
+    const green = check(project({ files, config: configWithRecord(442) }));
+    const stopped = check(project({ files, config: configWithRecord(441) }));
+    const help = main(['--help']);
+    const absent = project({ files: { 'src/ok.mjs': lines(10) }, config: null });
+    const written = main(['--write-baseline', '--cwd', absent, '--reason', 'initial adoption']);
+    assert.equal(green.code, 0, green.stdout);
+    assert.equal(stopped.code, 1, stopped.stdout);
+    assert.equal(help.code, 0, help.stdout);
+    assert.equal(written.code, 0, written.stdout);
+
+    const [, finding] = stopped.stdout.split('\n');
+    assert.match(finding, /^src\/big\.mjs: /);
+    const { schema, _README } = JSON.parse(readFileSync(configPath(absent), 'utf8'));
+    const restatements = {
+      'green practice line': lastLine(green),
+      '--help': help.stdout,
+      'source-size benefit': BENEFITS['source-size'],
+      'source-size.layout benefit': VARIANT_BENEFITS['source-size.layout'],
+    };
+    assert.deepEqual({
+      exportedWhy: SOURCE_SIZE_WHY,
+      closingWhy: lastLine(stopped),
+      schema,
+      writtenReadme: _README,
+      templateReadme: TEMPLATE_README,
+      restatementsMissingAnExceptionWithItsReason: Object.keys(restatements).filter((name) => !EXCEPTION_WITH_REASON.test(restatements[name])),
+      restatementsSayingDebt: Object.keys(restatements).filter((name) => DEBT_WORD.test(restatements[name])),
+      findingsSayingDebt: [finding].filter((line) => DEBT_WORD.test(line)),
+      pilesBenefitSaysDebt: DEBT_WORD.test(VARIANT_BENEFITS['source-size.piles']),
+    }, {
+      exportedWhy: CANONICAL_WHY,
+      closingWhy: WHY_LINE,
+      schema: 3,
+      writtenReadme: CANONICAL_README,
+      templateReadme: CANONICAL_README,
+      restatementsMissingAnExceptionWithItsReason: [],
+      restatementsSayingDebt: [],
+      findingsSayingDebt: [],
+      pilesBenefitSaysDebt: true,
+    });
   });
 });

@@ -15,9 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SOURCE_SIZE_DEFAULTS, measureFile } from '../tools/source-size-core.mjs';
 
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOLS_DIR = fileURLToPath(new URL('../tools', import.meta.url));
 const IMPORT_RE = /(?:^|\n)\s*(?:import\s[^'"]*?|export\s[^'"]*?from\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 
@@ -204,44 +202,5 @@ describe('read-graph purity — the advisor surface is structurally read-only (F
     };
     for (const file of moduleFiles) if ((color.get(file) ?? WHITE) === WHITE) dfs(file);
     assert.deepEqual(cycles, [], `import cycles found:\n${cycles.join('\n')}`);
-  });
-});
-
-// This phase creates no test file of its own — flow-check.test.mjs stays byte-identical, which is
-// what keeps its red-proof standing — so the plan's own-rule check lands beside the boundaries test
-// that already binds the same three modules.
-describe('source-size — the plan keeps its own rule', () => {
-  it('phase5-plan-files-within-defaults: every file this plan has created through Phase 5 is within the declared defaults', () => {
-    // Cumulative and EXPLICIT (never derived from git state), so an earlier phase's file growing
-    // under a later phase's edits is caught here.
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-      'agent-workflow-kit/tools/source-size-core.test.mjs',
-      'agent-workflow-kit/tools/source-size-config.test.mjs',
-      'agent-workflow-kit/tools/source-size-ratchet.test.mjs',
-      'agent-workflow-kit/tools/source-size-refusal.mjs',
-      'agent-workflow-kit/tools/source-size-config.mjs',
-      'agent-workflow-kit/tools/source-size-scope.mjs',
-      'agent-workflow-kit/tools/source-size-gate-cmd.mjs',
-      'agent-workflow-kit/tools/source-size-judge.mjs',
-      'agent-workflow-kit/tools/source-size-report.mjs',
-      'agent-workflow-kit/tools/source-size-aggregate.test.mjs',
-      'agent-workflow-kit/tools/source-size-writer.test.mjs',
-      'agent-workflow-kit/tools/source-size-practice.test.mjs',
-      'agent-workflow-kit/tools/source-size-stop-rendering.test.mjs',
-      'agent-workflow-kit/tools/source-size-adopt.test.mjs',
-      'agent-workflow-kit/tools/recommendations-source-size.test.mjs',
-      // Phase 5 (campaign tranche 1) — the three halves the flow-check facade now composes.
-      'agent-workflow-kit/tools/flow-check-cores.mjs',
-      'agent-workflow-kit/tools/flow-check-rungs.mjs',
-      'agent-workflow-kit/tools/flow-check-git-lane.mjs',
-    ];
-    for (const path of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, path);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${path}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${path}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
   });
 });

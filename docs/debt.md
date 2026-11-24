@@ -246,15 +246,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   text predates revision 11 of the size contract and no rule of it depends on it. Raised by the SIZE-PRACTICE S1 spec
   review (2026-11-13).
 
-- **WITHHELD-LANE-NAMES-HAND-ENTRIES-WHERE-NONE-FOLLOW** — invariant: the withheld lane names the hand entries and
-  their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:85`, used
-  at `:230` (a stop whose stops are layout ones prints no entry), `:243` (the tighten warning, which also says "with
-  no reason") and `:271` (the reason-required refusal). Narrow fix: only the stop block that prints
-  entries carries the hand clause; the other sites take the lane without it. Proof: a green check on a path that
-  withholds the command, one record lowered, prints no "by hand below". Residual exposure, not live: "below" pointed
-  at absent entries before revision 11; the fold extends the clause by "your reason in place of the placeholder".
-  Raised by the SIZE-PRACTICE S1 spec review (2026-11-13).
-
 - **SIZE-CHECK-S61-CELL-THROWS-BEFORE-THE-MODE** — invariant: each mode of the size check is invoked with valid
   arguments and a deployed cwd, and an injected error with no exit code inside its run reaches `guardChecker`. Origin:
   `agent-workflow-kit/tools/source-size/red-block.test.mjs:186-199`; its `ctx.cwd = 42` throws at
@@ -1557,13 +1548,26 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (7) a failing specs outcome that carries `placedScripts`; (8) drop the import. Residual exposure, live from kit 21.0.0
   (Issue-037).
 
-- **PLAN-SHAPE-GATE-READS-NO-WAIVER** — invariant: a plan-shape finding the maintainer waived for one plan does not
-  block that plan's commit. Origin: `agent-workflow-kit/tools/plan-shape.mjs:17` (`MAX_LEDGER_ROWS` 25, no waiver
-  path); the KIT-SCRIPTS S4 plan carried 55 rows under the maintainer's waiver, the gate stayed red, and
-  `commit-guard --check` refuses any red final receipt — met by the S6 landing and the S4 diff review. Narrow fix
-  taken: the finished, reviewed plan renamed to the scratch form before `--final` (the maintainer's choice, option
-  1), its only findings the waived cap and T43's `story-owns`. Fix direction: a recorded waiver in a strict config
-  that plan-shape reads, through a spec and its review. Residual exposure, NOT live: one plan, already reviewed.
+- **EPIC-GATE-COUNTS-TAKE-NO-REASON** — invariant: an epic's own counts are signals, as a plan's are: an epic past its
+  line count passes with a stated reason, and without one the count asks whether every part is needed. Origin:
+  `agent-workflow-kit/tools/epic-shape.mjs:13` (`MAX_LINES` 60, frozen as the frontmatter `maxLines` at `:129`) and
+  `:230` (`line-cap` refuses with no lift); the row's 200 bytes at `:14` bound one row's sentence and stay. Narrow fix:
+  none in A-PLAN-CARRIES-NO-LINE-COUNTS, whose scope leaves the epic gate's caps as they are (its non-goals); its S2
+  gives the plan gate the reason line (plan-review-loop revision 17). Fix direction: the same `One plan: `-style
+  reason line for an epic, through a spec of the epic gate and its review. Proof owed: an epic past 60 lines with the
+  line passes and prints a note, one without it refuses asking the plan question. Residual exposure, NOT live: no open
+  epic stands past 60 lines. Written by S2 of A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-24).
+
+- **RAISE-FOCUS-CALLS-EVERY-RAISED-ENTRY-A-FILE** — invariant: the raise review-focus line names the raised entry,
+  a root's files count or a directory's entries or depth as well as a file. Origin: the S2 diff review of
+  A-PLAN-CARRIES-NO-LINE-COUNTS: `agent-workflow-kit/tools/source-size-report.mjs:103` (`RAISE_FOCUS_END`, "for that
+  file"), shared by the write's line and the stop's hand-record variant, quoted verbatim at
+  `docs/ai/specs/kit/source-size/record.md:59` and `:61`. Narrow fix: "for that file" becomes "for that entry" in
+  the one constant, `record.md:59` and `:61` revised and the hand-record expectation at
+  `agent-workflow-kit/tools/source-size/red-block.test.mjs:33` and the writer's `RAISE_REVIEW_FOCUS` updated. Proof
+  owed: the existing S73 cell whose write raises only a root's record asserts the entry wording. Residual exposure:
+  a review handed a root or directory raise reads it as a file's; the line still names the raise and asks for each
+  reason. Written by S2 of A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-24).
 
 - **WORKFLOW-CHECKOUT-CELL-MISSES-A-NAMED-STEP** — invariant: every checkout step of a workflow that runs the kit
   suites fetches the whole history. Origin: the lens, the KIT-SCRIPTS S10 publish fix review:
@@ -1759,6 +1763,20 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (2026-11-23).
 
 ## Closed
+
+- **WITHHELD-LANE-NAMES-HAND-ENTRIES-WHERE-NONE-FOLLOW** — invariant: the withheld lane names the hand entries and
+  their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:85` (the
+  lane's hand clause), printed by the stop block, the tighten warning and the reason-required refusal. Raised by the
+  SIZE-PRACTICE S1 spec review (2026-11-13). Closed in S2 of A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-24, source-size
+  revision 13): the lane names no hand entry, and the stop prints the hand-record remedy, lead and entries only where
+  a file is raised. Proof: source-size S72 (`agent-workflow-kit/tools/source-size/red-block.test.mjs`).
+
+- **PLAN-SHAPE-GATE-READS-NO-WAIVER** — invariant: a plan-shape finding the maintainer waived for one plan does not
+  block that plan's commit. Origin: `agent-workflow-kit/tools/plan-shape.mjs:17` (the row cap, no waiver path); the
+  KIT-SCRIPTS S4 plan carried 55 rows under the maintainer's waiver and the gate stayed red. Closed in S2 of
+  A-PLAN-CARRIES-NO-LINE-COUNTS (2026-11-24, plan-review-loop revision 17), its config direction replaced: a plan past
+  its lines, a section budget or its rows passes with one `One plan: <reason>` line in Goal and boundary, printed as a
+  note by every printer of the whole result. Proof: plan-review-loop S43-S45 (`agent-workflow-kit/tools/plan-shape.test.mjs`).
 
 - **PLAN-GATE-SWEEP-ROW-CANNOT-HOLD-EACH-RECORD** — invariant: a plan row over several files holds each file to its
   own size ceiling, so files of different recorded sizes can share one row. Origin: `plan-shape.mjs` held a row's one

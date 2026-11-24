@@ -42,7 +42,9 @@ Slots: author, fold, review
    revises (a live sibling's revision as the new contract states it) and the plan's ledger with its
    Goal and boundary and Verification, in the same rounds, at most two rounds; the plan has no rounds of
    its own. Solo (self-review only) / Reviewed (one backend) / Council (both; you
-   synthesize), as the resolved `review` recipe selects. The review brief of EVERY member (bridge
+   synthesize), as the resolved `review` recipe selects. Before each review brief, run
+   `node <kit>/tools/plan-shape-cli.mjs --check <plan>` on the exact plan. If that run prints a note,
+   carry it in the brief. If it prints none, drop the earlier note. The review brief of EVERY member (bridge
    focus, agy `--facts`, the lens brief) carries the walk-around lens: for every check bullet of each
    governing spec, name the invariant it proves and one state that walks around it; a named state
    rewrites the spec BEFORE code, as a `modify` row of the plan.
@@ -77,8 +79,9 @@ Slots: author, fold, review
    **{round N · finding-origin tally · per-backend verdict}**: the verdicts read from the round's
    receipts and the lens's answer, plus the orchestrator's finding-origin tally.
 6. **Present for approval** — finish the plan folded with the spec (the readers sweep of step 3 over
-   every name the fold changed), run `node <kit>/tools/plan-shape-cli.mjs --check <plan>`, and present
-   the plan with its contracts. Never execute here: a harness "approved — start coding" prompt
+   every name the fold changed). Run `node <kit>/tools/plan-shape-cli.mjs --check <plan>` on the exact
+   plan, then present it with its contracts. Carry any note that run prints when presenting the plan
+   for approval. If it prints none, drop the earlier note. Never execute here: a harness "approved — start coding" prompt
    (**ExitPlanMode**) authorizes the PLAN only; `plan-execution` is a deliberate transition once
    the plan and its cold-start prompt exist.
 

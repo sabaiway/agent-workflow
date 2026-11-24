@@ -1160,9 +1160,14 @@ describe('procedures CLI — the flow armed-halves block (P8)', () => {
 const assertRecordedPractice = (lines) => {
   const recorded = lines.filter((line) => line.startsWith('  recorded:'));
   assert.equal(recorded.length, 1);
-  assert.match(recorded[0], /1 file\(s\) carry a recorded size \(debt, not permission\)/);
-  assert.match(recorded[0], /growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it/);
-  assert.doesNotMatch(recorded[0], /aggregate|\b\d+ (?:lines?\b|line\(s\))/);
+  const [recordedLine] = recorded;
+  assert.match(recordedLine, /\b1 file\(s\)/);
+  assert.match(recordedLine, /\bexception with its reason\b/);
+  assert.doesNotMatch(recordedLine, /\bdebt\b/i);
+  assert.match(recordedLine, /\bstops\b.*\breason\b/);
+  assert.match(recordedLine, /\bcode rules\b/);
+  assert.match(recordedLine, /\babove the tree\b.*\bwarns\b.*\buntil\b.*\blower(?:s|ed)?\b/);
+  assert.doesNotMatch(recordedLine, /aggregate|\b\d+ (?:lines?\b|line\(s\))/);
 };
 describe('procedures CLI — the declared source-size practice (D-17 U1)', () => {
   const AUTHORED = {
@@ -1266,7 +1271,7 @@ describe('procedures CLI — the declared source-size practice (D-17 U1)', () =>
   });
   it('render-why-sentence-verbatim: the ONE canonical sentence, byte-exact on every surface', () => {
     // Pinned as a LITERAL: a test comparing the render against the constant would follow any rewording, and the sentence is canon (D-17) because it never varies.
-    const CANONICAL = 'A module you can hold whole is the unit of review, test pairing and safe edit; the caps turn size drift into recorded, reasoned debt instead of invisible growth.';
+    const CANONICAL = 'A module you can hold whole is the unit of review, test pairing and safe edit; a limit is a signal, not a goal, and a justified size is a recorded exception with its reason instead of invisible growth.';
     assert.equal(SOURCE_SIZE_WHY, CANONICAL, 'the practice exports the canonical sentence');
     writePractice(MINTED);
     assert.ok(run(['plan-authoring'], { codex: READY, agy: READY }).stdout.includes(`  why: ${CANONICAL}`));

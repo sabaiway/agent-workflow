@@ -11,8 +11,8 @@ no-process spawn error) that nobody had written into the brief. The list is data
 renders it, so a retro extends the list instead of a reviewer re-finding a member.
 
 **What it reads.** The plan file named by `--plan`, opened as a regular file no-follow through the
-kit's capped descriptor read (1 MiB — a plan's approved part is capped at 100 lines) with its realpath required
-under the realpath of the cwd (the project root the advisor renders the command from; no git is
+kit's capped descriptor read (1 MiB, a bound of its own: a plan file past it is refused at the read in both modes)
+with its realpath required under the realpath of the cwd (the project root the advisor renders the command from; no git is
 asked): an absolute path outside, a `..` traversal out of it, a symlink leading out, a non-regular file and
 an over-cap plan each refuse **exit 2** by name — the generator PRINTS row text, so unlike
 plan-shape-cli's unbounded no-follow read it is bounded. The plan is judged on every rule of plan-shape's structural half (headings, section caps,

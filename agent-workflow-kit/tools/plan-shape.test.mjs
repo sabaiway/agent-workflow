@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { codes, DEFAULT_ROW, ledgerOf, LEGACY_ROW, planWith } from './plan-shape-harness.test.mjs';
 import { expandClaim } from './claim-relation.mjs';
+import { escapeForLine } from './source-size-core.mjs';
 
 const PIN_PATH = 'test/package-content.test.mjs';
 const rules = await import('./plan-shape.mjs').catch(() => ({}));
@@ -18,6 +19,37 @@ const factsFor = (overrides = {}) => {
   };
   return { ...facts, candidates: (suffix, preceding) => rules.resolveAnchorCandidates(facts.repoFiles, suffix, preceding) };
 };
+
+const ONE_PLAN_LABEL = 'One plan: ';
+const PLAN_QUESTION = 'is every part of this plan needed, does its work belong in one plan, and is the plan logical and optimal? ' +
+  `If so, say why on one line "${ONE_PLAN_LABEL}<why>" in Goal and boundary; if not, cut what is not needed or split it by task ` +
+  'along independently verifiable boundaries, never to fit the count';
+const GOAL_AT_SIGNAL = '- Spec: docs/ai/specs/example.md' + '\nBoundary detail.'.repeat(7);
+const RESPONSIBILITY_AT_BYTE_CAP = '\u00e9'.repeat(93);
+const ROW_PATHS = Array.from({ length: 46 }, (_, index) => `docs/approved-${index + 1}.md`);
+const APPROVED_ROWS = ROW_PATHS.map((path, index) => `R${index + 1} | modify | ${path} | edit | docs/readme.md:1`);
+const countFacts = () => {
+  const base = factsFor();
+  const regular = base.pathFacts['docs/readme.md'];
+  return factsFor({ pathFacts: { ...base.pathFacts, ...Object.fromEntries(ROW_PATHS.map((path) => [path, regular])) } });
+};
+const addGoalLine = (plan, line) => plan.replace('## Goal and boundary\n', `## Goal and boundary\n${line}\n`);
+const planAtLines = (options, lines) => {
+  const phases = '\n## Phase: Work\n';
+  const padding = lines - rules.getLineCount(planWith({ ...options, phases }));
+  return planWith({ ...options, phases: phases + 'Work detail.\n'.repeat(padding) });
+};
+const countFinding = (code, measured, signal) => ({ code, message: `${measured}, past its signal of ${signal} — ${PLAN_QUESTION}` });
+const findingMessages = (result) => result.findings.map(({ code, message }) => ({ code, message }));
+const onePlanNote = (counts, reason) => `plan-shape: NOTE — one plan past its signals (${counts}): ${escapeForLine(reason)}`;
+const countCases = () => [
+  [planAtLines({ goal: GOAL_AT_SIGNAL }, 101), countFinding('line-cap', 'the plan has 101 lines', 100), 'lines 101 of 100'],
+  [planWith({ goal: GOAL_AT_SIGNAL + '\nBoundary detail.' }), countFinding('section-cap', '## Goal and boundary spans 11 lines', 10), '## Goal and boundary 11 of 10'],
+  [planWith({ ledger: DEFAULT_ROW + '\n'.repeat(58) }), countFinding('section-cap', '## Module ledger spans 61 lines', 60), '## Module ledger 61 of 60'],
+  [planWith({ verification: '- Check.' + '\n- Check again.'.repeat(18) }), countFinding('section-cap', '## Verification spans 21 lines', 20), '## Verification 21 of 20'],
+  [planWith() + '- Follow up.\n'.repeat(6), countFinding('section-cap', 'Cleanup and Next steps span 11 lines', 10), 'Cleanup and Next steps 11 of 10'],
+  [planWith({ ledger: APPROVED_ROWS.join('\n') }), countFinding('row-cap', 'the ledger has 46 rows', 45), 'rows 46 of 45'],
+];
 
 describe('plan-shape rules — structural and authoring state', () => {
   it('spec:plan-shape-ownership/S11 judges story ownership in every arm and leaves bare facts unjudged', async () => {
@@ -143,21 +175,76 @@ describe('plan-shape rules — structural and authoring state', () => {
     assert.deepEqual(codes(verifyPlan(planWith({ ledger }), facts)), ['sweep-count']);
   });
 
-  it('S2 enforces the line, row, section and counted-row byte caps (spec:plan-review-loop/S2)', async () => {
+  it('S2 refuses counts past their signals and rows past the byte cap (spec:plan-review-loop/S2)', async () => {
     const { checkPlan } = await loadRules();
     const path = 'docs/' + 'p'.repeat(200) + '.md';
     const facts = factsFor({ pathFacts: { [path]: { kind: 'regular', contained: true } }, repoFiles: [path] });
-    const atByteCap = '\u00e9'.repeat(93);
     const plan = (responsibility) => planWith({ ledger: ['  R1 ', ' modify ', path, ' ' + responsibility + ' ', path + ':1'].join(' | ') });
-    assert.deepEqual(codes(checkPlan(plan(atByteCap), facts)), []);
-    assert.deepEqual(codes(checkPlan(plan(atByteCap + 'x'), facts)), ['row-bytes']);
-    const rows = Array.from({ length: 46 }, (_, index) => ['R' + index, 'modify', 'docs/file-' + index + '.md', 'edit', path + ':1'].join(' | '));
-    assert.ok(codes(checkPlan(plan(atByteCap) + 'padding\n'.repeat(90), facts)).includes('line-cap'));
-    assert.ok(codes(checkPlan(planWith({ ledger: rows.join('\n') }), facts)).includes('row-cap'));
-    const tail = (bullets) => plan(atByteCap).replace('- Continue.\n', '- Continue.\n' + '- More.\n'.repeat(bullets));
-    assert.deepEqual(checkPlan(tail(5), facts).findings, [], 'Cleanup and Next steps at exactly ten lines, newline-terminated');
-    assert.ok(codes(checkPlan(tail(6), facts)).includes('section-cap'));
-    assert.ok(codes(checkPlan(planWith({ ledger: rows[0], goal: Array.from({ length: 10 }, () => '- boundary').join('\n') }), facts)).includes('section-cap'));
+    assert.deepEqual(codes(checkPlan(plan(RESPONSIBILITY_AT_BYTE_CAP), facts)), []);
+    assert.deepEqual(codes(checkPlan(plan(RESPONSIBILITY_AT_BYTE_CAP + 'x'), facts)), ['row-bytes']);
+    assert.deepEqual(codes(checkPlan(planWith() + '- Follow up.\n'.repeat(5), factsFor())), []);
+    const cases = countCases();
+    const signalFacts = countFacts();
+    assert.deepEqual(cases.map(([text]) => findingMessages(checkPlan(text, signalFacts))), cases.map(([, finding]) => [finding]));
+  });
+
+  it('spec:plan-review-loop/S43 one reason lifts every plan count and names each lifted signal', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure, checkPlanEntries, formatFindings } = await loadRules();
+    assert.equal(rules.ONE_PLAN_LABEL, ONE_PLAN_LABEL);
+    const reason = 'The ledger and its verification belong to one task.';
+    const reasonLine = ONE_PLAN_LABEL + reason;
+    const twoCounts = planAtLines({ ledger: APPROVED_ROWS.join('\n') }, 101);
+    const oversizedRow = DEFAULT_ROW.replace('keep the document current', RESPONSIBILITY_AT_BYTE_CAP + 'x');
+    const oversized = planAtLines({ ledger: oversizedRow }, 101);
+    const specOnlyInReason = planAtLines({ goal: 'Boundary detail.' }, 101);
+    const facts = countFacts();
+    for (const judge of [checkPlan, verifyPlan, checkPlanStructure, checkPlanEntries]) {
+      for (const [text, , lifted] of [...countCases(), [twoCounts, null, 'lines 101 of 100, rows 46 of 45']]) {
+        const result = judge(addGoalLine(text, reasonLine), facts);
+        assert.deepEqual(codes(result), [], `${judge.name}: ${lifted}`);
+        assert.equal(result.notes?.length, 1, `${judge.name}: ${lifted}`);
+        assert.equal(formatFindings(result), `plan-shape: ACCEPT — plan\n${onePlanNote(lifted, reason)}`, judge.name);
+      }
+      assert.deepEqual(codes(judge(addGoalLine(oversized, reasonLine), facts)), ['row-bytes'], judge.name);
+      assert.deepEqual(codes(judge(addGoalLine(specOnlyInReason, ONE_PLAN_LABEL + 'docs/ai/specs/example.md governs this task.'), facts)),
+        ['governing-spec'], judge.name);
+    }
+  });
+
+  it('spec:plan-review-loop/S44 missing, repeated, malformed and unneeded reasons lift nothing', async () => {
+    const { checkPlan, verifyPlan, checkPlanStructure, checkPlanEntries } = await loadRules();
+    assert.equal(rules.ONE_PLAN_LABEL, ONE_PLAN_LABEL);
+    const reasonLine = ONE_PLAN_LABEL + 'The work is verified together.';
+    const facts = countFacts();
+    const atSignals = planAtLines({ goal: GOAL_AT_SIGNAL, ledger: APPROVED_ROWS.slice(0, 45).join('\n') }, 100);
+    for (const judge of [checkPlan, verifyPlan, checkPlanStructure, checkPlanEntries]) {
+      for (const [text, finding] of countCases()) {
+        assert.deepEqual(findingMessages(judge(text, facts)), [finding], judge.name);
+        const repeated = addGoalLine(text, `${reasonLine}\n${ONE_PLAN_LABEL}A second reason.`);
+        const repeatedResult = judge(repeated, facts);
+        const repeatedCodes = codes(repeatedResult);
+        assert.ok(repeatedCodes.includes('one-plan-twice'), judge.name);
+        assert.ok(repeatedCodes.includes(finding.code), `${judge.name}: ${finding.message}`);
+        assert.equal(repeatedResult.notes?.length ?? 0, 0, judge.name);
+      }
+      for (const [prose, span] of [[ONE_PLAN_LABEL, 11], [`  ${reasonLine}`, 11], [`\`\`\`\n${reasonLine}\n\`\`\``, 13]]) {
+        assert.deepEqual(findingMessages(judge(addGoalLine(planWith({ goal: GOAL_AT_SIGNAL }), prose), facts)),
+          [countFinding('section-cap', `## Goal and boundary spans ${span} lines`, 10)], judge.name);
+      }
+      assert.deepEqual(codes(judge(addGoalLine(atSignals, reasonLine), facts)), judge === checkPlan ? ['one-plan-unneeded'] : [], judge.name);
+    }
+  });
+
+  it('spec:plan-review-loop/S45 formatFindings escapes the reason between findings and skips and preserves output without notes', async () => {
+    const { checkPlan, formatFindings } = await loadRules();
+    const legacy = { findings: [{ line: 4, rowId: 'R1', code: 'row-bytes', message: 'A row finding.' }], skips: ['R2: package pin skipped'] };
+    const findings = ['plan-shape: REFUSE — plan', 'plan:4: R1: row-bytes: A row finding.'];
+    const skip = 'plan-shape: SKIP — R2: package pin skipped';
+    assert.equal(formatFindings(legacy), [...findings, skip].join('\n'));
+    const reason = 'Verify paths\\together\u0007 after the edit.';
+    const { notes } = checkPlan(addGoalLine(planAtLines({}, 101), ONE_PLAN_LABEL + reason), factsFor());
+    assert.equal(formatFindings({ ...legacy, notes }), [...findings, onePlanNote('lines 101 of 100', reason), skip].join('\n'));
+    assert.equal(rules.ONE_PLAN_LABEL, ONE_PLAN_LABEL);
   });
 
   it('S3 rejects malformed fields, verbs, delete dashes and duplicate ids (spec:plan-review-loop/S3)', async () => {
@@ -332,6 +419,16 @@ describe('plan-shape rules — structural and authoring state', () => {
         assert.deepEqual(details(verifyPlan(plan, observed)), kind === (verb === 'delete' ? 'absent' : 'regular') ? [] : [['post-kind', 'A1']]);
       }
     }
+  });
+
+  it('spec:plan-review-loop/S46 counts approved rows and locates row-cap before the amendment entry', async () => {
+    const { checkPlanStructure } = await loadRules();
+    const amended = (approved) => planWith({ ledger: [...approved, 'amendments:', 'A1 | modify | docs/entry.md | update | docs/readme.md:1'].join('\n') });
+    const over = amended(APPROVED_ROWS);
+    const lastApprovedLine = over.split('\n').indexOf(APPROVED_ROWS.at(-1)) + 1;
+    assert.deepEqual(checkPlanStructure(over, {}).findings.map(({ code, line }) => ({ code, line })),
+      [{ code: 'row-cap', line: lastApprovedLine }]);
+    assert.deepEqual(codes(checkPlanStructure(amended(APPROVED_ROWS.slice(0, 45)), {})), []);
   });
 
   it('spec:plan-structure/S10 refuses every repeated amendment path, including package pins', async () => {

@@ -4,8 +4,10 @@ import { SPEC_SCHEMA } from '../references/scripts/spec-schema/index.mjs';
 import { unique } from './claim-relation.mjs';
 import { checkStoryOwnership, PIN_FILE, PIN_VERBS } from './plan-shape-ownership.mjs';
 import { AMENDMENT_LINE, checkRobustTags, relateAmendments } from './plan-structure/index.mjs';
+import { escapeForLine } from './source-size-refusal.mjs';
 
 export const PLAN_TITLE_PREFIX = '# Plan: ';
+export const ONE_PLAN_LABEL = 'One plan: ';
 export const PLAN_HEADINGS = Object.freeze([
   '## Goal and boundary',
   '## Module ledger',
@@ -20,6 +22,12 @@ const MAX_LEDGER_ROWS = 45;
 const MAX_ROW_BYTES = 200;
 const SECTION_CAPS = new Map([[PLAN_HEADINGS[0], 10], [PLAN_HEADINGS[1], 60], [PLAN_HEADINGS[2], 20]]);
 const CLEANUP_NEXT_CAP = 10;
+const CLEANUP_NEXT = 'Cleanup and Next steps';
+const PLAN_QUESTION = 'is every part of this plan needed, does its work belong in one plan, and is the plan logical and optimal? ' +
+  `If so, say why on one line "${ONE_PLAN_LABEL}<why>" in Goal and boundary; if not, cut what is not needed or split it by task ` +
+  'along independently verifiable boundaries, never to fit the count';
+const ONE_PLAN_TWICE = 'keep only one reason line in Goal and boundary';
+const ONE_PLAN_UNNEEDED = 'drop the reason line when the plan keeps every signal';
 const ROW_ID = /^[A-Za-z0-9._-]+$/;
 const VERBS = new Set(['create', 'modify', 'delete']);
 const GLOB_BYTE = /[*?[{]/;
@@ -43,9 +51,16 @@ const getHeading = (document, text) => document.headings.find((heading) => headi
 const getNextSection = (document, heading) => document.headings.find((item) => item.index > heading.index && item.level <= 2);
 const getBodyEnd = (document) => document.lines.length - (document.lines.at(-1) === '' ? 1 : 0);
 const getSectionEnd = (document, heading) => getNextSection(document, heading)?.index ?? getBodyEnd(document);
-const getSectionLines = (document, headingText) => {
-  const heading = getHeading(document, headingText);
-  return heading ? document.lines.slice(heading.index + 1, getSectionEnd(document, heading)) : [];
+const getGoalLines = (document) => {
+  const goal = getHeading(document, PLAN_HEADINGS[0]);
+  if (!goal) return [];
+  const start = goal.index + 1;
+  return document.lines.slice(start, getSectionEnd(document, goal)).map((text, offset) => {
+    const index = start + offset;
+    const reason = text.startsWith(ONE_PLAN_LABEL) && !document.fencedLines.has(index)
+      ? text.slice(ONE_PLAN_LABEL.length).replace(/\r$/u, '') : '';
+    return { text, line: getFindingLine(document, index), reason: reason.trim() ? reason : null };
+  });
 };
 const getSectionSpan = (document, heading) => heading ? getSectionEnd(document, heading) - heading.index : 0;
 const getConcretePaths = (row, facts) => isSweep(row.path) ? facts.expansions?.[row.path] ?? [] : [row.path];
@@ -124,7 +139,7 @@ const hasVerificationBullet = (document) => {
   return heading && bulletBlocks(document.lines, document.fencedLines, heading.index + 1, getSectionEnd(document, heading)).length > 0;
 };
 
-const checkHeadings = (text, document, amendmentLines) => {
+const checkHeadings = (document) => {
   const findings = [];
   const first = document.headings[0];
   if (!first || first.level !== 1 || !first.text.startsWith(PLAN_TITLE_PREFIX) || first.text.slice(PLAN_TITLE_PREFIX.length).trim() === '') {
@@ -148,18 +163,44 @@ const checkHeadings = (text, document, amendmentLines) => {
       findings.push(makeFinding(getFindingLine(document, heading.index), 'headings', `${heading.text} is not an admitted extension phase between Verification and Cleanup`));
     }
   }
-  const approvedLines = getLineCount(text) - amendmentLines.length;
-  if (approvedLines > MAX_PLAN_LINES) findings.push(makeFinding(1, 'line-cap', `the plan has ${approvedLines} lines; the cap is ${MAX_PLAN_LINES}`));
-  for (const [literal, cap] of SECTION_CAPS) {
+  return findings;
+};
+
+const getCountsPastSignals = (text, document, { approved, amendmentLines }, soleReason) => {
+  const lines = getLineCount(text) - amendmentLines.length - Number(Boolean(soleReason));
+  const counts = [{ name: 'lines', value: lines, signal: MAX_PLAN_LINES, line: 1, code: 'line-cap', subject: `the plan has ${lines} lines` }];
+  for (const [literal, signal] of SECTION_CAPS) {
     const heading = getHeading(document, literal);
+    if (!heading) continue;
     const span = getSectionSpan(document, heading);
-    const approvedSpan = heading && literal === PLAN_HEADINGS[1]
-      ? span - amendmentLines.filter((line) => line < getFindingLine(document, heading.index + span)).length : span;
-    if (approvedSpan > cap) findings.push(makeFinding(getFindingLine(document, heading.index), 'section-cap', `${heading.text} spans ${approvedSpan} lines; the cap is ${cap}`));
+    const uncounted = literal === PLAN_HEADINGS[1]
+      ? amendmentLines.filter((line) => line < getFindingLine(document, heading.index + span)).length
+      : Number(literal === PLAN_HEADINGS[0] && Boolean(soleReason));
+    const value = span - uncounted;
+    counts.push({ name: literal, value, signal, line: getFindingLine(document, heading.index),
+      code: 'section-cap', subject: `${literal} spans ${value} lines` });
   }
   const cleanupNext = getSectionSpan(document, getHeading(document, PLAN_HEADINGS[3])) + getSectionSpan(document, getHeading(document, PLAN_HEADINGS[4]));
-  if (cleanupNext > CLEANUP_NEXT_CAP) findings.push(makeFinding(1, 'section-cap', `Cleanup and Next steps span ${cleanupNext} lines; their shared cap is ${CLEANUP_NEXT_CAP}`));
-  return findings;
+  counts.push({ name: CLEANUP_NEXT, value: cleanupNext, signal: CLEANUP_NEXT_CAP, line: 1,
+    code: 'section-cap', subject: `${CLEANUP_NEXT} span ${cleanupNext} lines` });
+  const excessRow = approved[MAX_LEDGER_ROWS];
+  if (excessRow) counts.push({ name: 'rows', value: approved.length, signal: MAX_LEDGER_ROWS, line: excessRow.line,
+    rowId: excessRow.id, code: 'row-cap', subject: `the ledger has ${approved.length} rows` });
+  return counts.filter(({ value, signal }) => value > signal);
+};
+
+const makeCountFinding = ({ line, code, subject, signal, rowId }) =>
+  makeFinding(line, code, `${subject}, past its signal of ${signal} — ${PLAN_QUESTION}`, rowId);
+
+const checkPlanCounts = (text, document, relation, reasons, authoring) => {
+  const [first, second] = reasons;
+  const soleReason = second ? null : first;
+  const counts = getCountsPastSignals(text, document, relation, soleReason);
+  if (soleReason && counts.length > 0) return { findings: [], notes: [{ counts, reason: soleReason.reason }] };
+  const findings = counts.map(makeCountFinding);
+  if (second) findings.push(makeFinding(second.line, 'one-plan-twice', ONE_PLAN_TWICE));
+  if (soleReason && authoring) findings.push(makeFinding(soleReason.line, 'one-plan-unneeded', ONE_PLAN_UNNEEDED));
+  return { findings, notes: [] };
 };
 
 const checkPinBindings = (rows, owners, facts, isApprovedPin) => {
@@ -177,7 +218,7 @@ const checkPinBindings = (rows, owners, facts, isApprovedPin) => {
   });
 };
 
-const checkLedgerStructure = (parsed, facts, relation) => {
+const checkLedgerStructure = (parsed, facts, relation, goalLines) => {
   const validRows = parsed.rows.filter((row) => row.valid);
   const findings = [...relation.findings, ...checkRobustTags({ rows: validRows, facts, makeFinding })];
   const nonBlank = parsed.entries.filter((entry) => entry.raw.trim() !== '');
@@ -190,7 +231,6 @@ const checkLedgerStructure = (parsed, facts, relation) => {
   for (const row of parsed.rows) {
     if (row.retiredSizeField) findings.push(makeFinding(row.line, RETIRED_FORM_CODES.sizeField,'the size field is retired: drop the fifth field, or remove a ` | ` inside the responsibility', row.id));
     else if (!row.valid) findings.push(makeFinding(row.line, 'row-grammar', 'the row must carry five valid fields and delete rows alone use — for the anchor', row.id));
-    if (row === relation.approved[MAX_LEDGER_ROWS]) findings.push(makeFinding(row.line, 'row-cap', `the ledger has ${relation.approved.length} rows; the cap is ${MAX_LEDGER_ROWS}`));
     if (!row.id) continue;
     const prior = ids.get(row.id);
     if (prior) findings.push(makeFinding(row.line, 'duplicate-id', `${row.id} duplicates the row on line ${prior}`, row.id));
@@ -221,7 +261,7 @@ const checkLedgerStructure = (parsed, facts, relation) => {
   }
   findings.push(...checkPinBindings(validRows, owners, facts, isApprovedPin));
   if (!hasVerificationBullet(parsed.document)) findings.push(makeFinding(getHeading(parsed.document, PLAN_HEADINGS[2]) ? getFindingLine(parsed.document, getHeading(parsed.document, PLAN_HEADINGS[2]).index) : 1, 'acceptance', 'Verification must carry at least one top-level - bullet'));
-  if (!getSectionLines(parsed.document, PLAN_HEADINGS[0]).some((line) => line.includes(SPEC_SCHEMA.storePrefix) || SPEC_LINE.test(line))) {
+  if (!goalLines.some(({ text, reason }) => reason === null && (text.includes(SPEC_SCHEMA.storePrefix) || SPEC_LINE.test(text)))) {
     findings.push(makeFinding(getHeading(parsed.document, PLAN_HEADINGS[0]) ? getFindingLine(parsed.document, getHeading(parsed.document, PLAN_HEADINGS[0]).index) : 1, 'governing-spec', 'Goal and boundary must name a governing spec path or the adopted state'));
   }
   return findings;
@@ -327,14 +367,14 @@ const judge = (text, facts, stateRules) => {
   }
   const parsed = parsedResult.parsed;
   const relation = relateAmendments({ parsed, makeFinding, isSweep });
-  const goal = getHeading(parsed.document, PLAN_HEADINGS[0]);
-  const goalLines = goal ? getSectionLines(parsed.document, PLAN_HEADINGS[0])
-    .map((text, offset) => ({ text, line: getFindingLine(parsed.document, goal.index + 1 + offset) })) : [];
-  const structural = [...checkHeadings(String(text ?? ''), parsed.document, relation.amendmentLines), ...checkLedgerStructure(parsed, facts, relation),
+  const goalLines = getGoalLines(parsed.document);
+  const reasons = goalLines.filter(({ reason }) => reason !== null);
+  const counts = checkPlanCounts(String(text ?? ''), parsed.document, relation, reasons, stateRules === checkAuthoring);
+  const structural = [...checkHeadings(parsed.document), ...counts.findings, ...checkLedgerStructure(parsed, facts, relation, goalLines),
     ...checkStoryOwnership({ rows: parsed.rows, goalLines, facts, getConcretePaths }).findings];
   const state = stateRules ? stateRules(parsed, facts, relation) : { findings: [], skips: [] };
   const findings = [...structural, ...state.findings].sort((left, right) => left.line - right.line);
-  return { findings, skips: state.skips, parsed };
+  return { findings, skips: state.skips, parsed, ...(counts.notes.length ? { notes: counts.notes } : {}) };
 };
 
 export const checkPlan = (text, facts) => judge(text, facts, checkAuthoring);
@@ -342,10 +382,16 @@ export const verifyPlan = (text, facts) => judge(text, facts, checkPostState);
 export const checkPlanStructure = (text, facts) => judge(text, facts, null);
 export const checkPlanEntries = (text, facts) => judge(text, facts, (parsed, entryFacts, relation) => checkAuthoring(parsed, entryFacts, relation, { entriesOnly: true }));
 
+const formatOnePlanNote = ({ counts, reason }) => {
+  const lifted = counts.map(({ name, value, signal }) => `${name} ${value} of ${signal}`).join(', ');
+  return `plan-shape: NOTE — one plan past its signals (${lifted}): ${escapeForLine(reason)}`;
+};
+
 export const formatFindings = (result, label = 'plan') => {
   const lines = result.findings.length === 0
     ? [`plan-shape: ACCEPT — ${label}`]
     : [`plan-shape: REFUSE — ${label}`, ...result.findings.map((finding) =>
       `${label}:${finding.line}: ${finding.rowId ? `${finding.rowId}: ` : ''}${finding.code}: ${finding.message}`)];
-  return [...lines, ...result.skips.map((skip) => `plan-shape: SKIP — ${skip}`)].join('\n');
+  return [...lines, ...(result.notes ?? []).map(formatOnePlanNote),
+    ...result.skips.map((skip) => `plan-shape: SKIP — ${skip}`)].join('\n');
 };

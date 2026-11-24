@@ -5,7 +5,7 @@
 //     present). A malformed or unknown-keyed config is a loud STOP
 //     (exit 2), never a guess, and the template placeholders are REFUSED until replaced, so a
 //     printed authoring template can never be pasted into an empty-green scope.
-//   • A RECORDED size is debt, not permission: every entry carries a reason, and the reason lands
+//   • A RECORDED size is an exception with its reason, which lands
 //     verbatim in the JSON, the commit message and the release CHANGELOG — so it is validated as the
 //     single line those three surfaces can carry.
 //   • SCHEMAS — 3 is the shape: the kit's limits live in its code (tools/source-size/), the config
@@ -250,7 +250,6 @@ export const validateSourceSizeConfig = (parsed) => {
     if (defect) throw configFail(defect);
     assertNoStoreRoot(roots);
   }
-  // `defaults` keeps the shape the judge, practiceFacts and the plan-time cap read, now resolved.
   const { limits, defaults } = resolveLimits(shape.limits);
   return {
     schema: parsed.schema,

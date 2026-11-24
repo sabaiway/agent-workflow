@@ -15,6 +15,7 @@
 //
 // Dependency-free, Node >= 22. No writes, no side effects on import.
 
+import { AGENT_RULES, RULES_EFFECTIVE } from '../references/scripts/shared/index.mjs';
 import { SOURCE_SIZE_CONFIG_REL, SOURCE_SIZE_WARNING_PREFIX, SOURCE_SIZE_WHY, configPathFor, escapeForLine, isLineUnsafe, jsonForLine } from './source-size-refusal.mjs';
 import { KIT_FOLDER_ROOT, SOURCE_SIZE_SCHEMA, practiceFacts } from './source-size-config.mjs';
 import { SOURCE_SIZE_TOOL_PATH, dqUnsafePath } from './source-size-gate-cmd.mjs';
@@ -32,9 +33,10 @@ const namedConfig = (cwd) => escapeForLine(configPathFor(cwd));
 // `_README` byte-equal to one of them with the text of the schema it writes and carries any other verbatim.
 export const SCHEMA1_TEMPLATE_README = 'Source-size practice: declared scope + thresholds + the recorded ratchet. Authored keys: schema, defaults, roots, exclude, extensions. Machine keys: baseline, aggregate — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
 export const SCHEMA2_TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, aggregate, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
-export const TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+const REVISION_12_TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, layout — each recorded entry carries a reason, and a recorded size is debt, not permission. Strict JSON — unknown keys refused.';
+export const TEMPLATE_README = 'Source-size practice: declared scope + the recorded ratchet; the limits are the kit\'s, kept in its code. Authored keys: schema, roots, exclude, extensions, limits (a project\'s reasoned overrides of a kit limit). Machine keys: baseline, layout — each recorded entry is an exception with its own reason, never permission to grow. Strict JSON — unknown keys refused.';
 export const TEMPLATE_READMES = Object.freeze({ schema1: SCHEMA1_TEMPLATE_README, schema2: SCHEMA2_TEMPLATE_README });
-export const EARLIER_TEMPLATE_READMES = Object.freeze([SCHEMA1_TEMPLATE_README, SCHEMA2_TEMPLATE_README]);
+export const EARLIER_TEMPLATE_READMES = Object.freeze([SCHEMA1_TEMPLATE_README, SCHEMA2_TEMPLATE_README, REVISION_12_TEMPLATE_README]);
 
 // The authoring template (D-5): GENERIC, and INERT by construction — its roots/extensions carry
 // placeholders the validator refuses, so it can never be pasted into an empty-green scope.
@@ -82,7 +84,9 @@ const WITHHELD_LINE = 'source-size: no paste-ready command is printed — this p
 // The withheld fallback is the reader's ONLY remaining instruction, so it has to be the instruction
 // for what they were actually doing. Sending an adoption to the regenerator would leave them with a
 // record and no gate — half an adoption, handed over as the way out — so the lane is per MODE.
-const WITHHELD_LANE = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below, your reason in place of the placeholder.';
+const regenerationMode = (layout) => (layout ? '--write-baseline --layout' : '--write-baseline');
+const withheldLane = (layout = false) => `Run the regenerator yourself with the working directory set to this project (source-size-check.mjs ${regenerationMode(layout)}, plus --reason "<text>" for any raise).`;
+const WITHHELD_LANE = withheldLane();
 const WITHHELD_ADOPT_LANE = `Run source-size-check.mjs --adopt --reason "${INITIAL_ADOPTION_REASON}" yourself, with the working directory set to this project — it mints the record and declares the gate in one step.`;
 
 // → { command, withheld }: exactly one of the two is non-null. ONE renderer for every mode this tool
@@ -93,9 +97,12 @@ const rendered = (cwd, mode, reason) => {
   if (paths.some(dqUnsafePath)) return { command: null, withheld: WITHHELD_SHELL };
   return { command: `node "${SOURCE_SIZE_TOOL_PATH}" ${mode} --cwd "${cwd}"${reason === undefined ? '' : ` --reason "${reason}"`}`, withheld: null };
 };
-const regenerator = (cwd, reason, layout = false) => rendered(cwd, layout ? '--write-baseline --layout' : '--write-baseline', reason);
+const regenerator = (cwd, reason, layout = false) => rendered(cwd, regenerationMode(layout), reason);
 
 const SPLIT_QUALITY_FOCUS = 'source-size: REVIEW FOCUS — a recorded size went DOWN or disappeared: check that this is real decomposition and not the same coupling spread across more files (paste this line into the review dispatch focus).';
+const RAISE_FOCUS_END = 'judge whether the project\'s code rules were kept for that file; a reason naming a debt row holds an old file grown outside its story\'s scope (paste this line into the review dispatch focus).';
+const RAISE_REVIEW_FOCUS = `source-size: REVIEW FOCUS — this write RAISED a recorded size: read each raised entry's reason and ${RAISE_FOCUS_END}`;
+const HAND_RECORD_FOCUS = `source-size: REVIEW FOCUS — the entries above RAISE a recorded size once recorded by hand: give the review each one's recorded and new value and its reason, read each reason and ${RAISE_FOCUS_END}`;
 
 // Rendered refusals close with WHY. Thrown stops and usage refusals carry no WHY line; the command
 // line composes them, each with the remedy of its exit class (usage carries only its help lines).
@@ -106,7 +113,7 @@ const refusal = (lines) => [...lines, WHY_LINE];
 // absent one records nothing to summarize.
 const practiceLine = (config) => {
   const facts = practiceFacts(config);
-  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission): growth past a record takes a reasoned bump, and a record above the tree or gone warns until the regeneration lowers or removes it.`;
+  return `source-size: practice — caps ${facts.maxLines} lines · ${facts.maxLineBytes} bytes per line over ${facts.roots} declared root(s) · ${facts.recordedFiles} file(s) carry a recorded size, each an exception with its reason: growth the regeneration would raise stops and takes a reason, asking again whether the project's code rules were kept; a record above the tree or gone warns until the regeneration lowers or removes it.`;
 };
 
 export const absentRefusalLines = (cwd) => refusal([
@@ -160,15 +167,16 @@ const PREDATING_KIT_STOPS = (schema) => `a kit that predates schema ${schema} st
 const BAND = (f) => `over the limit ${f.allowed} but within its band (up to ${f.ceiling})`;
 const NAMED_PATHS = 3;
 const namedPaths = (paths) => `${paths.slice(0, NAMED_PATHS).map(escapeForLine).join(', ')}${paths.length > NAMED_PATHS ? ` and ${paths.length - NAMED_PATHS} more` : ''}`;
+const RECORDED_EXCEPTION_ENDING = 'a recorded exception holds the size it was reasoned for, not growth past it';
 
 // A stop: the regeneration would raise.
 const FINDING_LINE = Object.freeze({
   'over-default': (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds the declared default ${f.allowed} beyond its band (up to ${f.ceiling})`,
-  grew: (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds its recorded baseline ${f.recorded} — recorded debt is not permission to grow`,
+  grew: (f) => `${f.rel}: ${f.dimension} ${f.actual} exceeds its recorded baseline ${f.recorded} — ${RECORDED_EXCEPTION_ENDING}`,
   'root-unrecorded': (f) => `${f.root}: declared root carries NO recorded files count (${f.actual} files measured) — the layout record must mirror the declared roots exactly`,
   'root-grew': (f) => `${f.root}: files ${f.actual} exceeds its recorded ${f.recorded} beyond its band (up to ${f.ceiling})`,
   'dir-over': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds the limit ${f.allowed} beyond its band (up to ${f.ceiling})`,
-  'dir-grew': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds its recorded ${f.recorded} — recorded debt is not permission to grow`,
+  'dir-grew': (f) => `${f.dir}: ${f.dimension} ${f.actual} exceeds its recorded ${f.recorded} — ${RECORDED_EXCEPTION_ENDING}`,
 });
 
 // A warning: printed on every run, exit 0, until the value or its record comes back within its limit.
@@ -219,20 +227,40 @@ const findingPart = (finding) => {
 const emptyRootLines = (verdict) => verdict.scope.emptyRoots.map((rel) =>
   `source-size: NOTE — the declared root "${escapeForLine(rel)}" matches no tracked file with a declared extension${verdict.scope.kitFolderRoots.includes(rel) ? ` outside the kit's own folder ${KIT_FOLDER_ROOT}` : ''}`);
 
+const CODE_RULE_QUESTIONS = [
+  `for each place above, ask first whether the project's code rules were kept; consult ${AGENT_RULES} and ${RULES_EFFECTIVE} where present`,
+  'a broken rule: fix the code along its own seam; the rules kept and the size justified: record it as an exception with its reason, written by whoever runs the write, never asked of the user',
+  'never split or compress a file for the number',
+  'an old file grown in work about something else, its rules not kept: write a debt row and record the raise with a reason that names the row, never reworking the file outside that work\'s scope',
+];
+const HAND_RECORD_REMEDIES = [
+  'record each raised file by hand under "baseline", with that file\'s own reason: the entries below',
+  'only where one reason fits every raise of this run, regenerate instead:',
+];
+const HAND_RECORD_LEAD = 'Each placeholder below is replaced by that file\'s own reason; the validator accepts the rest of these bytes as they are:';
+const REGENERATION_RAISES = 'This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate.';
+
 export const checkStopBlock = ({ cwd, verdict, absent = false }) => {
   const stops = stopsOf(verdict.findings);
   const warnings = warningsOf(verdict.findings);
   const entries = suggestedEntryLines(verdict);
+  const hasRaisedFiles = entries.length > 0;
+  const limitFired = stops.some((finding) => finding.kind !== 'root-unrecorded');
   const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER);
   return {
     failed: escapeLeadingSpace(`${stops.length} finding(s) ${absent ? `under the kit's values (${namedConfig(cwd)} is absent)` : `against ${namedConfig(cwd)}`}`),
     findings: stops.map(findingPart),
-    remedies: [command ?? WITHHELD_LANE],
+    remedies: [
+      ...(limitFired ? CODE_RULE_QUESTIONS : []),
+      ...(hasRaisedFiles ? HAND_RECORD_REMEDIES : []),
+      command ?? WITHHELD_LANE,
+    ],
     after: refusal([
       ...emptyRootLines(verdict), ...warningLines(warnings),
-      ...(command === null ? [withheld] : ['This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate.']),
-      ...(command !== null && entries.length > 0 ? ['Or record each size by hand under "baseline" — replace the placeholder with your reason; the validator accepts the rest of these bytes as they are:'] : []),
-      ...entries, ...(hasLoweredRecord(warnings) ? [SPLIT_QUALITY_FOCUS] : []),
+      command === null ? withheld : REGENERATION_RAISES,
+      ...(hasRaisedFiles ? [HAND_RECORD_LEAD, ...entries] : []),
+      ...(hasLoweredRecord(warnings) ? [SPLIT_QUALITY_FOCUS] : []),
+      ...(hasRaisedFiles ? [HAND_RECORD_FOCUS] : []),
     ]),
   };
 };
@@ -268,7 +296,7 @@ export const deltaLines = (deltas) => deltas.map(
 // A run that starts the layout record says so in the command it prints, or pasting it would not.
 const regenerationRefusal = (lead, cwd, deltas, layout) => {
   const { command, withheld } = regenerator(cwd, GROWTH_REASON_PLACEHOLDER, layout);
-  return refusal([lead, ...deltaLines(deltas), command === null ? `${withheld} ${WITHHELD_LANE}` : `  ${command}`]);
+  return refusal([lead, ...deltaLines(deltas), command === null ? `${withheld} ${withheldLane(layout)}` : `  ${command}`]);
 };
 
 export const reasonRequiredLines = (cwd, deltas, { layout = false } = {}) => regenerationRefusal(
@@ -375,7 +403,7 @@ export const writtenLines = ({ cwd, deltas, reason, changed }) => {
   return [
     `source-size: baseline regenerated — ${deltas.length} change(s) in ${namedConfig(cwd)}:`,
     ...deltaLines(deltas),
-    ...(reason === undefined ? [] : [`reason: ${reason}`]),
+    ...(reason === undefined ? [] : [`reason: ${reason}`, RAISE_REVIEW_FOCUS]),
   ];
 };
 

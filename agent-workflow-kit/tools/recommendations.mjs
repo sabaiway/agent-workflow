@@ -138,7 +138,7 @@ const LAYOUT_RECORD_RECIPE = 'the hook is per clone and the config per branch: a
 const REASON_AUTHOR_RECIPE = 'the reason is yours to write, with no question to the user: where you made the growth, say why this size is accepted; where an entry grew before this write (a raise after the schema move, a teammate\'s growth), write that it grew before this write and its cause was not recorded';
 const SOURCE_SIZE_KEPT_WHAT = 'no source-size gate is declared — the size record is kept as it is; declaring the gate adds the size check to the gate matrix';
 const LAYOUT_HELD = {
-  stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 record that growth first with the reasoned --write-baseline its stop names, then re-run',
+  stops: () => 'the source-size check stops on this tree, so a layout record or layout line not yet in place waits \u2014 answer the size stop first, then re-run',
   'store-root': ({ root }) => `the source-size config declares the root "${root}" at or inside the spec store docs/ai/specs \u2014 the layout record starts once that root is declared outside it`,
 };
 // ── the section contract tokens (doc-parity-bound in upgrade.md + the mode doc) ────────────────
@@ -365,7 +365,7 @@ export const BENEFITS = Object.freeze({
   'review-recipe': 'recipe coverage — the review AND execution recipes you configured actually run instead of silently degrading',
   'gates-declaration': 'velocity — your project’s gates run as ONE declared batch with a PASS/FAIL table',
   'gates-inert': 'honest gates — the declared matrix verifies your project instead of reporting green over a check that ran nothing',
-  'source-size': 'maintainability — a module you can hold whole stays reviewable, and size drift becomes recorded, reasoned debt',
+  'source-size': 'maintainability — a module you can hold whole stays reviewable, and a justified size becomes a recorded exception with its reason',
   'gate-hook': 'velocity — your own declared gate commands auto-approve byte-exactly (opt-in PreToolUse hook)',
   'commit-guard': 'integrity — commits require the ONE green --final receipt at the exact staged fingerprint (consented pre-commit arm)',
   'hook-checks': 'enforcement — every commit runs the checks armed here, so their findings stop the commit',
@@ -392,7 +392,7 @@ export const VARIANT_BENEFITS = Object.freeze({
   'gate-hook.not-current': HOOK_CURRENCY_BENEFIT,
   'state-block.not-current': HOOK_CURRENCY_BENEFIT,
   'jev-skill.not-current': "currency — every agent skill root the kit fills holds the vendor skill at the kit's pin once a copy is placed",
-  'source-size.layout': 'layout — piles past the layout limits become recorded, reasoned debt, so the commit hook can judge new ones once its layout line is armed',
+  'source-size.layout': 'layout — justified piles past the layout limits become recorded exceptions with their reasons, so the commit hook can judge new ones once its layout line is armed',
   'source-size.piles': 'layout — each recorded pile gets a queue row that plans its cleanup, so the debt is ordered work in the queue, not only a record',
 });
 

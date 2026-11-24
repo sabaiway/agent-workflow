@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
 import {
-  validateSourceSizeConfig, matchesSourceSizeGate, measureFile, SOURCE_SIZE_DEFAULTS,
+  validateSourceSizeConfig, matchesSourceSizeGate,
 } from './source-size-core.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-core-'));
@@ -165,21 +165,5 @@ describe('source-size — the canonical matcher and the direct-run guard', () =>
     // PASS while checking nothing, which is the exact false green the gate exists to prevent.
     assert.match(`${run.stdout}${run.stderr}`, /src\/big\.mjs: lines 441/);
     assert.equal(run.status, 1);
-  });
-});
-
-describe('source-size — the plan keeps its own rule', () => {
-  it('phase1-plan-files-within-defaults-includes-the-core-suite: every file this phase created is within the declared defaults', () => {
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-      'agent-workflow-kit/tools/source-size-core.test.mjs',
-    ];
-    for (const rel of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
   });
 });

@@ -10,7 +10,11 @@ import { runCheck } from '../source-size-runs.mjs';
 import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_WHY, escapeForLine, validateSourceSizeConfig } from '../source-size-core.mjs';
 import { SOURCE_SIZE_TOOL_PATH } from '../source-size-gate-cmd.mjs';
 import { GROWTH_REASON_PLACEHOLDER, notJudgedLines, statedLimitLines } from '../source-size-report.mjs';
-import { configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit } from './cli-harness.test.mjs';
+import { INITIAL_ADOPTION_REASON } from './index.mjs';
+import {
+  CODE_RULE_QUESTION_LINES as QUESTIONS, HAND_RECORD_REMEDY_LINES as HAND_REMEDIES, RECORDED_EXCEPTION_ENDING,
+  configPath, createProject, makeLines, makeMany, readBlock, runCli, runGit,
+} from './cli-harness.test.mjs';
 
 const NAME = 'source-size';
 const FAIL = 'source-size: FAIL — ';
@@ -21,17 +25,32 @@ const SCOPE_REMEDY = 'fix the tree condition the verdict line names, then re-run
 const CONFIG_REMEDY = 'fix the size config or the git index error the verdict line names, then re-run';
 const ERROR_REMEDY = 'fix the cause the stack below names, then re-run';
 const RAISE = 'This regeneration RAISES a recorded value, so the reason is REQUIRED — it is recorded in the entry it raises, and it is what the commit message and the CHANGELOG restate.';
-const HAND = 'Or record each size by hand under "baseline" — replace the placeholder with your reason; the validator accepts the rest of these bytes as they are:';
-const WITHHELD = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise), or record each size by hand below, your reason in place of the placeholder.';
+const HAND = "Each placeholder below is replaced by that file's own reason; the validator accepts the rest of these bytes as they are:";
+const WITHHELD = 'Run the regenerator yourself with the working directory set to this project (source-size-check.mjs --write-baseline, plus --reason "<text>" for any raise).';
+const WITHHELD_SHELL = "source-size: no paste-ready command is printed — this project's path does not survive double-quoting, so a rendered command could run somewhere other than the project it names.";
+const WITHHELD_LINE = "source-size: no paste-ready command is printed — this project's path carries a character that cannot appear in a rendered line, and escaping it would change the path the shell receives.";
 const FOCUS = 'source-size: REVIEW FOCUS — a recorded size went DOWN or disappeared: check that this is real decomposition and not the same coupling spread across more files (paste this line into the review dispatch focus).';
+const HAND_FOCUS = "source-size: REVIEW FOCUS — the entries above RAISE a recorded size once recorded by hand: give the review each one's recorded and new value and its reason, read each reason and judge whether the project's code rules were kept for that file; a reason naming a debt row holds an old file grown outside its story's scope (paste this line into the review dispatch focus).";
 const AUTHORED = { schema: 2, roots: ['src'], extensions: ['.mjs'] };
 const mintConfig = (over = {}) => ({ ...AUTHORED, baseline: {}, aggregate: { src: { lines: 861, reason: 'fixture' } }, ...over });
 const makeSchema1Config = () => ({ ...mintConfig({ aggregate: { src: { lines: 1, reason: 'fixture' } } }), schema: 1, defaults: { ...SOURCE_SIZE_DEFAULTS } });
+const MINTED = { ...AUTHORED, schema: 3, baseline: {} };
+const UNRECORDED_ROOT_CONFIG = { ...MINTED, layout: { roots: {}, directories: {} } };
+const ROOT_GROWTH_CONFIG = {
+  ...MINTED,
+  layout: { roots: { src: { files: 1, reason: 'fixture' } }, directories: {} },
+};
+const ROOT_GROWTH_FILES = { 'src/a.mjs': 'x', 'src/b.mjs': 'x', 'src/c.mjs': 'x' };
 const FILES = { 'src/big.mjs': makeLines(441), 'src/near.mjs': makeLines(420) };
 const BIG = 'src/big.mjs: lines 441 exceeds the declared default 400 beyond its band (up to 440)';
+const WIDE = 'wide: entries 23 exceeds the limit 20 beyond its band (up to 22)';
+const ROOT_GROWTH = 'src: files 3 exceeds its recorded 1 beyond its band (up to 2)';
+const UNRECORDED_ROOT = 'src: declared root carries NO recorded files count (1 files measured) — the layout record must mirror the declared roots exactly';
 const WARNING = 'source-size: WARNING — src/near.mjs: lines 420 is over the limit 400 but within its band (up to 440) — no record is kept; past 440 it stops';
+const OBSOLETE = 'source-size: WARNING — src/near.mjs: lines 420 is within its band (up to 440), so its record is obsolete — the regeneration removes it';
 const ENTRY = `  "src/big.mjs": { "lines": 441, "reason": "${GROWTH_REASON_PLACEHOLDER}" }`;
-const regenerate = (cwd) => `node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}" --reason "${GROWTH_REASON_PLACEHOLDER}"`;
+const regenerateCommand = (cwd) => `node "${SOURCE_SIZE_TOOL_PATH}" --write-baseline --cwd "${cwd}"`;
+const regenerate = (cwd, reason = GROWTH_REASON_PLACEHOLDER) => `${regenerateCommand(cwd)} --reason "${reason}"`;
 const checkLead = (cwd, config, absent = false) => [...statedLimitLines(validateSourceSizeConfig(config)), ...notJudgedLines(cwd, { config: validateSourceSizeConfig(config), absent, layout: absent || Object.hasOwn(config, 'layout') })];
 const assertBlock = (result, places, expected, code = 1) => {
   assert.deepEqual([result.code, result.stderr], [code, ''], result.stdout);
@@ -45,6 +64,19 @@ const readThrown = (run) => {
   assert.ok(errors[0].message.startsWith(PREFIX));
   return errors[0].message.slice(PREFIX.length).replace(/^ /, '\\u0020');
 };
+const assertQuestions = (cwd, finding) => {
+  const result = runCli(cwd, '--check');
+  assert.deepEqual([result.code, result.stderr], [1, ''], result.stdout);
+  const block = readBlock(result.stdout);
+  assert.deepEqual(block.remedies.slice(0, QUESTIONS.length), QUESTIONS, result.stdout);
+  assert.deepEqual(block.findings, [finding], result.stdout);
+};
+const assertNoHandRecord = (stdout) => {
+  assert.doesNotMatch(stdout, /^  "/m);
+  for (const line of [...HAND_REMEDIES, HAND, HAND_FOCUS]) {
+    assert.ok(!stdout.includes(line), stdout);
+  }
+};
 
 describe('spec:source-size/S57 check stops put verdict, findings and remedy before limits, notes and warnings', () => {
   it('a minted file stop keeps the empty root, warning and whole hand record in order', () => {
@@ -53,8 +85,15 @@ describe('spec:source-size/S57 check stops put verdict, findings and remedy befo
     const cwd = createProject({ files, config });
     assertBlock(runCli(cwd, '--check'), ['src/big.mjs', 'src/big.mjs'], {
       verdict: `2 finding(s) against ${escapeForLine(configPath(cwd))}`,
-      findings: [BIG, 'src/big.mjs: maxLineBytes 1001 exceeds the declared default 1000 beyond its band (up to 1000)'], remedies: [regenerate(cwd)],
-      after: [...checkLead(cwd, config), 'source-size: NOTE — the declared root "empty" matches no tracked file with a declared extension', WARNING, RAISE, HAND, `  "src/big.mjs": { "lines": 441, "maxLineBytes": 1001, "reason": "${GROWTH_REASON_PLACEHOLDER}" }`, WHY],
+      findings: [BIG, 'src/big.mjs: maxLineBytes 1001 exceeds the declared default 1000 beyond its band (up to 1000)'],
+      remedies: [...QUESTIONS, ...HAND_REMEDIES, regenerate(cwd)],
+      after: [
+        ...checkLead(cwd, config),
+        'source-size: NOTE — the declared root "empty" matches no tracked file with a declared extension',
+        WARNING, RAISE, HAND,
+        `  "src/big.mjs": { "lines": 441, "maxLineBytes": 1001, "reason": "${GROWTH_REASON_PLACEHOLDER}" }`,
+        HAND_FOCUS, WHY,
+      ],
     });
   });
 
@@ -62,31 +101,36 @@ describe('spec:source-size/S57 check stops put verdict, findings and remedy befo
     const cwd = createProject({ files: makeMany('wide', 23) });
     assertBlock(runCli(cwd, '--check'), ['wide'], {
       verdict: `1 finding(s) under the kit's values (${escapeForLine(configPath(cwd))} is absent)`,
-      findings: ['wide: entries 23 exceeds the limit 20 beyond its band (up to 22)'], remedies: [regenerate(cwd)],
+      findings: [WIDE],
+      remedies: [...QUESTIONS, regenerate(cwd)],
       after: [...checkLead(cwd, { schema: 2 }, true), RAISE, WHY],
     });
   });
 
-  it('a withheld command is the remedy and its diagnosis follows the warning', () => {
+  it('the withheld lane ends the remedies and its diagnosis follows the warning', () => {
     for (const [suffix, diagnosis] of [
-      ['$', "source-size: no paste-ready command is printed — this project's path does not survive double-quoting, so a rendered command could run somewhere other than the project it names."],
-      ['\u2028', "source-size: no paste-ready command is printed — this project's path carries a character that cannot appear in a rendered line, and escaping it would change the path the shell receives."],
+      ['$', WITHHELD_SHELL],
+      ['\u2028', WITHHELD_LINE],
     ]) {
       const { aggregate, ...config } = mintConfig();
       const cwd = createProject({ files: FILES, config }, suffix);
       assertBlock(runCli(cwd, '--check'), ['src/big.mjs'], {
-        verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`, findings: [BIG], remedies: [WITHHELD],
-        after: [...checkLead(cwd, config), WARNING, diagnosis, ENTRY, WHY],
+        verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`,
+        findings: [BIG],
+        remedies: [...QUESTIONS, ...HAND_REMEDIES, WITHHELD],
+        after: [...checkLead(cwd, config), WARNING, diagnosis, HAND, ENTRY, HAND_FOCUS, WHY],
       });
     }
   });
 
-  it('a lowered record beside a stop puts REVIEW FOCUS immediately before WHY', () => {
+  it('a lowered record beside a stop puts its REVIEW FOCUS before the hand-record focus and WHY', () => {
     const { aggregate, ...config } = mintConfig({ baseline: { 'src/near.mjs': { lines: 450, reason: 'fixture' } } });
     const cwd = createProject({ files: FILES, config });
     assertBlock(runCli(cwd, '--check'), ['src/big.mjs'], {
-      verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`, findings: [BIG], remedies: [regenerate(cwd)],
-      after: [...checkLead(cwd, config), 'source-size: WARNING — src/near.mjs: lines 420 is within its band (up to 440), so its record is obsolete — the regeneration removes it', RAISE, HAND, ENTRY, FOCUS, WHY],
+      verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`,
+      findings: [BIG],
+      remedies: [...QUESTIONS, ...HAND_REMEDIES, regenerate(cwd)],
+      after: [...checkLead(cwd, config), OBSOLETE, RAISE, HAND, ENTRY, FOCUS, HAND_FOCUS, WHY],
     });
   });
 });
@@ -218,5 +262,126 @@ describe('spec:source-size/S61 the guarded entry renders unexpected errors and a
     const moved = [`source-size: ${configPath(cwd)} moved from schema 1 to schema 2 in this write; a kit that predates schema 2 stops by name until that copy is upgraded.`];
     assert.deepEqual(schemaMovedLines(cwd, 1, 2), moved);
     assertBlock(result, [], { verdict: 'unexpected error: after the schema-1 move', findings: [], remedies: [ERROR_REMEDY], after: [...error.stack.split('\n'), ...moved] }, 2);
+  });
+});
+
+describe('spec:source-size/S71 four questions open the remedy where a limit fired', () => {
+  it('asks on a minted file stop and skips the questions on schema-1, unminted and thrown stops', () => {
+    for (const [config, code, verdictPattern, remedy] of [
+      [makeSchema1Config(), 1, /is schema 1, which the check no longer judges$/, regenerateCommand],
+      [AUTHORED, 1, /is AUTHORED but not yet MINTED/, (cwd) => regenerate(cwd, INITIAL_ADOPTION_REASON)],
+      [{ ...AUTHORED, roots: [] }, 2, /roots/, () => CONFIG_REMEDY],
+    ]) {
+      const cwd = createProject({ files: FILES, config });
+      const result = runCli(cwd, '--check');
+      assert.deepEqual([result.code, result.stderr], [code, ''], result.stdout);
+      const block = readBlock(result.stdout);
+      assert.match(block.verdict, verdictPattern);
+      assert.deepEqual(block.remedies, [remedy(cwd)], result.stdout);
+      for (const question of QUESTIONS) assert.ok(!result.stdout.includes(question), result.stdout);
+    }
+
+    assertQuestions(createProject({ files: FILES, config: MINTED }), BIG);
+  });
+
+  it('asks on a directory beyond its band under the kit values', () => {
+    assertQuestions(createProject({ files: makeMany('wide', 23) }), WIDE);
+  });
+
+  it('asks when a layout root grows past its files band and skips the questions for an unrecorded root alone', () => {
+    const cwd = createProject({ files: { 'src/a.mjs': 'x' }, config: UNRECORDED_ROOT_CONFIG });
+    assertBlock(runCli(cwd, '--check'), ['src'], {
+      verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`,
+      findings: [UNRECORDED_ROOT],
+      remedies: [regenerate(cwd)],
+      after: [...checkLead(cwd, UNRECORDED_ROOT_CONFIG), RAISE, WHY],
+    });
+
+    assertQuestions(createProject({ files: ROOT_GROWTH_FILES, config: ROOT_GROWTH_CONFIG }), ROOT_GROWTH);
+  });
+
+  it('asks when a recorded file grows beyond the size its exception holds', () => {
+    const config = { ...MINTED, baseline: { 'src/big.mjs': { lines: 441, reason: 'fixture' } } };
+    const cwd = createProject({ files: { 'src/big.mjs': makeLines(442) }, config });
+    assertQuestions(cwd, `src/big.mjs: lines 442 exceeds its recorded baseline 441 — ${RECORDED_EXCEPTION_ENDING}`);
+  });
+});
+
+describe('spec:source-size/S72 each raised file has its own hand record before the regeneration lane', () => {
+  for (const [name, suffix] of [
+    ['a two-file stop offers hand recording first and prints one entry per file', ''],
+    ['a two-file stop keeps the lead, entries and hand focus after the withheld diagnosis', '$'],
+  ]) {
+    it(name, () => {
+      const files = { 'src/big.mjs': FILES['src/big.mjs'], 'src/other.mjs': makeLines(442) };
+      const cwd = createProject({ files, config: MINTED }, suffix);
+      assertBlock(runCli(cwd, '--check'), ['src/big.mjs', 'src/other.mjs'], {
+        verdict: `2 finding(s) against ${escapeForLine(configPath(cwd))}`,
+        findings: [BIG, 'src/other.mjs: lines 442 exceeds the declared default 400 beyond its band (up to 440)'],
+        remedies: [...QUESTIONS, ...HAND_REMEDIES, suffix === '' ? regenerate(cwd) : WITHHELD],
+        after: [
+          ...checkLead(cwd, MINTED), suffix === '' ? RAISE : WITHHELD_SHELL, HAND, ENTRY,
+          `  "src/other.mjs": { "lines": 442, "reason": "${GROWTH_REASON_PLACEHOLDER}" }`,
+          HAND_FOCUS, WHY,
+        ],
+      });
+    });
+  }
+
+  it('a withheld directory stop follows the questions with only the regeneration lane', () => {
+    const cwd = createProject({ files: makeMany('wide', 23) }, '$');
+    assertBlock(runCli(cwd, '--check'), ['wide'], {
+      verdict: `1 finding(s) under the kit's values (${escapeForLine(configPath(cwd))} is absent)`,
+      findings: [WIDE],
+      remedies: [...QUESTIONS, WITHHELD],
+      after: [...checkLead(cwd, { schema: 2 }, true), WITHHELD_SHELL, WHY],
+    });
+  });
+
+  it('a withheld root growth stop follows the questions with only the regeneration lane', () => {
+    const cwd = createProject({ files: ROOT_GROWTH_FILES, config: ROOT_GROWTH_CONFIG }, '$');
+    assertBlock(runCli(cwd, '--check'), ['src'], {
+      verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`,
+      findings: [ROOT_GROWTH],
+      remedies: [...QUESTIONS, WITHHELD],
+      after: [...checkLead(cwd, ROOT_GROWTH_CONFIG), WITHHELD_SHELL, WHY],
+    });
+  });
+
+  it('an unrecorded root with a warning keeps only the withheld regeneration lane', () => {
+    const files = { 'src/near.mjs': FILES['src/near.mjs'] };
+    const cwd = createProject({ files, config: UNRECORDED_ROOT_CONFIG }, '$');
+    assertBlock(runCli(cwd, '--check'), ['src'], {
+      verdict: `1 finding(s) against ${escapeForLine(configPath(cwd))}`,
+      findings: [UNRECORDED_ROOT],
+      remedies: [WITHHELD],
+      after: [...checkLead(cwd, UNRECORDED_ROOT_CONFIG), WARNING, WITHHELD_SHELL, WHY],
+    });
+  });
+
+  it('a withheld tighten warning gives only the regeneration lane', () => {
+    const files = { 'src/near.mjs': FILES['src/near.mjs'] };
+    const config = { ...MINTED, baseline: { 'src/near.mjs': { lines: 450, reason: 'fixture' } } };
+    const cwd = createProject({ files, config }, '$');
+    const result = runCli(cwd, '--check');
+    assert.deepEqual([result.code, result.stderr], [0, ''], result.stdout);
+    const lines = result.stdout.split('\n');
+    assert.ok(lines.includes(OBSOLETE), result.stdout);
+    assert.ok(lines.includes(FOCUS), result.stdout);
+    assertNoHandRecord(result.stdout);
+    const tighten = lines.find((line) => line.startsWith('source-size: WARNING —') && line.includes(WITHHELD_SHELL));
+    assert.equal(tighten?.slice(tighten.indexOf(WITHHELD_SHELL)), `${WITHHELD_SHELL} ${WITHHELD}`, result.stdout);
+  });
+
+  it('a withheld writer refusal for a missing reason gives only the regeneration lane', () => {
+    const files = { 'src/big.mjs': FILES['src/big.mjs'] };
+    const cwd = createProject({ files, config: MINTED }, '$');
+    const result = runCli(cwd, '--write-baseline');
+    assert.deepEqual([result.code, result.stderr], [1, ''], result.stdout);
+    const lines = result.stdout.split('\n');
+    assert.match(lines.find((line) => line.startsWith('source-size: REFUSED — ')) ?? '', /^source-size: REFUSED — this regeneration RAISES 1 recorded value\(s\), and a raise takes a reason/);
+    assert.ok(lines.includes('  src/big.mjs: lines none → 441 (raise)'), result.stdout);
+    assertNoHandRecord(result.stdout);
+    assert.deepEqual(lines.slice(-2), [`${WITHHELD_SHELL} ${WITHHELD}`, WHY]);
   });
 });

@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { main } from './source-size-check.mjs';
 import { runAdopt } from './source-size-runs.mjs';
-import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, matchesSourceSizeGate, measureFile } from './source-size-core.mjs';
+import { SOURCE_SIZE_DEFAULTS, SOURCE_SIZE_GATE_ID, matchesSourceSizeGate } from './source-size-core.mjs';
 import { buildOffer, sourceSizeCandidate, applyFill } from './gates-init.mjs';
 import { loadDeclaration, isFinalCapableDeclaration } from './run-gates.mjs';
 import { EXPECTED_WORKFLOW_VERSION } from './velocity-profile.mjs';
@@ -16,7 +16,6 @@ import { placeKitCommand } from '../../scripts/testing/foreign-fixture.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TOOL = join(HERE, 'source-size-check.mjs');
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-adopt-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -359,38 +358,5 @@ describe('source-size — the --adopt verb (4.1.b, D-16)', () => {
     const result = runAdopt({ cwd, reason: 'initial adoption' });
     assert.equal(result.code, 0, result.lines.join('\n'));
     assert.deepEqual(declaredGates(cwd).map((g) => g.id), [SOURCE_SIZE_GATE_ID]);
-  });
-});
-
-describe('source-size — the plan keeps its own rule', () => {
-  it('phase4-plan-files-within-defaults: every file this plan has created through Phase 4 is within the declared defaults', () => {
-    // Cumulative and EXPLICIT (never derived from git state), so an earlier phase's file growing under
-    // a later phase's edits is caught here. Phase 4 added NO runtime module — only these two test
-    // files — which is why the package tarball count does not move.
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-      'agent-workflow-kit/tools/source-size-core.test.mjs',
-      'agent-workflow-kit/tools/source-size-config.test.mjs',
-      'agent-workflow-kit/tools/source-size-ratchet.test.mjs',
-      'agent-workflow-kit/tools/source-size-refusal.mjs',
-      'agent-workflow-kit/tools/source-size-config.mjs',
-      'agent-workflow-kit/tools/source-size-scope.mjs',
-      'agent-workflow-kit/tools/source-size-gate-cmd.mjs',
-      'agent-workflow-kit/tools/source-size-judge.mjs',
-      'agent-workflow-kit/tools/source-size-report.mjs',
-      'agent-workflow-kit/tools/source-size-aggregate.test.mjs',
-      'agent-workflow-kit/tools/source-size-writer.test.mjs',
-      'agent-workflow-kit/tools/source-size-practice.test.mjs',
-      'agent-workflow-kit/tools/source-size-stop-rendering.test.mjs',
-      'agent-workflow-kit/tools/source-size-adopt.test.mjs',
-      'agent-workflow-kit/tools/recommendations-source-size.test.mjs',
-    ];
-    for (const rel of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
   });
 });

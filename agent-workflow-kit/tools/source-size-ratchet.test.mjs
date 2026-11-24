@@ -17,6 +17,7 @@ import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { main } from './source-size-check.mjs';
 import { GROWTH_REASON_PLACEHOLDER } from './source-size-report.mjs';
 import { configPathFor, matchesSourceSizeGate } from './source-size-core.mjs';
+import { RECORDED_EXCEPTION_ENDING, readBlock } from './source-size/cli-harness.test.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-source-size-ratchet-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -69,7 +70,7 @@ const linkedTool = (name) => {
   return link;
 };
 
-describe('source-size — a recorded size is debt for exactly what it records', () => {
+describe('source-size — a recorded exception holds exactly the dimension it records', () => {
   // spec:source-size/S3
   it('baseline-entry-exempts-only-recorded-dimension: a lines-only record does not hide a new long line', () => {
     const cwd = project(
@@ -96,7 +97,7 @@ describe('source-size — a recorded size is debt for exactly what it records', 
 
 describe('source-size — the recorded ratchet (D-3)', () => {
   // spec:source-size/S1
-  it('ratchet-recorded-file-may-not-grow: recorded debt is not permission to grow, and the growth alone stops', () => {
+  it(`ratchet-recorded-file-may-not-grow: ${RECORDED_EXCEPTION_ENDING}, and the growth alone stops`, () => {
     const cwd = project(
       { 'src/big.mjs': lines(460), 'src/near.mjs': lines(420) },
       { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } },
@@ -104,7 +105,9 @@ describe('source-size — the recorded ratchet (D-3)', () => {
     const result = check(cwd);
     assert.match(result.stdout, /^source-size: FAIL — 1 finding\(s\)/m, `a file within its band beside the growth only warns:\n${result.stdout}`);
     assert.equal(result.code, 1, `a recorded file that grew must refuse:\n${result.stdout}`);
-    assert.match(result.stdout, /src\/big\.mjs: lines 460 exceeds its recorded baseline 441/);
+    const { findings } = readBlock(result.stdout);
+    assert.deepEqual(findings, [`src/big.mjs: lines 460 exceeds its recorded baseline 441 — ${RECORDED_EXCEPTION_ENDING}`]);
+    assert.doesNotMatch(findings.join('\n'), /\bdebt\b/);
   });
 
   it('ratchet-linebytes-may-not-grow: the second dimension rides the same rule', () => {
@@ -114,7 +117,9 @@ describe('source-size — the recorded ratchet (D-3)', () => {
     );
     const result = check(cwd);
     assert.equal(result.code, 1);
-    assert.match(result.stdout, /src\/wide\.mjs: maxLineBytes 1200 exceeds its recorded baseline 1001/);
+    assert.deepEqual(readBlock(result.stdout).findings, [
+      `src/wide.mjs: maxLineBytes 1200 exceeds its recorded baseline 1001 — ${RECORDED_EXCEPTION_ENDING}`,
+    ]);
   });
 
   // spec:source-size/S2
@@ -235,7 +240,7 @@ describe('source-size — a refusal renders the step the reader can actually per
     assert.match(lowered.stdout, /REVIEW FOCUS — a recorded size went DOWN or disappeared/);
 
     const grown = project({ 'src/big.mjs': lines(460) }, { 'src/big.mjs': { lines: 441, reason: 'recorded at adoption' } });
-    assert.doesNotMatch(check(grown).stdout, /REVIEW FOCUS/, 'growth is not a split — the focus line must not fire');
+    assert.doesNotMatch(check(grown).stdout, /REVIEW FOCUS — a recorded size went DOWN or disappeared/, 'growth is not a split — the focus line must not fire');
   });
 });
 

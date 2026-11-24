@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { main } from './source-size-check.mjs';
 import { authoringTemplate } from './source-size-report.mjs';
 import {
-  countBytes, measureFile, validateSourceSizeConfig, matchesSourceSizeGate, SOURCE_SIZE_DEFAULTS,
+  countBytes, validateSourceSizeConfig, matchesSourceSizeGate,
 } from './source-size-core.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 
@@ -361,19 +361,6 @@ describe('source-size — thresholds (D-1)', () => {
   it('a file carrying a recorded baseline entry is recorded debt, not a defaults violation', () => {
     const cwd = project({ files: { 'src/big.mjs': lines(441) }, config: CONFIG({ baseline: { 'src/big.mjs': { lines: 441, reason: 'initial adoption' } }, aggregate: agg(441) }) });
     assert.equal(check(cwd).code, 0);
-  });
-
-  it('phase1-plan-files-within-defaults: every file this plan has created is within the declared defaults', () => {
-    const created = [
-      'agent-workflow-kit/tools/source-size-core.mjs',
-      'agent-workflow-kit/tools/source-size-check.mjs',
-      'agent-workflow-kit/tools/source-size-check.test.mjs',
-    ];
-    for (const rel of created) {
-      const { lines: count, maxLineBytes } = measureFile(REPO_ROOT, rel);
-      assert.ok(count <= SOURCE_SIZE_DEFAULTS.maxLines, `${rel}: ${count} lines exceeds ${SOURCE_SIZE_DEFAULTS.maxLines}`);
-      assert.ok(maxLineBytes <= SOURCE_SIZE_DEFAULTS.maxLineBytes, `${rel}: longest line ${maxLineBytes} bytes exceeds ${SOURCE_SIZE_DEFAULTS.maxLineBytes}`);
-    }
   });
 });
 

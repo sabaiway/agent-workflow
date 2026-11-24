@@ -67,7 +67,34 @@ describe('planning.md — the plan shape', () => {
     for (const [heading, budget] of [['Goal and boundary', 10], ['Module ledger', 60], ['Verification', 20]]) {
       assert.match(flat, new RegExp(`\\*\\*${heading}\\*\\* \\(${budget} lines\\)`), `${heading} carries its budget`);
     }
-    assert.match(flat, /never by document size/, 'an over-cap plan splits on verifiable boundaries, not on length');
+  });
+
+  it('asks the plan questions before cutting or splitting and the code rules question at a diff limit (spec:plan-review-loop/S47)', () => {
+    const shape = planning.slice(planning.indexOf(`${LF}## Shape${LF}`), planning.lastIndexOf(`${LF}## Module ledger${LF}`))
+      .replace(/\s+/g, ' ');
+    const cutOrSplit = /\bcut\b[^.]*\b(?:not needed|unneeded|unnecessary)\b[^.]*\bsplit\b[^.]*\bby task\b[^.]*\bnever to fit the count\b/i;
+    const [beforeCutOrSplit] = shape.split(cutOrSplit, 1);
+    holds('S47', [
+      [beforeCutOrSplit, 'Shape does not ask whether every part is needed before cutting or splitting', /\bevery part\b[^.]*\bneeded\b/i],
+      [beforeCutOrSplit, 'Shape does not ask whether the work belongs in one plan before cutting or splitting', /\bbelongs?\b[^.]*\bone plan\b/i],
+      [beforeCutOrSplit, 'Shape does not ask whether the plan is logical and optimal before cutting or splitting', /\bplan\b[^.]*\blogical and optimal\b/i],
+      [shape, 'Shape does not say to cut unneeded work or split by task, never to fit the count', cutOrSplit],
+      [shape, 'Shape does not name the reason line', /\b(?:reason line|why on one line)\b/i],
+      [shape, 'Shape does not say that a row byte cap takes no reason', /(?=[^.]*\brows?\b)(?=[^.]*\bbytes?\b)[^.]*\bno reason\b/i],
+    ]);
+    assert.ok(shape.includes('One plan: '), 'S47: Shape does not give the literal reason line label');
+
+    const diffLimit = planning.split(/\r?\n\s*\r?\n/).map((paragraph) => paragraph.replace(/\s+/g, ' '))
+      .find((paragraph) => /\blimit\b/i.test(paragraph) && /\bdiff\b/i.test(paragraph));
+    assert.ok(diffLimit, 'S47: planning.md has no paragraph on a limit at the diff');
+    const oldFile = diffLimit.match(/\bold file\b.*/i)?.[0] ?? '';
+    holds('S47', [
+      [diffLimit, 'the limit at the diff does not ask whether the code rules were kept', /\b(?:ask(?:s|ing)?|were)\b[^.]*\bcode rules\b[^.]*\bkept\b/i],
+      [diffLimit, 'the limit at the diff does not rule out splitting or compression for the number', /\b(?:never|do not|no)\b[^.]*\b(?:split(?:ting)?|compress(?:ion|ing)?)\b[^.]*\bfor the number\b/i],
+      [oldFile, 'the old file is not described as having grown', /\bold file\b[^.]*\b(?:grew|grow(?:n|s|ing)?)\b/i],
+      [oldFile, 'the old file case is not scoped to unrelated work', /\b(?:outside\b[^.]*\bscope|work about something else|unrelated (?:work|story))\b/i],
+      [oldFile, 'the old file does not get a debt row and a raise with a reason naming that row', /\bdebt row\b.*\braise\b[^.]*\breason\b[^.]*\bnam(?:e|es|ing) (?:the|that) (?:debt )?row\b/i],
+    ]);
   });
 
   // AD-123: a plan may still cite ZERO governing specs, but only by naming the adoption state it relies

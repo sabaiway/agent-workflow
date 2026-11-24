@@ -202,6 +202,22 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.doesNotMatch(amendment, /\b(?:budgets?|(?:size|tolerance) bands?|rais(?:e[sd]?|ing))\b|--write-baseline/i);
   });
 
+  it('spec:plan-review-loop/S48 plan-authoring checks the exact plan before each review brief and approval and carries the current note', () => {
+    const authoring = sectionOf(procedures, 'plan-authoring');
+    const review = stepOf(authoring, 4).replace(/\s+/g, ' ');
+    const approval = stepOf(authoring, 6).replace(/\s+/g, ' ');
+    assert.match(approval, /plan-shape-cli\.mjs --check <plan>.*?\bpresent\w*\b/i, 'step 6 checks the exact plan before presenting it');
+    assert.match(review, /plan-shape-cli\.mjs --check <plan>.*?\bbrief\b/i, 'step 4 names the exact-plan check before its brief');
+    assert.match(review, /\bbefore\b[^.]*\b(?:each|every)\b[^.]*\bbrief\b/i, 'the check precedes each review brief');
+
+    const printedNote = /\b(?=[^.!?]*\b(?:carr\w*|includ\w*|present\w*)\b)(?=[^.!?]*\bprint\w*\b)[^.!?]*\bnote\b/i;
+    assert.match(review, printedNote, 'the brief carries the note printed by its check');
+    assert.match(approval, printedNote, 'the approval carries the note printed by its check');
+    const dropsEarlierNote = /\b(?=[^.!?]*\bdrop\w*\b)(?=[^.!?]*\bearlier\b)(?=[^.!?]*\bnote\b)[^.!?]*\bprint\w* (?:none|nothing|no note)\b/i;
+    assert.match(review, dropsEarlierNote, 'step 4 drops an earlier note when its check prints none');
+    assert.match(approval, dropsEarlierNote, 'step 6 drops an earlier note when its check prints none');
+  });
+
   it('spec:story-flow/S22 Draft decides layout before implementation code and judges size at the diff', () => {
     const section = sectionOf(procedures, 'plan-authoring');
     const draft = stepOf(section, 2).replace(/\s+/g, ' ');

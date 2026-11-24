@@ -566,7 +566,7 @@ const declaredPracticeAdvice = (cwd, readFile, lstat) => {
       : '  layout: not recorded — `source-size-check.mjs --write-baseline --layout --reason "<text>"` starts it.',
     ...(config.schema === 1 ? ['  schema 1: the check stops on it — `source-size-check.mjs --write-baseline` moves it off schema 1.'] : []),
     declaration.state === 'minted'
-      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size (debt, not permission) — growth past a record takes a reasoned bump, and a record above the tree warns until the regeneration lowers it.`
+      ? `  recorded: ${facts.recordedFiles} file(s) carry a recorded size, each an exception with its reason — growth the regeneration would raise stops and takes a reason, asking again whether the code rules were kept, and a record above the tree warns until the regeneration lowers it.`
       : unmintedRecord,
     `  why: ${SOURCE_SIZE_WHY}`,
   ];
