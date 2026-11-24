@@ -43,7 +43,7 @@ const FROZEN_PRIORS = [
   ['spec-schema.mjs', '8.0.0', '8.6.3', '238e9a0ab3839f56b9f488b8c3232e8289c90d9808c772864dd5a95405b8488c'],
   ['spec-schema.test.mjs', '8.0.0', '8.6.3', '192661dd459c130004b2639d506676ee023fb24e862aad09656adc8c1418af04'],
 ];
-const CATALOG_ROWS = 46;
+const CATALOG_ROWS = 47;
 const LAST_FLAT_RELEASE = '1af99af';
 const LAST_FLAT_VERSION = '9.0.0';
 const OTHER_BYTES = Buffer.from('not a shipped script body\n');
@@ -203,30 +203,23 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
     lines.splice(at + 1, 2);
     return lines.join('\n');
   };
-  it('appends exactly the 24 last-flat bodies after the frozen prefix, with fixture folders, digests and lastShipped 9.0.0', () => {
+  it('appends exactly 25 last-flat bodies, one per flat name, after the frozen prefix, with fixture folders, digests and lastShipped 9.0.0', () => {
     assert.deepEqual(Object.keys(scriptPriors).sort(), ['CHECKER_PAIR', 'INSTALLER_SET', 'PRIOR_FILES', 'READER_PAIR', 'SCRIPT_PRIORS', 'classifyDeployedScript', 'digestOf']);
     for (const folder of [FIXTURES, ...readdirSync(FIXTURES).map((version) => join(FIXTURES, version))]) {
       assert.ok(readdirSync(folder).length <= KIT_LIMITS['entries-per-directory'].value, folder);
     }
     const fixtures = readFixtures();
-    const current = [];
-    const expected = FLAT.flatMap((file) => {
+    const expected = FLAT.map((file) => {
       const canon = spawnChecked('git', ['show', `${LAST_FLAT_RELEASE}:agent-workflow-memory/references/scripts/${file}`], KIT_ROOT, null).stdout;
       const mirror = spawnChecked('git', ['show', `${LAST_FLAT_RELEASE}:agent-workflow-kit/references/scripts/${file}`], KIT_ROOT, null).stdout;
       assert.ok(canon.equals(mirror), `${file}: the kit mirror equals the canon's raw bytes`);
-      if (DEPLOYED_BY_NAME.has(file) && canon.equals(deployedBundleBytes(file))) {
-        current.push(file);
-        assert.deepEqual(SCRIPT_PRIORS.filter((row) => row.file === file && row.digest === sha256(canon)), [], `${file}: no row for the bundled body`);
-        assert.deepEqual(fixtures.filter((row) => row.file === file && sha256(readFileSync(fixturePath(row))) === sha256(canon)), [], `${file}: no fixture for the bundled body`);
-        return [];
-      }
+      assert.ok(!DEPLOYED_BY_NAME.has(file) || !canon.equals(deployedBundleBytes(file)), `${file}: the last-flat body differs from the deployed entry's bundled body`);
       const matches = fixtures.filter((row) => row.file === file && readFileSync(fixturePath(row)).equals(canon));
       assert.equal(matches.length, 1, `${file}: exactly one fixture equals the canon's raw bytes`);
       const row = { ...matches[0], lastShipped: LAST_FLAT_VERSION, digest: sha256(canon) };
       assert.equal(classifyDeployedScript(canon, `scripts/${file}`, OTHER_BYTES), 'custom', 'the classifier consults only the given name');
-      return [row];
+      return row;
     });
-    assert.deepEqual(current.sort(), ['spec-schema.mjs']);
     assert.equal(expected.length, CATALOG_ROWS - FROZEN_PRIORS.length);
     const sortRows = (rows) => [...rows].sort((left, right) => left.file.localeCompare(right.file));
     assert.deepEqual(sortRows(SCRIPT_PRIORS.slice(FROZEN_PRIORS.length)), sortRows(expected));

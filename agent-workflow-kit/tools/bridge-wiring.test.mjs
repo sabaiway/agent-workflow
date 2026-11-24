@@ -59,8 +59,8 @@ const BAD_ENABLED = 'yes';
 const EXECUTION = 'plan-execution';
 const TEXT_TYPE = 'string';
 const DENIED = 'EACCES';
-const PROJECT_PATTERN = /settings\.json/;
-const LOCAL_PATTERN = /settings\.local\.json/;
+const PROJECT_PATTERN = /^settings\.json\b/;
+const LOCAL_PATTERN = /^settings\.local\.json\b/;
 const ENABLED_PATTERN = /enabled/;
 const CODEX_PATTERN = /codex-cli-bridge/;
 const WRITE_PATTERN = /allowWrite/;
@@ -106,7 +106,7 @@ const makeProject = (t, settings = {}, config = reviewConfig(COUNCIL), local) =>
 const compose = (fixture, readiness = READY, deps = {}) => wiring.composeBridgeWiring(
   { root: fixture.root, readiness }, { home: fixture.home, env: {}, bundleRoot: BUNDLE_ROOT, ...deps },
 );
-const NOT_REGULAR_PATTERN = /settings\.json: not a regular file/;
+const NOT_REGULAR_PATTERN = /^settings\.json\b: not a regular file/;
 const CHILD_TIMEOUT_MS = 10000;
 const CHILD_JUDGE = [
   "import fs from 'node:fs';",

@@ -82,13 +82,14 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   locations S2 has no positive cell for a colon past the first segment, nor for the lowercase drive form
   `c:relative`; script-family S4 (a namespace import, a computed specifier), S5 (an extra symbolic link in the
   mirror), S11 (a computed specifier; a kit tool importing the memory canon's index passes but cannot load from the
-  packed kit); jev-guide S7 (an extra `node:crypto` edge through the shared module); the comment at
-  `agent-workflow-kit/test/read-graph-purity.test.mjs:30-32` still says mcp-registration keeps its own settings-path
-  literals, which it now takes from the shared index (`agent-workflow-kit/tools/mcp-registration.mjs:41`). Narrow
-  fix: a cell per form with the next change of its suite; the jev-guide point and the comment with story 6 of that
-  epic. Proof: each new cell red on a body that walks around its scenario. Residual exposure, not live: no shipped
-  file takes any of these forms today, and each diff review reads the importers. Raised in the spec review of that
-  story, round 1, by codex and the lens, the drive form in round 2 by codex (2026-11-22).
+  packed kit); jev-guide S7 (the suite's statement reader,
+  `agent-workflow-kit/tools/jev-guide.test/surface.test.mjs:55-58`, still misses a comment between `import` and its
+  specifier and any form a line pattern cannot read). Narrow fix: a cell per form with the next change of its suite;
+  for the jev-guide point, read the graph with a parser or the loader, one fix for the forms together. Proof: each new
+  cell red on a body that walks around its scenario. Residual exposure, not live: no shipped file takes any of these
+  forms today, and each diff review reads the importers. Raised in the spec review of that story, round 1, by codex
+  and the lens, the drive form in round 2 by codex (2026-11-22); the jev-guide point rewritten by story 5 of that epic
+  (2026-11-24).
 
 - **HIDE-FOOTPRINT-GITIGNORE-FALLBACK-SPELLS-A-ROOT-PATH** — invariant: every fixed path the hide tool resolves
   against the project root takes the definition's name. Origin: `agent-workflow-kit/tools/hide-footprint.mjs:200`
@@ -310,22 +311,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   the docs checker's copy is pinned by its own suite. Bound to no story of that epic (its Specs paragraph, 2026-11-11).
   Raised in the spec session of S4 (2026-11-11); the epic's lens ruled the binding.
 
-- **FLAT-BODY-SEEDS-KEPT-BY-HAND-IN-FOUR-TESTS** — invariant: a test seed of a flat script body is the body the last
-  flat release shipped under that name, derived in one place from the catalog. Origin:
-  `agent-workflow-kit/tools/distribution-files/retired.test.mjs:22` and
-  `agent-workflow-kit/tools/distribution-files/scripts-component.test.mjs:69` seed `markdown-blocks.mjs` with today's
-  bundled body, which no release shipped flat since S4 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE changed it;
-  that story corrected the two move seeds (`move.integration.test.mjs:37-39`, `standalone-flat-move.test.mjs:27-29`)
-  by hand. Narrow fix: drop `'markdown-blocks.mjs'` from `retired.test.mjs:22` and delete
-  `scripts-component.test.mjs:69`. Generalization: one helper derives the last flat body (a name with a
-  `SCRIPT_PRIORS` row whose `lastShipped` is the last flat version takes that row's fixture, any other name the
-  bundled body), imported by the four seeds. Proof: a seed cell over a name whose body changed after the last flat
-  release, red on a hand list. Residual exposure, not live: the cells that seed every flat name
-  (`retired.test.mjs:105,122,140,162,284`, `scripts-component.test.mjs:140,160`) remove a flat `markdown-blocks.mjs`
-  through the bundled-body arm, not the prior-row arm a real 9.0.0 project takes; that arm is covered for every
-  fixture version at `retired.test.mjs:172-186`, by S23 and by the two move tests. Raised by the lens, round 1 of the
-  S4 diff review (2026-11-11), below the bar: no write or remove decision changes.
-
 - **FLOW-CHECK-READS-A-FAILED-GIT-SPAWN-AS-AN-UNBORN-HEAD** — invariant: the flow check's rungs skip on an unborn HEAD
   only when git itself answers so; a git query that fails to run is a failure, never an absence. Origin: `gitBuf`
   (`agent-workflow-kit/tools/core-evidence-tree.mjs:13-17`) answers null on a spawn error as on a non-zero status, so
@@ -377,6 +362,22 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   exposure, declared not live: a writer placed behind the shared index would pass the suite; the shared module holds
   no writer today. Raised by Fable at the placement consult of story S1 of ROTATION-RUN-LOSES-ENTRIES-ON-A-REFUSED-WRITE
   (2026-11-11).
+
+- **READ-GRAPH-PURITY-LINE-CITATIONS-GO-STALE** — invariant: a contract, test comment or debt row that points into
+  `agent-workflow-kit/test/read-graph-purity.test.mjs` names the test case or code symbol, never a line. Origin:
+  contracts under `docs/ai/specs` (`docs/ai/specs/kit/tier/gap-screen/index.md:51` among them), two kit tests
+  (`agent-workflow-kit/test/flow-record-layout.test.mjs:24`, `agent-workflow-kit/test/flow-store-layout.test.mjs:24`)
+  and rows of this file cite that test by line: with the file name before the line number, or, in
+  READ-GRAPH-PURITY-WALK-STOPS-AT-THE-TOOLS-BOUNDARY, by bare line numbers after the file was named once. Several
+  were off their target before story 5 of EVERY-LOCATION-IS-NAMED-ONCE, which shortened a three-line comment above
+  `WRITE_MODULES` to one line and so moved `WRITE_MODULES` and every line below it two lines up. Narrow fix: as each
+  contract, test comment or debt row is next edited, replace every line reference to the test, with or without the
+  file name, with the name of the test case or code symbol. Proof:
+  `rg --no-ignore -n 'read-graph-purity\.test\.mjs:[0-9]' docs/ai/specs agent-workflow-kit/test docs/debt.md`
+  exits 1 with no matches, and READ-GRAPH-PURITY-WALK-STOPS-AT-THE-TOOLS-BOUNDARY holds no bare line number of the
+  test. Residual exposure, not live: no tool reads these line numbers; a stale citation can point a reader to the
+  wrong code or leave out part of the intended test. Raised in the spec review of that story (2026-11-24); shortened
+  in its diff review.
 
 - **ISSUES-SKIP-SUITE-NEVER-BUILDS-A-NOTE-INSIDE-AN-ARCHIVED-SECTION** — invariant: the S9 suite of spec
   rotation-conservation fails when the issues skip stops removing a terminal `---` and canonical closing note from an

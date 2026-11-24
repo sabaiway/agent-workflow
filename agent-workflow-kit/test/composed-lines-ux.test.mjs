@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,7 @@ import { VEHICLES_REL } from '../tools/vehicle-settings.mjs';
 const [{ applyGitHooks, UPGRADE_ROUTE }, { hermeticGitEnv }] = await Promise.all(['../tools/git-hooks.mjs', '../tools/git-env.mjs'].map((path) => import(path)));
 const { ensureSpecs } = await import('../tools/ensure-specs.mjs').catch(() => ({}));
 const { ensureScripts } = await import('../tools/distribution-files/index.mjs').catch(() => ({}));
+const { readLastFlatBody } = await import('../../scripts/testing/flat-release.mjs').catch(() => ({}));
 import { readFamily } from '../references/scripts/family.mjs';
 import { readDeployedScripts } from '../tools/node-evidence.mjs';
 import { SCRIPT_PRIORS } from '../tools/script-priors.mjs';
@@ -271,10 +272,9 @@ const KIT_FX = (() => {
   const specsKit = (over = {}, store = true, dir = lay(project(), [...CL, ...R, ...C, 'test-reporter/reporter.mjs', 'run.mjs'], over)) => { if (store) { mkdirSync(join(dir, 'docs', 'ai', 'specs')); writeFileSync(join(dir, SPEC_STORE), '---\nkind: index\n---\n'); } return dir; };
   const kitWithout = (p, kit = tmp('clux-kit-')) => { for (const sub of ['scripts', 'templates']) cpSync(join(KIT, 'references', sub), join(kit, 'references', sub), { recursive: true }); rmSync(join(kit, 'references', 'scripts', ...p.split('/'))); return kit; };
   const adrKit = (docs, over = {}) => { const dir = kitTree(over); makeFixtureRepo((args) => assert.equal(spawnSync('git', args, { env: hermeticGitEnv(process.env, dir) }).status, 0, 'git init, so the snapshot stays in the tree'), dir, ['-q']); mkdirSync(join(dir, 'docs', 'ai', 'history')); for (const [rel, body] of Object.entries(docs)) writeFileSync(join(dir, 'docs', 'ai', rel), body); return dir; };
-  const flatBody = (name) => { const root = join(KIT, 'test/fixtures/script-priors'), versions = readdirSync(root).filter((v) => readdirSync(join(root, v)).includes(`${name}.txt`)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })); return readFileSync(join(root, versions.at(-1), `${name}.txt`)); };
   const moveRun = (flat = {}, command = true, inGit = false, deps = {}) => {
     const dir = lay(project(), [R[0], ...(command ? ['run.mjs'] : [])], {});
-    for (const [name, body] of Object.entries({ 'spec-schema.mjs': kb(R[0]), ...flat })) writeFileSync(join(dir, 'scripts', name), body);
+    for (const [name, body] of Object.entries({ 'spec-schema.mjs': readLastFlatBody('spec-schema.mjs'), ...flat })) writeFileSync(join(dir, 'scripts', name), body);
     const git = (cmd, args, options = {}) => { const result = spawnSync(cmd, args, { ...options, env: hermeticGitEnv(process.env, dir) }); if (args[0] === 'check-ignore') assert.equal(result.status, 1, 'the temp deployment is visible'); return result; };
     if (inGit) makeFixtureRepo((args) => assert.equal(git('git', args).status, 0, 'git init for the move lines'), dir, ['-q']);
     return runScripts(dir, { deps: { ...stripped(dir).deps, ...(inGit ? { git } : {}), ...deps } });
@@ -314,7 +314,7 @@ const KIT_FX = (() => {
     ['scripts-wrong-node-kind', (d = project()) => (mkdirSync(join(d, 'scripts')), writeFileSync(join(d, KF), ''), runScripts(d)), `${KF}/: exists but is a regular file — nothing was read or written; resolve it by hand, then re-run`],
     ['scripts-wrong-node-kind-family', (d = project()) => (mkdirSync(join(d, KF, ROT), { recursive: true }), runScripts(d)), `${at(ROT)}: exists but is a directory — nothing was read or written; resolve it by hand, then re-run`],
     ['scripts-bundle-unreadable', () => runScripts(kitTree(), { kitRoot: kitWithout(ROT) }), `${at(ROT)}: the bundled script could not be read, so nothing was written — reinstall the kit.`],
-    ['scripts-flat-removed', () => moveRun({ 'archive-caps.mjs': flatBody('archive-caps.mjs') }), "scripts/spec-schema.mjs: removed — the kit's scripts live in scripts/agent-workflow/"],
+    ['scripts-flat-removed', () => moveRun({ 'archive-caps.mjs': readLastFlatBody('archive-caps.mjs') }), "scripts/spec-schema.mjs: removed — the kit's scripts live in scripts/agent-workflow/"],
     ['scripts-flat-kept', () => moveRun({}, false), 'scripts/spec-schema.mjs: kept — scripts/agent-workflow/run.mjs is not placed yet'],
     ['scripts-flat-not-removed', () => moveRun({}, true, false, { unlink: (path) => { if (path === join(dirname(path), 'spec-schema.mjs')) throw eacces(); unlinkSync(path); } }), 'scripts/spec-schema.mjs: not removed (EACCES) — left for the next run'],
     ['scripts-flat-not-the-kits', () => moveRun({ 'spec-schema.mjs': MINE }), "scripts/spec-schema.mjs: differs from every body this kit knows it shipped — not the kit's, left as it stands; the kit's checks now run from scripts/agent-workflow/"],
@@ -341,7 +341,7 @@ const KIT_FX = (() => {
     ...SPECS_LAYOUT_FREE_FX];
   return { scripts, specs };
 })();
-if (ensureScripts) for (const [id, build] of KIT_FX.scripts) ensureFx(id, build(), ['scripts-index-regeneration-failed', 'scripts-flat-not-removed'].includes(id) || undefined);
+if (ensureScripts) for (const [id, build] of KIT_FX.scripts) if (readLastFlatBody || !id.startsWith('scripts-flat-')) ensureFx(id, build(), ['scripts-index-regeneration-failed', 'scripts-flat-not-removed'].includes(id) || undefined);
 if (ensureSpecs) for (const [id, build] of KIT_FX.specs) ensureFx(id, build());
 
 {

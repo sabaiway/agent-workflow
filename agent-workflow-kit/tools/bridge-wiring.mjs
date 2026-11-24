@@ -4,7 +4,8 @@
 
 import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { SETTINGS, SETTINGS_LOCAL } from '../references/scripts/shared/index.mjs';
 import { bundledSandboxRecipe, usedBridges } from './bridge-sandbox-recipe.mjs';
 import { missingStateDirs, stateDirsOf } from './bridge-state-dirs.mjs';
 import { loadConfig } from './orchestration-config.mjs';
@@ -20,9 +21,6 @@ export const WIRING_ROUTE_UNUSED = 'no slot uses it for review — once one does
 export const SANDBOX_ENABLED_CONDITION = `enabled in the project settings — ready means wired ${HOST_HONORS_QUALIFIER}`;
 export const SANDBOX_NOT_ENABLED_CONDITION = 'not enabled in the project settings — ready means installed';
 
-const PROJECT_FILE = 'settings.json';
-const LOCAL_FILE = 'settings.local.json';
-const SETTINGS_DIR = '.claude';
 const UTF8 = 'utf8';
 const ABSENT = 'ENOENT';
 const NOT_REGULAR = 'not a regular file';
@@ -32,6 +30,9 @@ const NOT_COVERED = 'not covered';
 const ENABLED = 'enabled';
 const SANDBOX = 'sandbox';
 const SURFACE_KEYS = Object.freeze(['excludedCommands', 'hosts', 'dirs']);
+
+const PROJECT_LABEL = basename(SETTINGS);
+const LOCAL_LABEL = basename(SETTINGS_LOCAL);
 
 const isPlainObject = (value) => value !== null && typeof value === 'object'
   && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
@@ -49,11 +50,11 @@ const sandboxOf = (data, file) => {
 };
 
 export const sandboxEnabled = (projectData, localData) => {
-  const project = sandboxOf(projectData, PROJECT_FILE);
-  const local = sandboxOf(localData, LOCAL_FILE);
+  const project = sandboxOf(projectData, PROJECT_LABEL);
+  const local = sandboxOf(localData, LOCAL_LABEL);
   const useLocal = local !== undefined && Object.hasOwn(local, ENABLED);
   const judged = useLocal ? local : project;
-  const file = useLocal ? LOCAL_FILE : PROJECT_FILE;
+  const file = useLocal ? LOCAL_LABEL : PROJECT_LABEL;
   if (judged === undefined || !Object.hasOwn(judged, ENABLED)) return false;
   if (typeof judged.enabled !== 'boolean') throw new Error(`${file}: enabled must be a boolean`);
   return judged.enabled === true;
@@ -104,8 +105,9 @@ const readRegular = (path) => {
   }
 };
 
-const readSettings = (root, file) => {
-  const path = join(root, SETTINGS_DIR, file);
+const readSettings = (root, relativePath) => {
+  const path = join(root, relativePath);
+  const file = basename(relativePath);
   const raw = (() => {
     try {
       return readRegular(path);
@@ -166,8 +168,8 @@ const judgeBridge = (bridge, used, sandbox, context, deps) => {
 export const composeBridgeWiring = ({ root, readiness }, deps = {}) => {
   const ready = BACKEND_PRIORITY.filter((bridge) => readiness.some((row) => row.name === bridge && row.readiness === READY));
   try {
-    const project = readSettings(root, PROJECT_FILE);
-    const local = readSettings(root, LOCAL_FILE);
+    const project = readSettings(root, SETTINGS);
+    const local = readSettings(root, SETTINGS_LOCAL);
     if (!sandboxEnabled(project, local)) {
       return {
         enabled: false,

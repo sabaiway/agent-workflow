@@ -1,20 +1,21 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from './fixture-repo.mjs';
 import { GIT_MAX_BUFFER, hermeticGitEnv } from '../../agent-workflow-kit/tools/git-env.mjs';
-import { PRIOR_FILES, SCRIPT_PRIORS } from '../../agent-workflow-kit/tools/script-priors.mjs';
+import { PRIOR_FILES, SCRIPT_PRIORS, digestOf } from '../../agent-workflow-kit/tools/script-priors.mjs';
 import { readNodeEvidenceProbes } from '../../agent-workflow-kit/tools/node-evidence.mjs';
 import { readFamily } from '../../agent-workflow-memory/references/scripts/family.mjs';
+
+const { readLastFlatBody } = await import('./flat-release.mjs').catch(() => ({}));
 
 const REPO = fileURLToPath(new URL('../../', import.meta.url));
 const MEMORY_ROOT = join(REPO, 'agent-workflow-memory');
 const BUNDLE = join(MEMORY_ROOT, 'references', 'scripts');
-const FIXTURES = join(REPO, 'agent-workflow-kit', 'test', 'fixtures', 'script-priors');
 const FLAT_RELEASE = '9.0.0';
 const KIT_DIRECTORY = 'scripts/agent-workflow';
 const COMMAND = `node ${KIT_DIRECTORY}/run.mjs`;
@@ -24,9 +25,6 @@ const USER_SUITE_BODY = "import { test } from 'node:test';\ntest('user suite', (
 const HOOK_PATH = '.git/hooks/pre-commit';
 const GIT_IDENTITY = ['-c', 'user.name=coder-tool', '-c', 'user.email=coder-tools@proton.me', '-c', 'commit.gpgsign=false'];
 const INTEGRATION_TIMEOUT = 120_000;
-const BUNDLED_FLAT_BODIES = {
-  'spec-schema.mjs': 'spec-schema/spec-schema.mjs',
-};
 const GIT_LOCATION_KEYS = [
   'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE', 'GIT_PREFIX',
   'GIT_CONFIG_PARAMETERS', 'GIT_EXEC_PATH', 'gIt_location',
@@ -43,13 +41,6 @@ const writeAt = (root, path, body) => {
   writeFileSync(join(root, path), body);
 };
 const readAt = (root, path) => readFileSync(join(root, path), 'utf8');
-const readFlatBody = (name) => {
-  if (Object.hasOwn(BUNDLED_FLAT_BODIES, name)) return readFileSync(join(BUNDLE, BUNDLED_FLAT_BODIES[name]));
-  const versions = readdirSync(FIXTURES).filter((version) => existsSync(join(FIXTURES, version, `${name}.txt`)))
-    .sort(compareVersions);
-  assert.ok(versions.length > 0, `setup: the last flat release's fixture exists for ${name}`);
-  return readFileSync(join(FIXTURES, versions.at(-1), `${name}.txt`));
-};
 
 it('spec:standalone-scripts/S13 flat names, bodies covering 9.0.0 and Node probes equal the kit', async () => {
   const { FLAT_NAMES, FLAT_BODIES } = await import('../../agent-workflow-memory/scripts/flat-scripts.mjs').catch(() => ({}));
@@ -66,8 +57,21 @@ it('spec:standalone-scripts/S13 flat names, bodies covering 9.0.0 and Node probe
   assert.ok(Object.isFrozen(memoryProbes));
 });
 
+it('readLastFlatBody returns the catalogued 9.0.0 bytes as a Buffer for every flat name and throws for an uncatalogued name', async () => {
+  const { FLAT_BODIES } = await import('../../agent-workflow-memory/scripts/flat-scripts.mjs').catch(() => ({}));
+  for (const name of PRIOR_FILES) {
+    const body = readLastFlatBody(name);
+    assert.ok(Buffer.isBuffer(body), `${name}: the last flat body is a Buffer`);
+    const rows = FLAT_BODIES.filter(({ file }) => file === name);
+    assert.equal(rows.length, 1, `${name}: exactly one row covers ${FLAT_RELEASE}`);
+    assert.equal(digestOf(body), rows[0].digest, `${name}: the helper returns the catalogued bytes`);
+  }
+  assert.throws(() => readLastFlatBody('locations.mjs'));
+});
+
 it('spec:standalone-scripts/S14 one plain run moves a 1af99af deployment through real git, the real rotator and a hook commit',
-  { timeout: INTEGRATION_TIMEOUT }, () => {
+  { timeout: INTEGRATION_TIMEOUT }, async () => {
+    const { FLAT_BODIES } = await import('../../agent-workflow-memory/scripts/flat-scripts.mjs').catch(() => ({}));
     const base = mkdtempSync(join(tmpdir(), 'standalone-flat-move-'));
     const project = join(base, 'project');
     const home = join(base, 'home');
@@ -111,7 +115,13 @@ it('spec:standalone-scripts/S14 one plain run moves a 1af99af deployment through
       writeAt(project, 'package.json', `${JSON.stringify({
         name: 'standalone-flat-move-fixture', scripts: { prepare: 'node scripts/install-git-hooks.mjs' },
       }, null, 2)}\n`);
-      for (const name of PRIOR_FILES) writeAt(project, `scripts/${name}`, readFlatBody(name));
+      for (const name of PRIOR_FILES) writeAt(project, `scripts/${name}`, readLastFlatBody(name));
+      for (const name of PRIOR_FILES) {
+        const rows = FLAT_BODIES.filter(({ file }) => file === name);
+        assert.equal(rows.length, 1, `${name}: exactly one row covers ${FLAT_RELEASE}`);
+        assert.equal(digestOf(readFileSync(join(project, 'scripts', name))), rows[0].digest, `${name}: seeded bytes match the catalog`);
+      }
+      assert.equal(FLAT_BODIES.length, PRIOR_FILES.length, 'memory has one row per flat name');
       for (const [name, type] of [['changelog', 'log'], ['known_issues', 'issues']]) {
         writeAt(project, `docs/ai/${name}.md`, `---\ntype: ${type}\nmaxLines: 200\n---\n\n# ${name}\n`);
       }

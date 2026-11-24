@@ -11,6 +11,8 @@ import { bundledImportsOf, DRY_RUN_TOKENS, ENSURE_OPS, RELAYED_ENSURE_TOKENS, WR
 import { KIT_OWN_PATHS } from './known-footprint.mjs';
 import { readDeployedScripts } from './node-evidence.mjs';
 import { CONFIG_REL } from './orchestration-config.mjs';
+import { READER_PAIR, CHECKER_PAIR } from './script-priors.mjs';
+const { readLastFlatBody } = await import('../../scripts/testing/flat-release.mjs').catch(() => ({}));
 
 const withProject = (fn, { deploy = true, node = true } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'ensure-cli-'));
@@ -198,22 +200,22 @@ describe('the reconcile run', () => {
 });
 
 describe('spec:distribution-files/S36 the op order on a flat tree without package.json', () => {
-  const flat = [['spec-schema.mjs', 'references/scripts/spec-schema/spec-schema.mjs'], ['spec-schema.test.mjs', 'test/fixtures/script-priors/8.7.0/spec-schema.test.mjs.txt'],
-    ['check-docs-size.mjs', 'test/fixtures/script-priors/8.2.0/check-docs-size.mjs.txt'], ['check-docs-size.test.mjs', 'test/fixtures/script-priors/4.6.0/check-docs-size.test.mjs.txt']], SEEDS = readDeployedScripts().filter((e) => e.seed && e.module && !['spec-schema', 'docs-size'].includes(e.module) && e.path !== 'run.mjs');
+  const flatNames = [...READER_PAIR, ...CHECKER_PAIR];
+  const SEEDS = readDeployedScripts().filter((e) => e.seed && e.module && !['spec-schema', 'docs-size'].includes(e.module) && e.path !== 'run.mjs');
   for (const [label, flags] of [['one plain run places the pairs, closure, command and every seed entry before removing the flat pairs', []], ['--only scripts places every seed entry and no other file, removes nothing, keeping each flat file with its line naming run.mjs', ['--only', 'scripts']]]) {
     it(label, () => withProject((dir) => {
       mkdirSync(join(dir, 'scripts'));
-      for (const [name, source] of flat) writeFileSync(join(dir, 'scripts', name), readFileSync(join(KIT, source)));
+      for (const name of flatNames) writeFileSync(join(dir, 'scripts', name), readLastFlatBody(name));
       const before = snapshot(dir), r = main(['--reconcile', ...flags], { cwd: dir, deps: { git: () => ({ status: 128 }) } }), after = snapshot(dir);
       assert.equal(r.code, 0, `${r.stderr}\n${r.stdout}`);
       if (flags.length) {
         assert.deepEqual([tokensOf(r.stdout), [...after.keys()].filter((rel) => !before.has(rel)).sort(), [...before].filter(([rel, body]) => after.get(rel) !== body), SEEDS.filter(({ deployed, bundled }) => after.get(deployed) !== readFileSync(join(KIT, bundled), 'utf8')).map(({ path }) => path)], [[{ op: 'scripts', token: 'seeded' }], SEEDS.map(({ deployed }) => deployed).sort(), [], []], r.stdout);
-        for (const [name] of flat) assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`), r.stdout);
+        for (const name of flatNames) assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`), r.stdout);
       } else {
         const paths = new Set([...PAIR_FILES.map(({ path }) => path), 'run.mjs', ...SEEDS.map(({ path }) => path)]);
         for (const path of paths) for (const dep of bundledImportsOf(path, readFileSync(join(KIT, entryOf(path).bundled)))) paths.add(dep);
         for (const path of paths) { const { deployed, bundled } = entryOf(path); assert.equal(existsSync(join(dir, deployed)), true, deployed); assert.deepEqual([lstatSync(join(dir, deployed)).isFile(), readFileSync(join(dir, deployed))], [true, readFileSync(join(KIT, bundled))], deployed); }
-        for (const [name] of flat) { assert.equal(existsSync(join(dir, 'scripts', name)), false, name); assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: removed — the kit's scripts live in scripts/agent-workflow/`), r.stdout); }
+        for (const name of flatNames) { assert.equal(existsSync(join(dir, 'scripts', name)), false, name); assert.ok(r.stdout.split('\n').includes(`      scripts/${name}: removed — the kit's scripts live in scripts/agent-workflow/`), r.stdout); }
         assert.deepEqual(tokensOf(r.stdout).map(({ op }) => op), [...ENSURE_OPS]);
         assert.ok(r.stdout.indexOf('\n  specs:') < r.stdout.indexOf('\n  scripts:'), r.stdout);
       }

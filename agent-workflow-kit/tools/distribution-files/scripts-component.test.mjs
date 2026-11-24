@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { PRIOR_FILES } from '../script-priors.mjs';
 
 const scripts = await import('./scripts.mjs').catch(() => ({})), { ensureScripts, SCRIPT_CHANNEL } = scripts;
+const { readLastFlatBody } = await import('../../../scripts/testing/flat-release.mjs').catch(() => ({}));
 
 const KIT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT, 'references', 'scripts');
@@ -67,14 +68,6 @@ const put = (dir, bodies, at = KD) => {
   }
 };
 const pairBodies = (K) => Object.fromEntries(K.pairs.map((p) => [p, bundled(p)]));
-const flatBody = (name) => {
-  if (name === 'spec-schema.mjs') return bundled('spec-schema/spec-schema.mjs');
-  if (name === 'markdown-blocks.mjs') return bundled('shared/markdown-blocks.mjs');
-  const fixtures = join(KIT, 'test', 'fixtures', 'script-priors');
-  const version = readdirSync(fixtures).filter((v) => existsSync(join(fixtures, v, `${name}.txt`))).sort((a, b) => a.localeCompare(b, 'en', { numeric: true })).at(-1);
-  assert.ok(version, `a last-flat-release fixture for ${name}`);
-  return readFileSync(join(fixtures, version, `${name}.txt`));
-};
 // A temp project: docs/ai, a package.json unless `node` is false, then whatever `setup` lays down.
 const withTree = (setup, fn, { node = true } = {}) => {
   const dir = mkdtempSync(join(tmpdir(), 'scripts-component-'));
@@ -140,7 +133,7 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
   it("only flat spec-pair, suite and support files beside run.mjs: every seed entry placed with the not-accepted line, suites and support removed, pairs kept, seeded", async () => {
     const K = await kitLayout(), pairs = ['spec-schema.mjs', 'check-docs-size.mjs'];
     const removed = PRIOR_FILES.filter((name) => !K.deployed.some((p) => posix.basename(p) === name));
-    const flat = Object.fromEntries([...pairs, ...removed].map((name) => [name, flatBody(name)]));
+    const flat = Object.fromEntries([...pairs, ...removed].map((name) => [name, readLastFlatBody(name)]));
     withTree((dir) => { put(dir, flat, 'scripts'); put(dir, { 'run.mjs': bundled('run.mjs') }); }, (dir) => {
       const [before, store] = [listing(dir), spawner()], r = run(dir, { spawnSync: store.spawnSync });
       assert.deepEqual([r.token, r.failed, 'entries' in r, store.calls.length], ['seeded', false, false, 1]);
@@ -160,11 +153,11 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
 
   it("only flat spec-pair, suite and support files with no kit folder: every seed entry placed, nothing removed, every kit file kept naming run.mjs", async () => {
     const K = await kitLayout(), names = PRIOR_FILES.filter((name) => ['spec-schema.mjs', 'check-docs-size.mjs'].includes(name) || !K.deployed.some((p) => posix.basename(p) === name));
-    withTree((dir) => put(dir, Object.fromEntries(names.map((name) => [name, flatBody(name)])), 'scripts'), (dir) => {
+    withTree((dir) => put(dir, Object.fromEntries(names.map((name) => [name, readLastFlatBody(name)])), 'scripts'), (dir) => {
       const store = spawner(), r = run(dir, { spawnSync: store.spawnSync });
       assert.deepEqual([r.token, r.failed, store.calls.length, listing(dir)], ['seeded', false, 1, [...K.seeds].sort()]);
       assert.deepEqual(r.lines, [...K.seeds.map(L.placed), L.notAccepted(), HOOK_IF, ...names.map((name) => `scripts/${name}: kept — scripts/agent-workflow/run.mjs is not placed yet`)]);
-      for (const name of names) assert.equal(sha(readFileSync(join(dir, 'scripts', name))), sha(flatBody(name)), `${name} left as it stood`);
+      for (const name of names) assert.equal(sha(readFileSync(join(dir, 'scripts', name))), sha(readLastFlatBody(name)), `${name} left as it stood`);
     });
   });
 

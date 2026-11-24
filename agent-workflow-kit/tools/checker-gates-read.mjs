@@ -5,6 +5,7 @@
 import { lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DOCS, DOCS_TREE, GIT_DIR, SPEC_COVERAGE, SPEC_STORE_INDEX } from '../references/scripts/shared/index.mjs';
 import { CHECKER_CLAIM, classifyCheckerClaim, dqUnsafePath } from './checker-claim.mjs';
 import { refuseDirectRun } from './direct-run.mjs';
 import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
@@ -12,15 +13,15 @@ import { GATES_REL, KIT_CHECKER_CLAIMS, coverageDeclarationDefects, validateDecl
 import { escapeForLine, isLineUnsafe } from './source-size-core.mjs';
 
 const KIT_TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
-const DEPLOYMENT_CHAIN = ['.', 'docs', 'docs/ai'];
+const DEPLOYMENT_CHAIN = ['.', DOCS, DOCS_TREE];
 const NOT_APPLICABLE_CODES = new Set(['ENOENT', 'ENOTDIR']);
 const OK = 'ok';
 const ABSENT = 'absent';
 const FOREIGN = 'foreign';
 const SYMLINK_CLASS = 'symlink';
-const GIT_DIR = Object.freeze({ rel: '.git', kinds: ['directory', 'file'], what: 'a directory or a regular gitfile' });
-const STORE_ROOT = Object.freeze({ rel: 'docs/ai/specs/index.md', kinds: ['file'], what: 'a regular file' });
-const COVERAGE_SCOPE = Object.freeze({ rel: 'docs/ai/spec-coverage.json', kinds: ['file'], what: 'a regular file' });
+const GIT_PROBE = Object.freeze({ rel: GIT_DIR, kinds: ['directory', 'file'], what: 'a directory or a regular gitfile' });
+const STORE_ROOT = Object.freeze({ rel: SPEC_STORE_INDEX, kinds: ['file'], what: 'a regular file' });
+const COVERAGE_SCOPE = Object.freeze({ rel: SPEC_COVERAGE, kinds: ['file'], what: 'a regular file' });
 
 export const CANDIDATE_STATES = Object.freeze({
   declared: 'declared',
@@ -72,7 +73,7 @@ const requiring = (...requirements) => (root, deps) => {
 const candidate = (id, title, probe) => Object.freeze({ id, title, probe });
 
 export const CHECKER_GATE_CANDIDATES = Object.freeze([
-  candidate('control-bytes', 'No raw control byte in the work tree', requiring(GIT_DIR)),
+  candidate('control-bytes', 'No raw control byte in the work tree', requiring(GIT_PROBE)),
   candidate('plan-shape', 'Plans in flight keep the structural planning shape', requiring()),
   candidate('spec-check', 'Feature-spec store structure — the whole store', requiring(STORE_ROOT)),
   candidate(

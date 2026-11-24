@@ -841,7 +841,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 241 = 239 + the finding-scope checker (the fold channel): tools/fold-scope.mjs (the pure rule)
     //       + tools/fold-scope-cli.mjs (argv + fs). Their *.test.mjs siblings are stripped by files[].
     // 243 = 241 + the spec layer's reader pair (spec layer 1a): references/scripts/spec-schema.mjs
-    //       (the ONE import-free reader that defines a well-formed spec; the navigator collapse reads
+    //       (the ONE reader that defines a well-formed spec; the navigator collapse reads
     //       through it) + its deploy-payload test — both mirrored from the memory canon by sync-mirrors.
     // 245 = 243 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
     //       like adr-record.md) + references/templates/specs/index.md (the seed spec store root the

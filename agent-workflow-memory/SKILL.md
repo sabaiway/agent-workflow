@@ -381,8 +381,9 @@ The three setup choices each have a full contract in
   seed `adr/log.md` navigator, the `SPEC_TEMPLATE.md` spec authoring reference + the seed
   `specs/index.md` store root, and all `docs/ai/` files to deploy.
 - [`references/scripts/`](references/scripts/) — the Node enforcement scripts (caps + staleness +
-  index-freshness gate with the counted `specs/` collapse, the import-free spec reader
-  `spec-schema.mjs` that defines a well-formed spec, one-file-per-ADR archive, hook installer) and
+  index-freshness gate with the counted `specs/` collapse, the spec reader `spec-schema.mjs` that
+  defines a well-formed spec and imports only the spec store's location, through the shared index,
+  one-file-per-ADR archive, hook installer) and
   their unit tests.
 - [`scripts/stamp-takeover.mjs`](scripts/stamp-takeover.mjs) — the upgrade-time lineage state
   machine (`LINEAGE_HEAD`, atomic stamp writes) + tests.

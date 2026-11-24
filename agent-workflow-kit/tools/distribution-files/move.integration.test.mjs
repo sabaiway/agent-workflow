@@ -1,21 +1,23 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
-import { PRIOR_FILES } from '../script-priors.mjs';
+import { PRIOR_FILES, SCRIPT_PRIORS, digestOf } from '../script-priors.mjs';
 import { readDeployedScripts } from '../node-evidence.mjs';
 import { UPGRADE_RUNLIST } from '../upgrade-runlist.mjs';
 import { KIT_COMMANDS } from '../../references/scripts/run.mjs';
 import { ALARM_WORDS, INTERNAL_NAMES, scannable } from '../../../scripts/testing/composed-lines-scan.mjs';
 
+const { readLastFlatBody } = await import('../../../scripts/testing/flat-release.mjs').catch(() => ({}));
+
 const KIT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT_ROOT, 'references', 'scripts');
-const FIXTURES = join(KIT_ROOT, 'test', 'fixtures', 'script-priors');
+const LAST_FLAT_VERSION = '9.0.0';
 const KIT_DIRECTORY = 'scripts/agent-workflow';
 const COMMAND = `node ${KIT_DIRECTORY}/run.mjs`;
 const GATES_PATH = 'docs/ai/gates.json';
@@ -34,9 +36,6 @@ const EXPECTED_GATES = [
   { ...GATES[1], cmd: `${COMMAND} docs-size --check-index` },
   { ...GATES[2], cmd: `${COMMAND} archive-changelog --check` },
 ];
-const BUNDLED_FLAT_BODIES = {
-  'spec-schema.mjs': 'spec-schema/spec-schema.mjs',
-};
 const GIT_IDENTITY = ['-c', 'user.name=coder-tool', '-c', 'user.email=coder-tools@proton.me', '-c', 'commit.gpgsign=false'];
 
 const writeAt = (root, path, body) => {
@@ -46,13 +45,6 @@ const writeAt = (root, path, body) => {
 const readAt = (root, path) => readFileSync(join(root, path), 'utf8');
 const readJson = (root, path) => JSON.parse(readAt(root, path));
 const writeJson = (root, path, value) => writeAt(root, path, `${JSON.stringify(value, null, 2)}\n`);
-const readFlatBody = (name) => {
-  if (Object.hasOwn(BUNDLED_FLAT_BODIES, name)) return readFileSync(join(BUNDLE, BUNDLED_FLAT_BODIES[name]));
-  const versions = readdirSync(FIXTURES).filter((version) => existsSync(join(FIXTURES, version, `${name}.txt`)))
-    .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }));
-  assert.ok(versions.length > 0, `setup: the last flat release's fixture exists for ${name}`);
-  return readFileSync(join(FIXTURES, versions.at(-1), `${name}.txt`));
-};
 const readScriptLines = (stdout) => {
   const rest = stdout.split('\n  scripts: ')[1]?.split('\n').slice(1) ?? [];
   const end = rest.findIndex((line) => !line.startsWith('      '));
@@ -97,7 +89,13 @@ describe('spec:distribution-files/S38 one plain upgrade of a 1af99af deployment 
     try {
       makeFixtureRepo((args) => git('setup', ...args), project, ['-q', '-b', 'main']);
       writeJson(project, 'package.json', { name: 'flat-upgrade-fixture', scripts: { prepare: 'node scripts/install-git-hooks.mjs' } });
-      for (const name of PRIOR_FILES) writeAt(project, `scripts/${name}`, readFlatBody(name));
+      for (const name of PRIOR_FILES) {
+        const path = `scripts/${name}`;
+        writeAt(project, path, readLastFlatBody(name));
+        const rows = SCRIPT_PRIORS.filter(({ file, lastShipped }) => file === name && lastShipped === LAST_FLAT_VERSION);
+        assert.equal(rows.length, 1, `${name}: exactly one row ends at ${LAST_FLAT_VERSION}`);
+        assert.equal(digestOf(readFileSync(join(project, path))), rows[0].digest, `${name}: seeded bytes match the catalog`);
+      }
       for (const [name, type] of [['changelog', 'log'], ['known_issues', 'issues']]) {
         writeAt(project, `docs/ai/${name}.md`, `---\ntype: ${type}\nmaxLines: 200\n---\n\n# ${name}\n`);
       }

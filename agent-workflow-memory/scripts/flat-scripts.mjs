@@ -39,6 +39,7 @@ export const FLAT_BODIES = Object.freeze([
   ['migrate-gates-branches.test.mjs', '59734b15ddf98762c6db0c048edf374f949f7b92c53ea4fd986d72b7f44e283f'],
   ['migrate-gates.mjs', 'd9c3f9da27397dd94ad866c3cbac72e529ad2e6311ffa15de7478a960800cdfa'],
   ['migrate-gates.test.mjs', '8f99a2f65f1f3db0eb3464a0382c208ca5076388b6df0596cf099d53ab2a1f86'],
+  ['spec-schema.mjs', 'ddc14a4c79498913977d6494f84e4b48348d0d2d7a415d84bb24334e24d3538f'],
   ['spec-schema.test.mjs', '6a602a93e9f9f21f0bc10c50e356de693936d3e204987efbab1a1d7674030498'],
 ].map(([file, digest]) => Object.freeze({ file, digest })));
 

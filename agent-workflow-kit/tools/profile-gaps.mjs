@@ -1,16 +1,14 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { EPIC_STORE, PLANS, QUEUE } from '../references/scripts/shared/index.mjs';
 import { CANDIDATE_STATES, isDeployed, judgeCheckerGates } from './checker-gates-read.mjs';
 import { CONFIG_REL, validateConfig } from './orchestration-config.mjs';
 import { TIER_TARGETS, isDeclineCurrent } from './reference-profile.mjs';
 
 const SLOTS_ID = 'epic-task-slots';
 const STORE_ID = 'epic-store-seeded';
-const STORE_PATH = 'docs/ai/epics';
 const CHECKER_GATES_ID = 'checker-gates-declared';
 const QUEUE_SEED_ID = 'named-queue-row-seed';
-const PLANS_PATH = 'docs/plans';
-const QUEUE_PATH = 'docs/plans/queue.md';
 const QUEUE_SEED_PATH = fileURLToPath(new URL('../references/authoring/QUEUE_TEMPLATE.md', import.meta.url));
 const ABSENT_ARM_CODES = new Set(['ENOENT', 'ENOTDIR']);
 const TIER_PREVIEW_PATH = fileURLToPath(new URL('./tier-preview.mjs', import.meta.url));
@@ -111,7 +109,7 @@ const detectStore = ({ root, deps }) => {
   if (!isDeployed(root, deps)) return reportUndecidable(REASONS.noDeployment);
   let stat;
   try {
-    stat = deps.lstatSync(resolve(root, STORE_PATH));
+    stat = deps.lstatSync(resolve(root, EPIC_STORE));
   } catch (error) {
     if (error?.code === MISSING_FILE_CODE) return { verdict: VERDICTS.absent };
     return reportUndecidable(REASONS.storeUnreadable);
@@ -146,7 +144,7 @@ const detectQueueSeed = ({ root, deps }) => {
   if (!isDeployed(root, deps)) return reportUndecidable(REASONS.noDeployment);
   let plans;
   try {
-    plans = deps.lstatSync(resolve(root, PLANS_PATH));
+    plans = deps.lstatSync(resolve(root, PLANS));
   } catch (error) {
     return ABSENT_ARM_CODES.has(error?.code) ? absentUnlessSeedUnreadable(deps) : reportUndecidable(REASONS.plansUnreadable);
   }
@@ -154,7 +152,7 @@ const detectQueueSeed = ({ root, deps }) => {
   if (!plans.isDirectory()) return reportUndecidable(REASONS.plansNotDirectory);
   let queue;
   try {
-    queue = deps.lstatSync(resolve(root, QUEUE_PATH));
+    queue = deps.lstatSync(resolve(root, QUEUE));
   } catch (error) {
     return error?.code === MISSING_FILE_CODE ? absentUnlessSeedUnreadable(deps) : reportUndecidable(REASONS.queueUnreadable);
   }

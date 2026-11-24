@@ -12,14 +12,14 @@ import { PRIOR_FILES, SCRIPT_PRIORS, classifyDeployedScript, digestOf } from '..
 
 const { ensureScripts } = await import('./scripts.mjs').catch(() => ({}));
 const { main } = await import('../ensure-configs.mjs').catch(() => ({}));
+const { readLastFlatBody } = await import('../../../scripts/testing/flat-release.mjs').catch(() => ({}));
 const KIT = fileURLToPath(new URL('../../', import.meta.url));
 const BUNDLE = join(KIT, 'references', 'scripts');
 const FIXTURES = join(KIT, 'test', 'fixtures', 'script-priors');
+const LAST_FLAT_VERSION = '9.0.0';
 const KD = 'scripts/agent-workflow';
 const bundled = (path) => readFileSync(join(BUNDLE, path));
 const flat = (name) => `scripts/${name}`;
-const versionsOf = (name) => readdirSync(FIXTURES).filter((version) => existsSync(join(FIXTURES, version, `${name}.txt`))).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
-const flatBody = (name, K) => ['spec-schema.mjs', 'markdown-blocks.mjs'].includes(name) ? bundled(K.byName.get(name)) : readFileSync(join(FIXTURES, versionsOf(name).at(-1), `${name}.txt`));
 const kitLayout = async () => {
   const { readFamily } = await import('../../references/scripts/family.mjs');
   const deployed = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
@@ -102,7 +102,7 @@ describe('spec:distribution-files/S29 the flat component and the command prerequ
   it('the flat installer, shipped or edited, accepts the family and removes only replaceable kit files', async () => {
     const K = await kitLayout();
     for (const edited of [false, true]) withTree(K, (dir) => {
-      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, flatBody(name, K)])));
+      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, readLastFlatBody(name)])));
       if (edited) put(dir, { 'install-git-hooks.mjs': '// my installer\n' });
       const links = [], result = run(dir, { deps: { link: (from, to) => { links.push(relative(join(dir, KD), to)); return linkSync(from, to); } } });
       assert.equal(result.token, 'seeded');
@@ -119,7 +119,7 @@ describe('spec:distribution-files/S29 the flat component and the command prerequ
   it('a flat seed alone accepts nothing: every seed entry placed with the not-accepted line, that flat file removed; index and project-root are never read or named', async () => {
     const K = await kitLayout();
     for (const name of ['archive-decisions.mjs', 'markdown-blocks.mjs']) withTree(K, (dir) => {
-      put(dir, { [name]: flatBody(name, K), 'index.mjs': '// not a seed\n', 'project-root.mjs': '// not a seed\n' });
+      put(dir, { [name]: readLastFlatBody(name), 'index.mjs': '// not a seed\n', 'project-root.mjs': '// not a seed\n' });
       const reads = [], result = run(dir, { deps: { readFile: (path, ...args) => { reads.push(String(path)); return readFileSync(path, ...args); } } });
       assert.equal(result.token, 'seeded'); hasLine(result, L.notAccepted); hasLine(result, L.removed(name));
       for (const path of K.seeds) hasLine(result, L.placed(path));
@@ -137,7 +137,7 @@ describe('spec:distribution-files/S29 the flat component and the command prerequ
       { names: ['archive-caps.mjs'], token: 'seeded' }, { names: [], token: 'seeded' },
     ];
     for (const row of rows) withTree(K, (dir) => {
-      put(dir, Object.fromEntries(row.names.map((name) => [name, flatBody(name, K)])));
+      put(dir, Object.fromEntries(row.names.map((name) => [name, readLastFlatBody(name)])));
       const before = snapshot(dir), reads = [], result = run(dir, { deps: { readFile: (path, ...args) => { reads.push(path); return readFileSync(path, ...args); } } });
       assert.equal(result.token, row.token);
       if (row.command === false) { assert.deepEqual([reads, snapshot(dir)], [[], before]); assertNoAfterLines(result); return; }
@@ -159,10 +159,10 @@ describe('spec:distribution-files/S29 the flat component and the command prerequ
   it('without run.mjs the installer witness places the family but keeps every kit flat file naming run.mjs', async () => {
     const K = await kitLayout();
     withTree(K, (dir) => {
-      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, flatBody(name, K)])));
+      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, readLastFlatBody(name)])));
       const result = run(dir); assert.equal(result.token, 'seeded');
       assert.equal(existsSync(join(dir, KD, 'run.mjs')), false);
-      for (const name of PRIOR_FILES) { hasLine(result, L.kept(name, 'run.mjs')); assert.equal(digestOf(readFileSync(join(dir, flat(name)))), digestOf(flatBody(name, K))); }
+      for (const name of PRIOR_FILES) { hasLine(result, L.kept(name, 'run.mjs')); assert.equal(digestOf(readFileSync(join(dir, flat(name)))), digestOf(readLastFlatBody(name))); }
       assertNoAfterLines(result);
     }, { command: false });
   });
@@ -172,7 +172,11 @@ describe('spec:distribution-files/S30 body classification and files left in plac
   it('catalog bodies by flat name and bundled deployed bodies, LF and CRLF, are removed without changing classifyDeployedScript', async () => {
     const K = await kitLayout();
     for (const name of PRIOR_FILES) {
-      const path = K.byName.get(name), bodies = [...versionsOf(name).map((version) => readFileSync(join(FIXTURES, version, `${name}.txt`))), ...(path ? [bundled(path)] : [])];
+      const path = K.byName.get(name);
+      const lastFlatBody = readLastFlatBody(name);
+      const earlierBodies = SCRIPT_PRIORS.filter(({ file, lastShipped }) => file === name && lastShipped !== LAST_FLAT_VERSION)
+        .map(({ firstShipped }) => readFileSync(join(FIXTURES, firstShipped, `${name}.txt`)));
+      const bodies = [...earlierBodies, lastFlatBody, ...(path ? [bundled(path)] : [])];
       for (const body of bodies) for (const crlf of [false, true]) withTree(K, (dir) => {
         const bytes = crlf ? Buffer.from(body.toString().replace(/\r?\n/g, '\r\n')) : body;
         put(dir, { [name]: bytes });
@@ -180,14 +184,14 @@ describe('spec:distribution-files/S30 body classification and files left in plac
         const bundle = path ? bundled(path) : Buffer.from('// no deployed entry\n');
         const expected = digestOf(bytes) === digestOf(bundle) ? 'current' : SCRIPT_PRIORS.some((row) => row.file === name && row.digest === digestOf(bytes)) ? 'prior' : 'custom';
         assert.equal(classifyDeployedScript(bytes, name, bundle), expected);
-        if (path && path !== name) assert.equal(classifyDeployedScript(flatBody(name, K), path, bundle), digestOf(flatBody(name, K)) === digestOf(bundle) ? 'current' : 'custom');
+        if (path && path !== name) assert.equal(classifyDeployedScript(lastFlatBody, path, bundle), digestOf(lastFlatBody) === digestOf(bundle) ? 'current' : 'custom');
       }, { family: true });
     }
   });
   it('other bytes, including a catalog body under the wrong flat name, are named on every plain and dry run and never touched', async () => {
     const K = await kitLayout();
     for (const dryRun of [false, true]) withTree(K, (dir) => {
-      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, name === 'archive-caps.mjs' ? flatBody('install-git-hooks.mjs', K) : `// my ${name}\n`])));
+      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, name === 'archive-caps.mjs' ? readLastFlatBody('install-git-hooks.mjs') : `// my ${name}\n`])));
       const before = snapshot(dir);
       for (const repeat of [1, 2]) {
         const result = run(dir, { dryRun });
@@ -199,7 +203,7 @@ describe('spec:distribution-files/S30 body classification and files left in plac
   it('unreadable files, failed unlinks, ENOENT, links and directories are left without failing or reporting a kit suite as the user\'s', async () => {
     const K = await kitLayout(), name = 'archive-caps.test.mjs', later = 'archive-changelog.test.mjs';
     for (const kind of ['unreadable', 'EACCES', 'ENOENT', 'link', 'directory']) withTree(K, (dir) => {
-      put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K), [name]: flatBody(name, K), [later]: flatBody(later, K) });
+      put(dir, { '_expect-shim.mjs': readLastFlatBody('_expect-shim.mjs'), [name]: readLastFlatBody(name), [later]: readLastFlatBody(later) });
       const target = join(dir, flat(name)), reads = [], error = (code) => Object.assign(new Error(`${code}: fixture`), { code });
       if (kind === 'link') { renameSync(target, join(dir, 'link-target')); symlinkSync(join(dir, 'link-target'), target); }
       if (kind === 'directory') { unlinkSync(target); mkdirSync(target); }
@@ -222,7 +226,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
   it('removal follows the last write and successful store run; a stopped removal converges and a failed run never removes', async () => {
     const K = await kitLayout();
     for (const failure of ['none', 'write', 'store', 'interrupted']) withTree(K, (dir) => {
-      put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K), 'archive-caps.test.mjs': flatBody('archive-caps.test.mjs', K) });
+      put(dir, { '_expect-shim.mjs': readLastFlatBody('_expect-shim.mjs'), 'archive-caps.test.mjs': readLastFlatBody('archive-caps.test.mjs') });
       put(dir, { [K.family[0]]: '// refresh me\n' }, KD);
       const events = [], removed = [], result = run(dir, { deps: {
         rename: (from, to) => { events.push('write'); if (failure === 'write') throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return renameSync(from, to); },
@@ -242,7 +246,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
   it('a declined removal beside absent seeds seeds them; beside current seeds it refreshes with no placement line; a dry run previews standing replacements and keeps only absent ones, after the would line', async () => {
     const K = await kitLayout();
     for (const seedsStand of [false, true]) for (const dryRun of [false, true]) withTree(K, (dir) => {
-      put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K), 'spec-schema.mjs': flatBody('spec-schema.mjs', K), 'archive-caps.mjs': flatBody('archive-caps.mjs', K) });
+      put(dir, { '_expect-shim.mjs': readLastFlatBody('_expect-shim.mjs'), 'spec-schema.mjs': readLastFlatBody('spec-schema.mjs'), 'archive-caps.mjs': readLastFlatBody('archive-caps.mjs') });
       put(dir, { [K.byName.get('spec-schema.mjs')]: bundled(K.byName.get('spec-schema.mjs')), ...(seedsStand ? Object.fromEntries(K.seeds.map((path) => [path, bundled(path)])) : {}) }, KD);
       const at = `seeds ${seedsStand ? 'current' : 'absent'}, ${dryRun ? 'dry' : 'plain'}`, before = snapshot(dir), result = run(dir, { dryRun });
       assert.equal(result.token, seedsStand ? (dryRun ? 'would-refresh' : 'refreshed') : (dryRun ? 'would-seed' : 'seeded'), at); hasLine(result, L.notAccepted);
@@ -256,7 +260,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
   it('a dry run counts its own due family placements without writing', async () => {
     const K = await kitLayout();
     withTree(K, (dir) => {
-      put(dir, { 'install-git-hooks.mjs': flatBody('install-git-hooks.mjs', K), 'archive-caps.mjs': flatBody('archive-caps.mjs', K) });
+      put(dir, { 'install-git-hooks.mjs': readLastFlatBody('install-git-hooks.mjs'), 'archive-caps.mjs': readLastFlatBody('archive-caps.mjs') });
       const before = snapshot(dir), result = run(dir, { dryRun: true });
       assert.equal(result.token, 'would-seed'); for (const name of ['install-git-hooks.mjs', 'archive-caps.mjs']) assertWouldRemove(result, name);
       assert.deepEqual(snapshot(dir), before);
@@ -265,7 +269,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
   it('the CLI hands in the specs preview, but a failed specs op or --only scripts hands in none', async () => {
     const K = await kitLayout();
     for (const mode of ['specs', 'failed-specs', 'only-scripts']) withTree(K, (dir) => {
-      put(dir, { 'check-docs-size.mjs': flatBody('check-docs-size.mjs', K), 'spec-schema.mjs': flatBody('spec-schema.mjs', K) });
+      put(dir, { 'check-docs-size.mjs': readLastFlatBody('check-docs-size.mjs'), 'spec-schema.mjs': readLastFlatBody('spec-schema.mjs') });
       const before = snapshot(dir), result = main(['--reconcile', '--cwd', dir, '--dry-run', ...(mode === 'only-scripts' ? ['--only', 'scripts'] : [])], { kitRoot: KIT, deps: {
         git: outsideGit, readFile: (path, ...args) => { if (mode === 'failed-specs' && path === join(BUNDLE, 'docs-size', 'check-docs-size.mjs')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return readFileSync(path, ...args); },
       } });
@@ -281,7 +285,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
   it('without the command a plain or dry run keeps flat files, including ones with no replacement', async () => {
     const K = await kitLayout();
     for (const dryRun of [false, true]) withTree(K, (dir) => {
-      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, flatBody(name, K)])));
+      put(dir, Object.fromEntries(PRIOR_FILES.map((name) => [name, readLastFlatBody(name)])));
       const before = snapshot(dir), result = run(dir, { dryRun }); assert.equal(result.token, 'already-present');
       for (const name of PRIOR_FILES) {
         if (dryRun) assert.ok(result.lines.some((line) => line.startsWith(`${flat(name)}:`) && line.includes('would be kept') && line.includes(`${KD}/run.mjs`)));
@@ -295,7 +299,7 @@ describe('spec:distribution-files/S34 removal order, tokens, previews and follow
     const K = await kitLayout();
     for (const realGit of [false, true]) for (const dryRun of [false, true]) withTree(K, (dir) => {
       const git = realGit ? initGit(dir) : { git: outsideGit, calls: [] };
-      put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K), 'archive-caps.test.mjs': '// my suite\n', 'own.test.mjs': '// my suite\n', 'nested/own.test.mjs': '// nested\n' });
+      put(dir, { '_expect-shim.mjs': readLastFlatBody('_expect-shim.mjs'), 'archive-caps.test.mjs': '// my suite\n', 'own.test.mjs': '// my suite\n', 'nested/own.test.mjs': '// nested\n' });
       const result = run(dir, { dryRun, deps: { git: git.git } });
       assert.equal(result.token, dryRun ? 'would-refresh' : 'refreshed');
       assert.deepEqual(result.lines.filter((line) => line.includes('a suite of your own')).sort(), ['archive-caps.test.mjs', 'own.test.mjs'].map(L.suite).sort());
@@ -320,7 +324,7 @@ describe('spec:distribution-files/S35 commit the move together in visible deploy
       const recorded = initGit(dir);
       if (visibility === 'hidden') writeFileSync(join(dir, '.git', 'info', 'exclude'), `${KD}/\n`);
       if (action === 'place' || action === 'both') put(dir, { 'install-git-hooks.mjs': '// my installer\n' });
-      if (action === 'remove' || action === 'both') put(dir, { '_expect-shim.mjs': flatBody('_expect-shim.mjs', K) });
+      if (action === 'remove' || action === 'both') put(dir, { '_expect-shim.mjs': readLastFlatBody('_expect-shim.mjs') });
       const result = run(dir, { deps: { git: (command, args, options) => {
         const answer = recorded.git(command, args, options);
         return visibility === 'error' && args[0] === 'check-ignore' ? { status: 128, stdout: '', stderr: '' } : answer;

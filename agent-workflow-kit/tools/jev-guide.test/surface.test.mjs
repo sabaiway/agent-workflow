@@ -13,7 +13,8 @@ const loaded = await import('../jev-guide.mjs').catch(() => ({}));
 const main = loaded.main ?? (() => { throw new Error('main is absent'); });
 const KIT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const REPO = dirname(KIT);
-const GUIDE = join(KIT, 'tools', 'jev-guide.mjs');
+const GUIDE_IDENTITY = 'tools/jev-guide.mjs';
+const GUIDE = join(KIT, GUIDE_IDENTITY);
 const LF = '\n';
 const COMMAND = /\/agent-workflow-kit jev\b/;
 const WORDS = /\bjev\b|typesafe/i;
@@ -25,11 +26,13 @@ const JUDGE_MIRROR = 'kit:bridges/typesafe-jev-bridge/';
 // The contract's closed import surface: specifier → the names it may give (null: any name).
 const FACTS = ['AFTER_INSTALL', 'KEY_VARIABLE', 'NO_APPLY_LINE', 'RESTART_STEP', 'SKILL_PINS', 'claudeDirOf', 'connectLine', 'keySet', 'placeOf',
   'printable', 'skillLine', 'skillState', 'skillTargets'];
+const FACTS_LEAF = 'tools/jev-facts.mjs';
+const SHARED_INDEX = 'references/scripts/shared/index.mjs';
 const NAMED = new Map([['node:fs', ['lstatSync', 'readFileSync', 'readdirSync', 'statSync']], ['node:os', ['homedir', 'hostname']],
-  ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], ['references/scripts/shared/index.mjs', ['fail']],
-  ['tools/jev-facts.mjs', FACTS]]);
+  ['node:path', null], ['node:url', null], ['tools/direct-run.mjs', ['isDirectRun']], [SHARED_INDEX, ['fail', 'AGENTS_SKILLS', 'SKILLS_DIR']],
+  [FACTS_LEAF, FACTS]]);
 // The shared module's files count as one module, its index.
-const moduleOf = (identity) => (identity.startsWith('references/scripts/shared/') ? 'references/scripts/shared/index.mjs' : identity);
+const moduleOf = (identity) => (identity.startsWith('references/scripts/shared/') ? SHARED_INDEX : identity);
 // The one module the graph may reach beyond the guide's own imports, and only through the facts leaf.
 const THROUGH_FACTS = 'node:crypto';
 const TOKENS = ['import(', 'require(', 'process.getBuiltinModule', 'process.binding', 'fetch', 'WebSocket', 'plugins',
@@ -49,16 +52,20 @@ const identityOf = (specifier, from) => {
   if (!specifier.startsWith('.')) return specifier.startsWith('node:') ? specifier : `node:${specifier}`;
   return relative(KIT, resolve(dirname(from), specifier)).split('\\').join('/');
 };
-const statementsOf = (source) => source.match(/^\s*(import|export)\b[^;]*?\bfrom\s*['"][^'"]+['"]|^\s*import\s*['"][^'"]+['"]/gm) ?? [];
+const statementsOf = (source) => {
+  const statements = source.matchAll(/(?:^|;)\s*(import\s*['"][^'"]+['"]|(?:import\b|export\s*(?=[{*]))[^;]*?\bfrom\s*['"][^'"]+['"])/gm);
+  return Array.from(statements, ([, statement]) => statement);
+};
 const specifierOf = (statement) => statement.match(/['"]([^'"]+)['"]\s*$/)[1];
-const graphOf = (file, seen = new Set()) => {
-  for (const statement of statementsOf(readFileSync(file, 'utf8'))) {
-    const identity = identityOf(specifierOf(statement), file);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    if (!identity.startsWith('node:')) graphOf(join(KIT, identity), seen);
+const graphOf = (importer, graph = new Map()) => {
+  if (graph.has(importer)) return graph;
+  const file = join(KIT, importer);
+  const imports = statementsOf(readFileSync(file, 'utf8')).map((statement) => identityOf(specifierOf(statement), file));
+  graph.set(importer, imports);
+  for (const identity of imports) {
+    if (!identity.startsWith('node:')) graphOf(identity, graph);
   }
-  return seen;
+  return graph;
 };
 
 const made = [];
@@ -122,6 +129,15 @@ it('spec:jev-judge/S6 the jev service fragment lists first the host of JEV_ENDPO
 });
 
 describe('spec:jev-guide/S7 a closed import surface, no network token and no network call', () => {
+  it('reads static import and re-export specifiers after another statement on the same line', () => {
+    const sources = [
+      "export const A = 1; import { b } from './c.mjs';",
+      "export const A = 1; import './c.mjs';",
+      "export const A = 1; export { b } from './c.mjs';",
+    ];
+    assert.deepEqual(sources.map((source) => statementsOf(source).map(specifierOf)), [['./c.mjs'], ['./c.mjs'], ['./c.mjs']]);
+  });
+
   it('imports only the named imports the contract lists, no namespace or default import', () => {
     const source = sourceOf();
     const statements = statementsOf(source);
@@ -136,8 +152,8 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
     }
   });
 
-  it('names exactly its names in its one node:fs, node:os and facts-leaf statement', () => {
-    for (const identity of ['node:fs', 'node:os', 'tools/jev-facts.mjs']) {
+  it('names exactly its names in its one node:fs, node:os, shared index and facts-leaf statement', () => {
+    for (const identity of ['node:fs', 'node:os', SHARED_INDEX, FACTS_LEAF]) {
       const found = statementsOf(sourceOf()).filter((statement) => identityOf(specifierOf(statement), GUIDE) === identity);
       assert.equal(found.length, 1, found.join(LF));
       assert.deepEqual(found[0].match(/\{([^}]*)\}/)[1].split(',').map((name) => name.trim()).sort(), [...NAMED.get(identity)].sort(), identity);
@@ -145,13 +161,14 @@ describe('spec:jev-guide/S7 a closed import surface, no network token and no net
   });
 
   it('keeps the transitive static import graph within the seven listed modules plus node:crypto through the facts leaf, never a command', () => {
-    const graph = [...graphOf(GUIDE)];
-    assert.ok(graph.includes('tools/direct-run.mjs'), 'the walk reaches the direct-run leaf');
-    assert.ok(graph.includes('tools/jev-facts.mjs'), 'the walk reaches the facts leaf');
-    assert.deepEqual(graph.filter((identity) => !NAMED.has(moduleOf(identity)) && identity !== THROUGH_FACTS), []);
-    assert.ok(!statementsOf(sourceOf()).some((statement) => identityOf(specifierOf(statement), GUIDE) === THROUGH_FACTS), 'not the guide\'s own import');
-    assert.ok(graphOf(join(KIT, 'tools', 'jev-facts.mjs')).has(THROUGH_FACTS), 'reached through the facts leaf');
-    assert.ok(!graph.includes('tools/jev-connect.mjs') && !graph.includes('tools/jev-skill.mjs'));
+    const graph = graphOf(GUIDE_IDENTITY);
+    const reached = [...new Set([...graph.values()].flat())];
+    assert.ok(reached.includes('tools/direct-run.mjs'), 'the walk reaches the direct-run leaf');
+    assert.ok(reached.includes(FACTS_LEAF), 'the walk reaches the facts leaf');
+    assert.deepEqual(reached.filter((identity) => !NAMED.has(moduleOf(identity)) && identity !== THROUGH_FACTS), []);
+    const cryptoImporters = [...graph].filter(([, imports]) => imports.includes(THROUGH_FACTS)).map(([importer]) => importer);
+    assert.deepEqual(cryptoImporters, [FACTS_LEAF], `${THROUGH_FACTS} is reached through the facts leaf only`);
+    assert.ok(!reached.includes('tools/jev-connect.mjs') && !reached.includes('tools/jev-skill.mjs'));
   });
 
   it('carries none of the listed tokens nor their bare names, and names process.env once, as the default of io.env', () => {

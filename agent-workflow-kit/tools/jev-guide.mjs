@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fail } from '../references/scripts/shared/index.mjs';
+import { AGENTS_SKILLS, SKILLS_DIR, fail } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { AFTER_INSTALL, KEY_VARIABLE, NO_APPLY_LINE, RESTART_STEP, SKILL_PINS, claudeDirOf, connectLine, keySet, placeOf, printable, skillLine, skillState, skillTargets } from './jev-facts.mjs';
 
@@ -107,7 +107,7 @@ const homeOf = (io) => {
 const placeFor = (io, env, platform) => placeOf({ env, platform,
   hostname: io.hostname ?? (() => { try { return hostname(); } catch { return ''; } })(),
   container: io.container ?? statIs('/.dockerenv', 'file') });
-const skillPaths = (dir, home) => [...new Set([join(dir, '.claude', 'skills'), join(dir, '.agents', 'skills'),
+const skillPaths = (dir, home) => [...new Set([join(dir, SKILLS_DIR), join(dir, AGENTS_SKILLS),
   ...(home === '' ? [] : [join(home, '.claude', 'skills'), join(home, '.codex', 'skills'), join(home, '.cursor', 'skills')])]
   .map((root) => join(root, SKILL_FILE)))];
 

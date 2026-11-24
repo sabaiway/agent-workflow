@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Canon: the methodology engine's references/specs.md (frozen schema, refusals table).
+import { SPEC_STORE } from '../shared/index.mjs';
 
 export const SPEC_SCHEMA = Object.freeze({
-  storePrefix: 'docs/ai/specs/',
+  storePrefix: `${SPEC_STORE}/`,
   navigatorFile: 'index.md',
   upLink: 'technical_specification.md',
   upLinkLine: '> Up: [technical_specification.md](../technical_specification.md)',

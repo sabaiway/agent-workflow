@@ -204,7 +204,7 @@ describe('memory package content — tarball guard (no own-test leak; deploy pay
     // 55 = 54 + references/scripts/check-docs-size-ensure.test.mjs (the navigator write contract +
     //      the --ensure-index finalizer mode — a deploy-payload spec beside the parity-frozen main
     //      pair; kit-mirrored via sync-mirrors).
-    // 57 = 55 + references/scripts/spec-schema.mjs (the ONE import-free spec reader the navigator
+    // 57 = 55 + references/scripts/spec-schema.mjs (the ONE spec reader the navigator
     //      collapse reads through — spec layer 1a) + its deploy-payload test; kit-mirrored.
     // 59 = 57 + references/templates/SPEC_TEMPLATE.md (the spec authoring reference, skill-home only
     //      like adr-record.md) + references/templates/specs/index.md (the seed spec store root the

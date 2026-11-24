@@ -21,8 +21,8 @@ machinery. **No new blocking checkpoints**: statuses are lifecycle markers, neve
   swallowed by the aggregate.
 - "Well-formed" has ONE definition: the deployed reader `scripts/agent-workflow/spec-schema/spec-schema.mjs`
   (`readSpecDocument(text, rel)`), read through by the navigator collapse and by the structural
-  checker alike. It is pure text — it imports nothing, opens no file, and models no markdown code
-  (a fence line refuses; a spec carries no code sample, so no line is ever ambiguous); an inline
+  checker alike. It is pure text — it imports only the spec store's location, `SPEC_STORE` through
+  the shared index, opens no file, and models no markdown code (a fence line refuses; a spec carries no code sample, so no line is ever ambiguous); an inline
   backtick span is opaque to the clause split and to nothing else, and an unmatched backtick leaves
   the rest of the bullet opaque.
 

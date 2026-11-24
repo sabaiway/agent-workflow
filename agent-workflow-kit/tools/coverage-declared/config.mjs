@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
+import { COVERAGE_DECLARED } from '../../references/scripts/shared/index.mjs';
 import { classifyChangedPath } from '../changed-surface.mjs';
 import { isLineUnsafe } from '../source-size-refusal.mjs';
 import { readFileBytesNoFollow } from '../fs-read-nofollow.mjs';
 
-export const COVERAGE_DECLARED_REL = 'docs/ai/coverage-declared.json';
+export const COVERAGE_DECLARED_REL = COVERAGE_DECLARED;
 export const DECLARED_REASON_MAX_BYTES = 300;
 
 const SHAPE = '{ "schema": 1, "_README"?: string, "entries": [{ "path": string, "reason": string }, ...] }';
