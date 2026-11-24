@@ -3,12 +3,71 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **ROLLBACK-OWNERSHIP-IS-PROVEN-BY-PATH-AND-KIND** — invariant: the enforcement rollback removes only a file this apply
+  published, never one another writer put at its path. Origin: `agent-workflow-kit/tools/git-hooks.mjs:243` (`intact(rel)
+  && isFile(...)`), `atomic-write.mjs:211-212` (the write returns no identity); a device and inode can be reused, so an
+  identity needs its bytes too (the lens, S4 spec review). Residual, NOT live: a created file replaced by another regular
+  file before the rollback is removed, and a file the rollback leaves can stand beside a removed dependency, each left
+  file named: a refused unlink of the installer goes on to remove `shared/index.mjs`, leaving an installer that cannot
+  load and hiding the enforcement re-offer (codex, the re-read of the last round; `git-hooks.test.mjs:250-262`,
+  `recommendations.mjs:1055`); the repair is the upgrade's next run. Raised in the S4 spec review (codex, the lens);
+  folding it bred new states, so it was subtracted to this row, and the maintainer ruled on 2026-11-23 to keep the
+  rollback as it is. `git-hooks.md:41` "removes exactly the files this run created" overstates the same check.
+
+- **ROLLBACK-TEXTS-PROMISE-A-WHOLE-ROLLBACK** — invariant: a shipped rollback text names each file the rollback leaves.
+  Origin: `agent-workflow-kit/references/modes/recommendations.md:42` ("an install it refuses removes the scripts this
+  apply copied"), `agent-workflow-kit/references/modes/bootstrap.md:29` (exit 6 "leaves no script"), pinned by S37
+  (`agent-workflow-kit/test/recommendations-language-contract.test.mjs:64`), the git-hooks part's Shipped text bullet and
+  its sentences at `git-hooks.md:21` ("all or nothing") and `:45` ("leaves the tree as the advisor read it").
+  Pre-existing since revision 17 (an unremovable file is left and named). Residual, NOT live: a rollback that fails
+  partway is described as whole, and a left file can hide the enforcement re-offer.
+
+- **TEST-DEPLOYED-ORDER-HELPERS-COPIED** — invariant: the suites read the deployed scripts' write order and the
+  installer's import closure from one test-support module whose order is computed apart from the writers' own.
+  Origin: story S4 of EVERY-LOCATION-IS-NAMED-ONCE moved the two suites it grew (`git-hooks.test.mjs`,
+  `apply-danger-check.test.mjs`) onto `agent-workflow-kit/tools/git-hooks-harness.test.mjs`; copies of the order loop
+  stand in `agent-workflow-kit/tools/distribution-files/scripts.test.mjs:43-50`, `scripts-component.test.mjs:37-44`,
+  `scripts-adr-store.test.mjs:65-67` and `agent-workflow-kit/test/composed-lines-ux.test.mjs:259-261`, each adding the
+  installer → `shared/index.mjs` edge by hand, now dead; three under the false comment "Revision 31 gives the installer
+  its shared index import before the bundled body carries it" (`scripts-component.test.mjs:30`,
+  `scripts-adr-store.test.mjs:65`, `composed-lines-ux.test.mjs:259`). Narrow fix: those suites import the harness, the hand-added
+  edge and the comment removed; memory's `agent-workflow-memory/scripts/kit-folder.test.mjs:170` keeps its own copy
+  (memory imports nothing from the kit). Proof: the suites green, the harness's order not the writers' function.
+  Residual exposure, NOT live: a copy can drift from the writers' order and stay green on its own. Raised in the S4
+  diff review, round 1 (the lens; codex on the independent order; agy's nits on the dead edge).
+
+- **COVERAGE-PRODUCER-REGION-AUTHORED-TWICE** — invariant: the unit-tests guard's vocabulary is written once. Origin:
+  `agent-workflow-kit/tools/coverage-producer.mjs:11-141` and its twin in
+  `agent-workflow-memory/references/scripts/gates/migrate-gates.mjs`, held equal by a text drift guard; since story 3 the
+  kit's tools import the shared index, so the kit could re-export the memory copy. Residual: a checked copy.
+
+- **IMPORT-REGEX-HAS-THREE-COPIES** — invariant: one reader of a family file's relative imports. Origin:
+  `agent-workflow-kit/tools/ensure-ops.mjs:260`, `agent-workflow-memory/scripts/kit-folder.mjs:20`,
+  `agent-workflow-memory/references/scripts/gates/kit-command-gates.mjs:80`.
+
+- **KIT-FOLDER-COPIES-ISMANAGED** — invariant: one predicate reads a hook as the installer's. Origin:
+  `agent-workflow-memory/scripts/kit-folder.mjs:22-23` copies the installer's `isManaged`.
+
+- **HOOK-SWITCH-NEVER-PROVES-ITS-TARGETS-LOAD** — invariant: the hook switch proves each target the hook runs loads.
+  Origin: `agent-workflow-kit/tools/git-hooks.mjs:119-123`, `agent-workflow-memory/scripts/kit-folder.mjs:188-190` prove
+  the named entry files only; the targets import the shared index (`check-docs-size.mjs:32-33`). Pre-existing; a failing
+  target stops the commit with Node's own error.
+
+- **STOP-HOOK-HEADER-PROMISES-A-LOCAL-EDIT** — invariant: shipped text is true. Origin:
+  `agent-workflow-kit/references/hooks/state-block-guard.mjs:24-26` promises a locally edited placed copy while the writer
+  replaces a differing file (`docs/ai/specs/kit/install/init-project/hook-writers.md:33`); since 2026-11-23 no kit hook
+  needs to work without the kit (the maintainer), so its "machines without the kit" wording (`:31`) is no requirement.
+
+- **INSTALL-MJS-CALLS-FAMILY-MEMBERS-THE-DATA-LEAF** — invariant: a comment is true. Origin:
+  `agent-workflow-kit/bin/install.mjs:45` calls `family-members.mjs` "the data leaf"; since story 3 it imports the shared
+  index (`tools/family-members.mjs`). Fix: one word, with the next change of that file.
+
 - **REGEX-ESCAPER-COPIES-OUTSIDE-THE-LEXICAL-HELPER** — invariant: a regular expression built from a value escapes
   it through the one escaping function of the kit's lexical helpers (`agent-workflow-kit/tools/repo-lex.mjs:25`,
   `escapeRegExp`). Origin: story 3 of EVERY-LOCATION-IS-NAMED-ONCE moved only the copies in files its rows hold
-  (epic-shape-ledger, worktrees, known-footprint); local copies stand in `agent-workflow-kit/tools/git-hooks.mjs:67`,
-  `agent-workflow-kit/tools/checker-claim.mjs:56` and `:66-67` with their twins
-  `references/scripts/gates/migrate-gates.mjs:236` and `:246-247` in both script trees, the placed hook
+  (epic-shape-ledger, worktrees, known-footprint), story 4 the one in `agent-workflow-kit/tools/git-hooks.mjs`; local
+  copies stand in `agent-workflow-kit/tools/checker-claim.mjs:56` and `:66-67` with their twins
+  `references/scripts/gates/migrate-gates.mjs:235` and `:245-246` in both script trees, the placed hook
   `agent-workflow-kit/references/hooks/state-block-guard.mjs:198` and `scripts/release/version-sync.mjs:366`.
   `agent-workflow-kit/tools/plan-shape-facts.mjs:144-148` compiles scope globs and keeps `*`, `**` and braces as
   glob syntax, a partial set by design, and stays. Narrow fix: each copy gives way to `escapeRegExp` with the next

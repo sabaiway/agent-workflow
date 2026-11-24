@@ -139,13 +139,12 @@ describe('spec:init-project/S1 every severity key has one of the four lanes and 
     }
   });
 
-  it('isRejudged is true for worktrees-dir and footprint-global alone', () => {
+  it('isRejudged is true only for worktrees-dir, footprint-global, commit-guard and hook-checks', () => {
     const isRejudged = need(lanes, 'isRejudged');
     const variantLanes = need(lanes, 'VARIANT_LANES');
-    assert.equal(isRejudged('worktrees-dir'), true);
-    assert.equal(isRejudged('footprint-global'), true);
-    for (const variant of Object.keys(variantLanes).filter((v) => !['worktrees-dir', 'footprint-global'].includes(v))) {
-      assert.equal(isRejudged(variant), false, variant);
+    const rejudged = ['worktrees-dir', 'footprint-global', 'commit-guard', 'hook-checks'];
+    for (const variant of Object.keys(variantLanes)) {
+      assert.equal(isRejudged(variant), rejudged.includes(variant), variant);
     }
   });
 });
@@ -533,14 +532,15 @@ describe('spec:init-project/S53 the four user variants of revision 11 by proof',
 });
 
 describe('spec:init-project/S62 hook-checks in the lanes by proof', () => {
-  it('is harness, previews and applies git-hooks.mjs --hook-checks with --apply first, neither env-dependent nor rejudged, its slot quoting the check over a tools dir with a space and an apostrophe, on linux and win32', (t) => {
+  it('uses the harness hook-checks form and quoted slot on linux and win32, with no environment dependence and rejudgment for both guard variants', (t) => {
     const git = ['node', join(TOOLS, 'git-hooks.mjs')];
     const check = `node ${[join(TOOLS, 'apply-danger-check.mjs'), '--variant', 'hook-checks', '--cwd', ROOT].map(quoteArg).join(' ')}`;
-    assert.deepEqual([lanes.VARIANT_LANES['hook-checks'], lanes.isEnvDependent('hook-checks'), lanes.isRejudged('hook-checks')], ['harness', false, false]);
+    assert.deepEqual([lanes.VARIANT_LANES['hook-checks'], lanes.isEnvDependent('hook-checks')], ['harness', false]);
     for (const facts of ['linux', 'win32'].map((platform) => ({ ...createFacts(t), platform }))) {
       assert.deepEqual(lanes.consoleArgv('hook-checks', facts), { preview: [...git, '--hook-checks', '--cwd', ROOT], apply: [...git, '--apply', '--hook-checks', '--cwd', ROOT] });
       assert.deepEqual(lanes.applySlot('hook-checks', facts), { check, apply: `${check} --apply --expect <digest>` }, facts.platform);
     }
+    assert.deepEqual([lanes.isRejudged('commit-guard'), lanes.isRejudged('hook-checks')], [true, true]);
   });
   it('writesOf names exactly the pre-commit of a hooksDir inside or outside the project and the deployed installer', (t) => {
     for (const hooksDir of [join(ROOT, '.githooks'), '/elsewhere/hooks']) assert.deepEqual(lanes.writesOf('hook-checks', { ...createFacts(t), hooksDir }), [join(hooksDir, 'pre-commit'), KIT_INSTALLER]);

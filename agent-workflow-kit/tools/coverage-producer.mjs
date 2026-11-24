@@ -1,20 +1,21 @@
 // coverage-producer.mjs — the kit's half of the shared coverage-producer vocabulary (spec
 // coverage-producer): the one command body the suite gate runs, the move list of the flag sets
 // earlier kits wrote, and the CLOSED predicate deciding whether a declared gate cmd actually WRITES
-// the lcov the canonical checker reads. A LEAF — imports nothing, so every consumer (gates-init,
-// gates-declaration, the advisor) decides through ONE predicate.
+// the lcov the canonical checker reads. The region uses four imported location and command names.
+// Every consumer decides through ONE predicate.
 // Dependency-free, Node >= 22. No side effects on import.
 
+import { KIT_COMMAND, KIT_FOLDER } from '../references/scripts/shared/index.mjs';
+import { UNIT_TESTS_NAME, UNIT_TESTS_REPORTER } from '../references/scripts/run.mjs';
+
 // coverage-producer canon >>> BEGIN drift-guarded region
-// Authored TWICE, byte-identically: in the memory substrate's references/scripts/migrate-gates.mjs
-// and in the composition root's tools/coverage-producer.mjs. Neither side imports the other — the
-// substrate is standalone and must not depend on the root, and the root must not import mirrored
-// bytes — so a TEXT drift guard beside the root's copy holds them equal. Edit BOTH, then re-run the
-// mirror sync.
+// Authored twice, byte-identically. Each host imports the four names above this region, and neither
+// imports the other. A text drift guard beside the kit's copy keeps the regions equal.
+// Edit both copies, then sync the mirror.
 //
 // The ONE producer form the kit writes: the stable kit command's unit-tests name (spec kit-command) —
 // the Node test runner with the lcov reporter under AW_GIT_DIR and the kit test reporter on stdout.
-export const COVERAGE_PRODUCER_BODY = 'node scripts/agent-workflow/run.mjs unit-tests';
+export const COVERAGE_PRODUCER_BODY = `node ${KIT_COMMAND} ${UNIT_TESTS_NAME}`;
 
 // The reporter flag sets earlier kits wrote after `node --test`, newest first, byte for byte: a MOVE
 // LIST the gate migration switches onto the body above, never read as a producer.
@@ -93,7 +94,7 @@ export const retiredProducerFormOf = (cmd) => {
 // unitTestsGuardFailure → the guard on every write of the body: run.mjs a regular file equal to `ownRun`, then the reporter
 // a regular file, every folder on the way a directory (lstat: a link fails); null, or the first failing path and kind,
 // worded by guardRemedy with the caller's upgrade.
-const GUARD_PATHS = Object.freeze(['scripts/agent-workflow/run.mjs', 'scripts/agent-workflow/test-reporter/reporter.mjs']);
+const GUARD_PATHS = Object.freeze([KIT_COMMAND, `${KIT_FOLDER}/${UNIT_TESTS_REPORTER}`]);
 export const unitTestsGuardFailure = (projectDir, ownRun, { lstatSync, readFileSync }) => {
   for (const rel of GUARD_PATHS) {
     const parts = rel.split('/');

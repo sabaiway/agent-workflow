@@ -176,6 +176,7 @@ describe('spec:init-project/S59 the known-prior catalog carries the hook install
 
 describe('spec:distribution-files/S23 the catalog: the flat names, the spec-layer pairs, the installer set and an installer in the kit folder', () => {
   const SET = ['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs'];
+  const SHARED_INDEX = 'shared/index.mjs';
   // The 25 flat names the kit placed in scripts/ before revision 17 of distribution-files, as a literal independent of the module.
   const FLAT = Object.freeze(['_expect-shim.mjs', 'archive-caps.mjs', 'archive-caps.test.mjs', 'archive-changelog.mjs', 'archive-changelog.test.mjs',
     'archive-conservation.test.mjs', 'archive-decisions.mjs', 'archive-decisions.test.mjs', 'archive-issues.mjs', 'archive-issues.test.mjs',
@@ -256,7 +257,12 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
       writeFileSync(join(dir, INSTALLER_REL), readFileSync(fixturePath(setRows[0])));
       const r = ensureScripts({ cwd: dir, kitRoot: KIT_ROOT });
       const replaced = `${INSTALLER_REL}: differs from every body this kit knows it shipped — replaced by the bundled body; an edit meant to last goes in the local hook file scripts/pre-commit.local, which the commit hook runs first`;
-      assert.deepEqual({ failed: r.failed, first: r.lines?.[0], prior: (r.lines ?? []).filter((l) => l.includes('matches a body an earlier release shipped')) }, { failed: false, first: replaced, prior: [] }, (r.lines ?? []).join('\n'));
+      const lines = r.lines ?? [];
+      const installerLine = lines.find((line) => line.startsWith(`${INSTALLER_REL}: `));
+      const priorLines = lines.filter((line) => line.includes('matches a body an earlier release shipped'));
+      assert.deepEqual({ failed: r.failed, installerLine, priorLines }, { failed: false, installerLine: replaced, priorLines: [] }, lines.join('\n'));
+      const sharedIndexAt = lines.indexOf(`${KIT_SCRIPTS_DIR}/${SHARED_INDEX}: absent — placed from the bundled scripts`);
+      assert.ok(sharedIndexAt !== -1 && sharedIndexAt < lines.indexOf(installerLine), `the shared index is placed before the installer is replaced\n${lines.join('\n')}`);
       assert.equal(typeof manifest.readFamily, 'function', `references/scripts/family.mjs exports readFamily ${manifest.error ?? ''}`);
       // By digest: a failed deepEqual of two Buffers diffs them byte per line and takes gigabytes.
       assert.equal(sha256(readFileSync(join(dir, INSTALLER_REL))), sha256(bundleBytes(posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL))), 'the installer holds the bundled bytes');
@@ -277,6 +283,14 @@ describe('spec:distribution-files/S23 the catalog: the flat names, the spec-laye
       spawnChecked(process.execPath, [join(root, 'scripts', SET[0]), '--commit-guard', 'guard.mjs'], root);
       const guarded = readFileSync(hook, 'utf8'), guard = guarded.split('\n').filter((l) => /^node "[^"]+" --check$/.test(l));
       assert.deepEqual([guard.length, guarded.split('\n').includes('# fixture:install-git-hooks.mjs'), guarded.includes(LOCAL)], [1, true, false], `the 8.3.0 hook: one guard line, the named marker, no local line\n${guarded}`);
+      assert.equal(typeof readFamily, 'function', 'references/scripts/family.mjs exports readFamily');
+      const sharedDirectory = `${posix.dirname(SHARED_INDEX)}/`;
+      const sharedFiles = readFamily(BUNDLE).filter(({ path, role }) => role === 'deployed' && path.startsWith(sharedDirectory));
+      for (const { path } of sharedFiles) {
+        const target = join(root, KIT_SCRIPTS_DIR, path);
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, bundleBytes(path));
+      }
       mkdirSync(dirname(join(root, INSTALLER_REL)), { recursive: true });
       writeFileSync(join(root, INSTALLER_REL), bundleBytes(posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL)));
       spawnChecked(process.execPath, [join(root, INSTALLER_REL)], root);

@@ -6,13 +6,13 @@ import { constants, lstatSync, readFileSync, realpathSync, writeFileSync, rename
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFamily } from '../references/scripts/family.mjs';
-import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
-import { DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY, PACKAGE_JSON, PRE_COMMIT, SCRIPTS } from '../references/scripts/shared/index.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import { DECISIONS_ARCHIVE, DECISIONS_ARCHIVE_EARLY, KIT_COMMAND, KIT_FOLDER, PACKAGE_JSON, PRE_COMMIT, SCRIPTS } from '../references/scripts/shared/index.mjs';
 import { askGit, FLAT_NAMES, retireFlat } from './flat-scripts.mjs';
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const SKILL_ROOT = dirname(dirname(SCRIPT_FILE));
-const KIT = posix.dirname(KIT_COMMAND_PATH);
+const COMMAND_ENTRY = posix.relative(KIT_FOLDER, KIT_COMMAND);
 const INSTALLER = KIT_COMMANDS['install-git-hooks'];
 const ROTATOR = KIT_COMMANDS['archive-decisions'];
 // The command runs the reporter, which imports nothing: its module sorts just before run.mjs, so it is written just before it.
@@ -26,7 +26,7 @@ const DEPLOYED = readFamily(join(SKILL_ROOT, 'references/scripts')).filter((entr
 export const NODE_EVIDENCE_PROBES = Object.freeze([
   PACKAGE_JSON,
   ...FLAT_NAMES.filter((name) => !name.endsWith('.test.mjs') && name !== '_expect-shim.mjs').map((name) => `${SCRIPTS}/${name}`),
-  ...DEPLOYED.map((entry) => entry.path).sort().map((path) => `${KIT}/${path}`),
+  ...DEPLOYED.map((entry) => entry.path).sort().map((path) => `${KIT_FOLDER}/${path}`),
 ]);
 const isAnswered = (result, status) => !result.error && !result.signal && result.status === status;
 const describeError = (error) => error.code ?? error.message ?? String(error);
@@ -73,7 +73,6 @@ const readImports = (path, body, paths) => [...String(body).matchAll(IMPORT)]
   .map(([, imported]) => posix.join(posix.dirname(path), imported)).filter((dependency) => paths.has(dependency));
 const orderFiles = (files) => {
   const remaining = new Map(files.map((file) => [file.path, file])), ordered = [];
-  if (remaining.has(INSTALLER)) { ordered.push(remaining.get(INSTALLER)); remaining.delete(INSTALLER); }
   while (remaining.size) {
     const next = [...remaining.keys()].sort((a, b) => (writeKey(remaining.get(a)) < writeKey(remaining.get(b)) ? -1 : 1)).find((path) => remaining.get(path).imports.every((dependency) => !remaining.has(dependency)));
     if (!next) throw new Error(`bundled scripts contain an import cycle: ${[...remaining.keys()].join(', ')}`);
@@ -85,15 +84,15 @@ const survey = (cwd, skillRoot, enforcement, deps) => {
   const bundle = join(skillRoot, 'references/scripts');
   const entries = readFamily(bundle).filter((entry) => entry.role === 'deployed');
   const paths = new Set(entries.map((entry) => entry.path));
-  assertFolders(cwd, new Set(entries.flatMap((entry) => foldersOf(`${KIT}/${entry.path}`))), deps);
+  assertFolders(cwd, new Set(entries.flatMap((entry) => foldersOf(`${KIT_FOLDER}/${entry.path}`))), deps);
   const files = entries.map((entry) => {
-    const rel = `${KIT}/${entry.path}`, stat = readStat(join(cwd, rel), deps);
+    const rel = `${KIT_FOLDER}/${entry.path}`, stat = readStat(join(cwd, rel), deps);
     if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error(`${rel}: ${describeKind(stat)}; a regular file is required`);
     const body = readBody(join(bundle, entry.path), deps);
     const current = stat && Buffer.from(readBody(join(cwd, rel), deps)).equals(Buffer.from(body));
     return { ...entry, rel, body, present: Boolean(stat), current, imports: readImports(entry.path, body, paths) };
   });
-  const isSpec = (file) => ['spec-schema', 'docs-size', 'test-reporter'].includes(file.module) || file.path === 'run.mjs';
+  const isSpec = (file) => ['spec-schema', 'docs-size', 'test-reporter'].includes(file.module) || file.path === COMMAND_ENTRY;
   const family = files.filter((file) => !isSpec(file));
   const flatInstaller = readStat(join(cwd, SCRIPTS, posix.basename(INSTALLER)), deps);
   const accepted = enforcement || family.some((file) => file.present && !file.seed) || flatInstaller?.isFile() === true;
@@ -141,7 +140,7 @@ const markPossibleWrite = (target, rel, error, deps) => {
 };
 const fileLine = (file, dryRun) => `${file.rel}: ${dryRun ? 'would be ' : ''}${file.present ? "written over; its body differed from the one this substrate bundles; a customization goes where the memory skill's contracts.md, Reserved names and channels, says" : 'placed from the bundled scripts'}`;
 const writeAll = (cwd, files, dryRun, deps, lines, written) => {
-  const due = orderFiles(files.filter((file) => !file.current));
+  const due = orderFiles(files).filter((file) => !file.current);
   for (const file of due) {
     try {
       const fate = dryRun ? null : writeFile(cwd, file, deps);
@@ -152,14 +151,14 @@ const writeAll = (cwd, files, dryRun, deps, lines, written) => {
       throw failAt(file.rel, error);
     }
   }
-  lines.push(`${KIT}/: ${files.filter((file) => file.current).length} scripts already current`);
+  lines.push(`${KIT_FOLDER}/: ${files.filter((file) => file.current).length} scripts already current`);
   return due.map((file) => file.rel);
 };
 const runStore = (cwd, dryRun, deps, lines, wrote) => {
-  const command = `${KIT}/${ROTATOR} --ensure-current`;
+  const command = `${KIT_FOLDER}/${ROTATOR} --ensure-current`;
   if (dryRun) { lines.push(`ADR store: ${command} would run after the writes`); return 0; }
   const result = (() => {
-    try { return (deps.spawnSync ?? spawnSync)(process.execPath, [join(cwd, KIT, ROTATOR), '--ensure-current'], { cwd, encoding: 'utf8' }) ?? {}; }
+    try { return (deps.spawnSync ?? spawnSync)(process.execPath, [join(cwd, KIT_FOLDER, ROTATOR), '--ensure-current'], { cwd, encoding: 'utf8' }) ?? {}; }
     catch (error) { return { error }; }
   })();
   for (const stream of [result.stdout, result.stderr]) for (const line of String(stream ?? '').split(/\r?\n/).filter(Boolean)) lines.push(`ADR store: ${line}`);
@@ -184,14 +183,15 @@ const hookLines = (cwd, dryRun, placed, deps) => {
   })();
   if (body instanceof Error) return [`${path}: could not be read (${describeError(body)}); the hook switch was not judged`];
   if (body === null) return [];
-  if (!isManaged(body) || body.split(/\r?\n/).includes(`node ${KIT_COMMAND_PATH} docs-size`)) return [];
-  const required = [...new Set([INSTALLER, posix.basename(KIT_COMMAND_PATH), ...Object.values(KIT_COMMANDS)])];
-  const absent = required.map((name) => `${KIT}/${name}`).find((rel) => !(dryRun && placed.includes(rel)) && readStat(join(cwd, rel), deps)?.isFile() !== true);
-  return [absent ? `hook switch skipped: ${absent} is absent; run once with --enforcement` : `switch the managed hook on your yes: node ${KIT_COMMAND_PATH} install-git-hooks`];
+  const command = `node ${KIT_COMMAND}`;
+  if (!isManaged(body) || body.split(/\r?\n/).includes(`${command} docs-size`)) return [];
+  const required = [...new Set([INSTALLER, COMMAND_ENTRY, ...Object.values(KIT_COMMANDS)])];
+  const absent = required.map((name) => `${KIT_FOLDER}/${name}`).find((rel) => !(dryRun && placed.includes(rel)) && readStat(join(cwd, rel), deps)?.isFile() !== true);
+  return [absent ? `hook switch skipped: ${absent} is absent; run once with --enforcement` : `switch the managed hook on your yes: ${command} install-git-hooks`];
 };
 const commitLines = (cwd, removed, changed, deps) => {
-  if (!changed || !isAnswered(askGit(cwd, ['check-ignore', '-q', KIT], deps), 1)) return [];
-  return [`commit ${KIT}/${removed.length ? `, the removed files ${removed.map((name) => `${SCRIPTS}/${name}`).join(', ')}` : ''} and, as this upgrade changed it, package.json as one change; merge it into every branch still committed or installed on`];
+  if (!changed || !isAnswered(askGit(cwd, ['check-ignore', '-q', KIT_FOLDER], deps), 1)) return [];
+  return [`commit ${KIT_FOLDER}/${removed.length ? `, the removed files ${removed.map((name) => `${SCRIPTS}/${name}`).join(', ')}` : ''} and, as this upgrade changed it, package.json as one change; merge it into every branch still committed or installed on`];
 };
 
 export const runKitFolder = ({ cwd, skillRoot = SKILL_ROOT, dryRun = false, enforcement = false, deps = {} }) => {
@@ -202,7 +202,7 @@ export const runKitFolder = ({ cwd, skillRoot = SKILL_ROOT, dryRun = false, enfo
       if (skip) return { exitCode: 0, lines: [skip, ...pendingLines(cwd, deps), ...hookLines(cwd, dryRun, [], deps)] };
     }
     const { files, accepted } = survey(cwd, skillRoot, enforcement, deps);
-    lines.push(`${KIT}/: ${accepted ? 'component accepted' : 'component not accepted; the spec layer and every seed only'}`);
+    lines.push(`${KIT_FOLDER}/: ${accepted ? 'component accepted' : 'component not accepted; the spec layer and every seed only'}`);
     const placed = writeAll(cwd, files, dryRun, deps, lines, written);
     const storeExit = files.some((file) => file.path === ROTATOR) ? runStore(cwd, dryRun, deps, lines, written.length > 0) : 0;
     if (storeExit) return { exitCode: storeExit, lines };

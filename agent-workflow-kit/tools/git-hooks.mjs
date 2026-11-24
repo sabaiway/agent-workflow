@@ -2,19 +2,21 @@
 // git-hooks.mjs — the thin writer of the three git-hook items (`enforcement`, `commit-guard`,
 // `hook-checks`): it copies the deployed scripts create-only into the kit folder and spawns the project's
 // own installer (INSTALLER_REL) as it stands, which decides the hook at the write. The leaf
-// decides nothing about the hook: the danger check binds the copies and the installer bytes this dry run
+// decides nothing about the hook: the danger check binds the deployed set this dry run
 // answers, never git's hooks dir. It is also the home of the one pre-commit reader, which the
 // commit-guard and hook-checks applies run after the installer to verify the arm.
 import { lstatSync, readFileSync, readdirSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeProjectFileCreateOnly } from './atomic-write.mjs';
+import { bundledImportsOf, dependenciesFirst } from './ensure-ops.mjs';
 import { readDeployedScripts, INSTALLER_REL, readNodeEvidenceScripts, SCRIPTS_DIR } from './node-evidence.mjs';
-import { shellQuoteArg } from './repo-lex.mjs';
+import { escapeRegExp, shellQuoteArg } from './repo-lex.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
-import { KIT_COMMAND_PATH, KIT_COMMANDS } from '../references/scripts/run.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import { KIT_COMMAND, KIT_FOLDER } from '../references/scripts/shared/index.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { checkRules } from './project-rules/index.mjs';
 import { readLayoutSetup } from './source-size-core.mjs';
@@ -29,6 +31,7 @@ const EXIT_USAGE = 2;
 const EXIT_REFUSED = 3;
 const VARIANTS = ['enforcement', 'commit-guard', 'hook-checks'];
 const USAGE = 'usage: git-hooks (--enforcement | --commit-guard | --hook-checks) [--cwd <root>] [--apply]';
+const ABSENT_RUN_ENTRY = '-:';
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const usageError = (message) => Object.assign(new Error(message), { exitCode: EXIT_USAGE });
 const refusal = (message) => Object.assign(new Error(message), { exitCode: EXIT_REFUSED });
@@ -64,10 +67,9 @@ export const resolveGitHooksPath = (projectDir, env = process.env) => {
 };
 
 export const INSTALLER_MARKER_RE = /:install-git-hooks\.mjs\r?$/m;
-const escapeRe = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const COMMAND_LINE_RE = new RegExp(`^node ${escapeRe(KIT_COMMAND_PATH)} docs-size\\r?$`, 'm');
+const COMMAND_LINE_RE = new RegExp(`^node ${escapeRegExp(KIT_COMMAND)} docs-size\\r?$`, 'm');
 // Armed means the exact line the installer writes on the kit's own guard path; a commented or lookalike line is not.
-export const canonicalGuardLineRe = (toolsDir = TOOLS) => new RegExp(`^node "${escapeRe(join(toolsDir, 'commit-guard.mjs'))}" --check$`, 'm');
+export const canonicalGuardLineRe = (toolsDir = TOOLS) => new RegExp(`^node "${escapeRegExp(join(toolsDir, 'commit-guard.mjs'))}" --check$`, 'm');
 
 // The one safe shell representation of an armed path, the installer's rule: on win32 its separators
 // made `/`; null when a byte would not name the file inside the hook's double quotes.
@@ -83,7 +85,7 @@ const ROLES = Object.freeze([
 ]);
 const roleLineRe = ({ role, tool }, toolsDir, platform) => {
   const path = safeHookPath(tool(toolsDir), platform);
-  return path === null ? /(?!)/ : new RegExp(`^node "${escapeRe(path)}" --check # ${role}$`, 'm');
+  return path === null ? /(?!)/ : new RegExp(`^node "${escapeRegExp(path)}" --check # ${role}$`, 'm');
 };
 export const canonicalRulesLineRe = (toolsDir = TOOLS, platform = process.platform) => roleLineRe(ROLES[0], toolsDir, platform);
 export const canonicalLayoutLineRe = (toolsDir = TOOLS, platform = process.platform) => roleLineRe(ROLES[1], toolsDir, platform);
@@ -114,9 +116,13 @@ export const readPreCommitState = (root, deps = {}) => {
     command: COMMAND_LINE_RE.test(hook), ...roleStates(hook, deps.toolsDir ?? TOOLS, deps.platform) };
 };
 
-export const missingHookCommandFile = (root, deps = {}) => [INSTALLER_REL, KIT_COMMAND_PATH,
-  ...Object.values(KIT_COMMANDS).map((target) => join(dirname(KIT_COMMAND_PATH), target))]
-  .map((rel) => join(root, rel)).find((path) => !isFile(nodeAt(path, deps.lstat ?? lstatSync)));
+const findMissingHookCommandFile = (root, isPresent) => {
+  const missing = [INSTALLER_REL, KIT_COMMAND, ...Object.values(KIT_COMMANDS).map((target) => posix.join(KIT_FOLDER, target))]
+    .find((rel) => !isPresent(rel));
+  return missing === undefined ? undefined : join(root, missing);
+};
+export const missingHookCommandFile = (root, deps = {}) => findMissingHookCommandFile(root,
+  (rel) => isFile(nodeAt(join(root, rel), deps.lstat ?? lstatSync)));
 
 // The two read-only answers the hook-checks dry run and the advisor's probe ask, on the tree on disk.
 export const hookCheckAnswers = (root, deps = {}) => {
@@ -138,15 +144,14 @@ export const unsafeToolsPath = (toolsDir, platform) => (ROLES.some(({ tool }) =>
   ? `the kit's tools path ${toolsDir} carries ", $, a backtick, a backslash, CR or LF — a hook line would not run the file it names` : null);
 
 // hook-checks: the lines it arms, from the two answers and the hook; the installer runs as it stands.
-const planHookChecks = ({ root, toolsDir, installer, installerNode, lstat, readFile, deps }) => {
-  if (!isFile(installerNode)) throw refusal(`${installer} is absent — nothing here places the hook installer`);
+const planHookChecks = ({ root, toolsDir, isPresent, deps }) => {
   const unsafe = unsafeToolsPath(toolsDir, deps.platform);
   if (unsafe !== null) throw refusal(unsafe);
   const hook = readPreCommitState(root, { toolsDir, platform: deps.platform, gitHooksPath: deps.gitHooksPath });
   if (hook.state === 'unreadable') throw refusal(`${hook.path} is unreadable (${hook.code}) — the pre-commit hook cannot be judged`);
   if (hook.state === 'no-hooks-dir') throw refusal('nothing to plan — git reports no hooks dir here (not a git checkout), so there is no hook to arm');
   const switchCommand = hook.state === 'managed' && !hook.command;
-  const missing = switchCommand ? missingHookCommandFile(root, { lstat }) : undefined;
+  const missing = switchCommand ? findMissingHookCommandFile(root, isPresent) : undefined;
   if (missing) throw refusal(`${missing} is not a regular file — re-run /agent-workflow-kit upgrade, then apply this item again`);
   const answers = hookCheckAnswers(root, deps);
   const roles = plannedRoles(answers, hook);
@@ -154,50 +159,68 @@ const planHookChecks = ({ root, toolsDir, installer, installerNode, lstat, readF
     throw refusal(`nothing to plan — ${ROLES.map(({ key, role }) => `the ${role} line: ${hook[`${key}Armed`] ? 'armed' : `not armable (${answers[key].why})`}`).join('; ')}`);
   }
   const flags = roles.flatMap(({ flag, tool }) => [flag, tool(toolsDir)]);
-  return { root, variant: 'hook-checks', folders: [], copies: [], switchCommand, roles: roles.map(({ key }) => key),
-    runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], bytes: readFile(installer) } };
+  return { switchCommand, roles: roles.map(({ key }) => key), flags };
+};
+
+const probePath = (path, lstat, isKind, kind, read = () => true) => {
+  try {
+    const node = nodeAt(path, lstat);
+    if (node === null) return null;
+    if (isKind(node)) return read(path);
+  } catch (error) {
+    throw refusal(`${path} is unreadable (${error?.code ?? String(error)})`);
+  }
+  throw refusal(`${path} is not ${kind}`);
 };
 
 // The dry run: what the apply copies and the installer it runs, with the bytes of each.
 export const planGitHooks = ({ root, variant, toolsDir = TOOLS, lstat = lstatSync, readFile = readFileSync, ...deps }) => {
   const enforcing = variant === 'enforcement';
-  const nodes = new Map();
-  const folders = [];
-  // Never beneath an absent folder: a folder on the way absent, every path under it is absent.
-  const probe = (rel, isKind, kind) => {
-    if (nodes.has(rel)) return nodes.get(rel);
-    const path = join(root, rel);
-    const node = foldersOf(rel).some((folder) => nodes.get(folder) === null) ? null : nodeAt(path, lstat);
-    if (node !== null && !isKind(node)) throw refusal(`${path} is not ${kind}`);
-    nodes.set(rel, node);
-    return node;
-  };
-  for (const rel of enforcing ? readDeployedScripts().map(({ deployed }) => deployed) : [INSTALLER_REL]) {
-    for (const folder of foldersOf(rel)) if (!nodes.has(folder)) (folders.push(folder), probe(folder, isPlainDir, 'a plain directory'));
-    probe(rel, isFile, 'a regular file');
+  const entries = readDeployedScripts();
+  const folders = new Map();
+  const deployedBytes = new Map();
+  const beneathAbsent = (rel) => foldersOf(rel).some((folder) => folders.get(folder) === null);
+  for (const { deployed: rel } of entries) {
+    for (const folder of foldersOf(rel)) {
+      if (!folders.has(folder)) folders.set(folder, beneathAbsent(folder) ? null : probePath(join(root, folder), lstat, isPlainDir, 'a plain directory'));
+    }
+    deployedBytes.set(rel, beneathAbsent(rel) ? null : probePath(join(root, rel), lstat, isFile, 'a regular file', readFile));
   }
   const installer = join(root, INSTALLER_REL);
-  if (variant === 'hook-checks') return planHookChecks({ root, toolsDir, installer, installerNode: nodes.get(INSTALLER_REL), lstat, readFile, deps });
+  const isPresent = (rel) => deployedBytes.has(rel) && deployedBytes.get(rel) !== null;
   // A flat evidence name is no copy path: another node kind there is not evidence, never a refusal.
-  const evidence = (rel) => (nodes.has(rel) ? isFile(nodes.get(rel)) : nodes.get(SCRIPTS_REL) !== null && isFile(nodeAt(join(root, rel), lstat)));
-  const deployed = enforcing && readNodeEvidenceScripts().some((name) => evidence(`${SCRIPTS_REL}/${name}`));
-  const copies = enforcing && !deployed ? readDeployedScripts().map(({ deployed: rel, bundled }) =>
-    ({ rel, path: join(root, rel), action: 'created', bytes: readFile(join(toolsDir, '..', bundled)) })) : [];
-  const placed = copies.find(({ rel }) => rel === INSTALLER_REL);
-  if (!placed && !isFile(nodes.get(INSTALLER_REL))) throw refusal(`${installer} is absent — nothing here places the hook installer`);
+  const evidence = (rel) => (deployedBytes.has(rel) ? isPresent(rel) : folders.get(SCRIPTS_REL) !== null && isFile(nodeAt(join(root, rel), lstat)));
+  const willCopy = enforcing && !readNodeEvidenceScripts().some((name) => evidence(`${SCRIPTS_REL}/${name}`));
+  if (!willCopy && !isPresent(INSTALLER_REL)) throw refusal(`${installer} is absent — nothing here places the hook installer`);
   const guard = variant === 'commit-guard' ? ['--commit-guard', join(toolsDir, 'commit-guard.mjs')] : [];
+  const { flags = guard, ...hookChecks } = variant === 'hook-checks' ? planHookChecks({ root, toolsDir, isPresent, deps }) : {};
+  const runEntries = entries.map(({ path, deployed: rel, bundled }) => ({ path, rel,
+    bytes: willCopy ? readFile(join(toolsDir, '..', bundled)) : deployedBytes.get(rel) }));
+  const copies = willCopy ? dependenciesFirst(runEntries.map((entry) => ({ ...entry, imports: bundledImportsOf(entry.path, entry.bytes) })))
+    .map(({ rel, bytes }) => ({ rel, path: join(root, rel), action: 'created', bytes })) : [];
   return {
     root,
     variant,
-    folders: copies.length === 0 ? [] : folders.filter((folder) => nodes.get(folder) === null),
+    ...hookChecks,
+    folders: willCopy ? [...folders].filter(([, node]) => node === null).map(([folder]) => folder) : [],
     copies,
-    runs: { argv: ['node', installer, ...guard], shown: ['node', INSTALLER_REL, ...guard], bytes: placed ? placed.bytes : readFile(installer) },
+    runs: { argv: ['node', installer, ...flags], shown: ['node', INSTALLER_REL, ...flags], entries: runEntries },
   };
+};
+
+const hashRunEntries = (entries) => {
+  const hash = createHash('sha256');
+  for (const { rel, bytes } of entries) {
+    hash.update(`${Buffer.byteLength(rel)}:${rel}`);
+    if (bytes === null) hash.update(ABSENT_RUN_ENTRY);
+    else hash.update(`${Buffer.byteLength(bytes)}:`).update(bytes);
+  }
+  return hash.digest('hex');
 };
 
 export const formatPlan = (plan) => [
   ...plan.copies.map(({ rel, action, bytes }) => `copy: ${rel} ${action}${action === 'created' ? ` sha256:${sha(bytes)}` : ''}`),
-  `runs: ${plan.runs.shown.map(shellQuoteArg).join(' ')} sha256:${sha(plan.runs.bytes)}`,
+  `runs: ${plan.runs.shown.map(shellQuoteArg).join(' ')} sha256:${hashRunEntries(plan.runs.entries)}`,
 ];
 
 // Removes exactly the files this run created, then each folder this run created, deepest first, when it is
@@ -217,7 +240,7 @@ const rollBack = (plan, created, io) => {
       left.push(path);
     }
   };
-  for (const { rel, path } of created.files) {
+  for (const { rel, path } of created.files.toReversed()) {
     if (intact(rel) && isFile(nodeOrNull(path, io.lstat))) remove(path, io.unlink);
     else left.push(path);
   }

@@ -7,17 +7,21 @@ import { dirname, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
-import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import * as shared from '../references/scripts/shared/index.mjs';
 
 const MAGIC_MARKER = '# agent-workflow:install-git-hooks.mjs';
 const SKILL_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const BUNDLE = join(SKILL_ROOT, 'references/scripts');
-const KIT = posix.dirname(KIT_COMMAND_PATH);
+const KIT = shared.KIT_FOLDER;
 const INSTALLER = KIT_COMMANDS['install-git-hooks'];
 const ROTATOR = KIT_COMMANDS['archive-decisions'];
 const REPORTER = 'test-reporter/reporter.mjs';
-const SWITCH = `node ${KIT_COMMAND_PATH} install-git-hooks`;
-const DOCS_LINE = `node ${KIT_COMMAND_PATH} docs-size`;
+const commandLine = (command) => {
+  assert.equal(typeof shared.KIT_COMMAND, 'string', 'shared/index.mjs must export KIT_COMMAND');
+  return `node ${shared.KIT_COMMAND} ${command}`;
+};
+const switchLine = () => commandLine('install-git-hooks');
 const MANAGED = `#!/bin/sh\n${MAGIC_MARKER}\nnode scripts/check-docs-size.mjs\n`;
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 const ENTRIES = readFamily(BUNDLE).filter((entry) => entry.role === 'deployed');
@@ -79,7 +83,7 @@ const createGitRunner = (cwd, hooks, answer = { status: 0, stdout: `${hooks}\n`,
   if (args.join(' ') === 'rev-parse --git-path hooks') return typeof answer === 'function' ? answer() : answer;
   assert.fail(`unexpected git question: ${args.join(' ')}`);
 };
-const getHookLines = (result) => result.lines.filter((line) => line.includes(SWITCH) || line.includes(`${KIT}/${INSTALLER}`) && !line.startsWith(`${KIT}/${INSTALLER}:`));
+const getHookLines = (result) => result.lines.filter((line) => line.includes(switchLine()) || line.includes(`${KIT}/${INSTALLER}`) && !line.startsWith(`${KIT}/${INSTALLER}:`));
 const FLAT_RUNNABLE = ['archive-caps.mjs', 'archive-changelog.mjs', 'archive-decisions.mjs', 'archive-issues.mjs', 'check-docs-size.mjs', 'install-git-hooks.mjs', 'markdown-blocks.mjs', 'migrate-gates.mjs', 'spec-schema.mjs'];
 const isSkipLine = (line) => line.includes('package.json') && FLAT_RUNNABLE.every((name) => line.includes(name));
 
@@ -161,6 +165,14 @@ describe('spec:standalone-scripts/S7 survey and Node evidence', () => {
 });
 
 describe('spec:standalone-scripts/S8 component and writes', () => {
+  const sharedIndex = 'shared/index.mjs', remaining = new Set([...DEPLOYED].sort()), writeOrder = [];
+  while (remaining.size) {
+    const next = [...remaining].find((path) => (path !== INSTALLER || !remaining.has(sharedIndex)) && readImports(path).every((dependency) => !remaining.has(dependency)));
+    assert.ok(next, 'bundled imports contain no cycle'); writeOrder.push(next); remaining.delete(next);
+  }
+  const reporter = writeOrder.splice(writeOrder.indexOf(REPORTER), 1);
+  writeOrder.splice(writeOrder.indexOf('run.mjs'), 0, ...reporter);
+
   it('a declined project gets exactly the spec closure and every seed', async () => {
     const cwd = createTree(), result = await run(cwd);
     assert.deepEqual([DEPLOYED.length, SPEC.size, DECLINED.length], [17, 10, 12]);
@@ -185,25 +197,28 @@ describe('spec:standalone-scripts/S8 component and writes', () => {
       assert.equal(result.lines.filter((line) => /accepted/.test(line)).length, 1);
     }
   });
-  it('writes the installer first, then imports before importers; reports replacements, placements and current count', async () => {
+  it('writes imports before importers and the shared index before the installer; reports replacements, placements and current count', async () => {
     const cwd = createTree(), current = ROTATOR;
     seed(cwd, [current]); put(cwd, `${KIT}/${INSTALLER}`, 'edited\n');
     const result = await run(cwd), lines = getFileLines(result);
     assert.equal(result.exitCode, 0); assertBodies(cwd, DEPLOYED);
-    assert.ok(lines[0].startsWith(`${KIT}/${INSTALLER}:`) && lines[0].includes('written over'));
-    for (const path of DEPLOYED.filter((path) => path !== current && path !== INSTALLER)) assert.ok(lines.some((line) => line.startsWith(`${KIT}/${path}:`) && line.includes('placed')), path);
     const position = (path) => lines.findIndex((line) => line.startsWith(`${KIT}/${path}:`));
+    assert.match(lines[position(INSTALLER)], /written over/);
+    for (const path of DEPLOYED.filter((path) => path !== current && path !== INSTALLER)) assert.ok(lines.some((line) => line.startsWith(`${KIT}/${path}:`) && line.includes('placed')), path);
+    assert.ok(position(sharedIndex) < position(INSTALLER), `${sharedIndex} before ${INSTALLER}`);
     for (const path of DEPLOYED.filter((path) => path !== current)) for (const dependency of readImports(path).filter((path) => DEPLOYED.includes(path))) assert.ok(dependency === current || position(dependency) < position(path), `${dependency} before ${path}`);
-    const remaining = new Set(DEPLOYED.filter((path) => path !== current && path !== INSTALLER)), order = [INSTALLER];
-    while (remaining.size) {
-      const next = [...remaining].sort().find((path) => readImports(path).every((dependency) => !remaining.has(dependency)));
-      assert.ok(next, 'bundled imports contain no cycle'); order.push(next); remaining.delete(next);
-    }
-    const reporter = order.splice(order.indexOf(REPORTER), 1);
-    order.splice(order.indexOf('run.mjs'), 0, ...reporter);
-    assert.deepEqual(lines.map((line) => DEPLOYED.find((path) => line.startsWith(`${KIT}/${path}:`))), order);
+    assert.deepEqual(lines.map((line) => DEPLOYED.find((path) => line.startsWith(`${KIT}/${path}:`))), writeOrder.filter((path) => path !== current));
     assert.ok(!lines.some((line) => line.startsWith(`${KIT}/${current}:`)));
     assert.ok(result.lines.some((line) => /\b1\b/.test(line) && /current|already/.test(line)));
+  });
+  it('writes shared/locations.mjs before the installer when shared/index.mjs is current', async () => {
+    const cwd = createTree(), locations = 'shared/locations.mjs', writes = [];
+    seed(cwd, DEPLOYED.filter((path) => path !== locations && path !== INSTALLER));
+    const result = await run(cwd, { enforcement: true, deps: { writeFile: (path, body, options) => {
+      writeFileSync(path, body, options); writes.push(path);
+    } } });
+    assert.equal(result.exitCode, 0); assertBodies(cwd, DEPLOYED);
+    assert.deepEqual(writes, [locations, INSTALLER].map((path) => join(cwd, KIT, path)));
   });
   it('overwrites atomically through an exclusive sibling and rename', async () => {
     const cwd = createTree(), events = []; seed(cwd); put(cwd, `${KIT}/${INSTALLER}`, 'edited\n');
@@ -238,29 +253,28 @@ describe('spec:standalone-scripts/S8 component and writes', () => {
     if (cleanup) assert.ok(formatLines(result).includes(relative(cwd, siblings[0])), formatLines(result));
   });
   for (const [body, later, code] of [['bundle', false, 0], ['other', false, 1], ['other', true, 3]]) it(`create-only race body=${body} later=${later} exits ${code}`, async () => {
-    const cwd = createTree(), targetPath = later ? ROTATOR : INSTALLER, target = join(cwd, KIT, targetPath), calls = [];
+    const cwd = createTree(), targetIndex = later ? 1 : 0, targetPath = writeOrder[targetIndex], target = join(cwd, KIT, targetPath), attempts = [];
     const racedBody = body === 'bundle' ? readBundled(targetPath) : Buffer.from('racing bytes\n');
     const result = await run(cwd, { enforcement: true, deps: { spawnSync: code ? assertNoSpawn : answerSuccessfulStore, writeFile: (path, bytes, options) => {
-      if (!calls.includes('race') && dirname(String(path)) === dirname(target)) { put(cwd, `${KIT}/${targetPath}`, racedBody); calls.push('race'); }
-      calls.push(String(path)); return writeFileSync(path, bytes, options);
+      if (path === target) put(cwd, `${KIT}/${targetPath}`, racedBody);
+      attempts.push(path); return writeFileSync(path, bytes, options);
     } } });
-    assert.equal(result.exitCode, code); assert.ok(calls.includes('race')); assert.ok(readFileSync(target).equals(racedBody));
+    const expectedAttempts = code === 0 ? writeOrder : writeOrder.slice(0, targetIndex + 1);
+    assert.deepEqual(attempts, expectedAttempts.map((path) => join(cwd, KIT, path)));
+    assert.equal(result.exitCode, code); assert.ok(readFileSync(target).equals(racedBody));
     if (code === 0) { assertBodies(cwd, DEPLOYED); assert.ok(result.lines.some((line) => line.includes(`${KIT}/${targetPath}`) && /bundled|current|stands/.test(line))); }
-    else { assert.ok(formatLines(result).includes(`${KIT}/${targetPath}`)); if (later) assert.ok(getFileLines(result).some((line) => line.startsWith(`${KIT}/${INSTALLER}:`) && line.includes('placed'))); }
+    else { assert.ok(formatLines(result).includes(`${KIT}/${targetPath}`)); if (later) assert.ok(getFileLines(result).some((line) => line.startsWith(`${KIT}/${writeOrder[0]}:`) && line.includes('placed'))); }
   });
   it('a partway EACCES names landed files, leaves the flat file and spawns nothing', async () => {
-    const cwd = createTree(), completed = [], attempts = []; putFlat(cwd);
+    const cwd = createTree(), attempts = [], beforeRefusal = writeOrder.slice(0, 2), refused = writeOrder[beforeRefusal.length]; putFlat(cwd);
     const result = await run(cwd, { enforcement: true, deps: { spawnSync: assertNoSpawn, writeFile: (path, body, options) => {
-      attempts.push(String(path));
-      if (String(path).startsWith(join(cwd, KIT, 'archives') + sep)) throw fail('EACCES');
+      attempts.push(path);
+      if (path === join(cwd, KIT, refused)) throw fail('EACCES');
       return writeFileSync(path, body, options);
-    }, rename: (from, to) => { renameSync(from, to); completed.push(relative(cwd, to)); } } });
-    assert.equal(result.exitCode, 3); assert.match(formatLines(result), /EACCES/); assertFlat(cwd);
-    assert.equal(attempts.findIndex((path) => path.startsWith(join(cwd, KIT, 'archives') + sep)), attempts.length - 1, 'no write follows the refused one');
-    const landed = DEPLOYED.filter((path) => lstatSync(join(cwd, KIT, path), { throwIfNoEntry: false })?.isFile());
-    assert.ok(landed.includes(INSTALLER));
-    for (const path of landed) { assert.ok(readFileSync(join(cwd, KIT, path)).equals(readBundled(path))); assert.ok(getFileLines(result).some((line) => line.startsWith(`${KIT}/${path}:`) && /placed|written over/.test(line))); }
-    for (const path of completed) assert.ok(formatLines(result).includes(path));
+    } } });
+    assert.deepEqual(attempts, [...beforeRefusal, refused].map((path) => join(cwd, KIT, path)));
+    assert.equal(result.exitCode, 3); assert.match(formatLines(result), /EACCES/); assertFlat(cwd); assertBodies(cwd, beforeRefusal);
+    for (const path of beforeRefusal) assert.ok(getFileLines(result).some((line) => line.startsWith(`${KIT}/${path}:`) && line.includes('placed')), path);
   });
   it('dry runs write nothing and print one would line per noncurrent file', async () => {
     for (const enforcement of [false, true]) {
@@ -322,7 +336,7 @@ describe('spec:standalone-scripts/S12 hook advice and repository location', () =
         for (const key of ['HOME', 'XDG_CONFIG_HOME', 'LC_ALL', 'PATH']) assert.equal(options.env[key], overrides[key]);
         return git(command, args, options);
       } } });
-      assert.equal(result.exitCode, 0); assert.ok(formatLines(result).includes(SWITCH));
+      assert.equal(result.exitCode, 0); assert.ok(formatLines(result).includes(switchLine()));
       for (const question of ['rev-parse --is-inside-work-tree', 'check-ignore -q scripts/agent-workflow', 'rev-parse --git-path hooks']) assert.ok(calls.some((args) => args.join(' ') === question));
     } finally {
       for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -334,12 +348,13 @@ describe('spec:standalone-scripts/S12 hook advice and repository location', () =
       const cwd = createTree(), hooks = createTree(false); put(hooks, 'pre-commit', MANAGED);
       const before = snapshot(hooks), result = await run(cwd, { enforcement, dryRun, deps: { git: createGitRunner(cwd, hooks) } });
       assert.equal(result.exitCode, 0); assert.equal(getHookLines(result).length, 1);
-      assert.ok(getHookLines(result)[0].includes(enforcement ? SWITCH : `${KIT}/${INSTALLER}`)); assert.deepEqual(snapshot(hooks), before);
+      assert.ok(getHookLines(result)[0].includes(enforcement ? switchLine() : `${KIT}/${INSTALLER}`)); assert.deepEqual(snapshot(hooks), before);
       if (enforcement && !dryRun) for (const path of [INSTALLER, 'run.mjs', ...Object.values(KIT_COMMANDS)]) assert.ok(lstatSync(join(cwd, KIT, path)).isFile());
     }
   });
   it('unmanaged, already switched, absent and outside-git hooks yield no hook advice', async () => {
-    for (const [body, outside] of [['#!/bin/sh\ncustom\n', false], ['#!/bin/sh\n# x:install-git-hooks.mjs\r extra\nnode scripts/check-docs-size.mjs\n', false], [`${MANAGED}${DOCS_LINE}\n`, false], [null, false], [MANAGED, true], [MANAGED, 'hooks-128']]) {
+    const docsLine = commandLine('docs-size');
+    for (const [body, outside] of [['#!/bin/sh\ncustom\n', false], ['#!/bin/sh\n# x:install-git-hooks.mjs\r extra\nnode scripts/check-docs-size.mjs\n', false], [`${MANAGED}${docsLine}\n`, false], [null, false], [MANAGED, true], [MANAGED, 'hooks-128']]) {
       const cwd = createTree(), hooks = createTree(false); if (body) put(hooks, 'pre-commit', body);
       const git = outside === true ? answerOutsideGit : createGitRunner(cwd, hooks, outside === 'hooks-128' ? answerOutsideGit() : undefined);
       const before = snapshot(hooks), result = await run(cwd, { enforcement: true, deps: { git } });
@@ -361,6 +376,7 @@ describe('spec:standalone-scripts/S12 hook advice and repository location', () =
     }
   });
   it('real git: an ambient GIT_DIR cannot redirect CLI hook advice or writes', async () => {
+    const advice = switchLine();
     const cwd = createTree(), other = createTree(false), home = createTree(false), env = createChildEnv(home);
     for (const project of [cwd, other]) {
       makeFixtureRepo((args) => {
@@ -378,7 +394,7 @@ describe('spec:standalone-scripts/S12 hook advice and repository location', () =
     put(cwd, '.git/hooks/pre-commit', MANAGED); seed(cwd);
     const before = snapshot(other), hookBefore = readFileSync(join(cwd, '.git/hooks/pre-commit'));
     const cli = spawnSync(process.execPath, [join(SKILL_ROOT, 'scripts/kit-folder.mjs'), '--project', cwd], { cwd, env: { ...env, GIT_DIR: join(other, '.git') }, encoding: 'utf8' });
-    assert.equal(cli.status, 0, `${cli.error?.code ?? ''} ${cli.stderr}`); assert.ok(cli.stdout.includes(SWITCH), cli.stdout);
+    assert.equal(cli.status, 0, `${cli.error?.code ?? ''} ${cli.stderr}`); assert.ok(cli.stdout.includes(advice), cli.stdout);
     assert.ok(readFileSync(join(cwd, '.git/hooks/pre-commit')).equals(hookBefore)); assert.deepEqual(snapshot(other), before);
   });
 });

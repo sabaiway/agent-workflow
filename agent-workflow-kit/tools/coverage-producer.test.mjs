@@ -12,11 +12,11 @@ import { COVERAGE_PRODUCER_BODY, isCoverageProducerGate, matchesCoverageProducer
 import { execCmdFor } from './gates-init.mjs';
 import { validateDeclaration, LCOV_PRODUCER_KEY } from './gates-declaration.mjs';
 import { readFamily } from '../references/scripts/family.mjs';
-import { KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OWN_SOURCE = join(HERE, 'coverage-producer.mjs');
 const KIT_RUN = '../references/scripts/run.mjs';
+const SHARED_INDEX = '../references/scripts/shared/index.mjs';
 
 // The one body and the two flag sets earlier kits wrote, frozen here as literal bytes — never read back out of the
 // module under test: deployed declarations on disk carry exactly these bytes.
@@ -47,10 +47,11 @@ const regionOf = (text) => {
 };
 
 describe('spec:coverage-producer/S1 the one producer body and the retired move list', () => {
-  it('COVERAGE_PRODUCER_BODY equals node, KIT_COMMAND_PATH and UNIT_TESTS_NAME joined by single spaces', async () => {
-    const { UNIT_TESTS_NAME } = await import(KIT_RUN);
-    assert.equal(COVERAGE_PRODUCER_BODY, ['node', KIT_COMMAND_PATH, UNIT_TESTS_NAME].join(' '));
+  it('COVERAGE_PRODUCER_BODY equals node, KIT_COMMAND and UNIT_TESTS_NAME joined by single spaces', async () => {
+    const [shared, { UNIT_TESTS_NAME }] = await Promise.all([import(SHARED_INDEX), import(KIT_RUN)]);
     assert.equal(COVERAGE_PRODUCER_BODY, BODY);
+    assert.ok(Object.hasOwn(shared, 'KIT_COMMAND'), 'the shared index exports KIT_COMMAND');
+    assert.equal(COVERAGE_PRODUCER_BODY, ['node', shared.KIT_COMMAND, UNIT_TESTS_NAME].join(' '));
   });
 
   it('the body bare, with a path tail, with a single-quoted glob tail and behind each execCmdFor prefix is a producer', () => {
@@ -183,6 +184,74 @@ describe('spec:coverage-producer/S10 the one producer question of a declared row
       `is absent — the kit's upgrade places the kit folder only where Node evidence stands (a root package.json, or a kit script): add one if this project runs Node, then run ${u}.`);
     assert.ok(guardRemedy('absent', 'the kit\'s upgrade').endsWith('run the kit\'s upgrade.'), 'the caller\'s upgrade name is the one named');
   });
+});
+
+it('spec:coverage-producer/S15 both regions build the body and ordered guard paths from four names imported above the region', async () => {
+  const fixture = {
+    KIT_COMMAND: 'launcher/entrypoint.mjs',
+    KIT_FOLDER: 'bundle/tooling',
+    UNIT_TESTS_NAME: 'verify-suite',
+    UNIT_TESTS_REPORTER: 'formatters/results.mjs',
+  };
+  const bindings = Object.entries(fixture).map(([name, value]) => `const ${name} = ${JSON.stringify(value)};`).join('\n');
+  const hosts = [['kit', OWN_SOURCE], ['memory', MIRRORED_CANON]];
+  const projectDir = '/project';
+  const ownRun = '/bundled/command.mjs';
+  const commandBytes = Buffer.from('bundled command');
+  const recordGuard = (unitTestsGuardFailure) => {
+    const probes = [];
+    const failure = unitTestsGuardFailure(projectDir, ownRun, {
+      lstatSync: (path) => ({
+        isDirectory: () => true,
+        isFile: () => {
+          probes.push(['lstat', path]);
+          return true;
+        },
+      }),
+      readFileSync: (path) => {
+        probes.push(['read', path]);
+        return commandBytes;
+      },
+    });
+    return { failure, probes };
+  };
+  const expectedGuard = (command, reporter) => ({
+    failure: null,
+    probes: [['lstat', `${projectDir}/${command}`], ['read', `${projectDir}/${command}`], ['read', ownRun], ['lstat', `${projectDir}/${reporter}`]],
+  });
+  const [{ KIT_FOLDER }, { UNIT_TESTS_REPORTER }] = await Promise.all([import(SHARED_INDEX), import(KIT_RUN)]);
+  const realCommand = BODY.split(' ')[1];
+  assert.ok(realCommand.startsWith(`${KIT_FOLDER}/`), 'the deployed command is under KIT_FOLDER');
+  const observed = await Promise.all(hosts.map(async ([host, source]) => {
+    const text = readFileSync(source, 'utf8');
+    const region = regionOf(text);
+    assert.ok(region, `${host} has a delimited region`);
+    const beforeRegion = text.slice(0, text.indexOf(BEGIN));
+    const namedImports = [...beforeRegion.matchAll(/^[ \t]*import\s*\{([^{}]*)\}\s*from\s*['"]([^'"\n]+)['"]/gm)];
+    const importsFrom = (modulePath) => namedImports
+      .filter(([, , specifier]) => join(dirname(source), specifier) === join(HERE, modulePath))
+      .flatMap(([, names]) => names.split(',').map((name) => name.trim()));
+    const [isolated, deployed] = await Promise.all([
+      import(`data:text/javascript,${encodeURIComponent(`${bindings}\n${region}`)}#${host}`),
+      import(pathToFileURL(source).href),
+    ]);
+    return {
+      host,
+      body: isolated.COVERAGE_PRODUCER_BODY,
+      fixtureGuard: recordGuard(isolated.unitTestsGuardFailure),
+      deployedGuard: recordGuard(deployed.unitTestsGuardFailure),
+      missingSharedImports: ['KIT_COMMAND', 'KIT_FOLDER'].filter((name) => !importsFrom(SHARED_INDEX).includes(name)),
+      missingRunImports: ['UNIT_TESTS_NAME', 'UNIT_TESTS_REPORTER'].filter((name) => !importsFrom(KIT_RUN).includes(name)),
+    };
+  }));
+  assert.deepEqual(observed, hosts.map(([host]) => ({
+    host,
+    body: `node ${fixture.KIT_COMMAND} ${fixture.UNIT_TESTS_NAME}`,
+    fixtureGuard: expectedGuard(fixture.KIT_COMMAND, `${fixture.KIT_FOLDER}/${fixture.UNIT_TESTS_REPORTER}`),
+    deployedGuard: expectedGuard(realCommand, `${KIT_FOLDER}/${UNIT_TESTS_REPORTER}`),
+    missingSharedImports: [],
+    missingRunImports: [],
+  })));
 });
 
 describe('coverage-producer — the GATE-level predicate (the lcovProducer marker)', () => {

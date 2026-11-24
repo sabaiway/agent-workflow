@@ -27,20 +27,23 @@ const closureOf = (from, within) => {
   return reached;
 };
 
-// The kit folder, read inside each cell from the kit mirror's manifest and node-evidence; every name below is a
-// manifest path. The family is the deployed entries less the spec layer's modules, in write order: the installer,
-// then each file after every family file it imports, by manifest path otherwise.
+// Revision 31 gives the installer its shared index import before the bundled body carries it.
 let layout;
 let KD;
 const kitLayout = () => (layout ??= (async () => {
   const [{ readFamily }, { KIT_SCRIPTS_DIR, INSTALLER_REL }] = await Promise.all([import('../../references/scripts/family.mjs'), import('../node-evidence.mjs')]);
   const entries = readFamily(BUNDLE), deployed = entries.filter((e) => e.role === 'deployed'), spec = (e) => ['spec-schema', 'docs-size', 'test-reporter'].includes(e.module);
   const installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
-  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== 'run.mjs' && e.path !== installer).map((e) => e.path)];
-  for (let next; (next = rest.filter((p) => importsOf(p).every((d) => !rest.includes(d))).sort()[0]);) order.push(...rest.splice(rest.indexOf(next), 1));
-  assert.deepEqual(rest, [], "the family's imports close no cycle");
+  const order = [], rest = deployed.filter((e) => !spec(e) && e.path !== 'run.mjs').map((e) => e.path).sort();
+  const imports = new Map(rest.map((path) => [path, new Set(importsOf(path))]));
+  imports.get(installer).add('shared/index.mjs');
+  while (rest.length > 0) {
+    const next = rest.findIndex((path) => [...imports.get(path)].every((dependency) => !rest.includes(dependency)));
+    assert.notEqual(next, -1, "the family's imports close no cycle");
+    order.push(...rest.splice(next, 1));
+  }
   KD = KIT_SCRIPTS_DIR;
-  return { entries, order, deployed: deployed.map((e) => e.path), seeds: order.filter((p) => deployed.find((e) => e.path === p).seed), pairs: deployed.filter(spec).map((e) => e.path) };
+  return { entries, order, installer, deployed: deployed.map((e) => e.path), seeds: order.filter((p) => deployed.find((e) => e.path === p).seed), pairs: deployed.filter(spec).map((e) => e.path) };
 })());
 
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
@@ -181,7 +184,7 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
 
   it('a symlinked or non-directory scripts/, kit folder or module folder, or a linked family path in a kit folder holding no regular family file: wrong-node-kind naming it, nothing read or written', async () => {
     const K = await kitLayout(), rotator = 'archives/archive-decisions.mjs';
-    const accepted = (dir, more = {}) => put(dir, { ...pairBodies(K), [K.order[0]]: bundled(K.order[0]), ...more });
+    const accepted = (dir, more = {}) => put(dir, { ...pairBodies(K), [K.installer]: bundled(K.installer), ...more });
     const shared = Object.fromEntries(K.order.filter((p) => p.startsWith('shared/')).map((p) => [p, bundled(p)]));
     const rows = [
       ['scripts', 'a symlink', (dir) => { accepted(dir); linkAway(dir, 'scripts'); }],
@@ -229,7 +232,7 @@ describe('spec:distribution-files/S13 the scripts component, the seed names and 
         return real(from, to);
       };
       const absent = [...new Set(others.map((p) => posix.dirname(p)))].filter((m) => !existsSync(join(dir, KD, m)));
-      const r = run(dir, { link: record(links, linkSync), rename: record(renames, renameSync) });
+      const r = run(dir, { link: record(links, linkSync), rename: record(renames, renameSync), spawnSync: spawner().spawnSync });
       assert.deepEqual({ token: r.token, failed: r.failed, lines: r.lines, entries: 'entries' in r }, { token: 'seeded', failed: false, lines: [...others.map(L.placed), L.count(1), HOOK_ACCEPTED], entries: false });
       assert.deepEqual([links, renames], [others, []], 'every placement a create-only link, no replacing rename');
       assert.ok(absent.length > 0 && absent.every((m) => existsSync(join(dir, KD, m))), `each absent module folder created: ${absent.join(', ')}`);

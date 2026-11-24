@@ -5,17 +5,16 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../run.mjs';
+import { KIT_COMMANDS } from '../run.mjs';
 import { readFamily } from '../family.mjs';
+import { KIT_COMMAND, KIT_FOLDER, SCRIPTS } from '../shared/index.mjs';
 
 const TREE = dirname(dirname(fileURLToPath(import.meta.url)));
-const KIT_FOLDER = dirname(KIT_COMMAND_PATH);
-const SCRIPTS_FOLDER = dirname(KIT_FOLDER);
-const COMMAND = `node ${KIT_COMMAND_PATH}`;
+const COMMAND = `node ${KIT_COMMAND}`;
 
 const fileNameOf = (path) => path.slice(path.lastIndexOf('/') + 1);
 const NAME_BY_FILE = new Map(Object.entries(KIT_COMMANDS).map(([name, target]) => [fileNameOf(target), name]));
-const flatOf = (target) => `${SCRIPTS_FOLDER}/${fileNameOf(target)}`;
+const flatOf = (target) => `${SCRIPTS}/${fileNameOf(target)}`;
 
 // path token → { name, flat } for the deployed or the flat path of a known name, relative to the project root.
 const KNOWN_PATHS = new Map(Object.entries(KIT_COMMANDS).flatMap(([name, target]) => [
@@ -61,12 +60,12 @@ const firstStaleKitPath = (projectDir, name) => {
     }
   };
   const folders = new Set();
-  for (const folder of [SCRIPTS_FOLDER, KIT_FOLDER]) {
+  for (const folder of [SCRIPTS, KIT_FOLDER]) {
     if (!isPlain(folder, 'directory')) return folder;
     folders.add(folder);
   }
   const deployedPaths = new Set(readFamily(TREE).filter((entry) => entry.role === 'deployed').map(({ path }) => path));
-  const needed = new Set([fileNameOf(KIT_COMMAND_PATH), KIT_COMMANDS[name]]);
+  const needed = new Set([posix.relative(KIT_FOLDER, KIT_COMMAND), KIT_COMMANDS[name]]);
   for (const path of needed) {
     const deployed = `${KIT_FOLDER}/${path}`;
     const folder = dirname(deployed);

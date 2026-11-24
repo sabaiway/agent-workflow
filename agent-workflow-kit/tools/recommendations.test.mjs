@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, lstatSync, chmodSync, symlinkSync, realpathSync, cpSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFileSync } from 'node:child_process';
 import {
@@ -61,7 +61,8 @@ const need = (mod, name) => {
 import { ROOT_DOC, specDoc } from './spec-check-harness.test.mjs';
 import { makeProject as makeProfileProject } from './tier-preview.test/harness.test.mjs';
 import { CENSUS_VERDICT } from './tracked-tree-census.mjs';
-import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import * as shared from '../references/scripts/shared/index.mjs';
 import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -2737,6 +2738,10 @@ describe('recommendations — the commit-guard item (the D10 consumer surface)',
   });
 });
 
+const placeHookFixtureFiles = (root, targets = [], kitFolder = dirname(need(shared, 'KIT_COMMAND'))) => {
+  const imports = gitHooks.readDeployedScripts().filter(({ module }) => module === 'shared').map(({ deployed }) => deployed);
+  for (const path of [...imports, ...targets]) cpSync(join(BUNDLED_SCRIPTS, relative(kitFolder, path)), join(root, path));
+};
 describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', () => {
   const whatOf = (checks) => `the pre-commit hook lacks this kit's ${checks} — the kit arms each line`;
   const NAMES = { rules: 'project-rules check', layout: 'layout check', both: 'project-rules and layout checks' };
@@ -2812,6 +2817,7 @@ describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', (
   it('a no to the record writes nothing and renders both again; a yes to both, the record first, arms the layout line and the next run renders neither', (t) => {
     const root = layoutRoot({ piles: 25 });
     t.after(() => rmSync(root, { recursive: true, force: true }));
+    placeHookFixtureFiles(root);
     const [env, hooks] = [gitPathEnv(root), join(root, '.git', 'hooks')];
     const run = () => buildRecommendations({ cwd: root, deps: hermeticDeps(root, { env, gitHooksPath: () => hooks }) }).items
       .filter((item) => item.variant === 'source-size.layout' || item.key === 'hook-checks')
@@ -2832,13 +2838,13 @@ describe('spec:init-project/S64 the advisor\'s hook-checks item by its table', (
 });
 
 describe('spec:init-project/S75 the advisor\'s hook-checks item over the managed flat hook', () => {
-  const targets = [KIT_COMMAND_PATH, ...Object.values(KIT_COMMANDS).map((path) => `scripts/agent-workflow/${path}`)];
+  const targets = [shared.KIT_COMMAND, ...Object.values(KIT_COMMANDS).map((path) => `${shared.KIT_FOLDER}/${path}`)];
   const flatProject = (t) => {
     const root = makeProject(); t.after(() => rmSync(root, { recursive: true, force: true })); makeFixtureRepo((args) => runFixtureGit(root, args), root, ['-q']);
     const env = gitPathEnv(root); delete env.NODE_TEST_CONTEXT;
     mkdirSync(join(root, 'scripts'), { recursive: true }); cpSync(join(KIT_ROOT, 'test/fixtures/script-priors/8.4.0/install-git-hooks.mjs.txt'), join(root, 'scripts/install-git-hooks.mjs'));
     const installed = spawnSync(process.execPath, [join(root, 'scripts/install-git-hooks.mjs')], { cwd: root, env, encoding: 'utf8' }); assert.equal(installed.status, 0, installed.stderr);
-    for (const path of targets) { mkdirSync(dirname(join(root, path)), { recursive: true }); cpSync(join(BUNDLED_SCRIPTS, path.slice('scripts/agent-workflow/'.length)), join(root, path)); }
+    placeHookFixtureFiles(root, targets);
     writeFileSync(join(root, 'docs/ai/source-size.json'), JSON.stringify({ schema: 1, defaults: SOURCE_SIZE_DEFAULTS, roots: ['src'], exclude: [], extensions: ['.mjs'] }));
     const run = (extra = {}) => buildRecommendations({ cwd: root, deps: hermeticDeps(root, { env, gitHooksPath: () => join(root, '.git/hooks'), ...extra }) });
     return { root, env, run };
@@ -2854,7 +2860,7 @@ describe('spec:init-project/S75 the advisor\'s hook-checks item over the managed
     }
     assert.equal(spawnSync(process.execPath, [join(root, KIT_INSTALLER)], { cwd: root, env }).status, 0); assert.deepEqual(run().items.filter((item) => item.key === 'hook-checks'), []);
   });
-  for (const missing of targets.filter((path) => path !== KIT_INSTALLER)) it(`states a skip naming absent ${missing} and the upgrade re-run, with no item`, (t) => {
+  for (const missing of targets.filter((path) => path !== KIT_INSTALLER)) it(`states a skip naming absent ${missing ?? `${shared.KIT_FOLDER}/run.mjs`} and the upgrade re-run, with no item`, (t) => {
     const { root, run } = flatProject(t); rmSync(join(root, missing));
     for (const rules of [false, true]) for (const layout of [false, true]) {
       const built = run({ checkRules: () => [{ theme: 'project-layout', verdict: rules ? 'current' : 'absent' }], readLayoutSetup: () => ({ answer: layout ? 'armable' : 'held' }) });

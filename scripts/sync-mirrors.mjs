@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // sync-mirrors.mjs — the canon → mirror synchronizer for the four byte-identical mirror
 // families, the generator of each canon bridge's service-facts.txt (spec kit/services), which
-// runs first so the bridge mirror carries the fresh file, and of the bundled gate hook's lists
+// runs first so the bridge mirror carries the fresh file, and of the bundled gate hook's generated
 // region (spec kit/install/init-project, part gate-hook-lists) (repo-local, tracked; repo-only
 // tooling — never shipped in any tarball).
 //
@@ -42,6 +42,7 @@ import { join, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadServiceFragments, mergeServices, renderServiceFacts, SERVICE_FACTS_FILE } from '../agent-workflow-kit/tools/services/index.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
+import { GATES, LANES } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -59,7 +60,7 @@ const MANIFEST_FILE = 'capability.json';
 const SCRIPTS_REL = 'references/scripts';
 const TEMPLATES_REL = 'references/templates';
 const GATE_HOOK_REL = `${KIT_DIR}/references/hooks/gate-approve.mjs`;
-const GATE_HOOK_LISTS_BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs by scripts/sync-mirrors.mjs; do not edit';
+const GATE_HOOK_LISTS_BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs and agent-workflow-memory/references/scripts/shared/locations.mjs by scripts/sync-mirrors.mjs; do not edit';
 const GATE_HOOK_LISTS_END = '// end of the generated lists';
 // The prune both installers take (spec upgrade-delivery, part payload-prune): one canon, one kit copy.
 const PRUNE_CANON = `${MEMORY_DIR}/bin/payload-prune.mjs`;
@@ -218,8 +219,10 @@ const planServiceFacts = (root) => {
 
 const renderLiteral = (value) => JSON.stringify(value).replaceAll('\u007f', '\\u007f');
 
-export const renderGateHookLists = (readonlyCore, residualForms) => [
+export const renderGateHookLists = (readonlyCore, residualForms, locations) => [
   GATE_HOOK_LISTS_BEGIN,
+  `export const GATES_REL = ${renderLiteral(locations.GATES)};`,
+  `export const LANES_REL = ${renderLiteral(locations.LANES)};`,
   'export const SEEDED_READONLY_CORE = Object.freeze([',
   ...readonlyCore.map((item) => `  ${renderLiteral(item)},`),
   ']);',
@@ -246,7 +249,7 @@ const planGateHookLists = (root) => {
   const beginLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_BEGIN ? [index] : []);
   const endLines = lines.flatMap((line, index) => line === GATE_HOOK_LISTS_END ? [index] : []);
   if (typeof hook.text === 'string' && beginLines.length === 1 && endLines.length === 1 && endLines[0] > beginLines[0]) {
-    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES });
     const begin = beginLines[0];
     const afterEnd = endLines[0] + 1;
     if (lines.slice(begin, afterEnd).join('\n') === render) return { changes: [], identical: 1 };

@@ -6,18 +6,47 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { BUNDLED_HOOK_PATH, HOOK_FILE_REL, LANES_REL, buildHookSettingsEntry } from '../gate-hook.mjs';
+import { FINAL_CORE_CHECKS } from '../gates-declaration.mjs';
 import { hermeticGitEnv } from '../git-env.mjs';
+import { INSTALLER_REL, readPreCommitState } from '../git-hooks.mjs';
 import { readFamily } from '../../references/scripts/family.mjs';
+import { GATES, KIT_FOLDER, PRE_COMMIT, SOURCE_SIZE } from '../../references/scripts/shared/index.mjs';
 import { skillTargets } from '../jev-facts.mjs';
+import { SOURCE_SIZE_DEFAULTS } from '../source-size-config.mjs';
 import {
   APPLY, FIVE, RESTART, RUN_NONE, SUDO, TOOLS, applies, changed, facts, fixture, hashTree, init, isApply, item, lanes,
   need, ok, pending, policy, put, realFixture,
 } from './harness.test.mjs';
 
 const CHECK_DIGEST = 'a'.repeat(64);
+const MAGIC_MARKER = '# agent-workflow:install-git-hooks.mjs';
 const HARNESS_VARIANTS = ['velocity-core', 'kit-tools-tier', 'bridge-tier', 'autonomy-render', 'gate-hook',
   'mcp-channel', 'mcp-channel.differing', 'agents', 'executor-vehicle', 'jev-skill'];
 const KIT_VARIANTS = ['agents.not-current', 'jev-skill.not-current'];
+const BUNDLED_SCRIPTS = join(TOOLS, '../references/scripts');
+const GIT_HOOKS_TOOL = join(TOOLS, 'git-hooks.mjs');
+const readDeployedScriptNames = () => readFamily(BUNDLED_SCRIPTS).filter(({ role }) => role === 'deployed').map(({ path }) => path);
+
+const createGitFixture = (t, variants) => {
+  const f = realFixture(t, new Set(variants));
+  const ambient = process.env;
+  const gitDir = (ambient.PATH ?? '').split(delimiter).find((dir) => existsSync(join(dir, 'git')));
+  assert.ok(gitDir, 'git must be on PATH');
+  f.env.PATH = [dirname(process.execPath), gitDir, f.env.PATH].join(delimiter);
+  const env = hermeticGitEnv(ambient, f.home);
+  delete env.NODE_TEST_CONTEXT;
+  process.env = env;
+  t.after(() => { process.env = ambient; });
+  makeFixtureRepo((args) => {
+    const result = spawnSync('git', args, { cwd: f.root, env, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }, f.root, ['-q']);
+  const respond = f.respond;
+  f.respond = (argv, opts) => argv[1] === GIT_HOOKS_TOOL
+    ? spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: hermeticGitEnv(opts.env, f.home), encoding: 'utf8' })
+    : respond(argv, opts);
+  return f;
+};
 
 describe('spec:init-project/S11 previews and one terminal y', () => {
   it('every pending variant with preview argv prints its preview and check lines, bridge-tier with its note and velocity-core without one', async (t) => {
@@ -248,38 +277,38 @@ describe('spec:init-project/S30 init over the three writers with real writers', 
   });
 
   it('on a fresh git project with no package.json a pending enforcement item is previewed by the leaf\'s dry run and applied on the one y, the record refreshed', async (t) => {
-    const f = realFixture(t, new Set(['enforcement', 'state-block']));
-    const gitDir = (process.env.PATH ?? '').split(delimiter).find((dir) => existsSync(join(dir, 'git')));
-    assert.ok(gitDir, 'git must be on PATH');
-    makeFixtureRepo((args) => { const git = spawnSync('git', args, { cwd: f.root, env: hermeticGitEnv(process.env, f.home), encoding: 'utf8' }); assert.equal(git.status, 0, git.stderr); }, f.root, ['-q']);
-    f.env.PATH = [dirname(process.execPath), gitDir, f.env.PATH].join(delimiter);
+    const f = createGitFixture(t, ['enforcement', 'state-block']);
     assert.equal(existsSync(join(f.root, 'package.json')), false);
     assert.deepEqual(pending(f), ['enforcement', 'state-block']);
     const respond = f.respond;
     f.respond = (argv, opts) => {
-      if (![join(TOOLS, 'git-hooks.mjs'), join(TOOLS, 'state-block-hook.mjs')].includes(argv[1])) return respond(argv, opts);
+      if (argv[1] !== join(TOOLS, 'state-block-hook.mjs')) return respond(argv, opts);
       const result = spawnSync(process.execPath, argv.slice(1), { cwd: opts.cwd, env: opts.env, encoding: 'utf8' });
       return { status: result.status, stdout: result.stdout, stderr: result.stderr };
     };
     assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 0 });
     assert.deepEqual(f.questions, [APPLY]);
     assert.deepEqual(applies(f).map(({ argv }) => argv), [
-      ['node', join(TOOLS, 'git-hooks.mjs'), '--apply', '--enforcement', '--cwd', f.root],
+      ['node', GIT_HOOKS_TOOL, '--apply', '--enforcement', '--cwd', f.root],
       ['node', join(TOOLS, 'state-block-hook.mjs'), '--apply', '--cwd', f.root],
     ]);
     const lines = f.printed.flatMap((line) => line.split('\n'));
     const preview = lines.indexOf('preview: enforcement');
     const scope = lines.indexOf('scope: within the declared scope of enforcement');
     const next = lines.indexOf('preview: state-block');
-    const bundle = join(TOOLS, '../references/scripts');
-    const names = readFamily(bundle).filter(({ role }) => role === 'deployed').map(({ path }) => path);
+    const names = readDeployedScriptNames();
     assert.ok(preview >= 0 && scope > preview + names.length && next > scope);
-    assert.deepEqual(lines.slice(preview + 1, preview + 1 + names.length), names.map((name) =>
-      `copy: scripts/agent-workflow/${name} created sha256:${createHash('sha256').update(readFileSync(join(bundle, name))).digest('hex')}`));
+    const copies = names.map((name) =>
+      `copy: ${KIT_FOLDER}/${name} created sha256:${createHash('sha256').update(readFileSync(join(BUNDLED_SCRIPTS, name))).digest('hex')}`);
+    assert.deepEqual(lines.slice(preview + 1, preview + 1 + names.length).sort(), copies.sort());
+    const installerSha = createHash('sha256').update(readFileSync(join(f.root, INSTALLER_REL))).digest('hex');
+    const runsLine = lines[preview + 1 + names.length];
+    assert.match(runsLine, /^runs: .* sha256:[0-9a-f]{64}$/);
+    assert.notEqual(runsLine.split('sha256:').at(-1), installerSha);
     for (const name of names) {
-      assert.deepEqual(readFileSync(join(f.root, 'scripts/agent-workflow', name)), readFileSync(join(bundle, name)));
+      assert.deepEqual(readFileSync(join(f.root, KIT_FOLDER, name)), readFileSync(join(BUNDLED_SCRIPTS, name)));
     }
-    assert.match(readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8'), /:install-git-hooks\.mjs$/m);
+    assert.match(readFileSync(join(f.root, PRE_COMMIT), 'utf8'), /:install-git-hooks\.mjs$/m);
     assert.deepEqual(pending(f), []);
   });
 });
@@ -325,8 +354,15 @@ describe('spec:init-project/S43 — init over the worktrees grant', () => {
   });
 });
 
-describe('spec:init-project/S45 — the console y re-judges the worktrees grant', () => {
+describe('spec:init-project/S45 — the console y re-judges worktrees and git-hook items', () => {
   const REJUDGED = 'not applied: worktrees-dir — its danger check no longer answers the previewed result';
+  const createGuardFixture = (t, variants) => {
+    const f = createGitFixture(t, variants);
+    for (const name of readDeployedScriptNames()) put(join(f.root, KIT_FOLDER, name), readFileSync(join(BUNDLED_SCRIPTS, name)));
+    const gates = FINAL_CORE_CHECKS.map(({ name, canonical }) => ({ id: name, title: name, cmd: `node "${canonical}" --check` }));
+    put(join(f.root, GATES), JSON.stringify({ gates }));
+    return f;
+  };
 
   it('a link planted at the parent before the y leaves the grant and every later item unapplied, the link target untouched', async (t) => {
     const f = realFixture(t, new Set(['velocity-core', 'worktrees-dir']));
@@ -393,6 +429,41 @@ describe('spec:init-project/S45 — the console y re-judges the worktrees grant'
     assert.ok(existsSync(join(f.root, '.claude/settings.local.json')));
     assert.ok(statSync(parent).isDirectory());
     assert.deepEqual(pending(f), []);
+  });
+
+  it('an edit to deployed shared/index.mjs before the y stops commit-guard at its rejudge', async (t) => {
+    const f = createGuardFixture(t, ['commit-guard']);
+    const sharedIndex = join(f.root, KIT_FOLDER, 'shared/index.mjs');
+    assert.deepEqual(pending(f), ['commit-guard']);
+    f.answers = [async () => {
+      put(sharedIndex, `${readFileSync(sharedIndex, 'utf8')}\n`);
+      return 'y';
+    }];
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 1 });
+    assert.deepEqual(f.questions, [APPLY]);
+    assert.ok(f.printed.includes('scope: within the declared scope of commit-guard'));
+    assert.match(f.printed.find((line) => line.startsWith('not applied: commit-guard')) ?? '', /danger check.*its digest moved/);
+    assert.deepEqual(applies(f), []);
+    assert.equal(existsSync(join(f.root, PRE_COMMIT)), false);
+  });
+
+  it('commit-guard installs the kit-command line and the switch-only hook-checks stops at its rejudge', async (t) => {
+    const variants = ['commit-guard', 'hook-checks'];
+    const f = createGuardFixture(t, variants);
+    put(join(f.root, PRE_COMMIT), `#!/bin/sh\n${MAGIC_MARKER}\n`);
+    put(join(f.root, SOURCE_SIZE), JSON.stringify({ schema: 1, defaults: SOURCE_SIZE_DEFAULTS, roots: ['src'], exclude: [], extensions: ['.mjs'] }));
+    assert.deepEqual(pending(f), variants);
+    assert.deepEqual(await need(init, 'runInitProject')(f.deps), { code: 1 });
+    assert.deepEqual(f.questions, [APPLY]);
+    const preview = f.printed.indexOf('preview: hook-checks');
+    assert.ok(preview >= 0);
+    assert.ok(f.printed[preview + 1]?.startsWith(`runs: node ${INSTALLER_REL} sha256:`));
+    assert.ok(f.printed.includes('scope: within the declared scope of hook-checks'));
+    assert.deepEqual(applies(f).map(({ argv }) => argv), [['node', GIT_HOOKS_TOOL, '--apply', '--commit-guard', '--cwd', f.root]]);
+    const hook = readPreCommitState(f.root);
+    assert.equal(hook.armed, true);
+    assert.equal(hook.command, true);
+    assert.match(f.printed.find((line) => line.startsWith('not applied: hook-checks')) ?? '', /danger check.*nothing to plan/);
   });
 });
 

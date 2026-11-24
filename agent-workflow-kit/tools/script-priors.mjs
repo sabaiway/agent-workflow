@@ -32,8 +32,8 @@ export const PRIOR_FILES = Object.freeze([
 export const READER_PAIR = Object.freeze(['spec-schema.mjs', 'spec-schema.test.mjs']);
 export const CHECKER_PAIR = Object.freeze(['check-docs-size.mjs', 'check-docs-size.test.mjs']);
 
-// The hook installer and the two suites that test it beside it — written first, installer first, so a
-// stop partway never leaves a bundled suite beside a prior installer.
+// The hook installer and the two suites that test it beside it form one set because a bundled suite
+// fails inside the hook when paired with a prior installer.
 export const INSTALLER_SET = Object.freeze(['install-git-hooks.mjs', 'install-git-hooks.test.mjs', 'install-git-hooks-repo-exec.test.mjs']);
 
 const prior = (file, firstShipped, lastShipped, digest) => Object.freeze({ file, firstShipped, lastShipped, digest });

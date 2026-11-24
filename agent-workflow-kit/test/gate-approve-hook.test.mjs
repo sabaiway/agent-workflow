@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+import { GATES, LANES } from '../../agent-workflow-memory/references/scripts/shared/index.mjs';
 import {
   ALLOW_PERMISSION_MODES,
   BASH_TOOL_NAME,
@@ -544,7 +545,8 @@ describe('read-lane config read — live, fail-closed (docs/ai/lanes.json; Decis
 
   it('the lane lives in a SEPARATE file/key from gates.json — the gates schema is untouched', () => {
     assert.notEqual(LANES_REL, GATES_REL);
-    assert.equal(LANES_REL, 'docs/ai/lanes.json');
+    assert.equal(GATES_REL, GATES);
+    assert.equal(LANES_REL, LANES);
     assert.equal(READ_LANE_KEY, 'readLane');
     // gates.json validation still REJECTS a lane field (the run-gates-parity schema is unchanged).
     assert.equal(validateDeclarationShape({ gates: [], readLane: true }).ok, false);

@@ -98,13 +98,21 @@ describe('spec:kit-command/S1 the frozen names, the command path and the direct-
     }
   });
 
-  it('KIT_COMMANDS is frozen and maps exactly the five names, in order, to deployed entries; KIT_COMMAND_PATH is the deployed path', async () => {
-    const { KIT_COMMANDS, KIT_COMMAND_PATH } = await import('./run.mjs');
+  it('KIT_COMMANDS is frozen and maps the five names in order to deployed entries; run.mjs has exactly four exports and only node: imports; the shared index exports KIT_COMMAND', async () => {
+    const command = await import('./run.mjs');
+    const { KIT_COMMANDS } = command;
     assert.ok(Object.isFrozen(KIT_COMMANDS));
     assert.deepEqual(Object.entries(KIT_COMMANDS), Object.entries(TARGETS));
-    assert.equal(KIT_COMMAND_PATH, 'scripts/agent-workflow/run.mjs');
     const deployed = readFamily(HERE).filter((entry) => entry.role === 'deployed').map((entry) => entry.path);
     assert.deepEqual(Object.values(KIT_COMMANDS).filter((target) => !deployed.includes(target)), [], 'every target is a deployed entry');
+
+    const source = readFileSync(join(HERE, 'run.mjs'), 'utf8');
+    const imports = [...source.matchAll(/^[\t ]*import\b\s*(?:[^'";()]*?\bfrom\s*)?(['"])([^'"\r\n]+)\1/gm)]
+      .map((match) => match[2]);
+    assert.deepEqual(imports.filter((specifier) => !specifier.startsWith('node:')), [], 'run.mjs imports only node: modules');
+    assert.deepEqual(Object.keys(command), ['KIT_COMMANDS', 'UNIT_TESTS_NAME', 'UNIT_TESTS_REPORTER', 'main']);
+    const shared = await import('./shared/index.mjs');
+    assert.equal(shared.KIT_COMMAND, 'scripts/agent-workflow/run.mjs');
   });
 
   it('an import of run.mjs prints nothing and spawns nothing; a direct run through a symlinked entry runs main and sets the exit code', () => {

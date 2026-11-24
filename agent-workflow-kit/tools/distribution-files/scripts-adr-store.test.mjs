@@ -59,16 +59,18 @@ const recorder = (dir, { refuseAt = 0, base = 'scripts' } = {}, order = []) => {
 // ── the kit folder: the family read from the KIT mirror's manifest inside each cell, never counted by hand ──
 const KF = 'scripts/agent-workflow';
 const [INSTALLER, ROTK, ISSUES] = ['git-hooks/install-git-hooks.mjs', 'archives/archive-decisions.mjs', 'archives/archive-issues.mjs'];
+const SHARED_INDEX = 'shared/index.mjs';
 const kb = (p) => readFileSync(join(BUNDLE, ...p.split('/')));
 const IMPORT = /(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g;
-const importsOf = (p, within) => [...kb(p).toString('utf8').matchAll(IMPORT)].map(([, spec]) => posix.join(posix.dirname(p), spec)).filter((dep) => within.includes(dep));
-// Dependencies before importers, code-unit order of the manifest path otherwise.
-const writeOrder = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p, paths).every((d) => !left.has(d))); assert.ok(next, `an import cycle among ${[...left]}`); out.push(next); left.delete(next); } return out; };
+// Revision 31 gives the installer its shared index import before the bundled body carries it.
+const importsOf = (p) => [...(p === INSTALLER ? [SHARED_INDEX] : []), ...[...kb(p).toString('utf8').matchAll(IMPORT)].map(([, spec]) => posix.join(posix.dirname(p), spec))];
+const writeOrder = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p).every((d) => !left.has(d))); assert.ok(next, `an import cycle among ${[...left]}`); out.push(next); left.delete(next); } return out; };
 const kitFamily = async () => {
   const { readFamily } = await import('../../references/scripts/family.mjs');
   const deployed = readFamily(BUNDLE).filter((e) => e.role === 'deployed');
   const own = deployed.filter((e) => e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter' && e.path !== 'run.mjs');
-  const F = { family: own.map((e) => e.path), seeds: own.filter((e) => e.seed).map((e) => e.path), pairs: deployed.filter((e) => ['spec-schema', 'docs-size'].includes(e.module)).map((e) => e.path), shared: own.filter((e) => e.module === 'shared').map((e) => e.path) };
+  const family = writeOrder(own.map((e) => e.path));
+  const F = { family, seeds: family.filter((path) => own.find((e) => e.path === path).seed), pairs: deployed.filter((e) => ['spec-schema', 'docs-size'].includes(e.module)).map((e) => e.path), shared: own.filter((e) => e.module === 'shared').map((e) => e.path) };
   assert.deepEqual([INSTALLER, ROTK, ISSUES].filter((p) => !F.family.includes(p)), [], 'the named files are family files');
   return F;
 };
@@ -120,12 +122,13 @@ const spawned = (calls) => calls.map(({ cmd, args, opts }) => [cmd, args, opts?.
 describe("spec:distribution-files/S17 the store run's spawn and when it runs", () => {
   it('one spawn of node with the project rotator in the kit folder and --ensure-current, cwd the project, no timeout or env key, after the last write', async () => {
     const F = await kitFamily();
-    withKit(F, { [INSTALLER]: OLD(INSTALLER), [ISSUES]: null }, (dir) => {
+    const due = { [INSTALLER]: OLD(INSTALLER), [ISSUES]: null, [SHARED_INDEX]: EDIT(SHARED_INDEX) };
+    withKit(F, due, (dir) => {
       const { order, deps } = recorder(dir, { base: KF });
       const { calls, spawn } = fakeSpawn({}, order);
       run(dir, { deps: { ...deps, spawnSync: spawn, priors: priorsK(INSTALLER) } });
       assert.deepEqual(spawned(calls), [[process.execPath, [join(dir, KF, ...ROTK.split('/')), '--ensure-current'], dir, false, false]]);
-      assert.deepEqual(order, [INSTALLER, ISSUES, '<spawn>'], 'the spawn is the last entry, after every publish');
+      assert.deepEqual(order, [...F.family.filter((path) => Object.hasOwn(due, path)), '<spawn>'], 'dependencies publish first, then the spawn');
     });
   });
   it('an accepted component and a declined one, whether it held the rotator, an edited rotator or only the tree the specs op seeds: one spawn each, on a current store and an old one', async () => {
@@ -173,12 +176,16 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
       ['skipped-no-node-evidence', null, { node: false }, () => ({})],
       ['wrong-node-kind', { [ISSUES]: null }, { setup: (dir) => symlinkSync(join(dir, 'package.json'), join(dir, KF, ...ISSUES.split('/'))) }, () => ({})],
       ['bundle-unreadable', {}, {}, () => ({ readFile: unreadable })],
-      ['write-refused', { [INSTALLER]: OLD(INSTALLER) }, {}, (dir) => ({ ...recorder(dir, { refuseAt: 1, base: KF }).deps, priors: priorsK(INSTALLER) })],
+      ['write-refused', { [INSTALLER]: OLD(INSTALLER), [SHARED_INDEX]: EDIT(SHARED_INDEX) }, {}, (dir) => ({ ...recorder(dir, { refuseAt: 2, base: KF }).deps, priors: priorsK(INSTALLER) })],
       ['race-unresolved', { [ISSUES]: null }, {}, (dir) => ({ link: raced(dir) })],
     ];
     const got = rows.map(([cause, bodies, tree, deps]) => withKit(F, bodies, (dir) => {
       const { calls, spawn } = fakeSpawn();
       const r = run(dir, { deps: { ...deps(dir), spawnSync: spawn } });
+      if (cause === 'write-refused') {
+        assert.equal(r.lines[0], `write-refused — ${relK(INSTALLER)}: EACCES: refused`);
+        holdsK(dir, { [SHARED_INDEX]: kb(SHARED_INDEX), [INSTALLER]: OLD(INSTALLER) });
+      }
       return [r.token === 'failed' ? r.lines[0].split(' — ')[0] : r.token, calls.length];
     }, tree));
     assert.deepEqual(got, rows.map(([cause]) => [cause, 0]));
@@ -192,7 +199,7 @@ describe("spec:distribution-files/S17 the store run's spawn and when it runs", (
     // the specs op seeds, the rotator absent.
     const declined = { setup: (dir) => putK(dir, { ...Object.fromEntries(F.pairs.map((p) => [p, kb(p)])), [ROTK]: EDIT(ROTK) }) };
     const seeded = { setup: (dir) => putK(dir, SEEDED(F)) };
-    const seeds = writeOrder(F.seeds), standing = seeds.filter((p) => F.shared.includes(p));
+    const { seeds } = F, standing = seeds.filter((p) => F.shared.includes(p));
     assert.ok(seeds.length > 1 && standing.length > 0 && !standing.includes(ROTK), 'the rotator imports seed files; the specs op seeds shared ones');
     const rows = [[{ [INSTALLER]: OLD(INSTALLER) }, 'would-refresh', [would(LK.refreshed(INSTALLER)), LK.count(N - 1), DRY_HOOK, WOULD_K]], [{}, 'already-present', [LK.count(N), WOULD_K]],
       [null, 'would-seed', [...seeds.map((p) => would(p === ROTK ? LK.replaced(p) : LK.placed(p))), NOT_ACCEPTED_K, DRY_IF, WOULD_K], declined],

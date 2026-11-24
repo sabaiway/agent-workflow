@@ -2,9 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync, existsSync, chmodSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, syncBridgeMirror } from './sync-mirrors.mjs';
+import { REPO_ROOT, BRIDGE_DIRS, TEMPLATE_HARD_EXCLUDES, planAllMirrors, renderGateHookLists, syncBridgeMirror } from './sync-mirrors.mjs';
 import { makeRoot, seedFamily, run, SERVICES_REL, FACTS_FILE } from './sync-mirrors-fixture.mjs';
 import { UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS } from '../agent-workflow-kit/tools/velocity-profile.mjs';
+import { GATES, LANES } from '../agent-workflow-memory/references/scripts/shared/index.mjs';
 describe('in-sync tree', () => {
   it('--check exits 0 with zero would-be changes despite the hard-excluded divergence', () => {
     const root = makeRoot();
@@ -326,24 +327,25 @@ it('spec:services/S5 facts drift and absence are read-only checks, then canon an
 });
 describe('spec:init-project/S78 gate-hook-lists sync and refusals', () => {
   const HOOK_REL = 'agent-workflow-kit/references/hooks/gate-approve.mjs';
-  const BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs by scripts/sync-mirrors.mjs; do not edit';
+  const BEGIN = '// generated from agent-workflow-kit/tools/velocity-profile.mjs and agent-workflow-memory/references/scripts/shared/locations.mjs by scripts/sync-mirrors.mjs; do not edit';
   const END = '// end of the generated lists';
-  it('plans gate-hook-lists immediately after service-facts', async () => {
-    const { renderGateHookLists } = await import('./sync-mirrors.mjs');
-    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+  const REGION_START = [BEGIN, `export const GATES_REL = ${JSON.stringify(GATES)};`, `export const LANES_REL = ${JSON.stringify(LANES)};`];
+  it('plans gate-hook-lists immediately after service-facts', () => {
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES });
+    assert.deepEqual(render.split('\n', REGION_START.length), REGION_START);
     const root = makeRoot();
     seedFamily(root);
     assert.ok(readFileSync(join(root, HOOK_REL), 'utf8').includes(render));
     assert.deepEqual(planAllMirrors(root).slice(0, 2).map(({ family }) => family), ['service-facts', 'gate-hook-lists']);
   });
-  it('checks drift without writes, restores only the region, then checks clean', async () => {
-    const { renderGateHookLists } = await import('./sync-mirrors.mjs');
-    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+  it('checks drift without writes, restores only the region, then checks clean', () => {
+    const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES });
+    assert.deepEqual(render.split('\n', REGION_START.length), REGION_START);
     const root = makeRoot();
     seedFamily(root);
     const path = join(root, HOOK_REL);
     const original = readFileSync(path, 'utf8');
-    assert.ok(original.includes(render));
+    assert.equal(original.slice(original.indexOf(BEGIN), original.indexOf(END) + END.length), render);
     const expected = original.replace(BEGIN, `// preserved above the generated lists\n${BEGIN}`);
     const driftedRegion = render.replace(/^([ \t]*".*")(,?)$/m, '$1$2 ');
     assert.notEqual(driftedRegion, render);
@@ -356,8 +358,6 @@ describe('spec:init-project/S78 gate-hook-lists sync and refusals', () => {
     const apply = run([], root);
     assert.equal(apply.code, 0, apply.errText);
     assert.deepEqual(readFileSync(path), Buffer.from(expected));
-    const restored = readFileSync(path, 'utf8');
-    assert.equal(restored.slice(restored.indexOf(BEGIN), restored.indexOf(END) + END.length), render);
     const clean = run(['--check'], root);
     assert.equal(clean.code, 0, `${clean.text}\n${clean.errText}`);
   });
@@ -370,9 +370,9 @@ describe('spec:init-project/S78 gate-hook-lists sync and refusals', () => {
     ['two end lines', (path, text) => writeFileSync(path, text.replace(END, `${END}\n${END}`))],
     ['end before begin', (path, text) => writeFileSync(path, text.split('\n').map((line) => line === BEGIN ? END : line === END ? BEGIN : line).join('\n'))],
   ]) {
-    it(`refuses ${cell} in both modes before any service-facts write`, async () => {
-      const { renderGateHookLists } = await import('./sync-mirrors.mjs');
-      const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS);
+    it(`refuses ${cell} in both modes before any service-facts write`, () => {
+      const render = renderGateHookLists(UNIVERSAL_READONLY_ALLOWLIST, RUNTIME_RESIDUAL_FORMS, { GATES, LANES });
+      assert.deepEqual(render.split('\n', REGION_START.length), REGION_START);
       const root = makeRoot();
       seedFamily(root);
       const path = join(root, HOOK_REL);

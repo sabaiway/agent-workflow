@@ -22,8 +22,10 @@ import { shellQuoteArg } from './repo-lex.mjs';
 import { homeRelative, mergeAllowWrite } from './bridge-state-dirs.mjs';
 import { SOURCE_SIZE_DEFAULTS } from './source-size-config.mjs';
 import { THEMES, themePaths } from './project-rules/index.mjs';
-import { readFamily } from '../references/scripts/family.mjs';
-import { KIT_COMMANDS, KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
+import { planGitHooks } from './git-hooks.mjs';
+import { INSTALLER_ENTRY as installerEntry, deployedWriteOrder, installerClosure, readGitHookBundle } from './git-hooks-harness.test.mjs';
+import { KIT_COMMANDS } from '../references/scripts/run.mjs';
+import * as shared from '../references/scripts/shared/index.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 const services = await import('./services/index.mjs').catch(() => ({}));
 const leaf = await import('./state-block-hook.mjs').catch(() => ({}));
@@ -1071,47 +1073,70 @@ describe('spec:init-project/S29 the danger check over the three writers by proof
   });
 });
 
+const sharedIndexEntry = 'shared/index.mjs';
+const installerPath = `${shared.KIT_FOLDER}/${installerEntry}`;
+const deployGitHookFiles = (root, paths) => {
+  for (const path of paths) put(join(root, shared.KIT_FOLDER, path), readGitHookBundle(path));
+};
+const assertRunsDigest = (lines, argv) => {
+  const runs = lines.filter((line) => line.startsWith('runs: '));
+  assert.equal(runs.length, 1);
+  const match = /^runs: (.+) sha256:([0-9a-f]{64})$/.exec(runs[0]);
+  assert.ok(match, runs[0]);
+  assert.equal(match[1], argv.map(shellQuoteArg).join(' '));
+  return match[2];
+};
+const assertSharedEditStopsApply = (t, f, variant, flags) => {
+  const argv = ['node', installerPath, ...flags];
+  const preview = unchanged(f, () => danger.checkApply(variant, f));
+  const runsDigest = assertRunsDigest(preview.lines, argv);
+  fs.appendFileSync(join(f.root, shared.KIT_FOLDER, sharedIndexEntry), '// edited after the yes\n');
+  const spawn = t.mock.fn(() => ({ status: 0 }));
+  const cli = capture(f, spawn);
+  const code = unchanged(f, () => danger.main([...argvFor(variant, f), '--apply', '--expect', preview.digest], cli.io));
+  assert.deepEqual([code, spawn.mock.callCount()], [5, 0]);
+  assert.notEqual(assertRunsDigest(cli.lines, argv), runsDigest);
+  assert.deepEqual(cli.errors, []);
+};
+
 describe('spec:init-project/S36 the danger check over the two git-hook writers by proof', () => {
-  const bundle = join(TOOLS, '../references/scripts');
   // The kit mirror's deployed entries, each copied to scripts/agent-workflow/<path>.
-  const names = readFamily(bundle).filter(({ role }) => role === 'deployed').map(({ path }) => path);
-  const kit = 'scripts/agent-workflow';
-  const installer = `${kit}/git-hooks/install-git-hooks.mjs`;
-  const bytes = fs.readFileSync(join(bundle, 'git-hooks/install-git-hooks.mjs'));
+  const names = deployedWriteOrder();
+  const kit = shared.KIT_FOLDER;
+  const guardFlags = ['--commit-guard', join(TOOLS, 'commit-guard.mjs')];
   const kept = 'markdown-blocks.test.mjs';
   // Each folder a fresh copy creates, deepest first per path in copy order; scripts/ only while absent.
   const createdFolders = (scriptsStands) => [...new Set(names.flatMap((name) => {
-    const folders = [];
-    for (let at = dirname(`${kit}/${name}`); at !== '.'; at = dirname(at)) folders.push(at);
-    return folders;
+    const parts = `${kit}/${name}`.split('/');
+    return parts.slice(1).map((_, index) => parts.slice(0, index + 1).join('/')).reverse();
   }))].filter((folder) => !scriptsStands || folder !== 'scripts');
   const initGit = (f) => {
     const git = findOnPath('git', { getenv: process.env }).path;
     assert.ok(git, 'git is on the host PATH');
-    f.env.PATH += `:${dirname(git)}`;
-    makeFixtureRepo((args) => { const child = spawnSync('git', args, { env: hermeticGitEnv(process.env, f.home) }); assert.equal(child.status, 0, String(child.stderr)); }, f.root, ['-q']);
+    f.env = hermeticGitEnv({ ...f.env, PATH: `${f.env.PATH}:${dirname(git)}` }, f.home);
+    makeFixtureRepo((args) => { const child = spawnSync('git', args, { env: f.env }); assert.equal(child.status, 0, String(child.stderr)); }, f.root, ['-q']);
     return f;
   };
   const project = (t, deployed = false) => {
     const f = initGit(fixture(t));
-    if (deployed) for (const name of ['archives/archive-decisions.mjs', 'git-hooks/install-git-hooks.mjs']) put(join(f.root, kit, name), fs.readFileSync(join(bundle, name)));
+    if (deployed) deployGitHookFiles(f.root, names);
     return f;
   };
-  const runLine = (variant) => `runs: node ${installer}${variant === 'commit-guard'
-    ? ` --commit-guard ${shellQuoteArg(join(TOOLS, 'commit-guard.mjs'))}` : ''} sha256:${sha(bytes)}`;
-  const preview = (f, variant, lines) => unchanged(f, () => {
+  const preview = (f, variant, writes = []) => unchanged(f, () => {
     const result = danger.checkApply(variant, f);
     digestResult(result);
     assert.deepEqual(result.refused, []);
-    assert.deepEqual(result.lines, [...lines, `scope: within the declared scope of ${variant}`, `digest: ${result.digest}`]);
-    assert.equal(result.lines.some((line) => /^(?:\.claude\/|  |masked:)/.test(line)), false);
-    return result;
+    const argv = ['node', installerPath, ...(variant === 'commit-guard' ? guardFlags : [])];
+    assert.deepEqual(result.lines.slice(0, -3), writes);
+    assert.equal(result.lines.at(-2), `scope: within the declared scope of ${variant}`);
+    const runsDigest = assertRunsDigest(result.lines.slice(-3, -2), argv);
+    return { ...result, runsDigest };
   });
   for (const standing of [false, true]) it(`enforcement: fresh git root, kept test ${standing}, ordered bundled writes and run`, (t) => {
     const f = project(t);
     if (standing) put(join(f.root, 'scripts', kept), 'foreign bytes\n');
-    preview(f, 'enforcement', [...names.map((name) => `writes: ${kit}/${name} sha256:${sha(fs.readFileSync(join(bundle, name)))}`),
-      ...createdFolders(standing).map((folder) => `writes: ${folder}/ created`), runLine('enforcement')]);
+    preview(f, 'enforcement', [...names.map((name) => `writes: ${kit}/${name} sha256:${sha(readGitHookBundle(name))}`),
+      ...createdFolders(standing).map((folder) => `writes: ${folder}/ created`)]);
   });
   it('enforcement: character-device settings mask does not halt main or print masked', (t) => {
     const f = project(t);
@@ -1135,28 +1160,34 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
   });
   it('enforcement: deployed root always prints the installer run with a stable digest', (t) => {
     const f = project(t, true);
-    assert.deepEqual(preview(f, 'enforcement', [runLine('enforcement')]), preview(f, 'enforcement', [runLine('enforcement')]));
+    assert.deepEqual(preview(f, 'enforcement'), preview(project(t, true), 'enforcement'));
   });
   it('commit-guard: deployed root prints only its guarded run; absent installer exits 3 without spawning', (t) => {
     const f = project(t, true);
-    preview(f, 'commit-guard', [runLine('commit-guard')]);
-    fs.unlinkSync(join(f.root, installer));
+    preview(f, 'commit-guard');
+    fs.unlinkSync(join(f.root, installerPath));
     unchanged(f, () => {
       const spawn = t.mock.fn(() => { throw new Error('absent installer spawned'); });
       assert.equal(danger.main(argvFor('commit-guard', f), capture(f, spawn).io), 3);
       assert.equal(spawn.mock.callCount(), 0);
     });
   });
+  it('commit-guard: shared/index.mjs edited after the preview exits 5 without spawning', (t) => {
+    assertSharedEditStopsApply(t, project(t, true), 'commit-guard', guardFlags);
+  });
   for (const outside of ['copy', 'runs']) it(`enforcement: planted ${outside} outside scope exits 1, nothing written`, (t) => {
     const f = project(t);
-    const plan = { root: f.root, variant: 'enforcement', scriptsCreated: false,
-      copies: outside === 'copy' ? [{ name: 'x.mjs', path: join(f.root, 'elsewhere/x.mjs'), action: 'created', bytes }] : [],
-      runs: { argv: ['node', join(f.root, installer)], shown: ['node', outside === 'runs' ? 'scripts/other.mjs' : installer], bytes } };
+    const planned = planGitHooks({ root: f.root, variant: 'enforcement' });
+    const shown = ['node', outside === 'runs' ? 'scripts/other.mjs' : installerPath];
+    const plan = { ...planned,
+      copies: outside === 'copy' ? [{ rel: 'elsewhere/x.mjs', path: join(f.root, 'elsewhere/x.mjs'), action: 'created',
+        bytes: readGitHookBundle(installerEntry) }] : [],
+      runs: { ...planned.runs, argv: ['node', join(f.root, shown[1])], shown } };
     unchanged(f, () => {
       const spawn = t.mock.fn(() => { throw new Error('refused plan spawned'); });
       const cli = capture(f, spawn);
       assert.equal(danger.main(argvFor(plan.variant, f), { ...cli.io, planGitHooks: () => plan }), 1);
-      assert.ok(cli.lines.includes(`runs: ${plan.runs.shown.map(shellQuoteArg).join(' ')} sha256:${sha(plan.runs.bytes)}`));
+      assertRunsDigest(cli.lines, shown);
       assert.ok(cli.lines.some((line) => line.startsWith(outside === 'copy' ? 'refused: elsewhere/x.mjs ' : 'refused: runs: ')));
       assert.ok(cli.lines.includes('nothing written'));
       assert.equal(spawn.mock.callCount(), 0);
@@ -1174,17 +1205,17 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
     const paths = writes.map((line) => line.slice(8).replace(/ sha256:[0-9a-f]{64}$|\/ created$/g, ''));
     const changed = [...new Set([...Object.keys(before), ...Object.keys(after)])]
       .filter((path) => (!path.startsWith('.git/') || path === '.git/hooks/pre-commit') && JSON.stringify(before[path]) !== JSON.stringify(after[path]));
-    assert.deepEqual(changed.sort(), [...new Set([...paths, 'scripts', '.git/hooks/pre-commit'])].sort());
+    assert.deepEqual(changed.sort(), [...paths, '.git/hooks/pre-commit'].sort());
     for (const line of writes.filter((line) => line.includes(' sha256:'))) {
       const [path, hash] = line.slice(8).split(' sha256:');
       assert.equal(sha(fs.readFileSync(join(copy.root, path))), hash);
     }
-    assert.equal(result.lines.find((line) => line.startsWith('runs: ')), `runs: node ${installer} sha256:${sha(fs.readFileSync(join(copy.root, installer)))}`);
+    assert.equal(assertRunsDigest(result.lines, ['node', installerPath]), preview(copy, 'enforcement').runsDigest);
   });
   it('enforcement: installer edited after the yes exits 5 without spawning', (t) => {
     const f = project(t, true);
-    const result = preview(f, 'enforcement', [runLine('enforcement')]);
-    fs.appendFileSync(join(f.root, installer), '// edited after the yes\n');
+    const result = preview(f, 'enforcement');
+    fs.appendFileSync(join(f.root, installerPath), '// edited after the yes\n');
     unchanged(f, () => {
       const spawn = t.mock.fn(() => { throw new Error('changed installer spawned'); });
       assert.equal(danger.main([...argvFor('enforcement', f), '--apply', '--expect', result.digest], capture(f, spawn).io), 5);
@@ -1208,17 +1239,19 @@ describe('spec:init-project/S36 the danger check over the two git-hook writers b
     const f = project(t, true);
     const cli = capture(f, () => { throw new Error('preview spawned'); });
     assert.equal(unchanged(f, () => danger.main(argvFor(variant, f), cli.io)), 0);
-    assert.deepEqual(cli.lines, preview(f, variant, [runLine(variant)]).lines);
+    assert.deepEqual(cli.lines, preview(f, variant).lines);
     assert.deepEqual(cli.errors, []);
   });
 });
 
 describe('spec:init-project/S63 the danger check over hook-checks by proof', () => {
   const [ambient, reset] = [{ ...process.env }, (keep, env) => { for (const key of Object.keys(process.env)) if (!keep(key)) delete process.env[key]; Object.assign(process.env, env); }];
-  before(() => reset((key) => !/^git_/i.test(key), { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }));
+  before(() => reset((key) => !/^git_/i.test(key) && key !== 'NODE_TEST_CONTEXT',
+    { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }));
   after(() => reset((key) => key in ambient, ambient));
-  const [INSTALLER, RULE] = ['scripts/agent-workflow/git-hooks/install-git-hooks.mjs', '# Project layout\n'];
-  const [bundled, prior] = ['references/scripts/git-hooks/install-git-hooks.mjs', 'test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt'].map((path) => fs.readFileSync(join(TOOLS, '..', path)));
+  const RULE = '# Project layout\n';
+  const bundled = readGitHookBundle(installerEntry);
+  const prior = fs.readFileSync(join(TOOLS, '../test/fixtures/script-priors/4.0.0/install-git-hooks.mjs.txt'));
   const [rules, layout] = [['--rules-check', join(TOOLS, 'project-rules/rules-cli.mjs')], ['--layout-check', join(TOOLS, 'source-size-check.mjs')]];
   const deployment = (t, installer, { theme = true, config } = {}) => {
     const f = fixture(t);
@@ -1226,55 +1259,90 @@ describe('spec:init-project/S63 the danger check over hook-checks by proof', () 
     delete f.env.NODE_TEST_CONTEXT;
     makeFixtureRepo((args) => assert.equal(spawnSync('git', args, { env: f.env }).status, 0), f.root, ['-q']);
     const themed = theme ? { ...Object.fromEntries(THEMES.flatMap(({ name }) => [themePaths(name).kit, themePaths(name).effective]).map((path) => [path, RULE])), [themePaths(THEMES[0].name).record]: JSON.stringify({ schema: 1, themes: Object.fromEntries(THEMES.map(({ name }) => [name, { kit: sha(RULE), local: 'absent', effective: sha(RULE) }])) }) } : {};
-    for (const [path, bytes] of Object.entries({ [INSTALLER]: installer, 'docs/ai/source-size.json': config, ...themed })) if (bytes !== undefined) put(join(f.root, path), bytes);
+    if (installer === bundled) deployGitHookFiles(f.root, installerClosure());
+    else put(join(f.root, installerPath), installer);
+    for (const [path, bytes] of Object.entries({ 'docs/ai/source-size.json': config, ...themed })) if (bytes !== undefined) put(join(f.root, path), bytes);
     return f;
   };
-  const runs = (flags, bytes = bundled) => `runs: ${['node', INSTALLER, ...flags].map(shellQuoteArg).join(' ')} sha256:${sha(bytes)}`;
+  const runsArgv = (flags) => ['node', installerPath, ...flags];
+  const plannedHookChecks = (f) => planGitHooks({ root: f.root, variant: 'hook-checks' });
+  const plantedRuns = (f, plan, flags) => ({ ...plan.runs, argv: ['node', join(f.root, installerPath), ...flags], shown: runsArgv(flags) });
+  const assertHookChecksPreview = (lines, flags) => {
+    assert.deepEqual(lines.slice(1, -1), ['scope: within the declared scope of hook-checks']);
+    assert.match(lines.at(-1), /^digest: [0-9a-f]{64}$/);
+    return assertRunsDigest(lines.slice(0, 1), runsArgv(flags));
+  };
   const main = (f, argv = [], io = {}, cli = capture(f, () => { throw new Error('spawned'); })) =>
     ({ code: unchanged(f, () => danger.main([...argvFor('hook-checks', f), ...argv], { ...cli.io, ...io })), ...cli });
   const schema1 = { config: JSON.stringify({ schema: 1, defaults: SOURCE_SIZE_DEFAULTS, roots: ['src'], exclude: [], extensions: ['.mjs'] }) };
   describe('spec:init-project/S76 the installer\'s bare runs: line admitted for hook-checks', () => {
     it('admits the bare runs argv at exit 0 and refuses another flag or tool path at exit 1', (t) => {
-      const f = deployment(t, bundled); const plan = (flags) => ({ root: f.root, variant: 'hook-checks', roles: [], copies: [], runs: { argv: ['node', join(f.root, INSTALLER), ...flags], shown: ['node', INSTALLER, ...flags], bytes: bundled } });
-      for (const [flags, code] of [[['--other'], 1], [['--rules-check', '/elsewhere/rules-cli.mjs'], 1], [[], 0]]) { const result = main(f, [], { planGitHooks: () => plan(flags) }); assert.equal(result.code, code, flags.join(' ')); assert.ok(result.lines.includes(runs(flags))); assert.ok(result.lines.includes(code ? 'nothing written' : 'scope: within the declared scope of hook-checks')); }
+      const f = deployment(t, bundled);
+      const planned = plannedHookChecks(f);
+      for (const [flags, code] of [[['--other'], 1], [['--rules-check', '/elsewhere/rules-cli.mjs'], 1], [[], 0]]) {
+        const plan = { ...planned, roles: [], runs: plantedRuns(f, planned, flags) };
+        const result = main(f, [], { planGitHooks: () => plan });
+        assert.equal(result.code, code, flags.join(' '));
+        assertRunsDigest(result.lines, runsArgv(flags));
+        assert.ok(result.lines.includes(code ? 'nothing written' : 'scope: within the declared scope of hook-checks'));
+      }
     });
     it('the real check on a copy admits the flat switch and its apply rewrites only the hook to the kit-command lines', (t) => {
+      const { KIT_COMMAND } = shared;
+      assert.ok(KIT_COMMAND, 'KIT_COMMAND is absent from shared/index.mjs');
       const source = deployment(t, bundled, { theme: false, ...schema1 }); const f = copyFixture(t, source); f.env = hermeticGitEnv(source.env, f.home);
       put(join(f.root, 'scripts/install-git-hooks.mjs'), fs.readFileSync(join(TOOLS, '../test/fixtures/script-priors/8.4.0/install-git-hooks.mjs.txt'))); assert.equal(spawnSync(process.execPath, [join(f.root, 'scripts/install-git-hooks.mjs')], { cwd: f.root, env: f.env }).status, 0);
-      for (const path of [KIT_COMMAND_PATH, ...Object.values(KIT_COMMANDS).map((target) => `scripts/agent-workflow/${target}`)]) put(join(f.root, path), fs.readFileSync(join(TOOLS, '../references/scripts', path.slice('scripts/agent-workflow/'.length))));
-      const before = snapshot(f); const result = main(f); assert.deepEqual([result.code, result.lines.slice(0, -1)], [0, [runs([]), 'scope: within the declared scope of hook-checks']]); assert.equal(danger.main([...argvFor('hook-checks', f), '--apply', '--expect', result.lines.at(-1).slice(8)], capture(f).io), 0);
-      const after = snapshot(f); assert.deepEqual(Object.keys(after).filter((path) => JSON.stringify(before[path]) !== JSON.stringify(after[path])), ['.git/hooks/pre-commit']); const hook = fs.readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8').split('\n'); for (const line of ['docs-size', 'docs-size --check-index', ...['changelog', 'issues', 'decisions'].map((name) => `archive-${name} --check`)]) assert.ok(hook.includes(`node ${KIT_COMMAND_PATH} ${line}`), line);
+      deployGitHookFiles(f.root, [KIT_COMMAND.slice(shared.KIT_FOLDER.length + 1), ...Object.values(KIT_COMMANDS)]);
+      const before = snapshot(f);
+      const result = main(f);
+      assert.equal(result.code, 0);
+      assertHookChecksPreview(result.lines, []);
+      assert.equal(danger.main([...argvFor('hook-checks', f), '--apply', '--expect', result.lines.at(-1).slice(8)], capture(f).io), 0);
+      const after = snapshot(f);
+      assert.deepEqual(Object.keys(after).filter((path) => JSON.stringify(before[path]) !== JSON.stringify(after[path])), ['.git/hooks/pre-commit']);
+      const hook = fs.readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8').split('\n');
+      for (const line of ['docs-size', 'docs-size --check-index', ...['changelog', 'issues', 'decisions'].map((name) => `archive-${name} --check`)]) assert.ok(hook.includes(`node ${KIT_COMMAND} ${line}`), line);
     });
   });
   for (const [title, installer, opts, flags] of [['prior, both lines', prior, {}, [...rules, ...layout]], ['current, both lines', bundled, {}, [...rules, ...layout]],
     ['current, the rules line alone', bundled, schema1, rules], ['prior, the layout line alone', prior, { theme: false }, layout]]) it(`${title}: the runs line alone, scope within, the CLI accepts --variant hook-checks, edited after the yes exit 5`, (t) => {
     const f = deployment(t, installer, opts);
     const result = unchanged(f, () => danger.checkApply('hook-checks', f));
-    assert.deepEqual(result.lines, [runs(flags, installer), 'scope: within the declared scope of hook-checks', `digest: ${result.digest}`]);
+    digestResult(result);
+    const digest = assertHookChecksPreview(result.lines, flags);
     const cli = main(f);
     assert.deepEqual([cli.code, cli.lines, cli.errors], [0, result.lines, []]);
-    fs.appendFileSync(join(f.root, INSTALLER), '// edited after the yes\n');
-    assert.equal(main(f, ['--apply', '--expect', result.digest]).code, 5);
+    fs.appendFileSync(join(f.root, installerPath), '// edited after the yes\n');
+    const changed = main(f, ['--apply', '--expect', result.digest]);
+    assert.equal(changed.code, 5);
+    assert.notEqual(assertHookChecksPreview(changed.lines, flags), digest);
+  });
+  it('hook-checks: shared/index.mjs edited after the preview exits 5 without spawning', (t) => {
+    assertSharedEditStopsApply(t, deployment(t, bundled), 'hook-checks', [...rules, ...layout]);
   });
   for (const [title, { flags = rules, write }] of [
     ['another flag', { flags: ['--commit-guard', join(TOOLS, 'commit-guard.mjs')] }], ['another tool path', { flags: ['--rules-check', '/elsewhere/rules-cli.mjs'] }],
-    ['the lines out of order', { flags: [...layout, ...rules] }], ['a planted write of the installer', { write: INSTALLER }], ['a planted write of another path', { write: 'scripts/other.mjs' }]]) it(`refuses ${title}, exit 1, nothing spawned`, (t) => {
+    ['the lines out of order', { flags: [...layout, ...rules] }], ['a planted write of the installer', { write: installerPath }], ['a planted write of another path', { write: 'scripts/other.mjs' }]]) it(`refuses ${title}, exit 1, nothing spawned`, (t) => {
     const f = deployment(t, prior);
-    const plan = { root: f.root, variant: 'hook-checks', scriptsCreated: false, roles: ['rules'],
-      copies: write ? [{ name: basename(write), path: join(f.root, write), action: 'created', bytes: bundled }] : [],
-      runs: { argv: ['node', join(f.root, INSTALLER), ...flags], shown: ['node', INSTALLER, ...flags], bytes: prior } };
+    const planned = plannedHookChecks(f);
+    const plan = { ...planned,
+      copies: write ? [{ rel: write, path: join(f.root, write), action: 'created', bytes: bundled }] : [],
+      runs: plantedRuns(f, planned, flags) };
     const cli = main(f, [], { planGitHooks: () => plan });
     assert.deepEqual([cli.code, cli.lines.filter((line) => line.startsWith('refused: ')).map((line) => line.startsWith(`refused: ${write ?? 'runs:'} `)), cli.lines.at(-2)], [1, [true], 'nothing written']);
-    assert.ok(cli.lines.includes(runs(flags, prior)));
+    assertRunsDigest(cli.lines, runsArgv(flags));
   });
   it('the real apply over the current installer writes nothing the leaf placed and arms the printed lines; the next check is the leaf\'s refusal, exit 3', (t) => {
-    const f = deployment(t, bundled);
+    const source = deployment(t, bundled);
+    const f = copyFixture(t, source);
+    f.env = hermeticGitEnv(source.env, f.home);
     const [result, earlier] = [unchanged(f, () => danger.checkApply('hook-checks', f)), snapshot(f)];
+    assert.equal(assertHookChecksPreview(result.lines, [...rules, ...layout]),
+      assertHookChecksPreview(unchanged(source, () => danger.checkApply('hook-checks', source)).lines, [...rules, ...layout]));
     assert.equal(danger.main([...argvFor('hook-checks', f), '--apply', '--expect', result.digest], capture(f).io), 0);
     const later = snapshot(f);
     assert.deepEqual(Object.keys(later).filter((path) => (!path.startsWith('.git/') || path === '.git/hooks/pre-commit')
       && JSON.stringify(earlier[path]) !== JSON.stringify(later[path])).sort(), ['.git/hooks/pre-commit']);
-    assert.equal(result.lines.some((line) => line.startsWith('writes: ')), false);
     const hook = fs.readFileSync(join(f.root, '.git/hooks/pre-commit'), 'utf8').split('\n');
     for (const [flag, path] of [rules, layout]) assert.ok(hook.includes(`node "${path}" --check # ${flag.slice(2)}`), flag);
     const next = main(f);

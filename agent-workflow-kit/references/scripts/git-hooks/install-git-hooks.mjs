@@ -8,8 +8,8 @@
 // stale archive entries never reach a commit. The hook runs no suite.
 // First after `set -e` it runs the project's own `scripts/pre-commit.local` with bash when present.
 //
-// The project root is three levels above this file's own folder (scripts/agent-workflow/git-hooks/):
-// the installer imports nothing, so the bytes a danger check binds are the bytes the run executes.
+// The installer gets its project root from findProjectRoot through the shared index.
+// The git-hook items bind the installer and every deployed path it may load (spec init-project, part git-hooks).
 //
 // The hooks location comes from git's OWN answer (`git rev-parse --git-path hooks`) — a linked
 // worktree resolves ITS OWN hooks path (its `.git` is a FILE; a hardcoded `.git/hooks` would
@@ -40,13 +40,12 @@
 
 import { writeFile, readFile, mkdir, chmod } from 'node:fs/promises';
 import { existsSync, realpathSync } from 'node:fs';
-import { dirname, resolve, basename } from 'node:path';
+import { resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { KIT_COMMAND, LOCAL_HOOK, findProjectRoot } from '../shared/index.mjs';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const ROOT = resolve(__dirname, '..', '..', '..');
+const ROOT = findProjectRoot(import.meta.url);
 
 export const MAGIC_MARKER = '# agent-workflow:install-git-hooks.mjs';
 const MARKER_TAIL = ':install-git-hooks.mjs';
@@ -160,13 +159,13 @@ ${MAGIC_MARKER}
 # never reach a commit.
 set -e
 # Your own commit checks go in scripts/pre-commit.local; it runs first, with bash, when present.
-if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi
-if [ -f scripts/agent-workflow/run.mjs ]; then
-node scripts/agent-workflow/run.mjs docs-size
-node scripts/agent-workflow/run.mjs docs-size --check-index
-node scripts/agent-workflow/run.mjs archive-changelog --check
-node scripts/agent-workflow/run.mjs archive-issues --check
-node scripts/agent-workflow/run.mjs archive-decisions --check
+if [ -f ${LOCAL_HOOK} ]; then bash ${LOCAL_HOOK}; fi
+if [ -f ${KIT_COMMAND} ]; then
+node ${KIT_COMMAND} docs-size
+node ${KIT_COMMAND} docs-size --check-index
+node ${KIT_COMMAND} archive-changelog --check
+node ${KIT_COMMAND} archive-issues --check
+node ${KIT_COMMAND} archive-decisions --check
 else
   echo "scripts/agent-workflow/run.mjs is not in this checkout — the kit's docs and archive checks are skipped for this commit; merge the commit that adds scripts/agent-workflow/, or run the kit's upgrade in this checkout"
 fi
@@ -214,6 +213,7 @@ const isDirectRun = (() => {
   const invoked = process.argv[1];
   if (!invoked) return false;
   try {
+    const __filename = fileURLToPath(import.meta.url);
     return realpathSync(invoked) === realpathSync(__filename);
   } catch {
     return false;

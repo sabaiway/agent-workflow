@@ -184,9 +184,9 @@ const FORMS = Object.freeze({
   enforcement: createForm('git-hooks.mjs',
     ['--enforcement', '--cwd', '<root>'], ['--apply', '--enforcement', '--cwd', '<root>'], getEnforcementPaths),
   'commit-guard': createForm('git-hooks.mjs',
-    ['--commit-guard', '--cwd', '<root>'], ['--apply', '--commit-guard', '--cwd', '<root>'], getGuardPaths),
+    ['--commit-guard', '--cwd', '<root>'], ['--apply', '--commit-guard', '--cwd', '<root>'], getGuardPaths, false, null, true),
   'hook-checks': createForm('git-hooks.mjs',
-    ['--hook-checks', '--cwd', '<root>'], ['--apply', '--hook-checks', '--cwd', '<root>'], getGuardPaths),
+    ['--hook-checks', '--cwd', '<root>'], ['--apply', '--hook-checks', '--cwd', '<root>'], getGuardPaths, false, null, true),
   'worktrees-dir': createForm('velocity-profile.mjs',
     ['--worktrees', '--cwd', '<root>'], ['--apply', '--worktrees', '--cwd', '<root>'], LOCAL_SETTINGS_WRITES, false, null, true),
   'worktrees-dir.home': Object.freeze({

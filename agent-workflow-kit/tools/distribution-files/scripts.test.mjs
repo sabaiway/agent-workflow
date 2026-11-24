@@ -30,8 +30,8 @@ const OLD = (n) => Buffer.from(`// an earlier ${n}\n`);
 const priorsWith = (...names) => [...SCRIPT_PRIORS, ...names.map((n) => ({ file: SRC.get(n) ?? n, digest: sha(OLD(n)) }))];
 const rel = (n) => `scripts/${n}`;
 const channelOf = (n) => (INSTALLERS.has(n) ? LOCAL_HOOK_CHANNEL : SCRIPT_CHANNEL);
-// The kit folder, read inside each cell from the kit mirror's manifest and node-evidence: the family (the deployed entries less the
-// spec layer's) in write order — the installer, then each file after every family file its bundled relative imports name, else by path.
+// The kit folder, read from the mirror's manifest and node-evidence: each family import before its importer,
+// then code-unit order by manifest path among available files. Revision 31 gives the installer its shared index import.
 const IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
 let layout;
 const kitLayout = () => (layout ??= (async () => {
@@ -40,9 +40,14 @@ const kitLayout = () => (layout ??= (async () => {
   const kit = posix.relative('scripts', KIT_SCRIPTS_DIR), installer = posix.relative(KIT_SCRIPTS_DIR, INSTALLER_REL);
   const at = (path) => { assert.ok(deployed.some((e) => e.path === path), `${path} is a deployed entry of the manifest`); SRC.set(`${kit}/${path}`, path); return `${kit}/${path}`; };
   const importsOf = (path) => [...readFileSync(join(BUNDLE, path), 'utf8').matchAll(IMPORT)].map((m) => posix.join(posix.dirname(path), m[1]));
-  const [order, rest] = [[installer], deployed.filter((e) => !spec(e) && e.path !== 'run.mjs' && e.path !== installer).map((e) => e.path)];
-  for (let next; (next = rest.filter((p) => importsOf(p).every((d) => !rest.includes(d))).sort()[0]);) order.push(...rest.splice(rest.indexOf(next), 1));
-  assert.deepEqual(rest, [], "the family's imports close no cycle");
+  const order = [], rest = deployed.filter((e) => !spec(e) && e.path !== 'run.mjs').map((e) => e.path).sort();
+  const imports = new Map(rest.map((path) => [path, new Set(importsOf(path))]));
+  imports.get(installer).add('shared/index.mjs');
+  while (rest.length > 0) {
+    const next = rest.findIndex((path) => [...imports.get(path)].every((dependency) => !rest.includes(dependency)));
+    assert.notEqual(next, -1, "the family's imports close no cycle");
+    order.push(...rest.splice(next, 1));
+  }
   INSTALLERS.add(at(installer));
   return { dir: KIT_SCRIPTS_DIR, kit, at, order: order.map(at), last: at(order.at(-1)), installer: at(installer), pairs: deployed.filter(spec).map((e) => at(e.path)),
     would: `ADR store: ${rel(at('archives/archive-decisions.mjs'))} --ensure-current would run after the writes, bringing the store current or writing nothing when it already is` };
@@ -190,28 +195,28 @@ describe('spec:distribution-files/S16 the failure cells and the hook-run line', 
   // A folder is named with or without its trailing slash; a file by its deployed path.
   for (const [kind, cause, at, says, setup] of rows) it(`${kind}: ${cause} naming it, no entries field, nothing written, a link target untouched`, async () => {
     const K = await kitLayout();
-    withTree({ [K.installer]: EDIT(K.installer), [K.last]: null }, (dir) => {
+    withTree({ [K.order[0]]: EDIT(K.order[0]), [K.last]: null }, (dir) => {
       const before = snapshot(dir), r = run(dir, { would: K.would, kitRoot: existsSync(join(dir, 'kit')) ? join(dir, 'kit') : KIT });
       const named = [`${at(K)}:`, `${at(K)}/:`].some((head) => r.lines[0].startsWith(`${cause} — ${head} ${says}`));
       assert.deepEqual([r.token, 'entries' in r, named, snapshot(dir)], ['failed', false, true, before], r.lines.join('\n'));
-    }, { family: K.order, setup: (dir) => setup(K, dir) });
+    }, { family: K.order, setup: (dir) => { mkdirSync(dirname(join(dir, rel(K.last))), { recursive: true }); setup(K, dir); } });
   });
-  it('a write refused at the second write: write-refused, the installer written and not rolled back, the later files not refreshed, replaced or placed, PARTWAY counting 1', async () => {
-    const K = await kitLayout();
+  it('a write refused at the second write: write-refused, the first file written and not rolled back, the later files not refreshed, replaced or placed, PARTWAY counting 1', async () => {
+    const K = await kitLayout(), [first] = K.order;
     const [blocks, index, caps, issues] = ['shared/markdown-blocks.mjs', 'shared/index.mjs', 'archives/archive-caps.mjs', 'archives/archive-issues.mjs'].map(K.at);
-    const bodies = { [K.installer]: OLD(K.installer), [blocks]: OLD(blocks), [index]: OLD(index), [caps]: EDIT(caps), [issues]: null };
+    const bodies = { [first]: OLD(first), [blocks]: OLD(blocks), [index]: OLD(index), [caps]: EDIT(caps), [issues]: null, [K.installer]: OLD(K.installer) };
     withTree(bodies, (dir) => {
-      const r = run(dir, { would: K.would, deps: { ...recorder(dir, { refuseAt: 2 }).deps, priors: priorsWith(K.installer, blocks, index) } });
-      assert.deepEqual({ token: r.token, entries: 'entries' in r, lines: r.lines }, { token: 'failed', entries: false, lines: [`write-refused — ${rel(blocks)}: EACCES: refused`, L.refreshed(K.installer),
+      const r = run(dir, { would: K.would, deps: { ...recorder(dir, { refuseAt: 2 }).deps, priors: priorsWith(first, blocks, index, K.installer) } });
+      assert.deepEqual({ token: r.token, entries: 'entries' in r, lines: r.lines }, { token: 'failed', entries: false, lines: [`write-refused — ${rel(blocks)}: EACCES: refused`, L.refreshed(first),
         `${rel(blocks)}: ${SHIPPED} — not refreshed; its write was refused (above)`, `${rel(index)}: ${SHIPPED} — not refreshed; the run stopped before it`, `${rel(caps)}: ${DIFFERS} — not replaced; the run stopped before it; an edit meant to last goes in ${SCRIPT_CHANNEL}`,
-        `${rel(issues)}: absent — not placed; the run stopped before it`, L.count(K.order.length - 5, K.dir), HOOK, L.partway(1)] });
-      holds(dir, { ...bodies, [K.installer]: bundled(K.installer) });
+        `${rel(issues)}: absent — not placed; the run stopped before it`, `${rel(K.installer)}: ${SHIPPED} — not refreshed; the run stopped before it`, L.count(K.order.length - 6, K.dir), HOOK, L.partway(1)] });
+      holds(dir, { ...bodies, [first]: bundled(first) });
       assert.deepEqual(Object.keys(snapshot(dir)).filter((p) => p.endsWith('.tmp')), [], 'no temp file left');
     }, { family: K.order });
   });
   it('the hook-run line: once on a run that wrote, failed or not; none on one that wrote none; once on a dry run that would write', async () => {
-    const K = await kitLayout();
-    const [one, two] = [{ [K.installer]: EDIT(K.installer) }, { [K.installer]: EDIT(K.installer), [K.order[1]]: EDIT(K.order[1]) }];
+    const K = await kitLayout(), [first, second] = K.order;
+    const one = { [first]: EDIT(first) }, two = { ...one, [second]: EDIT(second) };
     const rows = [['a plain run that wrote', one, () => ({}), 1], ['a plain run that wrote none', {}, () => ({}), 0],
       ['a failed run after one write', two, (dir) => ({ deps: recorder(dir, { refuseAt: 2 }).deps }), 1], ['a failed run before any write', two, (dir) => ({ deps: recorder(dir, { refuseAt: 1 }).deps }), 0],
       ['a dry run that would write', one, () => ({ dryRun: true }), 1], ['a dry run that would write none', {}, () => ({ dryRun: true }), 0]];
@@ -222,10 +227,10 @@ describe('spec:distribution-files/S16 the failure cells and the hook-run line', 
 
 describe('spec:distribution-files/S18 one token precedence over the plain and dry runs', () => {
   it('adjacent cells, one table: failed, seeded, refreshed, already-present; would-seed and would-refresh on a dry run; never pending or customized-preserved', async () => {
-    const K = await kitLayout(), [c, i] = ['archives/archive-caps.mjs', 'archives/archive-issues.mjs'].map(K.at), priors = priorsWith(K.installer);
+    const K = await kitLayout(), [first] = K.order, [c, i] = ['archives/archive-caps.mjs', 'archives/archive-issues.mjs'].map(K.at), priors = priorsWith(K.installer);
     const [plain, dry, caps, installer, absent] = [() => ({ deps: { priors } }), () => ({ dryRun: true, deps: { priors } }), { [c]: EDIT(c) }, { [K.installer]: OLD(K.installer) }, { [i]: null }];
     const rows = [
-      ['failed over seeded: the placement refused after the installer was refreshed', { ...installer, ...absent }, (dir) => ({ deps: { ...recorder(dir, { refuseAt: 2 }).deps, priors } }), 'failed'],
+      ['failed over seeded: the installer refresh refused after a placement', { [first]: null, ...installer }, (dir) => ({ deps: { ...recorder(dir, { refuseAt: 2 }).deps, priors } }), 'failed', first],
       ['seeded over refreshed: an absent file placed beside a replaced edit', { ...caps, ...absent }, plain, 'seeded'],
       ['refreshed by a replaced edit alone', caps, plain, 'refreshed'],
       ['refreshed over already-present', installer, plain, 'refreshed'],
@@ -233,40 +238,43 @@ describe('spec:distribution-files/S18 one token precedence over the plain and dr
       ['would-seed in the place of seeded on a dry run', { ...caps, ...absent }, dry, 'would-seed'],
       ['would-refresh in the place of refreshed on a dry run', caps, dry, 'would-refresh'],
     ];
-    const got = rows.map(([label, bodies, opts]) => [label, withTree(bodies, (dir) => run(dir, { would: K.would, ...opts(dir) }).token, { family: K.order })]);
+    const got = rows.map(([label, bodies, opts, , placed]) => [label, withTree(bodies, (dir) => {
+      const { token } = run(dir, { would: K.would, ...opts(dir) });
+      if (placed) holds(dir, { [placed]: bundled(placed) });
+      return token;
+    }, { family: K.order })]);
     assert.deepEqual(got, rows.map(([label, , , token]) => [label, token]));
   });
 });
 
 describe('spec:distribution-files/S19 write order through a recording writer', () => {
-  // Every family file but the last due, by turns edited, on a catalogued earlier body and absent; the last stays current.
-  const tree = (K, bodies = Object.fromEntries(K.order.slice(0, -1).map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]]))) => ({ bodies, priors: priorsWith(...K.order), due: K.order.filter((n) => n in bodies) });
-  it("one plain run's refreshes, replacements and placements: the installer, then each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
-    const K = await kitLayout(), { bodies, priors, due } = tree(K);
-    assert.deepEqual(K.order.slice(0, 7).map((n) => SRC.get(n)), [SRC.get(K.installer), 'archives/whole-write.mjs', 'shared/locations.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
-    assert.deepEqual(K.order.slice(7).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
+  const tree = (K) => ({ bodies: Object.fromEntries(K.order.map((n, i) => [n, [EDIT(n), OLD(n), null][i % 3]])), priors: priorsWith(...K.order) });
+  it("one plain run's refreshes, replacements and placements: each family file after every family file it imports, in code-unit order of its manifest path otherwise", async () => {
+    const K = await kitLayout(), { bodies, priors } = tree(K);
+    assert.deepEqual(K.order.slice(0, 6).map((n) => SRC.get(n)), ['archives/whole-write.mjs', 'shared/locations.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs', 'shared/verdict-block.mjs', 'shared/index.mjs']);
+    assert.deepEqual(K.order.slice(6, -1).filter((n) => !SRC.get(n).startsWith('archives/')), [], 'then the archives');
+    assert.equal(K.last, K.installer);
     const order = withTree(bodies, (dir) => { const { order: written, deps } = recorder(dir); run(dir, { would: K.would, deps: { ...deps, priors } }); return written; }, { family: K.order });
-    assert.deepEqual(order, due);
+    assert.deepEqual(order, K.order);
   });
   it('a write refused partway leaves every later file unwritten', async () => {
-    const K = await kitLayout(), { bodies, priors, due } = tree(K);
+    const K = await kitLayout(), { bodies, priors } = tree(K);
     withTree(bodies, (dir) => {
       const [before, { order, deps }] = [snapshot(dir), recorder(dir, { refuseAt: 3 })], now = (run(dir, { would: K.would, deps: { ...deps, priors } }), snapshot(dir));
-      assert.deepEqual([order, due.slice(2).filter((n) => now[join('scripts', n)] !== before[join('scripts', n)]), SRC.get(due[2])], [due.slice(0, 3), [], 'shared/locations.mjs']);
+      assert.deepEqual([order, K.order.slice(2).filter((n) => now[join('scripts', n)] !== before[join('scripts', n)]), SRC.get(K.order[2])], [K.order.slice(0, 3), [], 'shared/markdown-blocks.mjs']);
     }, { family: K.order });
   });
 });
 
 describe('spec:distribution-files/S20 the race of an absent file on a plain run', () => {
-  // The create-only link finds the file `body` put there between the survey and the write: the family file
-  // before the last in write order, so the installer is written before it and the last file after it.
+  // The create-only link injects the penultimate file after the survey, leaving room for a write on either side.
   const appear = (K, bodies, body, deps = {}) => withTree(bodies, (dir) => {
     const target = join(dir, rel(K.order.at(-2)));
     const link = (from, to) => {
       if (to === target) writeFileSync(to, body);
       return linkSync(from, to);
     };
-    return [run(dir, { would: K.would, deps: { ...deps, link } }), ...[K.installer, K.order.at(-2), K.last].map((n) => shaOf(bytesOf(dir, n)))];
+    return [run(dir, { would: K.would, deps: { ...deps, link } }), ...[K.order[0], K.order.at(-2), K.last].map((n) => shaOf(bytesOf(dir, n)))];
   }, { family: K.order });
   it('one that appears with the bundled body stands, its line saying so, already-present when every other file is current', async () => {
     const K = await kitLayout(), raced = K.order.at(-2);
@@ -274,11 +282,11 @@ describe('spec:distribution-files/S20 the race of an absent file on a plain run'
     assert.deepEqual([r.token, r.lines, placed], ['already-present', [`${rel(raced)}: appeared while this run was placing it — the bundled body stands, nothing written`, L.count(K.order.length - 1, K.dir)], sha(bundled(raced))]);
   });
   it('one with other bytes: race-unresolved, the earlier write kept and named, nothing further written', async () => {
-    const K = await kitLayout(), raced = K.order.at(-2);
-    const [r, installer, after, later] = appear(K, { [K.installer]: OLD(K.installer), [raced]: null, [K.last]: OLD(K.last) }, OLD(raced), { priors: priorsWith(K.installer, K.last) });
+    const K = await kitLayout(), [first] = K.order, raced = K.order.at(-2);
+    const [r, earlier, after, later] = appear(K, { [first]: OLD(first), [raced]: null, [K.last]: OLD(K.last) }, OLD(raced), { priors: priorsWith(first, K.last) });
     assert.deepEqual([r.token, r.lines], ['failed', [`race-unresolved — ${rel(raced)}: appeared while this run was placing it and does not carry the bundled body — nothing further written, re-run when the tree is settled`,
-      L.refreshed(K.installer), `${rel(raced)}: absent — not placed; its write was refused (above)`, `${rel(K.last)}: ${SHIPPED} — not refreshed; the run stopped before it`, L.count(K.order.length - 3, K.dir), HOOK, L.partway(1)]]);
-    assert.deepEqual([installer, after, later], [bundled(K.installer), OLD(raced), OLD(K.last)].map(sha));
+      L.refreshed(first), `${rel(raced)}: absent — not placed; its write was refused (above)`, `${rel(K.last)}: ${SHIPPED} — not refreshed; the run stopped before it`, L.count(K.order.length - 3, K.dir), HOOK, L.partway(1)]]);
+    assert.deepEqual([earlier, after, later], [bundled(first), OLD(raced), OLD(K.last)].map(sha));
   });
 });
 
@@ -319,9 +327,10 @@ describe('spec:distribution-files/S21 the rule through real commits', () => {
       holds(dir, { [K.installer]: bundled(K.installer) });
       // The tree is commit one's again, so the hook's run is proved on an empty commit.
       passes(commit(dir, 'two', '--allow-empty'));
-      rmSync(join(dir, rel(K.last)));
-      assert.deepEqual(plainRun(dir), { tokens: ['scripts: seeded'], details: [L.placed(K.last), L.count(K.order.length - 1, K.dir), HOOK] });
-      holds(dir, { [K.last]: bundled(K.last) });
+      const absent = K.at('archives/archive-issues.mjs');
+      rmSync(join(dir, rel(absent)));
+      assert.deepEqual(plainRun(dir), { tokens: ['scripts: seeded'], details: [L.placed(absent), L.count(K.order.length - 1, K.dir), HOOK] });
+      holds(dir, { [absent]: bundled(absent) });
     }, { family: K.order, setup: (dir) => put(dir, Object.fromEntries([...K.pairs, K.at('run.mjs')].map((n) => [n, bundled(n)]))) });
   });
 });

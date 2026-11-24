@@ -1,6 +1,6 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -180,7 +180,7 @@ const runScripts = (dir, extra = {}) => ensureScripts({ cwd: dir, kitRoot: KIT, 
 const appearing = (body) => ({ link: (_tmp, dst) => { writeFileSync(dst, body); throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' }); } });
 const [MINE, SHIPPED, EDITED] = ['// mine\n', ': matches a body an earlier release shipped — ', ': differs from every body this kit knows it shipped — '];
 const [HOOK_CHANNEL, OWN_CHANNEL, WROTE, WOULD_WRITE] = ['the local hook file scripts/pre-commit.local, which the commit hook runs first', 'a script or suite of your own under its own name in scripts/, or a config the script reads', 'the commit hook runs the files written above, so they may stop the next commit', 'the commit hook runs the files named above, so writing them may stop the next commit'];
-const [DEC, MONO] = ['---\ntype: decisions\nmaxLines: 200\n---\n\n# Decisions\n\n## AD-002 — second\n\nbody two\n', '---\ntype: archive\n---\n\n# Decisions archive\n\n## AD-001 — first\n\nbody one\n'], stripped = (dir) => ({ deps: { spawnSync: (cmd, args, options) => spawnSync(cmd, args, { ...options, env: hermeticGitEnv(process.env, dir) }) } });
+const [DEC, MONO] = ['---\ntype: decisions\nmaxLines: 200\n---\n\n# Decisions\n\n## AD-002 — second\n\nbody two\n', '---\ntype: archive\n---\n\n# Decisions archive\n\n## AD-001 — first\n\nbody one\n'], stripped = (dir) => ({ deps: { spawnSync: (cmd, args, options) => { const { NODE_TEST_CONTEXT, ...env } = hermeticGitEnv(process.env, dir); return spawnSync(cmd, args, { ...options, env }); } } });
 // The Node-evidence refusal names the probes, whatever the layout: the one line form both ops share.
 const NODE_EVIDENCE_FX = [['scripts-skipped-no-node-evidence', () => runScripts(project({ node: false })), 'scripts/: no Node evidence in this tree — probed package.json and the kit-seeded scripts/ files'],
   ['scripts-node-evidence-unverifiable', () => runScripts(project({ node: false }), { deps: { lstat: () => { throw eacces(); } } }), 'scripts/: whether Node runs here could not be read (EACCES on package.json), so nothing was written — resolve it by hand, then re-run']];
@@ -191,7 +191,15 @@ for (const [variant, roles] of [['commit-guard'], ['hook-checks', ['rules', 'lay
   applyGitHooks({ root, variant, copies: [], roles, runs: { argv: ['node', join(root, 'scripts', 'install-git-hooks.mjs')] } }, { env, spawn: () => ({ status: 0 }), error: (line) => errors.push(line) });
   fx('git-hooks', `${variant}-unarmed`, true, () => (assert.deepEqual(errors.map((line) => line.endsWith(` — ${UPGRADE_ROUTE}`)), [true], errors.join('\n')), errors));
 }
-const fxUnwitnessed = (table) => table.flatMap(([id, , ...lines]) => lines.filter((w) => !SURFACES.find((s) => s.id === id)?.lines.some((line) => w instanceof RegExp ? w.test(line) : line === w || line.startsWith(`${w} `))).map((w) => `${id}: ${w}`));
+const fxUnwitnessed = (table, inOrder = false) => table.flatMap(([id, , ...witnesses]) => {
+  const lines = SURFACES.find((s) => s.id === id)?.lines ?? [];
+  const positions = witnesses.map((w) => lines.findIndex((line) => w instanceof RegExp ? w.test(line) : line === w || line.startsWith(`${w} `)));
+  return witnesses.flatMap((witness, index) => {
+    if (positions[index] < 0) return [`${id}: ${witness}`];
+    if (inOrder && index > 0 && positions[index] <= positions[index - 1]) return [`${id}: out of order: ${witness}`];
+    return [];
+  });
+});
 {
   // The navigator ensure drives a SEPARATE process, so its causes split by how far that process
   // got — every one witnessed through the real op, never a hand-composed line.
@@ -246,14 +254,17 @@ const SPECS_LAYOUT_FREE_FX = [['specs-skipped-no-node-evidence', () => runSpecs(
 const KIT_FX = (() => {
   const KF = 'scripts/agent-workflow', at = (p) => `${KF}/${p}`, kb = (p) => readFileSync(join(KIT, 'references', 'scripts', ...p.split('/')));
   const deployed = readFamily(join(KIT, 'references', 'scripts')).filter((e) => e.role === 'deployed'), all = deployed.map((e) => e.path);
-  const importsOf = (p, within) => [...kb(p).toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g)].map(([, s]) => posix.join(posix.dirname(p), s)).filter((d) => within.includes(d));
-  const order = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p, paths).every((d) => !left.has(d))); out.push(next); left.delete(next); } return out; };
+  const [INST, ROT, CAPS, ISSUES, MD, PR] = ['git-hooks/install-git-hooks.mjs', 'archives/archive-decisions.mjs', 'archives/archive-caps.mjs', 'archives/archive-issues.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs'];
+  const SHARED_INDEX = 'shared/index.mjs';
+  // Revision 31 gives the installer its shared index import before the bundled body carries it.
+  const importsOf = (p, within) => [...(p === INST ? [SHARED_INDEX] : []), ...[...kb(p).toString('utf8').matchAll(/(?:from|import)\s*\(?\s*'(\.{1,2}\/[^']+)'/g)].map(([, s]) => posix.join(posix.dirname(p), s))].filter((d) => within.includes(d));
+  const order = (paths) => { const left = new Set(paths), out = []; while (left.size) { const next = [...left].sort().find((p) => importsOf(p, paths).every((d) => !left.has(d))); assert.ok(next, `an import cycle among ${[...left]}`); out.push(next); left.delete(next); } return out; };
   const own = deployed.filter((e) => e.path !== 'run.mjs' && e.module !== 'spec-schema' && e.module !== 'docs-size' && e.module !== 'test-reporter').map((e) => e.path);
+  const scriptOrder = order(own), orderedScriptLines = (lines) => scriptOrder.filter((p) => Object.hasOwn(lines, p)).map((p) => lines[p]);
   const [R, C] = ['spec-schema', 'docs-size'].map((m) => order(deployed.filter((e) => e.module === m).map((e) => e.path)));
   const reached = new Set([...R, ...C]);
   for (const p of reached) for (const d of importsOf(p, all)) reached.add(d);
   const CL = order([...reached].filter((p) => !R.includes(p) && !C.includes(p)));
-  const [INST, ROT, CAPS, ISSUES, MD, PR] = ['git-hooks/install-git-hooks.mjs', 'archives/archive-decisions.mjs', 'archives/archive-caps.mjs', 'archives/archive-issues.mjs', 'shared/markdown-blocks.mjs', 'shared/project-root.mjs'];
   const OLD = (p) => `// an earlier ${p}\n`, priors = { priors: [...SCRIPT_PRIORS, ...[INST, MD, PR, R[0], C[0], CL[1]].map((file) => ({ file, digest: createHash('sha256').update(OLD(file)).digest('hex') }))] };
   const lay = (dir, paths, over) => { for (const p of new Set([...paths, ...Object.keys(over)])) if (over[p] !== null) { mkdirSync(join(dir, KF, posix.dirname(p)), { recursive: true }); writeFileSync(join(dir, KF, p), over[p] ?? kb(p)); } return dir; };
   const kitTree = (over = {}) => lay(project(), own, over);
@@ -268,23 +279,37 @@ const KIT_FX = (() => {
     if (inGit) makeFixtureRepo((args) => assert.equal(git('git', args).status, 0, 'git init for the move lines'), dir, ['-q']);
     return runScripts(dir, { deps: { ...stripped(dir).deps, ...(inGit ? { git } : {}), ...deps } });
   };
-  const [refreshed, edited, rejected] = [kitTree({ [INST]: OLD(INST) }), kitTree({ [INST]: MINE, [CAPS]: MINE, [ISSUES]: null }), kitTree(Object.fromEntries(own.map((p) => [p, p === ROT ? MINE : null])))];
+  const [refreshed, edited, rejected] = [kitTree({ [INST]: OLD(INST) }), kitTree({ [INST]: MINE, [SHARED_INDEX]: MINE, [CAPS]: MINE, [ISSUES]: null }), kitTree(Object.fromEntries(own.map((p) => [p, p === ROT ? MINE : null])))];
   const [NOTE, PARTWAY, specsDue] = ['^ADR store: \\[archive-decisions\\] docs/ai/index\\.md NOT regenerated — (?!.*(?:docs-size/|check-docs-size))', 'the writes stopped PARTWAY — the 1 file(s) named above were already written and are NOT rolled back', { [R[0]]: OLD(R[0]), [R[1]]: null, [C[0]]: MINE }];
   const CMD = 'node scripts/agent-workflow/run\\.mjs docs-size --write-index(?![\\w-])'; // the index note: no module path, the stable command
-  const scripts = [['scripts-not-accepted-bare', (d = project()) => runScripts(d, stripped(d)), ...order(own.filter((p) => deployed.find((e) => e.path === p).seed)).map((p) => `${at(p)}: absent — placed from the bundled scripts`), `${KF}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`, IF_WROTE],
+  const scripts = [['scripts-not-accepted-bare', (d = project()) => runScripts(d, stripped(d)), ...scriptOrder.filter((p) => deployed.find((e) => e.path === p).seed).map((p) => `${at(p)}: absent — placed from the bundled scripts`), `${KF}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`, IF_WROTE],
     ['scripts-would-refresh', () => runScripts(refreshed, { dryRun: true, deps: priors }), `${at(INST)}${SHIPPED}would be refreshed to the bundled one`, WOULD_WRITE, `ADR store: ${at(ROT)} --ensure-current would run after the writes, bringing the store current or writing nothing when it already is`],
     ['scripts-brought-current', (d = adrKit({ 'decisions.md': DEC, 'history/decisions-archive.md': MONO })) => runScripts(d, stripped(d)), 'ADR store: snapshot:', 'ADR store: brought-current: migrated, navigator written', new RegExp(`${NOTE}the index generator is not beside this script — .*\\bupgrade\\b.*${CMD}`)],
     ['scripts-refreshed', () => runScripts(refreshed, { deps: priors }), `${at(INST)}${SHIPPED}refreshed to the bundled one`, WROTE],
     ['scripts-already-present', () => runScripts(refreshed), `${KF}/: ${own.length} other kit scripts are already the bundled body — nothing written`],
-    ['scripts-would-seed', () => runScripts(edited, { dryRun: true }), `${at(INST)}${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${HOOK_CHANNEL}`, `${at(ISSUES)}: absent — would be placed from the bundled scripts`, WOULD_WRITE],
-    ['scripts-seeded', () => runScripts(edited), `${at(INST)}${EDITED}replaced by the bundled body; an edit meant to last goes in ${HOOK_CHANNEL}`, `${at(CAPS)}${EDITED}replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`, `${at(ISSUES)}: absent — placed from the bundled scripts`, WROTE],
+    ['scripts-would-seed', () => runScripts(edited, { dryRun: true }), ...orderedScriptLines({
+      [SHARED_INDEX]: `${at(SHARED_INDEX)}${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`,
+      [ISSUES]: `${at(ISSUES)}: absent — would be placed from the bundled scripts`,
+      [INST]: `${at(INST)}${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${HOOK_CHANNEL}`,
+    }), WOULD_WRITE],
+    ['scripts-seeded', () => runScripts(edited, stripped(edited)), ...orderedScriptLines({
+      [SHARED_INDEX]: `${at(SHARED_INDEX)}${EDITED}replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`,
+      [CAPS]: `${at(CAPS)}${EDITED}replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`,
+      [ISSUES]: `${at(ISSUES)}: absent — placed from the bundled scripts`,
+      [INST]: `${at(INST)}${EDITED}replaced by the bundled body; an edit meant to last goes in ${HOOK_CHANNEL}`,
+    }), WROTE],
     ['scripts-appeared', () => runScripts(kitTree({ [ISSUES]: null }), { deps: appearing(kb(ISSUES)) }), `${at(ISSUES)}: appeared while this run was placing it — the bundled body stands, nothing written`],
     ['scripts-appeared-race', () => runScripts(kitTree({ [ISSUES]: null }), { deps: appearing('// other\n') }), `${at(ISSUES)}: appeared while this run was placing it and does not carry the bundled body — nothing further written, re-run when the tree is settled`, `${at(ISSUES)}: absent — not placed; its write was refused (above)`],
-    ['scripts-write-refused', (renames = 0) => runScripts(kitTree({ [INST]: OLD(INST), [MD]: OLD(MD), [PR]: OLD(PR), [CAPS]: MINE, [ISSUES]: null }), { deps: { ...priors, rename: (from, to) => { if (++renames === 2) throw eacces('EACCES: refused'); renameSync(from, to); } } }), `${at(MD)}: EACCES: refused`, `${at(MD)}${SHIPPED}not refreshed; its write was refused (above)`,
-      `${at(PR)}${SHIPPED}not refreshed; the run stopped before it`, `${at(CAPS)}${EDITED}not replaced; the run stopped before it; an edit meant to last goes in ${OWN_CHANNEL}`, `${at(ISSUES)}: absent — not placed; the run stopped before it`, WROTE, PARTWAY],
+    ['scripts-write-refused', () => runScripts(kitTree({ [INST]: OLD(INST), [MD]: OLD(MD), [PR]: OLD(PR), [CAPS]: MINE, [ISSUES]: null }), { deps: { ...priors, ...refusingAt(2) } }), `${at(PR)}: EACCES: refused`, ...orderedScriptLines({
+      [MD]: `${at(MD)}${SHIPPED}refreshed to the bundled one`,
+      [PR]: `${at(PR)}${SHIPPED}not refreshed; its write was refused (above)`,
+      [CAPS]: `${at(CAPS)}${EDITED}not replaced; the run stopped before it; an edit meant to last goes in ${OWN_CHANNEL}`,
+      [ISSUES]: `${at(ISSUES)}: absent — not placed; the run stopped before it`,
+      [INST]: `${at(INST)}${SHIPPED}not refreshed; the run stopped before it`,
+    }), WROTE, PARTWAY],
     ['scripts-index-regeneration-failed', (d = adrKit({ 'decisions.md': DEC }, { 'docs-size/check-docs-size.mjs': 'process.exit(1);\n' })) => runScripts(d, stripped(d)), 'ADR store: brought-current: navigator written', new RegExp(`${NOTE}index regeneration failed \\(exit 1\\) — (?!.*upgrade).*${CMD}`)],
     ['scripts-adr-store-not-current', (d = adrKit({ 'history/decisions-archive.md': MONO })) => runScripts(d, stripped(d)), `${at(ROT)} --ensure-current exited with code 1 — the ADR store was not confirmed current`, 'ADR store: [archive-decisions] docs/ai/decisions.md not found but a legacy monolith is present — a broken tree; restore docs/ai/decisions.md before migrating.'],
-    ['scripts-not-accepted-dry', () => runScripts(rejected, { dryRun: true }), `${at(ROT)}${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}`, `${at(MD)}: absent — would be placed from the bundled scripts`, IF_WOULD],
+    ['scripts-not-accepted-dry', () => runScripts(rejected, { dryRun: true }), ...orderedScriptLines({ [MD]: `${at(MD)}: absent — would be placed from the bundled scripts`, [ROT]: `${at(ROT)}${EDITED}would be replaced by the bundled body; an edit meant to last goes in ${OWN_CHANNEL}` }), IF_WOULD],
     ['scripts-not-accepted', () => runScripts(rejected), `${KF}/: the enforcement scripts were not accepted in this project, so no other kit script is placed`, IF_WROTE],
     ['scripts-wrong-node-kind', (d = project()) => (mkdirSync(join(d, 'scripts')), writeFileSync(join(d, KF), ''), runScripts(d)), `${KF}/: exists but is a regular file — nothing was read or written; resolve it by hand, then re-run`],
     ['scripts-wrong-node-kind-family', (d = project()) => (mkdirSync(join(d, KF, ROT), { recursive: true }), runScripts(d)), `${at(ROT)}: exists but is a directory — nothing was read or written; resolve it by hand, then re-run`],
@@ -365,7 +390,7 @@ describe('spec:distribution-files/S11 every line form of the specs and scripts o
   const KIT_READ = "the KIT mirror's family manifest reads (references/scripts/family.mjs), so the fixtures lay out the kit folder";
   it('each S11 fixture carries the line it witnesses', () => {
     assert.ok(KIT_FX, KIT_READ);
-    assert.deepEqual([...fxUnwitnessed(KIT_FX.scripts), ...fxUnwitnessed(KIT_FX.specs)], [], 'each S11 fixture carries its witness');
+    assert.deepEqual([...fxUnwitnessed(KIT_FX.scripts, true), ...fxUnwitnessed(KIT_FX.specs)], [], 'each S11 fixture carries its witness');
   });
   it('every scripts placement line that names a path opens with a deployed path under scripts/agent-workflow/', () => {
     assert.ok(KIT_FX, KIT_READ);

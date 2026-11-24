@@ -12,7 +12,6 @@ import { spawnSync } from 'node:child_process';
 const __filename = fileURLToPath(import.meta.url);
 const HERE = dirname(__filename);
 
-export const KIT_COMMAND_PATH = 'scripts/agent-workflow/run.mjs';
 export const KIT_COMMANDS = Object.freeze({
   'docs-size': 'docs-size/check-docs-size.mjs',
   'archive-changelog': 'archives/archive-changelog.mjs',
@@ -25,7 +24,7 @@ export const UNIT_TESTS_REPORTER = 'test-reporter/reporter.mjs';
 
 const NAMES = [...Object.keys(KIT_COMMANDS), UNIT_TESTS_NAME];
 const PREFIX = '[run]';
-const USAGE = `Usage: node ${KIT_COMMAND_PATH} <name> [arguments...]
+const USAGE = `Usage: node scripts/agent-workflow/run.mjs <name> [arguments...]
 Runs the named kit check with every argument after the name, unchanged; ${UNIT_TESTS_NAME} runs the Node test runner
 with the lcov reporter and the kit test reporter over the arguments. Names: ${NAMES.join(', ')}.
 `;

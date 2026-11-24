@@ -7,16 +7,19 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync, existsSync, realpathSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../../../scripts/testing/fixture-repo.mjs';
+import { readFamily } from '../family.mjs';
+import { KIT_FOLDER } from '../shared/index.mjs';
 import { MAGIC_MARKER, isManaged } from './install-git-hooks.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const INSTALLER_SRC = join(HERE, 'install-git-hooks.mjs');
+const FAMILY_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const INSTALLER = 'git-hooks/install-git-hooks.mjs';
+const INSTALLER_SRC = join(FAMILY_ROOT, INSTALLER);
 const MALFORMED_PACKAGE_JSON = '{ not json';
 const [NAMED_PACKAGE_JSON, NAMED_FIXTURE] = ['{"name":"named-fixture"}', 'named-fixture'];
 const WIN32 = ['--import', 'data:text/javascript,Object.defineProperty(process,"platform",{value:"win32"})'];
@@ -41,8 +44,17 @@ const succeeds = (r) => { assert.equal(r.status, 0, r.stderr); return r; };
 const git = (cwd, ...args) => succeeds(spawnChecked('git', args, cwd));
 
 // The installer takes its root three levels above its own folder — deploy it into a fixture's kit folder like a consumer.
-const KIT_INSTALLER = join('scripts', 'agent-workflow', 'git-hooks', 'install-git-hooks.mjs');
-const deploy = (root) => { mkdirSync(dirname(join(root, KIT_INSTALLER)), { recursive: true }); cpSync(INSTALLER_SRC, join(root, KIT_INSTALLER)); };
+const KIT_INSTALLER = join(KIT_FOLDER, INSTALLER);
+const SHARED_FILES = readFamily()
+  .filter(({ module, role }) => module === 'shared' && role === 'deployed')
+  .map(({ path }) => path);
+const deploy = (root) => {
+  for (const relativePath of [...SHARED_FILES, INSTALLER]) {
+    const target = join(root, KIT_FOLDER, relativePath);
+    mkdirSync(dirname(target), { recursive: true });
+    cpSync(join(FAMILY_ROOT, relativePath), target);
+  }
+};
 const mkProject = () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'install-hooks-')));
   const g = (...a) => git(root, ...a);
@@ -188,20 +200,53 @@ describe('spec:kit-command/S5 install-git-hooks — the hook names only the stab
     assert.equal(existsSync(record), false, 'no role or guard runs after the failed kit line');
   }));
 
-  it('the installer\'s own header comment and the hook\'s name node scripts/agent-workflow/run.mjs install-git-hooks; the installer imports nothing', async () => {
+  it('the installer\'s own header comment and the hook\'s name node scripts/agent-workflow/run.mjs install-git-hooks', async () => {
     const { KIT_COMMANDS } = await import('../run.mjs');
     assert.ok(Object.hasOwn(KIT_COMMANDS, 'install-git-hooks'));
-    const source = readFileSync(INSTALLER_SRC, 'utf8');
-    const own = source.split('\n').slice(1, source.split('\n').findIndex((l, at) => at > 0 && !l.startsWith('//')));
-    let hookHeader = [];
-    inProject(({ root }) => { installs(root); const lines = readHook(root).split('\n'); hookHeader = lines.slice(1, lines.indexOf('set -e')); })();
-    for (const [where, text] of [['the installer header comment', wordsOf(own)], ['the hook header comment', wordsOf(hookHeader)]]) {
-      assert.ok(text.includes(`${COMMAND} install-git-hooks`), `${where} names ${COMMAND} install-git-hooks: ${text}`);
-    }
-    const specs = [...source.matchAll(/\bfrom\s+(['"])([^'"]+)\1|\bimport\s*\(\s*(['"])([^'"]+)\3/g)].map((m) => m[2] ?? m[4]);
-    assert.ok(specs.length >= 5, `the scan found the installer's imports: ${specs}`);
-    assert.deepEqual(specs.filter((spec) => !spec.startsWith('node:')), [], 'the installer imports nothing but Node\'s own modules');
+    const source = readFileSync(INSTALLER_SRC, 'utf8').split('\n');
+    const own = source.slice(1, source.findIndex((line, at) => at > 0 && !line.startsWith('//')));
+    inProject(({ root }) => {
+      installs(root);
+      const lines = readHook(root).split('\n');
+      const hookHeader = lines.slice(1, lines.indexOf('set -e'));
+      for (const [where, text] of [['the installer header comment', wordsOf(own)], ['the hook header comment', wordsOf(hookHeader)]]) {
+        assert.ok(text.includes(`${COMMAND} install-git-hooks`), `${where} names ${COMMAND} install-git-hooks: ${text}`);
+      }
+    })();
   });
+
+  it('a flagless run reports an already up-to-date hook and preserves its frozen bytes and modification time', inProject(({ root }) => {
+    const frozenHook = Buffer.from(`#!/usr/bin/env bash
+# agent-workflow:install-git-hooks.mjs
+# Auto-installed by node scripts/agent-workflow/run.mjs install-git-hooks (run it by hand or from the kit).
+# Runs the docs cap-validator + index-freshness gate + rotation-freshness checks
+# before every commit, so files cannot drift over their declared maxLines, the
+# auto-generated index.md cannot silently go stale, and stale archive entries
+# never reach a commit.
+set -e
+# Your own commit checks go in scripts/pre-commit.local; it runs first, with bash, when present.
+if [ -f scripts/pre-commit.local ]; then bash scripts/pre-commit.local; fi
+if [ -f scripts/agent-workflow/run.mjs ]; then
+node scripts/agent-workflow/run.mjs docs-size
+node scripts/agent-workflow/run.mjs docs-size --check-index
+node scripts/agent-workflow/run.mjs archive-changelog --check
+node scripts/agent-workflow/run.mjs archive-issues --check
+node scripts/agent-workflow/run.mjs archive-decisions --check
+else
+  echo "scripts/agent-workflow/run.mjs is not in this checkout — the kit's docs and archive checks are skipped for this commit; merge the commit that adds scripts/agent-workflow/, or run the kit's upgrade in this checkout"
+fi
+`);
+    const hookPath = join(hooksPathOf(root), 'pre-commit');
+    const seededTime = new Date('2000-01-01T00:00:00Z');
+    mkdirSync(dirname(hookPath), { recursive: true });
+    writeFileSync(hookPath, frozenHook);
+    utimesSync(hookPath, seededTime, seededTime);
+    const originalMtime = statSync(hookPath, { bigint: true }).mtimeNs;
+
+    assert.match(installs(root).stdout, /already up to date/);
+    assert.deepEqual(readFileSync(hookPath), frozenHook);
+    assert.equal(statSync(hookPath, { bigint: true }).mtimeNs, originalMtime);
+  }));
 });
 
 describe('install-git-hooks — the hooks path comes from git plumbing (C7)', () => {

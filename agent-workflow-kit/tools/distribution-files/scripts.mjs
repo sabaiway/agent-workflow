@@ -5,8 +5,8 @@
 // surveyed by proof before any write: absent, current, prior (a body the catalog lists for its manifest
 // path) or edited. On every plain run a prior is refreshed, an edited one replaced in place and an
 // absent one placed create-only, with no question and no copy kept; a current one is left. A project
-// that did not accept the enforcement scripts gets every seed entry, the rotator and what it loads. The
-// installer is written first, then every file after the family files it imports; after the last write
+// that did not accept the enforcement scripts gets every seed entry, the rotator and what it loads.
+// Every file is written after the family files it imports; after the last write
 // the project's own rotator brings the ADR store current (`--ensure-current`); last, retired.mjs removes
 // the kit's old flat files from scripts/ (distribution-files, part flat-move). It never imports
 // ensure-specs.mjs or ensure-configs.mjs: the CLI composes this op from the module's index, and
@@ -41,8 +41,8 @@ const wrongKind = (rel, kind) => composeFailure(OP, 'wrong-node-kind', `${rel}: 
 
 // ── the survey: the component first, then every family file by proof, nothing written ────────────
 
-// The installer first (it imports nothing), then each file after every family file it imports.
-const inWriteOrder = (files) => [...files.filter((f) => f.rel === INSTALLER_REL), ...dependenciesFirst(files.filter((f) => f.rel !== INSTALLER_REL))];
+// The installer follows the same dependency order as every other family file.
+const inWriteOrder = (files) => dependenciesFirst(files);
 
 // Each folder on the way, lstat-ed without following a link: → { refusal } | {}.
 const surveyFolders = (cwd, family, lstat) => {

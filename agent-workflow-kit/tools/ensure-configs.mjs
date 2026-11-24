@@ -10,7 +10,7 @@
 //                  + docs/ai/specs/index.md    a shipped prior refreshed, an edited one replaced, an absent
 //                                              one placed; then the store root seeded create-only
 //   scripts        scripts/<every kit script>  once a kit script outside the seed names, or the old flat installer, stands there, every file not current
-//                  + the installer set         written with no question and no copy kept; installer set first; on a
+//                  + the installer set         written with no question and no copy kept; on a
 //                                              declined offer every seed file, the rotator included, and no other;
 //                                              then the project's rotator brings the ADR store current (--ensure-current)
 //   rules          docs/ai/rules/<theme>.md    the kit file seeded, refreshed on a shipped prior body, or any
@@ -86,7 +86,7 @@ The executor ensure writes nothing: a placed .claude/agents/executor.md whose by
 body derived from docs/ai/vehicles.json is pending and an absent one is not placed here — the
 advisor's agents item writes the derived body.
 A fifth writes too: once a kit script outside the seed names stands in scripts/agent-workflow/, or the hook installer under its old
-flat name in scripts/, the enforcement-script ensure writes every kit script that is not the bundled body, the hook installer first,
+flat name in scripts/, the enforcement-script ensure writes every kit script that is not the bundled body,
 with no question and no copy kept: a body a release shipped is refreshed, an edited one replaced (its line names where an edit meant
 to last goes) and an absent one placed; on a project that declined the enforcement offer, every seed file, the rotator included,
 is kept current the same way, an absent one placed, and no other kit script is placed; after the writes the project's

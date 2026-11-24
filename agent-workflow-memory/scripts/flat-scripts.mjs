@@ -4,10 +4,8 @@ import { createHash } from 'node:crypto';
 import { constants, lstatSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { readFamily } from '../references/scripts/family.mjs';
-import { KIT_COMMAND_PATH } from '../references/scripts/run.mjs';
-import { LOCAL_HOOK, SCRIPTS } from '../references/scripts/shared/index.mjs';
+import { KIT_COMMAND, KIT_FOLDER, LOCAL_HOOK, SCRIPTS } from '../references/scripts/shared/index.mjs';
 
-const KIT = posix.dirname(KIT_COMMAND_PATH);
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 export const FLAT_NAMES = Object.freeze([
   '_expect-shim.mjs', 'archive-caps.mjs', 'archive-caps.test.mjs', 'archive-changelog.mjs', 'archive-changelog.test.mjs',
@@ -61,7 +59,7 @@ const readBody = (path, deps) => (deps.readFile ?? readFileSync)(path, { flag: R
 const grepLines = (cwd, deps) => {
   const result = askGit(cwd, ['rev-parse', '--is-inside-work-tree'], deps);
   if (isAnswered(result, 0) && String(result.stdout ?? '').trim() === 'true') return [
-    `other files naming an old path: git grep -n -F --untracked ${FLAT_NAMES.map((name) => `-e ${name}`).join(' ')} -- . ':!${KIT}'`,
+    `other files naming an old path: git grep -n -F --untracked ${FLAT_NAMES.map((name) => `-e ${name}`).join(' ')} -- . ':!${KIT_FOLDER}'`,
     'git grep lists tracked and untracked files git does not ignore; the hooks dir and ignored files are yours to check',
   ];
   if (isAnswered(result, 128) || isAnswered(result, 0) && String(result.stdout ?? '').trim() === 'false') return ['this project is outside a git work tree; check other files naming an old path by hand'];
@@ -75,7 +73,7 @@ const suiteLines = (cwd, classified, removed, deps) => (deps.readdir ?? readdirS
 export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps = {} }) => {
   const removed = [], lines = [], classified = new Map();
   const standing = (path) => dryRun && placed.includes(path) || isRegular(cwd, path, deps);
-  if (!standing(KIT_COMMAND_PATH)) return { removed, lines };
+  if (!standing(KIT_COMMAND)) return { removed, lines };
   const bundle = join(skillRoot, 'references/scripts');
   const byName = new Map(readFamily(bundle).filter((entry) => entry.role === 'deployed').map((entry) => [posix.basename(entry.path), entry.path]));
   for (const name of FLAT_NAMES) {
@@ -92,8 +90,8 @@ export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps =
         || replacement && digest === digestOf(readBody(join(bundle, replacement), deps));
       classified.set(name, owned ? 'kit' : 'foreign');
       if (!owned) { lines.push(`${path}: not the kit's; left as it stands`); continue; }
-      if (replacement && !standing(`${KIT}/${replacement}`)) {
-        lines.push(`${path}: ${dryRun ? 'would be kept' : 'kept'}; ${KIT}/${replacement} is not placed yet`);
+      if (replacement && !standing(`${KIT_FOLDER}/${replacement}`)) {
+        lines.push(`${path}: ${dryRun ? 'would be kept' : 'kept'}; ${KIT_FOLDER}/${replacement} is not placed yet`);
         continue;
       }
       if (!dryRun) {
@@ -104,7 +102,7 @@ export const retireFlat = ({ cwd, skillRoot, dryRun = false, placed = [], deps =
         }
       }
       removed.push(name);
-      lines.push(`${path}: ${dryRun ? 'would be removed' : 'removed'}; the kit's scripts live in ${KIT}/`);
+      lines.push(`${path}: ${dryRun ? 'would be removed' : 'removed'}; the kit's scripts live in ${KIT_FOLDER}/`);
     } catch (error) { lines.push(`${path}: could not be read or confirmed (${describeError(error)}); left as it stands`); }
   }
   if (removed.length) {
