@@ -117,7 +117,7 @@ describe('procedures fold lane — spec:held-session/S5', () => {
   });
 });
 
-describe("spec:story-flow/S18 the fold lane is one resume line from the run's exec receipt and reads no delegation ledger", () => {
+describe("spec:story-flow/S18 the fold lane is one resume line from the run's exec receipt, names the new prompt's approval block and reads no delegation ledger", () => {
   it('calls no delegation store reader and no HEAD read', () => withRoot({}, (root) => {
     const calls = [];
     const spy = (name) => (...args) => { calls.push(name); throw new Error(`${name} was read`); };
@@ -136,6 +136,7 @@ describe("spec:story-flow/S18 the fold lane is one resume line from the run's ex
     const lane = JSON.parse(result.stdout).foldLane;
     assert.equal(lane.length, 1, 'S18: the fold lane is not one line');
     assert.match(lane[0], /codex-exec --resume <session id>[^\n]*\bexec receipt\b|\bexec receipt\b[^\n]*codex-exec --resume <session id>/u, "S18: the line does not resume the session read from the run's exec receipt");
+    assert.match(lane[0], /aw-plan-approval/u, 'S18: the new prompt carries the approval block');
   }));
 });
 

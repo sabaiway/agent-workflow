@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-// session-close-check.mjs — the read-only checker of a session close: judges the `## For the user`
-// section of docs/ai/handover.md and its two labels. Governing contract:
-// docs/ai/specs/kit/tier/session-rules/ (part session-close-check). Not a gate: a session close is
-// not a commit boundary. main(argv, deps) returns, never exits, never asks; every read goes through deps.
 import { resolve } from 'node:path';
 import { HANDOVER } from '../references/scripts/shared/index.mjs';
 import { safeLine } from './carriers.mjs';
 import { isDeployed } from './checker-gates-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
-import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { lstatNoFollowRead, readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { composeRenderLine, loadStages, NEXT_SESSION_HEADING, STAGES_REL, validateSlots } from './stage-render/index.mjs';
 
 const LF = String.fromCharCode(10);
 const CR = String.fromCharCode(13);
@@ -25,6 +22,12 @@ const SECTION_BOUNDARY = '## ';
 const LABELS = Object.freeze(['**What was done, and for what:**', '**What is next, and why:**']);
 const SINGLE = 1;
 const SYMLINK_CLASS = 'symlink';
+const STAGES_PATH = resolve(import.meta.dirname, '..', STAGES_REL);
+const SAMPLE_OPERAND = 'slot-file';
+const RENDER_PREFIX = composeRenderLine(SAMPLE_OPERAND).slice(0, -SAMPLE_OPERAND.length);
+const QUOTE = "'";
+const ESCAPED_QUOTE = "'\\''";
+const ABSENT_CODE = 'ENOENT';
 
 const STATES = Object.freeze({
   noDeployment: 'no-deployment',
@@ -38,16 +41,22 @@ const STATES = Object.freeze({
   labelTwice: 'label-twice',
   labelOrder: 'label-order',
   labelEmpty: 'label-empty',
+  nextAbsent: 'next-absent',
+  nextTwice: 'next-twice',
+  nextEmpty: 'next-empty',
+  nextMany: 'next-many',
+  nextForm: 'next-form',
+  nextFile: 'next-file',
 });
 
 export const OUTCOME_LINES = Object.freeze({
-  accept: () => 'session-close-check: accept — the handover carries the For the user section with both labels and their text',
+  accept: () => 'session-close-check: accept — the handover carries the For the user section with both labels and their text, and the Next session block in its one form',
   state: (name) => safeLine(name),
   labelState: (name, label) => `${safeLine(name)}: ${safeLine(label)}`,
   usage: (problem) => `usage: session-close-check.mjs --check [--cwd DIR] — ${safeLine(problem)}`,
   help: () => [
     'session-close-check.mjs --check [--cwd DIR]',
-    'Judges the For the user section of docs/ai/handover.md in DIR (default: the current directory); writes nothing.',
+    'Judges the For the user and Next session sections of docs/ai/handover.md in DIR (default: the current directory); writes nothing.',
     'Exit codes: 0 accept, 1 one refusal per line, 2 usage or cannot judge.',
   ].join(LF),
 });
@@ -81,11 +90,11 @@ const parseArgs = (argv) => {
 const stripCr = (line) => (line.endsWith(CR) ? line.slice(0, -1) : line);
 const isBlank = (text) => text.trim() === '';
 
-const sectionLines = (text) => {
+const sectionLines = (text, heading, absent, twice) => {
   const lines = text.split(LF).map(stripCr);
   if (lines[0].startsWith(BOM_CHAR)) lines[0] = lines[0].slice(BOM_CHAR.length);
-  const starts = lines.flatMap((line, index) => (line === SECTION_HEADING ? [index] : []));
-  if (starts.length !== SINGLE) return { state: starts.length === 0 ? STATES.sectionAbsent : STATES.sectionTwice };
+  const starts = lines.flatMap((line, index) => (line === heading ? [index] : []));
+  if (starts.length !== SINGLE) return { state: starts.length === 0 ? absent : twice };
   const body = lines.slice(starts[0] + 1);
   const end = body.findIndex((line) => line.startsWith(SECTION_BOUNDARY));
   return { lines: end === -1 ? body : body.slice(0, end) };
@@ -117,10 +126,57 @@ const judgeLabels = (lines) => {
   return refusals;
 };
 
-const judgeHandover = (content) => {
-  const section = sectionLines(content);
+const judgeUserSection = (content) => {
+  const section = sectionLines(content, SECTION_HEADING, STATES.sectionAbsent, STATES.sectionTwice);
   if (section.state) return [OUTCOME_LINES.state(section.state)];
   return judgeLabels(section.lines);
+};
+
+const readSlotOperand = (line) => {
+  if (!line.startsWith(RENDER_PREFIX)) return null;
+  const token = line.slice(RENDER_PREFIX.length);
+  const operand = token.startsWith(QUOTE) && token.endsWith(QUOTE)
+    ? token.slice(1, -1).replaceAll(ESCAPED_QUOTE, QUOTE) : token;
+  try {
+    return composeRenderLine(operand) === line ? operand : null;
+  } catch {
+    return null;
+  }
+};
+
+const readText = (path, deps) => {
+  const read = readRegularFileNoFollow(path, deps);
+  if (read.outcome !== 'ok' || read.closeFailure) {
+    throw new Error(`cannot read ${path} (${read.closeFailure ?? read.code ?? read.className ?? read.outcome})`);
+  }
+  return read.content;
+};
+
+const makeSlotReads = (deps) => Object.keys(deps).length === 0 ? undefined : ({
+  ...deps,
+  lstatSync: deps.lstatSync ?? deps.lstat ?? ((path) => {
+    const stat = lstatNoFollowRead(path);
+    if (stat === null) throw Object.assign(new Error(`${path} does not exist`), { code: ABSENT_CODE });
+    return stat;
+  }),
+  readFileSync: deps.readFileSync ?? ((path) => Buffer.from(readText(path, deps), 'utf8')),
+});
+
+const judgeNextSection = (content, root, deps) => {
+  const section = sectionLines(content, NEXT_SESSION_HEADING, STATES.nextAbsent, STATES.nextTwice);
+  if (section.state) return [OUTCOME_LINES.state(section.state)];
+  const lines = section.lines.filter((line) => !isBlank(line));
+  if (lines.length !== SINGLE) return [OUTCOME_LINES.state(lines.length === 0 ? STATES.nextEmpty : STATES.nextMany)];
+  const [line] = lines;
+  const slotFile = readSlotOperand(line);
+  if (slotFile === null) return [OUTCOME_LINES.labelState(STATES.nextForm, line)];
+  try {
+    const table = loadStages(readText(STAGES_PATH, deps));
+    validateSlots({ root, slotFile, table }, makeSlotReads(deps));
+    return [];
+  } catch (error) {
+    return [OUTCOME_LINES.labelState(STATES.nextFile, error.message)];
+  }
 };
 
 const runCheck = (options, deps) => {
@@ -132,7 +188,7 @@ const runCheck = (options, deps) => {
     return cannotJudge(read.className === SYMLINK_CLASS ? STATES.handoverSymlink : STATES.handoverNotRegular);
   }
   if (read.outcome !== 'ok') return cannotJudge(STATES.handoverUnreadable);
-  const refusals = judgeHandover(read.content);
+  const refusals = [...judgeUserSection(read.content), ...judgeNextSection(read.content, root, deps)];
   if (refusals.length > 0) return result(EXIT_REFUSAL, '', refusals.join(LF));
   return result(EXIT_ACCEPT, OUTCOME_LINES.accept());
 };

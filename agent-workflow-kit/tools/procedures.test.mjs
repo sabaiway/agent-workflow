@@ -356,6 +356,10 @@ describe('procedures CLI — the plan-authoring readers sweep', () => {
     ]) {
       const r = run(argv, readiness);
       for (const pattern of [/Readers sweep \(before the first review\)/u, RUN_LINE, /ledger row.*stated non-goal.*unchanged with its proof/u]) assert.match(r.stdout, pattern);
+      const sweep = JSON.parse(run([...argv, '--json'], readiness).stdout).readersSweep.join('\n');
+      assert.ok(r.stdout.includes(sweep), 'the advisor renders the same sweep block');
+      assert.match(sweep, /by (?:its )?name and by (?:its )?value/i);
+      assert.match(sweep, /(?:bounded|limited|only|every reader)[^.\n]*\b(?:search|instrument|tool)\b[^.\n]*\b(?:lists?|returns?|finds?)\b/i);
       assert.doesNotMatch(r.stdout, /use: repo_search/u, 'an unregistered project is never pointed at the MCP tool');
     }
   });

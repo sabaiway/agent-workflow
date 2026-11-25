@@ -24,6 +24,7 @@ import {
   wrapperOutcomeFor,
 } from './exec-receipt.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { composeApprovalBlock, writeStubCheck } from '../../codex-cli-bridge/bin/codex-fixtures-harness.test.mjs';
 
 const TS = '2026-08-10T00:00:00.000Z';
 const D = (pair) => pair.repeat(32);
@@ -363,7 +364,8 @@ const minted = (() => {
   git('commit', '-qm', 'base');
   const fence = '```';
   const contractFile = 'sub-task.md';
-  writeFileSync(join(repo, contractFile), `# sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(CONTRACT, null, 2)}\n${fence}\n`);
+  const approval = composeApprovalBlock({ plan: 'docs/plans/approved-plan.md', approval: 'c'.repeat(64), check: writeStubCheck(root) });
+  writeFileSync(join(repo, contractFile), `# sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(CONTRACT, null, 2)}\n${fence}\n${approval}`);
   const run = spawnSync('bash', [WRAPPER, '--nonce', CONTRACT.nonce, contractFile], {
     cwd: repo,
     encoding: 'utf8',

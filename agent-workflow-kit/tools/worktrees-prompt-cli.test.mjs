@@ -17,13 +17,22 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { APPROVED_PLAN_BODY, recordApproval } from './plan-approval/approved-plan-harness.test.mjs';
+import { isSeedablePathToken, shellQuoteArg } from './repo-lex.mjs';
 import { runCli, spawnGit } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-worktrees-prompt-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
+const SEED_PLAN = 'docs/plans/SEED-PROMPT-feature.md';
+const KIT_ROOT = dirname(import.meta.dirname);
+const RENDER_LINE = `    HERE $ node ${isSeedablePathToken(KIT_ROOT) ? KIT_ROOT : shellQuoteArg(KIT_ROOT)}/tools/stage-render/cli.mjs docs/plans/next-session.json`;
+
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -76,7 +85,7 @@ const makeRepo = (name, { packageJson = null, nodeModules = false } = {}) => {
   writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/.vscode/', '/node_modules', ''].join('\n'));
   mkdirSync(join(main, 'docs/plans'), { recursive: true });
   writeFileSync(join(main, 'docs/plans/queue.md'), 'index\n');
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# plan body\n');
+  writeFileSync(join(main, SEED_PLAN), APPROVED_PLAN_BODY);
   return main;
 };
 
@@ -87,6 +96,7 @@ let PROVISION;
 before(() => {
   MAIN = makeRepo('main');
   WT = join(dirname(MAIN), `${basename(MAIN)}--alpha`);
+  recordApproval(MAIN, SEED_PLAN);
   PROVISION = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md'], MAIN);
   assert.equal(PROVISION.code, 0, `provision failed: ${PROVISION.errText}`);
 });
@@ -138,6 +148,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
 
   it('the composed prompt re-probes nothing — the plan is read once and the install posture is the recorded one', () => {
     const repo = makeRepo('probe-once');
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--probe`);
     const plansReads = [];
     const r = run(['provision', 'probe', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-probe.md'], repo, {
@@ -164,6 +175,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
 
   it('a failure at the record write prints no success line and leaves the record bytes untouched', () => {
     const repo = makeRepo('write-fail');
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--wf`);
     let armed = false;
     const r = run(['provision', 'wf', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-wf.md'], repo, {
@@ -192,12 +204,12 @@ describe('worktrees provision — the report ends with the prompt', () => {
       packageJson: { name: 'x', packageManager: 'weird@1', dependencies: { 'a-dep': '1.0.0' } },
       nodeModules: true,
     });
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--nm`);
     const r = run(['provision', 'nm', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-nm.md'], repo);
     assert.equal(r.code, 0, r.errText);
     const hereLines = r.text.split('\n').filter((line) => line.startsWith('    HERE $ '));
-    assert.equal(hereLines.length, 1, r.text);
-    assert.equal(hereLines[0], `    HERE $ rm ${join(wt, 'node_modules')}`);
+    assert.deepEqual([...hereLines].sort(), [`    HERE $ rm ${join(wt, 'node_modules')}`, RENDER_LINE].sort(), r.text);
     assert.ok(r.text.includes('package manager is ambiguous or unknown'), 'the prose half still states why no install command is offered');
     // And the RECORD keeps the flattened posture it has always carried.
     const handoff = readFileSync(join(wt, 'docs/plans/handoff-nm.md'), 'utf8');
@@ -212,6 +224,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
       packageJson: { name: 'x', packageManager: 'weird@1', dependencies: { 'a-dep': '1.0.0' } },
       nodeModules: true,
     });
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--fg`);
     assert.equal(run(['provision', 'fg', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-fg.md'], repo).code, 0);
     const link = join(wt, 'node_modules');
@@ -233,7 +246,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
       const claiming = r.text.split('\n').filter((line) => line.includes('is a symlink into MAIN'));
       assert.ok(claiming.every((line) => line.trim().startsWith('record divergence:')), claiming.join('\n'));
       assert.ok(r.text.includes('record divergence'), 'the frozen record value is named, not silently dropped');
-      assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [], 'no removal is advised');
+      assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [RENDER_LINE], 'no removal is advised');
     }
   });
 
@@ -244,6 +257,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
       packageJson: { name: 'x', dependencies: { 'a-dep': '1.0.0' } },
       nodeModules: true,
     });
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--nr`);
     const seed = ['--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-nr.md'];
     assert.equal(run(['provision', 'nr', ...seed], repo).code, 0);
@@ -261,7 +275,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
     assert.ok(r.text.includes('a symlink whose target could not be read'), r.text);
     assert.ok(r.text.includes('(EACCES)'), 'the read failure names itself');
     assert.ok(!r.text.includes('raw target is not the absolute MAIN'), 'an unreadable link claims nothing about its target');
-    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), []);
+    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [RENDER_LINE]);
   });
 
   it('the install report never advises removing a node_modules link this tool did not place', () => {
@@ -272,6 +286,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
       packageJson: { name: 'x', dependencies: { 'a-dep': '1.0.0' } },
       nodeModules: true,
     });
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--ni`);
     const seed = ['--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-ni.md'];
     assert.equal(run(['provision', 'ni', ...seed], repo).code, 0);
@@ -306,6 +321,7 @@ describe('worktrees provision — the report ends with the prompt', () => {
 
   it('a resume against a hand-edited record renders the recorded value escaped', () => {
     const repo = makeRepo('resume-escapes');
+    recordApproval(repo, SEED_PLAN);
     const wt = join(dirname(repo), `${basename(repo)}--re`);
     const seed = ['--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-re.md'];
     assert.equal(run(['provision', 're', ...seed], repo).code, 0);

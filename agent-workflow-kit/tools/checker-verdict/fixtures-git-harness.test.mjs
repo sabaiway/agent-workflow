@@ -6,6 +6,7 @@ import { makeFixtureRepo } from '../../../scripts/testing/fixture-repo.mjs';
 import { main as runDispatch } from '../dispatch.mjs';
 import { DELEGATION_SCHEMA_VERSION } from '../dispatch-record.mjs';
 import { KIT_OVERRIDE } from './run-harness.test.mjs';
+import { APPROVED_PLAN_BODY } from '../plan-approval/approved-plan-harness.test.mjs';
 
 const TOOLS = 'agent-workflow-kit/tools/';
 const CHECK = '--check';
@@ -44,6 +45,7 @@ const FEEDBACK_RECORD = [
   '',
 ].join('\n');
 const BRIEF_PATH = 'brief.md';
+const PLAN_PATH = 'docs/plans/fixture.md';
 const DISPATCH_NONCE = 'fixture-nonce';
 const PASSED_INSTANT = '2000-01-01T00:00:00.000Z';
 const DISPATCH_CONTRACT = JSON.stringify({
@@ -139,5 +141,8 @@ export const GIT_FIXTURES = Object.freeze([
   })),
   makeEntry('task-brief.mjs', ['check', BRIEF_PATH], 'brief-without-title', (project) => makeRepository(project, {
     [BRIEF_PATH]: 'A brief with no title.\n',
+  })),
+  makeEntry('plan-approval/cli.mjs', ['check', PLAN_PATH], 'approval-record-absent', (project) => makeRepository(project, BASE_FILES, {
+    [PLAN_PATH]: APPROVED_PLAN_BODY,
   })),
 ]);

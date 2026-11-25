@@ -1,67 +1,57 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync,
+  existsSync, lstatSync, mkdirSync, mkdtempSync, renameSync, rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { basename, dirname, join } from 'node:path';
 import { EXIT, loadWorktreesConfig, runCli, WORKTREES_STOP } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-delegated2-'));
 const PLAN_ARGS = ['--plan', 'docs/plans/SEED-PROMPT-x.md'];
-const REPO_GITS = new Map();
-const HEAD = '2222222222222222222222222222222222222222';
-
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
-// `worktree add` materializes the HEAD checkout from headFiles — what the satellite receives,
-// which is NOT necessarily what main's working tree holds (the divergence the advice must respect).
-const makeGit = (main, headFiles = {}) => {
-  const commonDir = join(main, '.git');
-  const entries = [];
-  const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
-  const porcelain = () => [
-    [`worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main'],
-    ...entries.map(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`]),
-  ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
-  return (args) => {
-    if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) return ok(main);
-    if (args[0] === 'rev-parse' && args.includes('--git-dir')) return ok(`${commonDir}\n`);
-    if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return ok(`${commonDir}\n`);
-    if (args[0] === 'rev-parse' && args.includes('HEAD')) return ok(`${HEAD}\n`);
-    if (args[0] === 'check-ignore') return ok();
-    if (args[0] === 'ls-tree') return ok();
-    if (args[0] === 'ls-files') return ok();
-    if ((args[0] === 'status' && args[1] === '--porcelain')
-      || (args[0] === '--no-optional-locks' && args[1] === 'status' && args[2] === '--porcelain')) return ok();
-    if (args[0] === 'worktree' && args[1] === 'list') return ok(porcelain());
-    if (args[0] === 'worktree' && args[1] === 'add') {
-      const branch = args[3];
-      const requested = args[4];
-      const canonical = join(realpathSync(dirname(requested)), basename(requested));
-      mkdirSync(canonical, { recursive: true });
-      for (const [rel, body] of Object.entries(headFiles)) {
-        mkdirSync(dirname(join(canonical, rel)), { recursive: true });
-        writeFileSync(join(canonical, rel), body);
-      }
-      entries.push({ path: canonical, branch });
-      return ok();
-    }
-    return { status: 128, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
-  };
+const fixtureGit = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+};
+const sh = (args, cwd) => {
+  const result = fixtureGit(args, cwd);
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout;
 };
 
-const makeRepo = (name, headFiles = {}) => {
+const makeRepo = (name, headFiles = null) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
   writeFileSync(join(main, 'README.md'), 'fixture\n');
+  if (headFiles !== null) {
+    makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
+    sh(['config', 'user.email', 'coder-tools@proton.me'], main);
+    sh(['config', 'user.name', 'coder-tool'], main);
+    for (const [rel, body] of Object.entries(headFiles)) {
+      mkdirSync(dirname(join(main, rel)), { recursive: true });
+      writeFileSync(join(main, rel), body);
+    }
+    sh(['add', '-A'], main);
+    sh(['commit', '-q', '-m', 'init'], main);
+    writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules', '/.vscode/', ''].join('\n'));
+  }
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
-  REPO_GITS.set(main, makeGit(main, headFiles));
+  if (headFiles !== null) {
+    writeApprovedPlan(main, PLAN_ARGS[1]);
+  } else {
+    mkdirSync(join(main, 'docs/plans'), { recursive: true });
+    writeFileSync(join(main, PLAN_ARGS[1]), '# body\n');
+  }
   return main;
 };
 
@@ -70,7 +60,7 @@ const run = (argv, { cwd, deps = {} }) => {
   const err = [];
   const code = runCli(argv, {
     cwd,
-    git: deps.git ?? REPO_GITS.get(cwd),
+    git: deps.git ?? fixtureGit,
     log: (line) => out.push(line),
     logError: (line) => err.push(line),
     ...deps,
@@ -131,7 +121,7 @@ describe('delegated2 finding 1 — the read door binds lstat identity to the des
 
 describe('delegated2 finding 2 — resume plan compatibility is a zero-write preflight', () => {
   it('allows no plan or the exact seed, but rejects a different --as before the writability probe', () => {
-    const repo = makeRepo('resume-plan-main');
+    const repo = makeRepo('resume-plan-main', {});
     const { worktree } = provisionOk(repo, 'guard');
     const exact = run(['provision', 'guard', '--resume', ...PLAN_ARGS, '--as', 'feature-guard.md'], { cwd: repo });
     rmSync(join(worktree, 'docs/plans/feature-guard.md'));

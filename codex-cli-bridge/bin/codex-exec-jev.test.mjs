@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.mjs';
+import { composeApprovalBlock, makeFixtureRepo, openSuiteScopes, writeStubCheck } from './codex-fixtures-harness.test.mjs';
 const stripGitLocationEnv = (env) => Object.fromEntries(Object.entries(env).filter(([key]) => !/^[Gg][Ii][Tt]_/.test(key)));
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = JSON.parse(readFileSync(join(HERE, '..', 'capability.json'), 'utf8'));
@@ -53,6 +53,11 @@ const sandbox = (root = tmp) => {
   const dir = mkdtempSync(join(root, 'sb-'));
   cpSync(TEMPLATE, dir, { recursive: true });
   return { dir, bin: join(dir, 'bin'), home: join(dir, 'home'), repo: join(dir, 'repo'), state: join(dir, 'home', '.local', 'state', 'agent-workflow', 'codex-jev-profile-refused') };
+};
+const withApprovedTask = (sb) => {
+  writeFileSync(join(sb.repo, 'task.md'), CONTRACT
+    + composeApprovalBlock({ plan: 'docs/plans/approved-plan.md', approval: 'c'.repeat(64), check: writeStubCheck(sb.dir) }));
+  return sb;
 };
 const drive = (sb, args, env = {}, cwd = sb.repo) => {
   const cap = (name) => join(sb.dir, name);
@@ -239,7 +244,7 @@ describe('the fallback by version and by the refused record — spec:jev-every-r
 describe('the profile error item before the turn — spec:jev-every-run/S11', () => {
   for (const [label, shape] of [['the P13 shape', P13], ['the P1 shape', P1]]) {
     it(`${label}, printed twice before turn.started: exit 72, one entry appended, a transport-failure receipt`, { skip: profileSkip }, () => {
-      const sb = sandbox(repos);
+      const sb = withApprovedTask(sandbox(repos));
       const r = drive(sb, ['--nonce', 'n1', 'task.md'], { CODEX_FAKE_PRE: `${shape}\n${shape}` });
       assert.equal(r.status, 72, r.stderr);
       assert.ok(r.stderr.includes(JSON.parse(shape).item.message), 'the matched message is printed');
@@ -260,7 +265,7 @@ describe('the profile error item before the turn — spec:jev-every-run/S11', ()
     });
   }
   it('a failed write warns once naming the path and still exits 72 with its receipt', { skip: profileSkip }, () => {
-    const sb = sandbox(repos);
+    const sb = withApprovedTask(sandbox(repos));
     mkdirSync(dirname(dirname(sb.state)), { recursive: true });
     writeFileSync(dirname(sb.state), 'a file where the state directory belongs\n');
     const r = drive(sb, ['--nonce', 'n1', 'task.md'], { CODEX_FAKE_PRE: P13 });
@@ -271,7 +276,7 @@ describe('the profile error item before the turn — spec:jev-every-run/S11', ()
 });
 describe('bwrap: execvp in a failed command — spec:jev-every-run/S12', () => {
   it('exits 72 without touching the state file', { skip: profileSkip }, () => {
-    const sb = sandbox(repos);
+    const sb = withApprovedTask(sandbox(repos));
     const r = drive(sb, ['--nonce', 'n1', 'task.md'], { CODEX_FAKE_POST: command(BWRAP, 1, 'failed') });
     assert.equal(r.status, 72, r.stderr);
     assert.ok(r.stderr.includes('bwrap: execvp'), r.stderr);
@@ -281,7 +286,7 @@ describe('bwrap: execvp in a failed command — spec:jev-every-run/S12', () => {
 });
 describe('the same strings where they never fire — spec:jev-every-run/S13', () => {
   it('inside a successful command\'s output and in the final message: exit 0, a success receipt, no state file', { skip: profileSkip }, () => {
-    const sb = sandbox(repos);
+    const sb = withApprovedTask(sandbox(repos));
     const r = drive(sb, ['--nonce', 'n1', 'task.md'], { CODEX_FAKE_POST: command(`${P13_TEXT}\n${BWRAP}`, 0, 'completed'),
       CODEX_FAKE_FINAL: `${P13_TEXT} ${BWRAP}` });
     assertProfile(r);
@@ -292,7 +297,7 @@ describe('the same strings where they never fire — spec:jev-every-run/S13', ()
 });
 describe('the exec banner and the receipt — spec:jev-every-run/S14', () => {
   it('a profile run reads sandbox=jev-profile and the two hosts before source=, the receipt keys unchanged', { skip: profileSkip }, () => {
-    const sb = sandbox(repos);
+    const sb = withApprovedTask(sandbox(repos));
     const r = drive(sb, ['--nonce', 'n1', 'task.md']);
     assertProfile(r);
     assert.equal(bannerOf(r), banner('jev-profile', HOSTS));

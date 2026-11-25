@@ -8,6 +8,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import {
   EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseProvisionRecord, composeHandoffStub,
@@ -17,7 +19,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-final-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -52,6 +56,7 @@ const run = (argv, { cwd, deps = {} }) => {
 describe('worktrees final — F1 content reads never follow links', () => {
   it('F1 a symlinked worktree gates.json is never opened on resume (no follow, entry kept)', () => {
     const repo = makeRepo('f1-gates');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const r1 = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--alpha`);

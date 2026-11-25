@@ -10,6 +10,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { EXIT, runCli, parseProvisionRecord, handoffBasename } from './worktrees.mjs';
 // Authored WITH the fixtures below: imported dynamically so this spec LOADS against the pre-fix
 // tree and each fixture fails on its OWN assertion (the red-first doctrine).
@@ -24,6 +28,14 @@ const REPO_GITS = new Map();
 const HEAD = '3333333333333333333333333333333333333333';
 
 after(() => rmSync(TMP, { recursive: true, force: true }));
+
+const sh = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout;
+};
 
 const makeGit = (main) => {
   const commonDir = join(main, '.git');
@@ -58,12 +70,12 @@ const makeGit = (main) => {
 const makeRepo = (name) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   writeFileSync(join(main, 'README.md'), 'fixture\n');
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, PLAN_ARGS[1]);
   writeFileSync(join(main, 'package.json'), JSON.stringify({ name: 'fixture', version: '0.0.0' }));
   REPO_GITS.set(main, makeGit(main));
   return main;

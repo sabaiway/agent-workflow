@@ -28,7 +28,7 @@ TOKENS — not necessarily its bytes, since `rebasePins` may still rewrite absol
 file on its own lane — and, where the settings file is readable, well-formed and actually carries
 tokens, gets a neutral line naming them; orphanhood is claimed only where it is proven.
 
-- `provision <slug> --plan <path> [--as <name>.md] [--dir <path>] [--branch <name>] [--include <path>]... [--install] [--resume]`
+- `provision <slug> --plan <path> [--as <name>.md] [--dir <path>] [--branch <name>] [--include <path>]... [--install] [--resume] [--stage <id>]`
   — create a feature worktree (default: the visible sibling `<repoParent>/<repoName>--<slug>`,
   branch `aw/<slug>`) and populate it: the registry-derived footprint copy-if-missing (a tracked
   file is NEVER overwritten, and `/.mcp.json` is never copied or owned — see below), EXACTLY ONE seeded
@@ -52,6 +52,27 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   `--resume <slug>` completes a half-done provision (identity fail-closed; handoff user sections,
   the seeded plan, and edited copies are preserved byte-exact; the provision-record section is
   refreshed atomically; copy-if-missing everywhere).
+  The record check (spec `kit/plan-approval`): fresh, with `--as` and with `--resume` alike,
+  provision acts on ONE plan instance — the plan placed in the worktree when one is placed, else the
+  `--plan` source — and proceeds only when that instance matches the worktree's own approval record
+  or matches in MAIN (`plan-approval/cli.mjs check`'s match, structure verdict included); a fresh
+  provision makes the MAIN match before `git worktree add`, a resume before any provision write.
+  When the match is MAIN's, its entry is appended to the worktree's own record as `from:
+  provision` once the plan is seeded. With `AW_REVIEW_RECEIPTS` non-empty, fresh provision and
+  `--resume` alike refuse at the record check before the first write, naming the variable and
+  asking that it be unset. Every other state refuses naming the record command
+  (`node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`).
+  `--stage <id>` (one of the record-gated stages `tests`, `code`, `diff-review`, `split-edits`;
+  `tests` when absent; any other id is a usage STOP) names the stage the worktree's slot file
+  `docs/plans/next-session.json` carries (spec `kit/stage-render`). Provision writes it through the
+  stage writer (`node <kit>/tools/stage-render/cli.mjs --write`) after the plan is seeded and its
+  record carried, before the post-provision verify; it is the journaled surface `slot-file`, a path
+  an `--include` may not overlap, and a plans-chain path: tracked, it refuses in both lanes as the
+  handoff and the seeded plan do (below). A link or any other non-regular node at its path refuses
+  before the first provision write. With `--stage`, `--resume` rewrites the slot
+  file; without it, `--resume` writes the `tests` slot file when none is there, keeps one that
+  validates, names the placed plan and names a record-gated stage, and refuses any other naming it.
+  Every composed retry and fallback command keeps an explicitly given `--stage`.
   Resume identity also binds the EXISTING handoff: at most one `handoff-<slug>.md` may exist and
   its recorded slug AND branch must match the live invocation — a second handoff, a name/record
   mismatch, or a handoff that is not a regular file is a typed STOP before anything is written
@@ -67,7 +88,7 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   The post-provision verify is lane-specific:
   the resume verify proves only what THIS run placed or kept: every journaled leaf must be tracked or ignored in the worktree, an untracked owned leaf or any probe error stops the run naming the exact leaf, and every other path — the session's own work — is never probed and never a stop cause; a first provision keeps the blanket clean-tree verify.
   The proof list is THIS run's live placement journal — the closed-world placement registry (the
-  handoff stub, the seeded plan, copy-set leaves, include leaves, the `node_modules` link,
+  handoff stub, the seeded plan, the slot file, copy-set leaves, include leaves, the `node_modules` link,
   `.vscode/settings.json`, the pin-rebase targets, and the record refresh at its already-journaled
   path), leaf-only (files and symlinks; directories are containers, never proof obligations) and
   kind-gated: membership requires the live node's kind to match what that lane's SOURCE places, so
@@ -98,7 +119,7 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   inode, and kind of the canonical node) BEFORE `git worktree add`, and a root that is neither a
   regular file nor a directory — or whose identity probe fails — is refused before any mutation.
   An include that overlaps a path provision itself populates (the frozen registry footprint, the
-  seeded plan, the handoff) or another include root is refused pre-mutation too — an overlapped
+  seeded plan, the handoff, the slot file) or another include root is refused pre-mutation too — an overlapped
   destination would meet the copy-if-missing kept-exit and skip the identity door. On a FRESH
   (non-resume) provision an include destination that already exists at walk time is a fail-closed
   STOP (nothing legitimate pre-populates it — filesystem aliasing the overlap compare missed is
@@ -131,8 +152,10 @@ tokens, gets a neutral line naming them; orphanhood is claimed only where it is 
   NAMED as a divergence beside the live one, with the cause its own source makes likely (a moved MAIN
   or a hand edit for the MAIN-derived pair; a changed dependency declaration for the install
   posture), and a field an earlier kit never wrote is no divergence at all. Every command the prompt
-  offers is a marked line naming WHO runs it: `MAIN $ …` for the landing, `HERE $ …` for this
-  checkout's own install — including the removal of a provisioned `node_modules` symlink, which is
+  offers is a marked line naming WHO runs it: `MAIN $ …` for the landing, `HERE $ …` for the render
+  command of this checkout's slot file (`node <kit>/tools/stage-render/cli.mjs
+  docs/plans/next-session.json` with `<kit>` resolved, the command the satellite session runs first)
+  and for this checkout's own install — including the removal of a provisioned `node_modules` symlink, which is
   runnable even where the install command itself is not derivable. A posture with nothing to run
   stays prose, and the recorded posture string is never printed loose: it IS a command in the
   ordinary case, and an unattributed one reads as an instruction. A `node_modules` symlink is

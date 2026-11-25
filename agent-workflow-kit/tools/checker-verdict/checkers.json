@@ -457,6 +457,26 @@
       "word": "advisor"
     },
     {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "commandLines": [
+        {
+          "name": "plan-approval",
+          "arguments": [
+            "check",
+            "docs/plans/fixture.md"
+          ],
+          "redCases": [
+            {
+              "name": "approval-record-absent",
+              "places": [
+                "docs/plans/fixture.md"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",
       "commandLines": [
         {
@@ -899,6 +919,10 @@
       "word": "library"
     },
     {
+      "path": "agent-workflow-kit/tools/stage-render/cli.mjs",
+      "word": "writer"
+    },
+    {
       "path": "agent-workflow-kit/tools/state-block-hook.mjs",
       "word": "hook"
     },
@@ -1254,6 +1278,19 @@
         "--self-check"
       ],
       "redCase": "reader-answers-an-error",
+      "missKinds": [
+        "verdict",
+        "place",
+        "remedy"
+      ]
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "arguments": [
+        "check",
+        "docs/plans/fixture.md"
+      ],
+      "redCase": "approval-record-absent",
       "missKinds": [
         "verdict",
         "place",
@@ -1728,6 +1765,30 @@
         "--self-check"
       ],
       "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "arguments": [
+        "check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "read"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "arguments": [
+        "check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "stat"
+    },
+    {
+      "path": "agent-workflow-kit/tools/plan-approval/cli.mjs",
+      "arguments": [
+        "check",
+        "docs/plans/fixture.md"
+      ],
+      "faultPoint": "spawn"
     },
     {
       "path": "agent-workflow-kit/tools/plan-shape-cli.mjs",

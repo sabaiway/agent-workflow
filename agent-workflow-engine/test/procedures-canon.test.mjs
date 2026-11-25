@@ -20,9 +20,8 @@ const procedures = readFileSync(PROCEDURES, 'utf8');
 
 const contentLines = (text) => text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-// Extract a `## <activity>` section (heading → next `## ` heading or EOF) — the same boundary the kit
-// parser uses. Returns the section text including its heading.
-const sectionOf = (text, activity) => {
+// Extract a section's main steps or the named part within its `## ` boundary.
+const sectionOf = (text, activity, part = null) => {
   const lines = text.split('\n');
   const start = lines.findIndex((l) => l.trim() === `## ${activity}`);
   if (start === -1) return null;
@@ -33,7 +32,8 @@ const sectionOf = (text, activity) => {
       break;
     }
   }
-  return lines.slice(start, end).join('\n');
+  const [main, ...parts] = lines.slice(start, end).join('\n').split(/\n(?=### )/);
+  return part === null ? main : parts.find((body) => body.split('\n')[0] === `### ${part}`) ?? null;
 };
 
 // The first non-blank content line after the `## <activity>` heading must be the `Slots:` line.
@@ -360,11 +360,62 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(flat, /orchestration\.md.*§7/, 'points at the §7 policy canon, never restates it');
   });
 
-  it('pins the plan-authoring Definition of Done (plan + next-session execution prompt, unprompted)', () => {
-    const flat = procedures.replace(/\s+/g, ' ');
-    assert.match(flat, /Definition of Done/i);
-    assert.match(flat, /execution prompt to begin the next session/i, 'requires a next-session prompt');
-    assert.match(flat, /without the user asking/i, 'unprompted');
+  describe('spec:stage-render/S8 the start recovery, new parts, recorded approval and dispatch part', () => {
+    it('the start renders the next-session line and names every recovery trigger', () => {
+      const start = procedures.split(/^## /m)[0].replace(/\s+/g, ' ');
+      assert.match(start, /\brender\w*\b[^.]*\bnext[- ]session\b|\bnext[- ]session\b[^.]*\brender\w*\b/i);
+      for (const phrase of [
+        /\brecover\w*\b/i, /\b(?:no|absent|missing)\b[^.;]*\b(?:section|Next session)\b/i, /\bfree[- ]text\b/i,
+        /\bslot file\b[^.]*\b(?:absent|missing)\b/i, /\bslot file\b[^.]*\brefus\w*\b/i,
+        /\brecord-gated\b[^.]*\b(?:no matching record|no record match\w*|record does not match)\b/i,
+        /\b(?:another|different|wrong) plan\b/i, /\b(?:another|different|wrong) (?:plan(?: or| and) (?:another )?)?stage\b/i,
+      ]) assert.match(start, phrase);
+    });
+
+    it('the recovery writes waiting-on-approval without a matching record, tests by default with a match, and the named stage otherwise', () => {
+      const start = procedures.split(/^## /m)[0].replace(/\s+/g, ' ');
+      assert.match(start, /\bwaiting-on-approval\b[^.]*\b(?:no matching record|no record match\w*|without a match)\b|\b(?:no matching record|no record match\w*|without a match)\b[^.]*\bwaiting-on-approval\b/i);
+      assert.match(start, /\b(?:matching record|record matches|with a match)\b[^.]*\btests\b|\btests\b[^.]*\b(?:matching record|record matches|with a match)\b/i);
+      assert.match(start, /\btests\b[^.]*\b(?:none|no stage|default)\b|\b(?:none|no stage|default)\b[^.]*\btests\b/i);
+      assert.match(start, /\b(?:not record-gated|non-record-gated)\b[^.]*\b(?:as named|named stage|opened for)\b/i);
+      assert.match(start, /\b(?:no plan|name[s]? no plan)\b[^.]*\b(?:as named|named stage|opened for)\b/i);
+      assert.match(start, /\bwriter\b|--write\b/i);
+      assert.match(start, /\b(?:never|not)\b[^.]*\boverwrite\w*\b/i);
+      assert.match(start, /\bempty-queue\b[^.]*\b(?:user|maintainer)\b[^.]*\bno work\b|\b(?:user|maintainer)\b[^.]*\bno work\b[^.]*\bempty-queue\b/i);
+    });
+
+    for (const [activity, part] of [['epic', 'Design consult'], ['plan-execution', 'Split']]) {
+      it(`${activity} contains the ${part} part with steps 1–4 and no Slots line`, () => {
+        const body = sectionOf(procedures, activity, part);
+        assert.ok(body, `### ${part} inside ## ${activity}`);
+        assert.deepEqual([...body.matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1])), [1, 2, 3, 4]);
+        assert.doesNotMatch(body, /^\s*Slots:/m);
+        assert.deepEqual([...procedures.matchAll(/^## (.+)$/gm)].map((match) => match[1]), ['plan-authoring', 'plan-execution', 'routine', 'feedback-triage', 'epic', 'task']);
+      });
+    }
+
+    it('authoring steps 2 and 3 name the scenario instead of writing a test before approval and sweep by name and value', () => {
+      const draft = flatStep('plan-authoring', 2);
+      assert.match(draft, /\b(?:no|never|not)\b[^.]*\btest\b[^.]*\bapproval\b|\bbefore (?:the )?approval\b[^.]*\b(?:no|never|not)\b[^.]*\btest\b/i);
+      assert.match(draft, /\bfold\w*\b[^.]*\bscenario\b|\bscenario\b[^.]*\bfold\w*\b/i);
+      const sweep = flatStep('plan-authoring', 3);
+      assert.match(sweep, /by (?:its )?name and by (?:its )?value/i);
+      assert.match(sweep, /(?:bounded|limited|only|every reader)[^.]*\b(?:search|instrument|tool)\b[^.]*\b(?:lists?|returns?|finds?)\b/i);
+    });
+
+    it('authoring step 6 presents the essence and records the yes; Definition of Done names the record and next-session line', () => {
+      const approval = flatStep('plan-authoring', 6);
+      assert.match(approval, /\b(?:present|show)\w*\b[^.]*\bessence\b/i);
+      assert.match(approval, /\byes\b.*plan-approval\/cli\.mjs record\b|plan-approval\/cli\.mjs record\b.*\byes\b/i);
+      const done = sectionOf(procedures, 'plan-authoring').split('Definition of Done')[1] ?? '';
+      for (const phrase of [/approval record/i, /next-session line/i, /without the user asking/i, /Phase: Cleanup/]) assert.match(done, phrase);
+    });
+
+    for (const [activity, step, prompt] of [['plan-execution', 2, 'brief'], ['plan-execution', 5, 'fold prompt'], ['task', 1, 'prompt']]) {
+      it(`${activity} step ${step} carries the dispatch part in its ${prompt}`, () => {
+        assert.match(flatStep(activity, step), /aw-plan-approval|stage-render\/cli\.mjs --dispatch\b/);
+      });
+    }
   });
 
   it('pins the communication contract (deliver the artifact inline; never a bare pointer as a substitute)', () => {

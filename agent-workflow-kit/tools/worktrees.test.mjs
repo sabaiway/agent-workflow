@@ -2,27 +2,42 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync, readFileSync,
-  fchmodSync, lstatSync, existsSync, realpathSync,
+  fchmodSync, lstatSync, existsSync, realpathSync, appendFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import {
+  APPROVED_PLAN_BODY, recordApproval, writeApprovedContractPlan, writeApprovedPlan,
+} from './plan-approval/approved-plan-harness.test.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { EPIC_SECTIONS } from './epic-shape.mjs';
+import { isSeedablePathToken, shellQuoteArg } from './repo-lex.mjs';
+import { promptCommands } from './worktree-prompt.mjs';
 import { applySlot } from './write-lanes.mjs';
 import {
   EXIT, WORKTREES_STOP, CONFIG_REL, SLUG_RE, validateSlug, loadWorktreesConfig, resolveTargetDir,
   realpathThroughExistingParent, nearestExistingDir, resolveProbeDir, parseWorktreeList,
   probeParentWritable, provisionCopySet, copyTreeIfMissing, rebaseAbsolutePins,
   composeHandoffStub, parseProvisionRecord, composeProvisionArgv, parseArgs, runCli,
-  handoffBasename, spawnGit,
+  handoffBasename, PLACEMENT_REGISTRY,
 } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-worktrees-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
+const SEED_PLAN = 'docs/plans/SEED-PROMPT-feature.md';
+const SLOT_FILE = 'docs/plans/next-session.json';
+const approveSeed = (root) => writeApprovedPlan(root, SEED_PLAN);
+const fixtureGit = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+};
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const r = fixtureGit(args, cwd);
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -57,7 +72,7 @@ const makeRepo = (name, { excludes = HIDDEN_EXCLUDES, footprint = true, nodeModu
     writeFileSync(join(main, 'docs/ai/agent-workflow-review-receipts.jsonl'), '{"fixture":1}\n');
     mkdirSync(join(main, 'docs/plans'), { recursive: true });
     writeFileSync(join(main, 'docs/plans/queue.md'), 'index\n');
-    writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# plan body\n');
+    writeFileSync(join(main, SEED_PLAN), APPROVED_PLAN_BODY);
     mkdirSync(join(main, '.claude/skills'), { recursive: true });
     writeFileSync(join(main, '.claude/skills/dummy.md'), 'skill\n');
     writeFileSync(join(main, '.claude/skills/run.sh'), '#!/bin/sh\n');
@@ -76,10 +91,10 @@ const makeRepo = (name, { excludes = HIDDEN_EXCLUDES, footprint = true, nodeModu
   return main;
 };
 
-const run = (argv, { cwd, git } = {}) => {
+const run = (argv, { cwd, git, ...deps } = {}) => {
   const out = [];
   const err = [];
-  const code = runCli(argv, { cwd, log: (l) => out.push(l), logError: (l) => err.push(l), ...(git ? { git } : {}) });
+  const code = runCli(argv, { cwd, log: (l) => out.push(l), logError: (l) => err.push(l), git: git ?? fixtureGit, ...deps });
   return { code, out, err, text: out.join('\n'), errText: err.join('\n') };
 };
 
@@ -89,7 +104,7 @@ const recordingGit = (calls, { intercept = null } = {}) => (args, cwd) => {
     const hit = intercept(args);
     if (hit) return hit;
   }
-  return spawnGit(args, cwd);
+  return fixtureGit(args, cwd);
 };
 
 let MAIN;
@@ -168,12 +183,14 @@ describe('worktrees — path safety', () => {
   });
   it('paths with spaces survive end-to-end (quoting fixture; missing parents created)', () => {
     const spaced = join(TMP, 'sp ace', 'wt with space');
+    approveSeed(MAIN);
     const r = run(['provision', 'spc', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-spc.md', '--dir', spaced], { cwd: MAIN });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.equal(sh(['status', '--porcelain'], spaced).trim(), '');
     assert.ok(existsSync(join(spaced, 'docs/plans/feature-spc.md')));
   });
   it('a target inside the main repo and not ignored is a typed STOP', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'inside1', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--dir', join(MAIN, 'not-ignored-dir')], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /inside the main repo and not ignored/);
@@ -205,8 +222,10 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
   it('a create-OK/delete-FAIL probe is its OWN typed STOP naming the leftover path + code — never writable', () => {
     const out = [];
     const err = [];
+    approveSeed(MAIN);
     const code = runCli(['provision', 'cfail', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], {
       cwd: MAIN,
+      git: fixtureGit,
       log: (l) => out.push(l),
       logError: (l) => err.push(l),
       rmdir: () => { throw Object.assign(new Error('busy'), { code: 'EBUSY' }); },
@@ -232,6 +251,7 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
     const git = recordingGit(calls);
     const out = [];
     const err = [];
+    approveSeed(MAIN);
     const code = runCli(['provision', 'denied2', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], {
       cwd: MAIN,
       git,
@@ -264,6 +284,7 @@ describe('worktrees — parseWorktreeList / probeParentWritable', () => {
 describe('worktrees — provision (real git)', () => {
   let WT;
   before(() => {
+    approveSeed(MAIN);
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md', '--include', 'extra-secret.txt'], { cwd: MAIN });
     assert.equal(r.code, EXIT.ok, r.errText);
     WT = join(dirname(MAIN), `${basename(MAIN)}--alpha`);
@@ -294,7 +315,7 @@ describe('worktrees — provision (real git)', () => {
     assert.ok(!existsSync(join(WT, 'docs/ai/agent-workflow-review-receipts.jsonl')));
   });
   it('seeds EXACTLY the one feature plan under the bare name', () => {
-    assert.equal(readFileSync(join(WT, 'docs/plans/feature-alpha.md'), 'utf8'), '# plan body\n');
+    assert.equal(readFileSync(join(WT, 'docs/plans/feature-alpha.md'), 'utf8'), APPROVED_PLAN_BODY);
     assert.ok(!existsSync(join(WT, 'docs/plans/SEED-PROMPT-feature.md')));
     assert.ok(!existsSync(join(WT, 'docs/plans/queue.md')), 'main docs/plans content is never copied wholesale');
   });
@@ -341,12 +362,14 @@ describe('worktrees — provision (real git)', () => {
 
   // ── reservation refusals (git's OWN refusal surfaced, recoveries named) ──
   it('re-provisioning the same slug is a typed STOP naming the recoveries', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /git worktree add refused/);
     assert.match(r.errText, /--resume|cleanup/);
   });
   it('an existing branch under a new slug is the same refusal class', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'alpha2', '--branch', 'aw/alpha', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /git worktree add refused/);
@@ -355,6 +378,7 @@ describe('worktrees — provision (real git)', () => {
     const busy = join(TMP, 'busy-dir');
     mkdirSync(busy, { recursive: true });
     writeFileSync(join(busy, 'x'), 'x');
+    approveSeed(MAIN);
     const r = run(['provision', 'alpha3', '--dir', busy, '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /git worktree add refused/);
@@ -362,6 +386,7 @@ describe('worktrees — provision (real git)', () => {
 
   // ── run-from-satellite refusal ──
   it('provision refuses a cwd inside a linked worktree, naming the main path', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'nested', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: WT });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /MAIN worktree/);
@@ -373,8 +398,10 @@ describe('worktrees — provision (real git)', () => {
     let armed = false;
     const out = [];
     const err = [];
+    approveSeed(MAIN);
     const code = runCli(['provision', 'crash', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-crash.md'], {
       cwd: MAIN,
+      git: fixtureGit,
       log: (l) => out.push(l),
       logError: (l) => err.push(l),
       write: () => {
@@ -396,11 +423,13 @@ describe('worktrees — provision (real git)', () => {
 
   // ── --resume identity checks (fail-closed) ──
   it('--resume refuses an unregistered target', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'ghost', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /no registered worktree/);
   });
   it('--resume refuses a branch mismatch at the target', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'alpha', '--resume', '--branch', 'aw/other', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /identity mismatch/);
@@ -419,6 +448,7 @@ describe('worktrees — provision (real git)', () => {
     sh(['commit', '-q', '-m', 'x'], gammaDir);
     sh(['checkout', '-q', '-b', 'aw/gamma'], gammaDir);
     try {
+      approveSeed(MAIN);
       const r = run(['provision', 'gamma', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: MAIN });
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /does not share this repo/);
@@ -433,6 +463,7 @@ describe('worktrees — provision (real git)', () => {
   it('a second bare plan in the worktree fails the exactly-one-plan assert on --resume', () => {
     writeFileSync(join(WT, 'docs/plans/second-plan.md'), 'x\n');
     try {
+      approveSeed(MAIN);
       const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-alpha.md'], { cwd: MAIN });
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /EXACTLY ONE in-flight plan/);
@@ -452,6 +483,7 @@ describe('worktrees — provision (real git)', () => {
 describe('worktrees — resume preserves user work (copy-if-missing everywhere)', () => {
   it('a --resume refreshes only the record while preserving user sections and the seeded plan byte-exact', () => {
     const repo = makeRepo('res-preserve');
+    approveSeed(repo);
     const r1 = run(['provision', 'resp', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-resp.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--resp`);
@@ -462,7 +494,7 @@ describe('worktrees — resume preserves user work (copy-if-missing everywhere)'
     const userSuffix = '## Progress\n\nreal satellite work notes\n';
     const userHandoff = `${originalHandoff}\n${userSuffix}`;
     writeFileSync(handoffPath, userHandoff);
-    const userPlan = '# plan body\n\nuser-refined step\n';
+    const userPlan = `${APPROVED_PLAN_BODY}\n- User-refined step.\n`;
     writeFileSync(join(wt, 'docs/plans/feature-resp.md'), userPlan);
     const r2 = run(['provision', 'resp', '--resume', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-resp.md'], { cwd: repo });
     assert.equal(r2.code, EXIT.ok, r2.errText);
@@ -484,6 +516,7 @@ describe('worktrees — provision-source containment (pre-add sweep)', () => {
     rmSync(join(repo, '.claude/skills'), { recursive: true, force: true });
     symlinkSync(outside, join(repo, '.claude/skills'));
     const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], repo)).length;
+    approveSeed(repo);
     const r = run(['provision', 'esc', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /provision source escapes the main repo/);
@@ -495,6 +528,7 @@ describe('worktrees — provision-source containment (pre-add sweep)', () => {
 describe('worktrees — target-inside-source collision preflight (pre-add)', () => {
   it('a check-ignored target INSIDE a copy-set subtree is a typed STOP before worktree add', () => {
     const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
+    approveSeed(MAIN);
     const r = run(['provision', 'nest', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--dir', join(MAIN, '.claude/skills/nest')], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /inside a provision source/);
@@ -506,6 +540,7 @@ describe('worktrees — target-inside-source collision preflight (pre-add)', () 
     writeFileSync(join(MAIN, '.git/info/exclude'), [...HIDDEN_EXCLUDES.slice(0, -1), '/ignored-extras/', ''].join('\n'));
     try {
       const beforeCount = parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
+      approveSeed(MAIN);
       const r = run(['provision', 'nesti', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--include', 'ignored-extras', '--dir', join(MAIN, 'ignored-extras/nest')], { cwd: MAIN });
       assert.equal(r.code, EXIT.stop);
       assert.match(r.errText, /inside a provision source/);
@@ -516,6 +551,7 @@ describe('worktrees — target-inside-source collision preflight (pre-add)', () 
     }
   });
   it('an ignored target OUTSIDE every source subtree stays allowed (.claude/worktrees precedent)', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'nestok', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-nestok.md', '--dir', join(MAIN, '.claude/worktrees/nestok')], { cwd: MAIN });
     assert.equal(r.code, EXIT.ok, r.errText);
     rmSync(join(MAIN, '.claude/worktrees/nestok'), { recursive: true, force: true });
@@ -527,6 +563,7 @@ describe('worktrees — target-inside-source collision preflight (pre-add)', () 
 describe('worktrees — rebase decides tracked/untracked via git, byte-safe on user files', () => {
   it('a crash-shaped resume still rebases: the wt gates.json equals the MAIN source bytes', () => {
     const repo = makeRepo('rebase-crash');
+    approveSeed(repo);
     const r1 = run(['provision', 'rbc', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-rbc.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--rbc`);
@@ -540,6 +577,7 @@ describe('worktrees — rebase decides tracked/untracked via git, byte-safe on u
   });
   it('a USER-modified untracked rebase target is preserved byte-exact and reported', () => {
     const repo = makeRepo('rebase-user');
+    approveSeed(repo);
     const r1 = run(['provision', 'rbu', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-rbu.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--rbu`);
@@ -556,7 +594,10 @@ describe('worktrees — rebase decides tracked/untracked via git, byte-safe on u
 
 describe('worktrees — plan-seed refusals (pre-add, no worktree is created)', () => {
   const worktreeCount = () => parseWorktreeList(sh(['worktree', 'list', '--porcelain', '-z'], MAIN)).length;
-  const seedRun = (extra) => run(['provision', 'seedx', '--plan', 'docs/plans/SEED-PROMPT-feature.md', ...extra], { cwd: MAIN });
+  const seedRun = (extra) => {
+    approveSeed(MAIN);
+    return run(['provision', 'seedx', '--plan', 'docs/plans/SEED-PROMPT-feature.md', ...extra], { cwd: MAIN });
+  };
 
   for (const scratch of ['queue.md', 'EXECUTE-x.md', 'FEEDBACK-x.md', 'a-PROMPT.md', 'a-prompt.md', 'handoff-x.md']) {
     it(`refuses the scratch-class seeded name ${scratch}`, () => {
@@ -570,22 +611,25 @@ describe('worktrees — plan-seed refusals (pre-add, no worktree is created)', (
   it('refuses a --plan outside the main repo', () => {
     const outside = join(TMP, 'outside-plan.md');
     writeFileSync(outside, 'x\n');
+    approveSeed(MAIN);
     const r = run(['provision', 'seedx', '--plan', outside, '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /must resolve inside the main repo/);
   });
   it('refuses a --plan that is not a regular non-symlink file', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'seedx', '--plan', 'docs/plans', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /regular non-symlink file/);
   });
   it('refuses a missing --plan path', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'seedx', '--plan', 'docs/plans/nope.md', '--as', 'feature-x.md'], { cwd: MAIN });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /not found/);
   });
   it('refuses a bare (in-flight) plan inside MAIN docs/plans as the source, naming the recovery', () => {
-    writeFileSync(join(MAIN, 'docs/plans/bare-feature.md'), 'x\n');
+    writeApprovedPlan(MAIN, 'docs/plans/bare-feature.md');
     try {
       const r = run(['provision', 'seedx', '--plan', 'docs/plans/bare-feature.md'], { cwd: MAIN });
       assert.equal(r.code, EXIT.stop);
@@ -609,6 +653,7 @@ describe('worktrees — --include refusals', () => {
   it('refuses an out-of-repo include and a not-ignored destination', () => {
     const outside = join(TMP, 'outside-extra.txt');
     writeFileSync(outside, 'x\n');
+    approveSeed(MAIN);
     const r1 = run(['provision', 'incl1', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--include', outside], { cwd: MAIN });
     assert.equal(r1.code, EXIT.stop);
     assert.match(r1.errText, /--include must resolve inside the main repo/);
@@ -620,7 +665,7 @@ describe('worktrees — --include refusals', () => {
     for (const slug of ['incl1', 'incl2']) {
       rmSync(join(dirname(MAIN), `${basename(MAIN)}--${slug}`), { recursive: true, force: true });
       sh(['worktree', 'prune'], MAIN);
-      spawnSync('git', ['branch', '-D', `aw/${slug}`], { cwd: MAIN });
+      fixtureGit(['branch', '-D', `aw/${slug}`], MAIN);
     }
   });
 });
@@ -630,6 +675,7 @@ describe('worktrees — --include refusals', () => {
 describe('worktrees — node_modules arms', () => {
   it('main without node_modules → the printed install line, record "absent"', () => {
     const repo = makeRepo('nm-absent', { nodeModules: 'none' });
+    approveSeed(repo);
     const r = run(['provision', 'nma', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /npm install/);
@@ -639,6 +685,7 @@ describe('worktrees — node_modules arms', () => {
   });
   it('main node_modules resolving OUTSIDE the repo → not symlinked, stated line', () => {
     const repo = makeRepo('nm-outside', { nodeModules: 'outside' });
+    approveSeed(repo);
     const r = run(['provision', 'nmo', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /resolves outside the repo/);
@@ -647,6 +694,7 @@ describe('worktrees — node_modules arms', () => {
   });
   it('a directory-form ignore pattern (node_modules/) skips the symlink with the stated line', () => {
     const repo = makeRepo('nm-dirslash', { excludes: ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules/', '/extra-secret.txt', ''] });
+    approveSeed(repo);
     const r = run(['provision', 'nmd', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /would not be ignored here/);
@@ -656,6 +704,7 @@ describe('worktrees — node_modules arms', () => {
   });
   it('the symlink line states the shared MUTABLE cache honestly; --install on resume prints the unlink-first recovery', () => {
     const repo = makeRepo('nm-res');
+    approveSeed(repo);
     const r1 = run(['provision', 'nmr', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-nmr.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     assert.match(r1.text, /shared MUTABLE cache — writes through it hit MAIN/);
@@ -668,6 +717,7 @@ describe('worktrees — node_modules arms', () => {
   });
   it('--install ALWAYS only prints (zero installer spawn, zero node_modules write)', () => {
     const calls = [];
+    approveSeed(MAIN);
     const r = run(['provision', 'nmi', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md', '--install'], { cwd: MAIN, git: recordingGit(calls) });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /install it yourself \(zero spawn\): cd .* && npm install/);
@@ -687,6 +737,7 @@ describe('worktrees — .vscode window title', () => {
     const repo = makeRepo('vs-ok');
     mkdirSync(join(repo, '.vscode'));
     writeFileSync(join(repo, '.vscode/settings.json'), JSON.stringify({ 'editor.tabSize': 2 }));
+    approveSeed(repo);
     const r = run(['provision', 'vsa', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     const wt = join(dirname(repo), `${basename(repo)}--vsa`);
@@ -701,6 +752,7 @@ describe('worktrees — .vscode window title', () => {
     writeFileSync(join(repo, '.vscode/settings.json'), '{"tracked": true}\n');
     sh(['add', '.vscode/settings.json'], repo);
     sh(['commit', '-q', '-m', 'vscode'], repo);
+    approveSeed(repo);
     const r = run(['provision', 'vst', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /is tracked — left byte-unchanged/);
@@ -711,6 +763,7 @@ describe('worktrees — .vscode window title', () => {
     const repo = makeRepo('vs-notign', { excludes: ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules/', '/extra-secret.txt', ''] });
     mkdirSync(join(repo, '.vscode'));
     writeFileSync(join(repo, '.vscode/settings.json'), '{}');
+    approveSeed(repo);
     const r = run(['provision', 'vsn', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /not ignored in the worktree — skipped/);
@@ -725,6 +778,7 @@ describe('worktrees — docs/plans must be ignored in main', () => {
   it('a repo where docs/plans is not git-ignored is a typed STOP before any mutation', () => {
     const repo = makeRepo('no-excl', { excludes: ['/docs/ai/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules/', '/extra-secret.txt', ''] });
     const calls = [];
+    approveSeed(repo);
     const r = run(['provision', 'x1', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo, git: recordingGit(calls) });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /docs\/plans is not git-ignored/);
@@ -919,7 +973,7 @@ describe('worktrees — tracked gates.json with a root pin (visible mode)', () =
     sh(['add', 'docs/ai/gates.json'], repo);
     sh(['commit', '-q', '-m', 'gates'], repo);
     mkdirSync(join(repo, 'docs/plans'), { recursive: true });
-    writeFileSync(join(repo, 'docs/plans/SEED-PROMPT-feature.md'), '# p\n');
+    approveSeed(repo);
     const r = run(['provision', 'vis', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
     assert.match(r.text, /tracked declaration is not worktree-portable/);
@@ -936,6 +990,7 @@ describe('worktrees — git errors surface verbatim', () => {
     const git = recordingGit([], {
       intercept: (args) => (args[0] === 'worktree' && args[1] === 'add' ? { status: 128, stdout: '', stderr: 'fatal: disk exploded' } : null),
     });
+    approveSeed(MAIN);
     const r = run(['provision', 'gerr', '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature-x.md'], { cwd: MAIN, git });
     assert.equal(r.code, EXIT.stop);
     assert.match(r.errText, /fatal: disk exploded/);
@@ -955,6 +1010,7 @@ describe('worktrees — CLI usage', () => {
     assert.throws(() => parseArgs(['provision', 'x', '--frob']), (e) => e.exitCode === EXIT.usage);
   });
   it('provision without --plan is a usage STOP (the ONE seeded plan is required)', () => {
+    approveSeed(MAIN);
     const r = run(['provision', 'noplan'], { cwd: MAIN });
     assert.equal(r.code, EXIT.usage);
     assert.match(r.errText, /requires --plan/);
@@ -1009,5 +1065,381 @@ describe('worktrees — handoff record round-trip', () => {
   it('an empty include list round-trips as none', () => {
     const record = parseProvisionRecord(composeHandoffStub({ slug: 's', branch: 'b', includes: [], nodeModules: 'absent', vscode: 'absent' }));
     assert.deepEqual(record.includes, []);
+  });
+});
+
+const approvalPath = (root) => join(sh(['rev-parse', '--absolute-git-dir'], root).trim(), 'agent-workflow-plan-approvals.jsonl');
+const readApprovals = (root) => readFileSync(approvalPath(root), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+const makeProvision = (slug, { source = SEED_PLAN, as = 'feature.md', approved = true } = {}) => {
+  const root = makeRepo(slug);
+  if (approved) writeApprovedPlan(root, source);
+  const wt = join(dirname(root), `${basename(root)}--${slug}`);
+  const plan = `docs/plans/${as ?? basename(source)}`;
+  const argv = ['provision', slug, '--plan', source, ...(as === null ? [] : ['--as', as])];
+  return { root, wt, plan, argv, slug };
+};
+const provision = (fixture, extra = [], deps = {}) => run([...fixture.argv, ...extra], { cwd: fixture.root, ...deps });
+const expectProvisioned = (fixture, extra = [], deps = {}) => {
+  const result = provision(fixture, extra, deps);
+  assert.equal(result.code, EXIT.ok, result.errText);
+  return result;
+};
+const expectCarried = ({ root, wt }) => {
+  const [entry] = readApprovals(root);
+  assert.equal(entry.from, 'approval');
+  assert.deepEqual(readApprovals(wt), [{ ...entry, from: 'provision' }]);
+};
+const expectBeforeAdd = (fixture, extra, finding) => {
+  const calls = [];
+  const result = provision(fixture, extra, { git: recordingGit(calls) });
+  assert.equal(result.code, EXIT.stop, result.errText);
+  assert.match(result.errText, finding);
+  assert.ok(!calls.some((call) => call.startsWith('worktree add')));
+  assert.ok(!existsSync(fixture.wt));
+};
+const expectNoPlacement = ({ wt, slug }) => {
+  assert.ok(!existsSync(join(wt, 'AGENTS.md')));
+  assert.ok(!existsSync(join(wt, 'docs/plans', handoffBasename(slug))));
+};
+const createUnprovisioned = ({ root, wt, slug }) => {
+  sh(['worktree', 'add', '-b', `aw/${slug}`, wt], root);
+  mkdirSync(join(wt, 'docs/plans'), { recursive: true });
+};
+const writeStoriedSeed = (root) => {
+  const epic = 'docs/ai/epics/ALPHA.md';
+  const bodies = ['Keep the guide current.', 'Keep the guide useful.', 'No new features.', 'The guide is current.',
+    'docs/ai/specs/kit/example.md', '- S1 | Guide | depends-on: none | owns: docs/readme.md | shared: none | state: planned', 'Row ALPHA in Now'];
+  mkdirSync(join(root, dirname(epic)), { recursive: true });
+  writeFileSync(join(root, epic), ['---', 'type: epic', 'lastUpdated: 2026-11-25', 'scope: permanent', 'staleAfter: 90d',
+    'owner: none', 'maxLines: 60', 'state: open', '---', '# Epic: Guide',
+    ...EPIC_SECTIONS.flatMap((heading, index) => [heading, bodies[index]])].join('\n'));
+  const body = APPROVED_PLAN_BODY.replace('## Goal and boundary\n', '## Goal and boundary\nStory: S1 of ALPHA\n');
+  writeFileSync(join(root, SEED_PLAN), body);
+  recordApproval(root, SEED_PLAN);
+  return { epic, body };
+};
+
+describe('spec:plan-approval/S9 worktrees provision checks and carries the plan approval', () => {
+  it('refuses a fresh provision without a matching main record before worktree add, naming the record command', () => {
+    const fixture = makeProvision('approval-absent', { approved: false });
+    expectBeforeAdd(fixture, [], /plan-approval\/cli\.mjs record/);
+  });
+  for (const as of [null, 'renamed.md']) {
+    it(`seeds an approved plan ${as === null ? 'without --as' : 'with --as'} and carries the matching main record`, () => {
+      const fixture = makeProvision(as === null ? 'approval-same' : 'approval-renamed', { source: as === null ? 'source.md' : SEED_PLAN, as });
+      expectProvisioned(fixture);
+      assert.equal(readFileSync(join(fixture.wt, fixture.plan), 'utf8'), APPROVED_PLAN_BODY);
+      expectCarried(fixture);
+    });
+  }
+  it('resume carries the missing entry for the instance already placed', () => {
+    const fixture = makeProvision('approval-resume');
+    createUnprovisioned(fixture);
+    writeFileSync(join(fixture.wt, fixture.plan), APPROVED_PLAN_BODY);
+    assert.ok(!existsSync(approvalPath(fixture.wt)));
+    expectProvisioned(fixture, ['--resume']);
+    expectCarried(fixture);
+  });
+  it('resume carries MAIN\'s entry for a plan whose contract revision sits in MAIN\'s revision home', () => {
+    const fixture = makeProvision('approval-resume-contract', { approved: false });
+    writeApprovedContractPlan(fixture.root, SEED_PLAN);
+    createUnprovisioned(fixture);
+    writeFileSync(join(fixture.wt, fixture.plan), readFileSync(join(fixture.root, SEED_PLAN)));
+    expectProvisioned(fixture, ['--resume']);
+    expectCarried(fixture);
+  });
+  it('resume carries MAIN\'s entry for the placed instance after MAIN\'s source plan changed', () => {
+    const fixture = makeProvision('approval-resume-source');
+    createUnprovisioned(fixture);
+    writeFileSync(join(fixture.wt, fixture.plan), APPROVED_PLAN_BODY);
+    writeFileSync(join(fixture.root, SEED_PLAN), APPROVED_PLAN_BODY.replace('Keep the guide current.', 'Retire the guide.'));
+    expectProvisioned(fixture, ['--resume']);
+    expectCarried(fixture);
+  });
+  it('resume refuses without reading MAIN when the worktree record is unreadable', () => {
+    const fixture = makeProvision('approval-resume-unreadable');
+    createUnprovisioned(fixture);
+    writeFileSync(join(fixture.wt, fixture.plan), APPROVED_PLAN_BODY);
+    mkdirSync(approvalPath(fixture.wt));
+    const result = provision(fixture, ['--resume']);
+    assert.equal(result.code, EXIT.stop, result.errText);
+    assert.ok(result.errText.includes(approvalPath(fixture.wt)), result.errText);
+    expectNoPlacement(fixture);
+  });
+  for (const resume of [false, true]) {
+    it(`refuses ${resume ? '--resume' : 'a fresh provision'} before any write while AW_REVIEW_RECEIPTS is set`, () => {
+      const fixture = makeProvision(`approval-override-${resume ? 'resume' : 'fresh'}`);
+      if (resume) {
+        createUnprovisioned(fixture);
+        writeFileSync(join(fixture.wt, fixture.plan), APPROVED_PLAN_BODY);
+      }
+      const calls = [];
+      const previous = process.env.AW_REVIEW_RECEIPTS;
+      process.env.AW_REVIEW_RECEIPTS = join(dirname(approvalPath(fixture.root)), 'agent-workflow-review-receipts.jsonl');
+      const result = (() => {
+        try {
+          return provision(fixture, resume ? ['--resume'] : [], { git: recordingGit(calls) });
+        } finally {
+          if (previous === undefined) delete process.env.AW_REVIEW_RECEIPTS;
+          else process.env.AW_REVIEW_RECEIPTS = previous;
+        }
+      })();
+      assert.equal(result.code, EXIT.stop, result.errText);
+      assert.match(result.errText, /AW_REVIEW_RECEIPTS/);
+      assert.ok(!calls.some((call) => call.startsWith('worktree add')));
+      if (resume) {
+        expectNoPlacement(fixture);
+        assert.ok(!existsSync(approvalPath(fixture.wt)));
+      } else {
+        assert.ok(!existsSync(fixture.wt));
+      }
+    });
+  }
+  it('stops naming the carry when the worktree record cannot be written', () => {
+    const fixture = makeProvision('approval-carry-fails');
+    const git = (args, cwd) => {
+      const result = fixtureGit(args, cwd);
+      if (args[0] === 'worktree' && args[1] === 'add' && result.status === 0) mkdirSync(approvalPath(fixture.wt));
+      return result;
+    };
+    const result = provision(fixture, [], { git });
+    assert.equal(result.code, EXIT.stop, result.errText);
+    assert.match(result.errText, /could not carry the approval/);
+  });
+  it('names a malformed line of the record on a provision that matches', () => {
+    const fixture = makeProvision('approval-malformed');
+    appendFileSync(approvalPath(fixture.root), 'not JSON\n');
+    const result = expectProvisioned(fixture);
+    assert.match(result.text + result.errText, /malformed entry at .*agent-workflow-plan-approvals\.jsonl: line 2/);
+  });
+  it('resume refuses a placed instance matching neither the worktree nor the main record', () => {
+    const fixture = makeProvision('approval-mismatch');
+    expectProvisioned(fixture);
+    expectCarried(fixture);
+    const changed = APPROVED_PLAN_BODY.replace('Keep the guide current.', 'Retire the guide.');
+    writeFileSync(join(fixture.wt, fixture.plan), changed);
+    rmSync(join(fixture.wt, 'AGENTS.md'));
+    rmSync(join(fixture.wt, 'docs/plans', handoffBasename(fixture.slug)));
+    const result = provision(fixture, ['--resume']);
+    assert.equal(result.code, EXIT.stop, result.errText);
+    assert.match(result.errText, /plan-approval\/cli\.mjs record/);
+    expectNoPlacement(fixture);
+    expectCarried(fixture);
+    assert.equal(readFileSync(join(fixture.wt, fixture.plan), 'utf8'), changed);
+  });
+  for (const resume of [false, true]) {
+    it(`refuses ${resume ? 'resume before provision writes' : 'fresh provision before worktree add'} when the recorded plan has a refusing live structure verdict`, () => {
+      const fixture = makeProvision(`approval-structure-${resume ? 'resume' : 'fresh'}`, { approved: false });
+      const { epic, body } = writeStoriedSeed(fixture.root);
+      if (resume) {
+        expectProvisioned(fixture);
+        writeFileSync(join(fixture.wt, epic), readFileSync(join(fixture.wt, epic), 'utf8').replace('## Stories ledger', '## Broken ledger'));
+        rmSync(join(fixture.wt, 'AGENTS.md'));
+        rmSync(join(fixture.wt, 'docs/plans', handoffBasename(fixture.slug)));
+        const slotBytes = readFileSync(join(fixture.wt, SLOT_FILE));
+        const result = provision(fixture, ['--resume']);
+        assert.equal(result.code, EXIT.stop, result.errText);
+        assert.ok(result.errText.includes(epic), result.errText);
+        expectNoPlacement(fixture);
+        expectCarried(fixture);
+        assert.deepEqual(readFileSync(join(fixture.wt, SLOT_FILE)), slotBytes);
+        assert.equal(readFileSync(join(fixture.wt, fixture.plan), 'utf8'), body);
+      } else {
+        writeFileSync(join(fixture.root, epic), readFileSync(join(fixture.root, epic), 'utf8').replace('## Stories ledger', '## Broken ledger'));
+        expectBeforeAdd(fixture, [], /ALPHA\.md/);
+      }
+      assert.equal(readFileSync(join(fixture.root, SEED_PLAN), 'utf8'), body);
+    });
+  }
+});
+
+const readSlot = ({ wt }) => JSON.parse(readFileSync(join(wt, SLOT_FILE), 'utf8'));
+const expectSlot = (fixture, stage) => {
+  const slot = readSlot(fixture);
+  assert.equal(slot.schema, 1);
+  assert.equal(slot.stage, stage);
+  assert.equal(slot.plan, fixture.plan);
+  assert.match(slot.date, /^\d{4}-\d{2}-\d{2}$/);
+};
+
+describe('spec:stage-render/S7 worktrees provision places the stage slot and carries its render command', () => {
+  for (const stage of [null, 'tests', 'code', 'diff-review', 'split-edits']) {
+    it(`writes the ${stage ?? 'default tests'} slot before provision verify`, () => {
+      const fixture = makeProvision(`slot-${stage ?? 'default'}`);
+      const calls = [];
+      const git = (args, cwd) => {
+        if (cwd === fixture.wt && args[0] === 'status' && args.includes('--porcelain')) {
+          expectSlot(fixture, stage ?? 'tests');
+          calls.push(args);
+        }
+        return fixtureGit(args, cwd);
+      };
+      expectProvisioned(fixture, stage === null ? [] : ['--stage', stage], { git });
+      assert.ok(calls.length > 0);
+      expectSlot(fixture, stage ?? 'tests');
+    });
+  }
+  it('rejects a stage outside the record-gated stages as usage', () => {
+    const fixture = makeProvision('slot-usage');
+    const result = provision(fixture, ['--stage', 'pause']);
+    assert.equal(result.code, EXIT.usage);
+    assert.match(result.errText, /--stage/);
+    assert.ok(!existsSync(fixture.wt));
+  });
+  it('refuses an include onto the slot file path before worktree add', () => {
+    const fixture = makeProvision('slot-include');
+    writeFileSync(join(fixture.root, SLOT_FILE), '{}\n');
+    expectBeforeAdd(fixture, ['--include', SLOT_FILE], /next-session\.json/);
+  });
+  for (const when of ['before-add', 'post-add', 'resume']) {
+    it(`refuses a tracked slot file ${when} before provision writes`, () => {
+      const fixture = makeProvision(`slot-tracked-${when}`);
+      const trackSlot = (root) => {
+        mkdirSync(join(root, dirname(SLOT_FILE)), { recursive: true });
+        writeFileSync(join(root, SLOT_FILE), '{}\n');
+        sh(['add', '-f', '--', SLOT_FILE], root);
+      };
+      if (when === 'before-add') {
+        trackSlot(fixture.root);
+        sh(['commit', '-qm', 'tracked slot'], fixture.root);
+        sh(['rm', '--cached', '--', SLOT_FILE], fixture.root);
+        expectBeforeAdd(fixture, [], /next-session\.json/);
+        return;
+      }
+      if (when === 'resume') {
+        createUnprovisioned(fixture);
+        trackSlot(fixture.wt);
+      }
+      const git = (args, cwd) => {
+        const result = fixtureGit(args, cwd);
+        if (when === 'post-add' && args[0] === 'worktree' && args[1] === 'add' && result.status === 0) trackSlot(fixture.wt);
+        return result;
+      };
+      const result = provision(fixture, when === 'resume' ? ['--resume'] : [], { git });
+      assert.equal(result.code, EXIT.stop, result.errText);
+      assert.match(result.errText, /next-session\.json/);
+      expectNoPlacement(fixture);
+      assert.equal(readFileSync(join(fixture.wt, SLOT_FILE), 'utf8'), '{}\n');
+    });
+  }
+  for (const kind of ['link', 'directory']) {
+    for (const resume of [false, true]) {
+      it(`refuses a ${kind} at the slot file path before the first ${resume ? 'resume' : 'fresh provision'} write`, () => {
+        const fixture = makeProvision(`slot-${kind}-${resume ? 'resume' : 'fresh'}`);
+        const placeNode = () => {
+          mkdirSync(join(fixture.wt, dirname(SLOT_FILE)), { recursive: true });
+          if (kind === 'link') symlinkSync('../../README.md', join(fixture.wt, SLOT_FILE));
+          else mkdirSync(join(fixture.wt, SLOT_FILE));
+        };
+        if (resume) {
+          createUnprovisioned(fixture);
+          placeNode();
+        }
+        const git = (args, cwd) => {
+          const result = fixtureGit(args, cwd);
+          if (!resume && args[0] === 'worktree' && args[1] === 'add' && result.status === 0) placeNode();
+          return result;
+        };
+        const result = provision(fixture, resume ? ['--resume'] : [], { git });
+        assert.equal(result.code, EXIT.stop, result.errText);
+        assert.match(result.errText, /next-session\.json/);
+        expectNoPlacement(fixture);
+        const node = lstatSync(join(fixture.wt, SLOT_FILE));
+        assert.ok(kind === 'link' ? node.isSymbolicLink() : node.isDirectory());
+      });
+    }
+  }
+  it('resume rewrites the slot with --stage, keeps a valid slot without it, and defaults absent slot to tests', () => {
+    const fixture = makeProvision('slot-resume');
+    expectProvisioned(fixture);
+    expectProvisioned(fixture, ['--resume', '--stage', 'code']);
+    expectSlot(fixture, 'code');
+    const bytes = JSON.stringify({ ...readSlot(fixture), date: '2026-01-01' });
+    writeFileSync(join(fixture.wt, SLOT_FILE), bytes);
+    expectProvisioned(fixture, ['--resume']);
+    assert.equal(readFileSync(join(fixture.wt, SLOT_FILE), 'utf8'), bytes);
+    rmSync(join(fixture.wt, SLOT_FILE));
+    expectProvisioned(fixture, ['--resume']);
+    expectSlot(fixture, 'tests');
+  });
+  for (const mismatch of ['plan', 'stage']) {
+    it(`resume without --stage refuses a slot of another ${mismatch}`, () => {
+      const fixture = makeProvision(`slot-mismatch-${mismatch}`);
+      expectProvisioned(fixture);
+      const slot = readSlot(fixture);
+      const otherPlan = 'docs/plans/other-PROMPT.md';
+      if (mismatch === 'plan') writeFileSync(join(fixture.wt, otherPlan), APPROVED_PLAN_BODY);
+      const bytes = JSON.stringify({ ...slot, [mismatch]: mismatch === 'plan' ? otherPlan : 'waiting-on-approval' });
+      writeFileSync(join(fixture.wt, SLOT_FILE), bytes);
+      const result = provision(fixture, ['--resume']);
+      assert.equal(result.code, EXIT.stop, result.errText);
+      assert.match(result.errText, /next-session\.json/);
+      assert.match(result.errText, mismatch === 'plan' ? /names the plan/ : /names the stage "waiting-on-approval"/);
+      assert.equal(readFileSync(join(fixture.wt, SLOT_FILE), 'utf8'), bytes);
+    });
+  }
+  it('resume without --stage refuses a slot file that does not validate and an unreadable or refused stage table', () => {
+    const fixture = makeProvision('slot-invalid');
+    expectProvisioned(fixture);
+    writeFileSync(join(fixture.wt, SLOT_FILE), '{}\n');
+    const refusedTable = join(dirname(fixture.root), 'slot-invalid-refused-stages.json');
+    writeFileSync(refusedTable, '{}\n');
+    for (const [stagesPath, finding] of [[undefined, /does not validate/],
+      [join(dirname(fixture.root), 'slot-invalid-absent-stages.json'), /is not readable/], [refusedTable, /is refused/]]) {
+      const result = provision(fixture, ['--resume'], stagesPath === undefined ? {} : { stagesPath });
+      assert.equal(result.code, EXIT.stop, result.errText);
+      assert.match(result.errText, finding);
+      assert.equal(readFileSync(join(fixture.wt, SLOT_FILE), 'utf8'), '{}\n');
+    }
+  });
+  it('resume verifies the journaled slot-file surface', () => {
+    const fixture = makeProvision('slot-journal');
+    expectProvisioned(fixture);
+    assert.ok(PLACEMENT_REGISTRY.includes('slot-file'));
+    const probes = [];
+    const git = (args, cwd) => {
+      if (cwd === fixture.wt && args[0] === 'ls-files' && args.includes(`:(literal)${SLOT_FILE}`)) {
+        expectSlot(fixture, 'code');
+        probes.push(args);
+      }
+      return fixtureGit(args, cwd);
+    };
+    expectProvisioned(fixture, ['--resume', '--stage', 'code'], { git });
+    assert.ok(probes.length > 0, 'resume must verify the slot file as a placed path');
+  });
+  it('every composed provision retry retains the explicit stage', () => {
+    for (const resume of [false, true]) {
+      const line = composeProvisionArgv({ root: MAIN, slug: 'retry', flags: { plan: SEED_PLAN, stage: 'code', resume } });
+      assert.match(line, /(?:^| )--stage code(?: |$)/);
+    }
+    const fixture = makeProvision('slot-retry');
+    const result = provision(fixture, ['--stage', 'code'], {
+      mkdirPlain: () => { throw Object.assign(new Error('read-only'), { code: 'EROFS' }); },
+    });
+    assert.equal(result.code, EXIT.stop, result.errText);
+    const retries = result.errText.split('\n').filter((line) => line.includes('worktrees.mjs provision') || line.includes("worktrees.mjs' provision"));
+    assert.ok(retries.length >= 2, result.errText);
+    for (const retry of retries) assert.match(retry, /--stage code/);
+    const afterAdd = makeProvision('slot-retry-post-add');
+    const interrupted = provision(afterAdd, ['--stage', 'diff-review'], {
+      write: () => { throw Object.assign(new Error('copy interrupted'), { code: 'EIO' }); },
+    });
+    assert.equal(interrupted.code, EXIT.stop, interrupted.errText);
+    assert.ok(existsSync(afterAdd.wt));
+    const recovery = interrupted.errText.split('\n').find((line) => line.includes('finish with:'));
+    assert.match(recovery ?? '', /--stage diff-review/);
+    assert.match(recovery ?? '', /--resume/);
+  });
+  it('provision and worktrees prompt each offer exactly one HERE render command', () => {
+    const fixture = makeProvision('slot-prompt');
+    const first = expectProvisioned(fixture);
+    const later = run(['prompt', fixture.slug], { cwd: fixture.root });
+    assert.equal(later.code, EXIT.ok, later.errText);
+    const kit = dirname(import.meta.dirname);
+    const expected = `node ${isSeedablePathToken(kit) ? kit : shellQuoteArg(kit)}/tools/stage-render/cli.mjs ${SLOT_FILE}`;
+    for (const result of [first, later]) {
+      assert.deepEqual(promptCommands(result.text).filter(({ command }) => command.includes('stage-render/cli.mjs')),
+        [{ actor: 'HERE', command: expected }]);
+    }
   });
 });

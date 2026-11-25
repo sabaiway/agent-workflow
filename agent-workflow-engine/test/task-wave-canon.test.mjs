@@ -119,7 +119,7 @@ describe('spec:story-flow/S10 step 5 folds into the bridge runs receipt session'
   });
   it('S10: preserves the execution Slots line and steps 1 through 8', () => {
     assert.equal(execution.trim().split('\n')[0], 'Slots: execute, review', 'S10: execution Slots changed');
-    assert.deepEqual([...execution.matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1])),
+    assert.deepEqual([...execution.split(/^### /m)[0].matchAll(/^(\d+)\. /gm)].map((match) => Number(match[1])),
       [1, 2, 3, 4, 5, 6, 7, 8], 'S10: execution step numbers changed');
   });
 });

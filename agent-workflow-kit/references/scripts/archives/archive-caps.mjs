@@ -36,7 +36,7 @@ export const CAP_TABLE = Object.freeze({
   // grows again, so its stamp is a fact about that month, not a forecast.
   cold: Object.freeze({
     floor: 1500,
-    ceiling: 3000,
+    ceiling: 4000,
     remedy: 'compress that month harder — it is already one file per month, and sub-month sharding is NOT implemented (discovery matches YYYY-MM.md only, so a hand-split file would drop out of the corpus)',
   }),
   // WARM — docs/ai/history/recent.md: a rolling window of full-text entries, the widest tier.

@@ -6,6 +6,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { basename, dirname, join } from 'node:path';
 import * as worktrees from './worktrees.mjs';
 import { shellQuoteArg } from './review-state.mjs';
@@ -68,9 +72,31 @@ const createGitSeam = (root) => {
   return { git, state };
 };
 
-const createFixture = (name) => {
+const fixtureGit = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+};
+const sh = (args, cwd) => {
+  const result = fixtureGit(args, cwd);
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout;
+};
+
+const createFixture = (name, approved = false) => {
   const root = join(TEMP_ROOT, name);
   mkdirSync(join(root, 'docs/plans'), { recursive: true });
+  if (approved) {
+    makeFixtureRepo((args) => sh(args, root), root, ['-q', '-b', 'main']);
+    sh(['config', 'user.email', 'coder-tools@proton.me'], root);
+    sh(['config', 'user.name', 'coder-tool'], root);
+    writeFileSync(join(root, 'README.md'), 'fixture\n');
+    sh(['add', 'README.md'], root);
+    sh(['commit', '-q', '-m', 'init'], root);
+    writeFileSync(join(root, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules', '/.vscode/', '/extra.txt', ''].join('\n'));
+    writeApprovedPlan(root, 'docs/plans/SEED-PROMPT-feature.md');
+    return { root, git: fixtureGit };
+  }
   writeFileSync(join(root, 'docs/plans/SEED-PROMPT-feature.md'), '# plan\n');
   const { git, state } = createGitSeam(root);
   return { root, git, state };
@@ -276,7 +302,7 @@ describe('worktrees doors — strict parsers', () => {
 
 describe('worktrees doors — no-follow node kinds', () => {
   it('does not use a regular file as the main node_modules source', () => {
-    const fixture = createFixture('node-modules-file');
+    const fixture = createFixture('node-modules-file', true);
     writeFileSync(join(fixture.root, 'node_modules'), 'not a directory\n');
     const result = provision(fixture, 'nm-file');
     assert.equal(result.code, worktrees.EXIT.ok, result.errText);
@@ -302,7 +328,7 @@ describe('worktrees doors — no-follow node kinds', () => {
 
 describe('worktrees doors — resume freshness and honest commands', () => {
   it('refreshes only the Provision record section while preserving user sections byte-exact', () => {
-    const fixture = createFixture('record-surgery');
+    const fixture = createFixture('record-surgery', true);
     const first = provision(fixture, 'record');
     assert.equal(first.code, worktrees.EXIT.ok, first.errText);
     const target = join(dirname(fixture.root), `${basename(fixture.root)}--record`);
@@ -328,7 +354,7 @@ describe('worktrees doors — resume freshness and honest commands', () => {
   });
 
   it('shell-quotes both code -n hints', () => {
-    const fixture = createFixture('quoted-hint-main');
+    const fixture = createFixture('quoted-hint-main', true);
     const target = join(TEMP_ROOT, "hint dir;$(noop)'quoted");
     const created = provision(fixture, 'hint', ['--dir', target]);
     assert.equal(created.code, worktrees.EXIT.ok, created.errText);

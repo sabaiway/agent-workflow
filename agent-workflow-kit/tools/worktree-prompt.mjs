@@ -19,7 +19,7 @@ export { WORKTREES_STOP } from './worktrees-record.mjs';
 
 // The command grammar. Every command this prompt puts in front of a reader is a marked line naming
 // WHO runs it — `    MAIN $ …` or `    HERE $ …` — so the runnable set is enumerable AND attributed.
-// The actor is not decoration: the one command the prompt carries today runs from MAIN and mutates
+// The actor is not decoration: the landing command the prompt carries runs from MAIN and mutates
 // MAIN, which is precisely what the satellite is forbidden to do, and an unattributed `$` line reads
 // as an instruction to whoever is holding the prompt.
 export const PROMPT_ACTORS = Object.freeze({ main: 'MAIN', here: 'HERE' });
@@ -107,7 +107,8 @@ const MAIN_CAUSE = 'a moved MAIN, or a hand edit';
 const INSTALL_CAUSE = 'this checkout answers differently now, most often because its dependency declaration or its node_modules changed since provision';
 
 // live: { sharedQueue, landingRule, landingCommand, installPosture, installDescription,
-// installCommand } — derived by the caller at print time. The landing pair and the checkout identity
+// installCommand } — derived by the caller at print time. `renderCommand` is the stage renderer's
+// command for this checkout's slot file, the one command this session runs first. The landing pair and the checkout identity
 // have no "cannot answer" state and are REQUIRED; the series index and the install trio may be
 // absent and then render by omission. The install arrives in THREE parts on purpose: the posture is
 // the record's field and the divergence key and is never printed, the description is its prose half,
@@ -115,7 +116,7 @@ const INSTALL_CAUSE = 'this checkout answers differently now, most often because
 // case, and printing it as prose would offer an instruction nothing attributes. `record` is the
 // parsed provision record and is required too — a caller that could not read it must say so, not
 // hand in an empty object that renders as "nothing diverged".
-export const composeSatellitePrompt = ({ slug, branch, worktreePath, plan, live, record }) => {
+export const composeSatellitePrompt = ({ slug, branch, worktreePath, plan, renderCommand, live, record }) => {
   if (live == null || typeof live !== 'object') {
     throw stop('the satellite cold-start prompt cannot be composed: the live orientation is missing — every value the prompt states is derived at print time, so there is nothing to state without it');
   }
@@ -126,6 +127,7 @@ export const composeSatellitePrompt = ({ slug, branch, worktreePath, plan, live,
   const safeBranch = promptValue('branch', required('branch', branch));
   const safePath = promptValue('worktree path', required('worktree path', worktreePath));
   const safePlan = promptValue('seeded plan', required('seeded plan', plan));
+  const render = promptValue('render command', required('render command', renderCommand));
   const rule = promptValue('live.landingRule', required('live.landingRule', live.landingRule));
   const command = promptValue('live.landingCommand', required('live.landingCommand', live.landingCommand));
   const queue = promptValue('live.sharedQueue', live.sharedQueue);
@@ -150,6 +152,8 @@ export const composeSatellitePrompt = ({ slug, branch, worktreePath, plan, live,
     `- branch: ${safeBranch}`,
     `- seeded plan: ${PLANS_REL}/${safePlan}`,
     `- handoff: ${handoffRel}`,
+    '- the stage of this session, rendered from the installed kit before any other step:',
+    commandLine(PROMPT_ACTORS.here, render),
     '',
     '## MAIN orientation — derived LIVE from MAIN, never replayed from the provision record',
   ];

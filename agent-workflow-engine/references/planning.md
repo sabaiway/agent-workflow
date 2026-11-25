@@ -52,8 +52,9 @@ council), so a council round costs two bridge runs.
 
 The steps run as four sessions per story, after the epic: spec and plan, tests, code, then diff review,
 release and record. Tests and code never share a session, and a storyless plan runs the same four. A
-split (code and its existing cases moved into modules, no new logic, no new case) is one session: a
-short spec (the Module list), the split, the diff review, the release, Cleanup.
+split (code and its existing cases moved into modules, no new logic, no new case) is one session in
+two parts: its Module list is a plan approved and recorded before the first edit, then the split,
+the diff review, the release, Cleanup. One yes covers both parts.
 
 ## Shape
 
@@ -241,7 +242,8 @@ ignored or excluded by git; its Reads, the governing scenario lines verbatim and
 read; the commands the carrier runs and those it must not; and, for a row tagged `robust:`, the generated
 robustness-literals block. A bridge prompt also carries one `aw-dispatch-contract` block holding a fresh
 nonce for every bridge invocation, a retry and a fold included (`codex-exec --nonce <n> <prompt file>`),
-and the run leaves its exec receipt; the executor vehicle gets the same file.
+beside the `aw-plan-approval` block the stage renderer prints, and the run leaves its exec receipt;
+the executor vehicle gets the same file.
 
 A hand-out starts with the story's changes staged: the orchestrator stages its own changes in the story's
 scope and keeps the listing `git status --porcelain --untracked-files=all` prints; a path that listing

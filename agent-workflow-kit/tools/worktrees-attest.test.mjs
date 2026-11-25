@@ -8,6 +8,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EXIT, runCli, rebaseAbsolutePins, composeProvisionArgv, spawnGit, handoffBasename } from './worktrees.mjs';
 
@@ -15,7 +17,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-attest-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -62,6 +66,7 @@ const brokenGit = (matches, result = { status: 128, stdout: '', stderr: 'fatal: 
 describe('worktrees attest — post-add failures state the kept partial state (M1)', () => {
   it('a failure after worktree add names path, branch, and the FULL --resume invocation', () => {
     const repo = makeRepo('at-kept');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const flags = { plan: 'docs/plans/SEED-PROMPT-x.md', as: 'feature-kp.md', branch: 'aw/custom-kp', dir: null, include: [], install: false, resume: false };
     const r = run(['provision', 'kp', '--plan', flags.plan, '--as', flags.as, '--branch', flags.branch], {
       cwd: repo,
@@ -77,6 +82,7 @@ describe('worktrees attest — post-add failures state the kept partial state (M
   });
   it('a refused worktree add itself carries NO false KEPT note', () => {
     const repo = makeRepo('at-nokept');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const r1 = run(['provision', 'nk', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-nk.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const r2 = run(['provision', 'nk', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-nk.md'], { cwd: repo });
@@ -97,6 +103,7 @@ describe('worktrees attest — check-ignore/ls-files git errors are fatal, never
   });
   it('the .vscode ignore probe: status 128 STOPs with git words', () => {
     const repo = makeRepo('at-ci-vscode', { vscode: true });
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const git = brokenGit((args) => args[0] === 'check-ignore' && args.includes('.vscode/settings.json'));
     const r = run(['provision', 'civ', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-x.md'], { cwd: repo, deps: { git } });
     assert.equal(r.code, EXIT.stop);
@@ -104,6 +111,7 @@ describe('worktrees attest — check-ignore/ls-files git errors are fatal, never
   });
   it('the node_modules ignore probe: status 128 STOPs with git words', () => {
     const repo = makeRepo('at-ci-nm', { nodeModules: true });
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const git = brokenGit((args) => args[0] === 'check-ignore' && args.includes('node_modules'));
     const r = run(['provision', 'cin', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-x.md'], { cwd: repo, deps: { git } });
     assert.equal(r.code, EXIT.stop);
@@ -111,6 +119,7 @@ describe('worktrees attest — check-ignore/ls-files git errors are fatal, never
   });
   it('the .vscode ls-files probe: a failing `ls-files -- .vscode/settings.json` STOPs with git words', () => {
     const repo = makeRepo('at-ls-vscode', { vscode: true });
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const git = brokenGit(
       (args) => args[0] === 'ls-files' && args.includes('.vscode/settings.json'),
       { status: 128, stdout: '', stderr: 'fatal: index locked' },
@@ -124,6 +133,7 @@ describe('worktrees attest — check-ignore/ls-files git errors are fatal, never
 describe('worktrees attest — list ENOENT honesty covers dangling and vanished paths (m3)', () => {
   it('a DANGLING docs/plans symlink renders (unreadable); a genuinely absent one renders no', () => {
     const repo = makeRepo('at-dangle');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const r1 = run(['provision', 'dgl', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-dgl.md'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
     const wt = join(dirname(repo), `${basename(repo)}--dgl`);

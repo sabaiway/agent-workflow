@@ -536,7 +536,8 @@ for (const [word, detail, abnormal] of [['offered'], ['declared'], ['applied'], 
 
 // ── the session-close checker's outcome lines (the whole exported table, spec kit/tier/session-rules) ─────
 const CLOSE_STATES = ['no-deployment', 'handover-symlink', 'handover-not-regular', 'handover-unreadable', 'handover-absent',
-  'section-absent', 'section-twice', 'label-absent', 'label-twice', 'label-order', 'label-empty'];
+  'section-absent', 'section-twice', 'label-absent', 'label-twice', 'label-order', 'label-empty',
+  'next-absent', 'next-twice', 'next-empty', 'next-many', 'next-form', 'next-file'];
 const CLOSE_ARGS = {
   accept: [], help: [], usage: ['unknown argument --bogus'], state: ['label-order'], labelState: ['label-empty', '**What is next, and why:**'],
 };
@@ -636,6 +637,7 @@ describe('completeness — enumerated from the closed sets, not sampled', () => 
   });
   it('every session-close-check outcome composer has a fixture, none printing a placeholder or an unrendered argument', () => {
     assert.deepEqual(Object.keys(CLOSE_LINES ?? {}).sort(), Object.keys(CLOSE_ARGS).sort());
+    assert.equal(CLOSE_LINES.accept(), 'session-close-check: accept — the handover carries the For the user section with both labels and their text, and the Next session block in its one form');
     for (const [key, args] of Object.entries(CLOSE_ARGS)) {
       for (const line of composeLines(CLOSE_LINES, key, args)()) assert.doesNotMatch(line, /<kit>|<project>|undefined|\[object |\$\{/, key);
     }

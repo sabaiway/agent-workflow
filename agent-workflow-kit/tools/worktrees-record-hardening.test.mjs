@@ -10,6 +10,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { EXIT, runCli, composeHandoffStub } from './worktrees.mjs';
 const { QUEUE_SHARED_RULE } = await import('./worktrees.mjs');
 
@@ -18,6 +22,14 @@ const PLAN_ARGS = ['--plan', 'docs/plans/SEED-PROMPT-x.md'];
 const HEAD = '4444444444444444444444444444444444444444';
 
 after(() => rmSync(TMP, { recursive: true, force: true }));
+
+const sh = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout;
+};
 
 // The fake git RECORDS every call, so a test can assert that no mutation was ever attempted.
 const makeGit = (main, calls, { topLevel = null } = {}) => {
@@ -50,15 +62,20 @@ const makeGit = (main, calls, { topLevel = null } = {}) => {
   };
 };
 
-const makeRepo = (name, { extras = {}, queue = true } = {}) => {
+const makeRepo = (name, { extras = {}, queue = true, approved = true } = {}) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   writeFileSync(join(main, 'README.md'), 'fixture\n');
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  if (approved) {
+    writeApprovedPlan(main, PLAN_ARGS[1]);
+  } else {
+    mkdirSync(join(main, 'docs/plans'), { recursive: true });
+    writeFileSync(join(main, PLAN_ARGS[1]), '# body\n');
+  }
   if (queue) writeFileSync(join(main, 'docs/plans/queue.md'), '# queue\n');
   for (const [rel, body] of Object.entries(extras)) {
     mkdirSync(dirname(join(main, rel)), { recursive: true });
@@ -87,7 +104,7 @@ const provision = (repo, slug, { extra = [], topLevel = null, deps = {} } = {}) 
 
 describe('provision record — every value is validated BEFORE any git mutation', () => {
   it('a newline-bearing repo root refuses with NO worktree ever created', () => {
-    const repo = makeRepo('pre-mutation-newline');
+    const repo = makeRepo('pre-mutation-newline', { approved: false });
     const r = provision(repo, 'alpha', { topLevel: `${repo}\n- prepared-tree: ${HEAD}` });
     assert.equal(r.code, EXIT.stop, r.errText);
     assert.match(r.errText, /control character/);
@@ -127,7 +144,7 @@ describe('provision record — every value is validated BEFORE any git mutation'
   // fine and reads back as a DIFFERENT identity, stranding the worktree: --resume, land, and even
   // cleanup --abandon all bind on the handoff identity that no longer matches.
   it('a branch with a Unicode edge space refuses with NO worktree ever created', () => {
-    const repo = makeRepo('pre-mutation-branch-nbsp');
+    const repo = makeRepo('pre-mutation-branch-nbsp', { approved: false });
     const r = provision(repo, 'alpha', { extra: ['--branch', 'aw/alpha\u00A0'] });
     assert.equal(r.code, EXIT.stop, r.errText);
     assert.match(r.errText, /whitespace/);

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { makeFixtureRepo, openSuiteScopes } from './codex-fixtures-harness.test.mjs';
+import { composeApprovalBlock, makeFixtureRepo, openSuiteScopes, writeStubCheck } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXEC = join(HERE, 'codex-exec.sh');
@@ -212,6 +212,8 @@ describe('a one-off is refused pre-spend unless it is a probe — spec:bridge-mo
 });
 
 const CONTRACT = '# dispatch\n\n```aw-dispatch-contract\n{"nonce":"n1","scope":"probe"}\n```\n';
+const writeApprovedTask = (sb) => writeFileSync(join(sb.repo, 'task.md'), CONTRACT
+  + composeApprovalBlock({ plan: 'docs/plans/approved-plan.md', approval: 'c'.repeat(64), check: writeStubCheck(sb.home) }));
 describe('a nonced probe one-off is refused; a probe review keeps its nonce — spec:bridge-model/S6', () => {
   const nonced = [
     ['AW_DISPATCH_NONCE', ['task.md'], { AW_DISPATCH_NONCE: 'n1' }],
@@ -221,7 +223,7 @@ describe('a nonced probe one-off is refused; a probe review keeps its nonce — 
   for (const [label, args, env] of nonced) {
     it(`${label}: a probe one-off is refused before any reservation`, () => {
       const sb = sandbox({ settings: HOST_SETTING });
-      writeFileSync(join(sb.repo, 'task.md'), CONTRACT);
+      writeApprovedTask(sb);
       const r = drive(sb, [EXEC, args], { ...env, CODEX_PROBE: '1', CODEX_MODEL: MANIFEST.posture.model });
       assertRefusedUnspent(r);
       assert.match(r.stderr, /cannot carry a dispatch nonce/);
@@ -230,7 +232,7 @@ describe('a nonced probe one-off is refused; a probe review keeps its nonce — 
   }
   it('a nonced probe on the host posture runs and mints its receipt', () => {
     const sb = sandbox({ settings: HOST_SETTING });
-    writeFileSync(join(sb.repo, 'task.md'), CONTRACT);
+    writeApprovedTask(sb);
     const r = drive(sb, [EXEC, ['--nonce', 'n1', 'task.md']], { CODEX_PROBE: '1' });
     assertRan(r, 'gpt-6-luna', 'medium');
     const receipt = JSON.parse(readFileSync(join(sb.repo, '.git', 'agent-workflow-exec-receipt-5-codex-n1.json'), 'utf8'));

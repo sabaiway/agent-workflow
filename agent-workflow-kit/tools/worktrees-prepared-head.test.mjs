@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { APPROVED_PLAN_BODY, recordApproval } from './plan-approval/approved-plan-harness.test.mjs';
 import { EXIT, handoffBasename, runCli } from './worktrees.mjs';
 import { composeProvisionRecordSection, parseProvisionRecord } from './worktrees-record.mjs';
 
@@ -17,7 +19,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-prepared-head-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -47,7 +51,7 @@ const makeRepo = (name) => {
   sh(['commit', '-q', '-m', 'base'], main);
   writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/.vscode/', '/node_modules', ''].join('\n'));
   mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# feature plan\n');
+  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), APPROVED_PLAN_BODY);
   return main;
 };
 
@@ -62,6 +66,7 @@ describe('land --prepare — the prepared-head record', () => {
   it('land --prepare records prepared-head', () => {
     const main = makeRepo('ph-land');
     const slug = 'ph-land';
+    recordApproval(main, 'docs/plans/SEED-PROMPT-feature.md');
     const provisioned = run(['provision', slug, '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature.md'], { cwd: main });
     assert.equal(provisioned.code, EXIT.ok, provisioned.errText);
     const worktree = join(dirname(main), `${basename(main)}--${slug}`);

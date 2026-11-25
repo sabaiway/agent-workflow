@@ -962,7 +962,7 @@ if [[ -z "${task//[[:space:]]/}" ]]; then
   exit 2
 fi
 
-# --- The ACCOUNTED lane: everything below fires only for a NONCED run ---------
+# --- The ACCOUNTED lane: the mint core below fires only for a NONCED run ------
 # A nonce-LESS invocation is byte-unchanged — no reservation, no receipt, no artifact, needs no node —
 # which is what keeps every existing caller working. The whole mint core rides ONE node script per
 # step (the family floor, codex-review.sh's finding-manifest precedent): a bash re-implementation of
@@ -1029,31 +1029,40 @@ AW_JS
   NODE_OPTIONS= node -e "$aw_js" "$common"
 }
 
-# The contract header this run is accountable for: its `nonce` and its `contractDigest`, both read
-# from the bytes ALREADY loaded as the prompt (fed on stdin) rather than from a second open of the
-# path. That single read is load-bearing: two reads leave a window in which the file can be swapped,
-# and the run would then execute contract A while its receipt claimed the digest of B — a return the
-# ledger would accept. Dropping the trailing newlines (`$( )` does) cannot move the digest: the digest
-# is taken over the PARSED object and the fence walk is line-based, so anything after the closing
-# fence is outside the block either way.
+# The two blocks this run is accountable for, both read from the bytes ALREADY loaded as the prompt
+# (fed on stdin) rather than from a second open of the path. That single read is load-bearing: two
+# reads leave a window in which the file can be swapped, and the run would then execute contract A
+# while its receipt claimed the digest of B — a return the ledger would accept. Dropping the trailing
+# newlines (`$( )` does) cannot move the digest: the digest is taken over the PARSED object and the
+# fence walk is line-based, so anything after the closing fence is outside the block either way.
 #
-# contractDigest is sha256 over the CANONICAL serialization (recursively key-sorted JSON, no trailing
-# newline) of the ONE top-level ```aw-dispatch-contract block. Independently produced HERE: without
-# it the ledger would compare a dispatch record against values derived from itself, and a run that
-# executed a DIFFERENT contract would correlate cleanly. The fence walk mirrors the kit's
-# extractContractBlock — nesting-aware, so a contract marker inside another fenced block is example
-# text; both line endings accepted. FORM validation is deliberately NOT duplicated here: the kit's
-# `open` is the single form door, and a second one would drift. The ONE field validated is `nonce`,
-# because this wrapper COMPARES it — a value outside the safe grammar could not be compared or named.
-aw_compute_contract_header() {
+# Part `header` answers the contract's `nonce` and `contractDigest`: sha256 over the CANONICAL
+# serialization (recursively key-sorted JSON, no trailing newline) of the ONE top-level
+# ```aw-dispatch-contract block. Independently produced HERE: without it the ledger would compare a
+# dispatch record against values derived from itself, and a run that executed a DIFFERENT contract
+# would correlate cleanly. The fence walk mirrors the kit's extractContractBlock — nesting-aware, so a
+# marker inside another fenced block is example text; both line endings accepted. The contract's FORM
+# is deliberately NOT validated here: the kit's `open` is the single form door, and a second one would
+# drift. The ONE field validated is `nonce`, because this wrapper COMPARES it.
+#
+# Part `approval` judges the ONE top-level ```aw-plan-approval block whole, since no kit door reads it
+# before the run, and runs its check (spec plan-approval): a non-zero exit refuses.
+aw_read_dispatch_blocks() {
   local aw_js=""
   IFS= read -r -d '' aw_js <<'AW_JS' || true
 const fs = require("node:fs");
+const { isAbsolute } = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const INFO = "aw-dispatch-contract";
+const APPROVAL_INFO = "aw-plan-approval";
+const APPROVAL_KEYS = "approval,check,plan";
+const APPROVAL_DIGEST = /^[0-9a-f]{64}$/;
+const CHECK_TAIL = "/tools/plan-approval/cli.mjs";
 const FENCE = /^(`{3,})(.*)$/;
 const SAFE = /^[A-Za-z0-9._-]{1,64}$/;
 const die = (m) => { process.stderr.write("error: dispatch contract — " + m + ".\n"); process.exit(2); };
+const refuse = (m) => { process.stderr.write("error: plan approval — " + m + ".\n"); process.exit(2); };
 let text;
 try { text = fs.readFileSync(0, "utf8"); } catch (err) { die("cannot read the dispatch contract bytes (" + (err && err.code) + ")"); }
 const lines = text.split(/\r?\n/);
@@ -1066,26 +1075,48 @@ for (let i = 0; i < lines.length; i += 1) {
   const info = fence[2].trim();
   if (openTicks === 0) { openTicks = ticks; openInfo = info; openAt = i; continue; }
   if (info === "" && ticks >= openTicks) {
-    if (openInfo === INFO) blocks.push(lines.slice(openAt + 1, i).join("\n"));
+    blocks.push({ info: openInfo, body: lines.slice(openAt + 1, i).join("\n") });
     openTicks = 0; openInfo = ""; openAt = -1;
   }
 }
+const bodiesOf = (wanted) => blocks.filter((block) => block.info === wanted).map((block) => block.body);
+const contracts = bodiesOf(INFO);
 if (openTicks !== 0 && openInfo === INFO) die("the ```" + INFO + " block is never closed");
-if (blocks.length === 0) die("no top-level ```" + INFO + " block found — an accounted dispatch runs a contract");
-if (blocks.length > 1) die(blocks.length + " ```" + INFO + " blocks found — a dispatch file carries exactly one");
+if (contracts.length === 0) die("no top-level ```" + INFO + " block found — an accounted dispatch runs a contract");
+if (contracts.length > 1) die(contracts.length + " ```" + INFO + " blocks found — a dispatch file carries exactly one");
 let contract;
-try { contract = JSON.parse(blocks[0]); } catch { die("the ```" + INFO + " block body is not valid JSON"); }
+try { contract = JSON.parse(contracts[0]); } catch { die("the ```" + INFO + " block body is not valid JSON"); }
 if (contract === null || typeof contract !== "object" || Array.isArray(contract)) die("the ```" + INFO + " block body must be ONE JSON object");
 if (typeof contract.nonce !== "string" || !SAFE.test(contract.nonce)) die("the header carries no nonce in the safe grammar ([A-Za-z0-9._-]{1,64}) — an accounted dispatch is identified by the nonce the ledger copied from this header");
-const ser = (v) => (Array.isArray(v)
-  ? "[" + v.map(ser).join(",") + "]"
-  : (v !== null && typeof v === "object")
-    ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + ser(v[k])).join(",") + "}"
-    : JSON.stringify(v));
-process.stdout.write(contract.nonce + "\n" + createHash("sha256").update(ser(contract), "utf8").digest("hex"));
+if (process.argv[1] === "header") {
+  const ser = (v) => (Array.isArray(v)
+    ? "[" + v.map(ser).join(",") + "]"
+    : (v !== null && typeof v === "object")
+      ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + ser(v[k])).join(",") + "}"
+      : JSON.stringify(v));
+  process.stdout.write(contract.nonce + "\n" + createHash("sha256").update(ser(contract), "utf8").digest("hex"));
+  process.exit(0);
+}
+const approvals = bodiesOf(APPROVAL_INFO);
+if (openTicks !== 0 && openInfo === APPROVAL_INFO) refuse("the ```" + APPROVAL_INFO + " block is never closed");
+if (approvals.length === 0) refuse("no top-level ```" + APPROVAL_INFO + " block found — a nonced run executes a slice of an approved plan, and the kit's tools/stage-render/cli.mjs --dispatch <plan> prints that block");
+if (approvals.length > 1) refuse(approvals.length + " ```" + APPROVAL_INFO + " blocks found — a dispatch file carries exactly one");
+let record;
+try { record = JSON.parse(approvals[0]); } catch { refuse("the ```" + APPROVAL_INFO + " block body is not valid JSON"); }
+if (record === null || typeof record !== "object" || Array.isArray(record) || Object.keys(record).sort().join(",") !== APPROVAL_KEYS) refuse("the ```" + APPROVAL_INFO + " block body must be ONE JSON object of exactly plan, approval and check");
+const { plan, approval, check } = record;
+if (typeof approval !== "string" || !APPROVAL_DIGEST.test(approval)) refuse("approval must be 64 lower-case hex, got " + JSON.stringify(approval));
+if (typeof plan !== "string" || plan === "" || plan.startsWith("-")) refuse("plan must be a non-empty path that does not start with '-', got " + JSON.stringify(plan));
+if (typeof check !== "string" || !isAbsolute(check) || !check.endsWith(CHECK_TAIL)) refuse("check must be an absolute path ending " + CHECK_TAIL.slice(1) + ", got " + JSON.stringify(check));
+let checkStat;
+try { checkStat = fs.statSync(check); } catch (err) { refuse("the check " + JSON.stringify(check) + " cannot be read (" + (err && err.code) + ")"); }
+if (!checkStat.isFile()) refuse("the check " + JSON.stringify(check) + " is not a regular file");
+const run = spawnSync(process.execPath, [check, "check", plan, "--digest", approval], { stdio: ["ignore", 2, 2], env: { ...process.env, NODE_OPTIONS: "" } });
+if (run.error) refuse("the check " + JSON.stringify(check) + " could not start (" + run.error.code + ")");
+if (run.status !== 0) refuse("no approval record matches the plan " + JSON.stringify(plan) + ": its check exited " + (run.status === null ? "on the signal " + run.signal : run.status) + " (see above)");
 AW_JS
-  aw_require_core "$aw_js" "the contract-header reader" || return 1
-  printf '%s' "$1" | NODE_OPTIONS= node -e "$aw_js"
+  aw_require_core "$aw_js" "the dispatch-block reader" || return 1
+  printf '%s' "$1" | NODE_OPTIONS= node -e "$aw_js" "$2"
 }
 
 if [[ -n "$aw_nonce" ]]; then
@@ -1116,7 +1147,7 @@ if [[ -n "$aw_nonce" ]]; then
   fi
   aw_artifact_dir="${aw_dir_raw%x}"
   aw_header=""
-  if ! aw_header="$(aw_compute_contract_header "$task")"; then
+  if ! aw_header="$(aw_read_dispatch_blocks "$task" header)"; then
     echo "error: the prompt '$prompt_src' carries no readable dispatch contract (see above) — an accounted dispatch is refused before any spend." >&2
     exit 2
   fi
@@ -1128,6 +1159,10 @@ if [[ -n "$aw_nonce" ]]; then
   # plan file that happens to carry a contract block is none of this seam's business.
   if [[ "$aw_contract_nonce" != "$aw_nonce" ]]; then
     echo "error: the dispatch nonce '$aw_nonce' does not match the contract header's nonce '$aw_contract_nonce' — 'dispatch open' copies the nonce FROM the header, so this run would reserve an identity no return could absorb; nothing was reserved and nothing was spent." >&2
+    exit 2
+  fi
+  if ! aw_read_dispatch_blocks "$task" approval; then
+    echo "error: the prompt '$prompt_src' carries no approval that its check matches (see above) — a nonced run executes only an approved plan; nothing was reserved and nothing was spent." >&2
     exit 2
   fi
 fi

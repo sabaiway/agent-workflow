@@ -142,6 +142,22 @@ describe('the lens rules theme references/rules/lens.md — canon presence', () 
     assert.ok(!readTheme().includes('agent-workflow-kit'), 'the theme must never name the kit');
   });
 
+  describe('spec:stage-render/S9 authoring folds name scenarios and execution waits for the approval record and next-session line', () => {
+    it('Test-as-spec names the authoring fold scenario and the tests session', () => {
+      const bullet = partsOf(readTheme()).body.find((line) => line.startsWith('- **Test-as-spec')) ?? '';
+      assert.match(bullet, /\bauthoring\b[^.]*\bscenario\b|\bscenario\b[^.]*\bauthoring\b/i);
+      assert.match(bullet, /\bfold\w*\b/i);
+      assert.match(bullet, /\btest\b[^.]*\b(?:written|write\w*)\b[^.]*\btests session\b|\bwrite\w*\b[^.]*\btest\b[^.]*\btests session\b/i);
+    });
+
+    it('ExitPlanMode continues into execution only after the approval record and next-session line exist', () => {
+      const bullet = partsOf(readTheme()).body.find((line) => line.startsWith('- **ExitPlanMode')) ?? '';
+      assert.match(bullet, /\b(?:execution|execute)\b[^.]*\b(?:only after|once|only when)\b|\b(?:only after|only when)\b[^.]*\b(?:execution|execute)\b/i);
+      assert.match(bullet, /\bapproval record\b/i);
+      assert.match(bullet, /\bnext-session line\b/i);
+    });
+  });
+
   it('non-vacuity: stripping a token from an in-memory copy goes red (injected)', () => {
     const theme = readTheme();
     for (const token of ['checked syntax', 'cheapest adequate executor', 'backend divergence']) {

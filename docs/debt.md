@@ -3,6 +3,54 @@
 Rows queued out of a review round instead of folded. Each carries a stable id the flow store's
 `queued` disposition binds to. A row leaves this file only when the work lands.
 
+- **SLOT-KINDS-NO-STAGE-NAMES** — invariant: every slot kind the stage renderer accepts is named by a stage of its
+  table. Origin: `agent-workflow-kit/tools/stage-render/index.mjs:27` (`SLOT_KINDS`); since the slot-gap fold of story S3
+  of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN (`stages.json:38` names only `plan`), `epic`, `story` and `file` are
+  named by no stage, and the writer's `--epic`, `--story` and `--file` refuse on every stage (`cli.mjs` `composeValues`).
+  Judged together at story 5's spec session, which shares `stage-render/` (the Fable seat, slot-gap consult). Residual,
+  NOT live: the usage line advertises three flags no stage takes; each refuses by name.
+
+- **WORKTREES-SUITES-EACH-BUILD-THEIR-OWN-REPO** — invariant: the work-tree suites build their fixture repository and
+  run the CLI through one test-support module. Origin: a `makeRepo` of its own in 21 `agent-workflow-kit/tools/worktrees-*.test.mjs`
+  suites besides `worktrees.test.mjs:47`, each a near copy (`worktrees-record.test.mjs:70`, `worktrees-landing.test.mjs:31`);
+  so story S3's provision cells (plan-approval S9, stage-render S7) stay in `worktrees.test.mjs` beside its provision
+  helpers rather than one more copy. The same three-line `sh` change (`stripGitLocationEnv` and `delete
+  env.NODE_TEST_CONTEXT`) is copied into about 23 of those suites (the lens, S3 diff review). Residual, NOT live: a
+  fixture change is made in each copy by hand.
+
+- **APPROVAL-RECORD-FOLLOWS-THE-RECEIPTS-OVERRIDE** — invariant: the plan approval record is a guard input and lives
+  in the checkout's git directory, never at a path a seam names, as commit-guard already reads its own stores
+  (`agent-workflow-kit/tools/commit-guard.mjs:326`). Origin: `plan-approval/cli.mjs:62-65` resolves the record beside
+  the receipts the resolver answers, which honours `AW_REVIEW_RECEIPTS` (`core-evidence-receipts.mjs:10`). Narrow fix
+  shipped by story S3 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN: `worktrees provision` refuses before its first
+  write while the variable is set (plan-approval S9). Residual, NOT live: a satellite session run with the variable set
+  reads the shared file and refuses a plan with a contract row (fail-closed); with the variable set the record can lie
+  outside the git directory. The generalization needs a record-location parameter through `readApproval`,
+  `appendApproval` and the append lane (the Fable seat, S3 diff review design consult).
+
+- **READING-ENTRY-LIVES-IN-ANOTHER-MODULES-CLI** — a recorded, bounded exception to the project rule "The index is the
+  one door" (`docs/ai/rules/effective/project-layout.md`), approved by the maintainer with story S3's yes: exactly three
+  import lines reach past a module's door, `agent-workflow-kit/tools/stage-render/cli.mjs:10` (`readApproval`,
+  `getLocalDate` and the outcome lines of `plan-approval/cli.mjs`) and `agent-workflow-kit/tools/worktrees.mjs:47`,
+  `:49` (plan-approval's `readApproval`, `appendApproval` and outcome lines; stage-render's `main`). The cause: both
+  doors stay write-free, since the session close check imports the stage-render door (`session-close-check.mjs:175`)
+  and its import closure is pinned against the write modules (`session-close-check.test.mjs:382-399`). Ends at story 5
+  of that epic, whose spec session settles the layout, since that story adds the rendered-stage write to stage-render
+  (the council and Fable, S3 diff review). No new import past a door joins these three.
+
+- **CODEX-EXEC-HELP-OMITS-THE-APPROVAL-STOP** — invariant: the bridge's public receipt contract lists every pre-spend
+  refusal of a nonced run. Origin: `codex-cli-bridge/bin/codex-exec.sh:162-175` ("Receipt:") and
+  `codex-cli-bridge/capability.json:24` omit the `aw-plan-approval` stop enforced at `codex-exec.sh:1164-1167`; not
+  false (`:172-174` speaks of the dispatch contract file). Folded with the codex bridge's version bump at the joint
+  release (story 5). Residual, NOT live: a caller building a nonced prompt from the help text alone meets the refusal.
+
+- **DISPATCH-BLOCK-OF-ANOTHER-PLAN-PASSES-CODEX-EXEC** — invariant: a declared residual names every walk-around of the
+  dispatch part. Origin: an `aw-plan-approval` block printed for approved plan P, pasted into a prompt for a row of
+  unapproved plan Q, passes `codex-exec` (it checks the block's own plan); declared for the executor
+  (`docs/ai/specs/kit/plan-approval.md` Out of scope), not for codex-exec; `docs/ai/specs/kit/stage-render/index.md`
+  "a reused older brief does not pass" holds within one plan (the lens, S3 diff review). Declared with story 4 or 5's
+  yes. Residual, NOT live: the record stops a mistake, not a deliberate breach.
+
 - **ROLLBACK-OWNERSHIP-IS-PROVEN-BY-PATH-AND-KIND** — invariant: the enforcement rollback removes only a file this apply
   published, never one another writer put at its path. Origin: `agent-workflow-kit/tools/git-hooks.mjs:243` (`intact(rel)
   && isFile(...)`), `atomic-write.mjs:211-212` (the write returns no identity); a device and inode can be reused, so an

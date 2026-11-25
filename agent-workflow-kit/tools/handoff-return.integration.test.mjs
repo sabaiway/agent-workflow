@@ -13,6 +13,8 @@ import { spawnSync } from 'node:child_process';
 import { EXIT, handoffBasename, runCli } from './worktrees.mjs';
 import { main as dispatchMain } from './dispatch.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-hr-integration-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
@@ -21,7 +23,9 @@ const PLANTED_BEFORE = 'planted finding for the series index → arrives byte ve
 const PLANTED_AFTER = '## Session notes\nplanted after-record content → arrives byte verbatim too\n';
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -60,12 +64,12 @@ const makeRepo = (name) => {
   sh(['commit', '-q', '-m', 'base'], main);
   writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/.vscode/', '/node_modules', ''].join('\n'));
   mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# feature plan\n');
   return main;
 };
 
 const provisionAndPlant = (name, slug) => {
   const main = makeRepo(name);
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-feature.md');
   const provisioned = run(['provision', slug, '--plan', 'docs/plans/SEED-PROMPT-feature.md', '--as', 'feature.md'], { cwd: main });
   assert.equal(provisioned.code, EXIT.ok, provisioned.errText);
   const worktree = join(dirname(main), `${basename(main)}--${slug}`);

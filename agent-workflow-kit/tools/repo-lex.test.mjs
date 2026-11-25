@@ -54,3 +54,11 @@ test('escapeRegExp produces exact matches under the u flag', async () => {
     assert.doesNotMatch(differentValue, pattern);
   }
 });
+
+test('parseStrictJson reads arrays and refuses an unclosed one and a duplicate key inside one', async () => {
+  const { parseStrictJson } = await import('./repo-lex.mjs');
+  assert.deepEqual(parseStrictJson('[]'), []);
+  assert.deepEqual(parseStrictJson('[1, {"a": [true]}]'), [1, { a: [true] }]);
+  assert.throws(() => parseStrictJson('[1, 2'));
+  assert.throws(() => parseStrictJson('[{"a": 1, "a": 2}]'), /\$\[0\]/);
+});

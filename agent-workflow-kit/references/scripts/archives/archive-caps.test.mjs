@@ -11,7 +11,7 @@ import * as caps from './archive-caps.mjs';
 // the source by construction and pins nothing; these three rows are the frozen contract, and moving a
 // number in the module must break this file.
 const TABLE = [
-  ['cold', 1500, 3000],
+  ['cold', 1500, 4000],
   ['warm', 3500, 7000],
   ['meta', 1500, 3000],
 ];

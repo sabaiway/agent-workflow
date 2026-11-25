@@ -5,6 +5,10 @@ import {
   readFileSync, symlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { basename, dirname, join } from 'node:path';
 import { buildRecommendations } from './recommendations.mjs';
 import { copyTreeIfMissing, EXIT, runCli, WORKTREES_STOP } from './worktrees.mjs';
@@ -34,52 +38,40 @@ const advisorDeps = (home) => ({
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-delegated-'));
 const PLAN_ARGS = ['--plan', 'docs/plans/SEED-PROMPT-x.md'];
-const REPO_GITS = new Map();
-const HEAD = '1111111111111111111111111111111111111111';
-
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
-const makeGit = (main) => {
-  const commonDir = join(main, '.git');
-  const entries = [];
-  const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
-  const porcelain = () => [
-    [`worktree ${main}`, `HEAD ${HEAD}`, 'branch refs/heads/main'],
-    ...entries.map(({ path, branch }) => [`worktree ${path}`, `HEAD ${HEAD}`, `branch refs/heads/${branch}`]),
-  ].map((fields) => fields.join('\0')).join('\0\0') + '\0\0';
-  return (args) => {
-    if (args[0] === 'rev-parse' && args.includes('--show-toplevel')) return ok(main);
-    if (args[0] === 'rev-parse' && args.includes('--git-dir')) return ok(`${commonDir}\n`);
-    if (args[0] === 'rev-parse' && args.includes('--git-common-dir')) return ok(`${commonDir}\n`);
-    if (args[0] === 'rev-parse' && args.includes('HEAD')) return ok(`${HEAD}\n`);
-    if (args[0] === 'check-ignore') return ok();
-    if (args[0] === 'ls-tree') return ok();
-    if (args[0] === 'ls-files') return ok();
-    if ((args[0] === 'status' && args[1] === '--porcelain')
-      || (args[0] === '--no-optional-locks' && args[1] === 'status' && args[2] === '--porcelain')) return ok();
-    if (args[0] === 'worktree' && args[1] === 'list') return ok(porcelain());
-    if (args[0] === 'worktree' && args[1] === 'add') {
-      const branch = args[3];
-      const requested = args[4];
-      const canonical = join(realpathSync(dirname(requested)), basename(requested));
-      mkdirSync(canonical, { recursive: true });
-      entries.push({ path: canonical, branch });
-      return ok();
-    }
-    return { status: 128, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
-  };
+const fixtureGit = (args, cwd) => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync('git', args, { cwd, env, encoding: 'utf8' });
+};
+const sh = (args, cwd) => {
+  const result = fixtureGit(args, cwd);
+  assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout;
 };
 
-const makeRepo = (name) => {
+const makeRepo = (name, approved = false) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
   writeFileSync(join(main, 'README.md'), 'fixture\n');
+  if (approved) {
+    makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
+    sh(['config', 'user.email', 'coder-tools@proton.me'], main);
+    sh(['config', 'user.name', 'coder-tool'], main);
+    sh(['add', '-A'], main);
+    sh(['commit', '-q', '-m', 'init'], main);
+    writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/AGENTS.md', '/CLAUDE.md', '/node_modules', '/.vscode/', ''].join('\n'));
+  }
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
-  REPO_GITS.set(main, makeGit(main));
+  if (approved) {
+    writeApprovedPlan(main, PLAN_ARGS[1]);
+  } else {
+    mkdirSync(join(main, 'docs/plans'), { recursive: true });
+    writeFileSync(join(main, PLAN_ARGS[1]), '# body\n');
+  }
   return main;
 };
 
@@ -88,7 +80,7 @@ const run = (argv, { cwd, deps = {} }) => {
   const err = [];
   const code = runCli(argv, {
     cwd,
-    git: deps.git ?? REPO_GITS.get(cwd),
+    git: deps.git ?? fixtureGit,
     log: (line) => out.push(line),
     logError: (line) => err.push(line),
     ...deps,
@@ -248,7 +240,7 @@ describe('delegated finding 1 — a failed copy leaves no untrusted destination'
 
 describe('delegated finding 2 — symlink-parent provision resumes by canonical identity', () => {
   it('provisions, fails after add, then resumes the registered canonical worktree', () => {
-    const repo = makeRepo('symlink-resume-main');
+    const repo = makeRepo('symlink-resume-main', true);
     const realParent = join(TMP, 'symlink-resume-real');
     const linkedParent = join(TMP, 'symlink-resume-linked');
     const targetLexical = join(linkedParent, 'feature');
@@ -279,7 +271,7 @@ describe('delegated finding 2 — symlink-parent provision resumes by canonical 
 
 describe('delegated finding 3 — access-positive writability stays unverified', () => {
   it('surfaces the host-specific write lane when provision can still receive EROFS', async (t) => {
-    const repo = makeRepo('advisor-unverified-main');
+    const repo = makeRepo('advisor-unverified-main', true);
     const probeDir = realpathSync(dirname(repo));
     const provision = run(['provision', 'denied', ...PLAN_ARGS, '--as', 'feature-denied.md'], {
       cwd: repo,
@@ -331,13 +323,13 @@ describe('delegated finding 3 — access-positive writability stays unverified',
 describe('spec:init-project/S41 — the provision stop prints the grant route line', () => {
   for (const configured of [false, true]) {
     it(`prints the ordered grant route and full fallback with the parent ${configured ? 'absent' : 'existing'}`, () => {
-      const repo = makeRepo(`grant-stop-${configured ? 'absent' : 'existing'}-main`);
+      const repo = makeRepo(`grant-stop-${configured ? 'absent' : 'existing'}-main`, true);
       if (configured) {
         writeFileSync(join(repo, 'docs/ai/worktrees.json'), JSON.stringify({ parentDir: join(TMP, 'grant-stop-farm', 'deep') }));
       }
       const probeDir = realpathSync(configured ? TMP : dirname(repo));
       const calls = [];
-      const git = REPO_GITS.get(repo);
+      const git = (args) => fixtureGit(args, repo);
       const result = run(['provision', 'denied', ...PLAN_ARGS, '--as', 'feature-denied.md'], {
         cwd: repo,
         deps: {
@@ -476,7 +468,7 @@ describe('spec:init-project/S42 — one grant-dir derivation', () => {
 
 describe('delegated finding 4 — unsafe main .vscode/settings.json is never synthesized', () => {
   it('skips a symlinked settings file with the exact report and no destination', () => {
-    const repo = makeRepo('vscode-symlink-main');
+    const repo = makeRepo('vscode-symlink-main', true);
     mkdirSync(join(repo, '.vscode'), { recursive: true });
     writeFileSync(join(repo, '.vscode/base.json'), '{"editor.tabSize":2}\n');
     symlinkSync('base.json', join(repo, '.vscode/settings.json'));
@@ -497,7 +489,7 @@ describe('delegated finding 4 — unsafe main .vscode/settings.json is never syn
   });
 
   it('skips a non-regular settings entry with the same exact report and no destination', () => {
-    const repo = makeRepo('vscode-directory-main');
+    const repo = makeRepo('vscode-directory-main', true);
     mkdirSync(join(repo, '.vscode/settings.json'), { recursive: true });
     const worktree = provisionOk(repo, 'vsdir');
     const settingsReport = run(['provision', 'vsdir', '--resume', ...PLAN_ARGS, '--as', 'feature-vsdir.md'], { cwd: repo });

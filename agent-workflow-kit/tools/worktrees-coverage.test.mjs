@@ -8,6 +8,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import {
   EXIT, WORKTREES_STOP, runCli, loadWorktreesConfig, parseArgs, copyTreeIfMissing, handoffBasename,
@@ -18,7 +20,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-cov-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -158,6 +162,7 @@ describe('worktrees coverage — copy error branches', () => {
 describe('worktrees coverage — handoff door STOPs on resume', () => {
   it('a handoff-named directory is the resume nonRegular STOP', () => {
     const repo = makeRepo('cov-h-dir');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const handoffPath = join(wt, 'docs/plans', handoffBasename('alpha'));
     unlinkSync(handoffPath);
@@ -168,6 +173,7 @@ describe('worktrees coverage — handoff door STOPs on resume', () => {
   });
   it('a handoff turning non-regular at the stub write is a typed STOP (race arm)', () => {
     const repo = makeRepo('cov-h-stub');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const handoffPath = join(wt, 'docs/plans', handoffBasename('alpha'));
     const lie = { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
@@ -189,6 +195,7 @@ describe('worktrees coverage — handoff door STOPs on resume', () => {
   });
   it('a handoff turning non-regular at the record write is a typed STOP (race arm)', () => {
     const repo = makeRepo('cov-h-rec');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const handoffPath = join(wt, 'docs/plans', handoffBasename('alpha'));
     const lie = { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false };
@@ -218,41 +225,16 @@ describe('worktrees coverage — provision record section boundaries', () => {
       ['level-one', '# User notes\r\n\r\nkeep level one  \r\n'],
       ['indented', '  ## Indented\r\n\r\nkeep indented  \r\n'],
     ]) {
-      const root = join(TMP, `cov-record-${name}`);
-      mkdirSync(join(root, 'docs/plans'), { recursive: true });
-      writeFileSync(join(root, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
-      const head = 'a'.repeat(40);
-      const entries = [{ path: root, head, branch: 'refs/heads/main' }];
-      const git = (args) => {
-        const commandArgs = args[0] === '--no-optional-locks' ? args.slice(1) : args;
-        const ok = (stdout = '') => ({ status: 0, stdout, stderr: '' });
-        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--show-toplevel')) return ok(`${root}\n`);
-        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-dir')) return ok(`${join(root, '.git')}\n`);
-        if (commandArgs[0] === 'rev-parse' && commandArgs.includes('--git-common-dir')) return ok(`${join(root, '.git')}\n`);
-        if (commandArgs[0] === 'rev-parse' && commandArgs[1] === 'HEAD') return ok(`${head}\n`);
-        if (commandArgs[0] === 'check-ignore') return ok(`${commandArgs.at(-1)}\n`);
-        if (commandArgs[0] === 'ls-tree') return ok();
-        if (commandArgs[0] === 'ls-files' || commandArgs[0] === 'status') return ok();
-        if (commandArgs[0] === 'worktree' && commandArgs[1] === 'list') {
-          return ok(`${entries.map((entry) => `worktree ${entry.path}\0HEAD ${entry.head}\0branch ${entry.branch}\0\0`).join('')}\0`);
-        }
-        if (commandArgs[0] === 'worktree' && commandArgs[1] === 'add') {
-          const branch = commandArgs[commandArgs.indexOf('-b') + 1];
-          const target = commandArgs[commandArgs.indexOf('-b') + 2];
-          mkdirSync(target, { recursive: true });
-          entries.push({ path: target, head, branch: `refs/heads/${branch}` });
-          return ok();
-        }
-        return { status: 128, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
-      };
+      const root = makeRepo(`cov-record-${name}`);
+      writeApprovedPlan(root, 'docs/plans/SEED-PROMPT-x.md');
       const argv = ['provision', name, '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', `feature-${name}.md`];
-      const first = run(argv, { cwd: root, deps: { git } });
+      const first = run(argv, { cwd: root });
       assert.equal(first.code, EXIT.ok, first.errText);
       const wt = join(dirname(root), `${basename(root)}--${name}`);
       const handoffPath = join(wt, 'docs/plans', handoffBasename(name));
       expected[name] = `${readFileSync(handoffPath, 'utf8')}${suffix}`;
       writeFileSync(handoffPath, expected[name]);
-      const resumed = run([...argv, '--resume'], { cwd: root, deps: { git } });
+      const resumed = run([...argv, '--resume'], { cwd: root });
       assert.equal(resumed.code, EXIT.ok, resumed.errText);
       actual[name] = readFileSync(handoffPath, 'utf8');
     }
@@ -263,6 +245,7 @@ describe('worktrees coverage — provision record section boundaries', () => {
 describe('worktrees coverage — node_modules degrade branches', () => {
   it('an unresolvable main node_modules prints the install lane', () => {
     const repo = makeRepo('cov-nm-unres');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     mkdirSync(join(repo, 'node_modules'), { recursive: true });
     const nm = join(repo, 'node_modules');
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], {
@@ -279,6 +262,7 @@ describe('worktrees coverage — node_modules degrade branches', () => {
   });
   it('a failing symlink call prints the symlink-failed lane', () => {
     const repo = makeRepo('cov-nm-link');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     mkdirSync(join(repo, 'node_modules'), { recursive: true });
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], {
       cwd: repo,
@@ -292,6 +276,7 @@ describe('worktrees coverage — node_modules degrade branches', () => {
 describe('worktrees coverage — vscode degrade branches', () => {
   it('an unreadable main settings file is skipped with the code', () => {
     const repo = makeRepo('cov-vs-err', { excludes: [...EXCLUDES.slice(0, -1), '/.vscode/', ''] });
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     mkdirSync(join(repo, '.vscode'), { recursive: true });
     writeFileSync(join(repo, '.vscode/settings.json'), '{}');
     const settings = join(repo, '.vscode/settings.json');
@@ -309,6 +294,7 @@ describe('worktrees coverage — vscode degrade branches', () => {
   });
   it('a non-JSON main settings file is skipped as not a JSON object', () => {
     const repo = makeRepo('cov-vs-bad', { excludes: [...EXCLUDES.slice(0, -1), '/.vscode/', ''] });
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     mkdirSync(join(repo, '.vscode'), { recursive: true });
     writeFileSync(join(repo, '.vscode/settings.json'), 'not json');
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
@@ -362,6 +348,7 @@ describe('worktrees coverage — door and parser defensive branches', () => {
   });
   it('a special node at main node_modules is the neither-kind degrade line', () => {
     const repo = makeRepo('cov-nm-special');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const nm = join(repo, 'node_modules');
     const fifo = { isSymbolicLink: () => false, isFile: () => false, isDirectory: () => false };
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], {
@@ -373,6 +360,7 @@ describe('worktrees coverage — door and parser defensive branches', () => {
   });
   it('a dangling node_modules symlink prints the unresolvable install lane', () => {
     const repo = makeRepo('cov-nm-dangling');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     symlinkSync('missing-target', join(repo, 'node_modules'));
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
@@ -383,6 +371,7 @@ describe('worktrees coverage — door and parser defensive branches', () => {
 describe('worktrees coverage — install-advice and late-net defensive branches', () => {
   it('a lockfile lstat error degrades to the neutral install advice', () => {
     const repo = makeRepo('cov-lock-err');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     // The probe hits the WORKTREE's lockfile path: advice evidence is the satellite checkout.
     const denied = join(dirname(repo), `${basename(repo)}--alpha`, 'package-lock.json');
     const r = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md', '--install'], {
@@ -399,6 +388,7 @@ describe('worktrees coverage — install-advice and late-net defensive branches'
   });
   it('a plan appearing after the resume preflight still trips the late exactly-one net', () => {
     const repo = makeRepo('cov-late-net');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const plansDir = join(wt, 'docs/plans');
     let plansReads = 0;
@@ -428,6 +418,7 @@ describe('worktrees coverage — install-advice and late-net defensive branches'
 describe('worktrees coverage — remaining honest lanes', () => {
   it('an invalid-JSON worktree gates.json renders capability-unknown on resume', () => {
     const repo = makeRepo('cov-gates-bad');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     writeFileSync(join(wt, 'docs/ai/gates.json'), 'nope');
     const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });

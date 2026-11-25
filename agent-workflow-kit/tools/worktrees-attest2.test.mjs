@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EXIT, WORKTREES_STOP, runCli, parseArgs, loadWorktreesConfig, handoffBasename } from './worktrees.mjs';
 import { buildRecommendations } from './recommendations.mjs';
@@ -17,7 +19,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-att2-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -106,6 +110,7 @@ describe('worktrees attest2 — worktrees.json must be a regular, symlink-free-p
 describe('worktrees attest2 — resume binds the live slug/branch to the existing handoff (M2)', () => {
   it('a SECOND slug resumed onto the same --dir/--branch worktree STOPs before any write (probe included)', () => {
     const repo = makeRepo('a2-id-slug');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const dir = join(TMP, 'a2-id-slug-wt');
     const r1 = run(['provision', 'alpha', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md', '--dir', dir, '--branch', 'aw/shared'], { cwd: repo });
     assert.equal(r1.code, EXIT.ok, r1.errText);
@@ -126,6 +131,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
   });
   it('an INTERNAL slug mismatch (handoff-alpha.md carrying slug: beta) is a typed STOP', () => {
     const repo = makeRepo('a2-id-int');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const handoffPath = join(wt, 'docs/plans', handoffBasename('alpha'));
     writeFileSync(handoffPath, readFileSync(handoffPath, 'utf8').replace('- slug: alpha', '- slug: beta'));
@@ -135,6 +141,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
   });
   it('a BRANCH mismatch in the record is a typed STOP', () => {
     const repo = makeRepo('a2-id-branch');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     const handoffPath = join(wt, 'docs/plans', handoffBasename('alpha'));
     writeFileSync(handoffPath, readFileSync(handoffPath, 'utf8').replace('- branch: aw/alpha', '- branch: aw/other'));
@@ -144,6 +151,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
   });
   it('MISSING identity fields in the record are a typed STOP (malformed identity never passes)', () => {
     const repo = makeRepo('a2-id-missing');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     writeFileSync(join(wt, 'docs/plans', handoffBasename('alpha')), '# Handoff — alpha\n\nno record here\n');
     const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
@@ -152,6 +160,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
   });
   it('MULTIPLE handoffs are a typed STOP naming them', () => {
     const repo = makeRepo('a2-id-multi');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'alpha');
     writeFileSync(join(wt, 'docs/plans', handoffBasename('stray')), '# Handoff — stray\n');
     const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
@@ -161,6 +170,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
   });
   it('the MATCHING resume stays green', () => {
     const repo = makeRepo('a2-id-ok');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     provisionOk(repo, 'alpha');
     const r = run(['provision', 'alpha', '--resume', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-alpha.md'], { cwd: repo });
     assert.equal(r.code, EXIT.ok, r.errText);
@@ -170,6 +180,7 @@ describe('worktrees attest2 — resume binds the live slug/branch to the existin
 describe('worktrees attest2 — list scans the plans chain no-follow, regular files only (M3)', () => {
   it('a symlinked docs ANCESTOR renders (unreadable)', () => {
     const repo = makeRepo('a2-ls-anc');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'anc');
     const outside = join(TMP, 'a2-ls-anc-outside');
     mkdirSync(join(outside, 'plans'), { recursive: true });
@@ -182,6 +193,7 @@ describe('worktrees attest2 — list scans the plans chain no-follow, regular fi
   });
   it('a handoff-NAMED entry that is a symlink or a directory renders (unreadable)', () => {
     const repo = makeRepo('a2-ls-nonfile');
+    writeApprovedPlan(repo, 'docs/plans/SEED-PROMPT-x.md');
     const wt = provisionOk(repo, 'nf');
     rmSync(join(wt, 'docs/plans', handoffBasename('nf')));
     mkdirSync(join(wt, 'docs/plans', handoffBasename('nf')));

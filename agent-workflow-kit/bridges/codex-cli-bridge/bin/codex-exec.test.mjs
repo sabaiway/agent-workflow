@@ -9,7 +9,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync, execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { makeFixtureRepo } from './codex-fixtures-harness.test.mjs';
+import { composeApprovalBlock, makeFixtureRepo, writeStubCheck } from './codex-fixtures-harness.test.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRAPPER = join(HERE, 'codex-exec.sh');
@@ -1740,7 +1740,11 @@ const readReceipt = (dir, nonce) => JSON.parse(readFileSync(join(dir, receiptNam
 // A dispatch file carrying exactly ONE top-level contract block — the same shape `dispatch open
 // --contract` parses, so the digest the wrapper computes here is the digest the ledger recorded.
 const CONTRACT_FENCE = '```';
-const writeContract = (sb, nonce, over = {}) => {
+const APPROVED_PLAN = 'docs/plans/approved-plan.md';
+const APPROVAL = createHash('sha256').update('the approved essence').digest('hex');
+const approvalOf = (sb, over = {}) => ({ plan: APPROVED_PLAN, approval: APPROVAL, ...over, check: over.check ?? writeStubCheck(sb.root) });
+const approvalBlockFor = (sb, over = {}) => composeApprovalBlock(approvalOf(sb, over));
+const writeContract = (sb, nonce, over = {}, approvalBlock = approvalBlockFor(sb)) => {
   const contract = {
     schema: 1,
     nonce,
@@ -1754,7 +1758,7 @@ const writeContract = (sb, nonce, over = {}) => {
   };
   const rel = `${nonce}-dispatch.md`;
   writeFileSync(join(sb.repo, rel),
-    `# sub-task\n\n${CONTRACT_FENCE}aw-dispatch-contract\n${JSON.stringify(contract, null, 2)}\n${CONTRACT_FENCE}\n`);
+    `# sub-task\n\n${CONTRACT_FENCE}aw-dispatch-contract\n${JSON.stringify(contract, null, 2)}\n${CONTRACT_FENCE}\n${approvalBlock}`);
   return rel;
 };
 
@@ -2047,6 +2051,103 @@ describe('codex-exec.sh — the pre-spend reservation (D1/D8)', { concurrency: 2
     assert.match(rel.stderr, /AW_DELEGATION_STORE must be an ABSOLUTE path/);
     assert.equal(trailing.status, 2);
     assert.match(trailing.stderr, /must not end with a path separator/);
+  });
+});
+
+const APPROVAL_MODES = [
+  { label: 'fresh', args: (file) => ['--nonce', 'appr', file] },
+  { label: '--resume <id>', args: (file) => ['--resume', 'sess-xyz', '--nonce', 'appr', file] },
+  { label: '--resume-last', args: (file) => ['--resume-last', '--nonce', 'appr', file] },
+];
+const fenceApproval = (body) => `${CONTRACT_FENCE}aw-plan-approval\n${body}\n${CONTRACT_FENCE}\n`;
+const runApproval = async (blockFor, mode) => {
+  const sb = makeSandbox();
+  writeFileSync(join(sb.repo, '.codex-last-session'), 'sess-from-sidecar\n');
+  const r = await run(sb, { args: mode.args(writeContract(sb, 'appr', {}, blockFor(sb))) });
+  const callsFile = join(sb.root, 'check-calls.jsonl');
+  const calls = existsSync(callsFile) ? readFileSync(callsFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
+  const artifacts = execArtifacts(storeDirOf(sb));
+  const receipt = artifacts.includes(receiptName('appr')) ? readReceipt(storeDirOf(sb), 'appr') : null;
+  rmSync(sb.root, { recursive: true, force: true });
+  return { ...r, calls, artifacts, receipt };
+};
+const REFUSED_APPROVALS = [
+  ['an absent block', () => ''],
+  ['a doubled block', (sb) => approvalBlockFor(sb) + approvalBlockFor(sb)],
+  ['a block with an extra key', (sb) => fenceApproval(JSON.stringify({ ...approvalOf(sb), extra: 'x' }))],
+  ['a block without check', () => fenceApproval(JSON.stringify({ plan: APPROVED_PLAN, approval: APPROVAL }))],
+  ['a block holding an array', (sb) => fenceApproval(JSON.stringify([approvalOf(sb)]))],
+  ['a block that is no JSON', () => fenceApproval(`plan: ${APPROVED_PLAN}`)],
+  ['an approval of 63 hex', (sb) => approvalBlockFor(sb, { approval: APPROVAL.slice(1) })],
+  ['an upper-case approval', (sb) => approvalBlockFor(sb, { approval: APPROVAL.toUpperCase() })],
+  ['an approval that is not hex', (sb) => approvalBlockFor(sb, { approval: 'g'.repeat(64) })],
+  ['a plan starting with -', (sb) => approvalBlockFor(sb, { plan: `-${APPROVED_PLAN}` })],
+  ['an empty plan', (sb) => approvalBlockFor(sb, { plan: '' })],
+  ['a relative check path', (sb) => {
+    writeStubCheck(sb.repo);
+    return approvalBlockFor(sb, { check: join('tools', 'plan-approval', 'cli.mjs') });
+  }],
+  ['a check path that does not exist', (sb) => approvalBlockFor(sb, { check: join(sb.root, 'absent', 'tools', 'plan-approval', 'cli.mjs') })],
+  ['a check path that is a directory', (sb) => {
+    const folder = join(sb.root, 'folder', 'tools', 'plan-approval', 'cli.mjs');
+    mkdirSync(folder, { recursive: true });
+    return approvalBlockFor(sb, { check: folder });
+  }],
+  ['a check file not named cli.mjs', (sb) => {
+    const other = join(sb.root, 'tools', 'plan-approval', 'check.mjs');
+    cpSync(writeStubCheck(sb.root), other);
+    return approvalBlockFor(sb, { check: other });
+  }],
+  ['a check that exits non-zero', (sb) => approvalBlockFor(sb, { check: writeStubCheck(sb.root, { status: 1 }) })],
+  ['a block standing only inside another fence', (sb) => `${CONTRACT_FENCE}\`md\n${approvalBlockFor(sb)}${CONTRACT_FENCE}\`\n`],
+];
+
+describe('codex-exec.sh — a nonced run checks the plan approval — spec:plan-approval/S8', { concurrency: 2 }, () => {
+  for (const [label, blockFor] of REFUSED_APPROVALS) {
+    it(`${label}: exit 2 before any reservation or spend, fresh, --resume and --resume-last`, async () => {
+      for (const mode of APPROVAL_MODES) {
+        const r = await runApproval(blockFor, mode);
+        assert.equal(r.status, 2, `${mode.label}: ${r.stderr}`);
+        assert.equal(r.argv, '', `${mode.label}: the fake CLI was never started`);
+        assert.deepEqual(r.artifacts, [], `${mode.label}: nothing was reserved`);
+      }
+    });
+  }
+
+  it('a check that exits 0 lets every mode proceed, called as check <plan> --digest <approval>, the contract digest unchanged', async () => {
+    const digests = [];
+    for (const [index, mode] of APPROVAL_MODES.entries()) {
+      const plan = `docs/plans/approved-${index}.md`;
+      const approval = createHash('sha256').update(plan).digest('hex');
+      const r = await runApproval((sb) => approvalBlockFor(sb, { plan, approval }), mode);
+      assert.equal(r.status, 0, `${mode.label}: ${r.stderr}`);
+      assert.deepEqual(r.calls, [['check', plan, '--digest', approval]], `${mode.label}: the check ran once on the block's plan and approval`);
+      assert.match(r.argv, /(^|\n)exec(\n|$)/, `${mode.label}: codex exec was reached`);
+      assert.equal(r.receipt?.state, 'terminal', `${mode.label}: the run published its terminal receipt`);
+      digests.push(r.receipt.contractDigest);
+    }
+    assert.equal(new Set(digests).size, 1, 'the approval block never enters the contract digest');
+  });
+
+  it('a nonce-less run is byte-unchanged and needs no node', async () => {
+    const sb = makeSandbox();
+    const refusing = writeStubCheck(join(sb.root, 'refusing'), { status: 1 });
+    const file = writeContract(sb, 'plain', {}, approvalBlockFor(sb, { check: refusing }));
+    const withNode = await run(sb, { args: [file] });
+    clearCaptures(sb);
+    const withoutNode = await run(sb, { args: [file], path: `${sb.bin}:${farmFor(['node'])}` });
+    const checked = existsSync(join(sb.root, 'refusing', 'check-calls.jsonl'));
+    const prompt = readFileSync(join(sb.repo, file), 'utf8');
+    const artifacts = execArtifacts(storeDirOf(sb));
+    rmSync(sb.root, { recursive: true, force: true });
+    for (const r of [withNode, withoutNode]) {
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(r.capStdin.includes(prompt.trimEnd()), 'the prompt reaches codex byte for byte');
+    }
+    assert.equal(withoutNode.stdout, withNode.stdout);
+    assert.equal(withoutNode.capStdin, withNode.capStdin);
+    assert.equal(checked, false, 'a nonce-less run never runs the check');
+    assert.deepEqual(artifacts, []);
   });
 });
 

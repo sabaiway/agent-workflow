@@ -11,6 +11,8 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import * as W from './worktrees.mjs';
 
@@ -19,12 +21,10 @@ after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const IGNORE_LINK_FORM = '/node_modules';
 
-const gitResult = (args, cwd) => spawnSync('git', args, {
-  cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024,
-});
-
 const sh = (args, cwd) => {
-  const result = gitResult(args, cwd);
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync('git', args, { cwd, env, encoding: 'utf8', windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
   return result.stdout;
 };
@@ -59,8 +59,7 @@ const makeRepo = (name, { excludeNodeModules = true, mainNodeModules = null, tra
   sh(['commit', '-q', '-m', 'base'], main);
   writeExcludes(main, excludeNodeModules ? [IGNORE_LINK_FORM] : []);
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# feature plan\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-feature.md');
   if (mainNodeModules === 'dir') {
     mkdirSync(join(main, 'node_modules/dep'), { recursive: true });
     writeFileSync(join(main, 'node_modules/dep/index.js'), 'module.exports = 1;\n');

@@ -7,11 +7,15 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { resolve } from 'node:path';
+import { isSeedablePathToken, shellQuoteArg } from './repo-lex.mjs';
 
 const load = () => import('./worktree-prompt.mjs');
 
 const MAIN = '/repos/agent-workflow';
 const WT = '/repos/agent-workflow--alpha';
+const KIT_ROOT = resolve(import.meta.dirname, '..');
+const RENDER_COMMAND = `node ${isSeedablePathToken(KIT_ROOT) ? KIT_ROOT : shellQuoteArg(KIT_ROOT)}/tools/stage-render/cli.mjs docs/plans/next-session.json`;
 
 // The install arrives in three parts: the POSTURE is the record's field and the divergence key and
 // is never printed, the DESCRIPTION is its prose half, the COMMAND is its runnable half. This
@@ -59,6 +63,7 @@ const compose = async (overrides = {}) => {
     branch: 'aw/alpha',
     worktreePath: WT,
     plan: 'feature-alpha.md',
+    renderCommand: RENDER_COMMAND,
     live: LIVE,
     record: alignedRecord(),
     ...overrides,
@@ -162,14 +167,13 @@ describe('worktree-prompt — what the satellite is told', () => {
     }
   });
 
-  it('every command line names its actor, and the prompt offers exactly one MAIN command and zero HERE commands', async () => {
+  it('every command line names its actor, and the prompt offers exactly one MAIN command and one HERE render command', async () => {
     const { promptCommands, PROMPT_ACTORS } = await load();
     const text = await compose();
     const commands = promptCommands(text);
-    assert.equal(commands.length, 1, 'exactly one command is offered today');
-    assert.equal(commands[0].actor, PROMPT_ACTORS.main, 'the landing runs from MAIN');
-    assert.equal(commands[0].command, LIVE.landingCommand);
-    assert.equal(commands.filter((c) => c.actor === PROMPT_ACTORS.here).length, 0, 'no command is offered to this session');
+    assert.equal(commands.length, 2);
+    assert.deepEqual(commands.filter((c) => c.actor === PROMPT_ACTORS.main).map((c) => c.command), [LIVE.landingCommand]);
+    assert.deepEqual(commands.filter((c) => c.actor === PROMPT_ACTORS.here).map((c) => c.command), [RENDER_COMMAND]);
     // Nothing may look like a command without naming who runs it.
     const unattributed = text.split('\n').filter((line) => /^\s+\$ /.test(line));
     assert.deepEqual(unattributed, [], 'an unattributed $ line reads as an instruction to whoever holds the prompt');
@@ -179,14 +183,14 @@ describe('worktree-prompt — what the satellite is told', () => {
     const { promptCommands, PROMPT_ACTORS } = await load();
     const text = await compose({ live: LIVE_WITH_DEPENDENCIES });
     const commands = promptCommands(text);
-    assert.equal(commands.length, 2, 'the landing and the install are both commands here');
+    assert.equal(commands.length, 3, 'the landing, install and render are commands');
     assert.deepEqual(
       commands.map((c) => c.actor).sort(),
-      [PROMPT_ACTORS.here, PROMPT_ACTORS.main].sort(),
-      'one runs from MAIN, one runs here',
+      [PROMPT_ACTORS.here, PROMPT_ACTORS.here, PROMPT_ACTORS.main].sort(),
+      'one runs from MAIN, two run here',
     );
-    const here = commands.find((c) => c.actor === PROMPT_ACTORS.here);
-    assert.equal(here.command, LIVE_WITH_DEPENDENCIES.installCommand);
+    assert.deepEqual(commands.filter((c) => c.actor === PROMPT_ACTORS.here).map((c) => c.command).sort(),
+      [LIVE_WITH_DEPENDENCIES.installCommand, RENDER_COMMAND].sort());
     // The posture string IS that command. It may appear ONLY inside the attributed line — anywhere
     // else it is an instruction nothing attributes and promptCommands cannot see.
     const loose = text.split('\n').filter((line) => line.includes(LIVE_WITH_DEPENDENCIES.installCommand)
@@ -203,7 +207,7 @@ describe('worktree-prompt — what the satellite is told', () => {
       live: { ...LIVE, installPosture: advice, installDescription: advice, installCommand: null },
     });
     assert.ok(text.includes(`- install: ${advice}`));
-    assert.equal(promptCommands(text).filter((c) => c.actor === PROMPT_ACTORS.here).length, 0);
+    assert.deepEqual(promptCommands(text).filter((c) => c.actor === PROMPT_ACTORS.here).map((c) => c.command), [RENDER_COMMAND]);
   });
 
   it('no line the prompt tells the satellite to RUN carries commit, push, tag or stash', async () => {

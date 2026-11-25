@@ -30,6 +30,7 @@ import { DELEGATION_SCHEMA_VERSION } from './dispatch-record.mjs';
 import { DELEGATION_STORE_BASENAME } from './dispatch-store.mjs';
 import { execReceiptBasename, execReportBasename } from './exec-receipt.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { composeApprovalBlock, writeStubCheck } from '../../codex-cli-bridge/bin/codex-fixtures-harness.test.mjs';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 const DISPATCH = join(TOOLS, 'dispatch.mjs');
@@ -179,7 +180,8 @@ const kit = (fx, argv) => spawnSync(process.execPath, [DISPATCH, ...argv], {
 const brief = (fx, nonce) => {
   const path = join(fx.outside, `${nonce}.md`);
   const fence = '```';
-  writeFileSync(path, `# a bounded sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(contractFor(nonce), null, 2)}\n${fence}\n`);
+  const approval = composeApprovalBlock({ plan: 'docs/plans/approved-plan.md', approval: 'c'.repeat(64), check: writeStubCheck(fx.outside) });
+  writeFileSync(path, `# a bounded sub-task\n\n${fence}aw-dispatch-contract\n${JSON.stringify(contractFor(nonce), null, 2)}\n${fence}\n${approval}`);
   return path;
 };
 

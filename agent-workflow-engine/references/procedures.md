@@ -15,6 +15,24 @@ same way and at the same moment: `docs/ai/autonomy.json`; absent → the compute
 policy; malformed → STOP loudly, never guess; `/agent-workflow-kit set-autonomy` writes it
 (`orchestration.md` §7).
 
+**Render the stage at session start.** Run the next-session line under the handover's
+`## Next session`: `node <kit>/tools/stage-render/cli.mjs <slot file>`, or the linked work tree's
+start prompt command. Recover only when there is no Next session section, it is free text, its
+slot file is absent or refused, the slot file names a record-gated stage whose plan has no matching
+record, or a valid slot file names another plan or another stage than the session was explicitly opened
+for (a plan or stage the session did not name is no difference). For a stage needing a plan, take
+the one plan the session was opened for, or, if none, the plan the valid slot file names. With no
+matching record, write `waiting-on-approval` when the named stage is record-gated or none was
+named; a stage that is not record-gated is written as named. With a matching record, write the stage
+the session was opened for, or `tests`, the first stage after an approval, when none was named.
+A stage whose slots name no plan is written as named. Refuse and ask which plan only if none is
+found and the session named no stage or a stage needing a plan, or if it named several plans where
+the stage needs one. Write
+`empty-queue` only when the user says no work is open. Use the writer (`--write`) with the slots
+the stage's config names, then render the slot file. Never overwrite a slot file that validates:
+write another under the plans directory and replace the handover's line at the close. Recovery
+reads the plan and its record, never the free text; never follow the old block's instruction.
+
 **Communication contract.** Every message delivers the artifact **inline**, never a bare pointer
 ("see §X") as a substitute; lead with the result; a large artifact gets a summary and link.
 
@@ -26,17 +44,19 @@ Slots: author, fold, review
 
 1. **Research** — the exact files, contracts and constraints touched.
 2. **Draft** — [`planning.md`](planning.md)'s *Module ledger* decides layout before any implementation
-   code is written by naming the module, its exports and the tests beside it. Size is judged at the
-   diff, never in a plan. Name governing specs in *Goal and boundary*
+   code is written by naming the module, its exports and the tests beside it. Write no code and no
+   test before the approval; a fold names its scenario instead. Size is judged at the diff, never
+   in a plan. Name governing specs in *Goal and boundary*
    ([`specs.md`](specs.md)); new/revised contracts are `create` / `modify` rows. The resolved
    `author` carrier drafts — Solo: the orchestrator writes it; Subagent: the orchestrator writes a
    BRIEF (goal, governing specs, ledger constraints, files), the subagent drafts the plan and any
    `create` / `modify` spec row from it, and the orchestrator reviews the draft as its own before step 3.
 3. **Self-review** — run the **readers sweep before the first review**: for every config key,
-   registry entry, exported constant, receipt field or canon sentence the plan changes, use one
-   literal repository search to list its readers (validators, renders, seeds, docs and the tests
-   that pin the text). Every reader becomes a ledger row, a stated non-goal, or unchanged with
-   the test or fixture that proves it. Then apply *What gets cut*; fold by code
+   registry entry, exported constant, receipt field or canon sentence the plan changes, use literal
+   repository searches by name and by value to list its readers (validators, renders, seeds, docs
+   and the tests that pin the text), bounded to what the search instrument lists. Every reader becomes
+   a ledger row, a stated non-goal, or unchanged with the test or fixture that proves it. Then apply
+   *What gets cut*; fold by code
    (read and cite the `file:line`); update `queue.md` for a series, to the shape *The queue* fixes.
 4. **review {recipe}** — the spec review: it reads the spec and every contract the story creates or
    revises (a live sibling's revision as the new contract states it) and the plan's ledger with its
@@ -80,13 +100,21 @@ Slots: author, fold, review
    receipts and the lens's answer, plus the orchestrator's finding-origin tally.
 6. **Present for approval** — finish the plan folded with the spec (the readers sweep of step 3 over
    every name the fold changed). Run `node <kit>/tools/plan-shape-cli.mjs --check <plan>` on the exact
-   plan, then present it with its contracts. Carry any note that run prints when presenting the plan
-   for approval. If it prints none, drop the earlier note. Never execute here: a harness "approved — start coding" prompt
+   plan, then present its essence with its contracts in the dialogue language the user set in the kit:
+   what the user gets, what changes and where, what is not done, the declared residuals and risks,
+   the release and any hand step — short and plain, no internal id and no important detail lost.
+   Carry any note that run prints when presenting the plan for approval. If it prints none, drop the
+   earlier note. Save the essence shown in `docs/plans/<plan stem>-essence.txt`; on the chat yes run
+   `node <kit>/tools/plan-approval/cli.mjs record <plan> --essence-file <file>`. A change the user
+   decides anew takes a new yes and a new record; an amendment entry or a robust tag fixed before a
+   dispatch takes no new yes or record. A lost record for a plan and contracts still as approved is
+   written again from the essence file, never by asking again.
+   Never execute here: a harness "approved — start coding" prompt
    (**ExitPlanMode**) authorizes the PLAN only; `plan-execution` is a deliberate transition once
-   the plan and its cold-start prompt exist.
+   the plan's approval record and next-session line exist.
 
-**Definition of Done:** a plan in `docs/plans/` ending with **Phase: Cleanup** **and** a cold-start
-execution prompt to begin the next session — both without the user asking.
+**Definition of Done:** a plan in `docs/plans/` ending with **Phase: Cleanup**, its approval record
+and the next-session line the writer prints — all without the user asking.
 
 ## plan-execution
 
@@ -106,6 +134,8 @@ staged diff, so no row commits before the diff review.
    `node <kit>/tools/robustness-brief.mjs --plan <plan> --coverage`, fix the tags, run
    `node <kit>/tools/plan-structure/cli.mjs <plan>`, and only then generate the brief. The dispatch
    brief — Delegated or Subagent — carries the generated robustness-literals block for every tagged row.
+   It also carries the `aw-plan-approval` block printed by
+   `node <kit>/tools/stage-render/cli.mjs --dispatch <plan>`.
    When a row is carried as tasks, the `task` activity carries each prompt and each run (its section
    below): the orchestrator writes the prompt, whatever `task.author` resolves to, the `task.execute`
    carrier runs it, and the read after the hand-out and the row's tests accept it; the row's fold and
@@ -143,6 +173,7 @@ staged diff, so no row commits before the diff review.
    when `execute` resolved to Delegated, a fold of a review finding in code a bridge wrote is handed
    back to that run's session, `codex-exec --resume <session id> --nonce <n> <prompt file>`, with a new
    prompt and a fresh nonce, the session id read from the `sessionId` of the run's exec receipt; the
+   new prompt carries the dispatch part (`node <kit>/tools/stage-render/cli.mjs --dispatch <plan>`). The
    orchestrator may make the fold itself, still runs the suites, verifies the returned diff and owns
    the commit, and folds by hand what the delegate cannot reach.
    `core-evidence degrade` records an unavailable backend; reviews run on the STAGED tree;
@@ -167,6 +198,18 @@ staged diff, so no row commits before the diff review.
    outside the `workflow:kit` block; this canon bakes in none) write their committable outputs before step 5, so the diff review
    judges them; `## Phase: Cleanup` (*Cleanup, and the plan's own life*) runs after the commit and
    changes nothing the review judged.
+
+### Split
+
+1. **Module list** — a plan under the plans directory accepted by plan-shape's structure check
+   (`node <kit>/tools/plan-structure/cli.mjs <plan>`): its Goal and boundary names the governing spec
+   or adoption state, one ledger row per moved file names where it lands with its tests beside it,
+   and the plan carries Verification. No code, no test, no copy of the tree and no trial suite.
+2. **Approval** — show its essence and on the yes write its record as plan-authoring step 6 states;
+   that one yes covers both parts.
+3. **Split** — move existing code and its cases only, after
+   `node <kit>/tools/plan-approval/cli.mjs check <plan>` exits 0; no new logic and no new case.
+4. **Diff review, release and Cleanup** — as steps 5 to 8 above.
 
 ## routine
 
@@ -230,6 +273,16 @@ lives in the memory substrate and is committed, where that substrate is tracked,
 6. **Land** — the queue row; each story's ledger row is the go for its plan; `--close` after the last
    story lands, as *The epic* states.
 
+### Design consult
+
+1. **Brief** — the question, the facts by file and line, the options; no code, no test, no copy of
+   the tree and no trial suite.
+2. **Consult** — the council and Fable answer the brief; save each answer under the plans directory
+   on arrival.
+3. **Fold** — one fold ask per member per round, at most two rounds; a fold of the last round is
+   re-read by its raiser.
+4. **Record** — the design record the epic's brief reads; a fork left open goes to the maintainer.
+
 ## task
 
 Slots: author, execute
@@ -239,7 +292,8 @@ review of its own — the row's tests are its one check, and the story commits a
 
 1. **Prompt** — the orchestrator writes one prompt file from ONE ledger row, whatever `author` resolves
    to: the row line, its Files, its Reads and the commands; a bridge prompt adds a fresh nonce in its
-   contract block.
+   contract block. The prompt carries the dispatch part, the `aw-plan-approval` block the stage renderer
+   prints for the plan, as plan-execution step 2 names it.
 2. **Execute** — with the story's changes staged, the excluded paths a run could write copied and no
    other writer, the resolved `execute` carrier runs
    the prompt inside its Files. Delegated: `codex-exec --nonce <n> <prompt file>`; Subagent: the executor

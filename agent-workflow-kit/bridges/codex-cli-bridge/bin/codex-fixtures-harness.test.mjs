@@ -1,6 +1,6 @@
 import { after } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -15,6 +15,21 @@ const isInside = (parent, path) => {
   return suffix === '' || (suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix));
 };
 const runGit = (args, cwd, env) => spawnSync('git', args, { cwd, env: stripGitEnv(env), encoding: 'utf8' });
+
+export const writeStubCheck = (dir, { status = 0 } = {}) => {
+  const folder = join(dir, 'tools', 'plan-approval');
+  mkdirSync(folder, { recursive: true });
+  const check = join(folder, 'cli.mjs');
+  writeFileSync(check, [
+    "import { appendFileSync } from 'node:fs';",
+    `appendFileSync(${JSON.stringify(join(dir, 'check-calls.jsonl'))}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+    `process.exit(${JSON.stringify(status)});`,
+    '',
+  ].join('\n'));
+  return check;
+};
+
+export const composeApprovalBlock = ({ plan, approval, check }) => ['```aw-plan-approval', JSON.stringify({ plan, approval, check }), '```', ''].join('\n');
 
 export const makeFixtureRepo = (run, dir, initArgs = []) => {
   run(['init', ...initArgs, dir]);

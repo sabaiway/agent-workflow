@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
 import { EXIT, WORKTREES_STOP, runCli, rebaseAbsolutePins, handoffBasename } from './worktrees.mjs';
 
@@ -16,7 +18,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-hard-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -36,8 +40,7 @@ const makeRepo = (name) => {
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-x.md');
   return main;
 };
 

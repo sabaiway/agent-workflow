@@ -15,6 +15,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { APPROVED_PLAN_BODY, writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 // Dynamic import so this spec LOADS against the pre-fix tree (the red-first doctrine).
 const { EXIT, runCli, handoffBasename } = await import('./worktrees.mjs');
 
@@ -26,8 +28,12 @@ after(() => rmSync(TMP, { recursive: true, force: true }));
 
 // ── real-git harness (the posture-integration pattern) ─────────────────────────────────
 
+const SLOT_FILE = 'docs/plans/next-session.json';
+
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -50,8 +56,7 @@ const makeRepo = (name, { pkg = { name: 'r', version: '1.0.0' }, excludes = EXCL
   sh(['commit', '-q', '-m', 'init'], main);
   writeFileSync(join(main, '.git/info/exclude'), excludes.join('\n'));
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-x.md');
   return main;
 };
 
@@ -190,6 +195,7 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
   for (const [label, slug, relOf] of [
     ['handoff', 'reshand', (s) => `docs/plans/${handoffBasename(s)}`],
     ['seed plan', 'resseed', (s) => `docs/plans/feature-${s}.md`],
+    ['slot file', 'resslot', () => SLOT_FILE],
   ]) {
     it(`resume refuses a branch-HEAD-tracked ${label}: salvage first, then consented abandon`, () => {
       const repo = makeRepo(`r1-res-${slug}`);
@@ -246,6 +252,7 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
   for (const [label, slug, relOf] of [
     ['handoff', 'idxhand', (s) => `docs/plans/${handoffBasename(s)}`],
     ['seed plan', 'idxseed', (s) => `docs/plans/feature-${s}.md`],
+    ['slot file', 'idxslot', () => SLOT_FILE],
   ]) {
     it(`index-only tracked ${label}: surgical recovery converges`, () => {
       const repo = makeRepo(`r1-idx-${slug}`);
@@ -326,6 +333,7 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
     for (const [label, relOf] of [
       ['handoff', () => `docs/plans/${handoffBasename('hook')}`],
       ['seed plan', () => 'docs/plans/feature-hook.md'],
+      ['slot file', () => SLOT_FILE],
     ]) {
       it(`post-add hook ${variant} of the ${label} refuses before any provision write, and the recovery converges`, () => {
         const repo = makeRepo(`r1-hook-${variant}-${label.replace(' ', '')}`);
@@ -476,7 +484,7 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
     const wt = wtPath(repo, 'div');
     const rel = 'docs/plans/feature-div.md';
     sh(['add', '-f', '--', rel], wt);
-    writeFileSync(join(wt, rel), '# body\nlive edit after staging\n');
+    writeFileSync(join(wt, rel), `${APPROVED_PLAN_BODY}live edit after staging\n`);
     const resumed = run(provisionArgs('div', ['--resume']), repo);
     assert.equal(resumed.code, EXIT.stop);
     assert.match(resumed.errText, /rm --cached/);
@@ -488,9 +496,9 @@ describe('D10 — a tracked plans-chain path refuses fail-closed (real git)', ()
     const show = spawnSync('git', ['show', `:${rel}`], { cwd: wt, encoding: 'utf8' });
     assert.equal(show.status, 0, show.stderr);
     writeFileSync(backup, show.stdout);
-    assert.equal(readFileSync(backup, 'utf8'), '# body\n', 'the STAGED blob is preserved outside the worktree');
+    assert.equal(readFileSync(backup, 'utf8'), APPROVED_PLAN_BODY, 'the STAGED blob is preserved outside the worktree');
     sh(['rm', '--cached', '-f', '-q', '--', `:(literal)${rel}`], wt);
-    assert.equal(readFileSync(join(wt, rel), 'utf8'), '# body\nlive edit after staging\n', 'the live file survives -f untouched');
+    assert.equal(readFileSync(join(wt, rel), 'utf8'), `${APPROVED_PLAN_BODY}live edit after staging\n`, 'the live file survives -f untouched');
     const again = run(provisionArgs('div', ['--resume']), repo);
     assert.equal(again.code, EXIT.ok, `the caveat lane converges: ${again.errText}`);
   });
@@ -586,13 +594,13 @@ const MOCK_HEAD = '4444444444444444444444444444444444444444';
 const makeMockRepo = (name) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   writeFileSync(join(main, 'README.md'), 'fixture\n');
   writeFileSync(join(main, 'package.json'), JSON.stringify({ name: 'r', version: '1.0.0' }));
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-x.md');
   return main;
 };
 

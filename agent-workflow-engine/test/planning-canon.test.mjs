@@ -233,3 +233,24 @@ describe('planning.md — the queue spec:session-rules/S14', () => {
     assert.ok(section.includes(OPT_IN), 'the opt-in paragraph is unchanged');
   });
 });
+
+describe('spec:stage-render/S10 the split is approved and recorded before edits, and the task prompt carries the dispatch part', () => {
+  it('the story flow splits in two parts, the Module list approved and recorded before edits, with one yes covering both parts', () => {
+    const flow = sectionText('The story flow');
+    const split = flow.match(/\b(?:A|the) split\b.*$/i)?.[0] ?? '';
+    assert.match(split, /\btwo parts\b/i);
+    assert.match(split, /\bModule list\b/i);
+    assert.match(split, /\bplan\b/i);
+    assert.match(split, /\bapprov\w*\b/i);
+    assert.match(split, /\brecord\w*\b/i);
+    assert.match(split, /\b(?:approv\w*\b.*\brecord\w*|record\w*\b.*\bapprov\w*)\b.*\b(?:before|then)\b[^.]*\b(?:edit\w*|split)\b/i);
+    assert.match(split, /\b(?:one|single) (?:yes|approval)\b[^.]*\bboth parts\b/i);
+  });
+
+  it('The task names the approval block beside the dispatch contract in the bridge prompt', () => {
+    const task = sectionText('The task');
+    const prompt = task.match(/\bbridge prompt\b.*?(?=\bA hand-out\b|$)/i)?.[0] ?? '';
+    assert.match(prompt, /`aw-dispatch-contract`/);
+    assert.match(prompt, /`aw-plan-approval`/);
+  });
+});

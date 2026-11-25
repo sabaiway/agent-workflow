@@ -14,13 +14,21 @@ import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
+import { isSeedablePathToken, shellQuoteArg } from './repo-lex.mjs';
 import { runCli, spawnGit } from './worktrees.mjs';
 
 const TMP = mkdtempSync(join(tmpdir(), 'aw-worktrees-nmlink-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
+const KIT_ROOT = dirname(import.meta.dirname);
+const RENDER_LINE = `    HERE $ node ${isSeedablePathToken(KIT_ROOT) ? KIT_ROOT : shellQuoteArg(KIT_ROOT)}/tools/stage-render/cli.mjs docs/plans/next-session.json`;
+
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -45,8 +53,7 @@ const makeRepo = (name) => {
   mkdirSync(join(main, 'node_modules'), { recursive: true });
   writeFileSync(join(main, 'node_modules/marker.txt'), 'nm\n');
   writeFileSync(join(main, '.git/info/exclude'), ['/docs/ai/', '/docs/plans/', '/.claude/', '/.vscode/', '/node_modules', ''].join('\n'));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-feature.md'), '# plan body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-feature.md');
   return main;
 };
 
@@ -64,7 +71,7 @@ describe('worktrees node_modules link — a matching target is only half the pro
     const prompt = run(['prompt', 'nt'], repo);
     assert.equal(prompt.code, 0, prompt.errText);
     assert.ok(prompt.text.includes('a TRACKED symlink'), prompt.text);
-    assert.deepEqual(prompt.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [], 'the prompt advises nothing');
+    assert.deepEqual(prompt.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [RENDER_LINE], 'the prompt advises only the render command');
 
     const report = run(['provision', 'nt', '--resume', '--install', ...seed], repo);
     assert.equal(report.code, 0, report.errText);
@@ -89,7 +96,7 @@ describe('worktrees node_modules link — a lane the probe cannot settle', () =>
     assert.equal(r.code, 0, r.errText);
     assert.ok(r.text.includes('could not establish that the path sits in the ignored lane'), r.text);
     assert.ok(!r.text.includes('whose target could not be read'), 'the target read succeeded and the wording must say so');
-    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [], 'nothing is advised');
+    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [RENDER_LINE], 'only the render command is advised');
   });
 });
 
@@ -109,6 +116,6 @@ describe('worktrees node_modules link — a target that is not decodable text', 
     assert.equal(r.code, 0, r.errText);
     assert.ok(r.text.includes('its target is not decodable text'), r.text);
     assert.ok(!r.text.includes('raw target is not the absolute MAIN'), 'no claim about where it points');
-    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [], 'nothing is advised');
+    assert.deepEqual(r.text.split('\n').filter((line) => line.startsWith('    HERE $ ')), [RENDER_LINE], 'only the render command is advised');
   });
 });

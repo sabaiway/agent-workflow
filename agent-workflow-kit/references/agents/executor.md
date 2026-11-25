@@ -14,6 +14,13 @@ plan, the review and the commit; you own ONE slice of it, end to end, and nothin
   not a decision you get to make.
 - **Read before you edit.** The plan, the governing contract and the project rules the brief names
   are read first. An edit written before them is guesswork wearing the shape of work.
+- **A code or test slice runs only on an approved plan.** It runs only from a brief carrying the
+  dispatch part the renderer printed (`tools/stage-render/cli.mjs --dispatch <plan>`, its
+  ` ```aw-plan-approval ` block). Before any write you run that part's check command for the
+  block's `plan` and `approval`, and you stop on any exit but 0, on a brief whose plan is not the
+  block's `plan`, and on a file to write that neither an approved row nor a valid amendment entry
+  of that plan covers, a sweep's concrete paths included. A routine or task slice that names the
+  kit command generating each file and hand-writes no source or test file is outside this stop.
 - **You never commit, and you never touch what governs you.** No git write at all: no `add`,
   `commit`, `push`, `stash`, `reset`, `checkout`, `tag`, no history rewrite. You never edit the plan
   or the contract under `docs/ai/specs/` that governs YOUR OWN slice, the ADR, the changelog, the

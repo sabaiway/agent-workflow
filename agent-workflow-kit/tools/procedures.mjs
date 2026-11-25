@@ -353,10 +353,10 @@ const renderToolPath = (abs) => (isSeedablePathToken(abs) ? abs : shellQuoteArg(
 const readersSweepAdvice = (activity, registered, toolPath = REPO_SEARCH_TOOL) => {
   if (activity !== 'plan-authoring') return [];
   return [
-    'Readers sweep (before the first review) — for every changed config key, registry entry, exported constant, receipt field or canon sentence:',
+    'Readers sweep (before the first review) — for every changed config key, registry entry, exported constant, receipt field or canon sentence, search by name and by value:',
     ...(registered ? ['  use: repo_search {"pattern": "<the literal>"} — the kit\'s read-only MCP tool (registration complete; if it is not loaded in this session, the command below)'] : []),
     `  run: node ${renderToolPath(toolPath)} --pattern <the literal> (a pattern carrying a shell-significant byte goes through --pattern-file <f> instead)`,
-    '  classify every reader as a ledger row, a stated non-goal, or unchanged with its proof',
+    '  classify every reader the search instrument lists as a ledger row, a stated non-goal, or unchanged with its proof',
   ];
 };
 
@@ -610,7 +610,7 @@ const contractLines = ({ cmd, contract, settings }) => {
 
 // The fold lane under a delegated execute slot (this activity's, or task.execute under plan-execution):
 // one line resuming the run's session, its id read from the run's exec receipt — no ledger is read.
-const FOLD_LANE_LINE = `Fold lane (execute = delegated) — a fold of code a bridge wrote resumes that run's session: ${wrapperCmdFor('codex-cli-bridge', 'execute')} --resume <session id> --nonce <n> <prompt file>, the session id read from the sessionId of the run's exec receipt, with a new prompt and a fresh nonce; the orchestrator may make the fold itself.`;
+const FOLD_LANE_LINE = `Fold lane (execute = delegated) — a fold of code a bridge wrote resumes that run's session: ${wrapperCmdFor('codex-cli-bridge', 'execute')} --resume <session id> --nonce <n> <prompt file>, the session id read from the sessionId of the run's exec receipt, with a new prompt carrying the aw-plan-approval block and a fresh nonce; the orchestrator may make the fold itself.`;
 const foldLaneAdvice = ({ activity, slots, config, detection }) => {
   const own = slots.find((slot) => slot.slot === 'execute')?.recipe;
   const task = activity === 'plan-execution' ? resolveActivityRecipe({ config: config ?? {}, readiness: detection, activity: 'task', slot: 'execute' }).recipe : null;

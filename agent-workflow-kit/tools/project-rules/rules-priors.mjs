@@ -8,6 +8,7 @@ export const RULES_PRIORS = Object.freeze([
   Object.freeze({ theme: 'project-layout', release: '19.4.0', sha256: 'ec4ef10c05ba365e73df96d175042314ea120f3fe1c946fdd94d3d1237de8be9' }),
   Object.freeze({ theme: 'communication', release: '20.0.0', sha256: 'ce0ebcab194b21fedd96c389daefb92be3cf2b5fe15f3c40b0485c32a2575e1f' }),
   Object.freeze({ theme: 'lens', release: '20.0.0', sha256: 'd0cd7c6f602710f3d292644f78d2e9ccf569b1ce9a9d00bcb2e9cfd831e18703' }),
+  Object.freeze({ theme: 'story-sessions', release: '20.0.0', sha256: '696fc850b04c91ed4fe6b5d370835c420163a729cef3803d57ed86b06bde6b49' }),
 ]);
 
 // isKnownPrior(theme, bytes, catalog?) → true exactly when the bytes hash to an entry of that theme.

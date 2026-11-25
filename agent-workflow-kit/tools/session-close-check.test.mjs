@@ -11,6 +11,9 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { safeLine } from './carriers.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { APPROVED_PLAN_BODY } from './plan-approval/approved-plan-harness.test.mjs';
 
 const loaded = await import('./session-close-check.mjs').catch(() => ({}));
 const ABSENT = 'session-close-check.mjs main is absent';
@@ -31,6 +34,13 @@ const HANDOVER = 'docs/ai/handover.md';
 const HEADING = '## For the user';
 const DONE = '**What was done, and for what:**';
 const NEXT = '**What is next, and why:**';
+const NEXT_HEADING = '## Next session';
+const SLOT = 'docs/plans/next-session.json';
+const PLAN = 'docs/plans/guide.md';
+const RENDER_LINE = 'node <kit>/tools/stage-render/cli.mjs docs/plans/next-session.json';
+const ACCEPT_LINE = 'session-close-check: accept — the handover carries the For the user section with both labels and their text, and the Next session block in its one form';
+const PAUSE_SLOTS = { schema: 1, stage: 'pause', date: '2026-11-25' };
+const NEXT_BLOCK = [NEXT_HEADING, '', RENDER_LINE];
 const CYRILLIC = String.fromCharCode(0x0441, 0x0434, 0x0435, 0x043b, 0x0430, 0x043d, 0x043e);
 const INVALID_UTF8 = Buffer.from([0x23, 0x20, 0xc3, 0x28, 0x0a]);
 const PLACEHOLDER_RE = /<kit>|<project>|undefined|\[object |\$\{/;
@@ -40,13 +50,13 @@ after(() => {
   for (const base of bases) rmSync(base, { recursive: true, force: true });
 });
 
-const handover = (section = [HEADING, '', DONE, '- The queue is seeded.', '', NEXT, '- Write the tests.']) =>
-  ['# Handover', '', '**Active recipes:** solo', '', ...section, '', '## What was done last session', '', '- Work.', ''].join(LF);
+const handover = (section = [HEADING, '', DONE, '- The queue is seeded.', '', NEXT, '- Write the tests.'], next = NEXT_BLOCK) =>
+  ['# Handover', '', '**Active recipes:** solo', '', ...section, '', ...next, '', '## What was done last session', '', '- Work.', ''].join(LF);
 
 // project({ text, docsAi, link }) → { root, base }: text is the handover (a string or a Buffer; null
 // leaves it out; { kind: 'directory' } or { kind: 'symlink' } places that object instead); docsAi is
 // 'directory' (default), 'absent', 'symlink' or 'file'; link 'root' or 'docs' links that component.
-const project = ({ text = handover(), docsAi = 'directory', link } = {}) => {
+const project = ({ text = handover(), docsAi = 'directory', link, slots = PAUSE_SLOTS } = {}) => {
   const base = mkdtempSync(join(tmpdir(), 'session-close-'));
   bases.push(base);
   const real = join(base, link ? 'real' : 'project');
@@ -59,6 +69,8 @@ const project = ({ text = handover(), docsAi = 'directory', link } = {}) => {
   }
   if (docsAi === 'directory') {
     mkdirSync(join(docs, 'ai'));
+    mkdirSync(join(docs, 'plans'));
+    if (slots !== null) writeFileSync(join(real, SLOT), JSON.stringify(slots));
     const path = join(real, HANDOVER);
     if (typeof text === 'string' || Buffer.isBuffer(text)) writeFileSync(path, text);
     else if (text?.kind === 'directory') mkdirSync(path);
@@ -107,6 +119,17 @@ const assertCannotJudge = (outcome, name) => {
   assert.equal(outcome.stdout, '');
   assert.equal(outcome.stderr, name);
 };
+const assertAccept = (outcome) => {
+  assert.equal(outcome.code, 0, outcome.stderr);
+  assert.equal(outcome.stdout, ACCEPT_LINE);
+  assert.equal(outcome.stdout.split(LF).length, 1);
+  assert.equal(outcome.stderr, '');
+};
+const cleanEnv = () => {
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  return env;
+};
 
 describe('spec:session-rules/S5 the checker accepts on one conjunction', () => {
   for (const [name, text] of [
@@ -114,15 +137,11 @@ describe('spec:session-rules/S5 the checker accepts on one conjunction', () => {
     ['a CRLF handover', handover().split(LF).join(CR + LF)],
     ['a handover whose text is in another language', handover([HEADING, DONE, `- ${CYRILLIC}.`, NEXT, `- ${CYRILLIC}.`])],
     ['labels carrying their text on their own line', handover([HEADING, `${DONE} the queue is seeded.`, `${NEXT} write the tests.`])],
-    ['a section ending the file', ['# Handover', '', HEADING, DONE, '- Done.', NEXT, '- Next.'].join(LF)],
-    ['a byte-order mark before a first-line heading', `${BOM}${HEADING}${LF}${DONE}${LF}- Done.${LF}${NEXT}${LF}- Next.${LF}`],
+    ['a section ending the file', ['# Handover', '', ...NEXT_BLOCK, '', HEADING, DONE, '- Done.', NEXT, '- Next.'].join(LF)],
+    ['a byte-order mark before a first-line heading', [`${BOM}${HEADING}`, DONE, '- Done.', NEXT, '- Next.', ...NEXT_BLOCK].join(LF)],
   ]) {
     it(`accepts ${name}: one line, exit 0, nothing written`, () => {
-      const outcome = check(project({ text }).root);
-      assert.equal(outcome.code, 0, outcome.stderr);
-      assert.equal(outcome.stdout, lines().accept());
-      assert.equal(outcome.stdout.split(LF).length, 1);
-      assert.equal(outcome.stderr, '');
+      assertAccept(check(project({ text }).root));
     });
   }
 });
@@ -153,6 +172,7 @@ describe('spec:session-rules/S6 usage is judged before any read; main returns an
     assert.equal(outcome.code, 0);
     assert.equal(outcome.stdout, lines().help());
     assert.match(outcome.stdout, /--check/);
+    assert.match(outcome.stdout, /Next session/);
     assert.equal(outcome.stderr, '');
   });
 
@@ -168,10 +188,10 @@ describe('spec:session-rules/S6 usage is judged before any read; main returns an
 
   it('runs as a command, the project directory defaulting to the current one', () => {
     const { root } = project();
-    const env = { ...process.env };
+    const env = cleanEnv();
     const accepted = spawnSync(process.execPath, [MODULE, '--check'], { cwd: root, encoding: 'utf8', env });
     assert.equal(accepted.status, 0, accepted.stderr);
-    assert.equal(accepted.stdout, `${lines().accept()}${LF}`);
+    assert.equal(accepted.stdout, `${ACCEPT_LINE}${LF}`);
     const usage = spawnSync(process.execPath, [MODULE, '--bogus'], { cwd: root, encoding: 'utf8', env });
     assert.equal(usage.status, 2);
     assert.equal(usage.stdout, '');
@@ -217,17 +237,17 @@ describe('spec:session-rules/S8 each refusal answers by its name at exit 1, ever
     ['a third-level heading', [`#${HEADING}`, DONE, '- Done.', NEXT, '- Next.']],
   ]) {
     it(`refuses ${name} as section-absent`, () => {
-      assertRefusals(check(project({ text: handover(section) }).root), ['section-absent']);
+      assertRefusals(check(project({ text: handover(section, []) }).root), ['section-absent', 'next-absent']);
     });
   }
 
   it('refuses a doubled section as section-twice and withholds the label judgement', () => {
-    const text = handover([HEADING, NEXT, HEADING, DONE]);
-    assertRefusals(check(project({ text }).root), ['section-twice']);
+    const text = handover([HEADING, NEXT, HEADING, DONE], []);
+    assertRefusals(check(project({ text }).root), ['section-twice', 'next-absent']);
   });
 
   it('ends the section at the next level-two heading', () => {
-    const text = ['# Handover', HEADING, '', '## Elsewhere', DONE, '- Done.', NEXT, '- Next.', ''].join(LF);
+    const text = ['# Handover', HEADING, '', '## Elsewhere', DONE, '- Done.', NEXT, '- Next.', ...NEXT_BLOCK, ''].join(LF);
     assertRefusals(check(project({ text }).root), [`label-absent: ${DONE}`, `label-absent: ${NEXT}`]);
   });
 
@@ -283,7 +303,92 @@ describe('spec:session-rules/S16 every printed line comes from the one OUTCOME_L
   });
 });
 
-describe('the import closure of the checker', () => {
+describe('spec:session-rules/S17 the next-session block accepts on one conjunction', () => {
+  it('accepts the canonical line with blank lines and a CRLF section ending the file', () => {
+    const text = [handover(undefined, []), NEXT_HEADING, '  ', RENDER_LINE, '', ''].join(LF).replaceAll(LF, CR + LF);
+    assertAccept(check(project({ text, slots: { ...PAUSE_SLOTS, stage: 'empty-queue' } }).root));
+  });
+
+  const { root } = project({ slots: { ...PAUSE_SLOTS, stage: 'tests', plan: PLAN } });
+  writeFileSync(join(root, PLAN), APPROVED_PLAN_BODY);
+  writeFileSync(join(root, 'docs/readme.md'), 'Guide.\n');
+  it('accepts the canonical line of a tests slot file whose plan has no approval record', () => {
+    assertAccept(check(root));
+  });
+
+  it('the render of that same tests slot file refuses without an approval record', () => {
+    const rendered = spawnSync(process.execPath, [join(HERE, 'stage-render/cli.mjs'), SLOT], {
+      cwd: root, encoding: 'utf8', env: { ...cleanEnv(), AGENT_WORKFLOW_ENGINE_DIR: resolve(HERE, '../../agent-workflow-engine') },
+    });
+    assert.ifError(rendered.error);
+    assert.equal(rendered.status, 1, rendered.stderr);
+    assert.match(rendered.stdout + rendered.stderr, /waiting-on-approval/);
+    assert.match(rendered.stdout + rendered.stderr, /plan-approval\/cli\.mjs\s+record\b/);
+  });
+});
+
+describe('spec:session-rules/S18 each next-session refusal prints after every For the user refusal found', () => {
+  const section = [HEADING, NEXT, DONE];
+  const userRefusals = ['label-order', `label-empty: ${DONE}`, `label-empty: ${NEXT}`];
+  for (const [name, next, expected] of [
+    ['next-absent', [], 'next-absent'],
+    ['next-twice', [NEXT_HEADING, 'wrong form', NEXT_HEADING], 'next-twice'],
+    ['next-empty', [NEXT_HEADING, '', '  '], 'next-empty'],
+    ['next-many', [NEXT_HEADING, RENDER_LINE, 'another line'], 'next-many'],
+    ['next-form', [NEXT_HEADING, 'node\t<kit>/tools/stage-render/cli.mjs docs/plans/next-session.json'], `next-form: ${RENDER_LINE}`],
+    ['next-form for a noncanonical quoted operand', [NEXT_HEADING, "node <kit>/tools/stage-render/cli.mjs 'docs/plans/next-session.json'"], "next-form: node <kit>/tools/stage-render/cli.mjs 'docs/plans/next-session.json'"],
+    ['next-form for an empty quoted operand', [NEXT_HEADING, "node <kit>/tools/stage-render/cli.mjs ''"], "next-form: node <kit>/tools/stage-render/cli.mjs ''"],
+  ]) {
+    it(`answers ${name} beside all For the user refusals`, () => {
+      assertRefusals(check(project({ text: handover(section, next) }).root), [...userRefusals, expected]);
+      assertRefusals(check(project({ text: handover(undefined, next) }).root), [expected]);
+    });
+  }
+
+  for (const [name, slots] of [['absent', null], ['invalid', { ...PAUSE_SLOTS, extra: 'text' }]]) {
+    it(`answers next-file with the door's reason for an ${name} slot file`, async () => {
+      const { root } = project({ text: handover(section), slots });
+      const outcome = check(root);
+      assert.equal(outcome.code, 1);
+      assert.equal(outcome.stdout, '');
+      assert.match(outcome.stderr.split(LF).at(-1), /^next-file: /);
+      const { loadStages, validateSlots } = await import('./stage-render/index.mjs');
+      const table = loadStages(readFileSync(join(HERE, 'stage-render/stages.json'), 'utf8'));
+      assert.throws(() => validateSlots({ root, slotFile: SLOT, table }), (error) => {
+        assertRefusals(outcome, [...userRefusals, `next-file: ${safeLine(error.message)}`]);
+        return true;
+      });
+    });
+  }
+
+  it('validates the slot through the injected reads even when the For the user section passes', () => {
+    const { root } = project();
+    const refuseSlot = (path, ...args) => path === join(root, SLOT) ? failing('EACCES')() : lstatSync(path, ...args);
+    const outcome = check(root, { lstatSync: refuseSlot, lstat: refuseSlot });
+    assert.equal(outcome.code, 1, outcome.stdout);
+    assert.equal(outcome.stdout, '');
+    assert.match(outcome.stderr, /^next-file: [^\n]+$/);
+  });
+
+  it('reads the slot file through the injected open and stats it without an injected lstat', () => {
+    const { root } = project();
+    const refuseOpen = (path, ...args) => path === join(root, SLOT) ? failing('EACCES')() : openSync(path, ...args);
+    const refused = check(root, { open: refuseOpen });
+    assert.equal(refused.code, 1, refused.stdout);
+    assert.match(refused.stderr, /^next-file: cannot read [^\n]+$/);
+    assertAccept(check(root, { lstatSync: undefined, lstat: undefined }));
+  });
+});
+
+describe('spec:session-rules/S19 the checker never renders, reads the engine or the approval record', () => {
+  it('gains only the stage-render door among its direct imports and uses no render or approval API', () => {
+    const source = readFileSync(MODULE, 'utf8');
+    const imports = [...source.matchAll(/(?:^|\n)\s*import\s[^'"]*?['"]([^'"]+)['"]/g)].map((match) => match[1]);
+    assert.deepEqual(imports.sort(), ['node:path', '../references/scripts/shared/index.mjs', './carriers.mjs',
+      './checker-gates-read.mjs', './direct-run.mjs', './fs-read-nofollow.mjs', './stage-render/index.mjs'].sort());
+    assert.doesNotMatch(source, /\b(?:renderStage|composeRenderCommand|stepsOf|composeDispatchPart|findMatch|readEngineFragment|resolveEngineDir)\b/);
+  });
+
   it('reaches the deployment probe and the no-follow reader, and no write module', () => {
     const listed = readFileSync(PURITY_TEST, 'utf8').match(WRITE_MODULES_RE);
     assert.ok(listed, 'read-graph-purity.test.mjs declares WRITE_MODULES');

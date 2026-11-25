@@ -17,6 +17,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { writeApprovedPlan } from './plan-approval/approved-plan-harness.test.mjs';
 // Dynamic import so this spec LOADS against the pre-fix tree (the red-first doctrine).
 const {
   EXIT, runCli, handoffBasename, parseProvisionRecord,
@@ -29,7 +31,9 @@ after(() => rmSync(TMP, { recursive: true, force: true }));
 // ── real-git harness (the R1 pattern) ──────────────────────────────────────────────────
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -56,8 +60,7 @@ const makeRepo = (name, { pkg = { name: 'r', version: '1.0.0' }, excludes = EXCL
     mkdirSync(join(main, '.vscode'), { recursive: true });
     writeFileSync(join(main, '.vscode/settings.json'), '{}\n');
   }
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-x.md');
   return main;
 };
 
@@ -170,13 +173,13 @@ const MOCK_HEAD = '5555555555555555555555555555555555555555';
 const makeMockRepo = (name) => {
   const main = join(TMP, name);
   mkdirSync(main, { recursive: true });
+  makeFixtureRepo((args) => sh(args, main), main, ['-q', '-b', 'main']);
   writeFileSync(join(main, 'README.md'), 'fixture\n');
   writeFileSync(join(main, 'package.json'), JSON.stringify({ name: 'r', version: '1.0.0', dependencies: { left: '^1.0.0' } }));
   writeFileSync(join(main, 'AGENTS.md'), '# agents\n');
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
-  mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeApprovedPlan(main, 'docs/plans/SEED-PROMPT-x.md');
   mkdirSync(join(main, '.vscode'), { recursive: true });
   writeFileSync(join(main, '.vscode/settings.json'), '{}\n');
   mkdirSync(join(main, 'node_modules/left'), { recursive: true });
@@ -248,7 +251,7 @@ const provisionThenResume = ({ name, slug, extra = [], arm }) => {
 describe('slice R2 — the closed-world placement registry (injected git)', () => {
   it('placement-registry-is-frozen-and-pinned', () => {
     const expected = [
-      'handoff-stub', 'seed-plan', 'copy-set-leaf', 'include-leaf',
+      'handoff-stub', 'seed-plan', 'slot-file', 'copy-set-leaf', 'include-leaf',
       'node-modules-link', 'vscode-settings', 'pin-rebase-target', 'record-refresh',
     ];
     assert.ok(Object.isFrozen(PLACEMENT_REGISTRY), 'the registry ships frozen');
@@ -261,6 +264,7 @@ describe('slice R2 — the closed-world placement registry (injected git)', () =
   for (const [surface, rel] of [
     ['handoff-stub', 'docs/plans/handoff-journal.md'],
     ['seed-plan', 'docs/plans/feature-journal.md'],
+    ['slot-file', 'docs/plans/next-session.json'],
     ['copy-set-leaf', 'AGENTS.md'],
     ['include-leaf', 'notes/note.md'],
     ['node-modules-link', 'node_modules'],

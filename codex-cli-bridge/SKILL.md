@@ -196,7 +196,12 @@ skipped entirely without a nonce: the wrapper is byte-unchanged, writes no artif
   in state `reserved`, atomically and **no-clobber**, beside the delegation store. A second dispatch
   on the same nonce (or a leftover report under that name) refuses **before any spend**. So does a
   run with no capping binary, without `node`, with the prompt on stdin instead of a contract file, or
-  with a file carrying no ` ```aw-dispatch-contract ` block.
+  with a file carrying no ` ```aw-dispatch-contract ` block. The file also carries ONE top-level
+  ` ```aw-plan-approval ` block, a JSON object of exactly `plan`, `approval` and `check`, as the kit's
+  `tools/stage-render/cli.mjs --dispatch <plan>` prints it: a run whose block is absent, doubled or
+  malformed, or whose `NODE_OPTIONS= node <check> check <plan> --digest <approval>` exits non-zero,
+  refuses **before any spend**, so a nonced run executes only an approved plan. That block never
+  enters `contractDigest`.
 - **`contractDigest` is computed HERE**, by the wrapper, from the dispatch file it was handed — an
   independent value, never a copy of what the ledger holds, so `dispatch return` can refuse a run
   that executed a *different* contract than the one it opened.

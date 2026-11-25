@@ -95,3 +95,85 @@ export const isSeedablePathToken = (token) =>
   !/\s/u.test(token) &&
   !hasShellMetacharacter(token) &&
   !PATH_BREAKING_CHARACTERS.some((ch) => token.includes(ch));
+
+export const parseStrictJson = (text) => {
+  const source = String(text);
+  const cursor = { index: 0 };
+  const skipWhitespace = () => {
+    while (/\s/.test(source[cursor.index] ?? '')) cursor.index += 1;
+  };
+  const readString = () => {
+    const start = cursor.index;
+    cursor.index += 1;
+    while (cursor.index < source.length) {
+      if (source[cursor.index] === '\\') {
+        cursor.index += 2;
+      } else if (source[cursor.index] === '"') {
+        cursor.index += 1;
+        return JSON.parse(source.slice(start, cursor.index));
+      } else {
+        cursor.index += 1;
+      }
+    }
+    return null;
+  };
+  const childPath = (path, key) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)
+    ? `${path}.${key}`
+    : `${path}[${JSON.stringify(key)}]`;
+  const scanValue = (path) => {
+    skipWhitespace();
+    if (source[cursor.index] === '{') {
+      cursor.index += 1;
+      skipWhitespace();
+      const seen = new Set();
+      if (source[cursor.index] === '}') {
+        cursor.index += 1;
+        return;
+      }
+      while (cursor.index < source.length) {
+        const key = readString();
+        if (seen.has(key)) throw new SyntaxError(`duplicate JSON key ${JSON.stringify(key)} at ${path}`);
+        seen.add(key);
+        skipWhitespace();
+        cursor.index += 1;
+        scanValue(childPath(path, key));
+        skipWhitespace();
+        if (source[cursor.index] === '}') {
+          cursor.index += 1;
+          return;
+        }
+        cursor.index += 1;
+        skipWhitespace();
+      }
+      return;
+    }
+    if (source[cursor.index] === '[') {
+      cursor.index += 1;
+      skipWhitespace();
+      if (source[cursor.index] === ']') {
+        cursor.index += 1;
+        return;
+      }
+      const position = { item: 0 };
+      while (cursor.index < source.length) {
+        scanValue(`${path}[${position.item}]`);
+        position.item += 1;
+        skipWhitespace();
+        if (source[cursor.index] === ']') {
+          cursor.index += 1;
+          return;
+        }
+        cursor.index += 1;
+      }
+      return;
+    }
+    if (source[cursor.index] === '"') {
+      readString();
+      return;
+    }
+    while (cursor.index < source.length && !/[\s,}\]]/.test(source[cursor.index])) cursor.index += 1;
+  };
+  // the duplicate scan tolerates malformed tails (EOF-safe returns); JSON.parse then rejects them
+  scanValue('$');
+  return JSON.parse(source);
+};

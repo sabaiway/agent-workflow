@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "stages": {
+    "epic": {
+      "goal": "Write the epic file: its intent, value, non-goals, acceptance, specs and stories in order, at concept altitude.",
+      "steps": [{ "activity": "epic", "part": null, "from": 1, "to": 6 }],
+      "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Name a mechanism or a file line in the epic."],
+      "output": "The epic file the shape check accepts, its review folded, and its queue row.",
+      "done": "The epic shape check accepts the file and the lens read is folded or carried to the maintainer.",
+      "next": ["epic", "design-consult", "spec-and-plan", "pause", "empty-queue"],
+      "slots": { "queue-row": "queue-row", "decisions": "decisions" }
+    },
+    "design-consult": {
+      "goal": "Settle one design question with the council and Fable before any plan is written.",
+      "steps": [{ "activity": "epic", "part": "Design consult", "from": 1, "to": 4 }],
+      "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Size the work by a prototype."],
+      "output": "The design record the epic's brief reads, each answer saved under the plans directory.",
+      "done": "Every member's fold is read back, and any fork left open is put to the maintainer.",
+      "next": ["design-consult", "epic", "spec-and-plan", "pause"],
+      "slots": { "queue-row": "queue-row", "decisions": "decisions" }
+    },
+    "spec-and-plan": {
+      "goal": "Write every contract the story creates or revises and the plan's ledger beside them, through one review of at most two rounds.",
+      "steps": [{ "activity": "plan-authoring", "part": null, "from": 1, "to": 5 }],
+      "doNot": ["Write code.", "Write a test before the approval; a fold names its scenario instead.", "Copy the tree.", "Run a trial suite.", "Size a file in the plan."],
+      "output": "The contracts as drafts or revisions and the plan, folded with the review.",
+      "done": "The spec gate and the plan-shape gate accept, and the review is clean or its open findings are with the maintainer.",
+      "next": ["spec-and-plan", "waiting-on-approval", "pause"],
+      "slots": { "queue-row": "queue-row", "decisions": "decisions" }
+    },
+    "waiting-on-approval": {
+      "goal": "Show the plan's essence and, on the maintainer's yes, record the approval.",
+      "steps": [{ "activity": "plan-authoring", "part": null, "from": 6, "to": 6 }],
+      "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Record an approval the maintainer has not given in the chat."],
+      "output": "The essence file and, on the yes, the plan's approval record.",
+      "done": "The record check exits 0 for the plan, or the maintainer has asked for a change.",
+      "next": ["waiting-on-approval", "spec-and-plan", "tests", "split-edits", "pause"],
+      "slots": { "plan": "plan" }
+    },
+    "tests": {
+      "goal": "Write only the plan's tests, each failing for the reason its scenario or acceptance bullet states.",
+      "steps": [{ "activity": "plan-execution", "part": null, "from": 1, "to": 4 }],
+      "doNot": ["Write code.", "Write a prototype.", "Write a test that passes before its code exists."],
+      "output": "The plan's tests, staged, each red for its stated reason, and the session record.",
+      "done": "Every new test fails for its scenario's reason or on the absence of a name the plan adds.",
+      "next": ["tests", "code", "pause"],
+      "slots": { "plan": "plan" }
+    },
+    "code": {
+      "goal": "Write the plan's code until its tests and run-gates --pre-review pass.",
+      "steps": [{ "activity": "plan-execution", "part": null, "from": 1, "to": 4 }],
+      "doNot": ["Change a test except back to what its scenario states.", "Write code no approved row or amendment entry covers.", "Commit."],
+      "output": "The code rows written and every contract revision copied into the store.",
+      "done": "The staged tests and run-gates --pre-review pass.",
+      "next": ["code", "diff-review", "pause"],
+      "slots": { "plan": "plan" }
+    },
+    "diff-review": {
+      "goal": "Review the story's staged diff, run the final gates and the release where the story ships one, then commit and clean up.",
+      "steps": [{ "activity": "plan-execution", "part": null, "from": 5, "to": 8 }],
+      "doNot": ["Commit before the review is clean.", "Fold a finding without asking the member who raised it.", "Leave a committable output unstaged before the review."],
+      "output": "The reviewed commit, the release where one ships, and the plan's Phase: Cleanup done.",
+      "done": "The commit has landed and the Cleanup has run.",
+      "next": ["diff-review", "spec-and-plan", "epic", "pause", "empty-queue"],
+      "slots": { "plan": "plan" }
+    },
+    "split-modules": {
+      "goal": "Write the split's module list as a plan with no code.",
+      "steps": [{ "activity": "plan-execution", "part": "Split", "from": 1, "to": 2 }],
+      "doNot": ["Write code.", "Write a test.", "Copy the tree.", "Run a trial suite.", "Move a file before the approval."],
+      "output": "The module list plan and, on the yes, its approval record.",
+      "done": "The plan's record check exits 0, or the maintainer has asked for a change.",
+      "next": ["split-modules", "waiting-on-approval", "split-edits", "pause"],
+      "slots": { "queue-row": "queue-row", "decisions": "decisions" }
+    },
+    "split-edits": {
+      "goal": "Move the existing code and its cases into the modules the approved list names, then review, release and clean up.",
+      "steps": [{ "activity": "plan-execution", "part": "Split", "from": 3, "to": 4 }],
+      "doNot": ["Add new logic.", "Add a new case.", "Move a file the approved list does not name."],
+      "output": "The moved modules with their tests beside them, the reviewed commit and the Cleanup.",
+      "done": "The commit has landed and the Cleanup has run.",
+      "next": ["split-edits", "spec-and-plan", "epic", "pause", "empty-queue"],
+      "slots": { "plan": "plan" }
+    },
+    "pause": {
+      "goal": "The session waits: the work stops here until the maintainer names the next stage.",
+      "steps": [],
+      "doNot": ["Write code.", "Write a test.", "Start a stage the maintainer has not named."],
+      "output": "No change to the tree.",
+      "done": "The maintainer names the next stage.",
+      "next": ["epic", "design-consult", "spec-and-plan", "waiting-on-approval", "tests", "code", "diff-review", "split-modules", "split-edits", "pause", "empty-queue"],
+      "slots": {}
+    },
+    "empty-queue": {
+      "goal": "The session waits: no work is open until the maintainer opens some.",
+      "steps": [],
+      "doNot": ["Write code.", "Write a test.", "Open work the maintainer has not asked for."],
+      "output": "No change to the tree.",
+      "done": "The maintainer opens new work.",
+      "next": ["epic", "design-consult", "spec-and-plan", "waiting-on-approval", "tests", "code", "diff-review", "split-modules", "split-edits", "pause", "empty-queue"],
+      "slots": {}
+    }
+  }
+}

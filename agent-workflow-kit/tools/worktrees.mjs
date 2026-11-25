@@ -25,7 +25,7 @@ import {
 } from './known-footprint.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { isScratchPlanName, plansInFlight, PLANS_REL } from './plan-files.mjs';
-import { escapeRegExp, shellQuoteArg } from './repo-lex.mjs';
+import { escapeRegExp, parseStrictJson, shellQuoteArg } from './repo-lex.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { assertContainedRealPath } from './fs-safe.mjs';
 import { GIT_MAX_BUFFER } from './git-env.mjs';
@@ -42,6 +42,11 @@ import {
 import { composeSatellitePrompt, resolveSeededPlan } from './worktree-prompt.mjs';
 import { applySlot } from './write-lanes.mjs';
 import { dirCovers } from './declared-paths.mjs';
+import { RECEIPTS_BASENAME } from './core-evidence-receipts.mjs';
+import { readRegularFileNoFollow } from './fs-read-nofollow.mjs';
+import { OUTCOME_LINES as APPROVAL_LINES, appendApproval, readApproval } from './plan-approval/cli.mjs';
+import { RECORD_GATED_STAGES, STAGES_REL, composeRenderCommand, loadStages, validateSlots } from './stage-render/index.mjs';
+import { main as runStageWriter } from './stage-render/cli.mjs';
 
 // The record format and the satellite locator now live in leaves the dispatch side reads too — but
 // every name they took away is re-exported here, so no import site and no asserted error `code`
@@ -81,15 +86,23 @@ const TRACKED_PIN_DECLARATION =
   'tracked declaration is not worktree-portable — this worktree\'s council/final checks route through the MAIN runner via --cwd';
 const TRANSFER_EXCLUSIONS = Object.freeze([`:!${DOCS_TREE}`, `:!${PLANS_REL}`]);
 const PREPARE_LOCK_BASENAME = 'aw-prepare-lock';
+const SLOT_FILE_REL = `${PLANS_REL}/next-session.json`;
+const DEFAULT_STAGE = 'tests';
+const STAGES_ABS = join(dirname(WORKTREES_TOOL_DIR), STAGES_REL);
+const TOOL_EXIT_OK = 0;
+const TOOL_EXIT_USAGE = 2;
 
 const USAGE = [
   'usage: worktrees.mjs <subcommand> [args]',
   '',
   '  provision <slug> --plan <path> [--as <name>.md] [--dir <path>] [--branch <name>]',
-  '            [--include <path>]... [--install] [--resume]',
+  '            [--include <path>]... [--install] [--resume] [--stage <id>]',
   '            create + populate a feature worktree (sibling dir by default; the parent dir is',
   `            the ${CONFIG_REL} "parentDir" setting when present). --install only PRINTS the`,
   '            install command. --resume completes a half-done provision (identity-checked).',
+  '            Only a plan with a matching approval record is provisioned; its entry is carried',
+  `            into the worktree's record and ${SLOT_FILE_REL} is written for --stage`,
+  `            (${RECORD_GATED_STAGES.join(', ')}; ${DEFAULT_STAGE} when absent).`,
   '  list      show every worktree of this repo: slug, path, branch, base OID, dirty, handoff.',
   '  prompt <slug>',
   '            re-print the satellite cold-start prompt for a provisioned worktree: where it is,',
@@ -401,87 +414,7 @@ export const validateSlug = (slug) => {
   return slug;
 };
 
-export const parseStrictJson = (text) => {
-  const source = String(text);
-  const cursor = { index: 0 };
-  const skipWhitespace = () => {
-    while (/\s/.test(source[cursor.index] ?? '')) cursor.index += 1;
-  };
-  const readString = () => {
-    const start = cursor.index;
-    cursor.index += 1;
-    while (cursor.index < source.length) {
-      if (source[cursor.index] === '\\') {
-        cursor.index += 2;
-      } else if (source[cursor.index] === '"') {
-        cursor.index += 1;
-        return JSON.parse(source.slice(start, cursor.index));
-      } else {
-        cursor.index += 1;
-      }
-    }
-    return null;
-  };
-  const childPath = (path, key) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key)
-    ? `${path}.${key}`
-    : `${path}[${JSON.stringify(key)}]`;
-  const scanValue = (path) => {
-    skipWhitespace();
-    if (source[cursor.index] === '{') {
-      cursor.index += 1;
-      skipWhitespace();
-      const seen = new Set();
-      if (source[cursor.index] === '}') {
-        cursor.index += 1;
-        return;
-      }
-      while (cursor.index < source.length) {
-        const key = readString();
-        if (seen.has(key)) throw new SyntaxError(`duplicate JSON key ${JSON.stringify(key)} at ${path}`);
-        seen.add(key);
-        skipWhitespace();
-        cursor.index += 1;
-        scanValue(childPath(path, key));
-        skipWhitespace();
-        if (source[cursor.index] === '}') {
-          cursor.index += 1;
-          return;
-        }
-        cursor.index += 1;
-        skipWhitespace();
-      }
-      return;
-    }
-    if (source[cursor.index] === '[') {
-      cursor.index += 1;
-      skipWhitespace();
-      if (source[cursor.index] === ']') {
-        cursor.index += 1;
-        return;
-      }
-      let item = 0;
-      while (cursor.index < source.length) {
-        scanValue(`${path}[${item}]`);
-        item += 1;
-        skipWhitespace();
-        if (source[cursor.index] === ']') {
-          cursor.index += 1;
-          return;
-        }
-        cursor.index += 1;
-      }
-      return;
-    }
-    if (source[cursor.index] === '"') {
-      readString();
-      return;
-    }
-    while (cursor.index < source.length && !/[\s,}\]]/.test(source[cursor.index])) cursor.index += 1;
-  };
-  // the duplicate scan tolerates malformed tails (EOF-safe returns); JSON.parse then rejects them
-  scanValue('$');
-  return JSON.parse(source);
-};
+export { parseStrictJson } from './repo-lex.mjs';
 
 export const loadWorktreesConfig = (root, deps = {}) => {
   const fs = fsOf(deps);
@@ -629,6 +562,7 @@ const provisionFlagsTail = (flags, q) => {
   for (const inc of flags.include ?? []) parts.push('--include', q(inc));
   if (flags.install) parts.push('--install');
   if (flags.resume) parts.push('--resume');
+  if (flags.stage) parts.push('--stage', q(flags.stage));
   return parts;
 };
 
@@ -1078,7 +1012,7 @@ const listPlansIndexEntries = ({ git, cwd }) => {
 };
 
 const plansChainRels = ({ slug, seedName }) =>
-  [...new Set([`${PLANS_REL}/${handoffBasename(slug)}`, `${PLANS_REL}/${seedName}`])];
+  [...new Set([`${PLANS_REL}/${handoffBasename(slug)}`, `${PLANS_REL}/${seedName}`, SLOT_FILE_REL])];
 
 // The finding kind is decided over EVERY entry of the path from BOTH sources; an unmerged
 // index state — several stages OR a single non-zero stage — is irregular outright, never a
@@ -1280,6 +1214,7 @@ export const INCLUDE_IDENTITY_RULE = 'An --include source is copied only through
 export const PLACEMENT_REGISTRY = Object.freeze([
   'handoff-stub',
   'seed-plan',
+  'slot-file',
   'copy-set-leaf',
   'include-leaf',
   'node-modules-link',
@@ -1565,6 +1500,122 @@ const writeSeedPlan = ({ wtRoot, srcAbs, name, fs, report, journal = NO_JOURNAL 
   writeContainedFileAtomic(wtRoot, dst, String(src.bytes), fs, { stop: (m) => stop(m) });
   journal.record({ rel: `${PLANS_REL}/${name}`, surface: 'seed-plan', outcome: 'written' });
   report.push(`  seeded plan: ${PLANS_REL}/${name}`);
+};
+
+// ── the plan approval and the stage slot file (specs kit/plan-approval and kit/stage-render) ─
+
+// The record sits beside the review receipts, so pinning their resolver to the git dir the injected
+// git answers keeps provision's reads, its carry and the stage writer on one record file.
+const approvalEnv = (gitDir) => ({ ...process.env, AW_REVIEW_RECEIPTS: join(gitDir, RECEIPTS_BASENAME) });
+
+const resolveGitDir = (git, cwd) => {
+  const gitDir = gitLine(git, ['rev-parse', '--path-format=absolute', '--git-dir'], cwd);
+  if (gitDir == null) throw stop(`cannot resolve the git dir of ${cwd}`);
+  return gitDir;
+};
+
+const approvalLines = (plan, result) => [
+  ...(result.malformedLines ?? []).map((line) => APPROVAL_LINES.malformed(result.recordPath, line)),
+  ...(result.verdict?.result.findings ?? []).map((finding) => APPROVAL_LINES.finding(plan, finding)),
+];
+
+const placedInstance = ({ root, wtRoot, planFlag, seedName, fs }) => {
+  const placed = `${PLANS_REL}/${seedName}`;
+  return lstatNoFollow(fs.lstat, join(wtRoot, placed)) === null ? { cwd: root, plan: planFlag } : { cwd: wtRoot, plan: placed };
+};
+
+// The match is the work tree's own record first, then MAIN's, whose contracts are digested in MAIN; MAIN's
+// matching entry is returned to be carried, null when the work tree already holds one. An unreadable
+// work-tree record never falls back.
+const requireInstanceApproval = ({ instance, root, worktreeGitDir, mainGitDir, report }) => {
+  if (process.env.AW_REVIEW_RECEIPTS) {
+    throw stop('provision refuses: AW_REVIEW_RECEIPTS is set, so the worktree\'s plan approval record would be MAIN\'s own file — unset it, then re-run');
+  }
+  const read = (gitDir, contractsCwd) => readApproval({ cwd: instance.cwd, contractsCwd, env: approvalEnv(gitDir), plan: instance.plan });
+  const accept = (result) => {
+    report.push(...approvalLines(instance.plan, result).map((line) => `  ${line}`));
+    return result.match;
+  };
+  const local = worktreeGitDir === null ? null : read(worktreeGitDir, instance.cwd);
+  if (local?.exitCode === TOOL_EXIT_OK) {
+    accept(local);
+    return null;
+  }
+  const result = local?.exitCode === TOOL_EXIT_USAGE ? local : read(mainGitDir, root);
+  if (result.exitCode === TOOL_EXIT_OK) return accept(result);
+  throw stop([
+    `provision refuses: the plan ${displayValue(instance.plan)} has no matching approval record in ${worktreeGitDir === null ? 'MAIN' : 'this worktree or in MAIN'} — a worktree is provisioned only for an approved plan`,
+    APPROVAL_LINES.refused(instance.plan, result.reason),
+    ...approvalLines(instance.plan, result),
+  ].join('\n'));
+};
+
+const carryApproval = ({ wtRoot, gitDir, match, report }) => {
+  if (match === null) return;
+  const result = appendApproval({ cwd: wtRoot, env: approvalEnv(gitDir), entry: { ...match, from: 'provision' } });
+  if (result.exitCode !== TOOL_EXIT_OK) {
+    throw stop([`provision could not carry the approval of ${displayValue(match.plan)} into the worktree's record`,
+      APPROVAL_LINES.error(match.plan, result.reason), ...approvalLines(match.plan, result)].join('\n'));
+  }
+  report.push(`  plan approval: ${result.written ? 'carried from MAIN' : 'already carried'} into ${result.recordPath}`,
+    ...approvalLines(match.plan, result).map((line) => `  ${line}`));
+};
+
+const loadStageTable = (stagesPath = STAGES_ABS) => {
+  const read = readRegularFileNoFollow(stagesPath);
+  if (read.outcome !== 'ok' || read.closeFailure) {
+    throw stop(`the stage table ${stagesPath} is not readable (${read.closeFailure ?? read.code ?? read.outcome}) — upgrade the kit`);
+  }
+  try {
+    return loadStages(read.content);
+  } catch (err) {
+    throw stop(`the stage table ${stagesPath} is refused: ${errorText(err)} — upgrade the kit`);
+  }
+};
+
+const REWRITE_SLOT = `re-run --resume with --stage <${RECORD_GATED_STAGES.join('|')}> to rewrite it, or remove it`;
+const REMOVE_SLOT = 'remove it, then finish with --resume';
+const slotRefusal = (detail, remedy) => stop(`provision refuses: the slot file ${SLOT_FILE_REL} in the worktree ${detail} — ${remedy}`);
+
+// Decided before the first provision write: a non-regular node refuses, and only a --resume without
+// --stage keeps a regular slot file, which keepSlotFile judges once the plan is seeded.
+const planSlotFile = ({ wtRoot, flags, fs }) => {
+  const node = classifyNodeNoFollow(join(wtRoot, SLOT_FILE_REL), fs);
+  if (node.kind !== 'absent' && node.kind !== 'regular-file') {
+    throw slotRefusal(node.kind === 'error' ? `cannot be inspected (${node.error})` : `is a ${node.kind}, not a regular file`, REMOVE_SLOT);
+  }
+  const keep = node.kind === 'regular-file' && flags.resume && flags.stage === null;
+  return { write: !keep, stage: flags.stage ?? DEFAULT_STAGE };
+};
+
+const keepSlotFile = ({ wtRoot, seedName, stagesPath }) => {
+  const table = loadStageTable(stagesPath);
+  const slots = (() => {
+    try {
+      return validateSlots({ root: wtRoot, slotFile: SLOT_FILE_REL, table });
+    } catch (err) {
+      throw slotRefusal(`does not validate (${errorText(err)})`, REWRITE_SLOT);
+    }
+  })();
+  if (slots.plan !== `${PLANS_REL}/${seedName}`) {
+    throw slotRefusal(`names the plan ${displayValue(JSON.stringify(slots.plan ?? null))}, not ${PLANS_REL}/${displayValue(seedName)}`, REWRITE_SLOT);
+  }
+  if (!RECORD_GATED_STAGES.includes(slots.stage)) {
+    throw slotRefusal(`names the stage ${displayValue(JSON.stringify(slots.stage))}, outside ${RECORD_GATED_STAGES.join(', ')}`, REWRITE_SLOT);
+  }
+  return slots.stage;
+};
+
+const writeSlotFile = ({ wtRoot, seedName, slot, gitDir, stagesPath, report, journal }) => {
+  const stage = slot.write ? slot.stage : keepSlotFile({ wtRoot, seedName, stagesPath });
+  if (slot.write) {
+    const errors = [];
+    const code = runStageWriter(['--write', SLOT_FILE_REL, '--stage', stage, '--plan', `${PLANS_REL}/${seedName}`],
+      { cwd: wtRoot, env: approvalEnv(gitDir), stagesPath, stdout: () => {}, stderr: (text) => errors.push(text) });
+    if (code !== TOOL_EXIT_OK) throw stop(`the stage writer refused ${SLOT_FILE_REL} (exit ${code}):\n${errors.join('').trimEnd()}`);
+  }
+  journal.record({ rel: SLOT_FILE_REL, surface: 'slot-file', outcome: slot.write ? 'written' : 'kept' });
+  report.push(`  slot file: ${SLOT_FILE_REL} (${slot.write ? 'written' : 'kept'}, stage ${stage})`);
 };
 
 // The include set is resolved and identity-checked in runProvision — BEFORE `git worktree add` —
@@ -1907,6 +1958,7 @@ const composeSatellitePromptFor = ({ root, wtRoot, slug, branch, record, plan, i
   branch,
   worktreePath: wtRoot,
   plan,
+  renderCommand: composeRenderCommand(SLOT_FILE_REL),
   live: {
     sharedQueue: orientationFields({ root, slug }).sharedQueue,
     landingRule: LANDING_FROM_MAIN,
@@ -2129,7 +2181,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
   const slug = validateSlug(argvSlug);
   const branch = flags.branch ?? `${DEFAULT_BRANCH_PREFIX}${slug}`;
   if (flags.plan == null) throw usageStop('provision requires --plan <path> (the ONE feature plan the worktree starts with)');
-  const { root, commonDir } = resolveRoots(cwd, git);
+  const { root, gitDir, commonDir } = resolveRoots(cwd, git);
   // Composing the record is the LAST step of provision, so a refusal there would leave a created
   // worktree with no handoff — which neither --resume nor `cleanup --abandon` can recover, because
   // both bind on the handoff identity. Every value the record will carry is therefore checked HERE,
@@ -2167,6 +2219,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     ...provisionSetRels,
     `${PLANS_REL}/${seed.name}`,
     `${PLANS_REL}/${handoffBasename(slug)}`,
+    SLOT_FILE_REL,
   ];
   const includeSources = [];
   for (const inc of flags.include) {
@@ -2205,7 +2258,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     }
     const reserved = reservedRels.find((r) => includeRelsOverlap(rel, r));
     if (reserved !== undefined) {
-      throw stop(`--include overlaps a path provision itself populates (${reserved}): ${inc} — the footprint, the seeded plan, and the handoff are copied by provision; drop the --include`);
+      throw stop(`--include overlaps a path provision itself populates (${reserved}): ${inc} — the footprint, the seeded plan, the handoff and the slot file are placed by provision; drop the --include`);
     }
     const clashing = includeSources.find((prior) => includeRelsOverlap(rel, prior.rel));
     if (clashing !== undefined) {
@@ -2229,6 +2282,7 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     }
   };
 
+  const approval = { match: null, worktreeGitDir: null };
   if (flags.resume) {
     const entry = listWorktrees(git, root).find((e) => resolve(e.path) === resolve(targetReal));
     if (!entry) throw stop(`--resume: no registered worktree at ${targetReal} — run provision without --resume`);
@@ -2240,9 +2294,18 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     assertPlansChainCleanOnResume({ git, root, wtRoot: targetReal, slug, branch, rels: plansChainRels({ slug, seedName: seed.name }), fs });
     assertResumeHandoffIdentity({ wtRoot: targetReal, slug, branch, fs });
     assertResumePlanCompatibility({ wtRoot: targetReal, seedName: seed.name, fs });
+    approval.worktreeGitDir = resolveGitDir(git, targetReal);
+    approval.match = requireInstanceApproval({
+      instance: placedInstance({ root, wtRoot: targetReal, planFlag: flags.plan, seedName: seed.name, fs }),
+      root,
+      worktreeGitDir: approval.worktreeGitDir,
+      mainGitDir: gitDir,
+      report,
+    });
     runWritabilityProbe();
     report.push(`resuming provision at ${targetReal} (branch ${branch})`);
   } else {
+    approval.match = requireInstanceApproval({ instance: { cwd: root, plan: flags.plan }, root, worktreeGitDir: null, mainGitDir: gitDir, report });
     runWritabilityProbe();
     // ONE captured commit binds the plans-chain tree proof AND the branch cut: a clean
     // captured OID with a subsequently-moved HEAD still cuts from the captured OID.
@@ -2270,7 +2333,11 @@ export const runProvision = ({ argvSlug, flags, cwd, git, deps, log }) => {
     if (!flags.resume) {
       assertPlansChainCleanPostAdd({ git, wtRoot: targetReal, branch, rels: plansChainRels({ slug, seedName: seed.name }) });
     }
-    return finishProvision({ root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log });
+    const worktreeGitDir = approval.worktreeGitDir ?? resolveGitDir(git, targetReal);
+    return finishProvision({
+      root, rootReal, targetPath: targetReal, slug, branch, flags, seed, includeSources, provisionSet,
+      approvalMatch: approval.match, worktreeGitDir, git, deps, fs, report, log,
+    });
   } catch (err) {
     if (!flags.resume && err?.message && !err.suppressKeptNote) {
       err.message += `\nNOTE: the worktree at ${targetReal} (branch ${branch}) was created and KEPT — finish with: ${composeProvisionArgv({ root, slug, flags: { ...flags, resume: true } })} (or reclaim it with the consented cleanup).`;
@@ -2342,7 +2409,8 @@ const dropMcpRegistration = ({ root, wtRoot, git, fs, report }) => {
   report.push(`  ${SETTINGS_REL}: dropped our registration tokens (this worktree declares no ${MCP_JSON_REL})`);
 };
 
-const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, provisionSet, git, deps, fs, report, log }) => {
+const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed, includeSources, provisionSet, approvalMatch, worktreeGitDir, git, deps, fs, report, log }) => {
+  const slot = planSlotFile({ wtRoot: targetPath, flags, fs });
   // THIS run's proof set: every lane journals the leaf it placed or kept, and nothing else is ever
   // examined by the resume verify — the session's own work is out of scope by construction.
   const journal = createPlacementJournal({ wtRoot: targetPath, fs });
@@ -2356,6 +2424,8 @@ const finishProvision = ({ root, rootReal, targetPath, slug, branch, flags, seed
   }
 
   writeSeedPlan({ wtRoot: targetPath, srcAbs: seed.srcAbs, name: seed.name, fs, report, journal });
+  carryApproval({ wtRoot: targetPath, gitDir: worktreeGitDir, match: approvalMatch, report });
+  writeSlotFile({ wtRoot: targetPath, seedName: seed.name, slot, gitDir: worktreeGitDir, stagesPath: deps.stagesPath, report, journal });
   const includesRecorded = provisionIncludes({ rootReal, wtRoot: targetPath, includeSources, resume: flags.resume, git, fs, report, copied, journal });
   // Computed ONCE, from the satellite's own checkout, and threaded to both consumers — the report
   // lane and the record must state the SAME verdict.
@@ -3324,13 +3394,13 @@ export const parseArgs = (argv) => {
     throw usageStop(`unknown subcommand ${JSON.stringify(sub)}\n${USAGE}`);
   }
   const SUB_FLAGS = {
-    provision: ['--plan', '--as', '--dir', '--branch', '--include', '--install', '--resume'],
+    provision: ['--plan', '--as', '--dir', '--branch', '--include', '--install', '--resume', '--stage'],
     list: [],
     prompt: [],
     land: ['--prepare'],
     cleanup: ['--branch', '--abandon'],
   };
-  const flags = { plan: null, as: null, dir: null, branch: null, include: [], install: false, resume: false, prepare: false, abandon: false };
+  const flags = { plan: null, as: null, dir: null, branch: null, include: [], install: false, resume: false, stage: null, prepare: false, abandon: false };
   let slug = null;
   for (let i = 0; i < rest.length; i += 1) {
     const a = rest[i];
@@ -3338,7 +3408,7 @@ export const parseArgs = (argv) => {
       if (!SUB_FLAGS[sub].includes(a)) {
         throw usageStop(`flag ${JSON.stringify(a)} is not valid for ${sub}\n${USAGE}`);
       }
-      const takesValue = ['--plan', '--as', '--dir', '--branch', '--include'].includes(a);
+      const takesValue = ['--plan', '--as', '--dir', '--branch', '--include', '--stage'].includes(a);
       if (takesValue) {
         i += 1;
         if (rest[i] === undefined) throw usageStop(`${a} requires an argument`);
@@ -3351,6 +3421,9 @@ export const parseArgs = (argv) => {
     else throw usageStop(`unexpected argument ${JSON.stringify(a)}`);
   }
   if (sub !== 'list' && slug === null) throw usageStop(`${sub} requires the positional <slug>`);
+  if (flags.stage !== null && !RECORD_GATED_STAGES.includes(flags.stage)) {
+    throw usageStop(`--stage must be one of the record-gated stages (${RECORD_GATED_STAGES.join(', ')}), got ${displayValue(JSON.stringify(flags.stage))}`);
+  }
   if (sub === 'list' && slug !== null) throw usageStop('list takes no positional argument');
   return { sub, slug, flags };
 };

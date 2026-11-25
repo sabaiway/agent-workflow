@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { makeFixtureRepo } from '../../scripts/testing/fixture-repo.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
+import { APPROVED_PLAN_BODY, recordApproval } from './plan-approval/approved-plan-harness.test.mjs';
 // Dynamic import so this spec LOADS against the pre-fix tree (the red-first doctrine).
 const { EXIT, runCli, provisionCopySet, rebaseAbsolutePins } = await import('./worktrees.mjs');
 
@@ -20,7 +22,9 @@ const TMP = mkdtempSync(join(tmpdir(), 'aw-wt-mcp-'));
 after(() => rmSync(TMP, { recursive: true, force: true }));
 
 const sh = (args, cwd) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const env = stripGitLocationEnv(process.env);
+  delete env.NODE_TEST_CONTEXT;
+  const r = spawnSync('git', args, { cwd, env, encoding: 'utf8' });
   assert.equal(r.status, 0, `git ${args.join(' ')} failed: ${r.stderr}`);
   return r.stdout;
 };
@@ -43,7 +47,7 @@ const makeRepo = (name, { mcpJson = 'file', pin = true } = {}) => {
   mkdirSync(join(main, 'docs/ai'), { recursive: true });
   writeFileSync(join(main, 'docs/ai/gates.json'), JSON.stringify({ gates: [] }));
   mkdirSync(join(main, 'docs/plans'), { recursive: true });
-  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), '# body\n');
+  writeFileSync(join(main, 'docs/plans/SEED-PROMPT-x.md'), APPROVED_PLAN_BODY);
   mkdirSync(join(main, '.claude'), { recursive: true });
   writeFileSync(join(main, '.claude/settings.json'), JSON.stringify({
     enabledMcpjsonServers: ['agent-workflow', 'someone-elses-server'],
@@ -67,8 +71,10 @@ const run = (argv, cwd) => {
   return { code, out: out.join('\n'), errText: err.join('\n') };
 };
 
-const provision = (repo, slug) =>
-  run(['provision', slug, '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', `feature-${slug}.md`], repo);
+const provision = (repo, slug) => {
+  recordApproval(repo, 'docs/plans/SEED-PROMPT-x.md');
+  return run(['provision', slug, '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', `feature-${slug}.md`], repo);
+};
 const wtPath = (repo, slug) => join(dirname(repo), `${basename(repo)}--${slug}`);
 
 describe('worktrees — /.mcp.json is registry-known but never provisioned', () => {
@@ -100,6 +106,7 @@ describe('worktrees — /.mcp.json is registry-known but never provisioned', () 
   // cannot see it — --include is the one door that would copy AND own the launcher.
   it('--include cannot smuggle it in through the one door that bypasses the copy set', () => {
     const main = makeRepo('include');
+    recordApproval(main, 'docs/plans/SEED-PROMPT-x.md');
     const r = run(['provision', 'inc', '--plan', 'docs/plans/SEED-PROMPT-x.md', '--as', 'feature-inc.md',
       '--include', '.mcp.json'], main);
     assert.notEqual(r.code, EXIT.ok, 'the include is refused');

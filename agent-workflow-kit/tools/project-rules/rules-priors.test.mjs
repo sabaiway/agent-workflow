@@ -6,12 +6,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { EXPECTED_ENGINE_NAME } from '../engine-source.mjs';
+import { EXPECTED_ENGINE_NAME, LENS_THEME_REL } from '../engine-source.mjs';
 import { KIT_ROOT, entryOf, load, makeEngine, makeProject, need, recordText, removeProject, sha } from './rules-harness.test.mjs';
 import { THEMES, themePaths } from './themes.mjs';
 
 const THEME = 'project-layout';
 const LENS = 'lens';
+const STORY_SESSIONS = 'story-sessions';
 const LENS_RELEASE = '20.0.0';
 const ENGINE_HOME = 'engine';
 const ENGINE_ROOT = join(KIT_ROOT, '..', EXPECTED_ENGINE_NAME);
@@ -32,7 +33,11 @@ const SHIPPED_BODIES = Object.freeze({
   ]),
   [LENS]: Object.freeze([
     'd0cd7c6f602710f3d292644f78d2e9ccf569b1ce9a9d00bcb2e9cfd831e18703',
-    '02ac3386529d4744277d11729c6b5cc444c99f7594b82e45f34406085434c1a4',
+    '9990fd49fa15fd98124d1a9706d5217739611c768af9ce8919575bfc3bbe5722',
+  ]),
+  [STORY_SESSIONS]: Object.freeze([
+    '696fc850b04c91ed4fe6b5d370835c420163a729cef3803d57ed86b06bde6b49',
+    '032823894725d9bea6e0e01c501deec0e52ec3c7460092b76d14edaefae4d446',
   ]),
 });
 const EXPECTED_PRIORS = [
@@ -40,6 +45,7 @@ const EXPECTED_PRIORS = [
   { theme: THEME, release: '19.4.0', sha256: SHIPPED_BODIES[THEME][1] },
   { theme: 'communication', release: '20.0.0', sha256: SHIPPED_BODIES.communication[0] },
   { theme: LENS, release: LENS_RELEASE, sha256: SHIPPED_BODIES[LENS][0] },
+  { theme: STORY_SESSIONS, release: '20.0.0', sha256: SHIPPED_BODIES[STORY_SESSIONS][0] },
 ];
 const OUTGOING_HEADINGS = { communication: '### 2.5. Communication (user-facing messages)', 'story-sessions': '### 2.7. Story sessions' };
 const FIVE_SESSIONS = 'runs as five sessions';
@@ -53,7 +59,7 @@ const kitPath = (theme) => `docs/ai/rules/${theme}.md`;
 const themeOf = (theme) => THEMES.find(({ name }) => name === theme);
 const templateOf = (theme) => {
   const { home, template } = themeOf(theme);
-  return readFileSync(join(home === ENGINE_HOME ? ENGINE_ROOT : KIT_ROOT, template), 'utf8');
+  return readFileSync(home === ENGINE_HOME ? join(ENGINE_ROOT, LENS_THEME_REL) : join(KIT_ROOT, template), 'utf8');
 };
 // The section body the template carries, its frontmatter, title and precedence line dropped.
 const sectionBody = (text) => {
@@ -73,15 +79,15 @@ const ensureOver = async (files) => {
 };
 const replacedLine = (theme) => `${kitPath(theme)}: differs from every body this kit knows it shipped — replaced by the bundled template; a rule meant to last goes in docs/ai/rules/local/${theme}.md, where it wins`;
 
-describe('spec:project-rules/S24 RULES_PRIORS is a frozen catalog of exactly four entries including lens 20.0.0 and isKnownPrior answers per theme over the given catalog', () => {
-  it('RULES_PRIORS is a frozen list of exactly four entries in order: project-layout 14.37.0, project-layout 19.4.0, communication 20.0.0 and lens 20.0.0', async () => {
+describe('spec:project-rules/S24 RULES_PRIORS is a frozen catalog of exactly five entries including story-sessions 20.0.0 and isKnownPrior answers per theme over the given catalog', () => {
+  it('RULES_PRIORS is a frozen list of exactly five entries in order: project-layout 14.37.0, project-layout 19.4.0, communication 20.0.0, lens 20.0.0 and story-sessions 20.0.0', async () => {
     const RULES_PRIORS = need(await priorsOf(), 'RULES_PRIORS');
     assert.ok(Array.isArray(RULES_PRIORS), 'RULES_PRIORS is a list');
     assert.ok(Object.isFrozen(RULES_PRIORS), 'RULES_PRIORS is frozen');
     assert.deepEqual(RULES_PRIORS.map((entry) => ({ ...entry })), EXPECTED_PRIORS);
   });
 
-  it('the default catalog knows every expected fixture body under its theme and neither current template', async () => {
+  it('the default catalog knows every expected fixture body under its theme and no catalogued current template', async () => {
     const isKnownPrior = need(await priorsOf(), 'isKnownPrior');
     for (const { theme, release } of EXPECTED_PRIORS) {
       const fixture = fixtureOf(theme, release);
@@ -139,8 +145,17 @@ describe('spec:project-rules/S24 RULES_PRIORS is a frozen catalog of exactly fou
   });
 });
 
-describe('spec:session-rules/S2 no prior for the outgoing sections: no story-sessions entry and one communication 20.0.0 entry, other bodies replaced naming their local file', () => {
+describe('spec:session-rules/S2 no prior for the outgoing sections: one story-sessions and one communication 20.0.0 entry, other bodies replaced naming their local file', () => {
   for (const theme of Object.keys(OUTGOING_HEADINGS)) {
+    it(`${kitPath(theme)} holding the 20.0.0 template is refreshed without a line naming its local file`, async () => {
+      const prior = readFileSync(fixtureOf(theme, '20.0.0'));
+      const template = Buffer.from(templateOf(theme));
+      assert.notDeepEqual(prior, template);
+      const run = await ensureOver({ [kitPath(theme)]: prior });
+      assert.ok(run.lines.includes(`${kitPath(theme)}: ${PRIOR_REFRESH}`), run.lines.join('\n'));
+      assert.ok(!run.lines.some((line) => line.includes(themePaths(theme).local)), run.lines.join('\n'));
+      assert.deepEqual(readFileSync(join(run.root, kitPath(theme))), template);
+    });
     for (const [what, body] of [
       ['the outgoing section body', () => `${OUTGOING_HEADINGS[theme]}\n${sectionBody(templateOf(theme))}`],
       ['a body of its own', () => `# ${theme}\n\nMy own rule.\n`],
