@@ -96,8 +96,8 @@ On `upgrade`, a pre-1.2.0 deployment with no block gets one (the agent asks, def
 Every name the kit bundles and writes over on an upgrade is the kit's, and an edit there is never a
 customization: every kit script, the kit folder `scripts/agent-workflow/` whole, the spec layer's
 files and the command `scripts/agent-workflow/run.mjs` in it, the hook installer set, the kit rules
-files `docs/ai/rules/<theme>.md` and the kit agent files (the five the kit bundles for
-`.claude/agents/` — `changelog-skeleton.md`, `executor.md`,
+files `docs/ai/rules/<theme>.md` and the kit agent files (the names the kit bundles for
+`.claude/agents/` — `author.md`, `changelog-skeleton.md`, `executor.md`,
 `gate-triage.md`, `mechanical-sweep.md`, `review-lens.md` — and each configured
 `review-lens-<model>-<effort>.md`) and, within a hook you wired, the kit hook files
 `.claude/hooks/agent-workflow-gates.mjs` and `.claude/hooks/state-block-guard.mjs` are written over

@@ -9,6 +9,7 @@
 // Pure, no side effects, Node >= 22.
 
 import { STATE_PHRASING, VISIBILITY_PHRASING } from './presentation.mjs';
+import { slotRole } from './carriers.mjs';
 
 const memberVm = (m) => {
   const refresh = m.refresh ?? { behind: false, recommend: null };
@@ -57,7 +58,7 @@ const recipesVm = (r) => {
     // source + degradedFrom ride along: an effective recipe alone cannot tell a chosen value from a
     // computed default, nor a degrade from a configuration that really names the resolved recipe.
     for (const [slot, v] of Object.entries(slots)) {
-      pairs.push({ key: `${activity}.${slot}`, recipe: v.recipe, source: v.source ?? null, degradedFrom: v.degradedFrom ?? null });
+      pairs.push({ key: `${activity}.${slot}`, recipe: v.recipe, source: v.source ?? null, degradedFrom: v.degradedFrom ?? null, role: slotRole(activity, slot) });
     }
   }
   return { pairs, detectError: r.detectError ?? null };
@@ -80,15 +81,17 @@ const velocityVm = (v) => {
 
 const agentsVm = (a) => {
   if (!a) return null;
-  if (a.error) return { error: a.error, executor: a.executor ?? null, executorReason: a.executorReason ?? null };
+  if (a.error) return { error: a.error, author: a.author ?? null, authorReason: a.authorReason ?? null, executor: a.executor ?? null, executorReason: a.executorReason ?? null };
   const bundled = a.bundled ?? 0;
   return {
     bundled,
     placed: a.placed ?? 0,
-    // The envelope counts the read-only vehicles; an envelope predating the executor field bundled
+    // The envelope counts the read-only vehicles; an envelope predating the author and executor fields bundled
     // only read-only ones.
-    readOnly: a.readOnly ?? (a.executor == null ? bundled : Math.max(bundled - 1, 0)),
+    readOnly: a.readOnly ?? Math.max(bundled - Number(a.executor != null) - Number(a.author != null), 0),
     // null = an envelope predating the field (unknown), never a state.
+    author: a.author ?? null,
+    authorReason: a.authorReason ?? null,
     executor: a.executor ?? null,
     executorReason: a.executorReason ?? null,
   };

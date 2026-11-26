@@ -1722,6 +1722,8 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
     });
   }
   const AGENTS_KIT = 'agents.not-current';
+  const kitNames = ['author.md', 'changelog-skeleton.md', 'executor.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens-opus-xhigh.md', 'review-lens.md'];
+  const kitRels = kitNames.map((name) => `.claude/agents/${name}`);
   const kitTree = (t, f = fixture(t)) => {
     for (const [rel, body] of [['.claude/agents/executor.md', 'differing body\n'], ['.claude/agents/review-lens.md', 'edited lens\n'], ['.claude/agents/doc-research.md', 'own vehicle\n'],
       ['docs/ai/orchestration.json', JSON.stringify({ 'plan-execution': { review: ['review-lens:opus:xhigh'] } })]]) put(join(f.root, rel), body);
@@ -1730,7 +1732,7 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
   it('agents.not-current over a placed component: a writes line per planned place or re-derive, the scope exactly the kit agent paths', (t) => {
     const f = kitTree(t);
     const plan = expectedPlan(AGENTS_KIT, f);
-    assert.deepEqual(plan.writes.map(({ path }) => basename(path)).sort(), ['changelog-skeleton.md', 'executor.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens-opus-xhigh.md', 'review-lens.md']);
+    assert.deepEqual(plan.writes.map(({ path }) => basename(path)).sort(), kitNames);
     unchanged(f, () => {
       const result = danger.checkApply(AGENTS_KIT, f);
       assertPreview(AGENTS_KIT, f, result, plan);
@@ -1740,10 +1742,15 @@ describe('spec:init-project/S47 the danger check over in-session writers by proo
     const [scope, planted] = [danger.scopeOf(AGENTS_KIT, f), ['.claude/agents/doc-research.md', 'docs/ai/notes.md', '.claude/agents/sub/executor.md'].map((rel) => join(f.root, rel))];
     assert.deepEqual([...[...plan.writes.map(({ path }) => path), ...planted].map((path) => scope.admitsPath(path)), scope.admitsPath(join(f.root, '.claude/agents'), true)], [...plan.writes.map(() => true), false, false, false, true]);
   });
-  const kitRels = [...fs.readdirSync(join(TOOLS, '../references/agents')), 'review-lens-opus-xhigh.md'].map((name) => `.claude/agents/${name}`);
+  const derivedLens = '.claude/agents/review-lens-opus-xhigh.md';
+  const removePlacedKitFiles = (f) => ['executor.md', 'review-lens.md'].forEach((name) => fs.rmSync(join(f.root, '.claude/agents', name)));
   for (const [title, prepare, code, named] of [
-    ['a tree holding no regular kit agent file: each planned write refused naming it, exit 1', (f) => ['executor.md', 'review-lens.md'].forEach((name) => fs.rmSync(join(f.root, '.claude/agents', name))), 1, kitRels.map((rel) => `refused: ${rel} ${rel} — `)],
-    ["a linked configured derived lens: the writer's refusal naming it, exit 3", (f) => fs.symlinkSync(join(f.root, 'docs/ai/autonomy.json'), join(f.root, kitRels.at(-1))), 3, [kitRels.at(-1)]],
+    ['a tree holding no regular kit agent file: each planned write refused naming it, exit 1', removePlacedKitFiles, 1, kitRels.map((rel) => `refused: ${rel} ${rel} — `)],
+    ['a tree holding a regular author.md alone: each planned write refused naming it, exit 1', (f) => {
+      removePlacedKitFiles(f);
+      put(join(f.root, '.claude/agents/author.md'), 'own author vehicle\n');
+    }, 1, kitRels.map((rel) => `refused: ${rel} ${rel} — `)],
+    ["a linked configured derived lens: the writer's refusal naming it, exit 3", (f) => fs.symlinkSync(join(f.root, 'docs/ai/autonomy.json'), join(f.root, derivedLens)), 3, [derivedLens]],
     ["an orchestration config the reader rejects: the writer's refusal, exit 3", (f) => put(join(f.root, 'docs/ai/orchestration.json'), '{ not json'), 3, ['docs/ai/orchestration.json']],
   ]) it(`agents.not-current over ${title}, nothing written`, (t) => {
     const f = kitTree(t);

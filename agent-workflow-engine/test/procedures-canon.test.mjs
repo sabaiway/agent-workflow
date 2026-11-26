@@ -425,19 +425,42 @@ describe('procedures.md — canonical activity-procedures reference', () => {
     assert.match(procedures, /see §X/, 'names the banned bare-pointer anti-pattern');
   });
 
-  it('spec:carriers/S10 — the carrier slots reach the steps: the author carrier drafts, the subagent branch rides beside Delegated', () => {
-    const draft = stepOf(sectionOf(procedures, 'plan-authoring'), 2).replace(/\s+/g, ' ');
-    assert.match(draft, /The resolved `author` carrier drafts/, 'the Draft step resolves the author carrier');
-    assert.match(draft, /Solo: the orchestrator writes it/, 'the Solo arm writes the plan itself');
-    assert.match(draft, /Subagent: the orchestrator writes a BRIEF/, 'the Subagent arm starts from a brief');
-    assert.match(draft, /goal, governing specs, ledger\s+constraints, files/, 'what the brief carries');
-    assert.match(draft, /drafts the plan and any `create` \/ `modify` spec row from it/, 'the subagent drafts the plan and its spec rows');
-    assert.match(draft, /reviews the draft as its own before step 3/, 'the orchestrator owns the draft it accepts');
-    const dispatch = stepOf(sectionOf(procedures, 'plan-execution'), 2).replace(/\s+/g, ' ');
-    assert.match(dispatch, /\*\*If `execute` resolved to Subagent\*\*, split the ledger into file-disjoint slices/, 'the subagent branch splits the ledger');
-    assert.match(dispatch, /exact wording where wording is a red line/, 'wording is copied where it is a red line');
-    assert.match(dispatch, /the executor vehicle in the background/, 'the dispatch is backgrounded');
-    assert.match(dispatch, /verify every returned slice by running its suites yourself before step 3/, 'the orchestrator verifies every returned slice');
+  describe('spec:carriers/S10 — the author slots dispatch the author vehicle under the agent-list condition', () => {
+    const assertAuthorDispatch = (arm) => {
+      assert.match(arm, /\bauthor vehicle\b/i, 'the author vehicle carries the authoring slice');
+      assert.match(arm, /orchestration\.md[^.]*§4|§4[^.]*orchestration\.md/i, 'the dispatch points to orchestration.md §4');
+      assert.match(arm, /\bcondition\b|\bagent[- ]list\b/i, 'the reference is to the agent-list condition');
+    };
+
+    it('plan-authoring step 2 drafts the plan and spec rows on the author vehicle; the execution branch rides beside Delegated', () => {
+      const draft = stepOf(sectionOf(procedures, 'plan-authoring'), 2).replace(/\s+/g, ' ');
+      assert.match(draft, /The resolved `author` carrier drafts/, 'the Draft step resolves the author carrier');
+      assert.match(draft, /Solo: the orchestrator writes it/, 'the Solo arm writes the plan itself');
+      assert.match(draft, /Subagent: the orchestrator writes a BRIEF/, 'the Subagent arm starts from a brief');
+      assert.match(draft, /goal, governing specs, ledger\s+constraints, files/, 'what the brief carries');
+      assert.match(draft, /drafts the plan and any `create` \/ `modify` spec row from it/, 'the author vehicle drafts the plan and its spec rows');
+      assertAuthorDispatch(draft.split('Subagent:')[1] ?? '');
+      assert.match(draft, /reviews the draft as its own before step 3/, 'the orchestrator owns the draft it accepts');
+      const dispatch = stepOf(sectionOf(procedures, 'plan-execution'), 2).replace(/\s+/g, ' ');
+      assert.match(dispatch, /\*\*If `execute` resolved to Subagent\*\*, split the ledger into file-disjoint slices/, 'the subagent branch splits the ledger');
+      assert.match(dispatch, /exact wording where wording is a red line/, 'wording is copied where it is a red line');
+      assert.match(dispatch, /the executor vehicle in the background/, 'the dispatch is backgrounded');
+      assert.match(dispatch, /verify every returned slice by running its suites yourself before step 3/, 'the orchestrator verifies every returned slice');
+    });
+
+    it('plan-authoring step 5 folds the round on the author vehicle', () => {
+      const fold = stepOf(sectionOf(procedures, 'plan-authoring'), 5).replace(/\s+/g, ' ');
+      const arm = (fold.split('Subagent:')[1] ?? '').split('CLEAN')[0];
+      assert.match(arm, /round's findings with their dispositions/, 'the slice is the round and its dispositions');
+      assertAuthorDispatch(arm);
+    });
+
+    it('epic step 2 drafts from the brief on the author vehicle', () => {
+      const draft = stepOf(sectionOf(procedures, 'epic'), 2).replace(/\s+/g, ' ');
+      const arm = draft.split('Subagent:')[1] ?? '';
+      assert.match(arm, /the orchestrator writes the brief of step 1/, 'the orchestrator supplies the brief');
+      assertAuthorDispatch(arm);
+    });
   });
 
   it('S8 pins the generated robustness block in the plan-execution dispatch brief (spec:robustness-literals/S8)', () => {

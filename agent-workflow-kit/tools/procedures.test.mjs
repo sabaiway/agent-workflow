@@ -48,8 +48,9 @@ const addPlan = (name) => {
 };
 // Run main() with the repo engine + an injected detection and vehicle survey; config from the temp cwd.
 const vehicle = (state) => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' });
-const run = (argv, { codex = READY, agy = READY, executor = 'missing' } = {}, extra = {}) =>
-  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy), surveyVehicle: vehicle(executor), ...extra });
+const authorVehicle = (state) => () => ({ state, reason: ['placed', 'missing'].includes(state) ? null : `author template is ${state}`, rel: '.claude/agents/author.md' });
+const run = (argv, { codex = READY, agy = READY, executor = 'missing', author = 'missing' } = {}, extra = {}) =>
+  main(argv, { cwd, env: { AGENT_WORKFLOW_ENGINE_DIR: ENGINE_DIR }, detect: detect(codex, agy), surveyVehicle: vehicle(executor), surveyAuthorVehicle: authorVehicle(author), ...extra });
 
 describe('procedures CLI — happy path (section verbatim + resolved recipe)', () => {
   it('plan-authoring prints the canon section + the resolved review recipe, exit 0', () => {
@@ -209,8 +210,7 @@ describe('procedures CLI — override resolution (degrades loudly, still exit 0)
   });
 });
 
-// spec:carriers/S5 — the dispatch form per subagent slot, the four routine parallel x carrier cells, today's lines for solo and delegated, and an --override that writes nothing.
-describe('procedures CLI — the dispatch form and the routine switch', () => {
+describe('procedures CLI — the dispatch form and the routine switch (spec:carriers/S5)', () => {
   const FORM = (state, slice) => [slice, `dispatch: the executor vehicle (.claude/agents/executor.md — ${state}), in the background`, 'the orchestrator verifies every returned slice by running its suites itself', 'the subagent is never told to commit, never a review backend, never a bridge substitute', 'honest limit: a Claude Code lane — on a host that cannot dispatch the vehicle, follow this form by hand and say so'].map((l) => `      ${l}`);
   const EXECUTE_SLICE = 'a slice is a set of file-disjoint ledger rows; wording is copied verbatim where wording is a red line';
   const carried = (activity, slot, executor = 'placed') => {
@@ -219,17 +219,66 @@ describe('procedures CLI — the dispatch form and the routine switch', () => {
   };
   const lines = (r) => r.stdout.split('\n');
 
-  it('a subagent slot prints its activity slice sentence + the four dispatch lines carrying the surveyed state, and never the one-liner', () => {
+  it('the carry and author forms follow their own surveyed role, including every author state and override', () => {
     const exec = carried('plan-execution', 'execute');
     assert.equal(exec.code, 0, exec.stderr);
     assert.match(exec.stdout, /execute: subagent — from docs\/ai\/orchestration\.json/);
     for (const line of FORM('placed', EXECUTE_SLICE)) assert.ok(lines(exec).includes(line), line);
     assert.doesNotMatch(exec.stdout, /the placed subagent vehicle/, 'the form REPLACES the one-liner, it never rides beside it');
-    const author = carried('plan-authoring', 'author', 'customized');
-    for (const line of FORM('customized', 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own')) assert.ok(lines(author).includes(line), line);
-    assert.ok(!lines(author).includes(`      ${EXECUTE_SLICE}`), 'the slice noun is the activity own');
-    const fold = carried('plan-authoring', 'fold');
-    for (const line of FORM('placed', "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself")) assert.ok(lines(fold).includes(line), line);
+    const authorForm = (slice) => [slice,
+      'dispatch: the author vehicle (.claude/agents/author.md — placed), in the background',
+      'the orchestrator reviews every returned draft as its own',
+      'the subagent is never told to commit, never a review backend, never a bridge substitute',
+      "honest limit: a Claude Code lane loaded at session start — dispatch only when this session's agent list shows author with exactly Read, Grep, Glob, Write and Edit; otherwise, a file placed or written during this session included, carry the slice solo and say so; never another subagent",
+    ];
+    for (const [activity, slot, slice] of [
+      ['plan-authoring', 'author', 'a slice is a brief naming the goal, the governing spec(s) and the ledger constraints; the subagent drafts the plan or the contract from it, and the orchestrator reviews the draft as its own'],
+      ['plan-authoring', 'fold', "a slice is the round's findings with their dispositions; the subagent edits the plan or the contract in place and returns; the orchestrator runs the self-consistency read itself"],
+      ['epic', 'author', 'a slice is a brief naming the intent, the value, the non-goals and the stories in order; the subagent drafts the epic file from it, and the orchestrator runs the shape check on the draft as its own'],
+    ]) {
+      for (const author of ['placed', 'missing', 'stale', 'widened', 'unusable']) {
+        for (const override of [false, true]) {
+          const context = `${activity}.${slot}: ${author}, override=${override}`;
+          const config = JSON.stringify({ [activity]: { [slot]: override ? 'solo' : 'subagent' } });
+          writeConfig(config);
+          const argv = [activity, ...(override ? ['--override', `${slot}=subagent`] : [])];
+          const readiness = { author, executor: author === 'placed' ? 'missing' : 'placed' };
+          const result = run(argv, readiness);
+          assert.equal(result.code, 0, result.stderr);
+          const resolution = lines(result).findIndex((line) => line.startsWith(`  ${slot}: `));
+          assert.notEqual(resolution, -1, context);
+          const source = override ? 'from --override' : 'from docs/ai/orchestration.json';
+          if (author === 'placed') {
+            assert.equal(lines(result)[resolution], `  ${slot}: subagent — ${source}`, context);
+            const form = authorForm(slice);
+            assert.deepEqual(lines(result).slice(resolution + 1, resolution + 6), form.map((line) => `      ${line}`), context);
+            assert.doesNotMatch(lines(result).slice(resolution + 1, resolution + 6).join('\n'), /suite/);
+            assert.ok(!lines(result)[resolution + 6]?.startsWith('      '), 'exactly five dispatch lines');
+            assert.doesNotMatch(result.stdout, /dispatch: the executor vehicle|the orchestrator verifies every returned slice by running its suites itself|follow this form by hand and say so/);
+            assert.ok(!lines(result).includes(`      ${EXECUTE_SLICE}`), context);
+            const json = run([...argv, '--json'], readiness);
+            assert.equal(json.code, 0, json.stderr);
+            const resolved = JSON.parse(json.stdout).slots[slot];
+            assert.equal(resolved.recipe, 'subagent', context);
+            assert.ok(Object.values(resolved).some((value) => Array.isArray(value) && value.length === form.length && value.every((line, index) => line === form[index])), 'the JSON slot carries the same author dispatch form');
+          } else {
+            assert.equal(lines(result)[resolution], `  ${slot}: solo — ${source} (requested subagent → degraded)`, context);
+            const reason = lines(result)[resolution + 1];
+            for (const fact of ['author vehicle', author, '/agent-workflow-kit agents', authorVehicle(author)().reason].filter(Boolean)) assert.ok(reason.includes(fact), `${context}: ${fact}`);
+            assert.doesNotMatch(result.stdout, /dispatch: the (author|executor) vehicle/);
+            if (override) assert.ok(result.stdout.includes(`override "${slot}=subagent" could not be satisfied here — degraded to solo`), context);
+            else assert.doesNotMatch(result.stdout, /could not be satisfied here/);
+          }
+          assert.equal(readFileSync(join(cwd, CONFIG_REL), 'utf8'), config, context);
+        }
+      }
+    }
+    writeConfig(JSON.stringify({ 'plan-execution': { execute: 'subagent' } }));
+    const gone = run(['plan-execution'], { author: 'placed', executor: 'missing' });
+    assert.match(gone.stdout, /execute: solo — from docs\/ai\/orchestration\.json \(requested subagent → degraded\)/);
+    const reason = lines(gone).find((line) => line.includes('↳') && line.includes('executor'));
+    for (const fact of ['executor vehicle', 'missing', '/agent-workflow-kit agents']) assert.ok(reason.includes(fact), fact);
+    assert.doesNotMatch(gone.stdout, /dispatch: the (author|executor) vehicle/);
   });
   it('routine renders all four parallel x carrier cells', () => {
     for (const [carrier, argv, line] of [
@@ -656,6 +705,7 @@ describe('procedures CLI — cost-lane advisory block (cost-tiered execution): u
     'cheapest adequate executor', 'no named guardrail', 'L0', 'L1', 'L2', 'L3', 'red lines never move',
     'forbidden lane downgrade', 'plain pipeline per call', 'vehicle mandate a host cannot satisfy',
     'stay at the frontier lane', 'no deterministic gate classifies a dispatch',
+    'a task that needs to run commands keeps a full-tool subagent; an authoring slice rides the no-shell author vehicle',
     // writer economy (D6 batch verb) + sandbox lanes (host-diff + nested-sandbox honesty), AD-054
     'one writer call at a time', 'host-diff', 'nested inside a harness sandbox',
   ];
@@ -1338,5 +1388,10 @@ describe('the procedures mode doc never keeps the two-value execute list (AD-124
     const doc = readFileSync(new URL('../references/modes/procedures.md', import.meta.url), 'utf8');
     assert.doesNotMatch(doc, /solo \| delegated`(?! \| subagent)|solo\|delegated`(?!\|subagent)/u);
     assert.match(doc, /Subagent → Solo when the executor vehicle is missing or unusable/u);
+    assert.ok(doc.includes('.claude/agents/author.md'));
+    const degradation = doc.split('\n').find((line) => line.includes('**Degradation:**')).split('**Degradation:**')[1];
+    assert.match(degradation, /author vehicle/u);
+    assert.match(degradation, /author(?:-role)? slot|plan-authoring\.author/u);
+    assert.match(degradation, /author vehicle[^;]*\b(?:placed|missing|stale|widened|unusable)\b|\b(?:placed|missing|stale|widened|unusable)\b[^;]*author vehicle/u);
   });
 });

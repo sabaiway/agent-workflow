@@ -37,11 +37,11 @@ afterEach(() => {
 });
 
 const BUNDLE = readBundledAgents();
-const EXPECTED_VEHICLES = ['changelog-skeleton.md', 'executor.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens.md'];
+const EXPECTED_VEHICLES = ['author.md', 'changelog-skeleton.md', 'executor.md', 'gate-triage.md', 'mechanical-sweep.md', 'review-lens.md'];
 // The CHEAP subset is model-pinned to haiku/low. `review-lens` is deliberately NOT in it: it exists
 // so a read-only REVIEW has a vehicle at all, and a review on the cheap model would be theatre.
 const CHEAP_VEHICLES = new Set(['changelog-skeleton.md', 'gate-triage.md', 'mechanical-sweep.md']);
-const READ_ONLY_BUNDLE = BUNDLE.filter((template) => template.name !== EXECUTOR_VEHICLE);
+const READ_ONLY_BUNDLE = BUNDLE.filter((template) => ![EXECUTOR_VEHICLE, 'author.md'].includes(template.name));
 const EXECUTOR = BUNDLE.find((template) => template.name === EXECUTOR_VEHICLE);
 
 // ── the bundled vehicles: content pins (bounded read-only tools; cheap subset model-pinned) ────
@@ -158,12 +158,32 @@ const surveyWith = (existing, { kind = 'file', readFileError = null } = {}) => {
 };
 
 describe('surveyExecutorVehicle — the subagent carrier readiness (spec:carriers/S8)', () => {
+  it('the author pins its five tools and carries only one named authoring slice, with no code, tests, shell or git command', () => {
+    const author = BUNDLE.find((template) => template.name === 'author.md');
+    assert.ok(author, 'author.md is bundled');
+    const [, frontmatter, body] = author.content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/u);
+    for (const line of ['name: author', 'model: opus', 'effort: high', 'tools: Read, Grep, Glob, Write, Edit']) assert.deepEqual(frontmatter.split('\n').filter((entry) => entry.startsWith(`${line.split(':')[0]}:`)), [line]);
+    assert.match(frontmatter, /^description: .+/mu);
+    for (const word of ['one authoring slice', 'plan', 'contract', 'epic', 'fold', 'brief', 'red line', 'stop', 'report', 'approval', 'network', 'credential', 'project rules']) assert.match(body, new RegExp(`\\b${word}\\b`, 'iu'));
+    assert.match(body, /\b(?:no|never)\b[^.]*\bcode\b/iu);
+    assert.match(body, /\b(?:no|never)\b[^.]*\btest\b/iu);
+    assert.match(body, /\b(?:only|no other)\b[^.]*\bfiles?\b[^.]*\bbrief\b|\bfiles?\b[^.]*\bbrief\b[^.]*\b(?:only|no other)\b/iu);
+    assert.match(body, /\b(?:no|never)\b[^.]*\bcommit\b/iu);
+    assert.match(body, /\b(?:no|never)\b[^.]*\bgit\b[^.]*\bcommands?\b/iu);
+    assert.match(body, /\b(?:no|never)\b[^.]*\bshell\b/iu);
+    assert.match(body, /\bread\b[^.]*\bfirst\b/iu);
+    assert.match(body, /\bpaths\b[^.]*\bwrote\b|\bwritten\b[^.]*\bpaths\b/iu);
+    assert.match(body, /\bundone\b[^.]*\breason\b/iu);
+    for (const template of READ_ONLY_BUNDLE) assert.match(template.content, /never (?:modify|edit) files/u);
+  });
   it('the executor prompt states it never commits and lists the writes it refuses', () => {
     assert.match(EXECUTOR.content, /You never commit/u);
     assert.match(EXECUTOR.content, /never hand an implementation file to `node --test`/u);
-    assert.match(EXECUTOR.content, /names as your DELIVERABLE/u, 'an authoring or routine slice may write the file the brief names');
-    for (const gitWrite of ['add', 'commit', 'push', 'stash', 'reset', 'checkout', 'tag']) {
-      assert.match(EXECUTOR.content, new RegExp(`\`${gitWrite}\``, 'u'), `names ${gitWrite} among the refused git writes`);
+    assert.doesNotMatch(EXECUTOR.content, /\bauthoring\b|\b(?:plan|contract) draft\b/iu);
+    assert.match(EXECUTOR.content, /\bregenerated document\b[^.]*\broutine slice\b[^.]*\b(?:named file|deliverable)\b|\bregenerated document\b[^.]*\bdeliverable\b[^.]*\broutine slice\b/iu);
+    const refused = EXECUTOR.content.match(/No git write at all:[^.]+/u)?.[0] ?? '';
+    for (const gitWrite of ['add', 'commit', 'push', 'stash', 'reset', 'checkout', 'tag', 'worktree']) {
+      assert.match(refused, new RegExp(`\`${gitWrite}\``, 'u'), `names ${gitWrite} among the refused git writes`);
     }
     assert.match(EXECUTOR.content, /docs\/ai\/specs\//u, 'the contracts stay the orchestrator\'s');
     assert.match(EXECUTOR.content, /language and encoding rules come from its `AGENTS\.md` and the brief/u, 'a portable vehicle takes the project\'s rules, never this repo\'s');
@@ -207,10 +227,13 @@ describe('surveyExecutorVehicle — the subagent carrier readiness (spec:carrier
     assert.match(open.reason, /name: executor/u);
   });
 
-  it('--help names the executor as the three-slice full-tool vehicle', () => {
+  it('--help names bounded execution and write-capable routine slices for the full-tool executor, and authoring for author', () => {
     const out = [];
     assert.equal(main(['--help'], { log: (line) => out.push(line) }), 0);
-    assert.match(out.join('\n'), /bounded execution,\s+authoring, or write-capable routine slice/u);
+    const help = out.join('\n');
+    assert.match(help, /bounded execution\s*,?\s+or write-capable routine slice/u);
+    assert.match(help, /\bauthor\b[^.]*\bauthoring\b/iu);
+    assert.doesNotMatch(help, /execution,\s+authoring, or write-capable/u);
   });
 
   it('a duplicated name: or tools: key is unusable in either order — the parser never picks one silently', () => {

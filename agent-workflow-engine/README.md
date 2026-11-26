@@ -54,7 +54,8 @@ the canonical methodology reference on disk:
   routes to the full reference).
 - [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
   reference: the five recipes (Solo / Reviewed / Council / Delegated / Subagent) over the bridges'
-  role vocabulary and the executor vehicle's `carry` role, the when/why, the graceful-degradation
+  role vocabulary and the vehicles' roles (the executor for `carry`, the no-shell author vehicle for
+  the `author` role), the when/why, the graceful-degradation
   lattice, and the quota/health guard.
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root reads into a deployed `AGENTS.md`, routing to the

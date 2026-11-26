@@ -117,6 +117,11 @@ describe('the lens rules theme references/rules/lens.md — canon presence', () 
     }
   });
 
+  it('the cost lanes keep full tools for commands and the no-shell author vehicle for authoring', () => {
+    const bullet = partsOf(readTheme()).body.find((line) => line.startsWith('- **Cost lanes')) ?? '';
+    assert.ok(bullet.includes('a task that needs to run commands keeps a full-tool subagent; an authoring slice rides the no-shell author vehicle'));
+  });
+
   it('spec:project-rules/S40 carries the one-definition bullet once between Heavy review at the diff and Convergence bar', () => {
     const { body } = partsOf(readTheme());
     const occurrences = body.filter((line) => line === ONE_DEFINITION_LINE);

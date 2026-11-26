@@ -1,23 +1,26 @@
 // carriers.mjs — the activity/slot registry plus the subagent carrier's readiness composition.
 // ACTIVITIES + SLOT_RECIPES are the ONE table: recipes.mjs re-exports them, so no importer's path
-// moves. The carrier half declares the `subagent` recipe, appends the executor vehicle to a
-// readiness array as the single provider of the `carry` role, words the degrade a missing or
-// unusable vehicle causes, and holds the dispatch-form wording every render prints (one source, a
+// moves. The carrier half declares the `subagent` recipe, appends the executor and author vehicles to a
+// readiness array as the single providers of their roles, words the degrade an unready
+// vehicle causes, and holds the dispatch-form wording every render prints (one source, a
 // red line where it is a red line). Governing contract: docs/ai/specs/kit/carriers/index.md.
 // Leaf — imports only the direct-run guard (recipes.mjs imports THIS), no fs, nothing on import.
 import { refuseDirectRun } from './direct-run.mjs';
+
+export const CARRY_ROLE = 'carry';
+export const AUTHOR_ROLE = 'author';
 
 // The slot VALUE is the slot's TYPE; SLOT_RECIPES lists the values each type accepts. A `switch`
 // slot is a flag, not a recipe: it resolves outside the recipe lattice and never degrades.
 // `policy` marks an activity that is a SESSION with an autonomy level of its own; a routine chore
 // runs inside such a session and carries none.
 export const ACTIVITIES = {
-  'plan-authoring': { slots: { author: 'carrier', fold: 'carrier', review: 'review' }, policy: true },
-  'plan-execution': { slots: { execute: 'execute', review: 'review' }, policy: true },
-  routine: { slots: { carrier: 'carrier', parallel: 'switch' }, policy: false },
-  'feedback-triage': { slots: { review: 'review' }, policy: false },
-  epic: { slots: { author: 'carrier', review: 'review' }, policy: false },
-  task: { slots: { author: 'execute', execute: 'execute' }, policy: false },
+  'plan-authoring': { slots: { author: 'carrier', fold: 'carrier', review: 'review' }, roles: { author: AUTHOR_ROLE, fold: AUTHOR_ROLE }, policy: true },
+  'plan-execution': { slots: { execute: 'execute', review: 'review' }, roles: { execute: CARRY_ROLE }, policy: true },
+  routine: { slots: { carrier: 'carrier', parallel: 'switch' }, roles: { carrier: CARRY_ROLE }, policy: false },
+  'feedback-triage': { slots: { review: 'review' }, roles: {}, policy: false },
+  epic: { slots: { author: 'carrier', review: 'review' }, roles: { author: AUTHOR_ROLE }, policy: false },
+  task: { slots: { author: 'execute', execute: 'execute' }, roles: { author: CARRY_ROLE, execute: CARRY_ROLE }, policy: false },
 };
 
 export const POLICY_ACTIVITIES = Object.fromEntries(
@@ -48,7 +51,6 @@ export const LENS_VERDICTS = Object.freeze(['ship', 'ship with nits', 'revise', 
 
 export const isSwitchSlot = (slotType) => slotType === SWITCH_SLOT;
 
-export const CARRY_ROLE = 'carry';
 export const EXECUTOR_PROVIDER = 'executor';
 
 export const SUBAGENT_RECIPE = {
@@ -59,6 +61,13 @@ export const SUBAGENT_RECIPE = {
   degradesTo: 'solo',
   summary:
     'a full-tool frontier subagent from the placed executor vehicle carries a bounded, file-disjoint slice; the orchestrator verifies it and commits.',
+};
+
+export const AUTHOR_SUBAGENT_RECIPE = {
+  ...SUBAGENT_RECIPE,
+  role: AUTHOR_ROLE,
+  summary:
+    'a frontier subagent from the placed no-shell author vehicle drafts a bounded authoring slice; the orchestrator reviews the draft as its own and commits.',
 };
 
 // The readiness tokens the planner judges on. Mirrored from detect-backends.mjs rather than
@@ -80,6 +89,15 @@ export const withVehicle = (readiness = [], survey = null) => [
   },
 ];
 
+export const withAuthorVehicle = (readiness = [], survey = null) => [
+  ...readiness.filter((entry) => entry?.name !== AUTHOR_ROLE),
+  {
+    name: AUTHOR_ROLE,
+    readiness: survey?.state === 'placed' ? READY : MISSING,
+    vehicle: survey,
+  },
+];
+
 export const EXECUTOR_APPLY = '/agent-workflow-kit agents';
 
 // A survey reason may quote a file the user wrote; it is collapsed to one safe line before it rides
@@ -91,10 +109,16 @@ export const safeLine = (text) => String(text ?? '')
   .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, ' ')
   .trim();
 
-export const vehicleDegradeReason = (survey, applyHint = EXECUTOR_APPLY) => {
+export const vehicleDegradeReason = (survey, applyHint = EXECUTOR_APPLY, role = CARRY_ROLE) => {
   const state = survey?.state ?? MISSING;
   const reason = safeLine(survey?.reason);
   const detail = reason ? ` (${reason})` : '';
+  if (role === AUTHOR_ROLE) {
+    const remedy = state === 'unusable'
+      ? `fix or remove ${safeLine(survey?.rel) || '.claude/agents/author.md'}, then place it with: ${applyHint}`
+      : state === MISSING ? `place it with: ${applyHint}` : `write it current with: ${applyHint}`;
+    return `the author vehicle is ${state}${detail} — ${remedy}`;
+  }
   const remedy = state === 'unusable'
     ? `fix or remove ${safeLine(survey?.rel) || '.claude/agents/executor.md'}, then place it with: ${applyHint}`
     : `place it with: ${applyHint}`;
@@ -125,6 +149,13 @@ export const DISPATCH_LINES = [
   'honest limit: a Claude Code lane — on a host that cannot dispatch the vehicle, follow this form by hand and say so',
 ];
 
+const AUTHOR_DISPATCH_LINES = [
+  `dispatch: the author vehicle (.claude/agents/author.md — ${VEHICLE_STATE_TOKEN}), in the background`,
+  'the orchestrator reviews every returned draft as its own',
+  DISPATCH_LINES[2],
+  "honest limit: a Claude Code lane loaded at session start — dispatch only when this session's agent list shows author with exactly Read, Grep, Glob, Write and Edit; otherwise, a file placed or written during this session included, carry the slice solo and say so; never another subagent",
+];
+
 export const PARALLEL_SOLO_NOTE = '(no effect while the carrier is solo)';
 
 export const PARALLEL_LINES = {
@@ -137,6 +168,14 @@ export const SUBAGENT_SLOT_TYPES = Object.entries(SLOT_RECIPES)
   .filter(([, values]) => values.includes(SUBAGENT_RECIPE.id))
   .map(([slotType]) => slotType);
 
+export const slotRole = (activity, slot, activities = ACTIVITIES) => {
+  const definition = activities[activity];
+  if (!SUBAGENT_SLOT_TYPES.includes(definition?.slots?.[slot])) return null;
+  const role = definition.roles?.[slot];
+  if (role !== AUTHOR_ROLE && role !== CARRY_ROLE) throw new Error(`missing or invalid subagent role for ${activity}.${slot}`);
+  return role;
+};
+
 // dispatchForm({ activity, slot, state }) → the lines a `subagent`-resolved slot renders: the
 // slot's slice sentence, then the four shared lines with the surveyed vehicle state filled in.
 // A slot type that cannot hold `subagent` (review) and an unknown activity render nothing; a slot
@@ -144,9 +183,10 @@ export const SUBAGENT_SLOT_TYPES = Object.entries(SLOT_RECIPES)
 const UNDISPATCHED_SLOTS = new Set(['task.author']);
 export const dispatchForm = ({ activity, slot, state } = {}) => {
   const slice = SLICE_BY_SLOT[`${activity}.${slot}`];
-  const slotType = ACTIVITIES[activity]?.slots?.[slot];
-  if (!slice || !SUBAGENT_SLOT_TYPES.includes(slotType)) return [];
-  return UNDISPATCHED_SLOTS.has(`${activity}.${slot}`) ? [slice] : [slice, ...DISPATCH_LINES.map((line) => line.replace(VEHICLE_STATE_TOKEN, state ?? MISSING))];
+  const role = slotRole(activity, slot);
+  if (!slice || role === null) return [];
+  const lines = role === AUTHOR_ROLE ? AUTHOR_DISPATCH_LINES : DISPATCH_LINES;
+  return UNDISPATCHED_SLOTS.has(`${activity}.${slot}`) ? [slice] : [slice, ...lines.map((line) => line.replace(VEHICLE_STATE_TOKEN, state ?? MISSING))];
 };
 
 // parallelLine({ value, carrier }) → the `routine` switch line. The concurrency claim is TRUE only

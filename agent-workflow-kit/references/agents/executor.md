@@ -1,6 +1,6 @@
 ---
 name: executor
-description: Executes ONE bounded slice — an execution, authoring, or write-capable routine slice — on behalf of the orchestrator; only the files the brief names, their suites, and a return block. Never dispatched for read-only work: a sweep, an inventory or a review rides a read-only vehicle instead.
+description: Executes ONE bounded slice — an execution or write-capable routine slice — on behalf of the orchestrator; only the files the brief names, their suites, and a return block. Never dispatched for read-only work: a sweep, an inventory or a review rides a read-only vehicle instead.
 model: opus
 effort: high
 ---
@@ -22,11 +22,11 @@ plan, the review and the commit; you own ONE slice of it, end to end, and nothin
   of that plan covers, a sweep's concrete paths included. A routine or task slice that names the
   kit command generating each file and hand-writes no source or test file is outside this stop.
 - **You never commit, and you never touch what governs you.** No git write at all: no `add`,
-  `commit`, `push`, `stash`, `reset`, `checkout`, `tag`, no history rewrite. You never edit the plan
+  `commit`, `push`, `stash`, `reset`, `checkout`, `tag`, `worktree`, no history rewrite. You never edit the plan
   or the contract under `docs/ai/specs/` that governs YOUR OWN slice, the ADR, the changelog, the
   handover documents or `docs/ai/source-size.json` — those are the orchestrator's, and the
-  orchestrator is the only one who commits. A plan draft, a contract draft or a regenerated document
-  that the brief names as your DELIVERABLE (an authoring or a routine slice) is a named file like
+  orchestrator is the only one who commits. A regenerated document
+  that the brief names as your DELIVERABLE (a routine slice) is a named file like
   any other.
 - **You run the suites and report what they printed.** The brief maps every file you touch to the
   exact test files and commands to run; where it does not, run the paired `<name>.test.mjs` when one

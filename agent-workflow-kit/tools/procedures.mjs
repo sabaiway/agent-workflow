@@ -4,7 +4,7 @@
 // It composes the AD-018 orchestration recipes into NAMED activities: it reads the canonical procedure
 // steps LIVE from the installed agent-workflow-engine (references/procedures.md — AD-016 live read, no
 // bundled mirror), reads the per-project, hand-edited config (docs/ai/orchestration.json), composes the
-// readiness every caller composes (detected backends + the executor vehicle), and prints the activity's
+// readiness every caller composes (detected backends + the executor and author vehicles), and prints the activity's
 // steps VERBATIM + the resolved effective recipe per slot, plus the project's DECLARED source-size
 // practice when it declares one (D-17 U1).
 //
@@ -31,7 +31,7 @@ import { loadRegistry, allowedLabel } from './bridge-settings-read.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, SLOT_RECIPES, isSwitchSlot, resolveActivityRecipe, planRecipe, composeReadiness } from './recipes.mjs';
 // The dispatch-form wording, from the pure (fs-free) leaf that owns it: composed here, never re-worded.
-import { dispatchForm, parallelLine } from './carriers.mjs';
+import { AUTHOR_ROLE, slotRole, dispatchForm, parallelLine } from './carriers.mjs';
 import { resolveEngineDir, readEngineFragment, PROCEDURES_FRAGMENT_REL } from './engine-source.mjs';
 // The plan-in-flight detector (AD-038) — imported from the plan-files.mjs LEAF (read-only fs by
 // construction); the WRITER-capable grounding.mjs is only NAMED in rendered text, never imported.
@@ -171,7 +171,8 @@ const resolveAllSlots = ({ activity, config, detection, overrides, surveyLens })
     // planRecipe's drift-guarded dispatch for WHICH backends, then resolve each (backend, role) to its
     // manifest wrapper cmd via the bridge registry — no wrapper name is hand-composed here. A vehicle
     // step is NOT a bridge: it carries its own state and is never looked up in a manifest.
-    const { dispatch } = resolved.roster ? { dispatch: [] } : planRecipe(resolved.recipe, detection);
+    const role = slotRole(activity, slot);
+    const { dispatch } = resolved.roster ? { dispatch: [] } : planRecipe(resolved.recipe, detection, role);
     const vehicles = dispatch.filter((d) => d.vehicle != null).map((d) => ({ backend: d.backend, state: d.vehicle }));
     const bridged = dispatch.filter((d) => d.vehicle == null);
     const backends = bridged.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
@@ -480,7 +481,7 @@ const costLanesAdvice = () => [
   '  • Sandbox lanes (under an OS sandbox): the L0 surfaces are sandbox-safe — gates/ledger/state/fold checks, git reads, plain no-network tests; the bridge wrappers are genuinely unsandboxed (network); npm-cache-touching commands are COMMAND-SHAPE dependent — first try the sandbox-safe shape (cache under $TMPDIR, offline/notifier off). Move ONLY the failing command out of the sandbox, never its class; BATCH consecutive unsandboxed calls. Pre-dispatch host-diff: before the FIRST dispatch of each bridge, diff the hosts of the services its manifest names against the live sandbox allow-list — a missing host is surfaced to the maintainer BEFORE dispatching, never fired into a known prompt. Nested-sandbox honesty: a backend CLI shipping its OWN OS sandbox cannot run nested inside a harness sandbox — route it outside (excludedCommands / a per-run consented bypass) on the OBSERVED failure, never a preemptive blanket.',
   '  • Prompt economy (autonomy-preserving dispatch): read-only fan-out (research/sweeps/extraction) runs ONLY on restricted-tool vehicles — a full-tool subagent for read-only work is a forbidden lane downgrade (invisible prompt-flood + blast radius), and a subagent is never told to shell out for facts obtainable read-only; the orchestrator\'s own shell form is ONE plain pipeline per call (a ;/&& chain or env-prefixed invocation never matches a prefix allow rule); a fan-out LAUNCHER that gates per call yields to the agent-spawn lane. Capability-gated: on a host with restricted-tool subagent vehicles use them; without restricted-tool vehicles (a host offering only full-tool agents included), read-only research stays in the orchestrator\'s own context — never a vehicle mandate a host cannot satisfy.',
   '  • Writer economy (autonomy-preserving dispatch): a stage\'s repeated WRITER commands batch into ONE invocation — combine a stage\'s writers via one batched write or one launcher per stage; never one writer call at a time (each write is its own prompt).',
-  '  • The prompt-economy clause narrows TOOLS for read-only work only — judgment, code, synthesis stay at the frontier lane; a task that genuinely needs to run or write keeps a full-tool subagent. Honest limit: no deterministic gate classifies a dispatch — enforcement is the canon at the point of use + the placed vehicles + the retro loop.',
+  '  • The prompt-economy clause narrows TOOLS for read-only work and authoring — judgment, code, synthesis stay at the frontier lane; a task that needs to run commands keeps a full-tool subagent; an authoring slice rides the no-shell author vehicle. Honest limit: no deterministic gate classifies a dispatch — enforcement is the canon at the point of use + the placed vehicles + the retro loop.',
 ];
 
 // ── the flow armed-halves block (P8 — design §5 read side) ─────────────────────────
@@ -622,7 +623,7 @@ const formatHuman = ({ activity, section, slots, warnings, plans, autonomy, flow
   const lines = [
     section,
     '',
-    `resolved recipes for "${activity}" (read-only — the orchestrator runs the recipe via the bridge skills or the executor vehicle and owns any commit; every other carrier never commits):`,
+    `resolved recipes for "${activity}" (read-only — the orchestrator runs the recipe via the bridge skills, the executor vehicle for carry or the author vehicle for author, and owns any commit; every other carrier never commits):`,
   ];
   const carrier = effectiveCarrier(slots);
   for (const s of slots) {
@@ -670,6 +671,9 @@ const buildJson = ({ activity, section, slots, configSource, warnings, plans, au
     slots.map((s) => [s.slot, {
       recipe: s.recipe, source: s.source, degradedFrom: s.degradedFrom, reason: s.reason, backends: s.backends, contracts: s.contracts,
       ...(s.roster ? { roster: s.roster } : {}),
+      ...(slotRole(activity, s.slot) === AUTHOR_ROLE && s.vehicles.length
+        ? { dispatchForm: s.vehicles.flatMap((v) => dispatchForm({ activity, slot: s.slot, state: v.state })) }
+        : {}),
     }]),
   ),
   reviewLoop: reviewLoopAdvice(slots, activity, flowArmed),
@@ -708,7 +712,7 @@ Accepted values: ${Object.entries(SLOT_RECIPES).map(([type, values]) => `${type}
 
 Reads the activity's procedure steps LIVE from the installed agent-workflow-engine
 (references/procedures.md), resolves the effective recipe per slot from
-${CONFIG_REL} + the read-only backend detector plus the executor-vehicle survey, and prints
+${CONFIG_REL} + the read-only backend detector plus the executor-vehicle survey (carry) and the author-vehicle survey (author), and prints
 both. A per-run
 --override <slot>=<value> (repeatable) overrides the configured/default recipe for that slot.
 Read-only: never writes, never commits, never runs a subscription CLI.
@@ -741,11 +745,12 @@ export const main = (argv, ctx = {}) => {
     const section = extractSection(readProceduresCanon(env, home), activity);
     // Readiness is a SECONDARY input — it only refines the recipe. A corrupt bridge must NOT fail
     // activity resolution as a config/engine error: the detector-failure hook floors the bridge half
-    // at not-ready and warns (exit 0), while the surveyed executor vehicle survives untouched.
+    // at not-ready and warns (exit 0), while the surveyed executor and author vehicles survive untouched.
     const detectWarnings = [];
     const detection = composeReadiness(cwd, {
       detect,
       surveyVehicle: ctx.surveyVehicle,
+      surveyAuthorVehicle: ctx.surveyAuthorVehicle,
       onDetectError: (err) => detectWarnings.push(
         `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor vehicle is unaffected).`,
       ),

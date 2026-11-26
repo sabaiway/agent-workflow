@@ -17,11 +17,11 @@
 // language when narrating. Exit codes: 0 success (an explicit recipe that gracefully degrades is still
 // 0); 2 usage (bad/duplicate op, --write with zero ops); 1 config error (malformed/unreadable config)
 // or a write STOP (no deployment / symlinked leaf). main(argv, ctx) → { code, stdout, stderr }; cwd /
-// env / home / detect / surveyVehicle / fs are injectable for host-independent tests.
+// env / home / detect / surveyVehicle / surveyAuthorVehicle / fs are injectable for host-independent tests.
 //
 // It writes every slot of every activity in the registry (carriers.mjs, via recipes.mjs) — the
 // carrier slots and the `routine.parallel` switch included — and resolves each preview against the
-// SAME readiness the recipes advisor composes: detected backends plus the executor-vehicle survey.
+// SAME readiness the recipes advisor composes: detected backends plus both vehicle surveys.
 //
 // Dependency-free, Node >= 22. No side effects on import (the isDirectRun idiom).
 
@@ -31,6 +31,7 @@ import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { posturesByBackend } from './bridge-posture.mjs';
 import { surveyVehicle } from './cheap-agents-read.mjs';
 import { applyCheapAgentsCommand } from './cheap-agents.mjs';
+import { AUTHOR_ROLE, CARRY_ROLE, slotRole } from './carriers.mjs';
 import {
   ACTIVITIES,
   SLOT_RECIPES,
@@ -105,15 +106,15 @@ const parseArgs = (argv) => {
 
 // ── effective-recipe resolution per op (degradation honesty) ────────────────────────
 
-// The readiness EVERY resolution here runs against: the detected bridges plus the executor-vehicle
-// survey, composed by the one helper the recipes CLI uses. Detection is a SECONDARY input — a bridge
+// The readiness EVERY resolution here runs against: the detected bridges plus both vehicle
+// surveys, composed by the one helper the recipes CLI uses. Detection is a SECONDARY input — a bridge
 // detector throw must NOT block the write (the config write is readiness-independent) and must not
-// cost the CARRIER either: the hook warns, the bridge half floors at not-ready, the vehicle survives.
+// cost the CARRIER either: the hook warns, the bridge half floors at not-ready, the vehicles survive.
 const composeReadinessOrWarn = (cwd, deps, warnings) =>
   composeReadiness(cwd, {
     ...deps,
     onDetectError: (err) => warnings.push(
-      `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor vehicle is unaffected).`,
+      `backend detection failed (${(err && err.message) || err}) — treating every bridge as not ready; recipes needing a bridge degrade to solo (the executor and author vehicles are unaffected).`,
     ),
   });
 
@@ -190,6 +191,12 @@ const QUALIFIED_SLOTS = Object.entries(ACTIVITIES)
   .flatMap(([activity, def]) => Object.keys(def.slots).map((slot) => `${activity}.${slot}`))
   .join(', ');
 
+const listSlotsByRole = (role) => Object.entries(ACTIVITIES)
+  .flatMap(([activity, def]) => Object.keys(def.slots)
+    .filter((slot) => slotRole(activity, slot) === role)
+    .map((slot) => `${activity}.${slot}`))
+  .join(', ');
+
 const HELP = `set-recipe — write the per-project orchestration config (docs/ai/orchestration.json).
 
 Usage:
@@ -211,8 +218,9 @@ ${ACTIVITY_LINES}
 Accepted values per slot type:
 ${VALUE_LINES}
 
-A carrier slot set to subagent needs the executor vehicle placed in this project — ${EXECUTOR_APPLY};
-without it the slot resolves to solo with the reason stated. routine.parallel is a flag, not a
+A slot set to subagent needs the author vehicle for ${listSlotsByRole(AUTHOR_ROLE)};
+the executor vehicle for ${listSlotsByRole(CARRY_ROLE)}. Without its role's ready vehicle the slot
+resolves to solo with the reason stated — ${EXECUTOR_APPLY}. routine.parallel is a flag, not a
 recipe: it never degrades.
 
 Previews by default; --write applies via an atomic, symlink/TOCTOU-safe write behind a deployment gate.
@@ -226,7 +234,7 @@ Exit codes: 0 success (an explicit recipe that gracefully degrades is still 0);
 
 export const main = (argv, ctx = {}) => {
   const cwd = ctx.cwd ?? process.cwd();
-  const readinessDeps = { detect: ctx.detect, surveyVehicle: ctx.surveyVehicle };
+  const readinessDeps = { detect: ctx.detect, surveyVehicle: ctx.surveyVehicle, surveyAuthorVehicle: ctx.surveyAuthorVehicle };
   const readFile = ctx.readFileSync ?? readFileSync;
   const lstat = ctx.lstatSync ?? lstatSync;
   const writeConfig = ctx.writeConfig ?? writeConfigFs;

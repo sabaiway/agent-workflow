@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as carriers from './carriers.mjs';
 import {
   ACTIVITIES,
   POLICY_ACTIVITIES,
@@ -56,6 +57,32 @@ describe('carriers — the one activity/slot table (spec:carriers/S1) (spec:plan
     const used = new Set(Object.values(ACTIVITIES).flatMap((def) => Object.values(def.slots)));
     for (const slotType of used) assert.ok(Array.isArray(SLOT_RECIPES[slotType]), `slot type "${slotType}" has a value list`);
     assert.deepEqual([...used].sort(), Object.keys(SLOT_RECIPES).sort());
+  });
+
+  it('names precisely the subagent-capable slots and their roles, without a default', () => {
+    const roles = {
+      'plan-authoring': { author: 'author', fold: 'author' },
+      'plan-execution': { execute: 'carry' },
+      routine: { carrier: 'carry' },
+      'feedback-triage': {},
+      epic: { author: 'author' },
+      task: { author: 'carry', execute: 'carry' },
+    };
+    assert.equal(carriers.AUTHOR_ROLE, 'author');
+    for (const [activity, definition] of Object.entries(ACTIVITIES)) {
+      assert.deepEqual(definition.roles, roles[activity], activity);
+      for (const [slot, type] of Object.entries(definition.slots)) {
+        const expected = roles[activity][slot] ?? null;
+        assert.equal(SLOT_RECIPES[type].includes('subagent'), expected !== null);
+        assert.equal(carriers.slotRole(activity, slot), expected, `${activity}.${slot}`);
+      }
+    }
+  });
+
+  it('a subagent-capable slot missing its role is a registry error', () => {
+    assert.equal(typeof carriers.slotRole, 'function');
+    const activities = { ...ACTIVITIES, epic: { ...ACTIVITIES.epic, roles: {} } };
+    assert.throws(() => carriers.slotRole('epic', 'author', activities), /epic\.author/);
   });
 });
 
@@ -297,6 +324,22 @@ describe('the dispatch form — the ONE wording source, pinned whole', () => {
     assert.equal(form[1], 'dispatch: the executor vehicle (.claude/agents/executor.md — customized), in the background');
     assert.deepEqual(form.slice(2), DISPATCH_LINES.slice(1));
     assert.match(dispatchForm({ activity: 'routine', slot: 'carrier' })[1], / missing\), in the background$/u, 'an unstated state reads missing, never an empty parenthesis');
+  });
+
+  it('dispatchForm for each author slot names the no-shell vehicle and its honest limit, never a suite', () => {
+    for (const [activity, slot] of [['plan-authoring', 'author'], ['plan-authoring', 'fold'], ['epic', 'author']]) {
+      for (const state of ['placed', 'stale']) {
+        const form = dispatchForm({ activity, slot, state });
+        assert.deepEqual(form, [
+          SLICE_BY_SLOT[`${activity}.${slot}`],
+          `dispatch: the author vehicle (.claude/agents/author.md — ${state}), in the background`,
+          'the orchestrator reviews every returned draft as its own',
+          'the subagent is never told to commit, never a review backend, never a bridge substitute',
+          "honest limit: a Claude Code lane loaded at session start — dispatch only when this session's agent list shows author with exactly Read, Grep, Glob, Write and Edit; otherwise, a file placed or written during this session included, carry the slice solo and say so; never another subagent",
+        ], `${activity}.${slot}: ${state}`);
+        assert.ok(form.every((line) => !/suite/.test(line)));
+      }
+    }
   });
 
   it('renders nothing for a slot no subagent can carry, and for an unknown activity', () => {

@@ -34,7 +34,8 @@ engine is absent, the kit's reconcile **fails loudly** (never silently) and writ
   full reference, not the full reference itself.
 - [`references/orchestration.md`](references/orchestration.md) — the canonical **orchestration-recipe**
   reference: the five recipes (Solo / Reviewed / Council / Delegated / Subagent) defined over the
-  bridges' role vocabulary and the executor vehicle's `carry` role, the when/why decision guidance,
+  bridges' role vocabulary and the vehicles' roles (the executor for `carry`, the no-shell author
+  vehicle for the `author` role), the when/why decision guidance,
   the graceful-degradation lattice, and the quota/health guard. The kit owns the executable dispatch and surfaces it as `/agent-workflow-kit recipes`.
 - [`references/orchestration-slot.md`](references/orchestration-slot.md) — the **bounded** one-line
   orchestration fragment the composition root reads into a deployed `AGENTS.md`. It names the

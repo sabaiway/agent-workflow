@@ -243,6 +243,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
       'references/agents/mechanical-sweep.md',
       'references/agents/changelog-skeleton.md',
       'references/agents/gate-triage.md',
+      'references/agents/author.md',
       'references/agents/executor.md',
       // the gate-approval PreToolUse hook: writer + the bundled self-contained runtime
       'tools/gate-hook.mjs',
@@ -950,7 +951,7 @@ describe('spec:init-project/S18 kit package content — tarball guard (no own-te
     // 403 = 402 + tools/source-size/help.mjs (the command line help) - story S5 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE
     // 405 = 403 + tools/source-size/reason.mjs and tools/source-size-runs.mjs - story S1 of THE-SIZE-PRACTICE-STOPS-ON-A-DESIGN-SIGNAL-AND-CAN-PAUSE
     // 411 = 405 + tools/checker-block/{index,place,tail}.mjs and tools/coverage-check/{index,block,help}.mjs - story S6 of KIT-CHECKER-RED-OUTPUT-LEADS-WITH-ITS-FAILURE; 413 = 411 + tools/release-scan/index.mjs and tools/doc-parity/index.mjs - story S16 of it; 414 = 413 + tools/advisor-skip/index.mjs (the skip record and its render) - story S1 of A-SKIPPED-CHECK-LOSES-ITS-REMEDY-ON-THE-WAY-TO-THE-REPORT; 415 = 414 + references/scripts/shared/locations.mjs (the definition of the project locations) - story S1 of EVERY-LOCATION-IS-NAMED-ONCE; 417 = 415 + tools/plan-structure/{index,cli}.mjs (the one-plan structure command and its door) - story S2 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN
-    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path)), packed.includes('references/scripts/shared/locations.mjs'), packed.includes('references/scripts/shared/locations.test.mjs')], [422, [], true, false], `tarball file count drifted (${packed.length}\u2260 422), or a retired leaf ships, or the locations payload differs`);
+    assert.deepEqual([packed.length, packed.filter((path) => retired.test(path)), packed.includes('references/scripts/shared/locations.mjs'), packed.includes('references/scripts/shared/locations.test.mjs')], [423, [], true, false], `tarball file count drifted (${packed.length}\u2260 423), or a retired leaf ships, or the locations payload differs`);
   });
 
   it('ships the vendored Jev pair under a non-skill name, each byte-equal to the first pin, the skill text clean under scanText (spec:jev-guide/S13)', async () => {

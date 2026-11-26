@@ -33,7 +33,6 @@ const CONFIG_REL = 'docs/ai/orchestration.json';
 const REVIEW = { 'plan-execution': { review: ['review-lens:opus:xhigh'] } };
 const CUSTOM_EXECUTOR = '---\nname: executor\ntools: Read, Bash\n---\nHand edit\n';
 const derivedLine = (verb) => `differs from the body derived from the vehicle settings — ${verb} with that body; its model and effort are set in docs/ai/vehicles.json`;
-const PLACE_ONLY_WHAT = '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first';
 const KIT_WHAT = '{n} kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for it, with no question';
 const settingsWith = (lens) => JSON.stringify({
   executor: { model: 'sonnet', effort: 'medium', fallback: 'opus' }, ...(lens ? { 'review-lens': lens } : {}),
@@ -161,9 +160,29 @@ describe('the agents key by its state table (spec:carriers/S26)', () => {
     const root = makeProject();
     mkdirSync(join(root, AGENTS_DIR), { recursive: true });
     writeFileSync(agentPath(root, 'doc-research.md'), 'own vehicle\n');
-    const [[item, ...more], skips] = agentsKey(root);
     const follow = `hidden-mode deployments only: after the --apply the preview prints, run node ${join(TOOLS, 'hide-footprint.mjs')} --dir ${root} --reconcile so the placed .claude/agents/ stays invisible to git status`;
-    assert.deepEqual([item.variant, item.lane, item.what, item.detail, item.apply, more, skips], ['agents', 'harness', fill(PLACE_ONLY_WHAT, { n: 5, ro: 4, ex: 1 }), follow, slotOf('agents', root).apply, [], []]);
+    for (const authorCount of [1, 0]) {
+      if (authorCount === 0) writeFileSync(agentPath(root, 'author.md'), readBundledAgents().find(({ name }) => name === 'author.md').content);
+      const [[item, ...more], skips] = agentsKey(root);
+      assert.deepEqual([item.variant, item.lane, item.detail, item.apply, more, skips], ['agents', 'harness', follow, slotOf('agents', root).apply, [], []]);
+      assert.match(item.what, new RegExp(`^${5 + authorCount}\\b`, 'u'));
+      assert.match(item.what, /\b4 read-only\b/u);
+      assert.match(item.what, new RegExp(`\\b${authorCount}\\b[^,;—]*\\bauthor\\b`, 'u'));
+      assert.match(item.what, /\b1\b[^,;—]*\bexecutor\b/u);
+      assert.ok(item.what.length <= ITEM_LINE_CAP);
+    }
+  });
+
+  it('not accepted, a differing author.md is counted not current, never not placed', () => {
+    const root = makeProject();
+    mkdirSync(join(root, AGENTS_DIR), { recursive: true });
+    writeFileSync(agentPath(root, 'doc-research.md'), 'own vehicle\n');
+    writeFileSync(agentPath(root, 'author.md'), 'an earlier author body\n');
+    const [[item]] = agentsKey(root);
+    assert.equal(item.variant, 'agents');
+    assert.match(item.what, /^6 bundled subagent vehicle\(s\) not current\b/u);
+    assert.match(item.what, /\b1\b[^,;—]*\bauthor\b/u);
+    assert.ok(!item.what.includes('not placed'), item.what);
   });
 
   it('accepted with a planned place or re-derive renders agents.not-current: lane kit, its count, every planned file, the executor included, no hidden-mode follow-up', () => {
@@ -203,10 +222,13 @@ describe('the agents key by its state table (spec:carriers/S26)', () => {
   });
 
   it('every filled agents text stays within ITEM_LINE_CAP at every count, and agents.lens-rederive is no WHATS key', () => {
-    assert.deepEqual([WHATS['agents.not-current'], WHATS.agents, Object.hasOwn(WHATS, 'agents.lens-rederive')], [KIT_WHAT, PLACE_ONLY_WHAT, false]);
+    assert.deepEqual([WHATS['agents.not-current'], Object.hasOwn(WHATS, 'agents.lens-rederive')], [KIT_WHAT, false]);
     const total = readBundledAgents().length;
+    assert.equal(total, 6);
+    const authorKeys = [...WHATS.agents.matchAll(/\{([A-Za-z]+)\}/gu)].map((match) => match[1]).filter((key) => !['n', 'ro', 'ex'].includes(key));
+    assert.equal(authorKeys.length, 1);
     const fills = [...[0, 1, 9, 10, 99, 100, 999].map((n) => fill(KIT_WHAT, { n })),
-      ...Array.from({ length: total + 1 }, (_, n) => [0, 1].filter((ex) => ex <= n).map((ex) => fill(PLACE_ONLY_WHAT, { n, ro: n - ex, ex }))).flat()];
-    assert.deepEqual(fills.filter((what) => what.length > ITEM_LINE_CAP || /[{}\r\n]/u.test(what)), []);
+      ...Array.from({ length: total - 1 }, (_, ro) => [0, 1].flatMap((ex) => [0, 1].map((author) => fill(WHATS.agents, { n: ro + ex + author, ro, ex, [authorKeys[0]]: author })))).flat()];
+    assert.deepEqual(fills.filter((what) => what.length > ITEM_LINE_CAP || /[{}\r\n]/u.test(what) || what.includes('undefined')), []);
   });
 });

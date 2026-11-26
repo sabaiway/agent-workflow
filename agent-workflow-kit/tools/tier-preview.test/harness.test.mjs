@@ -94,15 +94,16 @@ export const makeProject = ({ files = {}, docsAi = 'directory', link, name = 'pr
   return { root: real, base };
 };
 
-// readinessOf({ codex, agy, executor, detectError }) → the deps a run composes its readiness
+// readinessOf({ codex, agy, executor, author, detectError }) → the deps a run composes its readiness
 // from: the two bridges at the given readiness tokens (a thrown detector when detectError names a
-// cause) and the executor vehicle survey at the given state.
-export const readinessOf = ({ codex = 'needs-cli', agy = 'needs-cli', executor = 'missing', detectError } = {}) => ({
+// cause) and both vehicle surveys at their given states.
+export const readinessOf = ({ codex = 'needs-cli', agy = 'needs-cli', executor = 'missing', author = 'missing', detectError } = {}) => ({
   detect: () => {
     if (detectError) throw new Error(detectError);
     return [{ name: CODEX, readiness: codex }, { name: AGY, readiness: agy }];
   },
   surveyVehicle: () => ({ state: executor }),
+  surveyAuthorVehicle: () => ({ state: author }),
 });
 
 // A tree snapshot: every path under root with its kind and, for a regular file, its bytes.

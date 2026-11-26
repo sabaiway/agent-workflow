@@ -1,5 +1,5 @@
 // cheap-agents-read.mjs — the READ-ONLY core of the subagent-vehicle surface: the bundle, the
-// placement plan and the executor vehicle's readiness. Split from cheap-agents.mjs (the writer) so
+// placement plan and the executor and author vehicles' readiness. Split from cheap-agents.mjs (the writer) so
 // the read-only advisor graph (procedures -> recipes) reaches these facts WITHOUT importing a module
 // that can create `.claude/agents/` — by construction, pinned by the read-graph purity walk.
 
@@ -112,13 +112,16 @@ export const planPlacement = (templates, projectDir, deps = {}) => {
   });
 };
 
-// The component is accepted when a kit agent path of the given names holds a regular file, never followed.
+export const AUTHOR_VEHICLE = 'author.md';
+export const AUTHOR_VEHICLE_REL = `${AGENTS_DIR}/${AUTHOR_VEHICLE}`;
+
+// The component is accepted when a kit agent path other than author.md holds a regular file, never followed.
 export const agentsAccepted = (projectDir, names, deps = {}) => {
   const fs = readFsDeps(deps);
-  return names.some((name) => lstatNoFollow(join(projectDir, AGENTS_DIR, name), fs)?.isFile() === true);
+  return names.some((name) => name !== AUTHOR_VEHICLE && lstatNoFollow(join(projectDir, AGENTS_DIR, name), fs)?.isFile() === true);
 };
 
-// ── the executor vehicle's readiness (the subagent carrier's one instrument) ──────────
+// ── the executor vehicle's readiness (the carry role's instrument) ──────────
 
 export const EXECUTOR_VEHICLE = 'executor.md';
 export const EXECUTOR_VEHICLE_REL = `${AGENTS_DIR}/${EXECUTOR_VEHICLE}`;
@@ -173,6 +176,7 @@ export const executorBodyDiffers = (projectDir, deps = {}) => {
 };
 
 const READ_ONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+const AUTHOR_TOOLS = new Set([...READ_ONLY_TOOLS, 'Write', 'Edit']);
 
 // The YAML subset a vehicle's frontmatter is read with: a bare scalar, a single- or double-quoted
 // scalar, or a flow sequence; an unquoted ` #comment` and surrounding whitespace are dropped first.
@@ -210,6 +214,15 @@ const frontmatterOf = (content) => String(content).replace(/\r\n/gu, '\n').match
 const listedTools = (frontmatter) => {
   const inline = cleanValue(frontmatter.match(/^tools:(.*)$/mu)?.[1]);
   return (inline || blockItems(frontmatter).join(', ')).split(',').map((tool) => cleanValue(tool)).filter(Boolean);
+};
+
+const authorFrontmatterRefusal = (frontmatter) => {
+  const count = (frontmatter.match(/^tools:/gmu) ?? []).length;
+  if (count !== 1) return count === 0 ? 'frontmatter has no `tools:` key' : 'duplicate `tools:` key in the frontmatter';
+  const tools = listedTools(frontmatter);
+  if (tools.length === 0) return 'tools: is empty';
+  const outside = tools.find((tool) => !AUTHOR_TOOLS.has(tool));
+  return outside ? `tools: grants tool outside the author's five: ${outside}` : null;
 };
 
 const executorFrontmatterRefusal = (frontmatter, stem) => {
@@ -273,6 +286,12 @@ export const surveyVehicle = (projectDir, spec, deps = {}) => {
         ? { state: 'placed', reason: null, rel, model: lens.model, effort: lens.effort }
         : { state: 'unusable', reason: lens.refusal, rel };
     }
+    if (spec.tools === 'author') {
+      const refusal = authorFrontmatterRefusal(frontmatter);
+      return refusal === null
+        ? { state: 'stale', reason: 'differs from the body the kit writes for it', rel }
+        : { state: 'widened', reason: refusal, rel };
+    }
     if (spec.tools !== 'read-only') {
       const refusal = executorFrontmatterRefusal(frontmatter, spec.stem);
       return refusal === null
@@ -300,5 +319,8 @@ export const surveyExecutorVehicle = (projectDir, deps = {}) => {
   if (posture === null) return { state: 'unusable', reason, rel: VEHICLES_REL };
   return surveyVehicle(projectDir, executorVehicleSpec(posture), deps);
 };
+
+export const surveyAuthorVehicle = (projectDir, deps = {}) =>
+  surveyVehicle(projectDir, { stem: 'author', template: 'author', tools: 'author' }, deps);
 
 refuseDirectRun(import.meta.url);

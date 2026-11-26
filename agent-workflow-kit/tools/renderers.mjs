@@ -9,6 +9,7 @@
 
 import { BLOCK_TITLES, SETTINGS_LABELS, glyphsFor, NO_DEPLOYMENT } from './presentation.mjs';
 import { describeAdoption } from './spec-adoption.mjs';
+import { AUTHOR_ROLE } from './carriers.mjs';
 
 const MEMBER_COL = 20;
 const VERSION_COL = 12;
@@ -22,7 +23,7 @@ const ACTIONABLE_ADR_LAYOUTS = Object.freeze(['old', 'old-unrotated']);
 
 const DEGRADE_ARROW = '←';
 const EMPTY_CELL = '—';
-const UNKNOWN_EXECUTOR = 'unknown';
+const UNKNOWN_VEHICLE = 'unknown (the installed kit predates the field)';
 
 const SGR = Object.freeze({ bold: '\x1b[1m', reset: '\x1b[0m' });
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -127,7 +128,7 @@ const renderSettings = (vm, { color, glyph }) => {
   else if (s.recipes) {
     const rows = s.recipes.pairs.map((p) => {
       const source = p.source ? ` (${p.source})` : '';
-      const recovery = p.degradedFrom === 'subagent' ? ' — runs solo until the executor vehicle is usable (/agent-workflow-kit agents)' : '';
+      const recovery = p.degradedFrom === 'subagent' ? ` — runs solo until the ${p.role === AUTHOR_ROLE ? 'author' : 'executor'} vehicle is usable (/agent-workflow-kit agents)` : '';
       const degraded = p.degradedFrom ? ` ${DEGRADE_ARROW} degraded from ${p.degradedFrom}${recovery}` : '';
       return `${p.key}: ${p.recipe}${source}${degraded}`;
     });
@@ -150,16 +151,21 @@ const renderSettings = (vm, { color, glyph }) => {
     lines.push(`  ${pad(SETTINGS_LABELS.velocity, SETTINGS_COL)}defaultMode=${String(s.velocity.defaultMode)} · allow project/local=${s.velocity.allow.project}/${s.velocity.allow.local}`);
   }
   // cheap agents — the kit-placed .claude/agents/ vehicles: placed count vs the bundle, then the
-  // split the subagent carrier turns on — the read-only vehicles and the ONE executor, whose state
-  // decides whether a slot configured `subagent` can ride it (an unusable one carries its reason).
+  // split the subagent carrier turns on — the read-only vehicles, the author and the executor, whose states
+  // decide whether a slot configured `subagent` can ride its role's vehicle (an unusable one carries its reason).
   if (s.agents?.error) {
-    const partial = s.agents.executor ? ` — executor ${s.agents.executor}${s.agents.executorReason ? ` (${s.agents.executorReason})` : ''}` : '';
-    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}error: ${s.agents.error}${partial}`);
+    const partial = [
+      s.agents.author ? `author ${s.agents.author}${s.agents.authorReason ? ` (${s.agents.authorReason})` : ''}` : '',
+      s.agents.executor ? `executor ${s.agents.executor}${s.agents.executorReason ? ` (${s.agents.executorReason})` : ''}` : '',
+    ].filter(Boolean).join(', ');
+    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}error: ${s.agents.error}${partial ? ` — ${partial}` : ''}`);
   }
   else if (s.agents) {
+    const authorReason = s.agents.authorReason ? ` (${s.agents.authorReason})` : '';
     const reason = s.agents.executorReason ? ` (${s.agents.executorReason})` : '';
-    const executor = s.agents.executor == null ? `${UNKNOWN_EXECUTOR} (the installed kit predates the field)` : `${s.agents.executor}${reason}`;
-    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}${s.agents.placed}/${s.agents.bundled} placed — ${s.agents.readOnly} read-only, executor ${executor}`);
+    const author = s.agents.author == null ? UNKNOWN_VEHICLE : `${s.agents.author}${authorReason}`;
+    const executor = s.agents.executor == null ? UNKNOWN_VEHICLE : `${s.agents.executor}${reason}`;
+    lines.push(`  ${pad(SETTINGS_LABELS.agents, SETTINGS_COL)}${s.agents.placed}/${s.agents.bundled} placed — ${s.agents.readOnly} read-only, author ${author}, executor ${executor}`);
   }
   // gate hook — the opt-in PreToolUse gate-approval hook: wired / file placed / declaration present /
   // declared gate count (null → '?' — unknown is shown as unknown, never as a number).

@@ -1866,14 +1866,34 @@ describe('recommendations — every probe degrades honestly (per-branch skip cov
 describe('recommendations — the executor-vehicle attention item (spec:carriers/S7)', () => {
   const BUNDLED = readFileSync(join(HERE, '..', 'references', 'agents', 'executor.md'), 'utf8');
   const CARRIER = JSON.stringify({ routine: { carrier: 'subagent' } });
-  const run = (config, vehicle) => {
+  const run = (config, vehicle, { author, staleStamp = false } = {}) => {
     const root = makeProject();
     writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), config);
     const dir = join(root, '.claude', 'agents');
     if (vehicle !== undefined) { mkdirSync(dir, { recursive: true }); if (vehicle === null) symlinkSync(join(root, 'nowhere'), join(dir, 'executor.md')); else writeFileSync(join(dir, 'executor.md'), vehicle); }
+    if (author !== undefined) {
+      mkdirSync(dir, { recursive: true });
+      if (author === null) symlinkSync(join(root, 'nowhere'), join(dir, 'author.md'));
+      else writeFileSync(join(dir, 'author.md'), author);
+    }
+    if (staleStamp) writeFileSync(join(root, 'docs', 'ai', '.workflow-version'), '2.9.0\n');
     const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
     rmSync(root, { recursive: true, force: true });
     return { ...built, root, found: built.items.filter((i) => i.key === 'executor-vehicle') };
+  };
+  const assertVehicleItem = ({ found, items, root }, count) => {
+    assert.equal(found.length, 1);
+    assert.ok(!items.some((item) => item.variant === 'agents.not-current'));
+    const [item] = found;
+    assert.equal(item.severity, SEVERITY_ATTENTION);
+    assert.match(item.what, new RegExp(`\\b${count}\\b`, 'u'));
+    assert.match(item.what, /\bsolo\b/u);
+    const slot = need(lanes, 'applySlot')('executor-vehicle', { toolsDir: HERE, root, env: {}, home: root, platform: 'linux' });
+    assert.deepEqual({ check: item.check, apply: item.apply }, slot);
+    const rendered = formatRecommendations({ items: found, skips: [] });
+    assert.deepEqual(rendered.split('\n').filter((line) => line.startsWith('   apply: ')), [`   apply: ${slot.apply}`]);
+    for (const line of [item.what, item.benefit]) assert.ok(line.length <= ITEM_LINE_CAP, line);
+    return item;
   };
   it('configured + missing: exactly ONE attention item, counted, applied by the agents writer', () => {
     const { found, items, root } = run(JSON.stringify({ 'plan-execution': { execute: 'subagent' }, routine: { carrier: 'subagent' } }));
@@ -1887,6 +1907,36 @@ describe('recommendations — the executor-vehicle attention item (spec:carriers
     const { found } = run(CARRIER, null);
     assert.equal(found.length, 1);
     assert.ok(found[0].what.startsWith('1 slot(s) configured subagent but the executor vehicle is unusable: ') && /executor\.md exists but is not a regular file/u.test(found[0].detail), found[0].detail);
+  });
+  for (const [state, author, reason] of [
+    ['missing', undefined, null],
+    ['stale', '---\nname: author\ntools: Read, Grep, Glob, Write, Edit\n---\nold body\n', /differs from the body the kit writes/u],
+    ['widened', '---\nname: author\ntools: Read, Bash\n---\nbody\n', /\bBash\b/u],
+    ['unusable', null, /not a regular file/u],
+  ]) it(`author slot with a ${state} author beside a placed executor: attention for the author alone`, () => {
+    const built = run(JSON.stringify({ 'plan-authoring': { author: 'subagent' } }), BUNDLED, { author, staleStamp: true });
+    const item = assertVehicleItem(built, 1);
+    assert.match(item.what, /\bauthor\b/u);
+    assert.match(item.what, new RegExp(`\\b${state}\\b`, 'u'));
+    assert.doesNotMatch(item.what, /\bexecutor\b/u);
+    if (reason) assert.match(`${item.what}\n${item.detail}`, reason);
+  });
+  it('author and carry slots with neither vehicle ready: one item, author first, counting both roles', () => {
+    const config = { 'plan-authoring': { fold: 'subagent' }, routine: { carrier: 'subagent' } };
+    const item = assertVehicleItem(run(JSON.stringify(config), undefined, { author: null }), 2);
+    assert.match(item.what, /\bauthor\b.*\bunusable\b.*\bexecutor\b.*\bmissing\b/u);
+    assert.match(`${item.what}\n${item.detail}`, /not a regular file/u);
+  });
+  it('author and carry slots with both vehicles ready: no attention item', async (t) => {
+    const root = makeProject();
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const { writeCheapAgents } = await import('./cheap-agents.mjs');
+    const author = readFileSync(join(HERE, '..', 'references', 'agents', 'author.md'));
+    writeFileSync(join(root, 'docs', 'ai', 'orchestration.json'), JSON.stringify({ epic: { author: 'subagent' }, routine: { carrier: 'subagent' } }));
+    writeCheapAgents({ cwd: root, dryRun: false });
+    assert.deepEqual(readFileSync(join(root, '.claude', 'agents', 'author.md')), author);
+    const { items } = buildRecommendations({ cwd: root, deps: hermeticDeps(root) });
+    assert.deepEqual(items.filter((item) => ['agents', 'executor-vehicle'].includes(item.key)), []);
   });
   it('configured + a regular executor failing the check: the kit item alone, the base arm yielding to agents.not-current', () => {
     const { found, items } = run(CARRIER, '---\nname: executor\ntools: Read\n---\nbody\n');
@@ -3425,8 +3475,13 @@ describe('recommendations — the cheap-agents offer (OPT-IN-SHIPS-INVISIBLE)', 
     const item = items.find((i) => i.key === 'agents');
     assert.ok(item, 'a shipped opt-in capability must never be invisible');
     assert.equal(item.severity, SEVERITY_OPTIONAL);
-    assert.match(item.what, /\d+ bundled subagent vehicle\(s\) not placed .* \d+ read-only, \d+ the full-tool executor/u, 'the WHAT counts the read-only vehicles and the executor apart');
-    assert.match(item.benefit, /no shell on a read-only vehicle/u, 'the benefit scopes the no-shell property to the read-only vehicles');
+    assert.match(item.what, /\b6 bundled subagent vehicle\(s\) not current\b/u);
+    assert.match(item.what, /\b4 read-only\b/u);
+    assert.match(item.what, /\b1\b[^,]*\bauthor\b/u);
+    assert.match(item.what, /\b1\b[^,]*\bexecutor\b/u);
+    assert.match(item.benefit, /\bno shell\b/u);
+    assert.match(item.benefit, /\bread-only\b/u);
+    assert.match(item.benefit, /\bauthor\b/u);
     assert.ok(!skips.some((s) => s.key === 'agents'));
   });
 
@@ -3596,6 +3651,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
     ['unusable, configured slot: the base arm yields', 'unusable', true, ['kit']], ['placed, configured slot, the component current', 'placed', true, []],
     ['missing, no slot', 'missing', false, ['offer']], ['missing, configured slot', 'missing', true, ['offer', 'base']],
     ['missing beside a placed vehicle, configured slot', 'missing-beside', true, ['kit']],
+    ['missing beside a regular author.md alone, configured slot', 'missing-beside-author', true, ['offer', 'base']],
     ['symlinked agents, no slot', 'symlink', false, [/\.claude\/agents is a symlink/u]],
     ['symlinked executor, configured slot', 'executor-symlink', true, [/executor\.md exists but is not a regular file/u, 'base']],
     ['configured derived lens whose target is a symlink', 'lens-symlink', false, [LINKED_LENS]],
@@ -3622,6 +3678,7 @@ describe('spec:init-project/S48 — the advisor attribution, footprint-global an
       if (['customized', 'unusable', 'symlink', 'lens-symlink', 'stale-differing'].includes(state)) writeFileSync(join(dir, 'executor.md'), body);
       if (state === 'executor-symlink') symlinkSync(join(root, 'nowhere'), join(dir, 'executor.md'));
       if (state === 'missing-beside') writeFileSync(join(dir, 'gate-triage.md'), readFileSync(join(HERE, '..', 'references', 'agents', 'gate-triage.md')));
+      if (state === 'missing-beside-author') writeFileSync(join(dir, 'author.md'), 'a vehicle of my own\n');
       if (state.startsWith('lens-symlink')) symlinkSync(join(root, 'docs', 'ai', 'orchestration.json'), join(dir, 'review-lens-opus-high.md'));
       const built = buildRecommendations({ cwd: root, deps: hermeticDeps(root, { planGlobalRemoval: () => null }) });
       const [items, skips] = [built.items.filter((i) => ['agents', 'executor-vehicle'].includes(i.key)), built.skips.filter((s) => ['agents', 'executor-vehicle'].includes(s.key))];

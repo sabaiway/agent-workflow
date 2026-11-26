@@ -337,7 +337,7 @@ describe('formatHelp / buildJson', () => {
   });
 });
 
-describe('the agents catalog line names four read-only vehicles and the one full-tool executor (AD-124)', () => {
+describe('the agents catalog line names four read-only vehicles, the author and the one full-tool executor (AD-124)', () => {
   it('neither the catalog entry nor the tune tail claims every vehicle is shell-free', async () => {
     const { COMMANDS } = await import('./commands.mjs');
     const { readFileSync } = await import('node:fs');
@@ -347,5 +347,12 @@ describe('the agents catalog line names four read-only vehicles and the one full
     const source = readFileSync(new URL('./commands.mjs', import.meta.url), 'utf8');
     assert.match(source, /agents {8}subagent vehicles: four read-only .* \+ the one full-tool executor/u, 'the tune tail says the same');
     assert.doesNotMatch(source, /shell-free subagents|none of them granted a shell/u);
+    const tune = source.split('\n').find((line) => /agents {8}subagent vehicles:/.test(line));
+    for (const line of [agents.oneLine, tune]) {
+      const author = line.slice(line.indexOf('four read-only'), line.indexOf('the one full-tool executor'));
+      assert.match(author, /\bauthor\b/u);
+      assert.match(author, /no[- ]shell|shell-free|no Bash|without (?:a shell|Bash)|not granted a shell/u);
+      assert.match(author, /authoring/u);
+    }
   });
 });

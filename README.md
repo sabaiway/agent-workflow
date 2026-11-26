@@ -230,11 +230,12 @@ executor** (a parallel hand in execute: a bounded sub-task to `codex exec` in a 
 **Named recipes tie it together.** Rather than improvising "should I get a second opinion? from which
 bridge? what if it's down?" each time, the kit offers five named ways to compose the carriers into the
 loop — **Solo** (no backend), **Reviewed** (one reviews), **Council** (both review, you synthesize),
-**Delegated** (a bridge runs a bounded sub-task), **Subagent** (a full-tool frontier subagent from the
-placed `executor` vehicle carries a bounded, file-disjoint slice; the orchestrator verifies it). Honest
-limit: Subagent is a Claude Code lane, and a missing or unusable vehicle degrades the slot to Solo with
-the reason stated. `/agent-workflow-kit recipes` plans + recommends one for your environment (degrading
-gracefully when a carrier isn't ready); the orchestrator always commits.
+**Delegated** (a bridge runs a bounded sub-task), **Subagent** (a frontier subagent carries a bounded slice:
+carry slots ride the full-tool `executor`, author slots the no-shell author vehicle; the orchestrator
+verifies the result). Honest limit: Subagent is a Claude Code lane, and a slot whose own vehicle is not
+ready degrades to Solo naming the vehicle and the reason. `/agent-workflow-kit recipes` plans +
+recommends one for your environment (degrading gracefully when a carrier isn't ready); the orchestrator
+always commits.
 
 **Activity procedures make it a playbook.** A bare "write a plan" or "execute the plan" now has codified,
 recipe-aware steps. `/agent-workflow-kit procedures <activity>` (read-only) prints a named activity's

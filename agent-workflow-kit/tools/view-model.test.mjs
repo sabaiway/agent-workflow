@@ -37,14 +37,17 @@ const fullEnvelope = () => ({
       recipes: {
         configSource: 'docs/ai/orchestration.json',
         activities: {
-          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null }, review: { recipe: 'reviewed', source: 'default', degradedFrom: null } },
+          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null }, fold: { recipe: 'solo', source: 'default', degradedFrom: null }, review: { recipe: 'reviewed', source: 'default', degradedFrom: null } },
           'plan-execution': { execute: { recipe: 'delegated', source: 'config', degradedFrom: null }, review: { recipe: 'council', source: 'config', degradedFrom: null } },
           routine: { carrier: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' }, parallel: { recipe: 'on', source: 'default', degradedFrom: null } },
+          epic: { author: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' } },
+          task: { author: { recipe: 'solo', source: 'default', degradedFrom: null }, execute: { recipe: 'subagent', source: 'config', degradedFrom: null } },
+          future: { author: { recipe: 'solo', source: 'default', degradedFrom: null, role: 'author' } },
         },
       },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      agents: { bundled: 5, placed: 3, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
+      agents: { bundled: 6, placed: 3, readOnly: 4, author: 'stale', authorReason: 'differs from the bundled template', executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
       hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
@@ -150,16 +153,21 @@ describe('view-model — bridges / project / settings', () => {
   it('settings: recipe pairs flatten activity.slot with source and degradedFrom; attribution override is presence-and-differ; velocity counts', () => {
     const vm = toViewModel(fullEnvelope());
     assert.deepEqual(vm.project.settings.recipes.pairs, [
-      { key: 'plan-authoring.author', recipe: 'subagent', source: 'config', degradedFrom: null },
-      { key: 'plan-authoring.review', recipe: 'reviewed', source: 'default', degradedFrom: null },
-      { key: 'plan-execution.execute', recipe: 'delegated', source: 'config', degradedFrom: null },
-      { key: 'plan-execution.review', recipe: 'council', source: 'config', degradedFrom: null },
-      { key: 'routine.carrier', recipe: 'solo', source: 'config', degradedFrom: 'subagent' },
-      { key: 'routine.parallel', recipe: 'on', source: 'default', degradedFrom: null },
+      { key: 'plan-authoring.author', recipe: 'subagent', source: 'config', degradedFrom: null, role: 'author' },
+      { key: 'plan-authoring.fold', recipe: 'solo', source: 'default', degradedFrom: null, role: 'author' },
+      { key: 'plan-authoring.review', recipe: 'reviewed', source: 'default', degradedFrom: null, role: null },
+      { key: 'plan-execution.execute', recipe: 'delegated', source: 'config', degradedFrom: null, role: 'carry' },
+      { key: 'plan-execution.review', recipe: 'council', source: 'config', degradedFrom: null, role: null },
+      { key: 'routine.carrier', recipe: 'solo', source: 'config', degradedFrom: 'subagent', role: 'carry' },
+      { key: 'routine.parallel', recipe: 'on', source: 'default', degradedFrom: null, role: null },
+      { key: 'epic.author', recipe: 'solo', source: 'config', degradedFrom: 'subagent', role: 'author' },
+      { key: 'task.author', recipe: 'solo', source: 'default', degradedFrom: null, role: 'carry' },
+      { key: 'task.execute', recipe: 'subagent', source: 'config', degradedFrom: null, role: 'carry' },
+      { key: 'future.author', recipe: 'solo', source: 'default', degradedFrom: null, role: null },
     ]);
     assert.equal(vm.project.settings.attribution.override, false, 'local null → project value stands, not an override');
     assert.deepEqual(vm.project.settings.velocity, { defaultMode: 'acceptEdits', allow: { project: 1, local: 2 } });
-    assert.deepEqual(vm.project.settings.agents, { bundled: 5, placed: 3, readOnly: 4, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' });
+    assert.deepEqual(vm.project.settings.agents, { bundled: 6, placed: 3, readOnly: 4, author: 'stale', authorReason: 'differs from the bundled template', executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' });
     assert.deepEqual(vm.project.settings.hook, { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0, declarationError: null });
   });
 
@@ -168,8 +176,13 @@ describe('view-model — bridges / project / settings', () => {
       installed: [],
       project: { dir: '/p', deployed: true, settings: { recipes: { activities: { 'plan-execution': { execute: { recipe: 'solo' } } } }, agents: { bundled: 4, placed: 4 } } },
     });
-    assert.deepEqual(vm.project.settings.recipes.pairs, [{ key: 'plan-execution.execute', recipe: 'solo', source: null, degradedFrom: null }]);
+    assert.deepEqual(vm.project.settings.recipes.pairs, [{ key: 'plan-execution.execute', recipe: 'solo', source: null, degradedFrom: null, role: 'carry' }]);
     assert.equal(vm.project.settings.agents.executor, null);
+    assert.equal(vm.project.settings.agents.executorReason, null);
+    assert.equal(vm.project.settings.agents.author, null);
+    assert.equal(vm.project.settings.agents.authorReason, null);
+    const executorOnly = toViewModel({ installed: [], project: { dir: '/p', deployed: true, settings: { agents: { bundled: 5, placed: 4, executor: 'missing' } } } });
+    assert.deepEqual(executorOnly.project.settings.agents, { bundled: 5, placed: 4, readOnly: 4, executor: 'missing', executorReason: null, author: null, authorReason: null });
     assert.equal(vm.project.settings.agents.readOnly, 4, 'an envelope predating the executor field bundled only read-only vehicles');
   });
 
@@ -190,12 +203,15 @@ describe('view-model — bridges / project / settings', () => {
   it('per-area settings errors survive as { error }', () => {
     const vm = toViewModel({
       installed: [],
-      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' }, agents: { error: 'bundle: unreadable' }, hook: { error: 'settings.json: bad' } } },
+      project: { dir: '/p', deployed: true, settings: { recipes: { error: 'orchestration.json: bad' }, attribution: { error: 'settings.json: bad' }, velocity: { error: 'settings.local.json: bad' }, agents: { error: 'bundle: unreadable', author: 'unusable', authorReason: 'a symlink', executor: 'missing' }, hook: { error: 'settings.json: bad' } } },
     });
     assert.match(vm.project.settings.recipes.error, /orchestration\.json/);
     assert.match(vm.project.settings.attribution.error, /settings\.json/);
     assert.match(vm.project.settings.velocity.error, /settings\.local\.json/);
     assert.match(vm.project.settings.agents.error, /bundle/);
+    assert.equal(vm.project.settings.agents.author, 'unusable');
+    assert.equal(vm.project.settings.agents.authorReason, 'a symlink');
+    assert.equal(vm.project.settings.agents.executor, 'missing');
     assert.match(vm.project.settings.hook.error, /settings\.json/);
   });
 

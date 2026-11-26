@@ -8,7 +8,7 @@ import { linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, write
 import { resolve } from 'node:path';
 import { EPIC_STORE, EPIC_STORE_SEED, ORCHESTRATION, PLANS, PROFILE_DECLINES, QUEUE } from '../references/scripts/shared/index.mjs';
 import { assertDocsAiDeployment, writeDocsAiFileAtomic, writeProjectFileCreateOnly } from './atomic-write.mjs';
-import { safeLine } from './carriers.mjs';
+import { safeLine, slotRole } from './carriers.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { tmpNote } from './ensure-ops.mjs';
 import { CANON_README, applySetOps, refreshReadme } from './orchestration-config.mjs';
@@ -95,10 +95,11 @@ const withFs = (deps) => ({
 // The resolution walk: the first candidate planRecipe reports not degraded wins; every candidate
 // before it carries that plan's own first degrade reason.
 // solo, every target's last candidate, is always satisfiable, so the find always answers.
-const resolveTarget = ({ candidates }, readiness) => {
+const resolveTarget = ({ activity, slot, candidates }, readiness) => {
   const skipped = [];
+  const role = slotRole(activity, slot);
   const value = candidates.find((candidate) => {
-    const plan = planRecipe(candidate, readiness);
+    const plan = planRecipe(candidate, readiness, role);
     if (plan.degraded) skipped.push({ candidate, reason: plan.degradation[0].reason });
     return !plan.degraded;
   });

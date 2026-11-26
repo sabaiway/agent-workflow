@@ -52,10 +52,10 @@ import { HOOK_FILE_REL as GATE_HOOK_FILE_REL, isHookWired } from './gate-hook.mj
 // writer, which pulls in the atomic-write core) so the status survey stays a pure reader.
 import { settingsSnapshot } from './bridge-settings-read.mjs';
 import { GATES_REL, loadDeclaration } from './run-gates.mjs';
-// The cheap-agents READ core's bundle reader, placement planner and executor-vehicle survey —
+// The cheap-agents READ core's bundle reader, placement planner and executor and author vehicle surveys —
 // reused by the settings survey (one implementation, never a drifting copy; the read core imports
 // only node builtins, no cycle).
-import { readBundledAgents, planPlacement, surveyExecutorVehicle, EXECUTOR_VEHICLE, assertDirSafe, readFsDeps, CLAUDE_DIR, AGENTS_DIR } from './cheap-agents-read.mjs';
+import { readBundledAgents, planPlacement, surveyExecutorVehicle, surveyAuthorVehicle, EXECUTOR_VEHICLE, AUTHOR_VEHICLE, assertDirSafe, readFsDeps, CLAUDE_DIR, AGENTS_DIR } from './cheap-agents-read.mjs';
 // The status vocabulary (manifestState constants, internal→public maps, display names, the no-leak
 // forbidden set) lives in the frozen labels.mjs LEAF (Plan §4.2 B1) so the import graph is acyclic —
 // nothing imports family-registry for vocabulary. Imported here for internal use; the public subset is
@@ -527,7 +527,7 @@ export const surveyVisibility = (dir, deps = {}) => {
 
 // orchestration recipes: the EFFECTIVE recipe per slot (config · default · effective), engine-free —
 // shared loadConfig + resolveActivityRecipe + the ONE readiness composition (detected backends +
-// the executor vehicle). A malformed config → a localized error field; a detection failure floors
+// the executor and author vehicles). A malformed config → a localized error field; a detection failure floors
 // at solo (a corrupt bridge must not break the view) but is surfaced as `detectError`, so the
 // render says "couldn't check backends" instead of letting a real solo-default look identical.
 export const surveyRecipes = (dir, deps = {}) => {
@@ -617,33 +617,37 @@ export const surveyGateHook = (dir, deps = {}) => {
 };
 
 // cheap agents: the kit-placed .claude/agents/ vehicles (Mode: agents) — how many of the bundled
-// definitions are present in the project, plus the ONE full-tool vehicle's own state. A customized
-// copy counts as PLACED (it exists; the writer preserves it) — the welcome-mat agents rung keys on
-// zero placed, so the counts span every vehicle, the executor included. The executor state comes
-// from the read core's survey (the subagent carrier's one instrument — one implementation), which
-// answers a state instead of throwing; its reason rides along when it carries one.
+// definitions count as placed in the project, plus the author and executor vehicles' own states. A customized executor
+// copy counts as PLACED (it exists; the agents writer writes it current) — the welcome-mat agents rung keys on
+// zero placed, so the counts span every vehicle, the author and executor included. Their states come
+// from the read core's surveys (the subagent carrier's instrument per role — one implementation each), which
+// answer a state instead of throwing; each reason rides along when the survey carries one.
 export const surveyCheapAgents = (dir, deps = {}) => {
   try {
     const projectDir = resolve(dir);
     const templates = readBundledAgents(deps);
     const vehicle = (deps.surveyVehicle ?? surveyExecutorVehicle)(projectDir, deps);
-    // The executor is judged by its own survey (which answers a state where the placement plan
-    // would throw); the plan covers the read-only vehicles, so a broken executor never hides them,
+    const authorVehicle = (deps.surveyAuthorVehicle ?? surveyAuthorVehicle)(projectDir, deps);
+    // The author and executor are judged by their own surveys (which answer a state where the placement plan
+    // would throw); the plan covers the read-only vehicles, so a broken author or executor never hides them,
     // and it never follows a symlinked ancestor — the writer's own guard refuses first.
     const executor = { executor: vehicle.state, ...(vehicle.reason ? { executorReason: safeLine(vehicle.reason) } : {}) };
+    const author = { author: authorVehicle.state, ...(authorVehicle.reason ? { authorReason: safeLine(authorVehicle.reason) } : {}) };
     try {
       const fs = readFsDeps(deps);
       assertDirSafe(join(projectDir, CLAUDE_DIR), CLAUDE_DIR, fs);
       assertDirSafe(join(projectDir, AGENTS_DIR), AGENTS_DIR, fs);
-      const plan = planPlacement(templates.filter((t) => t.name !== EXECUTOR_VEHICLE), projectDir, deps);
+      const readOnly = templates.filter((t) => t.name !== EXECUTOR_VEHICLE && t.name !== AUTHOR_VEHICLE);
+      const plan = planPlacement(readOnly, projectDir, deps);
       return {
         bundled: templates.length,
-        readOnly: templates.filter((t) => t.name !== EXECUTOR_VEHICLE).length,
-        placed: plan.filter((p) => p.action !== 'place').length + (['placed', 'customized'].includes(vehicle.state) ? 1 : 0),
+        readOnly: readOnly.length,
+        placed: plan.filter((p) => p.action !== 'place').length + (['placed', 'customized'].includes(vehicle.state) ? 1 : 0) + (authorVehicle.state === 'placed' ? 1 : 0),
+        ...author,
         ...executor,
       };
     } catch (err) {
-      return { error: localizeError(err), ...executor };
+      return { error: localizeError(err), ...author, ...executor };
     }
   } catch (err) {
     return { error: localizeError(err) };

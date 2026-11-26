@@ -1344,11 +1344,6 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   `probeReviewRecipe` skips lens members. Narrow fix: drop the clause from renders.md and S9, or render the item.
   Proof: an advisor cell over a configured derived lens with no file. Residual, not live: from story S15 an accepted
   component places that lens through `agents.not-current`. Raised by the S15 spec session.
-- **FAMILY-REGISTRY-COMMENT-SAYS-PRESERVED** — invariant: a code comment states what the code's writer does.
-  Origin: `agent-workflow-kit/tools/family-registry.mjs:618-619` says a customized copy counts as placed because "the
-  writer preserves it"; from story S15 the agents writer writes it current. Narrow fix: "(it exists; the agents writer
-  writes it current)". Proof: none needed (comment). Residual, not live: the count is right. Raised by the S15 spec
-  review (lens, round 2).
 - **AGENTS-DIR-MASK-READ-TWO-WAYS** — invariant: the advisor and the danger check read `.claude/agents` itself alike.
   Origin: the advisor reads a device-node mask at an absent `.claude/agents` as absent and renders the `agents` offer,
   while the check's `assertDirSafe` (`agent-workflow-kit/tools/cheap-agents-read.mjs:95`) exits 3 "exists but is not a
@@ -1812,6 +1807,12 @@ Rows queued out of a review round instead of folded. Each carries a stable id th
   (2026-11-23).
 
 ## Closed
+
+- **FAMILY-REGISTRY-COMMENT-SAYS-PRESERVED** — invariant: a code comment states what the code's writer does.
+  Origin: `agent-workflow-kit/tools/family-registry.mjs:618-619` said a customized copy counts as placed because "the
+  writer preserves it", while the agents writer writes it current. Raised by the S15 spec review (lens, round 2).
+  Closed in S4 of A-SPEC-SESSION-CAN-WRITE-CODE-BEFORE-ITS-PLAN (2026-11-26): the comment reads "(it exists; the agents
+  writer writes it current)" (`agent-workflow-kit/tools/family-registry.mjs:621`). Proof: none needed (comment).
 
 - **WITHHELD-LANE-NAMES-HAND-ENTRIES-WHERE-NONE-FOLLOW** — invariant: the withheld lane names the hand entries and
   their placeholder only where entries follow it. Origin: `agent-workflow-kit/tools/source-size-report.mjs:85` (the

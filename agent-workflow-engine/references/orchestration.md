@@ -1,8 +1,8 @@
 # Orchestration Recipes
 
 Canonical, on-demand reference for **how an orchestrating agent composes the carriers of a step** —
-itself, the optional execution-backends (the family's subscription-CLI bridges) and a full-tool
-frontier subagent — into the `plan → execute → review`
+itself, the optional execution-backends (the family's subscription-CLI bridges) and a frontier
+subagent (the no-shell author vehicle for an author slot, the full-tool executor for every other slot) — into the `plan → execute → review`
 flow. This is the *narrative* source of truth — the **vocabulary** (what each recipe is), the
 **when/why** (which to reach for), the **graceful-degradation lattice** (what happens when a carrier
 is unavailable), and the **quota/health guard**. The kit (`agent-workflow-kit`) owns the *executable*
@@ -16,7 +16,7 @@ guard. For the plan lifecycle this composes with, see [`planning.md`](planning.m
 
 A recipe is an **orchestration pattern**, not a runnable script. It names **who carries a step** —
 the **orchestrator** itself (Solo), a **bridge backend** (Reviewed / Council / Delegated), or a
-**full-tool frontier subagent** dispatched from the placed executor vehicle (Subagent). The
+**frontier subagent** dispatched from the placed vehicle of the slot's role (Subagent). The
 orchestrator (the main agent) always owns the decisions, the edits it accepts, verification, and the
 **single commit** — every other carrier is **advisory or delegated, never autonomous, and never
 commits**.
@@ -31,11 +31,13 @@ Each backend declares what it can do in its `capability.json` `provides` / `role
 
 Both are **subscription** backends with a **finite quota** — spend deliberately.
 
-The third carrier is neither: the **executor vehicle** — a full-tool frontier subagent the
-orchestrator dispatches from the placed `.claude/agents/executor.md`. It declares no
-`capability.json` and spends no bridge quota (it runs on the host's own model and consumes that
-model's quota and cost); it carries the `carry` role only — never
-`review`, never `probe` — and its availability is the vehicle FILE, not a detector (§4, §5).
+The third carrier rides neither bridge: the **no-shell author vehicle** for the `author` role
+(`plan-authoring.author`, `plan-authoring.fold` and `epic.author`), dispatched from the placed
+`.claude/agents/author.md`, and the **full-tool executor vehicle** for the `carry` role (every other
+subagent slot), dispatched from the placed `.claude/agents/executor.md`. Neither declares a
+`capability.json`; each spends no bridge quota (it runs on the host's own model and consumes that
+model's quota and cost); neither carries `review` or `probe`, and readiness is the vehicle FILE,
+not a detector (§4, §5).
 
 ## 2. The five recipes
 
@@ -45,12 +47,12 @@ model's quota and cost); it carries the `carry` role only — never
 | **Reviewed** (`reviewed`) | The orchestrator executes; **one** backend reviews the result (advisory). | ≥1 backend providing `review` | `codex` and/or `agy` |
 | **Council** (`council`) | **Both** backends review independently; the orchestrator synthesizes the two opinions. | ≥2 backends providing `review` | `codex` **and** `agy` |
 | **Delegated** (`delegated`) | The orchestrator hands a **bounded** execution sub-task to a backend, then reviews the returned diff and commits. | ≥1 backend providing `execute` | `codex` only |
-| **Subagent** (`subagent`) | The orchestrator hands a **bounded, file-disjoint** slice — of execution, of plan/contract authoring, of an epic drafted from a brief, of one prompt the orchestrator wrote from one ledger row run inside its Files, or of routine work — to a **full-tool frontier subagent**, then verifies the returned slice by running its suites. A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor. | the `carry` role | the placed executor vehicle |
+| **Subagent** (`subagent`) | The orchestrator hands a **bounded, file-disjoint** slice to a frontier subagent: an authoring slice (a plan, a contract, a fold or an epic) rides the no-shell author vehicle, and the orchestrator reviews the returned draft as its own; execution (including one prompt the orchestrator wrote from one ledger row run inside its Files) or routine work rides the full-tool executor, and the orchestrator verifies the returned slice by running its suites. A routine slice is classified first: a read-only one rides a placed read-only vehicle (or is carried Solo with a stated reason when that vehicle is absent); a write-capable one rides the executor. | the slot's `author` or `carry` role | the placed author vehicle for the `author` role, the executor vehicle for the `carry` role |
 
 The orchestrator keeps the folds, the gates, the release documents, the asks and the **one commit**
 whatever the recipe resolves to. A subagent is **never a review backend**, **never a bridge
-substitute**, and is **never told to commit**; it **degrades to Solo** when the executor vehicle is
-missing or unusable.
+substitute**, and is **never told to commit**; it **degrades to Solo** when the vehicle of the slot's
+role is not ready, never to the other role's vehicle.
 
 ## 3. When / why to reach for each (the decision vocabulary)
 
@@ -70,9 +72,11 @@ missing or unusable.
 - **Subagent** — when the work is **bounded and file-disjoint** and the orchestrator's own context is
   the scarce resource: execution slices, a plan, a contract or an epic drafted from a brief the
   orchestrator writes, one prompt the orchestrator wrote from one ledger row run inside its Files, or
-  routine chores (gate triage, sweeps, doc regeneration, fixture builds). It spends no
-  bridge quota; it runs on the host's own model and consumes that model's quota and cost. The
-  orchestrator still verifies every returned slice by running its suites itself, and owns the commit —
+  routine chores (gate triage, sweeps, doc regeneration, fixture builds). An author slot rides the
+  no-shell author vehicle, and every other subagent slot rides the full-tool executor (routine work
+  is classified as in §2). Neither spends bridge quota; each runs on the host's own model and
+  consumes that model's quota and cost. The orchestrator reviews every returned author draft as its
+  own, verifies every returned carry slice by running its suites itself, and owns the commit —
   a subagent never stands in for the bridge a `review` recipe names.
 
 ## 4. Graceful degradation (never silent)
@@ -84,13 +88,19 @@ Availability is **pure file-presence**: a backend is dispatchable **iff its dete
 the wrapper is not on `PATH`). This is a claim about **set-up state only** — never about whether a
 backend's *service* is actually responsive.
 
-The subagent carrier makes the same kind of claim from a different file: its availability is the
+The subagent carrier makes the same kind of claim from the file of the slot's role: for `carry`, the
 **executor vehicle** at `.claude/agents/executor.md` — `placed` or `customized` is dispatchable,
 `unusable` or `missing` is not, and the state is the human reason (the writer's apply command
 places a missing vehicle and re-derives the executor's body from the vehicle settings, replacing a
 hand edit; a symlinked, non-regular or unreadable vehicle path must be fixed or removed first, then
 placed; an unreadable docs/ai/vehicles.json is fixed in that file — the writer refuses the whole run
-until it is valid). Never a claim about the host that would run it (§5).
+until it is valid). For the `author` role, the **no-shell author vehicle** at `.claude/agents/author.md`
+is ready only when `placed`; `stale`, `widened`, `unusable` and `missing` are not ready. Readiness is
+never a claim about the host that would run the vehicle (§5).
+
+The author vehicle is a Claude Code lane loaded at session start — dispatch only when this session's
+agent list shows author with exactly Read, Grep, Glob, Write and Edit; otherwise, a file placed or
+written during this session included, carry the slice solo and say so; never another subagent.
 
 When a recipe's roles can't be satisfied, it **degrades to a weaker recipe with a stated reason** —
 always reported, never silently dropped:
@@ -99,7 +109,10 @@ always reported, never silently dropped:
   neither is `ready` → Solo.
 - **Delegated → Solo.** No backend provides `execute` and is `ready` → Solo, with the reason.
 - **Reviewed → Solo.** No backend provides `review` and is `ready` → Solo, with the reason.
-- **Subagent → Solo.** The executor vehicle is `missing` or `unusable` → Solo, with the reason.
+- **Subagent → Solo.** The executor vehicle for a `carry` slot is `missing` or `unusable`, or the
+  author vehicle for an `author` slot is `stale`, `widened`, `unusable` or `missing` → Solo, naming
+  the vehicle, its state and reason and the remedy `/agent-workflow-kit agents` (fix or remove an
+  unusable path first), never the other vehicle.
 
 **Recipe fidelity — the converse: every ready backend, every round.** Degradation is the *only*
 licence to run fewer backends than the recipe names. When the resolved recipe is `council` and BOTH
@@ -181,13 +194,14 @@ never a vehicle mandate a host cannot satisfy. **(d)** a stage that fires repeat
 batches them — a stage's evidence declarations (red-proofs, degrades) ride consecutive plain
 writer invocations of ONE allow-listed tool, and the remaining stage writers combine via one
 launcher per stage; never an unbatched writer scatter (each gated write is its own prompt). The clause narrows
-TOOLS for read-only work only — judgment, code, and synthesis stay at the frontier lane, and a
-task that genuinely needs to run or write keeps a full-tool subagent. **Honest limit:**
+TOOLS for read-only work and authoring — judgment, code, and synthesis stay at the frontier lane, and
+a task that needs to run commands keeps a full-tool subagent; an authoring slice rides the no-shell author vehicle. **Honest limit:**
 no deterministic gate classifies a dispatch — enforcement is this canon at the point of use,
 the placed vehicles, and the retro loop.
 
-**The Subagent carrier is a Claude Code lane**, exactly like the placed vehicles above: its
-readiness is the vehicle FILE, never the host. On a host that cannot dispatch the vehicle, the
+**The Subagent carrier is a Claude Code lane**, exactly like the placed vehicles above: the no-shell
+author vehicle for an author slot (§4's condition applies), the full-tool executor for every other
+subagent slot. Its readiness is the vehicle FILE, never the host. On a host that cannot dispatch the vehicle, the
 rendered dispatch form is an **instruction the orchestrator follows by hand** and reports as such —
 never reported as a subagent dispatch.
 
@@ -228,7 +242,8 @@ a delegated backend edits inside its own sandbox and returns a diff the orchestr
 subagent edits only the files its brief names — and the orchestrator alone stages and commits. The kit's `recipes` surface is
 **read-only** — it lists the recipes, plans one for the current environment, and recommends a
 default; it **never executes** a recipe and **never runs a subscription CLI**. The orchestrator
-executes the chosen recipe through the bridge skills or the executor vehicle, accepts or rejects
+executes the chosen recipe through the bridge skills, the no-shell author vehicle for an author slot
+or the full-tool executor for every other subagent slot, accepts or rejects
 every returned edit, runs the
 verification gate, and makes the **one** commit — exactly as the plan lifecycle (`planning.md`)
 requires.

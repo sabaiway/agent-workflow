@@ -12,18 +12,22 @@ import {
   POLICY_ACTIVITIES,
   SLOT_RECIPES,
   SUBAGENT_RECIPE,
+  AUTHOR_SUBAGENT_RECIPE,
   CARRY_ROLE,
+  AUTHOR_ROLE,
   EXECUTOR_PROVIDER,
   SWITCH_DEFAULT,
   isSwitchSlot,
+  slotRole,
   withVehicle,
+  withAuthorVehicle,
   vehicleDegradeReason,
   EXECUTOR_APPLY,
   safeLine,
   DISPLAY_ALIASES,
   BACKEND_PRIORITY,
 } from './carriers.mjs';
-import { surveyExecutorVehicle, surveyVehicle } from './cheap-agents-read.mjs';
+import { surveyExecutorVehicle, surveyAuthorVehicle, surveyVehicle } from './cheap-agents-read.mjs';
 import { obligationsOf } from './review-roster.mjs';
 import { resolveRoster, activeLineCell, remedyFor } from './review-roster-resolve.mjs';
 import { posturesByBackend } from './bridge-posture.mjs';
@@ -47,11 +51,12 @@ const UNWIRED = 'not wired';
 const UNCHECKED = 'unchecked';
 const NOT_COVERED = 'not covered';
 
-// Keyed by readiness-array provider name; executor is the only `carry` provider.
+// Keyed by readiness-array provider name; executor and author are the sole providers of their roles.
 export const BACKEND_ROLES = {
   [CODEX]: ['execute', 'review'],
   [AGY]: ['review', 'probe'],
   [EXECUTOR_PROVIDER]: [CARRY_ROLE],
+  [AUTHOR_ROLE]: [AUTHOR_ROLE],
 };
 
 // Review obligations from the CONFIGURED activity's review recipe — the RAW config value, never
@@ -133,7 +138,11 @@ export const RECIPES = [
   SUBAGENT_RECIPE,
 ];
 
-const recipeById = (id) => RECIPES.find((r) => r.id === id);
+const recipeById = (id, role) => id === SUBAGENT_RECIPE.id && role === AUTHOR_ROLE
+  ? AUTHOR_SUBAGENT_RECIPE
+  : RECIPES.find((r) => r.id === id);
+
+const planDescriptors = [...RECIPES, AUTHOR_SUBAGENT_RECIPE];
 
 // ── pure planner ───────────────────────────────────────────────────────────────
 
@@ -154,13 +163,14 @@ const isSatisfiable = (recipe, detection) =>
 const degradeReason = (recipe, detection) => {
   const providers = providersOf(recipe.role, detection);
   if (providers.length === 0) {
-    return `${recipe.title} needs a provider providing ${recipe.role}, but no provider provides it`;
+    const detail = recipe.id === SUBAGENT_RECIPE.id ? ` — ${vehicleDegradeReason(null, EXECUTOR_APPLY, recipe.role)}` : '';
+    return `${recipe.title} needs a provider providing ${recipe.role}, but no provider provides it${detail}`;
   }
   const ready = providers.filter((b) => b.readiness === READY);
   const detail = providers
     .filter((b) => b.readiness !== READY)
-    .map((b) => (b.name === EXECUTOR_PROVIDER
-      ? vehicleDegradeReason(b.vehicle, EXECUTOR_APPLY)
+    .map((b) => (recipe.id === SUBAGENT_RECIPE.id
+      ? vehicleDegradeReason(b.vehicle, EXECUTOR_APPLY, recipe.role)
       : `${DISPLAY_ALIASES[b.name] ?? b.name}: ${remedyFor({ readiness: b.readiness })}`))
     .join('; ');
   return `${recipe.title} needs ${recipe.minBackends} provider(s) providing ${recipe.role}, but only ${ready.length} ready${detail ? ` — ${detail}` : ''}`;
@@ -181,19 +191,19 @@ const dispatchFor = (recipe, detection) => {
 const QUOTA_NOTE = "Each bridge runs the host posture the user set; a weaker model is the user's bridge setting, never a per-call choice.";
 const COUNCIL_QUOTA_NOTE = "Council spends two backends' quota for one decision — reserve it for changes that justify the cost.";
 
-// The quota reminder rides a subscription-BACKEND dispatch only: the executor vehicle spends no
-// bridge quota, and its recipe is a frontier one, so a bridge-posture reminder would not apply to it.
+// The quota reminder rides a subscription-BACKEND dispatch only: the vehicles spend no
+// bridge quota, and their recipes are frontier ones, so a bridge-posture reminder would not apply to them.
 const notesFor = (recipe, dispatch) => {
   const notes = [];
-  if (dispatch.some((d) => d.role !== CARRY_ROLE)) notes.push(QUOTA_NOTE);
+  if (dispatch.some((d) => BACKEND_PRIORITY.includes(d.backend))) notes.push(QUOTA_NOTE);
   if (recipe.id === 'council') notes.push(COUNCIL_QUOTA_NOTE);
   if (dispatch.some((d) => d.backend === AGY) && BACKEND_META[AGY].health) notes.push(BACKEND_META[AGY].health);
   return notes;
 };
 
 // planRecipe → pure plan: walks the degradation chain, a stated reason per step, then dispatches.
-export const planRecipe = (recipe, detection) => {
-  const requested = typeof recipe === 'string' ? recipeById(recipe) : recipe;
+export const planRecipe = (recipe, detection, role) => {
+  const requested = typeof recipe === 'string' ? recipeById(recipe, role) : recipe;
   if (!requested) throw new Error(`unknown recipe: ${recipe}`);
   let current = requested;
   const degradation = [];
@@ -205,6 +215,7 @@ export const planRecipe = (recipe, detection) => {
   const dispatch = dispatchFor(current, detection);
   return {
     requested: requested.id,
+    role: requested.role,
     effective: current.id,
     degraded: current.id !== requested.id,
     degradation,
@@ -308,7 +319,7 @@ export const resolveActivityRecipe = ({ config = {}, readiness = [], activity, s
     return { recipe: requested, source, degradedFrom: null, reason: null, overrideUnsatisfied: false };
   }
 
-  const plan = planRecipe(requested, readiness);
+  const plan = planRecipe(requested, readiness, slotRole(activity, slot));
   const degraded = plan.degraded;
   return {
     recipe: plan.effective,
@@ -334,9 +345,10 @@ export const composeConfiguredPosture = (ctx = {}) => {
 };
 
 // The bridge half of a readiness array: every backend-status render lists BRIDGES (the things
-// `/agent-workflow-kit backends` sets up); the executor vehicle is a carrier, judged by the agents
-// mode, and only the recipe lattice sees it.
-export const bridgeEntries = (readiness) => readiness.filter((b) => b.name !== EXECUTOR_PROVIDER);
+// `/agent-workflow-kit backends` sets up); the vehicles are carriers, judged by the agents
+// mode, and only the recipe lattice sees them.
+const VEHICLE_PROVIDERS = [EXECUTOR_PROVIDER, AUTHOR_ROLE];
+export const bridgeEntries = (readiness) => readiness.filter((b) => !VEHICLE_PROVIDERS.includes(b.name));
 
 export const composeStatusLine = (detection, recommendation, settings = null, autonomy = null, posture = null, wiring = null) => {
   // A raw env value may carry newlines/control chars — collapse them so the one-line contract holds.
@@ -435,7 +447,7 @@ export const composeActiveRecipeLine = ({ config, source } = {}, detection, auto
         config: config ?? {}, readiness: detection, activity, slot,
         surveyLens: rosterDeps?.surveyLens, postures: rosterDeps?.postures,
       });
-      const dispatch = isSwitchSlot(slotType) || r.roster ? [] : planRecipe(r.recipe, detection).dispatch;
+      const dispatch = isSwitchSlot(slotType) || r.roster ? [] : planRecipe(r.recipe, detection, slotRole(activity, slot)).dispatch;
       const wrappers = dispatch.map((d) => wrapperCmdFor(d.backend, d.role)).filter(Boolean);
       const srcLabel = r.source === 'config' ? 'configured' : 'computed default';
       const renderedValue = r.roster
@@ -477,7 +489,7 @@ export const buildReport = (detection, settings = null, autonomy = null, posture
       summary,
     })),
     recommendation,
-    plans: RECIPES.map((r) => planRecipe(r.id, detection)),
+    plans: planDescriptors.map((r) => planRecipe(r, detection)),
     // The --json envelope must never expose a status line staler than the --status-line surface.
     statusLine: composeStatusLine(detection, recommendation, settings, autonomy, posture, wiring),
     ...(wiring == null ? {} : { wiring }),
@@ -487,10 +499,10 @@ export const buildReport = (detection, settings = null, autonomy = null, posture
 // Deterministic human advisor text: the recipes, the recommendation, and the per-recipe plan here.
 export const formatRecipes = (detection, wiring = null) => {
   const lines = [
-    'agent-workflow orchestration recipes (read-only — the orchestrator executes via the bridge skills or the executor vehicle and always commits)',
+    'agent-workflow orchestration recipes (read-only — the orchestrator executes via the bridge skills, the executor vehicle for carry or the author vehicle for author, and always commits)',
     '',
   ];
-  for (const r of RECIPES) lines.push(`  ${r.title} (${r.id}) — ${r.summary}`);
+  for (const r of RECIPES) lines.push(`  ${r.title} (${r.id}) — ${r.summary}${r.id === SUBAGENT_RECIPE.id ? ` For author: ${AUTHOR_SUBAGENT_RECIPE.summary}` : ''}`);
   const rec = wiring == null ? recommendRecipe(detection) : recommendWiredRecipe(detection, wiring);
   lines.push('', `recommended here: ${rec.recipe} — ${rec.clause}`);
   for (const entry of orderedWiringEntries(wiring)) {
@@ -504,13 +516,14 @@ export const formatRecipes = (detection, wiring = null) => {
     if (entry.state === UNCHECKED) lines.push(`  ${UNCHECKED}: ${alias} — ${entry.reason}`);
   }
   lines.push('', 'plan for the current environment:');
-  for (const r of RECIPES) {
-    const p = planRecipe(r.id, detection);
+  for (const r of planDescriptors) {
+    const p = planRecipe(r, detection);
     const arrow = p.degraded ? ` → ${p.effective}` : '';
     const who = p.dispatch.length
       ? p.dispatch.map((d) => `${d.display} ${d.role}${d.vehicle ? ` (vehicle ${d.vehicle})` : ''}`).join(', ')
       : 'orchestrator only';
-    lines.push(`  ${r.title}${arrow}: ${who}`);
+    const roleLabel = r.id === SUBAGENT_RECIPE.id ? ` (${p.role})` : '';
+    lines.push(`  ${r.title}${roleLabel}${arrow}: ${who}`);
     for (const step of p.degradation) lines.push(`      ↳ ${step.reason}`);
     for (const note of p.notes) lines.push(`      • ${note}`);
   }
@@ -522,20 +535,21 @@ export const formatRecipes = (detection, wiring = null) => {
 const KNOWN_ARGS = new Set(['--help', '-h', '--json', '--status-line', '--active-line']);
 const EXCLUSIVE_ARGS = ['--json', '--status-line', '--active-line']; // each owns stdout whole
 
-// The readiness array EVERY mode composes: the detected backends plus the executor vehicle as the
-// one carry provider. Two independent axes: the vehicle is surveyed first, and a bridge detector
+// The readiness array EVERY mode composes: the detected backends plus the executor and author vehicles as the
+// sole providers of their roles. The vehicles are surveyed first, and a bridge detector
 // failure reaches `deps.onDetectError` exactly once (default: a loud stderr line) while the
-// vehicle's readiness survives it — so a caller's fail-closed state for bridges never masks the
-// carrier, and the reverse. `deps` is also the seam a test injects a fake survey or detector through.
+// vehicles' readiness survives it — so a caller's fail-closed state for bridges never masks either
+// vehicle, and the reverse. `deps` is also the seam a test injects a fake survey or detector through.
 export const composeReadiness = (cwd, deps = {}) => {
   const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(cwd, deps);
+  const authorSurvey = (deps.surveyAuthorVehicle ?? surveyAuthorVehicle)(cwd, deps);
   let detection = [];
   try {
     detection = (deps.detect ?? detectBackends)();
   } catch (err) {
     (deps.onDetectError ?? ((e) => console.error(`[agent-workflow-kit] backend detection failed: ${e.message}`)))(err);
   }
-  return withVehicle(detection, survey);
+  return withAuthorVehicle(withVehicle(detection, survey), authorSurvey);
 };
 
 // The wiring the status line, --json and the default output render. Lazy imports: the leaf reaches
@@ -555,7 +569,7 @@ Usage:
   node recipes.mjs [--json | --status-line | --active-line]
 
 Lists the five recipes (Solo / Reviewed / Council / Delegated / Subagent) and, from the read-only
-backend detector plus the executor-vehicle survey, plans + recommends one for the current
+backend detector plus the executor vehicle (carry) and author vehicle (author) surveys, plans + recommends one for the current
 environment. --status-line prints exactly ONE
 line — the machine-composed backend-status summary the bootstrap/upgrade reports paste verbatim
 (incl. the per-activity autonomy segment: effective levels + render-sync state, honest

@@ -33,7 +33,7 @@ const SHIPPED_BODIES = Object.freeze({
   ]),
   [LENS]: Object.freeze([
     'd0cd7c6f602710f3d292644f78d2e9ccf569b1ce9a9d00bcb2e9cfd831e18703',
-    '9990fd49fa15fd98124d1a9706d5217739611c768af9ce8919575bfc3bbe5722',
+    '051a5b66ec9851f59f4ab47f4667602278e356ea343e17c6e009a78b727faa1e',
   ]),
   [STORY_SESSIONS]: Object.freeze([
     '696fc850b04c91ed4fe6b5d370835c420163a729cef3803d57ed86b06bde6b49',

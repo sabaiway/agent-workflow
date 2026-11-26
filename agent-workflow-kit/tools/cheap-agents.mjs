@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // cheap-agents.mjs — the onboarding writer behind `/agent-workflow-kit agents`: places the bundled
-// subagent definitions (references/agents/*.md) into a project's .claude/agents/. FOUR vehicles
+// subagent definitions (references/agents/*.md) into a project's .claude/agents/. FOUR read-only vehicles
 // grant NO shell — three ride the cheap lane (haiku/low-effort) so mechanical work (sweeps,
 // changelog skeletons, gate triage) stops running on a frontier model by default, and review-lens
-// is the read-only review opinion. The fifth, `executor`, is the ONE full-tool vehicle: dispatched
-// only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it
-// never commits. `surveyExecutorVehicle` is that vehicle's readiness, for the subagent carrier.
+// is the read-only review opinion. The author carries authoring slices with Read, Grep, Glob, Write, Edit and no shell.
+// The executor is the ONE full-tool vehicle: dispatched only for a bounded execution or write-capable
+// routine slice the orchestrator verifies, never for read-only work, and it never commits.
+// `surveyExecutorVehicle` and `surveyAuthorVehicle` judge the readiness of their respective roles.
 //
 // The family's second `.claude/` writer, the velocity-profile.mjs discipline:
 //   • preview-then-mutate — `--dry-run` is the DEFAULT and writes nothing; `--apply` writes;
@@ -44,7 +45,7 @@ import { loadVehicles, resolveExecutor, resolveReviewLens } from './vehicle-sett
 import { safeLine } from './carriers.mjs';
 import { writeContainedFileAtomic } from './atomic-write.mjs';
 import { fileLine } from './distribution-files/index.mjs';
-// The READ core, never a second copy: the bundle, the placement plan and the executor survey live
+// The READ core, never a second copy: the bundle, the placement plan and the vehicle surveys live
 // there so the read-only advisor graph can reach them without reaching this writer.
 import {
   AGENTS_DIR,
@@ -56,6 +57,7 @@ import {
   CHEAP_AGENTS_BUNDLE,
   CHEAP_AGENTS_CONFIG,
   CHEAP_AGENTS_VEHICLES,
+  AUTHOR_VEHICLE,
   EXECUTOR_VEHICLE,
   REVIEW_LENS_VEHICLE,
   executorTemplate,
@@ -104,11 +106,12 @@ export const FALLBACK_LENS_ADDITIONAL_ONLY = 'review-lens is an ADDITIONAL read-
 
 const USAGE = `usage: cheap-agents [--dry-run | --apply] [--cwd <dir>] [--help]
 
-Places the bundled subagent definitions into the project's ${AGENTS_DIR}/. Four vehicles grant NO
+Places the bundled subagent definitions into the project's ${AGENTS_DIR}/. Four read-only vehicles grant NO
 shell: three ride a cheap model (haiku/low) for mechanical work — extraction sweeps, changelog
 fact-skeletons, gate triage — and review-lens is a read-only REVIEW vehicle, opus/high unless
-docs/ai/vehicles.json sets another posture. The fifth, executor, is the ONE full-tool vehicle: dispatched only for a bounded execution,
-authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and
+docs/ai/vehicles.json sets another posture. The author carries authoring slices with Read, Grep, Glob, Write, Edit and no shell.
+The executor is the ONE full-tool vehicle: dispatched only for a bounded execution
+or write-capable routine slice the orchestrator verifies, never for read-only work, and
 it never commits.
 Default is --dry-run (a preview; writes nothing). --apply writes.
 Configured derived review lenses are planned and placed beside the bundled vehicles.
@@ -138,6 +141,7 @@ export const preflightCheapAgents = ({ cwd, derived = [] }, deps = {}) => {
   const projectDir = cwd ?? process.cwd();
   refuseSymlinkedRoot(projectDir, deps);
   const templatesByName = new Map(readBundledAgents(deps).map((template) => [template.name, template]));
+  if (!templatesByName.has(AUTHOR_VEHICLE)) throw makeCheapAgentsError(CHEAP_AGENTS_BUNDLE, `${AUTHOR_VEHICLE} is missing from the bundle`);
   for (const template of derived) templatesByName.set(template.name, template);
   const templates = [...templatesByName.values()];
   const stamp = readStamp(join(projectDir, WORKFLOW_STAMP), fs);
@@ -238,11 +242,12 @@ export const formatResult = (result) => {
   if (!result.stampOk) {
     lines.push(`note: no current deployment stamp found (${result.stamp ?? 'none'}) — --apply will refuse until init/upgrade runs.`);
   }
-  const readOnlyCount = result.plan.filter((item) => item.name !== EXECUTOR_VEHICLE).length;
+  const readOnlyCount = result.plan.filter((item) => item.name !== EXECUTOR_VEHICLE && item.name !== AUTHOR_VEHICLE).length;
   lines.push(
     `${readOnlyCount} vehicles are Claude Code subagents with READ-ONLY tools and NO shell as the kit writes them — so a fan-out on the shipped templates can never turn into a wave of approval prompts.`,
     `three of those ride the cheap lane (model: haiku, effort: low) for mechanical work; ${FALLBACK_LENS_ADDITIONAL_ONLY}`,
-    'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution, authoring, or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
+    'author writes files with no shell and carries authoring slices.',
+    'executor is the one FULL-TOOL vehicle: dispatched only for a bounded execution or write-capable routine slice the orchestrator verifies, never for read-only work, and it never commits.',
     `executor posture: model=${safeLine(posture.model)} effort=${safeLine(posture.effort)} fallback=${safeLine(posture.fallback)} (source: ${safeLine(posture.source)}) — set in docs/ai/vehicles.json`,
     `review-lens posture: model=${safeLine(lensPosture.model)} effort=${safeLine(lensPosture.effort)} (source: ${safeLine(lensPosture.source)}) — set in docs/ai/vehicles.json`,
   );

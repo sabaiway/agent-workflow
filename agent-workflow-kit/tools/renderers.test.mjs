@@ -35,7 +35,7 @@ const fullEnvelope = () => ({
       },
       attribution: { project: false, local: null, effective: false },
       velocity: { defaultMode: 'acceptEdits', allowEntries: { project: 1, local: 2 } },
-      agents: { bundled: 5, placed: 3, executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
+      agents: { bundled: 6, placed: 3, readOnly: 4, author: 'placed', executor: 'unusable', executorReason: 'tools: Read, Grep is read-only' },
       hook: { wired: true, filePlaced: true, declarationPresent: false, declaredGates: 0 },
     },
   },
@@ -74,7 +74,7 @@ settings
                 routine.parallel: on (default)
   attribution   includeCoAuthoredBy effective=false
   velocity      defaultMode=acceptEdits · allow project/local=1/2
-  subagents     3/5 placed — 4 read-only, executor unusable (tools: Read, Grep is read-only)
+  subagents     3/6 placed — 4 read-only, author placed, executor unusable (tools: Read, Grep is read-only)
   gate hook     wired=yes · file=yes · gates.json=no · declared=0`;
 
 // The one plain-surface render helper every non-golden case goes through.
@@ -344,28 +344,31 @@ describe('renderers — the resolved carrier per slot and the vehicle behind it'
     const out = withSettings({
       recipes: {
         activities: {
-          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null } },
+          'plan-authoring': { author: { recipe: 'subagent', source: 'config', degradedFrom: null }, fold: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' } },
           routine: { carrier: { recipe: 'solo', source: 'config', degradedFrom: 'subagent' }, parallel: { recipe: 'off', source: 'config', degradedFrom: null } },
         },
       },
     });
     assert.match(out, /recipes\s+plan-authoring\.author: subagent \(config\)/);
+    assert.match(out, /^\s+plan-authoring\.fold: solo \(config\) ← degraded from subagent — runs solo until the author vehicle is usable \(\/agent-workflow-kit agents\)$/m);
     assert.match(out, /^\s+routine\.carrier: solo \(config\) ← degraded from subagent — runs solo until the executor vehicle is usable \(\/agent-workflow-kit agents\)$/m);
     assert.match(out, /^\s+routine\.parallel: off \(config\)$/m);
   });
 
-  it('the subagents line splits the read-only vehicles from the executor, whose reason rides an unusable state', () => {
+  it('the subagents line separates read-only vehicles, author and executor with their own reasons', () => {
     const line = (agents) => withSettings({ agents }).split('\n').find((l) => l.includes('subagents'));
-    assert.match(line({ bundled: 5, placed: 5, executor: 'placed' }), /subagents\s+5\/5 placed — 4 read-only, executor placed$/);
-    assert.match(line({ bundled: 5, placed: 5, executor: 'customized' }), /executor customized$/);
-    assert.match(line({ bundled: 5, placed: 4, executor: 'missing' }), /4\/5 placed — 4 read-only, executor missing$/);
-    assert.match(line({ bundled: 5, placed: 5, executor: 'unusable', executorReason: 'tools: Read is read-only' }), /executor unusable \(tools: Read is read-only\)$/);
+    const bundle = { bundled: 6, readOnly: 4 };
+    assert.match(line({ ...bundle, placed: 6, author: 'placed', executor: 'placed' }), /subagents\s+6\/6 placed — 4 read-only, author placed, executor placed$/);
+    assert.match(line({ ...bundle, placed: 5, author: 'missing', executor: 'customized' }), /5\/6 placed — 4 read-only, author missing, executor customized$/);
+    assert.match(line({ ...bundle, placed: 4, author: 'stale', authorReason: 'differs from the bundled template', executor: 'missing' }), /4\/6 placed — 4 read-only, author stale \(differs from the bundled template\), executor missing$/);
+    assert.match(line({ ...bundle, placed: 4, author: 'widened', authorReason: 'tools: Bash', executor: 'unusable', executorReason: 'tools: Read is read-only' }), /4\/6 placed — 4 read-only, author widened \(tools: Bash\), executor unusable \(tools: Read is read-only\)$/);
+    assert.match(line({ ...bundle, placed: 5, author: 'unusable', authorReason: 'a symlink', executor: 'placed' }), /5\/6 placed — 4 read-only, author unusable \(a symlink\), executor placed$/);
   });
 
-  it('an envelope predating the executor field says unknown, never a state', () => {
-    assert.match(withSettings({ agents: { bundled: 4, placed: 4 } }), /subagents\s+4\/4 placed — 4 read-only, executor unknown \(the installed kit predates the field\)/);
-    const partial = withSettings({ agents: { error: '.claude/agents is a symlink', executor: 'unusable', executorReason: 'a symlink' } });
-    assert.match(partial, /subagents\s+error: \.claude\/agents is a symlink — executor unusable \(a symlink\)/, 'a partial error still names the executor state');
+  it('an envelope predating the vehicle fields says unknown, never a state', () => {
+    assert.match(withSettings({ agents: { bundled: 4, placed: 4 } }), /subagents\s+4\/4 placed — 4 read-only, author unknown \(the installed kit predates the field\), executor unknown \(the installed kit predates the field\)/);
+    const partial = withSettings({ agents: { error: '.claude/agents is a symlink', author: 'unusable', authorReason: 'a symlink', executor: 'unusable', executorReason: 'a symlink' } });
+    assert.match(partial, /subagents\s+error: \.claude\/agents is a symlink — author unusable \(a symlink\), executor unusable \(a symlink\)/, 'a partial error still names both vehicle states');
     const mixed = withSettings({
       recipes: { activities: { 'plan-execution': { execute: { recipe: 'subagent', source: 'config', degradedFrom: null } } }, detectError: 'detector down' },
     });

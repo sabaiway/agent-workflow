@@ -49,7 +49,8 @@ Slots: author, fold, review
    in a plan. Name governing specs in *Goal and boundary*
    ([`specs.md`](specs.md)); new/revised contracts are `create` / `modify` rows. The resolved
    `author` carrier drafts — Solo: the orchestrator writes it; Subagent: the orchestrator writes a
-   BRIEF (goal, governing specs, ledger constraints, files), the subagent drafts the plan and any
+   BRIEF (goal, governing specs, ledger constraints, files), dispatches the author vehicle under
+   `orchestration.md` §4's condition; it drafts the plan and any
    `create` / `modify` spec row from it, and the orchestrator reviews the draft as its own before step 3.
 3. **Self-review** — run the **readers sweep before the first review**: for every config key,
    registry entry, exported constant, receipt field or canon sentence the plan changes, use literal
@@ -77,7 +78,8 @@ Slots: author, fold, review
    the findings and folds before the tree changes. Self-review findings, or findings with no review
    member, are folded directly before a remaining round; a real minor goes to the debt queue, and a
    declined finding enters the decided register with its reason. Solo: orchestrator edits. Subagent:
-   the round's findings with their dispositions are the slice; it edits the plan or contract and
+   the round's findings with their dispositions are the slice; dispatch the author vehicle under
+   `orchestration.md` §4's condition; it edits the plan or contract and
    returns; orchestrator runs the self-consistency read.
    CLEAN is **0 blockers + 0 majors** from each named backend, each verdict ship-class on the artifact
    as it stands; folding ≠ convergence. Fold code findings **test-as-spec**, with **no code-mechanics**
@@ -258,7 +260,8 @@ lives in the memory substrate and is committed, where that substrate is tracked,
 1. **Brief** — intent, value, non-goals, acceptance, the specs and the stories in order, at concept
    altitude: no mechanism, no file line.
 2. **Draft** — the resolved `author` carrier writes the epic file. Solo: the orchestrator writes it;
-   Subagent: the orchestrator writes the brief of step 1, the subagent drafts the file from it, and the
+   Subagent: the orchestrator writes the brief of step 1, dispatches the author vehicle under
+   `orchestration.md` §4's condition; it drafts the file from it, and the
    orchestrator runs the shape check on the draft as its own before step 3.
 3. **Check** — `epic-shape-cli --check <epic>` accepts the file, or nothing is reviewed.
 4. **review {recipe}** — one review-lens read over the RENDERED brief, never the file, whatever

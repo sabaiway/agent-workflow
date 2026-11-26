@@ -162,37 +162,101 @@ describe('engine orchestration.md — canonical recipe reference', () => {
     assert.match(flat, /red-line commands keep their asks at every level/i, 'red-lines never move');
   });
 
-  it('\u00a71 names WHO carries a step \u2014 the orchestrator, a bridge backend, or a subagent from the placed vehicle', () => {
-    const flat1 = sectionFrom(reference, /^## 1\. /).replace(/\s+/g, ' ');
-    assert.match(flat1, /who carries a step/i, '\u00a71 opens on the carrier, not on the backend alone');
-    assert.match(flat1, /the \*\*orchestrator\*\* itself \(Solo\)/, 'the orchestrator is a carrier');
-    assert.match(flat1, /a \*\*bridge backend\*\* \(Reviewed \/ Council \/ Delegated\)/, 'a bridge backend is a carrier');
-    assert.match(flat1, /\*\*full-tool frontier subagent\*\* dispatched from the placed executor vehicle \(Subagent\)/, 'a subagent is a carrier');
-    assert.match(flat1, /every other carrier is \*\*advisory or delegated, never autonomous, and never commits\*\*/, 'the carrier bar replaces the backend-only bar');
-  });
+  describe('spec:carriers/S9 — Subagent uses the vehicle of the slot role', () => {
+    const flat = (body) => body.replace(/[`*]/g, '').replace(/\s+/g, ' ');
+    const section = (number) => sectionFrom(reference, new RegExp(`^## ${number}\\. `));
+    const assertRoles = (body, name) => {
+      const prose = flat(body);
+      const clauses = prose.split(/;|\.(?=\s)/);
+      const authorRole = /\bauthor(?:-role|ing)? slots?\b|\bauthor role\b|\bslots? (?:of (?:the )?)?author\b|\bauthoring (?:slice|work)\b|\bfor author\b(?! vehicle)/i;
+      const carryRole = /\bcarry\b|\b(?:all|every) other(?: (?:subagent(?:-capable)? )?slots?)?\b/i;
+      assert.ok(clauses.some((clause) => authorRole.test(clause) && /\bauthor vehicle\b/i.test(clause)), `${name}: the author role names the author vehicle`);
+      assert.ok(clauses.some((clause) => carryRole.test(clause) && /\bexecutor\b/i.test(clause)), `${name}: the carry role names the executor`);
+    };
 
-  it('spec:carriers/S9 \u2014 \u00a72 lists Subagent as the fifth recipe with its load-bearing limits', () => {
-    const flat2 = sectionFrom(reference, /^## 2\. /).replace(/\s+/g, ' ');
-    assert.match(flat2, /\*\*Subagent\*\* \(`subagent`\)/, '\u00a72 carries the Subagent row with its id');
-    assert.match(flat2, /bounded, file-disjoint\*\* slice/, 'the slice is bounded and file-disjoint');
-    assert.match(flat2, /full-tool frontier subagent/, 'the carrier is a full-tool frontier subagent');
-    assert.match(flat2, /verifies the returned slice by running its suites/, 'the orchestrator verifies by running the suites');
-    assert.match(flat2, /the folds, the gates, the release documents, the asks and the \*\*one commit\*\*/, 'what the orchestrator keeps');
-    assert.match(flat2, /never a review backend/, 'never a review backend');
-    assert.match(flat2, /never a bridge substitute/, 'never a bridge substitute');
-    assert.match(flat2, /never told to commit/, 'never told to commit');
-    assert.match(flat2, /\*\*degrades to Solo\*\*/, 'degrades to Solo');
-  });
+    it('the opening and each of §1–§6 name both vehicles by slot role', () => {
+      const opening = reference.split('\n\n')[1];
+      assertRoles(opening.split(/\.(?=\s)/)[0], 'opening sentence');
+      for (const number of [1, 2, 3, 4, 5, 6]) assertRoles(section(number), `§${number}`);
+    });
 
-  it('the Subagent readiness is the vehicle FILE \u2014 \u00a74 degrades it to Solo, \u00a75 refuses to claim the host', () => {
-    const flat4 = sectionFrom(reference, /^## 4\. /).replace(/\s+/g, ' ');
-    assert.match(flat4, /\*\*Subagent \u2192 Solo\.\*\* The executor vehicle is `missing` or `unusable`/, '\u00a74 carries the Subagent degrade with its reason');
-    assert.match(flat4, /`\.claude\/agents\/executor\.md`/, '\u00a74 names the vehicle file readiness is read from');
-    const flat5 = sectionFrom(reference, /^## 5\. /).replace(/\s+/g, ' ');
-    assert.match(flat5, /Subagent carrier is a Claude Code lane/, '\u00a75 states the lane honestly');
-    assert.match(flat5, /readiness is the vehicle FILE, never the host/, 'readiness is the file, never the host');
-    assert.match(flat5, /instruction the orchestrator follows by hand/, 'an undispatchable host makes the render an instruction');
-    assert.match(flat5, /never reported as a subagent dispatch/, 'and it is never reported as a dispatch');
+    it('§1 names who carries a step — the orchestrator, a bridge backend, or a subagent of the slot role', () => {
+      const flat1 = section(1).replace(/\s+/g, ' ');
+      assert.match(flat1, /who carries a step/i, '§1 opens on the carrier, not on the backend alone');
+      assert.match(flat1, /the \*\*orchestrator\*\* itself \(Solo\)/, 'the orchestrator is a carrier');
+      assert.match(flat1, /a \*\*bridge backend\*\* \(Reviewed \/ Council \/ Delegated\)/, 'a bridge backend is a carrier');
+      assertRoles(flat1, '§1');
+      assert.match(flat(flat1), /\bSubagent\b/i, 'a subagent is a carrier');
+      assert.match(flat1, /every other carrier is \*\*advisory or delegated, never autonomous, and never commits\*\*/, 'the carrier bar replaces the backend-only bar');
+    });
+
+    it('§2 lists Subagent as the fifth recipe with its load-bearing limits for both roles', () => {
+      const flat2 = section(2).replace(/\s+/g, ' ');
+      const row = section(2).split('\n').find((line) => line.includes('**Subagent** (`subagent`)')) ?? '';
+      assert.deepEqual([...section(2).matchAll(/^\| \*\*\w+\*\* \(`(\w+)`\)/gm)].map((match) => match[1]), RECIPE_IDS, 'Subagent is the fifth recipe');
+      assert.match(row, /\*\*Subagent\*\* \(`subagent`\)/, '§2 carries the Subagent row with its id');
+      assertRoles(row, 'Subagent row');
+      assert.match(row, /bounded, file-disjoint\*\* slice/, 'the slice is bounded and file-disjoint');
+      assert.match(row, /full-tool/, 'the executor keeps full tools');
+      assert.match(row, /\bno-shell\b|\bno shell\b|\bwithout (?:a )?shell\b/i, 'the author vehicle has no shell');
+      assert.match(row, /\bverif\w*\b[^.]*\bsuites\b/i, 'the orchestrator verifies execution by running the suites');
+      assert.match(row, /\breview\w*\b[^.]*\bdraft\b|\bdraft\b[^.]*\breview\w*\b/i, 'the orchestrator reviews the author draft');
+      assert.match(flat2, /the folds, the gates, the release documents, the asks and the \*\*one commit\*\*/, 'what the orchestrator keeps');
+      assert.match(flat(flat2), /never a review backend/, 'never a review backend');
+      assert.match(flat(flat2), /never a bridge substitute/, 'never a bridge substitute');
+      assert.match(flat2, /never told to commit/, 'never told to commit');
+      assert.match(flat2, /\*\*degrades to Solo\*\*/, 'degrades to Solo');
+    });
+
+    it('§4 degrades Subagent on its own vehicle readiness and §5 refuses to claim the host', () => {
+      const section4 = section(4);
+      const readiness = section4.split(/\n- \*\*Council →/)[0];
+      assertRoles(readiness, '§4 readiness');
+      for (const state of ['placed', 'customized', 'missing', 'unusable', 'stale', 'widened']) assert.ok(readiness.includes(state), `§4 readiness names ${state}`);
+      const degrade = section4.split(/\n(?=- \*\*)/).find((block) => block.includes('Subagent → Solo'))?.split(/\n\s*\n/)[0] ?? '';
+      assert.match(flat(degrade), /\bauthor vehicle\b/i, '§4 names the author vehicle in the Subagent degrade');
+      assert.match(flat(degrade), /\bexecutor\b/i, '§4 names the executor in the Subagent degrade');
+      for (const state of ['missing', 'unusable']) assert.ok(degrade.includes(state), `§4 Subagent degrade names ${state}`);
+      assert.match(flat(degrade), /\breason\b/i, '§4 carries the Subagent degrade with its reason');
+      assert.match(section4, /`\.claude\/agents\/executor\.md`/, '§4 names the executor file');
+      assert.match(section4, /`\.claude\/agents\/author\.md`/, '§4 names the author file');
+      const flat5 = section(5).replace(/\s+/g, ' ');
+      assert.match(flat5, /Subagent carrier is a Claude Code lane/, '§5 states the lane honestly');
+      assert.match(flat5, /readiness is the vehicle FILE, never the host/, 'readiness is the file, never the host');
+      assert.match(flat5, /instruction the orchestrator follows by hand/, 'an undispatchable host makes the render an instruction');
+      assert.match(flat5, /never reported as a subagent dispatch/, 'and it is never reported as a dispatch');
+    });
+
+    it('§4 alone states the session agent-list condition with exactly five tools and solo instead of another subagent', () => {
+      assert.equal([...flat(reference).matchAll(/\bagent[- ]list\b/gi)].length, 1, 'the agent-list condition occurs once in the canon');
+      const condition = flat(section(4).split(/\n\s*\n/).find((paragraph) => /\bagent[- ]list\b/i.test(flat(paragraph))) ?? '');
+      const [requirement, fallback = ''] = condition.split(/\botherwise\b/i);
+      assert.match(requirement, /\bsession\b[^.]*\bagent[- ]list\b/i);
+      assert.match(requirement, /\bagent[- ]list\b[^.]*\bauthor\b/i);
+      assert.match(requirement, /\bexactly\b/);
+      assert.match(requirement, /\bRead, Grep, Glob, Write(?:,)? (?:and )?Edit(?!\s*(?:,|and)\s*[A-Z][a-z]+)(?=[.;,) ]|$)/);
+      assert.match(requirement, /\bdispatch\w*\b/i);
+      assert.match(requirement, /\b(?:only|requires?|must)\b/i);
+      assert.match(fallback, /\bsolo\b/i);
+      assert.match(fallback, /\b(?:never|not)\b[^.]*\banother subagent\b/i);
+    });
+
+    it('§5 carries the exact cost-lane sentence', () => {
+      assert.ok(section(5).replace(/\s+/g, ' ').includes('a task that needs to run commands keeps a full-tool subagent; an authoring slice rides the no-shell author vehicle'));
+    });
+
+    it('SKILL.md and README.md recipe summaries name the carry and author roles', () => {
+      for (const name of ['SKILL.md', 'README.md']) {
+        const summary = readFileSync(join(ROOT, name), 'utf8').split(/\n(?=- \[)/).find((item) => item.startsWith('- [`references/orchestration.md`]')) ?? '';
+        assertRoles(summary, name);
+      }
+    });
+
+    it('the slot fragment names Subagent without claiming every subagent has full tools', () => {
+      const slot = readFileSync(SLOT, 'utf8');
+      assert.match(slot, /\*\*Subagent\*\*[^;]*\bbounded slice\b/i);
+      assert.doesNotMatch(slot, /a full-tool frontier subagent carries a bounded slice/i);
+    });
   });
 
   it('the retired backend-only wording cannot return (the \u00a72 heading, the \u00a76 commit sentence)', () => {

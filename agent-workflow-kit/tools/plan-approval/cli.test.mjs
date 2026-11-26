@@ -287,17 +287,14 @@ describe('spec:plan-approval/S5 check command', () => {
   });
 });
 
-it('spec:plan-approval/S7 executor stops unapproved slices before writes and preserves the slice list and authoring deliverable', () => {
+it('spec:plan-approval/S7 executor stops unapproved slices before writes and preserves the slice list', () => {
   const path = 'agent-workflow-kit/references/agents/executor.md';
   const root = join(import.meta.dirname, '../../..');
   const body = fs.readFileSync(join(root, path), 'utf8');
   const previous = git(['show', `HEAD:${path}`], root);
   const sliceList = (text) => text.match(/^- \*\*One slice,[\s\S]*?(?=\n- )/m)?.[0];
-  const authoringDeliverable = (text) => text.match(/A plan draft, a contract draft[\s\S]*?named file like\n  any other\./)?.[0];
   assert.ok(sliceList(previous));
-  assert.ok(authoringDeliverable(previous));
   assert.equal(sliceList(body), sliceList(previous));
-  assert.equal(authoringDeliverable(body), authoringDeliverable(previous));
   const stop = body.split(/\n(?=- )/).find((bullet) => /dispatch part|aw-plan-approval/.test(bullet));
   assert.ok(stop, 'missing the dispatch approval stop');
   for (const fact of [

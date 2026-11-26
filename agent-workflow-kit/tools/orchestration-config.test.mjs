@@ -193,6 +193,14 @@ describe('orchestration-config - the epic and task rows validate (spec:carriers/
     "uthor', 'plan-authoring.fold' and 'routine.carrier' stay 'solo', and 'routine.parallel' stays 'on'. Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. 'subagent' needs the executor vehicle placed in this project — the composition root's `agents` writer places it; without it the slot reso" +
     "lves to solo with the reason stated. Remove a slot's line, or a whole activity block (or run `set-recipe --unset <activity>.<slot>`), to fall back to the computed default: reviewed when a review backend is ready and otherwise solo for a review slot, solo for author, fold, execute and carrier, on for parallel. Run the read-only procedures advisor to see an activity's steps plus " +
     "the recipe resolved for your environment. Strict JSON — no comments.";
+  const SIX_ACTIVITY_SEED_README =
+    "Per-project orchestration config: the recipe used at each step (slot) of each named activity. Easiest: tell the agent in plain language and run the `set-recipe` writer — it interprets your intent, previews the change, and writes valid JSON for you. You can still hand-edit this file directly whenever you prefer; that option never goes away. " +
+    "Six activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-execution' (slots execute, review), 'routine' (slots carrier, parallel), 'feedback-triage' (slot review), 'epic' (slots author, review) and 'task' (slots author, execute). " +
+    "A slot's value is a recipe: a 'review' slot accepts solo | reviewed | council (you self-review / one backend reviews / both review and you synthesize), or an explicit roster array such as [\"codex-review\", \"agy-review\", \"review-lens\"] in hand-edit form; an 'execute' slot accepts solo | delegated | subagent (you implement / a backend runs a bounded sub-task / a full-tool frontier subagent carries a bounded slice you verify); " +
+    "the carrier slots 'plan-authoring.author', 'plan-authoring.fold', 'routine.carrier' and 'epic.author' accept solo | subagent, and the task slots 'task.author' and 'task.execute' take the execute values. 'routine.parallel' is a flag rather than a recipe: it accepts on | off and decides whether file-disjoint subagent slices dispatch concurrently. " +
+    "Every slot seeded below is 'solo' — no execution backend required. A slot the seed leaves silent takes the computed default stated further down: 'feedback-triage.review' is reviewed as soon as a review backend is ready (solo until then), and so is 'epic.review'; 'plan-authoring.author', 'plan-authoring.fold', 'routine.carrier', 'epic.author', 'task.author' and 'task.execute' stay 'solo', and 'routine.parallel' stays 'on'. " +
+    "Raise a slot to reviewed or council for a second opinion, or to delegated to hand off execution; those need an execution backend set up first. 'subagent' needs the executor vehicle placed in this project — the composition root's `agents` writer places it; without it the slot resolves to solo with the reason stated. " +
+    "Remove a slot's line, or a whole activity block (or run `set-recipe --unset <activity>.<slot>`), to fall back to the computed default: reviewed when a review backend is ready and otherwise solo for a review slot, solo for author, fold, execute and carrier, on for parallel. Run the read-only procedures advisor to see an activity's steps plus the recipe resolved for your environment. Strict JSON — no comments.";
   it('accepts every epic and task slot value', () => { for (const [a,s,vs] of [['epic','author',['solo','subagent']], ['epic','review',['solo','reviewed','council',['review-lens']]],
     ...['author','execute'].map(s=>['task',s,['solo','delegated','subagent']])]) for(const v of vs){const c={[a]:{[s]:v}}; assert.doesNotThrow(()=>assert.deepEqual(validateConfig(c),c));} });
   it('refuses unknown slots and off-list values', () => { const refuse=(a,s,v,m)=>assert.throws(()=>validateConfig({[a]:{[s]:v}}),e=>e.exitCode===1 && e.message.includes(m));
@@ -205,9 +213,24 @@ describe('orchestration-config - the epic and task rows validate (spec:carriers/
       ['epic','review',ready,'reviewed']]) assert.doesNotThrow(()=>{ const r=resolveActivityRecipe({config,readiness,activity,slot}); assert.deepEqual([r.recipe,r.source],[want,'default']); }); });
   it('six-activity README',()=>{assert.ok(CANON_README.includes("Six activities are configured independently, and so is each slot within them: 'plan-authoring' (slots author, fold, review), 'plan-e" +
     "xecution' (slots execute, review), 'routine' (slots carrier, parallel), 'feedback-triage' (slot review), 'epic' (slots author, review) and 'task' (slots author, execute)."));
-    for(const s of ["'epic.author'","'task.author'","'task.execute'","'epic.review'"]) assert.ok(CANON_README.includes(s)); assert.ok(!CANON_README.includes('Four activities are configured')); });
-  it('frozen prior refreshes preserving epic', () => { const prior=FOUR_ACTIVITY_SEED_README; assert.equal(KNOWN_PRIOR_README.at(-1),prior); assert.notEqual(CANON_README,prior);
-    const r=refreshReadme({_README:prior,epic:{review:['review-lens']}}); assert.deepEqual([r.changed,r.config._README,r.config.epic],[true,CANON_README,{review:['review-lens']}]); }); });
+    for(const s of ["'epic.author'","'task.author'","'task.execute'","'epic.review'"]) assert.ok(CANON_README.includes(s)); assert.ok(!CANON_README.includes('Four activities are configured'));
+    const vehicleNote = CANON_README.slice(CANON_README.indexOf('those need an execution backend set up first.') + 'those need an execution backend set up first.'.length, CANON_README.indexOf("Remove a slot's line"));
+    assert.match(vehicleNote, /author vehicle/u);
+    for (const slot of ['plan-authoring.author', 'plan-authoring.fold', 'epic.author']) assert.ok(vehicleNote.includes(slot), slot);
+    assert.match(vehicleNote, /executor/u);
+    assert.match(vehicleNote, /(?:every|all) other|(?:carry|remaining) slots/u);
+    assert.doesNotMatch(vehicleNote, /'subagent' needs the executor vehicle/u);
+  });
+  it('the four- and six-activity frozen priors refresh preserving epic', () => {
+    assert.equal(KNOWN_PRIOR_README.at(-1), SIX_ACTIVITY_SEED_README);
+    for (const prior of [FOUR_ACTIVITY_SEED_README, SIX_ACTIVITY_SEED_README]) {
+      assert.ok(KNOWN_PRIOR_README.includes(prior));
+      assert.notEqual(CANON_README, prior);
+      const refreshed = refreshReadme({ _README: prior, epic: { review: ['review-lens'] } });
+      assert.deepEqual([refreshed.changed, refreshed.config._README, refreshed.config.epic], [true, CANON_README, { review: ['review-lens'] }]);
+    }
+  });
+});
 // ── applySetOps — pure merge, preserve, sparse, seed-on-change ──
 describe('orchestration-config — applySetOps (pure merge)', () => {
   it('sets a slot, preserving _README + untouched slots', () => {
@@ -312,7 +335,8 @@ describe('orchestration-config — canonical refresh', () => {
     for (const values of ['solo | reviewed | council', 'solo | delegated | subagent', 'solo | subagent', 'on | off']) {
       assert.ok(CANON_README.includes(values), `names ${values}`);
     }
-    assert.match(CANON_README, /composition root's `agents` writer places it/, 'subagent needs the placed executor vehicle');
+    assert.match(CANON_README, /`agents` writer/u, 'the note names the writer that places the vehicles');
+    assert.match(CANON_README, /author vehicle/u, 'a subagent slot needs the vehicle of its role');
     assert.ok(!CANON_README.includes('/agent-workflow-kit'), 'the memory twin of the seed must name no sibling skill');
     assert.match(CANON_README, /Every slot seeded below is 'solo'/u, 'the seed defaults are stated without claiming silent slots are seeded');
     assert.match(CANON_README, /'feedback-triage.review' is reviewed as soon as a review backend is ready/u, 'the silent review slot\'s default is stated honestly');

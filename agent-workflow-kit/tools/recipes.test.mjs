@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import * as carriers from './carriers.mjs';
 import {
   RECIPES,
   BACKEND_ROLES,
@@ -26,6 +27,7 @@ import {
 } from './recipes.mjs';
 import { detectBackends, READY, NEEDS_SKILL, NEEDS_CLI, NEEDS_CREDENTIALS, DEGRADED } from './detect-backends.mjs';
 import { usedBridges } from './bridge-sandbox-recipe.mjs';
+import { stripGitLocationEnv } from './git-env.mjs';
 const { mergeServices, loadServiceFragments } = await import('./services/index.mjs').catch(() => ({}));
 const recipesModule = await import('./recipes.mjs');
 const getRecommendWiredRecipe = () => {
@@ -41,6 +43,7 @@ const CODEX = 'codex-cli-bridge';
 const AGY = 'antigravity-cli-bridge';
 const EXECUTOR = 'executor';
 const CARRY = 'carry';
+const AUTHOR = 'author';
 const RECIPE_IDS = ['solo', 'reviewed', 'council', 'delegated', 'subagent'];
 const RECIPE_TITLES = ['Solo', 'Reviewed', 'Council', 'Delegated', 'Subagent'];
 const WIRING_ROUTE = 'wire it on the chat yes of /agent-workflow-kit upgrade';
@@ -75,10 +78,11 @@ const detect = (codexReadiness, agyReadiness) => [
 ];
 
 // The readiness array the CLI modes compose, through the CLI's own seam — never re-implemented here.
-const readinessWith = (state, codexReadiness = READY, agyReadiness = READY) =>
+const readinessWith = (state, codexReadiness = READY, agyReadiness = READY, author = 'missing') =>
   composeReadiness('/nowhere', {
     detect: () => detect(codexReadiness, agyReadiness),
     surveyVehicle: () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' }),
+    surveyAuthorVehicle: () => ({ state: author, reason: null, rel: '.claude/agents/author.md' }),
   });
 
 const readManifest = (name) => JSON.parse(readFileSync(join(REPO_ROOT, name, 'capability.json'), 'utf8'));
@@ -144,17 +148,18 @@ describe('role-coverage drift-guard — every recipe role has a declared provide
     }
   });
 
-  it('carry is the ONE role no bridge provides — the executor vehicle is its only provider', () => {
+  it('carry and author are the roles no bridge provides — each vehicle provides its own role alone', () => {
     const bridgeRoles = new Set([...readManifest(CODEX).provides, ...readManifest(AGY).provides]);
     const nonBridge = [...new Set(Object.values(BACKEND_ROLES).flat())].filter((role) => !bridgeRoles.has(role));
-    assert.deepEqual(nonBridge, [CARRY]);
+    assert.deepEqual(nonBridge.sort(), [AUTHOR, CARRY]);
     assert.deepEqual(BACKEND_ROLES[EXECUTOR], [CARRY]);
+    assert.deepEqual(BACKEND_ROLES[AUTHOR], [AUTHOR]);
   });
 });
 
 describe('manifest drift-guards — BACKEND_ROLES / BACKEND_META / DISPLAY_ALIASES track each bridge manifest', () => {
-  it('is keyed by the readiness names (manifest names, not display aliases) plus the executor vehicle', () => {
-    assert.deepEqual(Object.keys(BACKEND_ROLES).sort(), [AGY, CODEX, EXECUTOR].sort());
+  it('is keyed by the readiness names (manifest names, not display aliases) plus both vehicles', () => {
+    assert.deepEqual(Object.keys(BACKEND_ROLES).sort(), [AGY, CODEX, EXECUTOR, AUTHOR].sort());
   });
   it('matches each bridge capability.json provides[]', () => {
     assert.deepEqual(BACKEND_ROLES[CODEX], readManifest(CODEX).provides);
@@ -346,7 +351,7 @@ describe('formatRecipes — deterministic advisor text', () => {
     const det = detect(READY, NEEDS_SKILL);
     const once = formatRecipes(det);
     assert.equal(once, formatRecipes(det), 'same detection → identical text');
-    assert.match(once, /via the bridge skills or the executor vehicle and always commits/, 'the header names both carriers');
+    for (const fragment of ['bridge', 'executor vehicle', 'author vehicle', 'commits']) assert.ok(once.split('\n')[0].includes(fragment), fragment);
     assert.match(once, /needs a provider providing carry, but no provider provides it/, 'a degrade names providers, never only backends');
     for (const title of RECIPE_TITLES) assert.match(once, new RegExp(title));
   });
@@ -479,22 +484,40 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     assert.match(p.degradation[0].reason, /no provider provides it/);
   });
 
-  it('a carrier slot holds when placed, degrades gracefully when missing, and stays silent by default', () => {
-    const config = { 'plan-authoring': { author: 'subagent', fold: 'subagent' }, routine: { carrier: 'subagent' } };
-    for (const [activity, slot] of [['plan-authoring', 'author'], ['plan-authoring', 'fold'], ['routine', 'carrier']]) {
-      const ok = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity, slot });
-      assert.deepEqual([ok.recipe, ok.source, ok.degradedFrom], ['subagent', 'config', null]);
-      const gone = resolveActivityRecipe({ config, readiness: readinessWith('missing'), activity, slot });
-      assert.deepEqual([gone.recipe, gone.degradedFrom, gone.overrideUnsatisfied], ['solo', 'subagent', false]);
-      const silent = resolveActivityRecipe({ readiness: readinessWith('placed'), activity, slot });
-      assert.deepEqual([silent.recipe, silent.source], ['solo', 'default'], 'placing the vehicle never flips a default');
-    }
-  });
+  for (const [role, slots, states, readyStates, vehicle, otherVehicle] of [
+    [AUTHOR, [['plan-authoring', 'author'], ['plan-authoring', 'fold'], ['epic', 'author']], ['placed', 'missing', 'stale', 'widened', 'unusable'], ['placed'], 'author vehicle', 'executor vehicle'],
+    [CARRY, [['plan-execution', 'execute'], ['routine', 'carrier'], ['task', 'author'], ['task', 'execute']], ['placed', 'customized', 'missing', 'unusable'], ['placed', 'customized'], 'executor vehicle', 'author vehicle'],
+  ]) {
+    it(`${role} slots hold on their own ready vehicle alone and degrade by its state beside the other ready vehicle`, () => {
+      for (const state of states) {
+        const readiness = role === AUTHOR
+          ? readinessWith('placed', READY, READY, state)
+          : carriers.withAuthorVehicle(readinessWith(state), { state: 'placed' });
+        const ready = readyStates.includes(state);
+        for (const [activity, slot] of slots) {
+          const config = { [activity]: { [slot]: 'subagent' } };
+          const args = { readiness, activity, slot };
+          const silent = resolveActivityRecipe(args);
+          assert.deepEqual([silent.recipe, silent.source], ['solo', 'default']);
+          for (const source of ['config', 'override']) {
+            const result = resolveActivityRecipe({ ...args, ...(source === 'config' ? { config } : { override: 'subagent' }) });
+            assert.deepEqual([result.recipe, result.source, result.degradedFrom, result.overrideUnsatisfied],
+              [ready ? 'subagent' : 'solo', source, ready ? null : 'subagent', !ready && source === 'override'], `${activity}.${slot}: ${state}, ${source}`);
+            if (!ready) {
+              for (const fact of [vehicle, state, '/agent-workflow-kit agents']) assert.ok(result.reason.includes(fact), result.reason);
+              assert.ok(!result.reason.includes(otherVehicle), result.reason);
+            }
+          }
+        }
+      }
+    });
+  }
 
   it('a silent fold stays solo beside a configured author subagent', () => {
     const config = { 'plan-authoring': { author: 'subagent' } };
-    const author = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity: 'plan-authoring', slot: 'author' });
-    const fold = resolveActivityRecipe({ config, readiness: readinessWith('placed'), activity: 'plan-authoring', slot: 'fold' });
+    const readiness = carriers.withAuthorVehicle(readinessWith('missing'), { state: 'placed' });
+    const author = resolveActivityRecipe({ config, readiness, activity: 'plan-authoring', slot: 'author' });
+    const fold = resolveActivityRecipe({ config, readiness, activity: 'plan-authoring', slot: 'fold' });
     assert.deepEqual([author.recipe, author.source], ['subagent', 'config']);
     assert.deepEqual([fold.recipe, fold.source], ['solo', 'default']);
   });
@@ -520,10 +543,17 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     );
   });
 
-  it('a ready executor is NOT a ready reviewer — a silent review config still computes solo', () => {
-    const r = requiredBackendsForConfiguredRecipe({ config: {}, readiness: readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL) });
+  it('neither ready vehicle is a ready reviewer — a silent review config still computes solo', () => {
+    const readiness = carriers.withAuthorVehicle(readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL), { state: 'placed' });
+    const r = requiredBackendsForConfiguredRecipe({ config: {}, readiness });
     assert.deepEqual([r.recipe, r.source, r.backends, r.minShip], ['solo', 'default', [], 0]);
-    assert.equal(recommendRecipe(readinessWith('placed', NEEDS_SKILL, NEEDS_SKILL)).recipe, 'solo');
+    assert.equal(recommendRecipe(readiness).recipe, 'solo');
+    for (const review of ['reviewed', 'council']) {
+      const args = { activity: 'plan-authoring', slot: 'review', config: { 'plan-authoring': { review } } };
+      const baseline = resolveActivityRecipe({ ...args, readiness: readinessWith('missing', NEEDS_SKILL, NEEDS_SKILL) });
+      assert.equal(baseline.recipe, 'solo');
+      assert.deepEqual(resolveActivityRecipe({ ...args, readiness }), baseline);
+    }
   });
 
   it('derives the raw review obligation independently for each review activity', () => {
@@ -555,23 +585,6 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
     assert.throws(() => requiredBackendsForConfiguredRecipe({ config: {}, readiness: noneReady, activity: 'routine' }), /has no review slot/);
   });
 
-  it('the human render names the vehicle state when placed, and the degrade when missing', () => {
-    const placed = formatRecipes(readinessWith('placed'));
-    assert.match(placed, /Subagent \(subagent\) — a full-tool frontier subagent/);
-    assert.match(placed, /Subagent: executor carry \(vehicle placed\)/);
-    assert.match(formatRecipes(readinessWith('missing')), /Subagent → solo: orchestrator only/);
-  });
-
-  it('the JSON report carries the fifth recipe and its plan, placed and missing', () => {
-    const placed = buildReport(readinessWith('placed'));
-    assert.deepEqual(placed.recipes.map((r) => r.id), RECIPE_IDS);
-    const placedPlan = placed.plans.find((p) => p.requested === 'subagent');
-    assert.equal(placedPlan.effective, 'subagent');
-    assert.deepEqual(placedPlan.dispatch, [{ role: CARRY, backend: EXECUTOR, display: EXECUTOR, vehicle: 'placed' }]);
-    const missingPlan = buildReport(readinessWith('missing')).plans.find((p) => p.requested === 'subagent');
-    assert.deepEqual([missingPlan.effective, missingPlan.degraded], ['solo', true]);
-  });
-
   it('the active-recipe line renders the new slots and dispatches no wrapper for the executor', () => {
     const line = composeActiveRecipeLine({ config: { routine: { carrier: 'subagent' } }, source: 'x' }, readinessWith('placed'));
     assert.ok(!line.includes('\n'), 'exactly one line');
@@ -584,37 +597,101 @@ describe('the subagent carrier in the lattice, the resolver and the CLI (spec:ca
 
 // ── the two axes: bridgeEntries (what the renders name) + composeReadiness (how they get it) ──────
 
-describe('bridgeEntries + composeReadiness — the bridge half renders, the carrier survives a detector throw', () => {
+describe('spec:carriers/S30 the two role plans render separately, both vehicles survive a detector throw', () => {
   const boom = () => { throw new Error('corrupt bridge (EISDIR)'); };
   const placed = () => ({ state: 'placed', reason: null, rel: '.claude/agents/executor.md' });
+  const pairings = [['placed', 'placed'], ['missing', 'missing'], ['placed', 'missing'], ['missing', 'placed']];
 
-  it('bridgeEntries drops exactly the executor entry, keeps bridge order, and never mutates its input', () => {
-    const readiness = readinessWith('placed', READY, NEEDS_SKILL);
+  it('the human render gives each role a Subagent plan, with its own state or degrade reason', () => {
+    for (const [executor, author] of pairings) {
+      const text = formatRecipes(readinessWith(executor, READY, READY, author));
+      const lines = text.split('plan for the current environment:')[1].split('\n');
+      const plans = lines.filter((line) => /^  Subagent\b/.test(line));
+      assert.equal(plans.length, 2, text);
+      for (const [role, vehicle, state] of [[CARRY, EXECUTOR, executor], [AUTHOR, AUTHOR, author]]) {
+        const line = plans.find((candidate) => new RegExp(`\\b${role}\\b`).test(candidate));
+        assert.ok(line, `Subagent plan for ${role}`);
+        if (state === 'placed') {
+          assert.ok(line.includes(vehicle) && line.includes('vehicle placed'), line);
+        } else {
+          assert.match(line, /solo/);
+          const reason = lines[lines.indexOf(line) + 1];
+          for (const fact of [role, `${vehicle} vehicle`, state, '/agent-workflow-kit agents']) assert.ok(reason.includes(fact), reason);
+          assert.ok(!reason.includes(role === AUTHOR ? 'executor vehicle' : 'author vehicle'), reason);
+        }
+      }
+    }
+  });
+
+  it('the JSON report carries every plan role and one Subagent plan for each vehicle', () => {
+    for (const [executor, author] of pairings) {
+      const report = buildReport(readinessWith(executor, READY, READY, author));
+      assert.deepEqual(report.recipes.map((r) => r.id), RECIPE_IDS);
+      assert.deepEqual(report.plans.filter((p) => p.requested !== 'subagent').map((p) => [p.requested, p.role]),
+        [['solo', null], ['reviewed', 'review'], ['council', 'review'], ['delegated', 'execute']]);
+      const plans = report.plans.filter((p) => p.requested === 'subagent');
+      assert.deepEqual(plans.map((p) => p.role).sort(), [AUTHOR, CARRY]);
+      for (const [role, vehicle, state] of [[CARRY, EXECUTOR, executor], [AUTHOR, AUTHOR, author]]) {
+        const plan = plans.find((p) => p.role === role);
+        if (state === 'placed') {
+          assert.deepEqual([plan.effective, plan.degraded, plan.dispatch], ['subagent', false, [{ role, backend: vehicle, display: vehicle, vehicle: state }]]);
+        } else {
+          assert.deepEqual([plan.effective, plan.degraded, plan.dispatch], ['solo', true, []]);
+          const reason = plan.degradation[0].reason;
+          for (const fact of [`${vehicle} vehicle`, state, '/agent-workflow-kit agents']) assert.ok(reason.includes(fact), reason);
+          assert.ok(!reason.includes(role === AUTHOR ? 'executor vehicle' : 'author vehicle'), reason);
+        }
+      }
+    }
+  });
+
+  it('quota notes ride bridge dispatches alone, never either vehicle', () => {
+    const readiness = carriers.withAuthorVehicle(readinessWith('placed'), { state: 'placed' });
+    const authorPlan = planRecipe({ ...carriers.SUBAGENT_RECIPE, role: AUTHOR }, readiness);
+    assert.equal(authorPlan.effective, 'subagent');
+    assert.equal(authorPlan.role, AUTHOR);
+    assert.deepEqual(authorPlan.notes, []);
+    assert.deepEqual(planRecipe('subagent', readiness).notes, []);
+    assert.match(notesText(planRecipe('delegated', readiness)), /Each bridge runs the host posture/);
+  });
+
+  it('bridgeEntries drops both vehicles, keeps bridge order, and never mutates its input', () => {
+    const readiness = carriers.withAuthorVehicle(readinessWith('placed', READY, NEEDS_SKILL), { state: 'placed' });
     const snapshot = structuredClone(readiness);
     assert.deepEqual(bridgeEntries(readiness).map((b) => b.name), [CODEX, AGY]);
     assert.deepEqual(readiness, snapshot, 'the input array is untouched');
     assert.deepEqual(bridgeEntries(detect(READY, READY)), detect(READY, READY), 'no vehicle entry — nothing dropped');
   });
 
-  it('composeStatusLine never names the executor, while the lattice still carries the placed vehicle', () => {
-    const readiness = readinessWith('placed');
-    assert.ok(!composeStatusLine(readiness, recommendRecipe(readiness)).includes(EXECUTOR));
+  it('bridgeEntries keeps a bridge outside the review priority, such as the jev bridge', () => {
+    const jev = { name: 'typesafe-jev-bridge', readiness: READY };
+    const readiness = [...readinessWith('placed', READY, READY, 'placed'), jev];
+    assert.deepEqual(bridgeEntries(readiness).map((b) => b.name), [CODEX, AGY, jev.name]);
+  });
+
+  it('composeStatusLine never names either vehicle, while the lattice still carries the placed executor', () => {
+    const readiness = carriers.withAuthorVehicle(readinessWith('placed'), { state: 'placed' });
+    assert.equal(composeStatusLine(readiness, recommendRecipe(readiness)), composeStatusLine(detect(READY, READY), recommendRecipe(detect(READY, READY))));
     assert.equal(planRecipe('subagent', readiness).effective, 'subagent');
   });
 
-  it('surveys the vehicle FIRST and hands a detector throw to the hook exactly once', () => {
-    const order = [];
-    const errors = [];
-    const readiness = composeReadiness('/nowhere', {
-      surveyVehicle: () => { order.push('survey'); return placed(); },
-      detect: () => { order.push('detect'); return boom(); },
-      onDetectError: (err) => errors.push(err),
-    });
-    assert.deepEqual(order, ['survey', 'detect'], 'the vehicle is surveyed before the bridges');
-    assert.equal(errors.length, 1);
-    assert.match(errors[0].message, /corrupt bridge/);
-    assert.deepEqual(readiness.map((b) => b.name), [EXECUTOR], 'the vehicle entry only — the bridge set is empty');
-    assert.equal(readiness[0].readiness, READY);
+  it('surveys both vehicles before detection and preserves every readiness pairing under a detector throw', () => {
+    for (const [executor, author] of pairings) {
+      const order = [];
+      const errors = [];
+      const readiness = composeReadiness('/nowhere', {
+        surveyVehicle: () => { order.push(EXECUTOR); return { ...placed(), state: executor }; },
+        surveyAuthorVehicle: () => { order.push(AUTHOR); return { state: author, rel: '.claude/agents/author.md' }; },
+        detect: () => { order.push('detect'); return boom(); },
+        onDetectError: (err) => errors.push(err),
+      });
+      assert.equal(errors.length, 1);
+      assert.match(errors[0].message, /corrupt bridge/);
+      assert.deepEqual(order.slice(0, -1).sort(), [AUTHOR, EXECUTOR]);
+      assert.equal(order.at(-1), 'detect');
+      assert.deepEqual(readiness.map((b) => [b.name, b.readiness, b.vehicle.state]).sort(),
+        [[AUTHOR, author === 'placed' ? READY : 'missing', author], [EXECUTOR, executor === 'placed' ? READY : 'missing', executor]]);
+    }
   });
 
   it('with NO hook the throw becomes one stderr line and the vehicle still comes back', () => {
@@ -623,28 +700,31 @@ describe('bridgeEntries + composeReadiness — the bridge half renders, the carr
     console.error = (...args) => lines.push(args.join(' '));
     let readiness;
     try {
-      readiness = composeReadiness('/nowhere', { surveyVehicle: placed, detect: boom });
+      readiness = composeReadiness('/nowhere', { surveyVehicle: placed, surveyAuthorVehicle: () => ({ state: 'missing' }), detect: boom });
     } finally {
       console.error = original;
     }
-    assert.deepEqual(readiness.map((b) => b.name), [EXECUTOR]);
+    assert.deepEqual(readiness.map((b) => b.name).sort(), [AUTHOR, EXECUTOR]);
     assert.equal(lines.length, 1, 'exactly one line, never a repeat per caller');
     assert.match(lines[0], /backend detection failed: corrupt bridge/);
   });
 
-  it('CLI: neither --status-line nor --json lists the executor under backends, and subagent still resolves', () => {
+  it('CLI: neither --status-line nor --json lists vehicles under backends, and Subagent plans stay per role', () => {
     const root = mkdtempSync(join(tmpdir(), 'recipes-vehicle-'));
     mkdirSync(join(root, '.claude', 'agents'), { recursive: true });
     writeFileSync(join(root, '.claude', 'agents', 'executor.md'), readFileSync(join(HERE, '..', 'references', 'agents', 'executor.md')));
-    const env = { ...process.env, PATH: '' };
+    const env = { ...stripGitLocationEnv(process.env), PATH: '' };
+    delete env.NODE_TEST_CONTEXT;
     const opts = { encoding: 'utf8', env, cwd: root };
     const report = JSON.parse(execFileSync(process.execPath, [SCRIPT, '--json'], opts));
     const statusLine = execFileSync(process.execPath, [SCRIPT, '--status-line'], opts);
     rmSync(root, { recursive: true, force: true });
-    assert.equal(report.plans.find((p) => p.requested === 'subagent').effective, 'subagent', 'the placed vehicle carries');
+    assert.deepEqual(report.plans.filter((p) => p.requested === 'subagent').map((p) => [p.role, p.effective]).sort(), [[AUTHOR, 'solo'], [CARRY, 'subagent']]);
     const backendsPart = (line) => line.slice(0, line.indexOf(' — run '));
     assert.ok(!backendsPart(report.statusLine).includes(EXECUTOR));
     assert.ok(!backendsPart(statusLine).includes(EXECUTOR));
+    assert.ok(!backendsPart(report.statusLine).includes(AUTHOR));
+    assert.ok(!backendsPart(statusLine).includes(AUTHOR));
   });
 });
 

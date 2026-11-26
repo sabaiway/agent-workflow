@@ -13,7 +13,7 @@ const detect = (codex, agy) => () => [
   { name: CODEX, readiness: codex },
   { name: AGY, readiness: agy },
 ];
-const survey = (state) => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel: '.claude/agents/executor.md' });
+const survey = (state, rel = '.claude/agents/executor.md') => () => ({ state, reason: state === 'unusable' ? 'a symlink' : null, rel });
 
 let cwd;
 beforeEach(() => {
@@ -24,8 +24,8 @@ afterEach(() => rmSync(cwd, { recursive: true, force: true }));
 
 const write = (json) => writeFileSync(join(cwd, CONFIG_REL), json);
 const read = () => readFileSync(join(cwd, CONFIG_REL), 'utf8');
-const run = (argv, { codex = READY, agy = READY, vehicle = 'missing' } = {}) =>
-  main(argv, { cwd, detect: detect(codex, agy), surveyVehicle: survey(vehicle) });
+const run = (argv, { codex = READY, agy = READY, vehicle = 'missing', author = 'missing' } = {}) =>
+  main(argv, { cwd, detect: detect(codex, agy), surveyVehicle: survey(vehicle), surveyAuthorVehicle: survey(author, '.claude/agents/author.md') });
 
 describe('set-recipe — arg parsing (usage → exit 2)', () => {
   it('a bare recipe (no activity) → exit 2 (name the activity)', () => {
@@ -303,32 +303,32 @@ describe('set-recipe — --json schema + readiness permutations', () => {
   }
 });
 
-describe('set-recipe - every slot of the six activities [spec:carriers/S4] [spec:plan-review-loop/S16]', () => {
-  const roundTrip = (qualified, value, { vehicle = 'placed', effective = value } = {}) => {
+describe('set-recipe - every slot of the six activities [spec:carriers/S4] [spec:plan-review-loop/S16] [spec:carriers/S13]', () => {
+  const roundTrip = (qualified, value, { vehicle = 'placed', author = 'placed', effective = value } = {}) => {
     const [activity, slot] = qualified.split('.');
-    const preview = run(['--set', `${qualified}=${value}`], { vehicle });
+    const preview = run(['--set', `${qualified}=${value}`], { vehicle, author });
     assert.equal(preview.code, 0, preview.stderr);
     assert.match(preview.stdout, new RegExp(`${qualified.replace('.', '\\.')}: \\(computed default\\) → ${value}`));
     assert.match(preview.stdout, new RegExp(`effective here: ${effective}`));
     assert.equal(existsSync(join(cwd, CONFIG_REL)), false, 'a preview writes nothing');
 
-    const wrote = run(['--set', `${qualified}=${value}`, '--write'], { vehicle });
+    const wrote = run(['--set', `${qualified}=${value}`, '--write'], { vehicle, author });
     assert.equal(wrote.code, 0, wrote.stderr);
     assert.equal(JSON.parse(read())[activity][slot], value, `${qualified} is on disk`);
 
-    const unset = run(['--unset', qualified, '--write'], { vehicle });
+    const unset = run(['--unset', qualified, '--write'], { vehicle, author });
     assert.equal(unset.code, 0, unset.stderr);
     assert.equal(JSON.parse(read())[activity]?.[slot], undefined, `${qualified} is back to its default`);
     return unset;
   };
 
   it('plan-authoring.author carries a subagent and unsets back to solo', () => {
-    const unset = roundTrip('plan-authoring.author', 'subagent');
+    const unset = roundTrip('plan-authoring.author', 'subagent', { vehicle: 'missing' });
     assert.match(unset.stdout, /effective here: solo/);
   });
 
   it('plan-authoring.fold previews, writes, and unsets back to solo', () => {
-    const unset = roundTrip('plan-authoring.fold', 'subagent');
+    const unset = roundTrip('plan-authoring.fold', 'subagent', { vehicle: 'missing' });
     assert.match(unset.stdout, /effective here: solo/);
   });
 
@@ -351,12 +351,39 @@ describe('set-recipe - every slot of the six activities [spec:carriers/S4] [spec
     assert.match(roundTrip('feedback-triage.review', 'council').stdout, /effective here: reviewed/);
   });
 
-  it('epic.author=subagent unsets back to solo [spec:carriers/S13]', () => { assert.match(roundTrip('epic.author', 'subagent').stdout, /effective here: solo/); });
+  it('epic.author=subagent unsets back to solo', () => { assert.match(roundTrip('epic.author', 'subagent', { vehicle: 'missing' }).stdout, /effective here: solo/); });
   it('epic.review=council unsets back to reviewed', () => { assert.match(roundTrip('epic.review', 'council').stdout, /effective here: reviewed/); });
   it('task.author=delegated unsets back to solo', () => { assert.match(roundTrip('task.author', 'delegated').stdout, /effective here: solo/); });
   it('task.author=subagent uses the placed vehicle', () => { roundTrip('task.author', 'subagent'); });
   it('task.execute=delegated unsets back to solo', () => { assert.match(roundTrip('task.execute', 'delegated').stdout, /effective here: solo/); });
   it('task.execute=subagent unsets back to solo', () => { assert.match(roundTrip('task.execute', 'subagent').stdout, /effective here: solo/); });
+
+  it('plan-authoring.author previews solo naming its missing author vehicle beside a placed executor', () => {
+    const preview = run(['--set', 'plan-authoring.author=subagent'], { author: 'missing', vehicle: 'placed' });
+    assert.equal(preview.code, 0, preview.stderr);
+    assert.match(preview.stdout, /effective here: solo \(requested subagent → degraded/);
+    assert.match(preview.stdout, /author vehicle/u);
+    assert.match(preview.stdout, /\/agent-workflow-kit agents/u);
+    assert.equal(existsSync(join(cwd, CONFIG_REL)), false);
+  });
+
+  it('--help names every activity with its slots, the values and the vehicle of each subagent slot', () => {
+    const r = run(['--help']);
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /plan-authoring → author, fold, review/);
+    assert.match(r.stdout, /routine → carrier, parallel/);
+    assert.match(r.stdout, /epic → author, review/);
+    assert.match(r.stdout, /task → author, execute/);
+    assert.match(r.stdout, /carrier slots accept solo \| subagent/);
+    assert.match(r.stdout, /switch slots accept on \| off/);
+    const clauses = r.stdout.replace(/[`*]/gu, '').replace(/\s+/gu, ' ').split(/;|\.(?=\s)/u);
+    for (const slot of ['plan-authoring.author', 'plan-authoring.fold', 'epic.author']) {
+      assert.ok(clauses.some((clause) => clause.includes(slot) && /author vehicle/u.test(clause)), `${slot} needs the author vehicle`);
+    }
+    for (const slot of ['plan-execution.execute', 'routine.carrier', 'task.author', 'task.execute']) {
+      assert.ok(clauses.some((clause) => /executor/u.test(clause) && (clause.includes(slot) || /(?:all|every) other (?:subagent(?:-capable)? )?slots?/u.test(clause))), `${slot} needs the executor vehicle`);
+    }
+  });
 });
 
 describe('set-recipe — a subagent preview is honest about the executor vehicle', () => {
@@ -407,18 +434,5 @@ describe('set-recipe — a known-prior _README refreshes on a touched write', ()
     const r = run(['--set', 'routine.carrier=subagent', '--write'], { vehicle: 'placed' });
     assert.equal(r.code, 0, r.stderr);
     assert.equal(JSON.parse(read())._README, CANON_README);
-  });
-});
-
-describe('set-recipe — --help lists the registry, not a hand-typed list', () => {
-  it('names every activity with its slots and every slot type with its values', () => {
-    const r = run(['--help']);
-    assert.equal(r.code, 0);
-    assert.match(r.stdout, /plan-authoring → author, fold, review/);
-    assert.match(r.stdout, /routine → carrier, parallel/);
-    assert.match(r.stdout, /epic → author, review/);
-    assert.match(r.stdout, /task → author, execute/);
-    assert.match(r.stdout, /carrier slots accept solo \| subagent/);
-    assert.match(r.stdout, /switch slots accept on \| off/);
   });
 });

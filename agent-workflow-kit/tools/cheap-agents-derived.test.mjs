@@ -103,8 +103,11 @@ describe('agents writer derived review lenses (spec:review-roster/S6)', () => {
 describe('agentsAccepted, the component and its acceptance (spec:carriers/S22)', () => {
   it('is true exactly when a kit agent path of the given file names holds a regular file, judged by lstat and never followed', () => {
     const root = makeProject({});
-    const names = ['executor.md', 'gate-triage.md'];
+    const names = [...new Set([...readBundledAgents().map(({ name }) => name), 'author.md'])];
     const answers = [agentsAccepted(root, names)];
+    mkdirSync(join(root, AGENTS_DIR), { recursive: true });
+    writeFileSync(join(root, AGENTS_DIR, 'author.md'), 'own author\n');
+    answers.push(agentsAccepted(root, names), agentsAccepted(root, ['author.md']));
     mkdirSync(join(root, AGENTS_DIR, 'gate-triage.md'), { recursive: true });
     writeFileSync(join(root, 'elsewhere.md'), 'x\n');
     symlinkSync(join(root, 'elsewhere.md'), join(root, AGENTS_DIR, 'executor.md'));
@@ -114,7 +117,7 @@ describe('agentsAccepted, the component and its acceptance (spec:carriers/S22)',
     writeFileSync(join(root, AGENTS_DIR, 'gate-triage.md'), 'x\n');
     const fifo = (path) => (path === join(root, AGENTS_DIR, 'gate-triage.md') ? FIFO : lstatSync(path));
     answers.push(agentsAccepted(root, names), agentsAccepted(root, ['gate-triage']), agentsAccepted(root, names, { lstat: fifo }));
-    assert.deepEqual(answers, [false, false, true, false, true, false, false]);
+    assert.deepEqual(answers, [false, false, false, false, true, false, true, false, false]);
   });
 
   it('is one export of the read core that the writer, the advisor and the danger check import, none restating it', () => {
@@ -132,7 +135,7 @@ describe('the writer by cells over every kit template kind (spec:carriers/S23)',
     const bodies = Object.fromEntries(writeCheapAgents({ cwd: root, dryRun: true }).plan.map((item) => [item.name, item.content]));
     ageComponent(root);
     const actions = Object.fromEntries(writeCheapAgents({ cwd: root, dryRun: true }).plan.map((item) => [item.name, item.action]));
-    assert.deepEqual(actions, { 'changelog-skeleton.md': 'already-current', 'executor.md': 're-derive', 'gate-triage.md': 'place', 'mechanical-sweep.md': 're-derive', 'review-lens.md': 're-derive', [DERIVED]: 're-derive' });
+    assert.deepEqual(actions, { 'author.md': 'already-current', 'changelog-skeleton.md': 'already-current', 'executor.md': 're-derive', 'gate-triage.md': 'place', 'mechanical-sweep.md': 're-derive', 'review-lens.md': 're-derive', [DERIVED]: 're-derive' });
     assert.equal(writeCheapAgents({ cwd: root, dryRun: false }).wrote, true);
     assert.deepEqual(agentsOf(root), Object.keys(bodies).sort(), 'no copy kept');
     for (const [name, body] of Object.entries(bodies)) assert.equal(bodyOf(root, name), body, name);
@@ -164,7 +167,10 @@ describe('the writer lines (spec:carriers/S24)', () => {
         assert.equal(rowOf(name), `  - ${fileLine({ rel: `${AGENTS_DIR}/${name}`, name, state: stateOf(name) }, dryRun ? undefined : 'written', dryRun)}`, name);
       }
       assert.deepEqual([rowOf('gate-triage.md'), rowOf('changelog-skeleton.md')], [`  - ${AGENTS_DIR}/gate-triage.md: ${dryRun ? 'would place' : 'place'}`, `  - ${AGENTS_DIR}/changelog-skeleton.md: already current`]);
-      assert.match(report, /READ-ONLY tools and NO shell as the kit writes them\b/u);
+      assert.match(report, /^5 vehicles\b[^\n]*\bREAD-ONLY tools\b[^\n]*\bNO shell\b[^\n]*\bas the kit writes them\b/mu);
+      assert.match(report, /^author\b[^\n]*\bwrites? files\b[^\n]*\b(?:no shell|without (?:a )?shell)\b/imu);
+      assert.match(report, /^executor\b[^\n]*\bone FULL-TOOL\b[^\n]*\bexecution\b[^\n]*\bwrite-capable routine slice\b/mu);
+      assert.doesNotMatch(report.split('\n').find((line) => /^executor\b/u.test(line)), /\bauthoring\b/u);
       assert.doesNotMatch(report, /\bcustomized\b|\bpreserved\b|delete the file|earlier body|\b(?:you|user) edited\b|hand edit/iu);
     }
   });
@@ -217,7 +223,7 @@ describe('the STOPs (spec:carriers/S25)', () => {
       return writeFileSync(path, ...rest);
     };
     assert.throws(() => writeCheapAgents({ cwd: root, dryRun: false }, { writeFile }), (error) => error.code === CHEAP_AGENTS_SYMLINK && error.message.includes(`${AGENTS_DIR}/gate-triage.md`));
-    assert.deepEqual([readFileSync(elsewhere, 'utf8'), bodyOf(root, 'changelog-skeleton.md')], ['x\n', readBundledAgents()[0].content]);
+    assert.deepEqual([readFileSync(elsewhere, 'utf8'), bodyOf(root, 'changelog-skeleton.md')], ['x\n', readBundledAgents().find(({ name }) => name === 'changelog-skeleton.md').content]);
   });
 
   it('the read core keeps its answer: the executor survey reads a non-regular executor as unusable with the reason', () => {

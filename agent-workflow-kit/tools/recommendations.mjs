@@ -53,6 +53,7 @@ import { HOOK_FILE_REL, HOOKS_DIR, writeGateHook } from './gate-hook.mjs';
 import { detectBackends } from './detect-backends.mjs';
 import { isDirectRun } from './direct-run.mjs';
 import { ACTIVITIES, resolveActivityRecipe, composeReadiness, safeLine } from './recipes.mjs';
+import { AUTHOR_ROLE, CARRY_ROLE, slotRole } from './carriers.mjs';
 import { surveyFamily, surveyGateHook } from './family-registry.mjs';
 import { probeSandboxMasks, needsMasksApply, patternToRel } from './sandbox-masks.mjs';
 import { SKIP_REASON_CAP, composeSkip, renderSkip } from './advisor-skip/index.mjs';
@@ -89,7 +90,7 @@ import { ATTRIBUTION_KEY, LEGACY_ATTRIBUTION_KEY, attributionHidesText, effectiv
 import { planGlobalRemoval } from './hide-footprint.mjs';
 import { readDeployedScripts, INSTALLER_REL, NODE_EVIDENCE, probeNodeEvidence } from './node-evidence.mjs';
 // The vehicle READINESS comes from the read-only half — the same survey `recipes` and `status` read.
-import { surveyExecutorVehicle, readExecutorPosture, agentsAccepted, readStamp, readFsDeps, AGENTS_DIR, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
+import { surveyExecutorVehicle, surveyAuthorVehicle, readExecutorPosture, agentsAccepted, readStamp, readFsDeps, AGENTS_DIR, AUTHOR_VEHICLE, WORKFLOW_STAMP, EXPECTED_WORKFLOW_VERSION } from './cheap-agents-read.mjs';
 // The ack store's path, keys, lane registry, fingerprint and guarded reader live in their own leaf
 // (contract: kit/ack-store) — `status` reads the same store, and a second copy is what drifts.
 import {
@@ -305,7 +306,7 @@ export const WHATS = Object.freeze({
   'state-block.not-current': `${STATE_BLOCK_HOOK_FILE_REL} is absent or differs from the body the kit writes for it — written with that body, with no question`,
   'mcp-channel': "the kit's read-only MCP server is not registered here — path questions and literal searches stay shell strings",
   'mcp-channel.differing': 'an "{server}" MCP entry is already declared here and DIFFERS from the registration this kit copy would write',
-  agents: '{n} bundled subagent vehicle(s) not placed (Claude Code) — {ro} read-only, {ex} the full-tool executor; the apply PREVIEWS first',
+  agents: '{n} bundled subagent vehicle(s) not current (Claude Code) — {ro} read-only, {au} author, {ex} full-tool executor; the apply PREVIEWS first',
   'agents.not-current': '{n} kit agent file(s) in .claude/agents/ not current — each is written with the body the kit writes for it, with no question',
   'executor-vehicle': '{n} slot(s) configured subagent but the executor vehicle is {state}{reason} — every such slot runs solo until it is usable',
   attribution: 'AGENTS.md says attribution off but .claude/settings.json does not hide the harness trailer and PR text',
@@ -373,7 +374,7 @@ export const BENEFITS = Object.freeze({
   'read-lane': 'velocity — pipes/chains of your seeded read-only commands auto-approve instead of prompting (opt-in, conservatively classified)',
   'state-block': 'no silent stalls — a turn ending on «you are not needed», or on work it never started, warns at once instead of waiting to be spotted',
   'mcp-channel': 'velocity — path facts and literal searches arrive as typed tool calls whose arguments are JSON fields, never a shell string',
-  agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle (no prompt flood); the executor carries slices you verify',
+  agents: 'cost and quiet — cheap-model mechanical work, no shell on a read-only vehicle or the author; the executor carries slices you verify',
   'executor-vehicle': 'carrier readiness — a slot you configured subagent dispatches the subagent it names instead of silently running solo',
   attribution: 'attribution — the harness adds no Co-Authored-By trailer, PR text or session link, as your AGENTS.md block requires',
   'footprint-global': 'hygiene — the legacy machine-global excludes stop ignoring kit paths in every other repository on this host',
@@ -607,7 +608,7 @@ const probeReviewRecipe = ({ root, deps, add, skip }) => {
     const degraded = [];
     for (const [activity, def] of Object.entries(ACTIVITIES)) {
       for (const slot of Object.keys(def.slots)) {
-        if (config?.[activity]?.[slot] === 'subagent') continue; // the executor vehicle has its own probe
+        if (config?.[activity]?.[slot] === 'subagent') continue; // the subagent vehicles have their own probe
         const r = resolveActivityRecipe({ config, readiness, activity, slot });
         if (r.degradedFrom) degraded.push(`${activity}.${slot}: configured ${r.degradedFrom} degrades to ${r.recipe} (${r.reason})`);
       }
@@ -1161,7 +1162,8 @@ const probeCheapAgents = ({ root, deps, add, skip, shared }) => {
     const bundled = new Set(readBundledAgents(deps).map((template) => template.name));
     const toPlace = planned.filter((item) => bundled.has(item.name));
     const executors = toPlace.filter((item) => item.name === EXECUTOR_VEHICLE).length;
-    add('agents', fillTemplate(WHATS.agents, { n: toPlace.length, ex: executors, ro: toPlace.length - executors }),
+    const authors = toPlace.filter((item) => item.name === AUTHOR_VEHICLE).length;
+    add('agents', fillTemplate(WHATS.agents, { n: toPlace.length, ex: executors, au: authors, ro: toPlace.length - executors - authors }),
       `node ${q(toolPath('cheap-agents.mjs'))} --cwd ${q(root)}`, 'agents',
       `hidden-mode deployments only: after the --apply the preview prints, run node ${q(toolPath('hide-footprint.mjs'))} --dir ${q(root)} --reconcile so the placed .claude/agents/ stays invisible to git status`,
     );
@@ -1170,11 +1172,32 @@ const probeCheapAgents = ({ root, deps, add, skip, shared }) => {
   }
 };
 
-// The subagent carrier's ONE instrument (contract: kit/carriers). Neither neighbour can report this
+// The subagent carrier's instrument per role (contract: kit/carriers). Neither neighbour can report this
 // state: `probeReviewRecipe` skips a slot configured `subagent` by construction, and the `agents` key
 // above names files to place or write, never a configured slot that runs solo. It yields to
-// `agents.not-current`, whose apply writes the executor (the frozen order runs `agents` first).
+// `agents.not-current`, whose apply writes the vehicles (the frozen order runs `agents` first).
 const VEHICLE_BROKEN_STATES = Object.freeze(['missing', 'unusable']);
+const VEHICLES_SOLO_LEAD = 'slot(s) configured subagent run solo — ';
+
+const formatVehicleWhat = (broken) => {
+  const count = broken.reduce((total, vehicle) => total + vehicle.count, 0);
+  if (broken.every((vehicle) => vehicle.role === CARRY_ROLE)) {
+    const { state, reason } = broken[0];
+    const room = templateBudget(WHATS['executor-vehicle']) - String(count).length - state.length - 2;
+    return fillTemplate(WHATS['executor-vehicle'], {
+      n: count,
+      state,
+      reason: reason && room > 0 ? `: ${truncatedTo(reason, room)}` : '',
+    });
+  }
+  const prefix = `${count} ${VEHICLES_SOLO_LEAD}`;
+  const labels = broken.map(({ role, state }) => `${role === AUTHOR_ROLE ? 'author' : 'executor'} vehicle is ${state}`);
+  const reasons = broken.filter(({ reason }) => reason).length;
+  const room = ITEM_LINE_CAP - prefix.length - labels.join('; ').length - 2 * reasons;
+  const reasonBudget = reasons ? Math.floor(room / reasons) : 0;
+  return prefix + broken.map(({ reason }, index) =>
+    labels[index] + (reason && reasonBudget > 0 ? `: ${truncatedTo(reason, reasonBudget)}` : '')).join('; ');
+};
 
 // The writer's plain dry run, the call the `agents` key makes: its refusal is the last precondition.
 const writerBlock = (root, deps) => {
@@ -1194,11 +1217,20 @@ const probeExecutorVehicle = ({ root, deps, add, skip, shared }) => {
     // never an item computed over a shape nothing accepted.
     const { config } = loadConfig(root, deps.readFile ?? readFileSync, deps.lstat ?? lstatSync);
     const configured = Object.entries(ACTIVITIES).flatMap(([activity, def]) =>
-      Object.keys(def.slots).filter((slot) => config?.[activity]?.[slot] === 'subagent'));
-    if (configured.length === 0) return;
-    const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
-    if (!VEHICLE_BROKEN_STATES.includes(survey.state) || shared?.agentsNotCurrent) return;
-    const reason = safeLine(survey.reason ?? '');
+      Object.keys(def.slots).filter((slot) => config?.[activity]?.[slot] === 'subagent').map((slot) => slotRole(activity, slot)));
+    if (configured.length === 0 || shared?.agentsNotCurrent) return;
+    const broken = [];
+    const authorCount = configured.filter((role) => role === AUTHOR_ROLE).length;
+    if (authorCount > 0) {
+      const survey = (deps.surveyAuthorVehicle ?? surveyAuthorVehicle)(root, deps);
+      if (survey.state !== 'placed') broken.push({ role: AUTHOR_ROLE, count: authorCount, state: survey.state, reason: safeLine(survey.reason ?? '') });
+    }
+    const carryCount = configured.filter((role) => role === CARRY_ROLE).length;
+    if (carryCount > 0) {
+      const survey = (deps.surveyVehicle ?? surveyExecutorVehicle)(root, deps);
+      if (VEHICLE_BROKEN_STATES.includes(survey.state)) broken.push({ role: CARRY_ROLE, count: carryCount, state: survey.state, reason: safeLine(survey.reason ?? '') });
+    }
+    if (broken.length === 0) return;
     const { posture, reason: settingsReason } = readExecutorPosture(root, deps);
     const stamp = readStamp(join(root, WORKFLOW_STAMP), readFsDeps(deps));
     const preconditions = [
@@ -1210,15 +1242,10 @@ const probeExecutorVehicle = ({ root, deps, add, skip, shared }) => {
     // the posture is already unreadable so that reason is named once.
     const blocked = posture === null ? null : writerBlock(root, deps);
     if (blocked) preconditions.push(`${blocked} — fix that`);
-    const room = templateBudget(WHATS['executor-vehicle']) - String(configured.length).length - survey.state.length - 2;
     add(
       'executor-vehicle',
-      fillTemplate(WHATS['executor-vehicle'], {
-        n: configured.length,
-        state: survey.state,
-        reason: reason && room > 0 ? `: ${truncatedTo(reason, room)}` : '',
-      }),
-      // The writer places a missing vehicle and writes a placed executor whose bytes differ from the derived body (an invalid
+      formatVehicleWhat(broken),
+      // The writer places a missing vehicle and writes a placed author or executor whose bytes differ from the kit's body (an invalid
       // frontmatter or read-only tools included), so those states need no precondition; every precondition above is a refusal the apply would meet.
       `node ${q(toolPath('cheap-agents.mjs'))} --apply --cwd ${q(root)}`,
       'executor-vehicle',

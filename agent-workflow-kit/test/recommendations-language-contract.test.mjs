@@ -1146,13 +1146,24 @@ describe('spec:init-project/S50 — shipped text of the five writes', () => {
 
 describe('spec:carriers/S28 shipped text of the kit agent files rule', () => {
   const [OWN, RETIRED] = ['.claude/agents/<name>.local.md', /--executor|\bpreserved\b|never overwritten|delete the file to reseed|Only on an explicit yes/iu];
+  const EXECUTOR_AUTHORING = /execution\s*[,/]\s*authoring|of execution\s*,\s*of plan\/contract authoring/iu;
   it("agents.md, the writer's --help and header and the README agents row state the rule and the own-vehicle file with no retired word; agents.md's step 2, the base arm's yield, the router budget, upgrade.md and ensure-configs", async () => {
     const help = [];
     (await import('../tools/cheap-agents.mjs')).main(['--help'], { log: (line) => help.push(line) });
     const surfaces = { 'agents.md': read('references/modes/agents.md'), '--help': help.join('\n'), header: read('tools/cheap-agents.mjs').split('\nimport ')[0], 'README agents row': README.split('\n').find((line) => line.startsWith('| `/agent-workflow-kit agents`')) ?? '' };
-    const misses = Object.entries(surfaces).flatMap(([name, text, flat = text.replace(/\s+/gu, ' ')]) => [
-      !/\bwith no question\b/u.test(flat) && `${name}: no rule`, !flat.includes(OWN) && `${name}: no ${OWN}`, RETIRED.test(flat) && `${name}: ${flat.match(RETIRED)?.[0]}`,
-      /\bcustomized\b/iu.test(flat.replace(/`customized`/gu, '')) && `${name}: customized outside its code span`].filter(Boolean));
+    const misses = Object.entries(surfaces).flatMap(([name, text]) => {
+      const flat = text.replace(/(?:^|\n)\/\/\s*/gu, ' ').replace(/\s+/gu, ' ');
+      const sentences = flat.replace(/[`*]/gu, '').split(/\.(?=\s)/u);
+      const authorSentences = sentences.filter((sentence) => /(?<![\w.-])author(?![\w.-])/u.test(sentence));
+      return [
+        !/\bwith no question\b/u.test(flat) && `${name}: no rule`, !flat.includes(OWN) && `${name}: no ${OWN}`, RETIRED.test(flat) && `${name}: ${flat.match(RETIRED)?.[0]}`,
+        /\bcustomized\b/iu.test(flat.replace(/`customized`/gu, '')) && `${name}: customized outside its code span`,
+        !authorSentences.some((sentence) => sentence.includes('Read, Grep, Glob, Write, Edit')) && `${name}: no author vehicle with five tools`,
+        !authorSentences.some((sentence) => /\b(?:no|without)[ -]+(?:a\s+)?(?:shell|Bash)\b/iu.test(sentence)) && `${name}: no no-shell author rule`,
+        !/\bone\b[^.;]*\bexecutor\b|\bexecutor\b[^.;]*\bone\b/iu.test(flat) && `${name}: no one executor`,
+        EXECUTOR_AUTHORING.test(flat) && `${name}: executor still carries authoring`,
+        sentences.some((sentence) => /\bdrafts\b(?:(?!\bfrom\b)[^;])*\bbriefs?\b/u.test(sentence)) && `${name}: the author drafts a brief`].filter(Boolean);
+    });
     assert.deepEqual(misses, []);
     const step2 = between(read('references/modes/agents.md'), '\n2. ', '\n3. ').replace(/\s+/gu, ' ');
     assert.ok(['agents.not-current', '--apply'].every((word) => step2.includes(word)) && /\bwith no question\b/u.test(step2) && /\bfirst placement\b[^.]*\byes\b/iu.test(step2), step2);
@@ -1160,6 +1171,35 @@ describe('spec:carriers/S28 shipped text of the kit agent files rule', () => {
     assert.ok(Buffer.byteLength(MODE_DOC) + Buffer.byteLength(read('SKILL.md')) <= 52224);
     namesAgentsItem('upgrade.md', between(UPGRADE_DOC, '**What the executor ensure does.**', '\n\n'));
     namesAgentsItem('ensure-configs help', between(between(read('tools/ensure-configs.mjs'), 'Usage:', '`;'), 'The executor ensure writes nothing', 'A fifth writes too'));
+  });
+
+  it("recipes.md step 2 prints a named slot's plan by its role and both role plans with no slot named", () => {
+    const step2 = between(read('references/modes/recipes.md'), '\n2. ', '\n3. ').replace(/[`*]/gu, '').replace(/\s+/gu, ' ');
+    assert.ok(step2.includes('planRecipe(chosenId, detection, slotRole(activity, slot))'), step2);
+    assert.match(step2, /\bboth role-specific plans\b/u);
+  });
+
+  it('the recipes, set-recipe, status and README role text names the vehicle of the slot role', () => {
+    const roleSurfaces = {
+      'recipes.md': read('references/modes/recipes.md'),
+      'set-recipe.md': read('references/modes/set-recipe.md'),
+      'status.md': read('references/modes/status.md'),
+      'README recipes row': README.split('\n').find((line) => line.startsWith('| `/agent-workflow-kit recipes`')) ?? '',
+      'root README recipe line': between(read('../README.md'), '**Subagent** (', '\n\n'),
+      'recommendations.md executor-vehicle item': between(MODE_DOC, '**The `executor-vehicle` item', '\n\n'),
+    };
+    const misses = Object.entries(roleSurfaces).flatMap(([name, text]) => {
+      const flat = text.replace(/[`*]/gu, '').replace(/\s+/gu, ' ');
+      const clauses = flat.split(/;|\.(?=\s)/u);
+      const authorSlot = /\bauthor(?:-role|ing)? slots?\b|\bslots? (?:of (?:the )?)?author role\b|plan-authoring\.author/u;
+      const carrySlot = /\bcarry(?:-role)? slots?\b|\bslots? (?:of (?:the )?)?carry role\b|\b(?:all|every) other (?:subagent(?:-capable)? )?slots?\b/u;
+      return [
+        !clauses.some((clause) => authorSlot.test(clause) && /\bauthor vehicle\b/u.test(clause)) && `${name}: author slot does not name the author vehicle`,
+        !clauses.some((clause) => carrySlot.test(clause) && /\bexecutor\b/u.test(clause)) && `${name}: carry slot does not name the executor`,
+        EXECUTOR_AUTHORING.test(flat) && `${name}: executor still carries authoring`,
+      ].filter(Boolean);
+    });
+    assert.deepEqual(misses, []);
   });
 });
 

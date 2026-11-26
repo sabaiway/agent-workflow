@@ -1016,10 +1016,11 @@ describe('surveyGateHook — wired (either settings file) / file placed / declar
 });
 
 const VEHICLE_REL = '.claude/agents/executor.md';
+const AUTHOR_REL = '.claude/agents/author.md';
 const AGENTS_ENOENT = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 // A hermetic bundle + project fs: bundle templates under /bundle, project files under .claude/agents/,
 // and the executor survey injected — the vehicle's state is an axis of its own, never fixture noise.
-const vehicleFs = ({ bundle, project = {}, executor = { state: 'missing', reason: null } }) => ({
+const vehicleFs = ({ bundle, project = {}, executor = { state: 'missing', reason: null }, author = { state: 'missing', reason: null } }) => ({
   bundleDir: '/bundle',
   readdir: () => Object.keys(bundle),
   readFile: (p) => {
@@ -1038,6 +1039,7 @@ const vehicleFs = ({ bundle, project = {}, executor = { state: 'missing', reason
     throw AGENTS_ENOENT();
   },
   surveyVehicle: () => ({ ...executor, rel: VEHICLE_REL }),
+  surveyAuthorVehicle: () => ({ ...author, rel: AUTHOR_REL }),
 });
 
 const TWO_VEHICLES = { 'sweep.md': 'S', 'triage.md': 'T' };
@@ -1045,7 +1047,7 @@ const TWO_VEHICLES = { 'sweep.md': 'S', 'triage.md': 'T' };
 describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed vs bundled)', () => {
   it('none placed → placed=0 with the bundle count (the welcome-mat agents rung keys on zero placed)', () => {
     const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES }));
-    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 0, executor: 'missing' });
+    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 0, author: 'missing', executor: 'missing' });
   });
 
   it('an identical AND a customized copy both count as placed (a customization is present, never "absent")', () => {
@@ -1053,7 +1055,7 @@ describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed 
       bundle: TWO_VEHICLES,
       project: { 'sweep.md': 'S', 'triage.md': 'customized' },
     }));
-    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 2, executor: 'missing' });
+    assert.deepEqual(r, { bundled: 2, readOnly: 2, placed: 2, author: 'missing', executor: 'missing' });
   });
 
   it('a symlinked executor.md never collapses the block: the read-only counts survive and the executor reads unusable', () => {
@@ -1064,13 +1066,13 @@ describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed 
     deps.lstat = (p) => (String(p).endsWith('executor.md')
       ? { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }
       : lstat(p));
-    assert.deepEqual(surveyCheapAgents('/p', deps), { bundled: 3, readOnly: 2, placed: 2, executor: 'unusable', executorReason: 'a symlink' });
+    assert.deepEqual(surveyCheapAgents('/p', deps), { bundled: 3, readOnly: 2, placed: 2, author: 'missing', executor: 'unusable', executorReason: 'a symlink' });
   });
 
   it('a symlinked .claude/agents ancestor: no vehicle file is read, the counts are not claimed, the executor state survives', () => {
     const bundle = { ...TWO_VEHICLES, 'executor.md': 'E' };
     const project = { 'sweep.md': 'S', 'triage.md': 'T', 'executor.md': 'E' };
-    const deps = vehicleFs({ bundle, project, executor: { state: 'unusable', reason: '.claude/agents is a symlink — refusing to write through it' } });
+    const deps = vehicleFs({ bundle, project, executor: { state: 'unusable', reason: '.claude/agents is a symlink — refusing to write through it' }, author: { state: 'unusable', reason: 'a symlinked ancestor' } });
     const readFile = deps.readFile;
     const readProject = [];
     deps.readFile = (p) => { if (String(p).includes('.claude/agents')) readProject.push(String(p)); return readFile(p); };
@@ -1081,12 +1083,14 @@ describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed 
     assert.match(r.error, /symlink/u, 'the refusal is the error');
     assert.equal(r.executor, 'unusable');
     assert.match(r.executorReason, /symlink/u);
+    assert.equal(r.author, 'unusable');
+    assert.equal(r.authorReason, 'a symlinked ancestor');
     assert.equal(r.placed, undefined, 'no count is claimed through a symlinked ancestor');
     assert.deepEqual(readProject, [], 'no vehicle file was read through the symlink');
   });
 
   it('a symlinked read-only vehicle: the placement plan refuses, and the error still carries the executor state', () => {
-    const deps = vehicleFs({ bundle: { ...TWO_VEHICLES, 'executor.md': 'E' }, project: { 'sweep.md': 'S' }, executor: { state: 'placed', reason: null } });
+    const deps = vehicleFs({ bundle: { ...TWO_VEHICLES, 'executor.md': 'E' }, project: { 'sweep.md': 'S' }, executor: { state: 'placed', reason: null }, author: { state: 'stale', reason: 'differs from the bundled template' } });
     const lstat = deps.lstat;
     deps.lstat = (p) => (String(p).endsWith('/sweep.md')
       ? { isSymbolicLink: () => true, isFile: () => false, isDirectory: () => false }
@@ -1094,12 +1098,15 @@ describe('surveyCheapAgents — the kit-placed .claude/agents/ vehicles (placed 
     const r = surveyCheapAgents('/p', deps);
     assert.match(r.error, /sweep\.md exists but is not a regular file/u);
     assert.equal(r.executor, 'placed', 'the surveyed state survives a later refusal');
+    assert.equal(r.author, 'stale');
+    assert.equal(r.authorReason, 'differs from the bundled template');
     assert.equal(r.placed, undefined);
   });
 
-  it('an executor reason carrying escape sequences reaches the envelope as one clean line', () => {
-    const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES, executor: { state: 'unusable', reason: 'tools: \x1b[31mRead\x1b[0m\nis read-only' } }));
+  it('executor and author reasons carrying escape sequences reach the envelope as clean lines', () => {
+    const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES, executor: { state: 'unusable', reason: 'tools: \x1b[31mRead\x1b[0m\nis read-only' }, author: { state: 'widened', reason: 'tools: \x1b[31mBash\x1b[0m\nis outside the author tools' } }));
     assert.equal(r.executorReason, 'tools: Read is read-only');
+    assert.equal(r.authorReason, 'tools: Bash is outside the author tools');
   });
 
   it('an unreadable bundle → a localized error field (never a crash, never a false zero)', () => {
@@ -1129,20 +1136,58 @@ describe('status carries the resolved carrier and the vehicle behind it (spec:ca
     for (const slot of Object.values(r.activities.routine)) {
       assert.deepEqual(Object.keys(slot).sort(), ['degradedFrom', 'recipe', 'source']);
     }
+    for (const [author, executor] of [['placed', 'missing'], ['missing', 'placed']]) {
+      const recipes = surveyRecipes('/p', {
+        detect: () => [], lstat: () => ({}), readFile: () => JSON.stringify({ 'plan-authoring': { author: 'subagent', fold: 'subagent' }, epic: { author: 'subagent' }, routine: { carrier: 'subagent' } }),
+        surveyVehicle: () => ({ state: executor, reason: null, rel: VEHICLE_REL }),
+        surveyAuthorVehicle: () => ({ state: author, reason: null, rel: AUTHOR_REL }),
+      });
+      const env = buildEnvelope([], { dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true, stamps: [] }, { settings: { recipes } });
+      assert.deepEqual(env.project.settings.recipes.activities, recipes.activities);
+      const text = render(toViewModel(env), { mode: 'plain' });
+      for (const [activity, slot, role, state] of [['plan-authoring', 'author', 'author', author], ['plan-authoring', 'fold', 'author', author], ['epic', 'author', 'author', author], ['routine', 'carrier', 'executor', executor]]) {
+        const ready = state === 'placed';
+        assert.deepEqual(recipes.activities[activity][slot], { recipe: ready ? 'subagent' : 'solo', source: 'config', degradedFrom: ready ? null : 'subagent' });
+        const row = `${activity}.${slot}: ${ready ? 'subagent (config)' : `solo (config) ← degraded from subagent — runs solo until the ${role} vehicle is usable (/agent-workflow-kit agents)`}`;
+        assert.ok(text.includes(row), row);
+      }
+    }
   });
 
-  it('every executor state reaches the agents block, and only a state with a reason carries one', () => {
+  it('every executor and author state reaches the agents block; counts exclude both vehicles from read-only', () => {
     const states = [
       { state: 'placed', reason: null },
       { state: 'customized', reason: null },
       { state: 'missing', reason: null },
       { state: 'unusable', reason: 'tools: Read, Grep is read-only' },
     ];
+    const authorStates = [
+      { state: 'placed', reason: null },
+      { state: 'missing', reason: null },
+      { state: 'stale', reason: 'differs from the bundled template' },
+      { state: 'widened', reason: 'tools: Bash' },
+      { state: 'unusable', reason: 'a symlink' },
+    ];
+    const bundle = { ...TWO_VEHICLES, 'executor.md': 'E', 'author.md': 'A' };
     for (const executor of states) {
-      const r = surveyCheapAgents('/p', vehicleFs({ bundle: TWO_VEHICLES, executor }));
-      assert.equal(r.executor, executor.state);
-      assert.equal(r.executorReason ?? null, executor.reason, `${executor.state} reason`);
-      assert.equal(r.bundled, 2, 'the counts span every vehicle, the executor included');
+      for (const author of authorStates) {
+        const project = { ...TWO_VEHICLES, ...(executor.state === 'missing' ? {} : { 'executor.md': 'E' }), ...(author.state === 'missing' ? {} : { 'author.md': 'A' }) };
+        const r = surveyCheapAgents('/p', vehicleFs({ bundle, project, executor, author }));
+        assert.equal(r.executor, executor.state);
+        assert.equal(r.author, author.state);
+        for (const [key, vehicle] of [['executorReason', executor], ['authorReason', author]]) {
+          if (vehicle.reason) assert.equal(r[key], vehicle.reason);
+          else assert.ok(!Object.hasOwn(r, key), `${vehicle.state}: no ${key}`);
+        }
+        assert.equal(r.bundled, 4, 'counts span every vehicle');
+        assert.equal(r.readOnly, 2, 'neither author nor executor is read-only');
+        const placed = 2 + Number(['placed', 'customized'].includes(executor.state)) + Number(author.state === 'placed');
+        assert.equal(r.placed, placed);
+        const env = buildEnvelope([], { dir: '/p', deployed: true, docsAiPresent: true, hiddenFence: true, stamps: [] }, { settings: { agents: r } });
+        assert.deepEqual(env.project.settings.agents, r);
+        const stateLine = (vehicle) => `${vehicle.state}${vehicle.reason ? ` (${vehicle.reason})` : ''}`;
+        assert.ok(render(toViewModel(env), { mode: 'plain' }).includes(`${placed}/4 placed — 2 read-only, author ${stateLine(author)}, executor ${stateLine(executor)}`));
+      }
     }
   });
 
@@ -1150,9 +1195,11 @@ describe('status carries the resolved carrier and the vehicle behind it (spec:ca
     const s = surveySettings('/p', {
       ...settingsFs({ project: undefined, local: undefined }),
       exists: () => false,
-      ...vehicleFs({ bundle: TWO_VEHICLES, executor: { state: 'customized', reason: null } }),
+      ...vehicleFs({ bundle: { ...TWO_VEHICLES, 'author.md': 'A', 'executor.md': 'E' }, executor: { state: 'customized', reason: null }, author: { state: 'stale', reason: 'differs from the bundled template' } }),
     });
     assert.equal(s.agents.executor, 'customized');
+    assert.equal(s.agents.author, 'stale');
+    assert.equal(s.agents.authorReason, 'differs from the bundled template');
   });
 });
 

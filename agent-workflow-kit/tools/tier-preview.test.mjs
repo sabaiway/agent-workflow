@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ACTIVITIES, SLOT_RECIPES, withVehicle } from './carriers.mjs';
+import { TIER_TARGETS } from './reference-profile.mjs';
 import { SEED_CONFIG, serializeConfig } from './orchestration-config.mjs';
-import { planRecipe } from './recipes.mjs';
+import { composeReadiness, planRecipe, RECIPES } from './recipes.mjs';
 import { failAt, makeProject, readinessOf, runOffer } from './tier-preview.test/harness.test.mjs';
 
 const gaps = await import('./profile-gaps.mjs').catch(() => ({}));
@@ -23,7 +24,7 @@ const WORDS = ['present', 'offered', 'declined', 'undecidable'];
 const TARGETS = [['epic', 'author', ['subagent', 'solo']], ['epic', 'review', ['reviewed', 'solo']], ['task', 'author', ['subagent', 'solo']], ['task', 'execute', ['subagent', 'solo']]];
 const SLOT_LINE_RE = /^ {2}([a-z-]+)\.([a-z]+) = ([a-z]+)((?: — [a-z]+ skipped: .+)*)$/;
 const NONE_READY = {};
-const ALL_READY = { codex: 'ready', agy: 'ready', executor: 'placed' };
+const ALL_READY = { codex: 'ready', agy: 'ready', executor: 'placed', author: 'placed' };
 const seed = (extra = {}) => serializeConfig({ ...SEED_CONFIG, ...extra });
 const record = (declined) => JSON.stringify({ schema: 1, declined }, null, 2) + '\n';
 const EVERY_TARGET = { epic: { author: 'solo', review: 'solo' }, task: { author: 'solo', execute: 'solo' } };
@@ -58,20 +59,62 @@ const preview = async (options, readiness = NONE_READY) => {
 const bytesOf = (root, rel) => readFileSync(join(root, rel));
 const childOf = (tree, name) => tree?.entries?.find(([entry]) => entry === name)?.[1] ?? null;
 const configOf = (tree) => childOf(childOf(childOf(tree, 'docs'), 'ai'), 'orchestration.json');
+const assertSkippedVehicle = (line, role, readiness) => {
+  const vehicle = role === 'author' ? 'author' : 'executor';
+  const parts = line.split(' — subagent skipped: ');
+  assert.equal(parts.length, 2, line);
+  const reason = parts[1];
+  assert.ok(reason, line);
+  assert.ok(reason.includes(`${vehicle} vehicle`), reason);
+  assert.ok(!reason.includes(role === 'author' ? 'executor vehicle' : 'author vehicle'), reason);
+  assert.ok(reason.includes('/agent-workflow-kit agents'), reason);
+  const plan = planRecipe({ ...RECIPES.find((recipe) => recipe.id === 'subagent'), role }, readiness);
+  assert.equal(reason, plan.degradation[0].reason);
+};
 
 describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule', () => {
-  for (const [name, readiness] of [
-    ['nothing ready', NONE_READY],
-    ['every provider ready', ALL_READY],
-    ['only the review bridge ready and the vehicle placed', { agy: 'ready', executor: 'placed' }],
-    ['the execute bridge ready and the vehicle missing', { codex: 'ready' }],
-    ['the vehicle unusable', { codex: 'needs-credentials', agy: 'degraded', executor: 'unusable' }],
+  for (const [name, readiness, authorValue] of [
+    ['nothing ready', NONE_READY, 'solo'],
+    ['every provider ready', ALL_READY, 'subagent'],
+    ['only the review bridge ready and the executor placed', { agy: 'ready', executor: 'placed' }, 'solo'],
+    ['the execute bridge ready and both vehicles missing', { codex: 'ready' }, 'solo'],
+    ['the vehicles unusable', { codex: 'needs-credentials', agy: 'degraded', executor: 'unusable', author: 'unusable' }, 'solo'],
   ]) {
     it(`resolves every absent slot over ${name}`, async () => {
       const deps = readinessOf(readiness);
       const { run } = await preview({ files: { [CONFIG]: seed() } }, readiness);
-      const expected = TARGETS.map(([activity, slot, candidates]) => expectedSlot(activity, slot, candidates, deps));
-      assert.deepEqual(under(run.lines, 'epic-task-slots').slice(1), expected);
+      const [authorLine, ...rest] = under(run.lines, 'epic-task-slots').slice(1);
+      assert.equal(authorLine.split(' — ')[0], `  epic.author = ${authorValue}`);
+      if (authorValue === 'solo') assertSkippedVehicle(authorLine, 'author', composeReadiness('/nowhere', deps));
+      else assert.equal(authorLine, '  epic.author = subagent');
+      assert.deepEqual(rest, TARGETS.slice(1).map(([activity, slot, candidates]) => expectedSlot(activity, slot, candidates, deps)));
+    });
+  }
+
+  for (const [name, readiness, expectedLines, expectedConfig] of [
+    ['executor alone', { executor: 'placed', author: 'missing' },
+      ['  epic.author = solo', '  epic.review = reviewed', '  task.author = subagent', '  task.execute = subagent'],
+      { epic: { author: 'solo', review: 'reviewed' }, task: { author: 'subagent', execute: 'subagent' } }],
+    ['author alone', { executor: 'missing', author: 'placed' },
+      ['  epic.author = subagent', '  epic.review = reviewed', '  task.author = solo', '  task.execute = solo'],
+      { epic: { author: 'subagent', review: 'reviewed' }, task: { author: 'solo', execute: 'solo' } }],
+  ]) {
+    it(`offers and writes the resolved literal values with the ${name}, regardless of ready bridges for tasks`, async () => {
+      const allBridges = { ...readiness, codex: 'ready', agy: 'ready' };
+      const { root, run } = await preview({ files: { [CONFIG]: seed() } }, allBridges);
+      const lines = under(run.lines, 'epic-task-slots').slice(1);
+      assert.deepEqual(lines.map((line) => line.split(' — ')[0]), expectedLines);
+      const composed = composeReadiness('/nowhere', readinessOf(allBridges));
+      if (readiness.author === 'missing') assertSkippedVehicle(lines[0], 'author', composed);
+      else for (const line of lines.slice(2)) assertSkippedVehicle(line, 'carry', composed);
+      const vehicleOnly = await preview({ files: { [CONFIG]: seed() } }, readiness);
+      assert.deepEqual(under(vehicleOnly.run.lines, 'epic-task-slots').slice(3), lines.slice(2));
+      const applied = await runOffer(root, ['--apply'], readinessOf(allBridges));
+      assert.equal(applied.code, 0, applied.stderr);
+      assert.equal(entryOf(applied.lines, 'epic-task-slots'), 'epic-task-slots: applied');
+      assert.deepEqual(under(applied.lines, 'epic-task-slots'), lines);
+      const config = JSON.parse(bytesOf(root, CONFIG).toString());
+      assert.deepEqual({ epic: config.epic, task: config.task }, expectedConfig);
     });
   }
 
@@ -79,8 +122,8 @@ describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule',
     const { run } = await preview({ files: { [CONFIG]: seed() } });
     const slots = under(run.lines, 'epic-task-slots').slice(1).map((line) => line.match(SLOT_LINE_RE));
     assert.deepEqual(slots.map((match) => match[3]), ['solo', 'solo', 'solo', 'solo']);
-    assert.match(slots[0][4], /^ — subagent skipped: .*\/agent-workflow-kit agents/);
-    for (const match of slots.slice(2)) assert.match(match[4], /^ — subagent skipped: .*\/agent-workflow-kit agents/);
+    assert.match(slots[0][4], /^ — subagent skipped: .*author vehicle.*\/agent-workflow-kit agents/);
+    for (const match of slots.slice(2)) assert.match(match[4], /^ — subagent skipped: .*executor vehicle.*\/agent-workflow-kit agents/);
   });
 
   it('prints the first candidate of each slot when every provider is ready, no ready bridge changing a task value', async () => {
@@ -92,6 +135,14 @@ describe('spec:tier-offer/S1 the frozen targets resolve by the kit\'s one rule',
   });
 
   it('prints only values the slot type admits', async () => {
+    assert.ok(Object.isFrozen(TIER_TARGETS));
+    assert.deepEqual(TIER_TARGETS.map(({ activity, slot, candidates }) => [activity, slot, candidates]), TARGETS);
+    for (const target of TIER_TARGETS) {
+      const { activity, slot, candidates } = target;
+      assert.ok(Object.isFrozen(target) && Object.isFrozen(candidates));
+      for (const candidate of candidates) assert.ok(SLOT_RECIPES[ACTIVITIES[activity].slots[slot]].includes(candidate));
+      if (activity === 'task') assert.ok(!candidates.includes('delegated'));
+    }
     for (const readiness of [NONE_READY, ALL_READY, { codex: 'ready' }]) {
       const { run } = await preview({ files: { [CONFIG]: seed() } }, readiness);
       for (const line of under(run.lines, 'epic-task-slots').slice(1)) {
@@ -209,9 +260,11 @@ describe('spec:tier-offer/S8 each config state answers by its one closed name', 
     const { run } = await preview({ files: { [CONFIG]: seed() } }, readiness);
     assert.equal(run.lines.filter((line) => line.includes('detector exploded')).length, 1);
     const survey = readinessOf(readiness).surveyVehicle;
-    const deps = { detect: () => [], surveyVehicle: survey };
-    assert.deepEqual(under(run.lines, 'epic-task-slots').slice(1),
-      TARGETS.map(([activity, slot, candidates]) => expectedSlot(activity, slot, candidates, deps)));
+    const deps = { ...readinessOf(readiness), detect: () => [], surveyVehicle: survey };
+    const [authorLine, ...rest] = under(run.lines, 'epic-task-slots').slice(1);
+    assert.match(authorLine, /^  epic\.author = solo — subagent skipped: /);
+    assertSkippedVehicle(authorLine, 'author', composeReadiness('/nowhere', deps));
+    assert.deepEqual(rest, TARGETS.slice(1).map(([activity, slot, candidates]) => expectedSlot(activity, slot, candidates, deps)));
   });
 });
 
